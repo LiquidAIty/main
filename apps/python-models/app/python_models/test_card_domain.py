@@ -3797,6 +3797,7 @@ def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
             )
             for index, candidate in enumerate(candidates)
         }
+        distribution[card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT] = 0.0
         return {
             "decisionId": "decision-policy",
             "winner": candidates[0]["choiceId"],
@@ -3839,7 +3840,8 @@ def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
         "main.graph-attention-choice.v1"
     )
     assert set(attention["distribution"]) == {
-        candidate["choiceId"] for candidate in offered
+        *(candidate["choiceId"] for candidate in offered),
+        card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
     }
     assert attention["winner"] == offered[0]["choiceId"]
     assert attention["policy"] == {
@@ -3900,6 +3902,7 @@ def _attention_decision(_query, candidates, *, effective_request=None):
         "distribution": {
             candidates[0]["choiceId"]: 0.8,
             candidates[1]["choiceId"]: 0.2,
+            card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT: 0.0,
         },
         "confidence": 0.71,
         "provider": "OpenRouter",
@@ -4074,7 +4077,10 @@ def test_main_attention_selects_one_when_only_one_candidate_exists(
         return {
             "decisionId": "decision-one",
             "winner": candidates[0]["choiceId"],
-            "distribution": {candidates[0]["choiceId"]: 1.0},
+            "distribution": {
+                candidates[0]["choiceId"]: 1.0,
+                card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT: 0.0,
+            },
             "confidence": 0.91,
             "provider": "OpenRouter",
             "requestedModel": "typesafe/jev-1.13",
@@ -4156,7 +4162,7 @@ def test_main_attention_hydration_failure_preserves_real_decision_evidence(
         "jev_attention_hydration_failed:data_anchor_seed_limit_exceeded"
     )
     assert attention["decisionId"] == "decision-hydration"
-    assert sorted(attention["distribution"].values()) == [0.2, 0.8]
+    assert sorted(attention["distribution"].values()) == [0.0, 0.2, 0.8]
     assert attention["policy"]["selectedMass"] == 0.8
     assert attention["selectedReferences"] == []
     assert {
@@ -4775,7 +4781,7 @@ def test_run_finish_links_native_identity_to_the_same_observed_request(
     assert params["errorSummary"] == "native source failure"
 
 
-def test_run_attempt_observation_is_bounded_idempotent_and_identity_scoped(
+def test_run_attempt_observation_inserts_and_replaces_metadata_by_event_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: list[tuple[str, dict]] = []
@@ -4805,7 +4811,7 @@ def test_run_attempt_observation_is_bounded_idempotent_and_identity_scoped(
             observed.append((query, params)) or [{"run_id": "run-one"}]
         ),
     )
-    attempt = {
+    llm_attempt = {
         "eventId": "llm:turn-one:api:1:completed",
         "attemptId": "turn-one:api:1",
         "kind": "llm",
@@ -4822,19 +4828,80 @@ def test_run_attempt_observation_is_bounded_idempotent_and_identity_scoped(
         "requestHash": "a" * 64,
         "responseHash": "b" * 64,
         "redaction": "hashes_and_metrics_only",
+        "observationGap": 1,
     }
-    result = card_domain.observe_run_attempt({
+    first = card_domain.observe_run_attempt({
         "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
-        "runId": "run-one", "attempt": attempt,
+        "runId": "run-one", "attempt": llm_attempt,
+    })
+    replacement = card_domain.observe_run_attempt({
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
+        "runId": "run-one", "attempt": {
+            **llm_attempt,
+            "phase": "failed",
+            "endedAt": "2026-10-01T20:00:02Z",
+            "errorType": "provider_error",
+            "errorMessage": "provider returned a bounded failure",
+            "retryable": True,
+            "outputTokens": 0,
+            "observationGap": 2,
+        },
+    })
+    tool = card_domain.observe_run_attempt({
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
+        "runId": "run-one", "attempt": {
+            "eventId": "tool:turn-one:call:1:completed",
+            "attemptId": "turn-one:call:1",
+            "kind": "tool",
+            "phase": "completed",
+            "observedAt": "2026-10-01T20:00:03Z",
+            "toolName": "engraphis_get_memory",
+            "toolCallId": "native-call-one",
+            "argumentsHash": "c" * 64,
+            "argumentsBytes": 42,
+            "resultHash": "d" * 64,
+            "resultBytes": 84,
+            "status": "ok",
+            "redaction": "hashes_and_metrics_only",
+            "observationGap": 3,
+        },
     })
 
-    assert result == {"ok": True, "runId": "run-one", "eventId": attempt["eventId"]}
-    query, params = observed[0]
-    assert "prior.eventId <> $event.eventId" in query
+    assert first == {"ok": True, "runId": "run-one", "eventId": llm_attempt["eventId"]}
+    assert replacement == first
+    assert tool == {
+        "ok": True, "runId": "run-one", "eventId": "tool:turn-one:call:1:completed",
+    }
+    query, first_params = observed[0]
+    assert "coalesce(run.attemptEvents, []) AS events" in query
+    assert "eventIndex IN range(0, size(events) - 1)" in query
+    assert "events[eventIndex].eventId <> $eventId" in query
+    assert "| events[eventIndex]] AS retained" in query
+    assert "prior.eventId" not in query
     assert "[-256..]" in query
-    assert params["event"]["schemaVersion"] == "hermes-run-attempt.v1"
-    assert params["event"]["inputTokens"] == 120
-    assert "request" not in params["event"]
+    assert first_params["eventId"] == llm_attempt["eventId"]
+    assert first_params["event"]["schemaVersion"] == "hermes-run-attempt.v1"
+    assert first_params["event"]["inputTokens"] == 120
+    assert first_params["event"]["observationGap"] == 1
+    assert "request" not in first_params["event"]
+
+    replacement_params = observed[1][1]
+    assert replacement_params["eventId"] == llm_attempt["eventId"]
+    assert replacement_params["event"]["phase"] == "failed"
+    assert replacement_params["event"]["outputTokens"] == 0
+    assert replacement_params["event"]["observationGap"] == 2
+    assert replacement_params["event"]["errorMessage"] == (
+        "provider returned a bounded failure"
+    )
+
+    tool_params = observed[2][1]
+    assert tool_params["event"]["kind"] == "tool"
+    assert tool_params["event"]["toolName"] == "engraphis_get_memory"
+    assert tool_params["event"]["argumentsHash"] == "c" * 64
+    assert tool_params["event"]["resultHash"] == "d" * 64
+    assert tool_params["event"]["observationGap"] == 3
+    assert "arguments" not in tool_params["event"]
+    assert "result" not in tool_params["event"]
 
 
 def test_run_attempt_observation_rejects_raw_or_unbounded_payloads() -> None:
@@ -4844,6 +4911,56 @@ def test_run_attempt_observation_rejects_raw_or_unbounded_payloads() -> None:
             "attempt": {
                 "eventId": "event", "attemptId": "attempt", "kind": "tool",
                 "phase": "completed", "rawResult": "must not persist",
+            },
+        })
+
+
+@pytest.mark.parametrize("observation_gap", [-1, True, float("inf")])
+def test_run_attempt_observation_rejects_invalid_observation_gap(
+    observation_gap: object,
+) -> None:
+    with pytest.raises(card_domain.CardDomainError, match="run_attempt_invalid"):
+        card_domain.observe_run_attempt({
+            "projectId": "p", "deckId": "d", "cardId": "c", "runId": "r",
+            "attempt": {
+                "eventId": "event", "attemptId": "attempt", "kind": "llm",
+                "phase": "completed", "observationGap": observation_gap,
+            },
+        })
+
+
+def test_run_attempt_observation_propagates_age_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("age_write_failed")
+
+    monkeypatch.setattr(card_domain, "_age_rows", fail)
+    with pytest.raises(RuntimeError, match="age_write_failed"):
+        card_domain.observe_run_attempt({
+            "projectId": "p", "deckId": "d", "cardId": "c", "runId": "r",
+            "attempt": {
+                "eventId": "event", "attemptId": "attempt", "kind": "llm",
+                "phase": "completed", "observationGap": 0,
             },
         })
 
@@ -6140,3 +6257,379 @@ def test_card_model_router_failure_uses_saved_model_only_when_still_eligible(
     assert selected == call_config["provider"]
     assert receipt["status"] == "fallback_saved"
     assert receipt["errorCode"] == "card_model_router_timeout"
+
+
+def _atomic_candidate(memory_id: str, cutoff: str) -> dict:
+    return {
+        "schemaVersion": "atomic-research-candidate.v1",
+        "projectId": "project-one", "deckId": "deck-one",
+        "conversationId": "conversation-one",
+        "originatingRunId": f"run-{memory_id}", "thinkMemoryId": memory_id,
+        "mainCardId": "main", "mainCardRevisionId": "revision-main",
+        "thinkGraphCardId": "think", "thinkGraphCardRevisionId": "revision-think",
+        "knowGraphCardId": "know", "knowGraphCardRevisionId": "revision-know",
+        "evidenceCutoff": cutoff,
+    }
+
+
+def _atomic_seed_fixture(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> list[str]:
+    main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
+    main["runtimeOptions"]["configuration"] = {
+        "dataControl": {"automaticResearch": True},
+    }
+    think, know = _agent("think"), _agent("know")
+    for card, revision in ((main, "revision-main"), (think, "revision-think"),
+                           (know, "revision-know")):
+        card["_cardRevisionId"] = revision
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"nodes": [main, think, know], "edges": []},
+    })
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args, **_kwargs): return None
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    queries: list[str] = []
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(
+        card_domain, "_age_rows",
+        lambda _cursor, query, _params, _columns: queries.append(query) or rows,
+    )
+    return queries
+
+
+def test_pending_atomic_research_skips_stale_oldest_and_selects_valid_fifo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale = _atomic_candidate("mem_stale", "2026-01-01T00:00:00Z")
+    valid = _atomic_candidate("mem_valid", "2026-01-02T00:00:00Z")
+    queries = _atomic_seed_fixture(
+        monkeypatch, [{"candidate": stale}, {"candidate": valid}],
+    )
+    monkeypatch.setattr(
+        card_domain, "inspect_thinkgraph",
+        lambda _project, memory_id: (
+            (_ for _ in ()).throw(RuntimeError("memory_not_found"))
+            if memory_id == "mem_stale"
+            else {"memory": {"metadata": {
+                "structured_extraction": {"think": {"summary": "valid"}},
+            }}}
+        ),
+    )
+    assert card_domain._pending_atomic_research_seed(
+        "project-one", "deck-one", "conversation-one", "main",
+    ) == valid
+    assert "evidenceCutoff ASC" in queries[0]
+    assert "run.runId ASC" in queries[0]
+    assert "LIMIT 32" in queries[0]
+
+
+def test_pending_atomic_research_returns_none_when_all_memories_are_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _atomic_seed_fixture(monkeypatch, [
+        {"candidate": _atomic_candidate("mem_stale_one", "2026-01-01T00:00:00Z")},
+        {"candidate": _atomic_candidate("mem_stale_two", "2026-01-02T00:00:00Z")},
+    ])
+    monkeypatch.setattr(
+        card_domain, "inspect_thinkgraph",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("memory_not_found")),
+    )
+    assert card_domain._pending_atomic_research_seed(
+        "project-one", "deck-one", "conversation-one", "main",
+    ) is None
+
+
+def _atomic_main_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+    assessment: dict,
+    *,
+    think_exists: bool = True,
+) -> dict:
+    loaded = _destination_fixture(monkeypatch)
+    main = next(card for card in loaded["deck"]["nodes"] if card["id"] == "sender")
+    main["runtimeOptions"]["tools"] = ["research_atomic_thinks"]
+    main["runtimeOptions"]["configuration"] = {
+        "dataControl": {"automaticResearch": True},
+    }
+    payload = _destination_payload("sender")
+    payload.pop("senderCardId")
+    payload.update({
+        "assignment": "Current Main request.", "conversationId": "conversation-one",
+        "_mainAttentionQuery": "Current Main request.",
+        "_mainAttentionToken": card_domain._MAIN_ATTENTION_TOKEN,
+    })
+    monkeypatch.setattr(card_domain, "_pending_atomic_research_seed", lambda *_args: {})
+    monkeypatch.setattr(
+        card_domain, "_current_atomic_think_exists", lambda *_args: think_exists,
+    )
+    monkeypatch.setattr(
+        card_domain, "_prepare_main_graph_attention",
+        lambda **_kwargs: ({
+            "schemaVersion": "jev-attention.v1", "status": "success",
+            "candidates": [], "selectedReferences": [], "timingMs": {},
+            "atomicResearch": assessment,
+        }, [], 0.0),
+    )
+    monkeypatch.setattr(
+        card_domain, "resolve_data_anchors",
+        lambda _project_id, _anchors, **_kwargs: ("", []),
+    )
+    return card_domain.materialize_invocation(payload)
+
+
+def test_main_run_presents_atomic_tool_only_for_manual_exact_offers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invocation = _atomic_main_invocation(monkeypatch, {
+        "schemaVersion": "atomic-research-assessment.v1", "status": "success",
+        "assessmentId": "assessment-one",
+        "recommendedMemoryIds": ["mem_manual", "mem_automatic"],
+        "automaticMemoryIds": ["mem_automatic"],
+    })
+    grants = invocation["idf"]["selectedToolsAndGrants"]
+    task = invocation["idf"]["dynamicContext"]["task"]
+    assert "research_atomic_thinks" in grants["enabledTools"]
+    assert "research_atomic_thinks" in grants["presentedTools"]
+    assert "research_atomic_thinks" in invocation["jevAutoTools"]["normalAuthorizedTools"]
+    assert "research_atomic_thinks" in invocation["jevAutoTools"]["selectedTools"]
+    assert "mem_manual" in task and "mem_automatic" in task
+    assert "Never manually invoke an already auto-launched ID" in task
+
+
+@pytest.mark.parametrize("assessment", [
+    {},
+    {"schemaVersion": "atomic-research-assessment.v1", "status": "unavailable",
+     "recommendedMemoryIds": ["mem_one"], "automaticMemoryIds": []},
+    {"schemaVersion": "atomic-research-assessment.v1", "status": "success",
+     "recommendedMemoryIds": [], "automaticMemoryIds": []},
+])
+def test_main_run_hides_atomic_tool_without_a_manual_receipted_offer(
+    monkeypatch: pytest.MonkeyPatch, assessment,
+) -> None:
+    grants = _atomic_main_invocation(monkeypatch, assessment)["idf"][
+        "selectedToolsAndGrants"
+    ]
+    assert "research_atomic_thinks" not in grants["enabledTools"]
+    assert "research_atomic_thinks" not in grants["presentedTools"]
+
+
+def test_main_run_hides_tool_when_every_receipted_id_is_already_automatic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invocation = _atomic_main_invocation(monkeypatch, {
+        "schemaVersion": "atomic-research-assessment.v1", "status": "success",
+        "recommendedMemoryIds": ["mem_auto"], "automaticMemoryIds": ["mem_auto"],
+    })
+    grants = invocation["idf"]["selectedToolsAndGrants"]
+    task = invocation["idf"]["dynamicContext"]["task"]
+    assert "research_atomic_thinks" not in grants["enabledTools"]
+    assert "research_atomic_thinks" not in grants["presentedTools"]
+    assert "research_atomic_thinks" not in {
+        definition["canonicalId"] for definition in grants["toolDefinitions"]
+    }
+    assert "every recommended ID is already auto-launched" in task
+
+
+def test_main_run_hides_persisted_offer_when_think_memory_was_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invocation = _atomic_main_invocation(monkeypatch, {
+        "schemaVersion": "atomic-research-assessment.v1", "status": "success",
+        "recommendedMemoryIds": ["mem_deleted"], "automaticMemoryIds": [],
+    }, think_exists=False)
+    grants = invocation["idf"]["selectedToolsAndGrants"]
+    assert "research_atomic_thinks" not in grants["enabledTools"]
+    assert "research_atomic_thinks" not in grants["presentedTools"]
+    assert "mem_deleted" not in invocation["idf"]["dynamicContext"]["task"]
+
+
+def test_atomic_research_manual_claim_uses_snake_case_origin_and_rejoins_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main = _agent(
+        "main",
+        title="Main",
+        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
+    main["runtimeOptions"]["configuration"] = {
+        "dataControl": {"automaticResearch": True},
+    }
+    think = _agent("think", title="ThinkGraph")
+    know = _agent(
+        "know", title="KnowGraph",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "knowgraph"},
+    )
+    for card, revision in (
+        (main, "revision-main"),
+        (think, "revision-think"),
+        (know, "revision-know"),
+    ):
+        card["_cardRevisionId"] = revision
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {
+            "nodes": [main, think, know],
+            "edges": [{
+                "id": "flow-main-know", "source": "main", "target": "know",
+                "edgeType": "flow", "enabled": True,
+            }],
+        },
+    })
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args, **_kwargs): return None
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    assessment = {
+        "schemaVersion": "atomic-research-assessment.v1",
+        "status": "success",
+        "assessmentId": "assessment-one",
+        "conversationId": "conversation-one",
+        "mainCardRevisionId": "revision-main",
+        "thinkGraphCardId": "think",
+        "thinkGraphCardRevisionId": "revision-think",
+        "knowGraphCardId": "know",
+        "knowGraphCardRevisionId": "revision-know",
+        "recommendedMemoryIds": ["mem_manual"],
+        "automaticMemoryIds": [],
+        "researchFrameSha256": "a" * 64,
+        "evidenceCutoff": "2026-10-02T12:00:00Z",
+    }
+    launch_state: dict | None = None
+    outcome_state: dict | None = None
+    claim_writes: list[dict] = []
+
+    def age_rows(_cursor, query, params, _columns):
+        nonlocal launch_state
+        if "RETURN origin.runId AS originatingRunId" in query:
+            return [{
+                "originating_run_id": "origin-run-exact",
+                "assessment": assessment,
+                "launch": launch_state,
+                "outcome": outcome_state,
+            }]
+        if "SET origin.atomicResearchLaunch=$launch" in query:
+            assert params["originatingRunId"] == "origin-run-exact"
+            launch_state = dict(params["launch"])
+            claim_writes.append(dict(params))
+            return [{"run_id": "origin-run-exact"}]
+        raise AssertionError(query)
+
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+    payload = {
+        "projectId": "project-one", "deckId": "deck-one",
+        "conversationId": "conversation-one", "sourceRunId": "source-run-one",
+        "mainCardId": "main", "thinkMemoryIds": ["mem_manual"],
+        "mode": "main", "reason": "Research the exact offered Think.",
+    }
+
+    first = card_domain.authorize_atomic_research_launch(payload)
+    outcome_state = {
+        "schemaVersion": "atomic-research-outcome.v1",
+        "status": "completed",
+        "childRunId": "atomic_research:child",
+    }
+    second = card_domain.authorize_atomic_research_launch(payload)
+
+    assert first["claimed"] is True and first["rejoined"] is False
+    assert second["claimed"] is False and second["rejoined"] is True
+    assert first["originatingRunId"] == "origin-run-exact"
+    assert second["originatingRunId"] == "origin-run-exact"
+    assert first["correlationId"] == second["correlationId"]
+    assert first["settledOutcome"] is None
+    assert second["settledOutcome"] == outcome_state
+    assert launch_state is not None
+    assert launch_state["originatingRunId"] == "origin-run-exact"
+    assert len(claim_writes) == 1
+
+
+def test_atomic_research_assignment_does_not_refetch_hydrated_think() -> None:
+    assignment = card_domain._atomic_research_assignment(
+        assessment_id="assessment-one",
+        source_run_id="source-run-one",
+        memory_ids=["mem-one"],
+        reason="Research it.",
+    )
+
+    assert "already hydrated in actualGraphData" in assignment
+    assert "Do not call\nengraphis_get_memory" in assignment
+    assert "unless the supplied data explicitly reports a freshness mismatch" in assignment
+    assert "Preserve your semantic supported or" in assignment
+    assert "Never invent an episode UUID" in assignment
+    assert "source_description to one JSON array" in assignment
+
+
+def test_atomic_research_write_event_read_is_exact_run_and_card_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args, **_kwargs): return None
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    seen = []
+    monkeypatch.setattr(
+        card_domain, "connect_postgres", lambda **_kwargs: Connection(),
+    )
+    monkeypatch.setattr(
+        card_domain, "_resolve_project", lambda _cursor, project: {
+            "id": "project-canonical", "code": project,
+        },
+    )
+
+    def age_rows(_cursor, query, params, columns):
+        seen.append((query, params, columns))
+        return [{"event": {
+            "eventId": "native-attention:one",
+            "phase": "completed",
+            "authority": "knowgraph",
+            "operation": "write",
+            "toolName": "graphiti.add_memory",
+            "nativeNodeIds": ["episode-one", "entity-one"],
+        }}]
+
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+
+    event = card_domain.read_atomic_research_write_event(
+        "project-one", "deck-one", "atomic_research:child", "knowgraph",
+    )
+
+    assert event == {
+        "eventId": "native-attention:one",
+        "phase": "completed",
+        "authority": "knowgraph",
+        "operation": "write",
+        "toolName": "graphiti.add_memory",
+        "nativeNodeIds": ["episode-one", "entity-one"],
+        "projectId": "project-canonical",
+        "deckId": "deck-one",
+        "runId": "atomic_research:child",
+        "cardId": "knowgraph",
+    }
+    assert seen[0][1] == {
+        "projectId": "project-canonical",
+        "deckId": "deck-one",
+        "runId": "atomic_research:child",
+        "cardId": "knowgraph",
+    }
+    assert seen[0][2] == "event agtype"

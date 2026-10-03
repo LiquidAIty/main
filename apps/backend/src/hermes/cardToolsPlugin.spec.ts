@@ -506,6 +506,8 @@ describe('materializeHermesApplicationMcpServers', () => {
       name: 'cbm',
       config: {
         url: 'http://127.0.0.1:8765/mcp',
+        trust: 'full',
+        default_tools_approval_mode: 'approve',
         tools: {
           include: ['cbm.search_graph'],
           prompts: false,
@@ -518,6 +520,8 @@ describe('materializeHermesApplicationMcpServers', () => {
       name: 'graphiti',
       config: {
         url: 'http://127.0.0.1:8765/mcp',
+        trust: 'full',
+        default_tools_approval_mode: 'approve',
         tools: {
           include: ['graphiti.search_nodes'],
           prompts: false,
@@ -528,7 +532,7 @@ describe('materializeHermesApplicationMcpServers', () => {
     });
   });
 
-  it('renews an existing exact connection without replacing its filter', async () => {
+  it('replaces an existing exact connection so stale trust and approval policy cannot survive', async () => {
     const selected = configuration({
       enabledTools: ['cbm.search_graph'],
       presentedTools: ['cbm.search_graph'],
@@ -546,7 +550,8 @@ describe('materializeHermesApplicationMcpServers', () => {
         url: 'http://127.0.0.1:8765/mcp',
         tools: { include: ['cbm.search_graph'], prompts: false, resources: false },
       }] };
-      if (method === 'mcp.servers.set_api_key') return { ok: true, name: params.name };
+      if (method === 'mcp.servers.remove') return { ok: true, removed: true };
+      if (method === 'mcp.servers.add') return { ok: true, name: params.name };
       throw new Error(`unexpected:${method}`);
     });
 
@@ -556,11 +561,24 @@ describe('materializeHermesApplicationMcpServers', () => {
       headers: { Authorization: 'Bearer next-run-token' },
     });
 
-    expect(request).toHaveBeenCalledWith('mcp.servers.set_api_key', {
+    expect(request).toHaveBeenCalledWith('mcp.servers.remove', {
+      profile: 'builder',
       name: 'cbm',
-      value: 'next-run-token',
     });
-    expect(request).not.toHaveBeenCalledWith('mcp.servers.add', expect.anything());
+    expect(request).toHaveBeenCalledWith('mcp.servers.add', {
+      name: 'cbm',
+      config: {
+        url: 'http://127.0.0.1:8765/mcp',
+        trust: 'full',
+        default_tools_approval_mode: 'approve',
+        tools: {
+          include: ['cbm.search_graph'],
+          prompts: false,
+          resources: false,
+        },
+      },
+      bearer_token: 'next-run-token',
+    });
   });
 });
 

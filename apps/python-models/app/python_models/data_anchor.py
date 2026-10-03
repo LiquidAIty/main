@@ -1314,6 +1314,7 @@ def search_knowgraph_attention_candidates(
     *,
     limit: int = 8,
     mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
+    subject_reader: Callable[[str], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Return canonical KnowGraph entity candidates without graph hydration.
 
@@ -1331,6 +1332,26 @@ def search_knowgraph_attention_candidates(
         raise DataAnchorError("data_anchor_knowgraph_context_missing")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 8:
         raise DataAnchorError("data_anchor_knowgraph_limit_invalid")
+    # An authoritative project-scoped native count can prove there is nothing
+    # for semantic search to retrieve.  Keep that cold-start case off Graphiti's
+    # embedding/search path, which may legitimately be unavailable while an
+    # empty graph is still initializing.  A failed or non-empty status read is
+    # not evidence of emptiness and therefore falls through to the bounded MCP
+    # searches below.
+    if subject_reader is not None or mcp_reader is call_read_tools_via_mcp:
+        try:
+            status = (subject_reader or _read_knowgraph_subject_directory)(
+                project_id
+            )
+        except Exception:
+            status = None
+        if (
+            isinstance(status, dict)
+            and status.get("complete") is True
+            and status.get("count") == 0
+            and status.get("subjects") == []
+        ):
+            return []
     try:
         results = mcp_reader(
             project_id=project_id,
@@ -1597,17 +1618,81 @@ def search_knowgraph_hybrid(
     }
 
 
-def _render_anchor(anchor: dict[str, Any], record: dict[str, Any]) -> str:
+def _materialized_record_sha256(record: dict[str, Any]) -> str:
+    payload = {
+        "properties": record.get("properties") or {
+            "type": record["type"],
+            "title": record["title"],
+            "metadata": record.get("metadata") or {},
+        },
+        "know": record.get("know") if isinstance(record.get("know"), dict) else None,
+        "relationshipEvidence": record.get("relationshipEvidence") or [],
+        "content": record.get("content"),
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _deduplicate_exact_payload(
+    value: Any,
+    *,
+    authority: str,
+    native_id: str,
+    field: str,
+    rendered_payloads: dict[tuple[str, str, str], str] | None,
+) -> Any:
+    """Replace only byte-identical repeated native payloads with a stable pointer."""
+
+    if rendered_payloads is None:
+        return value
+    encoded = _canonical_json(value).encode("utf-8")
+    if len(encoded) < 256:
+        return value
+    digest = hashlib.sha256(encoded).hexdigest()
+    identity = (authority, field, digest)
+    first_native_id = rendered_payloads.get(identity)
+    if first_native_id is None:
+        rendered_payloads[identity] = native_id
+        return value
+    return {
+        "exactNativePayloadReference": {
+            "authority": authority,
+            "nativeId": first_native_id,
+            "sha256": digest,
+        }
+    }
+
+
+def _render_anchor(
+    anchor: dict[str, Any],
+    record: dict[str, Any],
+    *,
+    rendered_payloads: dict[tuple[str, str, str], str] | None = None,
+) -> str:
     properties = record.get("properties") or {
         "type": record["type"],
         "title": record["title"],
         "metadata": record.get("metadata") or {},
     }
+    authority = str(record["authority"])
+    native_id = str(record["nativeId"])
+    if isinstance(properties, dict) and "metadata" in properties:
+        properties = {
+            **properties,
+            "metadata": _deduplicate_exact_payload(
+                properties["metadata"], authority=authority, native_id=native_id,
+                field="metadata", rendered_payloads=rendered_payloads,
+            ),
+        }
+    content = _deduplicate_exact_payload(
+        record["content"], authority=authority, native_id=native_id,
+        field="content", rendered_payloads=rendered_payloads,
+    )
     return "\n".join([
         f"### Data Anchor: {record['authority']} / {record['nativeId']}",
         f"Selection reason (guidance, not verified fact): {anchor['reason']}",
         f"Verified native read as of: {record['asOf']}",
         f"Native read operation: {record.get('readOperation') or 'exact_read'}",
+        f"Materialized native record SHA-256: {_materialized_record_sha256(record)}",
         f"Verified native provenance: {json.dumps(record.get('provenance') or {}, ensure_ascii=False, separators=(',', ':'), default=str)}",
         f"Verified native properties: {json.dumps(properties, ensure_ascii=False, separators=(',', ':'), default=str)}",
         *(
@@ -1619,7 +1704,10 @@ def _render_anchor(anchor: dict[str, Any], record: dict[str, Any]) -> str:
             if record.get("relationshipEvidence") else []
         ),
         "Verified native content:",
-        record["content"],
+        (
+            content if isinstance(content, str)
+            else json.dumps(content, ensure_ascii=False, separators=(",", ":"), default=str)
+        ),
     ]).strip()
 
 
@@ -1693,6 +1781,7 @@ def _materialized_reference(
         "provenance": provenance,
         "selectionScope": selection_scope,
         "materializedContentBytes": len(content_text.encode("utf-8")),
+        "materializedRecordSha256": _materialized_record_sha256(record),
         **({"sourcePath": source_path} if source_path else {}),
         **({"sourceUrl": source_url} if source_url else {}),
         "truncated": truncated,
@@ -1925,6 +2014,7 @@ def resolve_data_anchors(
     """Resolve ordered anchors and return model text plus native references."""
     rendered: list[str] = []
     references: list[dict[str, Any]] = []
+    rendered_payloads: dict[tuple[str, str, str], str] = {}
     resolved_identities: set[tuple[str, str]] = set()
     exact_knowgraph_records: list[dict[str, Any]] = []
     search_hooks: list[dict[str, Any]] = []
@@ -1951,7 +2041,9 @@ def resolve_data_anchors(
         if identity in resolved_identities:
             continue
         resolved_identities.add(identity)
-        rendered.append(_render_anchor(anchor, record))
+        rendered.append(_render_anchor(
+            anchor, record, rendered_payloads=rendered_payloads,
+        ))
         if graph_projection is not None:
             _merge_graph_projection(
                 graph_projection,
@@ -2008,6 +2100,7 @@ def resolve_data_anchors(
             rendered.append(_render_anchor(
                 {"reason": f"{hook['reason']} — {record['selectionReason']}"},
                 record,
+                rendered_payloads=rendered_payloads,
             ))
             references.append(_materialized_reference(
                 {**hook, "reason": record["selectionReason"]},

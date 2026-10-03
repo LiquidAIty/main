@@ -21,7 +21,8 @@ from app.python_models.idf import (
 def _idf(
     *, graph_context: str = "", secret: bool = False,
     capabilities: dict | None = None, task: str = "Inspect the exact bounded slice.",
-    images: list[dict] | None = None,
+    images: list[dict] | None = None, materialized_record_sha256: str = "",
+    projection_payload_chars: int = 0,
 ):
     reference = {
         "authority": "CodeGraph",
@@ -37,6 +38,10 @@ def _idf(
         "sourceUrl": "https://example.test/source",
         "selectionScope": {"boundedExpansion": 1, "resultLimit": 4},
         "materializedContentBytes": 18,
+        **(
+            {"materializedRecordSha256": materialized_record_sha256}
+            if materialized_record_sha256 else {}
+        ),
         "truncated": False,
     }
     references = [reference] if graph_context else []
@@ -48,7 +53,10 @@ def _idf(
             "type": "Function",
             "label": "materialize_idf",
             "labels": ["Function"],
-            "properties": {"file": "apps/example.py", "source": "def materialize_idf(): pass"},
+            "properties": {
+                "file": "apps/example.py",
+                "source": "def materialize_idf(): pass" + ("x" * projection_payload_chars),
+            },
             "provenance": {"repository": "C-Projects-LiquidAIty-main"},
         }] if graph_context else []),
         "edges": [],
@@ -203,6 +211,29 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     summary = idf_public(materialized)["inputSummary"]
     assert summary["idfBytes"] == len(materialized.idf_bytes)
     assert summary["estimatedGraphContextTokens"] > 0
+
+
+def test_selected_native_record_is_not_serialized_again_in_structured_section() -> None:
+    graph = "Verified native properties: " + ("x" * 4_000)
+    baseline = _idf(graph_context=graph, projection_payload_chars=4_000)
+    compact = _idf(
+        graph_context=graph, materialized_record_sha256="a" * 64,
+        projection_payload_chars=4_000,
+    )
+    node = next(
+        record for record in compact.idf.actualGraphData.records
+        if record.kind == "node"
+    )
+
+    assert node.nativeId == "project.module.materialize_idf"
+    assert node.provenance == {"repository": "C-Projects-LiquidAIty-main"}
+    assert node.content["materializedRecord"] == {
+        "authority": "CodeGraph",
+        "nativeId": "project.module.materialize_idf",
+        "sha256": "a" * 64,
+    }
+    assert "properties" not in node.content
+    assert len(compact.idf_bytes) < len(baseline.idf_bytes)
 
 
 def test_builder_input_has_no_operation_authority() -> None:

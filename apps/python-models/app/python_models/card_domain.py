@@ -57,12 +57,14 @@ from app.python_models.data_anchor import (
     search_knowgraph_attention_candidates,
 )
 from app.python_models.engraphis import (
+    ATOMIC_RESEARCH_MAX_SELECTED,
     JEV_ENDPOINT,
     JEV_MODEL,
     MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
     JevAttentionError,
     _attention_choice_id,
     decide_main_graph_attention,
+    inspect as inspect_thinkgraph,
     prepare_atomic_research_frame,
     recall_thinkgraph_attention_candidates,
 )
@@ -1891,9 +1893,12 @@ def observe_run_attempt(payload: dict[str, Any]) -> dict[str, Any]:
                   -[:EXECUTED_BY]->(card:Card {
                     projectId: $projectId, deckId: $deckId, cardId: $cardId
                   })
-            WITH run, [prior IN coalesce(run.attemptEvents, [])
-                       WHERE prior.eventId <> $event.eventId] AS prior
-            SET run.attemptEvents=(prior + [$event])[-256..]
+            WITH run, coalesce(run.attemptEvents, []) AS events
+            WITH run, events,
+                 [eventIndex IN range(0, size(events) - 1)
+                  WHERE events[eventIndex].eventId <> $eventId
+                  | events[eventIndex]] AS retained
+            SET run.attemptEvents=(retained + [$event])[-256..]
             RETURN run.runId
             """,
             {
@@ -1901,6 +1906,7 @@ def observe_run_attempt(payload: dict[str, Any]) -> dict[str, Any]:
                 "deckId": deck_id,
                 "cardId": card_id,
                 "runId": run_id,
+                "eventId": event_id,
                 "event": event,
             },
             "run_id agtype",
@@ -3137,6 +3143,15 @@ def _attention_retrieval(
                 if not candidates else {}
             ),
         }
+    except Exception as error:
+        status, error_code = _attention_error_status(error)
+        return name, {
+            "status": status,
+            "candidateCount": 0,
+            "timingMs": round((time.perf_counter() - started) * 1000, 3),
+            "candidates": [],
+            "errorCode": error_code,
+        }
 
 
 def register_atomic_research_candidate(payload: dict[str, Any]) -> dict[str, Any]:
@@ -3241,6 +3256,24 @@ def register_atomic_research_candidate(payload: dict[str, Any]) -> dict[str, Any
     }
 
 
+def _current_atomic_think_exists(project_id: str, memory_id: str) -> bool:
+    """Confirm one project-scoped native ID still names a structured atomic Think."""
+
+    try:
+        native = inspect_thinkgraph(project_id, memory_id)
+    except Exception:
+        return False
+    memory = native.get("memory") if isinstance(native, dict) else None
+    metadata = memory.get("metadata") if isinstance(memory, dict) else None
+    structured = (
+        metadata.get("structured_extraction")
+        if isinstance(metadata, dict) else None
+    )
+    return isinstance(structured, dict) and isinstance(
+        structured.get("think"), dict
+    )
+
+
 def _pending_atomic_research_seed(
     project_id: str,
     deck_id: str,
@@ -3252,50 +3285,199 @@ def _pending_atomic_research_seed(
     main = cards.get(main_card_id)
     if main is None or not _card_automatic_research_enabled(main):
         return None
+    after_cutoff = ""
+    after_run_id = ""
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            while True:
+                rows = _age_rows(
+                    cursor,
+                    """
+                    MATCH (run:Run {
+                      projectId: $projectId, deckId: $deckId
+                    })-[:EXECUTED_BY]->(main:Card {
+                      projectId: $projectId, deckId: $deckId, cardId: $mainCardId
+                    })
+                    WHERE run.conversationId=$conversationId
+                      AND run.atomicResearchCandidate IS NOT NULL
+                      AND run.atomicResearchAssessment IS NULL
+                      AND (
+                        $afterCutoff=''
+                        OR run.atomicResearchCandidate.evidenceCutoff > $afterCutoff
+                        OR (
+                          run.atomicResearchCandidate.evidenceCutoff=$afterCutoff
+                          AND run.runId > $afterRunId
+                        )
+                      )
+                    RETURN run.atomicResearchCandidate AS candidate,
+                           run.runId AS runId
+                    ORDER BY run.atomicResearchCandidate.evidenceCutoff ASC,
+                             run.runId ASC
+                    LIMIT 32
+                    """,
+                    {
+                        "projectId": str(loaded["projectId"]),
+                        "deckId": deck_id,
+                        "conversationId": conversation_id,
+                        "mainCardId": main_card_id,
+                        "afterCutoff": after_cutoff,
+                        "afterRunId": after_run_id,
+                    },
+                    "candidate agtype, run_id agtype",
+                )
+                if not rows:
+                    return None
+                for row in rows:
+                    if not isinstance(row.get("candidate"), dict):
+                        continue
+                    candidate = dict(row["candidate"])
+                    current = {
+                        "mainCardRevisionId": str(main.get("_cardRevisionId") or ""),
+                    }
+                    for key in ("thinkGraph", "knowGraph"):
+                        card_id = str(candidate.get(f"{key}CardId") or "")
+                        card = cards.get(card_id)
+                        current[f"{key}CardRevisionId"] = str(
+                            card.get("_cardRevisionId") or ""
+                        ) if card is not None else ""
+                    if any(
+                        str(candidate.get(key) or "") != value
+                        for key, value in current.items()
+                    ):
+                        continue
+                    think_memory_id = str(candidate.get("thinkMemoryId") or "").strip()
+                    if not think_memory_id:
+                        continue
+                    if _current_atomic_think_exists(
+                        str(loaded["projectId"]), think_memory_id
+                    ):
+                        return candidate
+                if len(rows) < 32:
+                    return None
+                last = rows[-1]
+                last_candidate = (
+                    last.get("candidate")
+                    if isinstance(last.get("candidate"), dict) else {}
+                )
+                after_cutoff = str(last_candidate.get("evidenceCutoff") or "")
+                after_run_id = str(
+                    last.get("run_id") or last.get("runId") or ""
+                )
+                if not after_cutoff or not after_run_id:
+                    return None
+
+
+def _persisted_atomic_research_assessment(
+    project_id: str,
+    deck_id: str,
+    run_id: str,
+    main_card_id: str,
+) -> dict[str, Any] | None:
+    """Read the assessment already delivered to this exact Main Run, if any."""
+
+    if not run_id:
+        return None
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute("SET TRANSACTION READ ONLY")
             rows = _age_rows(
                 cursor,
                 """
-                MATCH (run:Run {
+                MATCH (origin:Run {
                   projectId: $projectId, deckId: $deckId
+                })
+                MATCH (current:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
                 })-[:EXECUTED_BY]->(main:Card {
                   projectId: $projectId, deckId: $deckId, cardId: $mainCardId
                 })
-                WHERE run.conversationId=$conversationId
-                  AND run.atomicResearchCandidate IS NOT NULL
-                  AND run.atomicResearchAssessment IS NULL
-                RETURN run.atomicResearchCandidate AS candidate
-                ORDER BY run.finishedAt DESC, run.runId DESC
+                WHERE origin.atomicResearchDeliveredToRunId=$runId
+                  AND origin.atomicResearchAssessment IS NOT NULL
+                RETURN origin.atomicResearchAssessment AS assessment
                 LIMIT 1
                 """,
                 {
-                    "projectId": str(loaded["projectId"]),
+                    "projectId": project_id,
                     "deckId": deck_id,
-                    "conversationId": conversation_id,
+                    "runId": run_id,
                     "mainCardId": main_card_id,
                 },
-                "candidate agtype",
+                "assessment agtype",
             )
-    if not rows or not isinstance(rows[0].get("candidate"), dict):
+    if len(rows) != 1 or not isinstance(rows[0].get("assessment"), dict):
         return None
-    candidate = dict(rows[0]["candidate"])
-    current = {
-        "mainCardRevisionId": str(main.get("_cardRevisionId") or ""),
-    }
-    for key in ("thinkGraph", "knowGraph"):
-        card_id = str(candidate.get(f"{key}CardId") or "")
-        card = cards.get(card_id)
-        current[f"{key}CardRevisionId"] = str(
-            card.get("_cardRevisionId") or ""
-        ) if card is not None else ""
-    if any(
-        str(candidate.get(key) or "") != value
-        for key, value in current.items()
+    return dict(rows[0]["assessment"])
+
+
+def _atomic_research_offer(value: Any) -> dict[str, Any] | None:
+    """Validate exact Jev-offered IDs without widening saved authority."""
+
+    if (
+        not isinstance(value, dict)
+        or value.get("schemaVersion") != "atomic-research-assessment.v1"
+        or value.get("status") != "success"
     ):
         return None
-    return candidate
+    recommended = value.get("recommendedMemoryIds")
+    automatic = value.get("automaticMemoryIds")
+    if (
+        not isinstance(recommended, list)
+        or not 1 <= len(recommended) <= ATOMIC_RESEARCH_MAX_SELECTED
+        or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 1_024
+            for item in recommended
+        )
+        or len(set(recommended)) != len(recommended)
+        or not isinstance(automatic, list)
+        or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 1_024
+            for item in automatic
+        )
+        or len(set(automatic)) != len(automatic)
+        or not set(automatic) <= set(recommended)
+    ):
+        return None
+    manual = [item for item in recommended if item not in set(automatic)]
+    return {
+        "assessmentId": str(value.get("assessmentId") or "") or None,
+        "recommendedMemoryIds": list(recommended),
+        "automaticMemoryIds": list(automatic),
+        "manualMemoryIds": manual,
+    }
+
+
+def _atomic_research_offer_section(
+    offer: dict[str, Any],
+    *,
+    tool_available: bool,
+) -> str:
+    manual = offer["manualMemoryIds"]
+    automatic = offer["automaticMemoryIds"]
+    lines = [
+        "## Current atomic research offer",
+        "Exact Jev-offered Think memory IDs only; do not invent a query or another ID.",
+        "Manual-eligible Think IDs: "
+        + json.dumps(manual, ensure_ascii=False, separators=(",", ":")),
+        "Already auto-launched Think IDs: "
+        + json.dumps(automatic, ensure_ascii=False, separators=(",", ":")),
+    ]
+    if tool_available and manual:
+        lines.append(
+            "You may call research_atomic_thinks only with one or two exact IDs from "
+            "Manual-eligible Think IDs. Never manually invoke an already auto-launched ID."
+        )
+    elif automatic:
+        lines.append(
+            "Do not call research_atomic_thinks for this offer; every recommended ID is "
+            "already auto-launched."
+        )
+    else:
+        lines.append(
+            "The saved research command is unavailable in this Run; do not attempt a "
+            "receiptless research call."
+        )
+    return "\n".join(lines)
 
 
 def record_atomic_research_assessment(
@@ -3389,14 +3571,26 @@ def _atomic_research_assignment(
     return "\n".join((
         "Run one bounded atomic research assignment using your saved KnowGraph Card authority.",
         "The supplied ThinkGraph Data Anchors are question framing, not factual evidence.",
+        "Each exact Think body is already hydrated in actualGraphData. Do not call",
+        "engraphis_get_memory for it again unless the supplied data explicitly reports a freshness mismatch.",
         "For each exact Think memory ID, inspect existing current project-scoped Knows and their",
         "source dates first. Use at most four distinct current primary sources across this assignment.",
         "Write useful source material through your existing Graphiti tools and saved grants only.",
+        "Make exactly one graphiti.add_memory call for the bounded research packet. Do not retry",
+        "after a queued acknowledgement. Set source_description to one JSON array containing",
+        "every exact primary-source citation URL used in RESULT_SCHEMA and no other values.",
+        "A queue acknowledgement is not persistence proof. Preserve your semantic supported or",
+        "contradicted finding when the write is still pending, but return episodeUuids as [] unless",
+        "you obtained exact native episode UUIDs. Python settlement binds the same native write",
+        "event to persisted Episodic readback before the finding can be published.",
+        "A source-unavailable semantic result may still contain useful cited research and use the",
+        "same pending settlement path. Keep each summary strictly about evidence and the semantic",
+        "finding; never put queue, readback, persistence-pending, or settlement status in summary.",
         "Do not exceed the saved Card's model, maxTokens, maxTurns, tools, profile, or grants.",
         "Return only one JSON object matching RESULT_SCHEMA, with one result per supplied Think ID.",
-        "A supported or contradicted result requires at least one exact primary-source citation URL",
-        "and at least one exact persisted Graphiti episode UUID for that source material.",
-        "If those exact references are unavailable, return source-unavailable; do not infer success.",
+        "A supported or contradicted result requires at least one exact primary-source citation URL.",
+        "Never invent an episode UUID. Use source-unavailable only for a semantic/source/tool failure,",
+        "not merely because the exactly-once Graphiti write is still processing.",
         f"ASSESSMENT_ID: {assessment_id}",
         f"SOURCE_RUN_ID: {source_run_id}",
         "THINK_MEMORY_IDS: " + json.dumps(memory_ids, separators=(",", ":")),
@@ -3463,7 +3657,8 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
               AND origin.atomicResearchAssessment IS NOT NULL
             RETURN origin.runId AS originatingRunId,
                    origin.atomicResearchAssessment AS assessment,
-                   origin.atomicResearchLaunch AS launch
+                   origin.atomicResearchLaunch AS launch,
+                   origin.atomicResearchOutcome AS outcome
             LIMIT 1
             """,
             {
@@ -3472,10 +3667,13 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
                 "sourceRunId": source_run_id,
                 "mainCardId": main_card_id,
             },
-            "originating_run_id agtype, assessment agtype, launch agtype",
+            "originating_run_id agtype, assessment agtype, launch agtype, outcome agtype",
         )
         if len(rows) != 1 or not isinstance(rows[0].get("assessment"), dict):
             raise CardDomainError("atomic_research_candidate_receipt_unavailable")
+        originating_run_id = _required_text(
+            rows[0].get("originating_run_id"), "originating_run_id"
+        )
         assessment = dict(rows[0]["assessment"])
         assessment_id = _required_text(
             assessment.get("assessmentId"), "assessment_id"
@@ -3535,7 +3733,7 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
                 "schemaVersion": "atomic-research-launch.v1",
                 "assessmentId": assessment_id,
                 "sourceRunId": source_run_id,
-                "originatingRunId": str(rows[0].get("originatingRunId") or ""),
+                "originatingRunId": originating_run_id,
                 "correlationId": correlation_id,
                 "thinkMemoryIds": memory_ids,
                 "mode": mode,
@@ -3555,7 +3753,7 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
                 {
                     "projectId": str(loaded["projectId"]),
                     "deckId": deck_id,
-                    "originatingRunId": str(rows[0].get("originatingRunId") or ""),
+                    "originatingRunId": originating_run_id,
                     "launch": launch,
                 },
                 "run_id agtype",
@@ -3580,7 +3778,7 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
         "deckId": deck_id,
         "conversationId": conversation_id,
         "sourceRunId": source_run_id,
-        "originatingRunId": str(rows[0].get("originatingRunId") or ""),
+        "originatingRunId": originating_run_id,
         "assessmentId": assessment_id,
         "correlationId": correlation_id,
         "mainCardId": main_card_id,
@@ -3597,6 +3795,64 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
             reason=reason,
         ),
         "dataAnchors": anchors,
+        "settledOutcome": (
+            dict(rows[0]["outcome"])
+            if isinstance(rows[0].get("outcome"), dict) else None
+        ),
+    }
+
+
+def read_atomic_research_write_event(
+    project_ref: str,
+    deck_id: str,
+    child_run_id: str,
+    knowgraph_card_id: str,
+) -> dict[str, Any] | None:
+    """Read the one observed Graphiti write event for an atomic child Run."""
+
+    project_ref = _required_text(project_ref, "project_id")
+    deck_id = _required_text(deck_id, "deck_id")
+    child_run_id = _required_text(child_run_id, "child_run_id")
+    knowgraph_card_id = _required_text(knowgraph_card_id, "knowgraph_card_id")
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            project = _resolve_project(cursor, project_ref)
+            rows = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })-[:EXECUTED_BY]->(card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
+                MATCH (run)-[used:USED_TOOL]->(tool:Tool {
+                  toolId: 'graphiti.add_memory'
+                })
+                WHERE used.eventId IS NOT NULL AND used.eventId <> ''
+                  AND used.authority='knowgraph'
+                  AND used.operation='write'
+                RETURN properties(used) AS event
+                LIMIT 2
+                """,
+                {
+                    "projectId": str(project["id"]),
+                    "deckId": deck_id,
+                    "runId": child_run_id,
+                    "cardId": knowgraph_card_id,
+                },
+                "event agtype",
+            )
+    if not rows:
+        return None
+    if len(rows) != 1 or not isinstance(rows[0].get("event"), dict):
+        raise CardDomainError("atomic_research_write_event_ambiguous")
+    return {
+        **dict(rows[0]["event"]),
+        "projectId": str(project["id"]),
+        "deckId": deck_id,
+        "runId": child_run_id,
+        "cardId": knowgraph_card_id,
     }
 
 
@@ -3640,15 +3896,6 @@ def record_atomic_research_outcome(payload: dict[str, Any]) -> dict[str, Any]:
     if len(rows) != 1:
         raise CardDomainError("atomic_research_outcome_receipt_unavailable")
     return {"ok": True, "childRunId": child_run_id}
-    except Exception as error:
-        status, error_code = _attention_error_status(error)
-        return name, {
-            "status": status,
-            "candidateCount": 0,
-            "timingMs": round((time.perf_counter() - started) * 1000, 3),
-            "candidates": [],
-            "errorCode": error_code,
-        }
 
 
 def _prepare_main_graph_attention(
@@ -3789,10 +4036,12 @@ def _prepare_main_graph_attention(
 
     jev_started = time.perf_counter()
     try:
-        decision = decide_main_graph_attention(
-            query, candidates, effective_request=effective_assignment or query,
-            atomic_research_frame=atomic_research_frame,
-        )
+        decision_kwargs: dict[str, Any] = {
+            "effective_request": effective_assignment or query,
+        }
+        if atomic_research_frame is not None:
+            decision_kwargs["atomic_research_frame"] = atomic_research_frame
+        decision = decide_main_graph_attention(query, candidates, **decision_kwargs)
     except Exception as error:
         attention["timingMs"]["jev"] = round(
             (time.perf_counter() - jev_started) * 1000, 3
@@ -4929,11 +5178,14 @@ def _resolve_invocation_components(
         else ""
     )
     runtime = call_config.get("runtime") if isinstance(call_config, dict) else None
-    if (
-        attention_query
-        and isinstance(runtime, dict)
+    is_main_run = (
+        isinstance(runtime, dict)
         and runtime.get("kind") == "hermes"
         and runtime.get("mode") == "main"
+    )
+    if (
+        attention_query
+        and is_main_run
     ):
         atomic_research_seed = _pending_atomic_research_seed(
             prepared["projectId"],
@@ -4956,6 +5208,12 @@ def _resolve_invocation_components(
             if (
                 atomic_assessment.get("subjectBoundary") == "shifted"
                 and attention.get("winner") == MAIN_GRAPH_ATTENTION_NEW_SUBJECT
+                and float((atomic_assessment.get("subjectBoundaryReceipt") or {}).get(
+                    "confidence", 0.0
+                )) >= 0.80
+                and float((atomic_assessment.get("subjectBoundaryReceipt") or {}).get(
+                    "winnerProbability", 0.0
+                )) >= 0.80
             ):
                 assignment = "\n\n".join((
                     "## Dynamic new-subject opening guidance\n"
@@ -4967,6 +5225,70 @@ def _resolve_invocation_components(
                     "transient guidance for this turn only.",
                     assignment,
                 ))
+    atomic_offer: dict[str, Any] | None = None
+    atomic_tool_definition: dict[str, Any] | None = None
+    if is_main_run:
+        atomic_assessment = prepared.get("atomicResearchAssessment")
+        if not isinstance(atomic_assessment, dict):
+            try:
+                atomic_assessment = _persisted_atomic_research_assessment(
+                    prepared["projectId"],
+                    prepared["deckId"],
+                    str(payload.get("runId") or ""),
+                    prepared["cardIdentity"]["cardId"],
+                )
+            except Exception:
+                atomic_assessment = None
+            if isinstance(atomic_assessment, dict):
+                prepared["atomicResearchAssessment"] = atomic_assessment
+        atomic_offer = _atomic_research_offer(atomic_assessment)
+        if atomic_offer is not None and not all(
+            _current_atomic_think_exists(prepared["projectId"], memory_id)
+            for memory_id in atomic_offer["recommendedMemoryIds"]
+        ):
+            atomic_offer = None
+        atomic_tool_definition = next((
+            definition for definition in effective_tool_definitions
+            if str(definition.get("canonicalId") or "")
+            == "research_atomic_thinks"
+        ), None)
+        saved_and_available = (
+            "research_atomic_thinks" in call_config.get("enabledTools", [])
+            and atomic_tool_definition is not None
+        )
+        tool_available = bool(
+            atomic_offer
+            and atomic_offer["manualMemoryIds"]
+            and saved_and_available
+        )
+        if not tool_available:
+            call_config["enabledTools"] = [
+                name for name in call_config.get("enabledTools", [])
+                if name != "research_atomic_thinks"
+            ]
+            call_config["presentedTools"] = [
+                name for name in call_config.get("presentedTools", [])
+                if name != "research_atomic_thinks"
+            ]
+            effective_tool_definitions = [
+                definition for definition in effective_tool_definitions
+                if str(definition.get("canonicalId") or "")
+                != "research_atomic_thinks"
+            ]
+            tool_definitions = [
+                definition for definition in tool_definitions
+                if str(definition.get("canonicalId") or "")
+                != "research_atomic_thinks"
+            ]
+        if atomic_offer is not None:
+            prepared["atomicResearchOffer"] = atomic_offer
+            assignment = "\n\n".join((
+                _atomic_research_offer_section(
+                    atomic_offer,
+                    tool_available=tool_available,
+                ),
+                assignment,
+            ))
     for anchor in anchors:
         anchor.pop("_inputOrder", None)
         anchor.pop("priority", None)
@@ -5069,6 +5391,35 @@ def _resolve_invocation_components(
             references=references,
             images=images,
         )
+    if (
+        atomic_offer is not None
+        and atomic_offer["manualMemoryIds"]
+        and atomic_tool_definition is not None
+    ):
+        call_config["enabledTools"] = list(dict.fromkeys([
+            *call_config.get("enabledTools", []),
+            "research_atomic_thinks",
+        ]))
+        call_config["presentedTools"] = list(dict.fromkeys([
+            *call_config.get("presentedTools", []),
+            "research_atomic_thinks",
+        ]))
+        if not any(
+            str(definition.get("canonicalId") or "")
+            == "research_atomic_thinks"
+            for definition in tool_definitions
+        ):
+            tool_definitions.append(atomic_tool_definition)
+        # Auto-tools is resolved before the validated per-Run atomic offer is
+        # projected. Keep the Run's durable authorization receipt identical to
+        # the exact post-Jev tool surface; otherwise the model can see this tool
+        # while AgentTerminal correctly rejects it as unauthorized.
+        auto_tools_receipt = prepared.get("jevAutoTools")
+        if isinstance(auto_tools_receipt, dict):
+            for field in ("normalAuthorizedTools", "selectedTools"):
+                names = auto_tools_receipt.get(field)
+                if isinstance(names, list) and "research_atomic_thinks" not in names:
+                    names.append("research_atomic_thinks")
     return {
         "prepared": prepared,
         "outputRequirements": output_requirements,

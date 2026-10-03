@@ -1,5 +1,6 @@
 import nativeDocument from '../../../../worldsignal/gods-eye-view-main/index.html?raw';
 import scopedStyles from 'virtual:worldview-native-css';
+import { importNativeWorldViewMount as importRuntimeWorldViewMount } from 'virtual:worldview-native-mount';
 
 export type NativeWorldViewCallbacks = {
   onReady?: (sourceVersion: string) => void;
@@ -70,6 +71,65 @@ export type NativeWorldViewMount = {
   getVisualReadiness: () => NativeWorldViewVisualReadiness;
   destroy: () => Promise<void>;
 };
+
+type NativeWorldViewMountModule = {
+  mountWorldView: (
+    root: HTMLElement,
+    config: Record<string, unknown>,
+  ) => Promise<NativeRuntimeMount>;
+};
+
+type NativeWorldViewImportOptions = {
+  dev?: boolean;
+  moduleImporter?: () => Promise<NativeWorldViewMountModule>;
+  fetcher?: typeof fetch;
+  attempts?: number;
+  retryDelayMs?: number;
+};
+
+/** Public module doorway owned by the supervised WorldView service. */
+export const WORLDVIEW_NATIVE_MOUNT_MODULE_URL =
+  'http://127.0.0.1:4174/src/app/mount.js';
+
+const delay = (milliseconds: number) => milliseconds <= 0
+  ? Promise.resolve()
+  : new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+async function waitForPublicNativeModule({
+  fetcher,
+  attempts,
+  retryDelayMs,
+}: Required<Pick<NativeWorldViewImportOptions, 'fetcher' | 'attempts' | 'retryDelayMs'>>) {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetcher(WORLDVIEW_NATIVE_MOUNT_MODULE_URL, {
+        method: 'HEAD',
+        cache: 'no-store',
+      });
+      if (response.ok) return;
+      lastError = new Error(`worldview_native_module_http_${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < attempts) await delay(retryDelayMs);
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('worldview_native_module_unavailable');
+}
+
+/** Dev uses the supervised module server; builds keep the bundled module graph. */
+export async function importNativeWorldViewMount({
+  dev = import.meta.env.DEV,
+  moduleImporter = importRuntimeWorldViewMount,
+  fetcher = fetch,
+  attempts = 8,
+  retryDelayMs = 250,
+}: NativeWorldViewImportOptions = {}): Promise<NativeWorldViewMountModule> {
+  if (dev) await waitForPublicNativeModule({ fetcher, attempts, retryDelayMs });
+  return moduleImporter();
+}
 
 type NativeEventLike = {
   addEventListener?: (listener: (...args: any[]) => void) => (() => void) | void;
@@ -444,9 +504,7 @@ export async function loadWorldViewNative(
     callbacks: NativeWorldViewCallbacks;
   },
 ): Promise<NativeWorldViewMount> {
-  const { mountWorldView } = await import(
-    '../../../../worldsignal/gods-eye-view-main/src/app/mount.js'
-  );
+  const { mountWorldView } = await importNativeWorldViewMount();
   const mounted = await mountWorldView(root, {
     ...config,
     documentMarkup: nativeDocument,

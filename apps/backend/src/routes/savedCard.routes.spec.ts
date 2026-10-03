@@ -105,6 +105,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     runId: string; message: string; cardId: string; owner: any;
   }>();
   const completed = new Map<string, Record<string, unknown>>();
+  const completedTurnGenerations = new Map<string, number>();
   const cancelled = new Set<string>();
   const gatewayListeners = new Set<(event: Record<string, unknown>) => void>();
   const profileFor = (cardId: string) => cardId === 'card_main_chat'
@@ -113,6 +114,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     : cardId === 'card_team' ? 'team'
     : cardId === 'builder' ? 'builder'
       : cardId === 'card_thinkgraph' ? 'thinkgraph'
+      : cardId === 'card_knowgraph' ? 'knowgraph'
       : cardId === 'card_hermes_steward' ? 'liquidaity-hermes-steward' : 'delegate';
   const stateFor = (owner: any) => {
     const conversationId = String(owner.conversationId || 'card-terminal');
@@ -129,6 +131,10 @@ const agentTerminalMocks = vi.hoisted(() => {
     ptyId: `pty:${owner.cardId}`,
     nativeSessionId: `native:${profileFor(owner.cardId)}${conversationSuffix}`,
     storedSessionId: `native:${profileFor(owner.cardId)}${conversationSuffix}`,
+    completedTurnGeneration: completedTurnGenerations.get(
+      `terminal:${owner.cardId}${conversationSuffix}`,
+    ) || 0,
+    completedNativeRunId: null,
     hermesHome: `C:\\profiles\\${profileFor(owner.cardId)}`,
     unavailableToolReasons: {},
     status: 'running',
@@ -266,7 +272,15 @@ const agentTerminalMocks = vi.hoisted(() => {
         nativeRunId: nativeFields.nativeRunId,
       } };
     options?.onEvent?.(event);
-    return { text, status: 'complete', event };
+    const completedTurnGeneration = (completedTurnGenerations.get(sessionId) || 0) + 1;
+    completedTurnGenerations.set(sessionId, completedTurnGeneration);
+    return {
+      text,
+      status: 'complete',
+      event,
+      completedTurnGeneration,
+      completedNativeRunId: nativeFields.nativeRunId ?? null,
+    };
   };
   const submit = vi.fn(async (owner: any, sessionId: string, message: string, options?: any) => (
     finishSubmitted(owner, sessionId, message, options)
@@ -322,6 +336,25 @@ const agentTerminalMocks = vi.hoisted(() => {
   const emitGatewayEvent = (event: Record<string, unknown>) => {
     for (const listener of gatewayListeners) listener(event);
   };
+  const queueNativeContextCompaction = vi.fn(async (
+    _owner: any, identity: any, onReceipt?: (receipt: any) => void,
+  ) => {
+    const receipt = {
+      status: 'compressed',
+      terminalSessionId: identity.sessionId,
+      nativeSessionId: identity.nativeSessionId,
+      storedSessionId: identity.storedSessionId,
+      profile: identity.profile,
+      focusApplied: false,
+      beforeMessages: 12,
+      afterMessages: 4,
+      beforeTokens: 1200,
+      afterTokens: 400,
+      errorCode: null,
+    };
+    onReceipt?.(receipt);
+    return receipt;
+  });
   const resolveHermesBotRosterProjections = vi.fn(async () => ([
     {
       cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
@@ -351,6 +384,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     manager: {
       find, findCard, open, history, verifyConfiguration, submit, interrupt,
       dispatchLearn, requestProfile, subscribeGatewayEvents, magenticCardToolAuthority,
+      queueNativeContextCompaction,
       startVoiceCapture, stopVoiceCapture,
     },
     resolveHermesBotRosterProjections,
@@ -370,6 +404,7 @@ const chatSessionMocks = vi.hoisted(() => {
   return {
     getConversationMessages: vi.fn(async () => []),
     appendSharedConversationTurn: vi.fn(async () => []),
+    appendSharedConversationReplyOnce: vi.fn(async () => ({ inserted: true, message: {} })),
     listConversations: vi.fn(async () => []),
     usage,
   };
@@ -819,6 +854,7 @@ vi.mock('../decks/store', () => ({
 }));
 
 vi.mock('../conversations/store', () => ({
+  appendSharedConversationReplyOnce: chatSessionMocks.appendSharedConversationReplyOnce,
   appendSharedConversationTurn: chatSessionMocks.appendSharedConversationTurn,
   getConversationMessages: chatSessionMocks.getConversationMessages,
   listConversations: chatSessionMocks.listConversations,
@@ -887,6 +923,149 @@ async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+}
+
+async function openSseReader(
+  url: string,
+  signal: AbortSignal,
+): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  const response = await fetch(url, { signal });
+  expect(response.status).toBe(200);
+  if (!response.body) throw new Error('sse_response_body_missing');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let connected = '';
+  while (!connected.includes('\n\n')) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error('sse_stream_closed_before_connect');
+    connected += decoder.decode(chunk.value, { stream: true });
+  }
+  expect(connected).toContain('ThinkGraph revisions connected');
+  return reader;
+}
+
+async function readSseJsonEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  eventName: string,
+): Promise<Record<string, unknown>> {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error(`sse_stream_closed_before_${eventName}`);
+    buffer += decoder.decode(chunk.value, { stream: true });
+    for (;;) {
+      const end = buffer.indexOf('\n\n');
+      if (end < 0) break;
+      const frame = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      if (!frame.startsWith(`event: ${eventName}\n`)) continue;
+      const data = frame.split('\n').find((line) => line.startsWith('data: '));
+      if (!data) throw new Error(`sse_${eventName}_data_missing`);
+      return JSON.parse(data.slice('data: '.length));
+    }
+  }
+}
+
+function withKnowGraphCard(loaded: any): any {
+  const next = structuredClone(loaded);
+  if (!next.deck.nodes.some((node: any) => node.id === 'card_knowgraph')) {
+    next.deck.nodes.push({
+      id: 'card_knowgraph',
+      _cardRevisionId: 'revision:card_knowgraph',
+      title: 'KnowGraph',
+      prompt: 'Saved KnowGraph prompt',
+      kind: 'agent',
+      templateId: 'template_assist',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' },
+      runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna' },
+    });
+  }
+  return next;
+}
+
+function atomicResearchAuthorization(args: {
+  correlationId: string;
+  rejoined: boolean;
+  settledOutcome?: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  return {
+    ok: true,
+    claimed: !args.rejoined,
+    rejoined: args.rejoined,
+    settledOutcome: args.settledOutcome ?? null,
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'atomic-settlement',
+    sourceRunId: 'main-source-run',
+    originatingRunId: 'originating-run',
+    assessmentId: 'atomic-assessment-one',
+    correlationId: args.correlationId,
+    mainCardId: 'card_main_chat',
+    mainCardRevisionId: 'revision:card_main_chat',
+    knowGraphCardId: 'card_knowgraph',
+    knowGraphCardRevisionId: 'revision:card_knowgraph',
+    knowGraphProfile: 'knowgraph',
+    knowGraphTitle: 'KnowGraph',
+    thinkMemoryIds: ['think-one'],
+    assignment: `Research think-one once for ${args.correlationId} and return the atomic result JSON.`,
+    dataAnchors: [],
+  };
+}
+
+function preparedKnowGraphRun(value: any): any {
+  return {
+    ...value,
+    hermesTransport: {
+      ...value.hermesTransport,
+      request: {
+        ...value.hermesTransport.request,
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' },
+      },
+      cardIdentity: {
+        ...value.hermesTransport.cardIdentity,
+        cardId: 'card_knowgraph',
+        title: 'KnowGraph',
+      },
+    },
+  };
+}
+
+function settledAtomicResearchResult(
+  childRunId: string,
+  status: 'supported' | 'source-unavailable' = 'supported',
+): Record<string, unknown> {
+  const result = {
+    schemaVersion: 'atomic-research-result.v1',
+    assessmentId: 'atomic-assessment-one',
+    sourceRunId: 'main-source-run',
+    childRunId,
+    results: [{
+      thinkMemoryId: 'think-one',
+      status,
+      summary: status === 'supported'
+        ? 'The exact primary source supports this Think.'
+        : 'The sources were stored, but no candidate could be ranked semantically.',
+      citations: [{
+        url: 'https://primary.example/report',
+        title: 'Primary report',
+        publishedAt: '2026-10-01',
+      }],
+      episodeUuids: ['episode-settled-one'],
+    }],
+  };
+  return {
+    ok: true,
+    result,
+    citationCount: 1,
+    episodeCount: 1,
+    sharedChatText: JSON.stringify(result),
+    settlement: {
+      eventId: 'native-attention:atomic-one',
+      phase: 'completed',
+      episodeUuids: ['episode-settled-one'],
+    },
+  };
 }
 
 describe('Jev attention telemetry', () => {
@@ -2620,7 +2799,8 @@ describe('saved Card routes', () => {
       try {
         await done;
         agentTerminalMocks.complete(record.runId, owner, 'Native graph proposal');
-        return { text: 'Native graph proposal', status: 'completed', event: {
+        return { text: 'Native graph proposal', status: 'completed',
+          completedTurnGeneration: 1, completedNativeRunId: null, event: {
           type: 'message.complete', session_id: sessionId,
           payload: {
             status: 'completed', text: 'Native graph proposal', usage: {},
@@ -2686,6 +2866,7 @@ describe('saved Card routes', () => {
       agentTerminalMocks.complete(record.runId, owner, 'late delegate completion');
       return {
         text: 'late delegate completion', status: 'completed',
+        completedTurnGeneration: 1, completedNativeRunId: null,
         event: { type: 'message.complete', session_id: sessionId,
           payload: {
             status: 'completed', text: 'late delegate completion', usage: {},
@@ -3892,6 +4073,7 @@ describe('saved Card routes', () => {
         distribution: {
           'think-one': 0.6,
           'know-one': 0.4,
+          ATTENTION_NEW_SUBJECT: 0,
         },
         winner: 'think-one',
         confidence: 0.86,
@@ -3958,6 +4140,7 @@ describe('saved Card routes', () => {
       agentTerminalMocks.resolveHermesBotRosterProjections.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
+      agentTerminalMocks.manager.queueNativeContextCompaction.mockClear();
       const projectDeck = await deckMocks.getDeckDocument();
       projectDeck.deck.edges = projectDeck.deck.edges.filter((edge: any) => (
         edge.source !== 'builder' && edge.target !== 'builder'
@@ -4038,6 +4221,7 @@ describe('saved Card routes', () => {
           state: 'completed', finalResult: fullReply,
           hermesSessionId: 'native:builder:direct-builder',
         });
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).not.toHaveBeenCalled();
       } finally {
         await closeServer(server);
       }
@@ -4931,6 +5115,356 @@ describe('saved Card routes', () => {
       }
     });
 
+    it('publishes a committed ThinkGraph revision to another conversation in the same Project', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        if (endpoint === '/thinkgraph/completed-pair/prepare') return {
+          ok: true,
+          pairMemoryId: 'pair_cross_conversation',
+          intakeOperation: 'pending',
+          structuredExtractionRequired: true,
+          revision: 4,
+          revisionChanged: false,
+          preparation: { status: 'pending_structured_extraction' },
+          enrichmentSchema: { type: 'object' },
+          enrichmentPrompt: 'Extract the exact completed pair.',
+        };
+        return railsImplementation(endpoint, init, options);
+      });
+      const streamController = new AbortController();
+      const { server, baseUrl } = await createApiServer();
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+      try {
+        reader = await openSseReader(
+          `${baseUrl}/main/session/thinkgraph-revisions?projectId=project-1&deckId=deck_builder&conversationId=main`,
+          streamController.signal,
+        );
+        const revisionEvent = readSseJsonEvent(reader, 'thinkgraph_revision');
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1',
+            conversationId: 'graph-join-proof',
+            message: 'Create one real Project Think.',
+          }),
+        });
+        expect(await response.text()).toContain('event: done');
+        await expect(revisionEvent).resolves.toMatchObject({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'graph-join-proof',
+          stage: 'settled',
+          revision: '5',
+          changedNodeIds: ['think-rich-a'],
+          changedEdgeIds: ['think-rich-edge'],
+        });
+      } finally {
+        streamController.abort();
+        await reader?.cancel().catch(() => undefined);
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
+    it('settles cited source-unavailable research before publishing the one saved child', async () => {
+      const priorSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+      process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'atomic-settlement-test-secret-0123456789abcdef';
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      const deckImplementation = deckMocks.getDeckDocument.getMockImplementation()!;
+      const childRunId = 'atomic_research:delayed-settlement';
+      let releaseValidation: () => void = () => undefined;
+      const validationGate = new Promise<void>((resolve) => { releaseValidation = resolve; });
+      deckMocks.getDeckDocument.mockImplementation(async (...args) => (
+        withKnowGraphCard(await deckImplementation(...args))
+      ));
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        const request = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        if (endpoint === '/domain/research/atomic/authorize') {
+          return atomicResearchAuthorization({ correlationId: childRunId, rejoined: false });
+        }
+        const value = await railsImplementation(endpoint, init, options);
+        if (endpoint === '/domain/runs/begin' && request.cardId === 'card_knowgraph') {
+          return preparedKnowGraphRun(value);
+        }
+        if (endpoint === '/thinkgraph/research/result/validate') {
+          await validationGate;
+          return settledAtomicResearchResult(childRunId, 'source-unavailable');
+        }
+        if (endpoint === '/domain/research/atomic/outcome') return { ok: true };
+        return value;
+      });
+      const provisional = JSON.stringify({
+        schemaVersion: 'atomic-research-result.v1',
+        assessmentId: 'atomic-assessment-one',
+        sourceRunId: 'main-source-run',
+        results: [{
+          thinkMemoryId: 'think-one', status: 'source-unavailable',
+          summary: 'Sources were found but the native write is still persistence-pending.',
+          citations: [{
+            url: 'https://primary.example/report', title: 'Primary report',
+            publishedAt: '2026-10-01',
+          }],
+          episodeUuids: [],
+        }],
+      });
+      agentTerminalMocks.manager.submit.mockClear();
+      agentTerminalMocks.manager.submit.mockImplementationOnce(
+        async (owner, sessionId, message, options) => agentTerminalMocks.finishSubmitted(
+          owner, sessionId, message, options, provisional,
+        ),
+      );
+      chatSessionMocks.appendSharedConversationReplyOnce.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/research/atomic`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-LiquidAIty-Internal-MCP-Secret': process.env.LIQUIDAITY_INTERNAL_MCP_SECRET,
+          },
+          body: JSON.stringify({
+            projectId: 'project-1', deckId: 'deck_builder',
+            conversationId: 'atomic-settlement', sourceRunId: 'main-source-run',
+            mainCardId: 'card_main_chat', thinkMemoryIds: ['think-one'],
+          }),
+        });
+        await expect(response.json()).resolves.toEqual({
+          ok: true, runId: childRunId, state: 'running', rejoined: false,
+        });
+        await vi.waitFor(() => expect(
+          orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+            ([endpoint]) => endpoint === '/thinkgraph/research/result/validate',
+          ),
+        ).toHaveLength(1));
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
+        expect(chatSessionMocks.appendSharedConversationReplyOnce).not.toHaveBeenCalled();
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+          ([endpoint]) => endpoint === '/domain/research/atomic/outcome',
+        )).toBe(false);
+
+        releaseValidation();
+        await vi.waitFor(() => expect(
+          chatSessionMocks.appendSharedConversationReplyOnce,
+        ).toHaveBeenCalledTimes(1));
+        const validationCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/thinkgraph/research/result/validate',
+        );
+        expect(JSON.parse(String(validationCall?.[1]?.body))).toMatchObject({
+          projectId: 'project-1', deckId: 'deck_builder',
+          knowGraphCardId: 'card_knowgraph', childRunId,
+          thinkMemoryIds: ['think-one'], output: provisional,
+        });
+        expect(validationCall?.[2]).toEqual({ timeoutMs: 200_000 });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/research/atomic/outcome',
+        )).toHaveLength(1);
+        expect(chatSessionMocks.appendSharedConversationReplyOnce).toHaveBeenCalledWith(
+          expect.objectContaining({
+            projectId: 'project-1', conversationId: 'atomic-settlement',
+            message: expect.objectContaining({
+              providerMessageId: `atomic-research:${childRunId}`,
+              content: expect.stringContaining('episode-settled-one'),
+            }),
+          }),
+        );
+      } finally {
+        releaseValidation();
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        deckMocks.getDeckDocument.mockImplementation(deckImplementation);
+        if (priorSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+        else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = priorSecret;
+        await closeServer(server);
+      }
+    });
+
+    it('keeps pending settlement unpublished and rejoins the same completed child once', async () => {
+      const priorSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+      process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'atomic-rejoin-test-secret-0123456789abcdef';
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      const deckImplementation = deckMocks.getDeckDocument.getMockImplementation()!;
+      const childRunId = 'atomic_research:pending-rejoin';
+      let authorizationCount = 0;
+      let validationCount = 0;
+      let storedOutcome: Record<string, unknown> | null = null;
+      deckMocks.getDeckDocument.mockImplementation(async (...args) => (
+        withKnowGraphCard(await deckImplementation(...args))
+      ));
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        const request = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        if (endpoint === '/domain/research/atomic/authorize') {
+          authorizationCount += 1;
+          return atomicResearchAuthorization({
+            correlationId: childRunId,
+            rejoined: authorizationCount > 1,
+            settledOutcome: storedOutcome,
+          });
+        }
+        const value = await railsImplementation(endpoint, init, options);
+        if (endpoint === '/domain/runs/begin' && request.cardId === 'card_knowgraph') {
+          return preparedKnowGraphRun(value);
+        }
+        if (endpoint === '/thinkgraph/research/result/validate') {
+          validationCount += 1;
+          if (validationCount === 1) {
+            throw new Error(
+              'python_rails_http_409:atomic_research_episode_settlement_pending',
+            );
+          }
+          return settledAtomicResearchResult(childRunId);
+        }
+        if (endpoint === '/domain/research/atomic/outcome') {
+          storedOutcome = request.outcome;
+          return { ok: true };
+        }
+        return value;
+      });
+      const provisional = JSON.stringify({
+        schemaVersion: 'atomic-research-result.v1',
+        assessmentId: 'atomic-assessment-one',
+        sourceRunId: 'main-source-run',
+        results: [{
+          thinkMemoryId: 'think-one', status: 'supported',
+          summary: 'The write is still pending.',
+          citations: [{
+            url: 'https://primary.example/report', title: 'Primary report', publishedAt: null,
+          }],
+          episodeUuids: [],
+        }],
+      });
+      agentTerminalMocks.manager.submit.mockClear();
+      agentTerminalMocks.manager.submit.mockImplementationOnce(
+        async (owner, sessionId, message, options) => agentTerminalMocks.finishSubmitted(
+          owner, sessionId, message, options, provisional,
+        ),
+      );
+      chatSessionMocks.appendSharedConversationReplyOnce.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      const invoke = () => fetch(`${baseUrl}/main/research/atomic`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-LiquidAIty-Internal-MCP-Secret': process.env.LIQUIDAITY_INTERNAL_MCP_SECRET,
+        },
+        body: JSON.stringify({
+          projectId: 'project-1', deckId: 'deck_builder',
+          conversationId: 'atomic-settlement', sourceRunId: 'main-source-run',
+          mainCardId: 'card_main_chat', thinkMemoryIds: ['think-one'],
+        }),
+      });
+      try {
+        const launched = await invoke();
+        await expect(launched.json()).resolves.toMatchObject({
+          ok: true, runId: childRunId, rejoined: false,
+        });
+        await vi.waitFor(() => expect(validationCount).toBe(1));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(chatSessionMocks.appendSharedConversationReplyOnce).not.toHaveBeenCalled();
+        expect(storedOutcome).toBeNull();
+
+        const rejoined = await invoke();
+        await expect(rejoined.json()).resolves.toMatchObject({
+          ok: true, runId: childRunId, state: 'completed', rejoined: true,
+        });
+        await vi.waitFor(() => expect(
+          chatSessionMocks.appendSharedConversationReplyOnce,
+        ).toHaveBeenCalledTimes(1));
+        expect(validationCount).toBe(2);
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
+        expect(storedOutcome).toMatchObject({
+          schemaVersion: 'atomic-research-outcome.v1', status: 'completed',
+          childRunId,
+        });
+
+        const settledRejoin = await invoke();
+        await expect(settledRejoin.json()).resolves.toMatchObject({
+          ok: true, runId: childRunId, state: 'completed', rejoined: true,
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(validationCount).toBe(2);
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
+        expect(chatSessionMocks.appendSharedConversationReplyOnce).toHaveBeenCalledTimes(1);
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        deckMocks.getDeckDocument.mockImplementation(deckImplementation);
+        if (priorSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+        else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = priorSecret;
+        await closeServer(server);
+      }
+    });
+
+    it('schedules automatic atomic research only after successful Main persistence', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      const appendImplementation = chatSessionMocks.appendSharedConversationTurn.getMockImplementation()!;
+      let persisted = false;
+      chatSessionMocks.appendSharedConversationTurn.mockImplementationOnce(async (...args) => {
+        persisted = true;
+        return appendImplementation(...args);
+      });
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        if (endpoint === '/domain/research/atomic/authorize') {
+          expect(persisted).toBe(true);
+          throw new Error('stop_after_schedule_proof');
+        }
+        const value = await railsImplementation(endpoint, init, options);
+        return endpoint === '/domain/main/runs/begin'
+          ? { ...value, atomicResearchAssessment: {
+            schemaVersion: 'atomic-research-assessment.v1', status: 'success',
+            automaticMemoryIds: ['think-auto-one'],
+          } }
+          : value;
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'auto-after-save', message: 'Answer first.' }),
+        });
+        expect(await response.text()).toContain('event: done');
+        await vi.waitFor(() => expect(
+          orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+            ([endpoint]) => endpoint === '/domain/research/atomic/authorize',
+          ),
+        ).toBe(true));
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
+    it('does not schedule automatic research when shared-chat persistence fails', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        const value = await railsImplementation(endpoint, init, options);
+        return endpoint === '/domain/main/runs/begin'
+          ? { ...value, atomicResearchAssessment: {
+            schemaVersion: 'atomic-research-assessment.v1', status: 'success',
+            automaticMemoryIds: ['think-auto-one'],
+          } }
+          : value;
+      });
+      chatSessionMocks.appendSharedConversationTurn.mockRejectedValueOnce(
+        new Error('database_unavailable'),
+      );
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'auto-save-failed', message: 'Do not research yet.' }),
+        });
+        expect(await response.text()).toContain('shared_conversation_persistence_failed');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+          ([endpoint]) => endpoint === '/domain/research/atomic/authorize',
+        )).toBe(false);
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
     it('stops after a native Engraphis noop without running the saved ThinkGraph Card', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
@@ -4955,6 +5489,174 @@ describe('saved Card routes', () => {
           ([owner]) => owner.cardId,
         )).toEqual(['card_main_chat']);
       } finally { await closeServer(server); }
+    });
+
+    it('queues shifted native compaction after settlement even when research registration fails', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      const deckImplementation = deckMocks.getDeckDocument.getMockImplementation()!;
+      deckMocks.getDeckDocument.mockImplementation(async (...args) => {
+        const loaded = structuredClone(await deckImplementation(...args));
+        const main = loaded.deck.nodes.find((node: any) => node.id === 'card_main_chat');
+        main.runtimeOptions = {
+          ...main.runtimeOptions,
+          configuration: { dataControl: { automaticResearch: true } },
+        };
+        loaded.deck.nodes.push({
+          id: 'card_knowgraph',
+          _cardRevisionId: 'revision:card_knowgraph',
+          title: 'KnowGraph',
+          prompt: 'Saved KnowGraph prompt',
+          kind: 'agent',
+          templateId: 'template_assist',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' },
+          runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna' },
+        });
+        return loaded;
+      });
+      const shiftedAssessment = {
+        schemaVersion: 'atomic-research-assessment.v1',
+        status: 'success',
+        subjectBoundary: 'shifted',
+        subjectBoundaryReceipt: { confidence: 0.91, winnerProbability: 0.88 },
+        automaticMemoryIds: [],
+      };
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        if (endpoint === '/domain/research/atomic/register') {
+          throw new Error('atomic_registration_unavailable');
+        }
+        if (endpoint === '/thinkgraph/completed-pair/prepare') return {
+          ok: true,
+          pairMemoryId: 'pair-shifted',
+          intakeOperation: 'pending',
+          structuredExtractionRequired: true,
+          revision: 4,
+          revisionChanged: false,
+          preparation: { status: 'pending_structured_extraction' },
+          enrichmentSchema: { type: 'object' },
+          enrichmentPrompt: 'Pair-derived extraction prompt.',
+        };
+        const value = await railsImplementation(endpoint, init, options);
+        if (endpoint === '/domain/main/runs/begin') return {
+          ...value,
+          atomicResearchAssessment: shiftedAssessment,
+          jevAttention: {
+            schemaVersion: 'jev-attention.v1',
+            status: 'success',
+            decisionId: 'shifted-attention',
+            candidates: [{
+              choiceId: 'old-context', authority: 'ThinkGraph', nativeId: 'old-native',
+              title: 'Old context', probability: 0.1, selected: false, hydrated: false,
+            }],
+            distribution: { 'old-context': 0.1, ATTENTION_NEW_SUBJECT: 0.9 },
+            winner: 'ATTENTION_NEW_SUBJECT',
+            confidence: 0.91,
+            selectedReferences: [],
+          },
+        };
+        return value;
+      });
+      agentTerminalMocks.manager.queueNativeContextCompaction.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'shifted-compaction',
+            message: 'Open a genuinely new subject.',
+          }),
+        });
+        expect(await response.text()).toContain('event: done');
+        await waitForCompletedPairThinkGraphLifecycles();
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledTimes(1);
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledWith(
+          expect.objectContaining({ cardId: 'card_main_chat' }),
+          {
+            sessionId: 'terminal:card_main_chat:shifted-compaction',
+            nativeSessionId: 'native:default:shifted-compaction',
+            storedSessionId: 'native:default:shifted-compaction',
+            profile: 'default',
+            completedTurnGeneration: 1,
+            completedNativeRunId: null,
+          },
+          expect.any(Function),
+        );
+        const endpoints = orchestratorMocks.requestPythonRailsJson.mock.calls.map(([endpoint]) => endpoint);
+        expect(endpoints.indexOf('/thinkgraph/completed-pair/settle')).toBeLessThan(
+          endpoints.indexOf('/domain/runs/attempt'),
+        );
+        expect(endpoints.indexOf('/domain/runs/attempt')).toBeLessThan(
+          endpoints.indexOf('/domain/research/atomic/register'),
+        );
+        const attemptCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/runs/attempt',
+        );
+        expect(JSON.parse(String(attemptCall?.[1]?.body))).toMatchObject({
+          cardId: 'card_main_chat',
+          attempt: {
+            kind: 'tool', phase: 'completed', toolName: 'session.compress',
+            status: 'compressed', redaction: 'metadata_only_no_summary', retryable: false,
+          },
+        });
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        deckMocks.getDeckDocument.mockImplementation(deckImplementation);
+        await closeServer(server);
+      }
+    });
+
+    it.each([
+      ['same_subject', 0.95, 0.95, 'ATTENTION_NEW_SUBJECT'],
+      ['uncertain', 0.95, 0.95, 'ATTENTION_NEW_SUBJECT'],
+      ['shifted', 0.79, 0.95, 'ATTENTION_NEW_SUBJECT'],
+      ['shifted', 0.95, 0.79, 'ATTENTION_NEW_SUBJECT'],
+      ['shifted', 0.95, 0.95, 'old-context'],
+    ])('does not compact boundary=%s confidence=%s probability=%s winner=%s', async (
+      subjectBoundary, confidence, winnerProbability, winner,
+    ) => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        if (endpoint === '/thinkgraph/completed-pair/prepare') return {
+          ok: true, pairMemoryId: 'pair-no-compact', intakeOperation: 'pending',
+          structuredExtractionRequired: true, revision: 4, revisionChanged: false,
+          preparation: { status: 'pending_structured_extraction' },
+          enrichmentSchema: { type: 'object' }, enrichmentPrompt: 'Pair prompt.',
+        };
+        const value = await railsImplementation(endpoint, init, options);
+        if (endpoint === '/domain/main/runs/begin') return {
+          ...value,
+          atomicResearchAssessment: {
+            schemaVersion: 'atomic-research-assessment.v1', status: 'success',
+            subjectBoundary, subjectBoundaryReceipt: { confidence, winnerProbability },
+            automaticMemoryIds: [],
+          },
+          jevAttention: {
+            schemaVersion: 'jev-attention.v1', status: 'success', decisionId: 'boundary',
+            candidates: [{ choiceId: 'old-context', authority: 'ThinkGraph',
+              nativeId: 'old-native', title: 'Old', probability: winner === 'old-context' ? 0.9 : 0.1,
+              selected: winner === 'old-context', hydrated: winner === 'old-context' }],
+            distribution: { 'old-context': winner === 'old-context' ? 0.9 : 0.1,
+              ATTENTION_NEW_SUBJECT: winner === 'ATTENTION_NEW_SUBJECT' ? 0.9 : 0.1 },
+            winner, confidence: 0.9,
+            selectedReferences: winner === 'old-context'
+              ? [{ authority: 'ThinkGraph', nativeId: 'old-native' }] : [],
+          },
+        };
+        return value;
+      });
+      agentTerminalMocks.manager.queueNativeContextCompaction.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: `no-compact-${subjectBoundary}-${confidence}-${winnerProbability}-${winner}`, message: 'Continue.' }),
+        });
+        expect(await response.text()).toContain('event: done');
+        await waitForCompletedPairThinkGraphLifecycles();
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).not.toHaveBeenCalled();
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
     });
 
     it('drives the same Main Chat bridge from the authenticated external-plugin doorway', async () => {
@@ -5200,6 +5902,7 @@ describe('saved Card routes', () => {
         agentTerminalMocks.complete(record.runId, owner, 'Completed after disconnect.');
         return {
           text: 'Completed after disconnect.', status: 'completed',
+          completedTurnGeneration: 1, completedNativeRunId: null,
           event: { type: 'message.complete', session_id: sessionId,
             payload: {
               status: 'completed', text: 'Completed after disconnect.', usage: {},

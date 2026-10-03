@@ -643,6 +643,31 @@ def test_knowgraph_attention_search_maps_nodes_and_fact_endpoints_without_hydrat
     )
 
 
+def test_knowgraph_attention_proven_empty_skips_semantic_search():
+    calls = []
+
+    def read(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("an authoritatively empty KnowGraph must not be searched")
+
+    candidates = search_knowgraph_attention_candidates(
+        "project-one",
+        "deck-one",
+        "main",
+        "What knowledge matters?",
+        mcp_reader=read,
+        subject_reader=lambda project_id: {
+            "complete": True,
+            "count": 0,
+            "revision": "empty-revision",
+            "subjects": [],
+        } if project_id == "project-one" else {},
+    )
+
+    assert candidates == []
+    assert calls == []
+
+
 def test_codegraph_projection_preserves_returned_ids_direction_and_type(monkeypatch):
     prefix = "C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderGraphAttention."
     source, target = prefix + "overlayAuthoritativeGraphAttention", prefix + "retain"
@@ -899,6 +924,45 @@ def test_required_anchor_materializes_real_data_and_stable_reference(native_grap
     assert references[0]["materializedContentBytes"] == len(
         "Current native graph content".encode("utf-8")
     )
+
+
+def test_exact_repeated_native_payload_is_rendered_once_without_losing_distinct_records(
+    monkeypatch,
+) -> None:
+    shared_metadata = {"structured_extraction": {"think": {"body": "x" * 2_000}}}
+
+    def read(_project_id, _deck_id, _card_id, anchor, **_kwargs):
+        native_id = anchor["nativeId"]
+        distinct = native_id == "entity-three"
+        return {
+            "authority": "ThinkGraph", "nativeId": native_id, "nativeKind": "node",
+            "type": "person_or_concept", "title": native_id,
+            "content": "different content" if distinct else "same exact content " * 40,
+            "metadata": (
+                {"structured_extraction": {"think": {"body": "different"}}}
+                if distinct else shared_metadata
+            ),
+            "provenance": {"engine": "engraphis", "memberIds": [native_id]},
+            "asOf": "current", "readOperation": "graph_entity",
+            "relationshipEvidence": [], "resultLimit": 1, "truncated": False,
+        }
+
+    monkeypatch.setattr(data_anchor, "_read_exact_anchor_record", read)
+    anchors = [{
+        "authority": "ThinkGraph", "nativeId": native_id,
+        "reason": f"select {native_id}", "boundedExpansion": 0,
+        "required": True,
+    } for native_id in ("entity-one", "entity-two", "entity-three")]
+    seed, references = resolve_data_anchors("project-1", anchors)
+
+    assert [reference["nativeId"] for reference in references] == [
+        "entity-one", "entity-two", "entity-three",
+    ]
+    assert seed.count("\"body\":\"" + "x" * 2_000 + "\"") == 1
+    assert seed.count(("same exact content " * 40).strip()) == 1
+    assert '"nativeId":"entity-one"' in seed
+    assert "different content" in seed and '"body":"different"' in seed
+    assert len({reference["materializedRecordSha256"] for reference in references}) == 3
 
 
 class _FakeNeo4jResult:

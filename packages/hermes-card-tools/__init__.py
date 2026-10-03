@@ -570,6 +570,9 @@ def _handler(hermes_name: str) -> Callable[..., str]:
         return _invoke(
             hermes_name,
             args,
+            # Gateway supplies its durable ``session_key`` as the turn task_id.
+            # ``session_id`` is the mutable AIAgent continuation identity and may
+            # rotate during compression while this turn is still dispatching.
             task_id=str(context.get("task_id") or ""),
         )
 

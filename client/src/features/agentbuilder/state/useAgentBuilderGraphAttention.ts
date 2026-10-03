@@ -924,7 +924,6 @@ export default function useAgentBuilderGraphAttention({
 
   const observeThinkGraphRevision = useCallback((event: ThinkGraphRevisionEvent) => {
     if (event.projectId !== projectId || event.deckId !== deckId
-      || event.conversationId !== conversationId
       || !['fast', 'settled'].includes(event.stage)
       || !event.originatingRunId || !event.revision
       || !Array.isArray(event.changedNodeIds)
@@ -932,7 +931,7 @@ export default function useAgentBuilderGraphAttention({
       || !Array.isArray(event.affectedNodeIds)
       || !isRecord(event.turnHeat)
       || !Array.isArray(event.topActiveNodes)) return;
-    const key = `${event.originatingRunId}:${event.stage}:${event.revision}`;
+    const key = `${event.conversationId}:${event.originatingRunId}:${event.stage}:${event.revision}`;
     if (seenThinkGraphRevisionsRef.current.has(key)) return;
     seenThinkGraphRevisionsRef.current.add(key);
     if (seenThinkGraphRevisionsRef.current.size > 256) {
@@ -941,7 +940,7 @@ export default function useAgentBuilderGraphAttention({
       );
     }
     void refreshThinkGraph(event);
-  }, [conversationId, deckId, projectId, refreshThinkGraph]);
+  }, [deckId, projectId, refreshThinkGraph]);
 
   const observeThinkGraphFailure = useCallback((event: ThinkGraphLifecycleError) => {
     if (event.projectId !== projectId || event.deckId !== deckId

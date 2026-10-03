@@ -70,17 +70,3 @@ def validate_cognition(value: Any, project_id: str) -> dict[str, Any]:
         # user-memory authorization. Keep the semantic field without granting it.
         raise ValueError("thinkgraph_user_scope_authorization_required")
     return record.model_dump(exclude_none=True)
-
-
-def research_seed(native_id: str, text: str, record: dict[str, Any]) -> dict[str, Any] | None:
-    if record.get("memoryCategory") != "question":
-        return None
-    return {
-        "questionRef": {"authority": "thinkgraph", "nativeId": native_id, "projectId": record["projectScope"]},
-        "question": record.get("normalizedText") or text,
-        "whyItMatters": record.get("whyItMatters"),
-        "originRefs": record.get("originRefs", []),
-        "knownContextRefs": record.get("relatedRefs", []),
-        "researchPolicy": record.get("researchPolicy", {}),
-        "status": record.get("questionStatus"),
-    }

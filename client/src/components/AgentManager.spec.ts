@@ -93,6 +93,20 @@ describe('AgentManager active builder config', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/cards/run')).toBe(false);
   });
 
+  it('places the latest Run receipt before configuration in the existing Runtime tab', async () => {
+    mockEditorFetch();
+    render(React.createElement(AgentManager, {
+      activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: savedConfig, onSaveLocalConfig: vi.fn(),
+    }));
+
+    const surface = screen.getByTestId('agent-manager-runtime-surface');
+    const receipt = screen.getByTestId('card-runtime-dashboard');
+    const configuration = screen.getByRole('region', { name: 'Runtime configuration' });
+    expect(surface.contains(receipt)).toBe(true);
+    expect(receipt.compareDocumentPosition(configuration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('persists independent Jev auto controls and disables model auto-select after a manual model choice', async () => {
     mockEditorFetch();
     const onSave = vi.fn();

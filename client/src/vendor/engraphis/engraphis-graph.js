@@ -40,12 +40,12 @@
     return { click, cancel };
   }
   const PRESETS = {
-    galaxy: { label: 'Galaxy gravity', repel: 100, link: 8, gravity: 96, font: 12, size: 3, linkw: 0.72, labelDensity: 24, curve: 0.12, particles: 0 },
-    original: { label: 'Original force', repel: 120, link: 30, gravity: 14, font: 13, size: 3, linkw: 1, labelDensity: 40, curve: 0, particles: 0 },
-    compact: { label: 'Compact clusters', repel: 42, link: 20, gravity: 26, font: 12, size: 3, linkw: 0.7, labelDensity: 30, curve: 0.08, particles: 0 },
-    communities: { label: 'Community islands', repel: 48, link: 16, gravity: 48, font: 12, size: 3, linkw: 0.72, labelDensity: 24, curve: 0.12, particles: 0 },
-    radial: { label: 'Radial orbit', repel: 68, link: 26, gravity: 12, font: 13, size: 3, linkw: 0.75, labelDensity: 55, curve: 0.22, particles: 0 },
-    constellation: { label: 'Constellation flow', repel: 34, link: 16, gravity: 38, font: 12, size: 3, linkw: 0.65, labelDensity: 35, curve: 0.32, particles: 2 },
+    galaxy: { label: 'Galaxy gravity', repel: 100, link: 8, gravity: 96, font: 12, size: 5, linkw: 0.72, labelDensity: 24, curve: 0.12, particles: 0 },
+    original: { label: 'Original force', repel: 120, link: 30, gravity: 14, font: 13, size: 5, linkw: 1, labelDensity: 40, curve: 0, particles: 0 },
+    compact: { label: 'Compact clusters', repel: 42, link: 20, gravity: 26, font: 12, size: 5, linkw: 0.7, labelDensity: 30, curve: 0.08, particles: 0 },
+    communities: { label: 'Community islands', repel: 48, link: 16, gravity: 48, font: 12, size: 5, linkw: 0.72, labelDensity: 24, curve: 0.12, particles: 0 },
+    radial: { label: 'Radial orbit', repel: 68, link: 26, gravity: 12, font: 13, size: 5, linkw: 0.75, labelDensity: 55, curve: 0.22, particles: 0 },
+    constellation: { label: 'Constellation flow', repel: 34, link: 16, gravity: 38, font: 12, size: 5, linkw: 0.65, labelDensity: 35, curve: 0.32, particles: 2 },
     custom: { label: 'Custom tuning', curve: 0.1, particles: 0 }
   };
 
@@ -6781,9 +6781,9 @@
     return +screenRadius < 12 ? 'bezel' : 'full';
   }
 
-  /* The preferred signature is (style, themeColors, paletteName, identity). The older
+  /* The preferred signature is (style, themeColors, paletteName, identity, materialNode). The older
      (style, identity, themeColors) ordering remains accepted for test and compatibility seams. */
-  function materialRecipe(styleName, themeOrIdentity, paletteOrTheme, maybeIdentity) {
+  function materialRecipe(styleName, themeOrIdentity, paletteOrTheme, maybeIdentity, materialNode) {
     let themeColors, paletteName, identity;
     if (themeOrIdentity && typeof themeOrIdentity === 'object') {
       themeColors = themeOrIdentity;
@@ -6802,16 +6802,35 @@
       identityKey: colourKey(identity), substrateKey: colourKey(substrate)
     };
     if (style === 'cyber') {
-      const fixedPalette = {
+      let fixedPalette = {
         cyan: '#21dff3', blue: '#367cff', violet: '#8d61ff',
         magenta: '#ec4fc4', teal: '#4ce4cf'
       };
+      let materialIdentity = identity;
+      if (materialNode && materialNode.material_kind === 'joined-cyber') {
+        const think = materialNode.material_blue || themeColors.material_blue || '#3979e8';
+        const know = materialNode.material_orange || themeColors.material_orange || '#f2a64a';
+        if (materialNode.material_role === 'THINK_MATERIAL') {
+          fixedPalette = { cyan: think, blue: think, violet: think, magenta: think, teal: think };
+          materialIdentity = think;
+        } else if (materialNode.material_role === 'KNOW_MATERIAL') {
+          fixedPalette = { cyan: know, blue: know, violet: know, magenta: know, teal: know };
+          materialIdentity = know;
+        } else if (materialNode.material_role === 'PAIRED_CYBER_MATERIAL') {
+          fixedPalette = {
+            cyan: think, blue: think, violet: mixColours(think, know, 0.5),
+            magenta: know, teal: think
+          };
+          materialIdentity = mixColours(think, know, 0.5);
+        }
+      }
       return Object.assign(base, {
         family: 'iridescent-pvd', fixedPalette, film: fixedPalette,
+        identity: rgbString(materialIdentity), identityKey: colourKey(materialIdentity),
         outer: mixColours(substrate, '#01040a', 0.82),
         bezel: mixColours(substrate, '#101626', 0.46),
         face: mixColours(substrate, '#182237', 0.48),
-        edge: '#677386', sheen: '#8d61ff'
+        edge: '#677386', sheen: fixedPalette.violet
       });
     }
     if (style === 'galaxy') {
@@ -6877,9 +6896,9 @@
     const turnHeat = turnHeatIntensity(node);
     const activeExposure = Math.min(1,
       (thinkActive ? 0.14 : 0) + (knowActive ? 0.14 : 0) + turnHeat * 0.48);
-    const dominant = modality === 'know' ? orange : blue;
+    const dominant = modality === 'paired' ? surface : modality === 'know' ? orange : blue;
     const identityColour = modality === 'paired'
-      ? mixColours(blue, orange, 0.48) : dominant;
+      ? surface : dominant;
     const substrate = mixColours(surface, '#020508', 0.76);
     const face = modality === 'paired'
       ? mixColours(surface, '#101923', 0.42)
@@ -6891,8 +6910,8 @@
     return {
       paletteName: 'transient-node-material', family: 'solarpunk',
       materialRole, modality, surfaceModel: modality === 'paired'
-        ? 'unified-dark-gloss' : 'unified-gloss',
-      splitSurface: false, dualBloom: modality === 'paired',
+        ? 'split-bicolor-gloss' : 'unified-gloss',
+      splitSurface: modality === 'paired', dualBloom: modality === 'paired',
       materialBlue: blue, materialOrange: orange, materialSurface: surface,
       blueKey: colourKey(blue), orangeKey: colourKey(orange), surfaceKey: colourKey(surface),
       thinkActive, knowActive, turnHeatActive, turnHeat, activeExposure, activeKey,
@@ -6912,6 +6931,13 @@
   function strokeCircle(ctx, x, y, r, stroke, width) {
     ctx.beginPath(); ctx.arc(x, y, Math.max(0.1, r), 0, 6.2832);
     ctx.lineWidth = width; ctx.strokeStyle = stroke; ctx.stroke();
+  }
+  function fillSplitCircle(ctx, x, y, r, left, right) {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, Math.max(0.1, r), 0, 6.2832); ctx.clip();
+    ctx.fillStyle = left; ctx.fillRect(x - r, y - r, r, r * 2);
+    ctx.fillStyle = right; ctx.fillRect(x, y - r, r, r * 2);
+    ctx.restore();
   }
   function gradient(ctx, kind, args, stops) {
     const maker = ctx[kind];
@@ -7139,7 +7165,7 @@
     const secondary = recipe.modality === 'know' ? blue : orange;
     const exposure = recipe.activeExposure || 0;
     /* Every modality uses the same circular geometry and top-left light direction. Paired
-       material remains one dark glossy body: radial spectral light and rims never divide it. */
+       material keeps the two native authorities visibly separate instead of blending them. */
     materialHalo(ctx, x, y, r, tier, blue,
       (paired ? 0.17 : recipe.modality === 'think' ? 0.20 : 0.065)
         + (recipe.thinkActive ? 0.07 : 0) + exposure * 0.035,
@@ -7151,10 +7177,9 @@
     fillCircle(ctx, x, y, r, recipe.outer);
     fillCircle(ctx, x, y, r * 0.94, recipe.bezel);
     if (tier === 'signature') {
-      const signatureFace = paired
-        ? mixColours(recipe.materialSurface, blue, 0.34)
-        : mixColours(recipe.face, primary, 0.38 + exposure * 0.12);
-      fillCircle(ctx, x, y, r * 0.79, signatureFace);
+      if (paired) fillSplitCircle(ctx, x, y, r * 0.79, blue, orange);
+      else fillCircle(ctx, x, y, r * 0.79,
+        mixColours(recipe.face, primary, 0.38 + exposure * 0.12));
       strokeCircle(ctx, x, y, r * 0.85, alpha(paired ? orange : primary, 0.88),
         Math.max(0.36, r * 0.085));
       if (paired) strokeCircle(ctx, x, y, r * 0.76, alpha(blue, 0.72),
@@ -7168,7 +7193,8 @@
       [0.58, paired ? orange : primary],
       [1, mixColours(recipe.substrate, paired ? orange : secondary, paired ? 0.34 : 0.18)]
     ]);
-    fillCircle(ctx, x, y, r * 0.89, rim);
+    if (paired) fillSplitCircle(ctx, x, y, r * 0.89, blue, orange);
+    else fillCircle(ctx, x, y, r * 0.89, rim);
     const face = gradient(ctx, 'createRadialGradient', [
       x - r * 0.28, y - r * 0.32, r * 0.025, x, y, r * 0.84
     ], paired ? [
@@ -7182,13 +7208,18 @@
       [0.62, mixColours(recipe.face, primary, 0.24)],
       [1, mixColours(recipe.face, '#010306', 0.68)]
     ]);
-    fillCircle(ctx, x, y, r * 0.81, face);
+    if (paired) fillSplitCircle(
+      ctx, x, y, r * 0.81,
+      mixColours(recipe.materialSurface, blue, 0.72),
+      mixColours(recipe.materialSurface, orange, 0.72)
+    );
+    else fillCircle(ctx, x, y, r * 0.81, face);
     const gloss = gradient(ctx, 'createRadialGradient', [
       x - r * 0.31, y - r * 0.36, r * 0.02, x, y, r * 0.80
     ], [
       [0, alpha('#ffffff', 0.34 + exposure * 0.22)],
       [0.20, alpha('#ffffff', 0.08 + exposure * 0.08)],
-      [0.56, alpha(primary, 0.035 + exposure * 0.045)],
+      [0.56, alpha(paired ? recipe.materialSurface : primary, 0.035 + exposure * 0.045)],
       [1, alpha('#020406', 0.34)]
     ]);
     fillCircle(ctx, x, y, r * 0.80, gloss);
@@ -7212,6 +7243,14 @@
     else if (recipe.family === 'anodized-alloy') paintGalaxyMaterial(ctx, x, y, r, recipe, detail);
     else if (recipe.family === 'brushed-copper') paintSolarMaterial(ctx, x, y, r, recipe, detail);
     else paintClassicMaterial(ctx, x, y, r, recipe, detail);
+  }
+
+  function solarpunkLinkColour(link, active, focus) {
+    if (!link || link.material_kind !== 'solarpunk'
+      || typeof link.material_color !== 'string' || !link.material_color) return null;
+    return active
+      ? alpha(link.material_color, focus ? 0.85 : 0.4)
+      : alpha(link.material_color, 0.06);
   }
 
   function clearMaterialCache(resetStats) {
@@ -8538,7 +8577,7 @@
       const s = state.settings;
       const repel = Math.max(0, Number(s.repel) || 0);
       const link = Math.max(4, Number(s.link) || 4);
-      const nodeSize = Math.max(1, Number(s.size) || 3);
+      const nodeSize = Math.max(1, Number(s.size) || 5);
       const compactness = galaxyLayoutCompactness(s.gravity);
       const control = (value, fallback, min, max) => Number.isFinite(Number(value))
         ? clamp(value, min, max) : fallback;
@@ -8720,7 +8759,7 @@
       } else if (state.styleName === 'cyber') {
         /* Cyberpunk owns a broad, fixed cyan→violet→magenta PVD face. Palette colour is kept
            out of that film and appears only in the slim identity ring. */
-        nodeMaterial = materialRecipe('cyber', state.themeColors, state.palette, col);
+        nodeMaterial = materialRecipe('cyber', state.themeColors, state.palette, col, node);
         paintMaterialSurface(ctx, node.x, node.y, r, scale, nodeMaterial,
           materialLow, galaxyPrimary);
       } else {
@@ -9622,7 +9661,7 @@
       dense = data.links.length > DENSE_LINK_LIMIT;
       const sizeMetric = n => state.sizeBy === 'betweenness' ? (n.betweenness || 0) : ((n.degree || 0) / Math.max(1, maxDeg));
       data.nodes.forEach(n => {
-        const base = (state.settings.size || 3);
+        const base = (state.settings.size || 5);
         n.radius = galaxyMode
           ? evidenceNodeRadius(n, base)
           : graphNodeRadius(n, base, sizeMetric(n));
@@ -10158,6 +10197,8 @@
         const focus = hoverSet && hoverSet.size > 1;
         const s = linkEndpoint(l, 'source'), t = linkEndpoint(l, 'target');
         const active = !focus || s === hilite || t === hilite;
+        const solarpunkColour = solarpunkLinkColour(l, active, focus);
+        if (solarpunkColour) return solarpunkColour;
         if (l.suggested) return alpha('#ffffff', active ? 0.34 : 0.1);
         if (l.ghost) return alpha(layerColor(l.layer), 0.12);
         if (state.bridges && l.bridge) return alpha('#ff5c7a', active ? 0.95 : 0.5);
@@ -11233,7 +11274,7 @@
       semanticRelationshipStrength, semanticRelationshipWidth,
       semanticRelationshipDistance, semanticRelationshipSpring,
       turnHeatIntensity, preserveRefreshPosition,
-      fallbackCommunityBridges, paintFlowArrow,
+      fallbackCommunityBridges, paintFlowArrow, solarpunkLinkColour,
       nodeName, linkEndpoint, asOfValue, materialRecipe, solarpunkMaterialRecipe, materialTier,
       paintMaterialDirect, paintMaterialSurface, paintGalaxyAnchorAdornment,
       galaxyOrbitLaneGeometry, paintGalaxyOrbitLanes, galaxyOrbitalLinkRole,

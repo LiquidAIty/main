@@ -84,6 +84,10 @@ export type AgentTerminalState = {
   ptyId: string | null;
   nativeSessionId: string;
   storedSessionId: string;
+  /** Monotonic within this live native session; advances only on a completed turn. */
+  completedTurnGeneration: number;
+  /** Exact provider/native turn reported by the latest completed turn, when supplied. */
+  completedNativeRunId: string | null;
   hermesHome: string;
   unavailableToolReasons: Record<string, string>;
   status: 'running' | 'exited' | 'failed';
@@ -162,6 +166,8 @@ export type AgentTerminalTurnResult = {
   text: string;
   status: string;
   event: AgentTerminalGatewayEvent;
+  completedTurnGeneration?: number;
+  completedNativeRunId?: string | null;
 };
 
 export type AgentTerminalCompactionReceipt = {
@@ -180,7 +186,12 @@ export type AgentTerminalCompactionReceipt = {
 
 export type AgentTerminalCompactionIdentity = Pick<
   AgentTerminalState,
-  'sessionId' | 'nativeSessionId' | 'storedSessionId' | 'profile'
+  | 'sessionId'
+  | 'nativeSessionId'
+  | 'storedSessionId'
+  | 'profile'
+  | 'completedTurnGeneration'
+  | 'completedNativeRunId'
 >;
 
 export type AgentTerminalVoiceState = {
@@ -776,6 +787,18 @@ function equalHex(left: string, right: string): boolean {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
+function cardToolAuthenticationFailure(stage: string): never {
+  throw new Error(`hermes_card_tool_authentication_failed:${stage}`);
+}
+
+export function cardToolAuthenticationFailureStage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : '';
+  const prefix = 'hermes_card_tool_authentication_failed:';
+  if (!message.startsWith(prefix)) return null;
+  const stage = message.slice(prefix.length);
+  return /^[a-z_]{1,64}$/.test(stage) ? stage : null;
+}
+
 function boundedString(value: unknown, max: number): string {
   return typeof value === 'string' && value.length <= max ? value : '';
 }
@@ -1287,6 +1310,8 @@ export class AgentTerminalManager {
           ptyId: null,
           nativeSessionId: native.sessionId,
           storedSessionId: native.storedSessionId,
+          completedTurnGeneration: 0,
+          completedNativeRunId: null,
           hermesHome: launch.profileHome,
           unavailableToolReasons,
           status: 'running',
@@ -1606,30 +1631,35 @@ export class AgentTerminalManager {
       Buffer.byteLength(keyId) > 256
       || Buffer.byteLength(signature) > 256
       || Buffer.byteLength(payload) > 512 * 1024
-    ) throw new Error('hermes_card_tool_authentication_failed');
+    ) cardToolAuthenticationFailure('bounds');
     const candidates = [...this.sessions.values()].filter((session) => (
       session.state.status === 'running' && equalHex(session.gatewayKeyId, keyId)
     ));
     if (candidates.length === 0) {
-      return this.authenticateMagenticWorkerToolRequest(keyId, payload, signature);
+      try {
+        return await this.authenticateMagenticWorkerToolRequest(keyId, payload, signature);
+      } catch (error) {
+        if (cardToolAuthenticationFailureStage(error)) throw error;
+        cardToolAuthenticationFailure('key_or_worker');
+      }
     }
-    if (candidates.length !== 1) throw new Error('hermes_card_tool_authentication_failed');
+    if (candidates.length !== 1) cardToolAuthenticationFailure('key_identity');
     const session = candidates[0];
     const expected = createHmac('sha256', session.gatewayToken).update(payload, 'utf8').digest('hex');
-    if (!equalHex(expected, signature)) throw new Error('hermes_card_tool_authentication_failed');
+    if (!equalHex(expected, signature)) cardToolAuthenticationFailure('signature');
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(payload);
     } catch {
-      throw new Error('hermes_card_tool_authentication_failed');
+      cardToolAuthenticationFailure('payload_json');
     }
     const value = record(parsed);
     const expectedKeys = [
       'arguments', 'expiresAt', 'nonce', 'sourceStoredSessionId', 'tool', 'version',
     ];
     if (Object.keys(value).sort().join('\0') !== expectedKeys.join('\0')) {
-      throw new Error('hermes_card_tool_authentication_failed');
+      cardToolAuthenticationFailure('payload_shape');
     }
     const now = Math.floor(Date.now() / 1000);
     const expiresAt = value.expiresAt;
@@ -1638,7 +1668,7 @@ export class AgentTerminalManager {
     const tool = boundedString(value.tool, 128);
     const args = value.arguments;
     if (!args || typeof args !== 'object' || Array.isArray(args)) {
-      throw new Error('hermes_card_tool_authentication_failed');
+      cardToolAuthenticationFailure('arguments');
     }
     const snapshot = record(await session.client.request('session.activate', {
       session_id: session.state.nativeSessionId,
@@ -1646,10 +1676,10 @@ export class AgentTerminalManager {
       omit_messages: true,
     }));
     if (String(snapshot.session_id || '').trim() !== session.state.nativeSessionId) {
-      throw new Error('hermes_card_tool_authentication_failed');
+      cardToolAuthenticationFailure('native_session');
     }
     const stored = String(snapshot.session_key || '').trim();
-    if (!stored) throw new Error('hermes_card_tool_authentication_failed');
+    if (!stored) cardToolAuthenticationFailure('stored_session');
     this.recordStoredSessionId(session, stored);
     for (const [prior, expiry] of session.priorStoredSessionIds) {
       if (expiry < now) session.priorStoredSessionIds.delete(prior);
@@ -1684,11 +1714,27 @@ export class AgentTerminalManager {
       || (registered !== undefined
         && active !== null
         && !active.authorizedCanonicalTools.includes(registered.canonicalName))
-    ) throw new Error('hermes_card_tool_authentication_failed');
+    ) {
+      if (value.version !== 1) cardToolAuthenticationFailure('version');
+      if (!Number.isSafeInteger(expiresAt)
+        || Number(expiresAt) < now
+        || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS) {
+        cardToolAuthenticationFailure('expiry');
+      }
+      if (!/^[a-f0-9]{32,128}$/i.test(nonce)) cardToolAuthenticationFailure('nonce_shape');
+      if (!sourceSessionKnown) cardToolAuthenticationFailure('source_session');
+      if (!registered && !projectRosterRequest && !runtimeObservationRequest) {
+        cardToolAuthenticationFailure('registered_tool');
+      }
+      if (runtimeObservationRequest && active === null) {
+        cardToolAuthenticationFailure('active_run');
+      }
+      cardToolAuthenticationFailure('run_authorization');
+    }
     for (const [usedNonce, expiry] of session.cardToolNonces) {
       if (expiry < now) session.cardToolNonces.delete(usedNonce);
     }
-    if (session.cardToolNonces.has(nonce)) throw new Error('hermes_card_tool_authentication_failed');
+    if (session.cardToolNonces.has(nonce)) cardToolAuthenticationFailure('nonce_replay');
     session.cardToolNonces.set(nonce, Number(expiresAt));
     while (session.cardToolNonces.size > CARD_TOOL_NONCE_LIMIT) {
       const oldest = session.cardToolNonces.keys().next().value as string | undefined;
@@ -2020,6 +2066,11 @@ export class AgentTerminalManager {
       || !expected.nativeSessionId?.trim()
       || !expected.storedSessionId?.trim()
       || !expected.profile?.trim()
+      || !Number.isSafeInteger(expected.completedTurnGeneration)
+      || expected.completedTurnGeneration < 0
+      || (expected.completedNativeRunId !== null
+        && (typeof expected.completedNativeRunId !== 'string'
+          || !expected.completedNativeRunId.trim()))
     ) {
       return resolved('failed', 'agent_terminal_context_compaction_identity_invalid');
     }
@@ -2036,6 +2087,10 @@ export class AgentTerminalManager {
       && session.state.nativeSessionId === expected.nativeSessionId
       && session.state.storedSessionId === expected.storedSessionId
       && session.state.profile === expected.profile
+    );
+    const completedTurnMatches = () => (
+      session.state.completedTurnGeneration === expected.completedTurnGeneration
+      && session.state.completedNativeRunId === expected.completedNativeRunId
     );
     if (!identityMatches()) {
       return resolved('unavailable', 'agent_terminal_context_compaction_identity_changed');
@@ -2066,6 +2121,13 @@ export class AgentTerminalManager {
       } catch {
         return { ...base(), status: 'unavailable',
           errorCode: 'agent_terminal_context_compaction_run_state_unavailable' };
+      }
+      // Settlement runs after the visible turn and may be delayed behind graph
+      // work. Recheck the exact completion immediately before native mutation so
+      // turn N can never compact away a now-completed turn N+1.
+      if (!completedTurnMatches()) {
+        return { ...base(), status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_turn_changed' };
       }
 
       let result: unknown;
@@ -2426,7 +2488,18 @@ export class AgentTerminalManager {
                 return;
               }
             }
-            finish(undefined, { text: textValue, status, event });
+            const completedNativeRunId = String(
+              event.payload?.nativeRunId ?? event.payload?.native_run_id ?? '',
+            ).trim() || null;
+            session.state.completedTurnGeneration += 1;
+            session.state.completedNativeRunId = completedNativeRunId;
+            finish(undefined, {
+              text: textValue,
+              status,
+              event,
+              completedTurnGeneration: session.state.completedTurnGeneration,
+              completedNativeRunId,
+            });
           }
         } else if (event.type === 'error') {
           finish(new Error(String(event.payload?.message || 'agent_terminal_turn_failed')));

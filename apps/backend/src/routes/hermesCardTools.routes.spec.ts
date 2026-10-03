@@ -272,4 +272,25 @@ describe('managed Hermes Card-tools host route', () => {
     });
     expect(JSON.stringify(response)).not.toContain('do-not-leak');
   });
+
+  it('logs only a fixed internal authentication stage while keeping the response generic', async () => {
+    const deps = dependencies();
+    deps.agentTerminalManager.authenticateCardToolRequest.mockRejectedValue(
+      new Error('hermes_card_tool_authentication_failed:run_authorization'),
+    );
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const response = await post(deps);
+      expect(response).toEqual({
+        status: 401,
+        body: { error: 'hermes_card_tool_authentication_failed' },
+      });
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        '[hermes-card-tools] authentication failed stage=run_authorization',
+      );
+      expect(JSON.stringify(response)).not.toContain('run_authorization');
+    } finally {
+      warning.mockRestore();
+    }
+  });
 });

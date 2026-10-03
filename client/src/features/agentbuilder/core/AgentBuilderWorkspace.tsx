@@ -13,6 +13,7 @@ type AgentBuilderWorkspaceProps = {
   onSplitterPointerLeave: () => void;
   onSplitterPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
   companionMinWidth: number;
+  companionContentMinWidth: number;
   companionOverlayWidth: number;
   companionViewportWidth: number;
   companionVisibleWidth: number;
@@ -34,6 +35,7 @@ export default function AgentBuilderWorkspace({
   onSplitterPointerLeave,
   onSplitterPointerDown,
   companionMinWidth,
+  companionContentMinWidth,
   companionOverlayWidth,
   companionViewportWidth,
   companionVisibleWidth,
@@ -141,7 +143,7 @@ export default function AgentBuilderWorkspace({
                   right: 0,
                   bottom: 0,
                   width: companionViewportWidth,
-                  minWidth: companionMinWidth,
+                  minWidth: companionContentMinWidth,
                 }}
               >
                 {workspaceView === 'canvas' ? canvas : companion}

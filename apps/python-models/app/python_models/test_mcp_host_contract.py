@@ -1977,6 +1977,38 @@ def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
     assert json.loads(later.content[0].text)["ok"] is True
 
 
+def test_graphiti_add_memory_dispatch_preserves_native_arguments(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    calls = []
+
+    class NativeMcp:
+        async def call_tool(self, name, arguments):
+            calls.append((name, arguments))
+            return [mcp_host.TextContent(type="text", text="queued")]
+
+    monkeypatch.setattr(
+        mcp_host, "_NATIVE_GRAPHITI_MODULE", SimpleNamespace(mcp=NativeMcp())
+    )
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_SERVICE_READY", True)
+    arguments = {
+        "name": "Bounded research packet",
+        "episode_body": "Current primary-source evidence.",
+        "source": "text",
+    }
+
+    result = asyncio.run(mcp_host._call_native_graphiti("add_memory", arguments))
+
+    assert result.content[0].text == "queued"
+    assert calls == [("add_memory", arguments)]
+    assert arguments == {
+        "name": "Bounded research packet",
+        "episode_body": "Current primary-source evidence.",
+        "source": "text",
+    }
+
+
 def test_application_catalog_preserves_saved_card_schemas_without_native_discovery(monkeypatch):
     import asyncio
     import jsonschema
@@ -2287,6 +2319,9 @@ def test_base_catalog_is_startup_safe_and_authorized_native_catalog_preserves_me
     assert canonical_by_name["cbm.unfamiliar_current_tool"].inputSchema[
         "properties"
     ]["probe"] == {"type": "string"}
+    assert "questionEvidence" not in canonical_by_name[
+        "graphiti.add_memory"
+    ].inputSchema["properties"]
     assert {
         "cbm.search_graph",
         "cbm.unfamiliar_current_tool",

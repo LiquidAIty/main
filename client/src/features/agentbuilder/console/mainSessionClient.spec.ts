@@ -161,10 +161,10 @@ describe('streamSession', () => {
       projectId: 'p', deckId: 'd', conversationId: 'main', cardId: 'card_main_chat', runId: 'r',
       directAddressed: false,
       candidates: [{ choiceId: 'think-one', authority: 'ThinkGraph', nativeId: 'native-think',
-        title: 'Think result', probability: 0.7, selected: true, hydrated: true },
+        title: 'Think result', probability: 0.6, selected: true, hydrated: true },
       { choiceId: 'know-one', authority: 'KnowGraph', nativeId: 'native-know',
         title: 'Know result', probability: 0.3, selected: false, hydrated: true }],
-      distribution: { 'think-one': 0.7, 'know-one': 0.3 },
+      distribution: { 'think-one': 0.6, 'know-one': 0.3, ATTENTION_NEW_SUBJECT: 0.1 },
       selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'native-think' }],
       policy: { limit: 8 }, model: { name: 'jev-test' }, timing: { elapsedMs: 5 }, error: null,
     };
@@ -181,7 +181,9 @@ describe('streamSession', () => {
     const delivered = onEvent.mock.calls.map(([event]) => event)
       .filter((event) => event.kind === 'jev_attention');
     expect(delivered).toEqual([{ kind: 'jev_attention', ...attention }]);
-    expect(delivered[0].distribution).toEqual({ 'think-one': 0.7, 'know-one': 0.3 });
+    expect(delivered[0].distribution).toEqual({
+      'think-one': 0.6, 'know-one': 0.3, ATTENTION_NEW_SUBJECT: 0.1,
+    });
   });
 
   it('refuses malformed Jev attention identity, status, and distribution shapes', async () => {
@@ -190,16 +192,28 @@ describe('streamSession', () => {
       decisionId: 'decision-one', projectId: 'p', deckId: 'd', conversationId: 'main',
       cardId: 'card_main_chat', runId: 'r', directAddressed: false,
       candidates: [{ choiceId: 'choice-one', authority: 'ThinkGraph', nativeId: 'native-one',
-        title: 'Candidate one', probability: 1, selected: true, hydrated: true }],
-      distribution: { 'choice-one': 1 },
+        title: 'Candidate one', probability: 0.7, selected: true, hydrated: true }],
+      distribution: { 'choice-one': 0.7, ATTENTION_NEW_SUBJECT: 0.3 },
       selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'native-one' }],
     };
     expect(isJevAttentionEvent(valid)).toBe(true);
     expect(isJevAttentionEvent({ ...valid, decisionId: '' })).toBe(false);
     expect(isJevAttentionEvent({ ...valid, status: 'complete' })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid,
+      candidates: [{ ...valid.candidates[0], choiceId: 'ATTENTION_NEW_SUBJECT' }],
+      distribution: { ATTENTION_NEW_SUBJECT: 1 },
+    })).toBe(false);
     expect(isJevAttentionEvent({ ...valid, distribution: { choice: '0.9' } })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid, distribution: { 'choice-one': 0.9 } })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid, distribution: { 'choice-one': 1, extra: 0 } })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid, distribution: { 'choice-one': 0.7 } })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid,
+      distribution: { 'choice-one': 0.7, ATTENTION_NEW_SUBJECT: 0.2 },
+    })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid,
+      distribution: { 'choice-one': 0.6, ATTENTION_NEW_SUBJECT: 0.4 },
+    })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid,
+      distribution: { 'choice-one': 0.7, ATTENTION_NEW_SUBJECT: 0.3, extra: 0 },
+    })).toBe(false);
     expect(isJevAttentionEvent({ ...valid,
       selectedReferences: [{ authority: 'KnowGraph', nativeId: 'native-one' }],
     })).toBe(false);

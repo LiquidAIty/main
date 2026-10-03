@@ -4,8 +4,10 @@ import { act, renderHook } from '@testing-library/react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import useAgentBuilderWorkspaceLayout, {
+  CANVAS_COLLISION_WIDTH,
   companionMinimumWidth,
   resolveHybridWorkspaceGeometry,
+  shouldCloseCanvasInspector,
 } from './useAgentBuilderWorkspaceLayout';
 
 function attachShell(
@@ -54,6 +56,7 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
       companionVisibleWidth: 770,
       companionViewportWidth: 770,
       companionOverlayWidth: 0,
+      companionContentMinWidth: 520,
     });
     expect(resolveHybridWorkspaceGeometry({
       workspaceWidth: 1000,
@@ -63,7 +66,45 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
       companionVisibleWidth: 390,
       companionViewportWidth: 520,
       companionOverlayWidth: 130,
+      companionContentMinWidth: 520,
     });
+  });
+
+  it('keeps Canvas side-by-side while room remains and overlaps only at the extreme floor', () => {
+    expect(resolveHybridWorkspaceGeometry({
+      workspaceWidth: 1000,
+      mainWidth: 600,
+      companionMinWidth: 520,
+      collisionWidth: CANVAS_COLLISION_WIDTH,
+    })).toEqual({
+      companionVisibleWidth: 390,
+      companionViewportWidth: 520,
+      companionOverlayWidth: 0,
+      companionContentMinWidth: 520,
+    });
+    expect(resolveHybridWorkspaceGeometry({
+      workspaceWidth: 1000,
+      mainWidth: 940,
+      companionMinWidth: 520,
+      collisionWidth: CANVAS_COLLISION_WIDTH,
+    })).toEqual({
+      companionVisibleWidth: 50,
+      companionViewportWidth: 520,
+      companionOverlayWidth: 46,
+      companionContentMinWidth: 520,
+    });
+  });
+
+  it('closes the open Canvas inspector before the chat reaches the overlap threshold', () => {
+    expect(shouldCloseCanvasInspector({
+      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 441,
+    })).toBe(false);
+    expect(shouldCloseCanvasInspector({
+      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 440,
+    })).toBe(true);
+    expect(shouldCloseCanvasInspector({
+      workspaceView: 'worldview', inspectorOpen: true, companionVisibleWidth: 0,
+    })).toBe(false);
   });
 
   it('uses source-backed surface-specific minimums', () => {
@@ -90,7 +131,8 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
     expect(result.current.chatPanelWidth).toBe(600);
     expect(result.current.companionVisibleWidth).toBe(390);
     expect(result.current.companionViewportWidth).toBe(520);
-    expect(result.current.companionOverlayWidth).toBe(130);
+    expect(result.current.companionOverlayWidth).toBe(0);
+    expect(result.current.companionContentMinWidth).toBe(520);
   });
 
   it('allows Main to cover WorldView while its 720px viewport stays mounted', () => {
@@ -110,6 +152,7 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
     expect(result.current.companionVisibleWidth).toBe(0);
     expect(result.current.companionViewportWidth).toBe(720);
     expect(result.current.companionOverlayWidth).toBe(720);
+    expect(result.current.companionContentMinWidth).toBe(720);
   });
 
   it('captures and releases the pointer, commits on blur, and cancels on Escape', () => {

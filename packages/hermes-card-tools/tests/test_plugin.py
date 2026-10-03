@@ -674,7 +674,8 @@ def test_handler_posts_one_signed_request_and_returns_native_output(plugin, monk
     monkeypatch.setattr(plugin, "_post_once", post_once)
     result = plugin._handler("card__card_create")(
         {"title": "New Card"},
-        task_id="stored-main",
+        task_id="stored-main-before-compression",
+        session_id="stored-main-after-compression",
     )
     assert result == '{"ok":true,"cardId":"new"}'
     assert len(calls) == 1
@@ -685,7 +686,7 @@ def test_handler_posts_one_signed_request_and_returns_native_output(plugin, monk
         "version": 1,
         "expiresAt": 1_300,
         "nonce": "a" * 32,
-        "sourceStoredSessionId": "stored-main",
+        "sourceStoredSessionId": "stored-main-before-compression",
         "tool": "card__card_create",
         "arguments": {"title": "New Card"},
     }
@@ -693,6 +694,25 @@ def test_handler_posts_one_signed_request_and_returns_native_output(plugin, monk
     assert envelope["signature"] == hmac.new(
         b"gateway-secret", envelope["payload"].encode("utf-8"), hashlib.sha256,
     ).hexdigest()
+    assert "stored-main-after-compression" not in envelope["payload"]
+
+
+def test_handler_refuses_mutable_agent_session_without_gateway_task_identity(plugin, monkeypatch):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_DASHBOARD_SESSION_TOKEN", "gateway-secret")
+    monkeypatch.setattr(
+        plugin,
+        "_post_once",
+        lambda *_args: pytest.fail("an unbound turn identity must not reach the Card host"),
+    )
+
+    result = json.loads(plugin._handler("card__card_create")(
+        {"title": "New Card"},
+        session_id="stored-main-after-compression",
+    ))
+
+    assert result == {"ok": False, "error": "card_tool_runtime_identity_missing"}
 
 
 def test_project_target_resolution_is_signed_to_exact_source_and_returns_exact_target_session(

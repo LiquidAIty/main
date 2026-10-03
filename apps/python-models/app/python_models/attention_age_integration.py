@@ -89,3 +89,86 @@ def test_materialized_read_generated_query_plans_under_application_role(planned_
     }, run_id="query-plan-only")
     assert len(planned) == 1
     assert "[read:READ" in planned[0][0]
+
+
+def test_run_attempt_observation_generated_query_plans_under_application_role(
+    planned_attention,
+):
+    planned, real_rows, _plan_cursor, connection = planned_attention
+    result = card_domain.observe_run_attempt({
+        "projectId": "query-plan-only",
+        "deckId": "query-plan-only",
+        "cardId": "query-plan-only",
+        "runId": "query-plan-only",
+        "attempt": {
+            "eventId": "query-plan-only",
+            "attemptId": "query-plan-only",
+            "kind": "llm",
+            "phase": "completed",
+            "observationGap": 0,
+        },
+    })
+    assert result == {
+        "ok": True,
+        "runId": "query-plan-only",
+        "eventId": "query-plan-only",
+    }
+    assert len(planned) == 1
+    query, params, columns = planned[0]
+    assert "events[eventIndex].eventId <> $eventId" in query
+    assert "prior.eventId" not in query
+    assert params["eventId"] == "query-plan-only"
+    assert columns == "run_id agtype"
+
+    update_expression = """
+        WITH $events AS events
+        WITH events,
+             [eventIndex IN range(0, size(events) - 1)
+              WHERE events[eventIndex].eventId <> $eventId
+              | events[eventIndex]] AS retained
+        RETURN (retained + [$event])[-256..] AS events
+    """
+
+    def update(events, event):
+        with connection.cursor(row_factory=dict_row) as cursor:
+            rows = real_rows(
+                cursor,
+                update_expression,
+                {"events": events, "eventId": event["eventId"], "event": event},
+                "events agtype",
+            )
+        assert len(rows) == 1
+        return rows[0]["events"]
+
+    started = {
+        "eventId": "same-event",
+        "attemptId": "llm-one",
+        "kind": "llm",
+        "phase": "started",
+        "observationGap": 0,
+    }
+    events = update([], started)
+    assert events == [started]
+
+    completed = {
+        **started,
+        "phase": "completed",
+        "inputTokens": 12,
+        "outputTokens": 3,
+        "observationGap": 1,
+    }
+    events = update(events, completed)
+    assert events == [completed]
+
+    tool = {
+        "eventId": "tool-event",
+        "attemptId": "tool-one",
+        "kind": "tool",
+        "phase": "completed",
+        "toolName": "engraphis_get_memory",
+        "argumentsHash": "a" * 64,
+        "resultHash": "b" * 64,
+        "observationGap": 2,
+    }
+    events = update(events, tool)
+    assert events == [completed, tool]

@@ -586,27 +586,28 @@ export async function materializeHermesApplicationMcpServers(
       if (existing.transport !== 'http' || existingUrl !== parsedUrl.toString()) {
         throw new Error(`hermes_application_mcp_server_conflict:${connectionId}`);
       }
-      const tools = record(existing.tools);
-      if (
-        Object.prototype.hasOwnProperty.call(tools, 'include')
-        && (!Array.isArray(tools.include) || !sameStrings(tools.include.map(String), include))
-      ) {
-        throw new Error(`hermes_application_mcp_filter_conflict:${connectionId}`);
-      }
-      const updated = record(await request('mcp.servers.set_api_key', {
+      // These definitions are transient Run material owned by this adapter.
+      // Replace a same-route residue instead of renewing it in place because
+      // the native list response intentionally omits trust/approval policy and
+      // therefore cannot prove the Codex-facing policy from the prior Run.
+      const removed = record(await request('mcp.servers.remove', {
+        profile: configuration.runtime.profile,
         name: connectionId,
-        value: bearer,
       }));
-      if (updated.ok !== true || updated.name !== connectionId) {
-        throw new Error(`hermes_application_mcp_credential_apply_failed:${connectionId}`);
+      if (removed.ok !== true || removed.removed !== true) {
+        throw new Error(`hermes_application_mcp_server_replace_failed:${connectionId}`);
       }
-      continue;
     }
 
     const added = record(await request('mcp.servers.add', {
       name: connectionId,
       config: {
         url: parsedUrl.toString(),
+        // The signed localhost host already enforces the exact saved Card and
+        // current Run grant. Mark only this internal connection trusted and
+        // eligible for a thread-scoped Codex per-tool approval projection.
+        trust: 'full',
+        default_tools_approval_mode: 'approve',
         tools: { include, prompts: false, resources: false },
       },
       bearer_token: bearer,

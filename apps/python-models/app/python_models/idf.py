@@ -235,9 +235,7 @@ def _graph_records(
 ) -> list[GraphDataRecord]:
     records: list[GraphDataRecord] = []
     retrieved_by_identity = {
-        (str(item.get("authority") or ""), str(item.get("nativeId") or "")): str(
-            item.get("asOf") or materialized_at
-        )
+        (str(item.get("authority") or ""), str(item.get("nativeId") or "")): item
         for item in native_references
         if isinstance(item, dict)
     }
@@ -282,6 +280,10 @@ def _graph_records(
         properties = dict(node.get("properties") or {})
         if not authority or not native_id:
             raise InputMaterializationError("input_graph_node_invalid")
+        selected = retrieved_by_identity.get((authority, native_id))
+        materialized_record_sha256 = str(
+            (selected or {}).get("materializedRecordSha256") or ""
+        ).strip()
         records.append(GraphDataRecord(
             kind="node",
             authority=authority,
@@ -290,11 +292,18 @@ def _graph_records(
             content={
                 "label": str(node.get("label") or native_id),
                 "labels": list(node.get("labels") or []),
-                "properties": properties,
+                **(
+                    {"materializedRecord": {
+                        "authority": authority,
+                        "nativeId": native_id,
+                        "sha256": materialized_record_sha256,
+                    }}
+                    if materialized_record_sha256 else {"properties": properties}
+                ),
             },
             provenance=dict(node.get("provenance") or {}),
             retrievedAt=(
-                retrieved_by_identity.get((authority, native_id)) or materialized_at
+                str((selected or {}).get("asOf") or materialized_at)
             ),
             sourcePath=_source_path(properties),
         ))

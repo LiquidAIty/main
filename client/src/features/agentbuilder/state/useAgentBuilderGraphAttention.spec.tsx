@@ -112,9 +112,12 @@ function jevAttentionTurn(
       projectId: 'project-1', deckId: 'deck_builder', conversationId,
       cardId: 'card_main_chat', runId, directAddressed: false,
       candidates,
-      distribution: Object.fromEntries(candidates.map((candidate) => [
-        candidate.choiceId, candidate.probability,
-      ])),
+      distribution: {
+        ...Object.fromEntries(candidates.map((candidate) => [
+          candidate.choiceId, candidate.probability,
+        ])),
+        ATTENTION_NEW_SUBJECT: 0,
+      },
       selectedReferences: candidates
         .filter((candidate) => candidate.selected && candidate.hydrated)
         .map((candidate) => ({ authority: candidate.authority, nativeId: candidate.nativeId })),
@@ -217,7 +220,10 @@ describe('attention-activated native graph projection', () => {
       phase: 'attention_space',
       active: true,
       terminalStatus: null,
-      distribution: { missing: 0.5, existing: 0.25, unavailable: 0.15, unselected: 0.1 },
+      distribution: {
+        missing: 0.5, existing: 0.25, unavailable: 0.15, unselected: 0.1,
+        ATTENTION_NEW_SUBJECT: 0,
+      },
       candidates: event.event.candidates,
       selectedSubjects: [
         expect.objectContaining({ choiceId: 'missing', probability: 0.5, resolution: 'resolving' }),
@@ -308,6 +314,7 @@ describe('attention-activated native graph projection', () => {
         distribution: {
           'think-selected': 0.4, 'think-unselected': 0.3,
           'know-selected': 0.2, 'know-unhydrated': 0.1,
+          ATTENTION_NEW_SUBJECT: 0,
         },
         selectedReferences: [
           { authority: 'ThinkGraph', nativeId: 'think-selected' },
@@ -342,7 +349,7 @@ describe('attention-activated native graph projection', () => {
     act(() => result.current.observeNativeTurnEvent(jevEvent('client-one', {
       candidates: [{ choiceId: 'duplicate', authority: 'ThinkGraph', nativeId: 'think-unselected',
         title: 'Duplicate delivery', probability: 1, selected: true, hydrated: true }],
-      distribution: { duplicate: 1 },
+      distribution: { duplicate: 1, ATTENTION_NEW_SUBJECT: 0 },
       selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'think-unselected' }],
     })));
     expect(result.current.projections.thinkgraph.nodes[1].properties?.attentionActive).toBeUndefined();
@@ -355,7 +362,7 @@ describe('attention-activated native graph projection', () => {
     act(() => result.current.observeNativeTurnEvent(jevEvent('client-two', {
       candidates: [{ choiceId: 'next', authority: 'KnowGraph', nativeId: 'know-unhydrated',
         title: 'Next selected source', probability: 1, selected: true, hydrated: true }],
-      distribution: { next: 1 },
+      distribution: { next: 1, ATTENTION_NEW_SUBJECT: 0 },
       selectedReferences: [{ authority: 'KnowGraph', nativeId: 'know-unhydrated' }],
     })));
     expect(result.current.projections.knowgraph.nodes[1].properties?.attentionActive).toBe(true);
@@ -858,7 +865,7 @@ describe('attention-activated native graph projection', () => {
     expect(refreshed.nodes.find((node) => node.id === 'b')?.semantic_mass).toBeCloseTo(1.4);
   });
 
-  it('refreshes exactly once per pushed settled ThinkGraph revision', async () => {
+  it('refreshes exactly once for a project revision produced by another conversation', async () => {
     let response = thinkgraphResponse();
     const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
       ? response : knowledgeResponse());
@@ -877,7 +884,7 @@ describe('attention-activated native graph projection', () => {
     }];
     response = thinkgraphResponse(records);
     const settled: ThinkGraphRevisionEvent = {
-      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'graph-join-proof',
       originatingRunId: 'run-1', stage: 'settled', revision: '4',
       changedNodeIds: ['native-entity'], changedEdgeIds: ['edge-rich'],
       affectedNodeIds: ['native-entity'], turnHeat: { 'native-entity': 0.75 },

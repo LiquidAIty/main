@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 from typing import Any, Callable, Literal
 
 import httpx
@@ -129,10 +130,19 @@ ATOMIC_RESEARCH_STATES = (
     "research-useful",
     "source-unavailable",
 )
+ATOMIC_RESEARCH_KINDS = frozenset((
+    "CLAIM", "DECISION", "QUESTION", "PREDICTION", "CONSTRAINT",
+    "CORRECTION", "PROPOSAL", "PREFERENCE", "PROCEDURE", "OBSERVATION",
+))
+ATOMIC_RESEARCH_EVIDENCE_KINDS = frozenset((
+    "CLAIM", "PREDICTION", "CORRECTION", "OBSERVATION",
+))
+ATOMIC_RESEARCH_AUTO_KINDS = ATOMIC_RESEARCH_EVIDENCE_KINDS | {"QUESTION"}
 ATOMIC_RESEARCH_SUBJECT_BOUNDARIES = ("same_subject", "shifted", "uncertain")
 ATOMIC_RESEARCH_MAX_THINKS = 8
 ATOMIC_RESEARCH_MAX_SELECTED = 2
-ATOMIC_RESEARCH_HIGH_CONFIDENCE = 0.80
+ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS = 180.0
+ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS = 2.0
 _ATOMIC_RESEARCH_NONE = "AR_NONE"
 MAIN_GRAPH_ATTENTION_NEW_SUBJECT = "ATTENTION_NEW_SUBJECT"
 
@@ -1874,6 +1884,37 @@ def _atomic_choice_answer(
     }
 
 
+def _atomic_state_choices(kind: str) -> tuple[str, ...]:
+    states = (
+        ATOMIC_RESEARCH_STATES
+        if kind in ATOMIC_RESEARCH_EVIDENCE_KINDS
+        else ATOMIC_RESEARCH_STATES[2:]
+        if kind in ATOMIC_RESEARCH_KINDS
+        else ("source-unavailable",)
+    )
+    return tuple(
+        f"AR_STATE_{state.upper().replace('-', '_')}" for state in states
+    )
+
+
+def _failed_atomic_candidate(
+    candidate: dict[str, Any], failure_reason: str
+) -> dict[str, Any]:
+    return {
+        "memoryId": candidate["memoryId"],
+        "title": candidate["title"],
+        "kind": str(candidate.get("kind") or ""),
+        "state": "source-unavailable",
+        "confidence": 0.0,
+        "winnerProbability": 0.0,
+        "distribution": {"source-unavailable": 1.0},
+        "coverage": candidate.get("coverage", {"state": "unavailable"}),
+        "evidenceNativeId": None,
+        "evidenceDistribution": {},
+        "failureReason": failure_reason,
+    }
+
+
 def _atomic_research_default_decision(body: dict[str, Any]) -> dict[str, Any]:
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
@@ -2078,12 +2119,11 @@ def _atomic_coverage_state(
             if know_subject is None:
                 think_only.append(subject)
                 continue
-            if know_subject["entityKind"] != think_subject["entityKind"]:
-                ambiguous.append(subject)
-                continue
             joined.append({
                 "canonicalName": name,
                 "entityKind": think_subject["entityKind"],
+                "thinkEntityKind": think_subject["entityKind"],
+                "knowEntityKind": know_subject["entityKind"],
                 "thinkNativeId": think_subject["nativeId"],
                 "knowNativeId": know_subject["nativeId"],
             })
@@ -2232,27 +2272,28 @@ def atomic_research_jev_questions(frame: dict[str, Any]) -> dict[str, Any]:
         raise AtomicResearchError("atomic_research_frame_invalid")
     if not isinstance(opaque_knows, dict):
         raise AtomicResearchError("atomic_research_frame_invalid")
-    state_choices = tuple(
-        f"AR_STATE_{state.upper().replace('-', '_')}"
-        for state in ATOMIC_RESEARCH_STATES
-    )
+    state_criteria = {
+        f"AR_STATE_{state.upper().replace('-', '_')}": criterion
+        for state, criterion in zip(ATOMIC_RESEARCH_STATES, (
+            "Current dated Know evidence directly supports the atomic Think.",
+            "Current dated Know evidence directly contradicts the atomic Think.",
+            "A material factual gap requires current primary-source research now.",
+            "Additional current research would be useful but is not required now.",
+            "Required source access or usable dated evidence is unavailable.",
+        ))
+    }
     questions: dict[str, Any] = {}
-    for index in range(len(opaque_thinks)):
+    for index, candidate in enumerate(opaque_thinks.values()):
+        state_choices = _atomic_state_choices(str(candidate.get("kind") or ""))
         questions[f"research_state_{index}"] = {
             "type": "choice",
             "instructions": (
                 "Classify this exact atomic Think against the supplied current dated Know "
-                "evidence. Exact-name coverage is structural only. Decide semantic support, "
-                "contradiction, whether research is required now, merely useful, or sources "
-                "are unavailable. Return the full distribution over every opaque state."
+                "evidence using only the choices allowed for its saved Think kind. Exact-name "
+                "coverage is structural only. Return the full distribution over every "
+                "supplied opaque state."
             ),
-            "criteria": {
-                state_choices[0]: "Current dated Know evidence directly supports the atomic Think.",
-                state_choices[1]: "Current dated Know evidence directly contradicts the atomic Think.",
-                state_choices[2]: "A material factual gap requires current primary-source research now.",
-                state_choices[3]: "Additional current research would be useful but is not required now.",
-                state_choices[4]: "Required source access or usable dated evidence is unavailable.",
-            },
+            "criteria": {choice: state_criteria[choice] for choice in state_choices},
         }
         questions[f"research_evidence_{index}"] = {
             "type": "choice",
@@ -2317,32 +2358,52 @@ def validate_atomic_research_jev_response(
 
     opaque_thinks = frame["opaqueThinkChoices"]
     opaque_knows = frame["opaqueKnowChoices"]
-    state_choices = tuple(
-        f"AR_STATE_{state.upper().replace('-', '_')}"
+    state_by_choice = {
+        f"AR_STATE_{state.upper().replace('-', '_')}": state
         for state in ATOMIC_RESEARCH_STATES
-    )
-    state_by_choice = dict(zip(state_choices, ATOMIC_RESEARCH_STATES))
+    }
     know_choices = (*opaque_knows, _ATOMIC_RESEARCH_NONE)
     think_choices = (*opaque_thinks, _ATOMIC_RESEARCH_NONE)
     results: list[dict[str, Any]] = []
     state_by_memory: dict[str, str] = {}
     for index, candidate in enumerate(opaque_thinks.values()):
-        state_answer = _atomic_choice_answer(
-            response, f"research_state_{index}", state_choices
-        )
-        evidence_answer = _atomic_choice_answer(
-            response, f"research_evidence_{index}", know_choices
-        )
-        state = state_by_choice[state_answer["winner"]]
-        evidence_choice = evidence_answer["winner"]
-        if state in {"supported", "contradicted"} and evidence_choice == _ATOMIC_RESEARCH_NONE:
-            raise AtomicResearchError("atomic_research_supported_evidence_required")
-        if candidate["coverage"]["state"] == "ambiguous" and state != "source-unavailable":
-            raise AtomicResearchError("atomic_research_ambiguous_candidate_must_fail_closed")
+        kind = str(candidate.get("kind") or "")
+        try:
+            if kind not in ATOMIC_RESEARCH_KINDS:
+                raise AtomicResearchError("atomic_research_kind_invalid")
+            state_answer = _atomic_choice_answer(
+                response,
+                f"research_state_{index}",
+                _atomic_state_choices(kind),
+            )
+            evidence_answer = _atomic_choice_answer(
+                response, f"research_evidence_{index}", know_choices
+            )
+            state = state_by_choice[state_answer["winner"]]
+            evidence_choice = evidence_answer["winner"]
+            if (
+                state in {"supported", "contradicted"}
+                and evidence_choice == _ATOMIC_RESEARCH_NONE
+            ):
+                raise AtomicResearchError(
+                    "atomic_research_supported_evidence_required"
+                )
+            if (
+                candidate["coverage"]["state"] == "ambiguous"
+                and state != "source-unavailable"
+            ):
+                raise AtomicResearchError(
+                    "atomic_research_ambiguous_candidate_must_fail_closed"
+                )
+        except AtomicResearchError as error:
+            state_by_memory[candidate["memoryId"]] = "source-unavailable"
+            results.append(_failed_atomic_candidate(candidate, str(error)))
+            continue
         state_by_memory[candidate["memoryId"]] = state
         results.append({
             "memoryId": candidate["memoryId"],
             "title": candidate["title"],
+            "kind": kind,
             "state": state,
             "confidence": state_answer["confidence"],
             "winnerProbability": state_answer["winnerProbability"],
@@ -2368,7 +2429,7 @@ def validate_atomic_research_jev_response(
         if memory_id in recommended or state_by_memory[memory_id] not in {
             "research-required", "research-useful",
         }:
-            raise AtomicResearchError("atomic_research_recommendation_invalid")
+            continue
         recommended.append(memory_id)
         recommendation_receipts.append({
             "memoryId": memory_id,
@@ -2385,15 +2446,9 @@ def validate_atomic_research_jev_response(
         opaque_thinks.get(active["winner"])
         if active["winner"] != _ATOMIC_RESEARCH_NONE else None
     )
-    automatic = [
-        receipt["memoryId"] for receipt in recommendation_receipts
-        if state_by_memory[receipt["memoryId"]] == "research-required"
-        and receipt["confidence"] >= ATOMIC_RESEARCH_HIGH_CONFIDENCE
-        and receipt["winnerProbability"] >= ATOMIC_RESEARCH_HIGH_CONFIDENCE
-        and next(item for item in results
-                 if item["memoryId"] == receipt["memoryId"])["coverage"]["state"]
-        in {"think_only", "mixed"}
-    ][:ATOMIC_RESEARCH_MAX_SELECTED]
+    automatic = _automatic_atomic_memory_ids(
+        recommendation_receipts, results
+    )
     identity = {
         "projectId": frame["projectId"],
         "originatingRunId": frame["originatingRunId"],
@@ -2427,6 +2482,83 @@ def validate_atomic_research_jev_response(
             "confidence": active["confidence"],
             "winnerProbability": active["winnerProbability"],
         } if active_candidate is not None else None),
+    }
+
+
+def _automatic_atomic_memory_ids(
+    recommendations: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+) -> list[str]:
+    """Return exact Jev-recommended candidates eligible for automatic research.
+
+    Confidence remains inspectable in the assessment receipt, but it is not a
+    second deterministic veto over Jev's validated recommendation. Automatic
+    launch remains bounded to research-required, source-gap candidates whose
+    saved Think kind is factual or interrogative.
+    """
+
+    candidates_by_memory = {
+        candidate["memoryId"]: candidate for candidate in candidates
+    }
+    automatic: list[str] = []
+    for recommendation in recommendations:
+        candidate = candidates_by_memory.get(recommendation["memoryId"])
+        if (
+            candidate is not None
+            and candidate["state"] == "research-required"
+            and candidate.get("kind") in ATOMIC_RESEARCH_AUTO_KINDS
+            and candidate["coverage"]["state"] in {"think_only", "mixed"}
+        ):
+            automatic.append(recommendation["memoryId"])
+    return automatic[:ATOMIC_RESEARCH_MAX_SELECTED]
+
+
+def _terminal_atomic_research_assessment(
+    frame: dict[str, Any],
+    *,
+    status: Literal["invalid", "source-unavailable"],
+    failure_reason: str,
+) -> dict[str, Any]:
+    """Fail closed after the shared request without discarding valid attention."""
+
+    identity = {
+        "projectId": frame["projectId"],
+        "originatingRunId": frame["originatingRunId"],
+        "thinkMemoryId": frame["thinkMemoryId"],
+        "researchFrameSha256": frame["researchFrameSha256"],
+        "evidenceCutoff": frame["evidenceCutoff"],
+    }
+    return {
+        "schemaVersion": "atomic-research-assessment.v1",
+        "status": status,
+        "failureReason": failure_reason,
+        **{key: frame[key] for key in (
+            "projectId", "deckId", "conversationId", "originatingRunId",
+            "thinkMemoryId", "mainCardId", "mainCardRevisionId",
+            "thinkGraphCardId", "thinkGraphCardRevisionId",
+            "knowGraphCardId", "knowGraphCardRevisionId", "evidenceCutoff",
+            "researchFrameSha256", "subjectDirectorySha256",
+        )},
+        "assessmentId": "atomic-research-assessment:" + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:32],
+        "requestCount": 1,
+        "questionCount": len(atomic_research_jev_questions(frame)),
+        "candidates": [{
+            "memoryId": candidate["memoryId"],
+            "title": candidate["title"],
+            "kind": str(candidate.get("kind") or ""),
+            "state": "source-unavailable",
+            "confidence": 0.0,
+            "winnerProbability": 0.0,
+            "coverage": candidate.get("coverage", {"state": "unavailable"}),
+            "evidenceNativeId": None,
+        } for candidate in frame["opaqueThinkChoices"].values()],
+        "recommendedMemoryIds": [],
+        "recommendations": [],
+        "automaticMemoryIds": [],
+        "subjectBoundary": "uncertain",
+        "activeSubject": None,
     }
 
 
@@ -2530,13 +2662,22 @@ def assess_atomic_research(
         f"AR_K_{index:03d}": evidence
         for index, evidence in enumerate(know_evidence)
     }
-    state_choices = tuple(f"AR_STATE_{state.upper().replace('-', '_')}"
-                          for state in ATOMIC_RESEARCH_STATES)
-    state_by_choice = dict(zip(state_choices, ATOMIC_RESEARCH_STATES))
+    state_by_choice = {
+        f"AR_STATE_{state.upper().replace('-', '_')}": state
+        for state in ATOMIC_RESEARCH_STATES
+    }
+    state_criteria = dict(zip(state_by_choice, (
+        "Current dated Know evidence directly supports the atomic Think.",
+        "Current dated Know evidence directly contradicts the atomic Think.",
+        "A material factual gap requires current primary-source research now.",
+        "Additional current research would be useful but is not required now.",
+        "Required source access or usable dated evidence is unavailable.",
+    )))
     think_choices = (*opaque_thinks.keys(), _ATOMIC_RESEARCH_NONE)
     know_choices = (*opaque_knows.keys(), _ATOMIC_RESEARCH_NONE)
     questions: dict[str, Any] = {}
     for index, (choice_id, candidate) in enumerate(opaque_thinks.items()):
+        state_choices = _atomic_state_choices(str(candidate.get("kind") or ""))
         questions[f"state_{index}"] = {
             "type": "choice",
             "instructions": (
@@ -2546,13 +2687,7 @@ def assess_atomic_research(
                 "source-unavailable when the supplied evidence/source state cannot support a "
                 "responsible decision. Return the full distribution over every opaque state."
             ),
-            "criteria": {
-                state_choices[0]: "Current dated Know evidence directly supports the atomic Think.",
-                state_choices[1]: "Current dated Know evidence directly contradicts the atomic Think.",
-                state_choices[2]: "A materially important factual gap requires current primary-source research now.",
-                state_choices[3]: "Additional current research would be useful but is not required now.",
-                state_choices[4]: "Required source access or usable dated evidence is unavailable.",
-            },
+            "criteria": {choice: state_criteria[choice] for choice in state_choices},
         }
         questions[f"evidence_{index}"] = {
             "type": "choice",
@@ -2648,26 +2783,43 @@ def assess_atomic_research(
         candidate_results: list[dict[str, Any]] = []
         state_by_memory: dict[str, str] = {}
         for index, (choice_id, candidate) in enumerate(opaque_thinks.items()):
-            state_answer = _atomic_choice_answer(
-                response, f"state_{index}", state_choices
-            )
-            evidence_answer = _atomic_choice_answer(
-                response, f"evidence_{index}", know_choices
-            )
-            state = state_by_choice[state_answer["winner"]]
-            evidence_choice = evidence_answer["winner"]
-            if state in {"supported", "contradicted"} and evidence_choice == _ATOMIC_RESEARCH_NONE:
-                raise AtomicResearchError(
-                    "atomic_research_supported_evidence_required"
+            kind = str(candidate.get("kind") or "")
+            try:
+                if kind not in ATOMIC_RESEARCH_KINDS:
+                    raise AtomicResearchError("atomic_research_kind_invalid")
+                state_answer = _atomic_choice_answer(
+                    response, f"state_{index}", _atomic_state_choices(kind)
                 )
-            if candidate["coverage"]["state"] == "ambiguous" and state != "source-unavailable":
-                raise AtomicResearchError(
-                    "atomic_research_ambiguous_candidate_must_fail_closed"
+                evidence_answer = _atomic_choice_answer(
+                    response, f"evidence_{index}", know_choices
                 )
+                state = state_by_choice[state_answer["winner"]]
+                evidence_choice = evidence_answer["winner"]
+                if (
+                    state in {"supported", "contradicted"}
+                    and evidence_choice == _ATOMIC_RESEARCH_NONE
+                ):
+                    raise AtomicResearchError(
+                        "atomic_research_supported_evidence_required"
+                    )
+                if (
+                    candidate["coverage"]["state"] == "ambiguous"
+                    and state != "source-unavailable"
+                ):
+                    raise AtomicResearchError(
+                        "atomic_research_ambiguous_candidate_must_fail_closed"
+                    )
+            except AtomicResearchError as error:
+                state_by_memory[candidate["memoryId"]] = "source-unavailable"
+                candidate_results.append(
+                    _failed_atomic_candidate(candidate, str(error))
+                )
+                continue
             state_by_memory[candidate["memoryId"]] = state
             candidate_results.append({
                 "memoryId": candidate["memoryId"],
                 "title": candidate["title"],
+                "kind": kind,
                 "state": state,
                 "confidence": state_answer["confidence"],
                 "winnerProbability": state_answer["winnerProbability"],
@@ -2695,9 +2847,7 @@ def assess_atomic_research(
             if memory_id in recommended or state_by_memory[memory_id] not in {
                 "research-required", "research-useful"
             }:
-                raise AtomicResearchError(
-                    "atomic_research_recommendation_invalid"
-                )
+                continue
             recommended.append(memory_id)
             recommendation_receipts.append({
                 "memoryId": memory_id,
@@ -2738,17 +2888,9 @@ def assess_atomic_research(
             "researchFrameSha256": frame_hash,
         }
 
-    automatic = [
-        receipt["memoryId"]
-        for receipt in recommendation_receipts
-        if state_by_memory[receipt["memoryId"]] == "research-required"
-        and receipt["confidence"] >= ATOMIC_RESEARCH_HIGH_CONFIDENCE
-        and receipt["winnerProbability"] >= ATOMIC_RESEARCH_HIGH_CONFIDENCE
-        and next(
-            item for item in candidate_results
-            if item["memoryId"] == receipt["memoryId"]
-        )["coverage"]["state"] in {"think_only", "mixed"}
-    ][:ATOMIC_RESEARCH_MAX_SELECTED]
+    automatic = _automatic_atomic_memory_ids(
+        recommendation_receipts, candidate_results
+    )
     active_candidate = (
         opaque_thinks.get(active["winner"])
         if active["winner"] != _ATOMIC_RESEARCH_NONE else None
@@ -2800,23 +2942,174 @@ def assess_atomic_research(
     }
 
 
+def _wait_for_atomic_research_episodes(
+    project: str,
+    episode_ids: list[str],
+    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Wait only for exact queued Graphiti IDs to become natively readable."""
+
+    requested = set(episode_ids)
+    deadline = (
+        time.monotonic()
+        + ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS
+    )
+    while True:
+        episodes = episode_reader(project, episode_ids)
+        observed = {
+            str(item.get("uuid") or "")
+            for item in episodes
+            if isinstance(item, dict) and item.get("uuid")
+        }
+        if observed == requested:
+            return episodes
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return episodes
+        time.sleep(min(
+            ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS,
+            remaining,
+        ))
+
+
+def _wait_for_atomic_research_write_settlement(
+    *,
+    project: str,
+    deck_id: str,
+    child_run_id: str,
+    knowgraph_card_id: str,
+    attention_reader: Callable[[str, str, str, str], dict[str, Any] | None],
+    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Settle one exact observed Graphiti write without repeating the write."""
+
+    deadline = (
+        time.monotonic()
+        + ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS
+    )
+    observed_event_id = ""
+    while True:
+        event = attention_reader(
+            project, deck_id, child_run_id, knowgraph_card_id,
+        )
+        if event is not None:
+            if (
+                not isinstance(event, dict)
+                or event.get("projectId") != project
+                or event.get("deckId") != deck_id
+                or event.get("runId") != child_run_id
+                or event.get("cardId") != knowgraph_card_id
+                or event.get("authority") != "knowgraph"
+                or event.get("operation") != "write"
+                or event.get("toolName") != "graphiti.add_memory"
+                or not str(event.get("eventId") or "").strip()
+            ):
+                raise AtomicResearchError(
+                    "atomic_research_write_event_scope_mismatch"
+                )
+            event_id = str(event["eventId"])
+            if observed_event_id and event_id != observed_event_id:
+                raise AtomicResearchError(
+                    "atomic_research_write_event_identity_changed"
+                )
+            observed_event_id = event_id
+            phase = str(event.get("phase") or "").strip()
+            if phase == "failed":
+                raise AtomicResearchError(
+                    "atomic_research_episode_write_failed"
+                )
+            if phase == "completed":
+                candidate_ids = list(dict.fromkeys(
+                    str(value or "").strip()
+                    for value in event.get("nativeNodeIds") or []
+                    if str(value or "").strip()
+                ))
+                if not candidate_ids:
+                    raise AtomicResearchError(
+                        "atomic_research_completed_write_missing_native_ids"
+                    )
+                while True:
+                    episodes = episode_reader(project, candidate_ids)
+                    by_id = {
+                        str(item.get("uuid") or ""): item
+                        for item in episodes
+                        if isinstance(item, dict) and item.get("uuid")
+                    }
+                    if not set(by_id) <= set(candidate_ids):
+                        raise AtomicResearchError(
+                            "atomic_research_episode_reference_invalid"
+                        )
+                    if len(by_id) == 1:
+                        return event, [next(iter(by_id.values()))]
+                    if len(by_id) > 1:
+                        raise AtomicResearchError(
+                            "atomic_research_episode_settlement_ambiguous"
+                        )
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise AtomicResearchError(
+                            "atomic_research_episode_settlement_pending"
+                        )
+                    time.sleep(min(
+                        ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS,
+                        remaining,
+                    ))
+            if phase != "pending":
+                raise AtomicResearchError(
+                    "atomic_research_write_event_phase_invalid"
+                )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AtomicResearchError(
+                "atomic_research_episode_settlement_pending"
+            )
+        time.sleep(min(
+            ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS,
+            remaining,
+        ))
+
+
+def _atomic_episode_citation_urls(episode: dict[str, Any]) -> set[str]:
+    urls: set[str] = set()
+    source_url = str(episode.get("source_url") or "").strip()
+    if source_url:
+        urls.add(source_url)
+    source_description = episode.get("source_description")
+    if isinstance(source_description, str):
+        try:
+            described = json.loads(source_description)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            described = None
+        if isinstance(described, list) and all(
+            isinstance(value, str) for value in described
+        ):
+            urls.update(value.strip() for value in described if value.strip())
+    return urls
+
+
 def validate_atomic_research_result(
     payload: dict[str, Any],
     *,
     episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
+    attention_reader: (
+        Callable[[str, str, str, str], dict[str, Any] | None] | None
+    ) = None,
 ) -> dict[str, Any]:
     """Validate exact per-Think status and project-scoped citation/episode refs."""
 
     if not isinstance(payload, dict):
         raise AtomicResearchError("atomic_research_result_payload_invalid")
     project = project_id(str(payload.get("projectId") or ""))
+    deck_id = str(payload.get("deckId") or "").strip()
     assessment_id = str(payload.get("assessmentId") or "").strip()
     source_run_id = str(payload.get("sourceRunId") or "").strip()
     child_run_id = str(payload.get("childRunId") or "").strip()
+    knowgraph_card_id = str(payload.get("knowGraphCardId") or "").strip()
     expected_ids = payload.get("thinkMemoryIds")
     raw_output = payload.get("output")
     if (
-        not assessment_id or not source_run_id or not child_run_id
+        not deck_id or not assessment_id or not source_run_id or not child_run_id
+        or not knowgraph_card_id
         or not isinstance(expected_ids, list)
         or not 1 <= len(expected_ids) <= ATOMIC_RESEARCH_MAX_SELECTED
         or any(not isinstance(value, str) or not value.strip() for value in expected_ids)
@@ -2891,10 +3184,10 @@ def validate_atomic_research_result(
             all_urls.add(url)
         if len(all_urls) > 4:
             raise AtomicResearchError("atomic_research_primary_source_limit_exceeded")
-        if status in {"supported", "contradicted"} and (
-            not normalized_citations or not episode_ids
-        ):
+        if status in {"supported", "contradicted"} and not normalized_citations:
             raise AtomicResearchError("atomic_research_supported_references_required")
+        if episode_ids and not normalized_citations:
+            raise AtomicResearchError("atomic_research_result_contract_invalid")
         for episode_id in episode_ids:
             if episode_id not in all_episode_ids:
                 all_episode_ids.append(episode_id)
@@ -2910,7 +3203,44 @@ def validate_atomic_research_result(
     if episode_reader is None:
         from app.python_models.data_anchor import read_knowgraph_episodes_exact
         episode_reader = read_knowgraph_episodes_exact
-    episodes = episode_reader(project, all_episode_ids) if all_episode_ids else []
+    settlement: dict[str, Any] | None = None
+    cited_results = [item for item in normalized if item["citations"]]
+    if cited_results:
+        if attention_reader is None:
+            from app.python_models.card_domain import (
+                read_atomic_research_write_event,
+            )
+            attention_reader = read_atomic_research_write_event
+        event, episodes = _wait_for_atomic_research_write_settlement(
+            project=project,
+            deck_id=deck_id,
+            child_run_id=child_run_id,
+            knowgraph_card_id=knowgraph_card_id,
+            attention_reader=attention_reader,
+            episode_reader=episode_reader,
+        )
+        settled_ids = [str(episodes[0]["uuid"])]
+        for item in cited_results:
+            if item["episodeUuids"] and set(item["episodeUuids"]) != set(
+                settled_ids
+            ):
+                raise AtomicResearchError(
+                    "atomic_research_episode_reference_mismatch"
+                )
+            item["episodeUuids"] = list(settled_ids)
+        all_episode_ids = list(settled_ids)
+        settlement = {
+            "eventId": str(event["eventId"]),
+            "phase": "completed",
+            "episodeUuids": list(settled_ids),
+        }
+    else:
+        episodes = (
+            _wait_for_atomic_research_episodes(
+                project, all_episode_ids, episode_reader,
+            )
+            if all_episode_ids else []
+        )
     by_id = {
         str(item.get("uuid") or ""): item
         for item in episodes if isinstance(item, dict) and item.get("uuid")
@@ -2918,13 +3248,13 @@ def validate_atomic_research_result(
     if set(by_id) != set(all_episode_ids):
         raise AtomicResearchError("atomic_research_episode_reference_invalid")
     for item in normalized:
-        if item["status"] not in {"supported", "contradicted"}:
+        if not item["citations"]:
             continue
         citation_urls = {citation["url"] for citation in item["citations"]}
-        episode_urls = {
-            str(by_id[episode_id].get("source_url") or "").strip()
+        episode_urls = set().union(*(
+            _atomic_episode_citation_urls(by_id[episode_id])
             for episode_id in item["episodeUuids"]
-        }
+        ))
         if not citation_urls <= episode_urls:
             raise AtomicResearchError("atomic_research_citation_episode_mismatch")
     ordered = sorted(normalized, key=lambda item: expected_ids.index(item["thinkMemoryId"]))
@@ -2935,14 +3265,35 @@ def validate_atomic_research_result(
         "childRunId": child_run_id,
         "results": ordered,
     }
+    status_labels = {
+        "supported": "Supported",
+        "contradicted": "Contradicted",
+        "source-unavailable": "Source unavailable",
+    }
+    chat_lines = ["Research result"]
+    for item in ordered:
+        chat_lines.extend((
+            "",
+            f"{status_labels[item['status']]}: {item['summary']}",
+        ))
+        if item["citations"]:
+            chat_lines.append("")
+            chat_lines.append("Sources:")
+            for citation in item["citations"]:
+                date = (
+                    f" ({citation['publishedAt']})"
+                    if citation["publishedAt"] else ""
+                )
+                chat_lines.append(
+                    f"- [{citation['title']}]({citation['url']}){date}"
+                )
     return {
         "ok": True,
         "result": normalized_result,
         "citationCount": sum(len(item["citations"]) for item in ordered),
         "episodeCount": len(all_episode_ids),
-        "sharedChatText": json.dumps(
-            normalized_result, ensure_ascii=False, separators=(",", ":")
-        ),
+        "sharedChatText": "\n".join(chat_lines),
+        **({"settlement": settlement} if settlement is not None else {}),
     }
 
 
@@ -3113,9 +3464,25 @@ def decide_main_graph_attention(
         raise JevAttentionError("invalid", "jev_attention_response_invalid")
     decision = _validate_jev_attention_response(response, attention_choices)
     if atomic_research_frame is not None:
-        decision["atomicResearch"] = validate_atomic_research_jev_response(
-            response, atomic_research_frame
-        )
+        try:
+            decision["atomicResearch"] = validate_atomic_research_jev_response(
+                response, atomic_research_frame
+            )
+        except AtomicResearchError as error:
+            decision["atomicResearch"] = _terminal_atomic_research_assessment(
+                atomic_research_frame,
+                status="invalid",
+                failure_reason=str(error) or "atomic_research_jev_response_invalid",
+            )
+        except JevAttentionError as error:
+            decision["atomicResearch"] = _terminal_atomic_research_assessment(
+                atomic_research_frame,
+                status=(
+                    "invalid" if error.status == "invalid"
+                    else "source-unavailable"
+                ),
+                failure_reason=error.error_code,
+            )
     return decision
 
 
@@ -4341,6 +4708,16 @@ def _llm_structured_contract(
         "natural directed relationships that actually occur in this pair. Do not browse, "
         "research, continue the thesis, read historical Think bodies, or split the pair "
         "into multiple memories.\n"
+        "NAMED ENTITY BOUNDARY:\n"
+        "Keep each central organization, person, product, or asset as a standalone proper-name "
+        "entity. Never concatenate a named entity with its metric, action, attribute, thesis, "
+        "or relationship to form a node name. Represent `Rocket Lab` and `Launch cadence` as "
+        "separate concepts rather than `Rocket Lab launch cadence`; express their meaning with "
+        "a directed relationship. Apply the same rule to explicitly discussed companies such "
+        "as `Redwire`, `RTX`, and `Parsons`. If a named company is only an unverified candidate "
+        "in the pair, retain it as a standalone endpoint linked to the hypothesis with "
+        "ASSOCIATED_WITH. This records subject framing, not a factual supplier relationship; "
+        "do not use PROVIDES or another factual predicate unless the pair establishes it.\n"
         "CANONICAL SUBJECT DIRECTORY:\n"
         "canonical_subject_directory is the complete compact write-time directory of current "
         "ThinkGraph and KnowGraph subjects. Use model reasoning to reuse an exact supplied "
@@ -5244,7 +5621,6 @@ def inspect(project: str, native_id: str) -> dict:
 
 def private_operation(project: str, operation: str, arguments: dict) -> dict:
     """Application operations outside model tool grants."""
-    from .thinkgraph import validate_cognition
     project = project_id(project)
     native_id = str(arguments.get("nativeId") or "")
     if operation == "retire":
@@ -5259,25 +5635,7 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict:
     result = inspect(project, native_id)
     if operation == "inspect":
         return result
-    if "memory" not in result:
-        raise ValueError("native_thinkgraph_question_required")
-    native_id = result["memory"]["id"]
-    if operation != "attach_answer":
-        raise ValueError("thinkgraph_operation_unavailable")
-    with _lock:
-        service = get_service()
-        record = service.store.get_memory(native_id)
-        cognition = dict(record.metadata.get("cognition") or {})
-        if cognition.get("memoryCategory") != "question":
-            raise ValueError("native_thinkgraph_question_required")
-        evidence = arguments["evidence"]
-        refs = list(cognition.get("answerRefs", []))
-        if evidence not in refs:
-            refs.append(evidence)
-        cognition.update(answerRefs=refs, questionStatus=arguments["status"])
-        record.metadata = {**record.metadata, "cognition": validate_cognition(cognition, project)}
-        service.store.add_memory(record)
-        return inspect(project, native_id)
+    raise ValueError("thinkgraph_operation_unavailable")
 
 
 def _bounded_entity_projection(

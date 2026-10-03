@@ -20,7 +20,37 @@ const cesiumPlugin = typeof cesiumPluginModule === 'function'
 
 const WORLDVIEW_CSS_ID = 'virtual:worldview-native-css';
 const WORLDVIEW_CSS_RESOLVED_ID = `\0${WORLDVIEW_CSS_ID}`;
+const WORLDVIEW_MOUNT_ID = 'virtual:worldview-native-mount';
+const WORLDVIEW_MOUNT_RESOLVED_ID = `\0${WORLDVIEW_MOUNT_ID}`;
+const WORLDVIEW_BUNDLED_MOUNT_ID = 'virtual:worldview-native-mount-bundled';
+const WORLDVIEW_PUBLIC_MOUNT_URL = 'http://127.0.0.1:4174/src/app/mount.js';
 const WORLDVIEW_SELECTOR = '#worldview-native-root';
+
+export function worldviewNativeMountModuleSource(command: 'serve' | 'build'): string {
+  const target = command === 'serve'
+    ? WORLDVIEW_PUBLIC_MOUNT_URL
+    : WORLDVIEW_BUNDLED_MOUNT_ID;
+  const ignore = command === 'serve' ? '/* @vite-ignore */ ' : '';
+  return `export const importNativeWorldViewMount = () => import(${ignore}${JSON.stringify(target)});`;
+}
+
+function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
+  return {
+    name: 'worldview-native-mount-module',
+    resolveId(id) {
+      if (id === WORLDVIEW_MOUNT_ID) return WORLDVIEW_MOUNT_RESOLVED_ID;
+      if (id === WORLDVIEW_BUNDLED_MOUNT_ID) {
+        return path.resolve(worldviewRoot, 'src/app/mount.js');
+      }
+      return null;
+    },
+    load(id) {
+      return id === WORLDVIEW_MOUNT_RESOLVED_ID
+        ? worldviewNativeMountModuleSource(command)
+        : null;
+    },
+  };
+}
 
 function splitSelectors(selectorList: string): string[] {
   const selectors: string[] = [];
@@ -130,7 +160,7 @@ ${WORLDVIEW_SELECTOR}, ${WORLDVIEW_SELECTOR} * { box-sizing: border-box; }
   };
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const vendorEnv = loadEnv(mode, worldviewRoot, '');
   const applicationProviderEnv = loadEnv(mode, path.resolve(repoRoot, 'apps/backend'), [
     'GOOGLE_MAPS_API_KEY', 'CESIUM_ION_TOKEN',
@@ -145,6 +175,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       worldviewNativeCssPlugin(),
+      worldviewNativeMountPlugin(command),
       cesiumPlugin({
         rebuildCesium: true,
         cesiumBuildRootPath: path.resolve(worldviewRoot, 'node_modules/cesium/Build'),

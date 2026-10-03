@@ -35,6 +35,56 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
+/** Render the exact saved research receipt as chat prose; its schema remains in Run data. */
+export function chatDisplayText(value: unknown): string {
+  const text = safeText(value);
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return text;
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      schemaVersion?: unknown;
+      results?: unknown;
+    };
+    if (
+      parsed.schemaVersion !== 'atomic-research-result.v1'
+      || !Array.isArray(parsed.results)
+    ) return text;
+    const lines = ['Research result'];
+    for (const raw of parsed.results) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return text;
+      const item = raw as Record<string, unknown>;
+      const summary = typeof item.summary === 'string' ? item.summary.trim() : '';
+      const status = typeof item.status === 'string' ? item.status : '';
+      if (!summary || !['supported', 'contradicted', 'source-unavailable'].includes(status)) {
+        return text;
+      }
+      const label = status === 'supported'
+        ? 'Supported'
+        : status === 'contradicted'
+          ? 'Contradicted'
+          : 'Source unavailable';
+      lines.push('', `${label}: ${summary}`);
+      const citations = Array.isArray(item.citations) ? item.citations : [];
+      const formatted = citations.flatMap((citation) => {
+        if (!citation || typeof citation !== 'object' || Array.isArray(citation)) return [];
+        const source = citation as Record<string, unknown>;
+        const title = typeof source.title === 'string' ? source.title.trim() : '';
+        const url = typeof source.url === 'string' ? source.url.trim() : '';
+        const date = typeof source.publishedAt === 'string' && source.publishedAt.trim()
+          ? ` (${source.publishedAt.trim()})`
+          : '';
+        return title && /^https?:\/\/\S+$/.test(url)
+          ? [`- ${title}${date} — ${url}`]
+          : [];
+      });
+      if (formatted.length) lines.push('', 'Sources:', ...formatted);
+    }
+    return lines.join('\n');
+  } catch {
+    return text;
+  }
+}
+
 type BuilderChatMessage = {
   role: "assistant" | "user";
   text: string;
@@ -50,6 +100,7 @@ function shouldRenderMessage(message: BuilderChatMessage): boolean {
 type ComposerImage = { name: string; mediaType: string; dataUrl: string; kind: "user-upload" };
 const COMPOSER_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 const MAX_COMPOSER_IMAGE_BYTES = 10 * 1024 * 1024;
+const MESSAGE_LANE_MAX_WIDTH = 760;
 
 function readComposerImage(file: File): Promise<ComposerImage> {
   if (!COMPOSER_IMAGE_TYPES.includes(file.type)) {
@@ -94,7 +145,7 @@ function BuilderChatMessageBubble({
   mainCardId?: string;
   message: BuilderChatMessage;
 }) {
-  const text = safeText(message.text);
+  const text = chatDisplayText(message.text);
   const isUser = message.role !== "assistant";
   const horizontalPadding = isUser ? 30 : 32;
   const maximumBubbleWidth = laneWidth == null
@@ -346,7 +397,10 @@ export default function BuilderChat({
       // Pretext needs the actual text lane width. This observes the one
       // continuously-resizable chat viewport; Virtuoso remains the sole row
       // height/scroll measurement owner.
-      const nextWidth = Math.max(0, viewport.clientWidth - 40);
+      const nextWidth = Math.max(
+        0,
+        Math.min(MESSAGE_LANE_MAX_WIDTH, viewport.clientWidth - 40),
+      );
       setMessageLaneWidth((current) => current === nextWidth ? current : nextWidth);
     };
     syncWidth();
@@ -360,6 +414,9 @@ export default function BuilderChat({
       data-testid="builder-chat-message-row"
       style={{
         boxSizing: "border-box",
+        width: "100%",
+        maxWidth: MESSAGE_LANE_MAX_WIDTH + 40,
+        margin: "0 auto",
         padding: `${index === 0 ? 16 : 7}px 20px ${
           index === renderableMessages.length - 1 ? 18 : 7
         }px`,

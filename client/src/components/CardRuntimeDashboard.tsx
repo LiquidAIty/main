@@ -20,6 +20,13 @@ type RunSummary = {
   preparationState?: string | null;
   preparationError?: string | null;
   nativeRunId?: string | number | null;
+  runtimeKind?: string | null;
+  runtimeMode?: string | null;
+  runtimeProfile?: string | null;
+  effectiveProvider?: string | null;
+  executionAuthorityFingerprint?: string | null;
+  cachedTokens?: number | null;
+  reasoningTokens?: number | null;
 };
 
 type RunDetail = RunSummary & {
@@ -104,6 +111,35 @@ function money(value: number | null | undefined): string {
   return value === null || value === undefined || !Number.isFinite(value)
     ? 'Unavailable'
     : `$${value.toFixed(6)}`;
+}
+
+function elapsed(run: RunSummary): number | null {
+  if (typeof run.totalElapsedMs === 'number' && Number.isFinite(run.totalElapsedMs)) {
+    return run.totalElapsedMs;
+  }
+  const accepted = Date.parse(run.acceptedAt || run.createdAt || '');
+  const finished = Date.parse(run.finishedAt || '');
+  return Number.isFinite(accepted) && Number.isFinite(finished)
+    ? Math.max(0, finished - accepted)
+    : null;
+}
+
+function average(values: Array<number | null | undefined>): number | null {
+  const known = values.filter((value): value is number => (
+    typeof value === 'number' && Number.isFinite(value)
+  ));
+  return known.length ? known.reduce((total, value) => total + value, 0) / known.length : null;
+}
+
+function resultSummary(run: RunDetail): string {
+  const output = String(run.output || '').replace(/\s+/g, ' ').trim();
+  if (output) return output.length > 180 ? `${output.slice(0, 177)}...` : output;
+  const error = String(run.errorSummary || run.errorCode || '').replace(/\s+/g, ' ').trim();
+  if (error) return error.length > 180 ? `${error.slice(0, 177)}...` : error;
+  if (!TERMINAL_STATES.has(run.state)) return `Run ${run.state || 'in progress'}; no terminal result yet.`;
+  return run.state === 'completed'
+    ? 'Completed; no saved result text was retained.'
+    : `${run.state || 'Run ended'}; no result summary was retained.`;
 }
 
 function JsonDetails({ label, value }: { label: string; value: unknown }) {
@@ -227,6 +263,42 @@ function AttemptWaterfall({ attempts }: { attempts: Record<string, unknown>[] })
   );
 }
 
+function ToolReceiptLog({ events, attempts }: {
+  events: Record<string, unknown>[];
+  attempts: Record<string, unknown>[];
+}) {
+  const source = events.length
+    ? events
+    : attempts.filter((attempt) => attempt.kind === 'tool');
+  const grouped = new Map<string, { name: string; status: string; count: number }>();
+  source.forEach((event) => {
+    const name = String(event.toolName || event.name || 'Unnamed tool').trim() || 'Unnamed tool';
+    const status = String(event.phase || event.status || 'observed').trim() || 'observed';
+    const key = `${name}\u0000${status}`;
+    const current = grouped.get(key);
+    grouped.set(key, { name, status, count: (current?.count || 0) + 1 });
+  });
+  if (!grouped.size) {
+    return (
+      <div style={{ color: '#71878D', fontSize: 10.5 }}>
+        No canonical tool event was observed. Generic Hermes tool bodies are not reconstructed from output text.
+      </div>
+    );
+  }
+  return (
+    <div aria-label="Observed tool receipt metadata" style={{ display: 'grid', gap: 4 }}>
+      {[...grouped.values()].map((item) => (
+        <div key={`${item.name}-${item.status}`} style={{ color: '#9FB2B7', fontSize: 10.5 }}>
+          {item.name} · {item.status}{item.count > 1 ? ` · ${item.count} calls` : ''}
+        </div>
+      ))}
+      <div style={{ color: '#71878D', fontSize: 9.5 }}>
+        Count and name metadata only; tool arguments and results are never rendered here.
+      </div>
+    </div>
+  );
+}
+
 export function CardRuntimeDashboard({ projectId, deckId, cardId }: Props) {
   const [history, setHistory] = useState<HistoryPayload | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
@@ -340,6 +412,30 @@ export function CardRuntimeDashboard({ projectId, deckId, cardId }: Props) {
         ? attempt.observationGap : 0
     )),
   ), [latest?.attemptEvents, latest?.observationGap]);
+  const currentSummary = useMemo(() => (
+    (history?.runs || []).find((run) => run.runId === latest?.runId) || null
+  ), [history?.runs, latest?.runId]);
+  const comparableRuns = useMemo(() => {
+    const fingerprint = currentSummary?.executionAuthorityFingerprint?.trim();
+    if (!fingerprint) return [];
+    return (history?.runs || []).filter((run) => (
+      run.runId !== latest?.runId
+      && run.state === 'completed'
+      && run.executionAuthorityFingerprint === fingerprint
+    )).slice(0, 5);
+  }, [currentSummary?.executionAuthorityFingerprint, history?.runs, latest?.runId]);
+  const comparableBaseline = useMemo(() => ({
+    elapsedMs: average(comparableRuns.map(elapsed)),
+    inputTokens: average(comparableRuns.map((run) => run.inputTokens)),
+    outputTokens: average(comparableRuns.map((run) => run.outputTokens)),
+    cachedTokens: average(comparableRuns.map((run) => run.cachedTokens)),
+    reasoningTokens: average(comparableRuns.map((run) => run.reasoningTokens)),
+    costUsd: average(comparableRuns.map((run) => run.costUsd)),
+  }), [comparableRuns]);
+  const lowestElapsedComparable = useMemo(() => comparableRuns
+    .map((run) => ({ run, elapsedMs: elapsed(run) }))
+    .filter((item): item is { run: RunSummary; elapsedMs: number } => item.elapsedMs !== null)
+    .sort((left, right) => left.elapsedMs - right.elapsedMs)[0] || null, [comparableRuns]);
 
   return (
     <section aria-label="Card Runtime observations" data-testid="card-runtime-dashboard"
@@ -347,7 +443,7 @@ export function CardRuntimeDashboard({ projectId, deckId, cardId }: Props) {
         borderRadius: 8, background: '#202827' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div>
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 700 }}>Last attempt</div>
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 700 }}>Last Run</div>
           <div style={{ color: '#71878D', fontSize: 10 }}>Accepted request, canonical Run when present, and passive observations</div>
         </div>
         <button type="button" onClick={() => void load()} disabled={status === 'loading'}>
@@ -372,7 +468,7 @@ export function CardRuntimeDashboard({ projectId, deckId, cardId }: Props) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 8 }}>
             <div style={{ padding: 10, border: '1px solid #3B5354', borderRadius: 8,
               background: 'linear-gradient(135deg, #1A2928, #17201F)' }}>
-              <div style={{ color: '#79CFC5', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 0.8 }}>Last attempt</div>
+              <div style={{ color: '#79CFC5', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 0.8 }}>Last Run</div>
               <div style={{ color: '#E4ECEA', fontSize: 12, fontWeight: 700 }}>{latest.state}</div>
               <code style={{ color: '#91A9B8', fontSize: 9.5 }}>{latest.runId}</code>
               <div style={{ color: '#AFC2C7', fontSize: 10.5, marginTop: 5 }}>
@@ -385,9 +481,25 @@ export function CardRuntimeDashboard({ projectId, deckId, cardId }: Props) {
                   : 'unavailable'}
               </div>
               <div style={{ color: '#71878D', fontSize: 9.5 }}>
-                {latest.model || 'model unavailable'} · {attemptTotals.count || 'LLM calls unavailable'}
+                {latest.effectiveProvider || latest.provider || 'provider unavailable'} · {latest.model || 'model unavailable'}
+                {' · '}{attemptTotals.count || 'LLM calls unavailable'}
                 {' · '}{latest.toolCallCount === null || latest.toolCallCount === undefined
                   ? 'tool calls unavailable' : `${latest.toolCallCount} tool call${latest.toolCallCount === 1 ? '' : 's'}`}
+              </div>
+              <div style={{ color: '#71878D', fontSize: 9.5 }}>
+                In {count(latest.inputTokens ?? attemptTotals.inputTokens)} · Out {count(latest.outputTokens ?? attemptTotals.outputTokens)}
+                {' · '}Cached {count(latest.cachedTokens ?? attemptTotals.cachedTokens)}
+                {' · '}Reasoning {count(latest.reasoningTokens ?? attemptTotals.reasoningTokens)}
+              </div>
+              <div style={{ color: '#71878D', fontSize: 9.5 }}>
+                {latest.attemptEvents?.length || 0} visible receipt{latest.attemptEvents?.length === 1 ? '' : 's'}
+                {' · '}observation gap {observationGap}
+                {' · '}{latest.modelFallbackOccurred
+                  ? `fallback: ${latest.modelFallbackReason || 'reason unavailable'}`
+                  : 'no fallback recorded'}
+              </div>
+              <div style={{ color: '#AFC2C7', fontSize: 10, marginTop: 5 }}>
+                {resultSummary(latest)}
               </div>
               {latest.errorCode || latest.errorSummary ? (
                 <div style={{ color: '#FFA2A2', fontSize: 9.5, marginTop: 3 }}>
@@ -397,18 +509,41 @@ export function CardRuntimeDashboard({ projectId, deckId, cardId }: Props) {
             </div>
             <div style={{ padding: 10, border: '1px solid #564B68', borderRadius: 8,
               background: 'linear-gradient(135deg, #282235, #1B1D26)' }}>
-              <div style={{ color: '#C6A7E5', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 0.8 }}>Comparison</div>
-              <div style={{ color: '#E7E0ED', fontSize: 12, fontWeight: 700, marginTop: 5 }}>
-                No comparable baseline
-              </div>
-              <div style={{ color: '#82758F', fontSize: 9.5, marginTop: 4 }}>
-                No explicit equivalent benchmark or task identity with matching input, configuration,
-                evidence cutoff, and success checks is retained. Card revision alone is not comparability.
-              </div>
+              <div style={{ color: '#C6A7E5', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 0.8 }}>Moving baseline / comparable low</div>
+              {comparableRuns.length ? (
+                <>
+                  <div style={{ color: '#E7E0ED', fontSize: 12, fontWeight: 700, marginTop: 5 }}>
+                    Moving baseline · {comparableRuns.length} same-authority Run{comparableRuns.length === 1 ? '' : 's'}
+                  </div>
+                  <div style={{ color: '#BBAECB', fontSize: 10.5, marginTop: 4 }}>
+                    {duration(comparableBaseline.elapsedMs)} avg wall · In {count(comparableBaseline.inputTokens)}
+                    {' · '}Out {count(comparableBaseline.outputTokens)} · {money(comparableBaseline.costUsd)} avg reported cost
+                  </div>
+                  <div style={{ color: '#82758F', fontSize: 9.5, marginTop: 4 }}>
+                    Cached {count(comparableBaseline.cachedTokens)} · Reasoning {count(comparableBaseline.reasoningTokens)}
+                    {lowestElapsedComparable
+                      ? ` · Lowest observed wall ${duration(lowestElapsedComparable.elapsedMs)} (${lowestElapsedComparable.run.runId})`
+                      : ' · Lowest observed wall unavailable'}
+                  </div>
+                  <div style={{ color: '#82758F', fontSize: 9.5, marginTop: 4 }}>
+                    Same saved execution-authority fingerprint; accounting comparison only, not a quality rank.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ color: '#E7E0ED', fontSize: 12, fontWeight: 700, marginTop: 5 }}>
+                    No comparable baseline
+                  </div>
+                  <div style={{ color: '#82758F', fontSize: 9.5, marginTop: 4 }}>
+                    No completed prior Run with the same saved execution-authority fingerprint is retained.
+                    Card revision alone is not comparability.
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <div style={{ color: '#71878D', fontSize: 10 }}>
-            Recent history is accounting only. No fastest, cheapest, best, or normal Run is inferred.
+            Recent history is accounting only. No task-quality rank, winner, or normal Run is inferred.
           </div>
           <details>
             <summary style={{ cursor: 'pointer', color: '#B9D0D6', fontSize: 11.5 }}>
@@ -514,11 +649,7 @@ export function CardRuntimeDashboard({ projectId, deckId, cardId }: Props) {
             {latest.jevDecisions?.length ? <JsonDetails label="Jev decisions and safe input receipts" value={latest.jevDecisions} /> : (
               <div style={{ color: '#71878D', fontSize: 10.5 }}>No Jev receipt was retained for this Run.</div>
             )}
-            {latest.toolEvents?.length ? <JsonDetails label="Observed tool-call log" value={latest.toolEvents} /> : (
-              <div style={{ color: '#71878D', fontSize: 10.5 }}>
-                No canonical tool event was observed. Generic Hermes tool bodies are not reconstructed from output text.
-              </div>
-            )}
+            <ToolReceiptLog events={latest.toolEvents || []} attempts={latest.attemptEvents || []} />
             <JsonDetails label="Identity, lineage, references, and artifacts" value={{
               runId: latest.runId,
               correlationId: latest.correlationId,

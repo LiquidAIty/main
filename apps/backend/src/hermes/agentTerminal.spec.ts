@@ -85,6 +85,7 @@ class FakeGatewayClient {
   private mcpReloaded = false;
   private voiceEnabled = false;
   private voiceTts = false;
+  private completedTurnIndex = 0;
   compressBarrier: Promise<void> | null = null;
   compressError: Error | null = null;
   compressResult: unknown = null;
@@ -138,6 +139,10 @@ class FakeGatewayClient {
       if (stored) this.activeStored = stored;
     }
     for (const handler of this.handlers) handler(event);
+  }
+
+  rotateStoredSession(storedSessionId: string) {
+    this.activeStored = storedSessionId;
   }
 
   async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -281,6 +286,7 @@ class FakeGatewayClient {
       const allowedTools = Array.isArray(params.allowed_tools)
         ? params.allowed_tools as string[]
         : ['card__canvas_inspect'];
+      const nativeRunId = `native-turn-${++this.completedTurnIndex}`;
       queueMicrotask(() => this.emitEvent({
         type: 'message.complete',
         session_id: sessionId,
@@ -290,6 +296,7 @@ class FakeGatewayClient {
           actualProvider: String(modelOnce.provider || 'openai-codex'),
           actualModel: String(modelOnce.model || 'gpt-5.6-sol'),
           exposedTools: ['memory', ...allowedTools],
+          nativeRunId,
         },
       }));
       return { status: 'streaming' } as T;
@@ -975,6 +982,34 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(methods.indexOf('session.compress')).toBeLessThan(methods.indexOf('prompt.submit'));
   });
 
+  it('refuses delayed turn-N compaction when a newer turn completes first', async () => {
+    const f = fixture();
+    f.resolveActiveContext.mockReturnValue(null);
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    const first = await f.manager.submit(f.owners[0], state.sessionId, 'turn N');
+    const firstGeneration = first.completedTurnGeneration!;
+    const firstNativeRunId = first.completedNativeRunId ?? null;
+
+    const newerTurn = f.manager.submit(f.owners[0], state.sessionId, 'turn N+1');
+    const delayedCompaction = f.manager.queueNativeContextCompaction(f.owners[0], {
+      ...state,
+      completedTurnGeneration: firstGeneration,
+      completedNativeRunId: firstNativeRunId,
+    });
+
+    await expect(newerTurn).resolves.toMatchObject({
+      completedTurnGeneration: firstGeneration + 1,
+      completedNativeRunId: 'native-turn-2',
+    });
+    await expect(delayedCompaction).resolves.toMatchObject({
+      status: 'unavailable',
+      errorCode: 'agent_terminal_context_compaction_turn_changed',
+    });
+    expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress')).toEqual([]);
+  });
+
   it('refuses native compaction non-fatally while an application Run is active', async () => {
     const f = fixture();
     const state = await f.manager.open(
@@ -1565,6 +1600,20 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const keyId = createHash('sha256').update(token).digest('hex');
     const signature = createHmac('sha256', token).update(payload).digest('hex');
 
+    const turnTaskPayload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: 'b'.repeat(32),
+      sourceStoredSessionId: 'ephemeral-turn-one',
+      tool: 'card__canvas_inspect',
+      arguments: { depth: 1 },
+    });
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      turnTaskPayload,
+      createHmac('sha256', token).update(turnTaskPayload).digest('hex'),
+    )).rejects.toThrow('hermes_card_tool_authentication_failed');
+
     await expect(f.manager.authenticateCardToolRequest(keyId, payload, signature)).resolves.toEqual({
       owner: f.owners[0],
       state,
@@ -1580,6 +1629,61 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     });
     await expect(f.manager.authenticateCardToolRequest(keyId, payload, signature))
       .rejects.toThrow('hermes_card_tool_authentication_failed');
+
+    const preCompressionSessionId = state.storedSessionId;
+    f.clients[0].rotateStoredSession('stored-after-compression');
+    const compressionRacePayload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: '8'.repeat(32),
+      sourceStoredSessionId: preCompressionSessionId,
+      tool: 'card__canvas_inspect',
+      arguments: { depth: 1 },
+    });
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      compressionRacePayload,
+      createHmac('sha256', token).update(compressionRacePayload).digest('hex'),
+    )).resolves.toEqual(expect.objectContaining({
+      state: expect.objectContaining({ storedSessionId: 'stored-after-compression' }),
+      canonicalToolName: 'canvas.inspect',
+      request: expect.objectContaining({ sourceStoredSessionId: preCompressionSessionId }),
+    }));
+
+    const changedArgumentsPayload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: 'c'.repeat(32),
+      sourceStoredSessionId: state.storedSessionId,
+      tool: 'card__canvas_inspect',
+      arguments: { depth: 2 },
+    });
+    const originalArgumentsPayload = changedArgumentsPayload.replace('"depth":2', '"depth":1');
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      changedArgumentsPayload,
+      createHmac('sha256', token).update(originalArgumentsPayload).digest('hex'),
+    )).rejects.toThrow('hermes_card_tool_authentication_failed');
+
+    for (const authorityOverride of [
+      { runId: 'different-run' },
+      { configurationFingerprint: '0'.repeat(64) },
+    ]) {
+      const authorityOverridePayload = JSON.stringify({
+        version: 1,
+        expiresAt: Math.floor(Date.now() / 1000) + 60,
+        nonce: 'd'.repeat(32),
+        sourceStoredSessionId: state.storedSessionId,
+        tool: 'card__canvas_inspect',
+        arguments: { depth: 1 },
+        ...authorityOverride,
+      });
+      await expect(f.manager.authenticateCardToolRequest(
+        keyId,
+        authorityOverridePayload,
+        createHmac('sha256', token).update(authorityOverridePayload).digest('hex'),
+      )).rejects.toThrow('hermes_card_tool_authentication_failed');
+    }
 
     const unknownPayload = JSON.stringify({
       version: 1,
@@ -1609,7 +1713,10 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       createHmac('sha256', token).update(rosterPayload).digest('hex'),
     )).resolves.toEqual(expect.objectContaining({
       owner: f.owners[0],
-      state,
+      state: expect.objectContaining({
+        sessionId: state.sessionId,
+        storedSessionId: 'stored-after-compression',
+      }),
       canonicalToolName: 'project_roster.resolve',
       request: expect.objectContaining({
         tool: 'project_roster.resolve',
@@ -1634,13 +1741,81 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       createHmac('sha256', token).update(observationPayload).digest('hex'),
     )).resolves.toEqual(expect.objectContaining({
       owner: f.owners[0],
-      state,
+      state: expect.objectContaining({
+        sessionId: state.sessionId,
+        storedSessionId: 'stored-after-compression',
+      }),
       canonicalToolName: 'runtime.observe_attempt',
       request: expect.objectContaining({
         tool: 'runtime.observe_attempt',
         arguments: { attempt: expect.objectContaining({ eventId: 'llm:one:completed' }) },
       }),
     }));
+  });
+
+  it('authorizes an exact offered dynamic tool only for its current staged Run', async () => {
+    const f = fixture();
+    const baseTools = await f.resolveCardTools(f.owners[0], f.cards[0]);
+    f.resolveCardTools.mockResolvedValue({
+      ...baseTools,
+      enabledTools: ['canvas.inspect', 'research_atomic_thinks'],
+      presentedTools: ['canvas.inspect', 'research_atomic_thinks'],
+      pluginTools: [
+        ...baseTools.pluginTools,
+        {
+          canonicalName: 'research_atomic_thinks',
+          hermesName: 'card__research_atomic_thinks',
+          description: 'Research one exact offered Think.',
+          inputSchema: { type: 'object', properties: {} },
+        },
+      ],
+    });
+    f.resolveActiveContext.mockReturnValue({
+      runId: 'run-with-offer',
+      conversationId: 'conversation-one',
+      authorizedCanonicalTools: ['canvas.inspect', 'research_atomic_thinks'],
+    });
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    const token = (f.spawnGateway.mock.calls[0][2].env as Record<string, string>)
+      .HERMES_DASHBOARD_SESSION_TOKEN;
+    const keyId = createHash('sha256').update(token).digest('hex');
+    const envelope = (nonce: string) => JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce,
+      sourceStoredSessionId: state.storedSessionId,
+      tool: 'card__research_atomic_thinks',
+      arguments: { thinkMemoryIds: ['mem-offered'] },
+    });
+
+    const offeredPayload = envelope('1'.repeat(32));
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      offeredPayload,
+      createHmac('sha256', token).update(offeredPayload).digest('hex'),
+    )).resolves.toEqual(expect.objectContaining({
+      canonicalToolName: 'research_atomic_thinks',
+      request: expect.objectContaining({
+        tool: 'card__research_atomic_thinks',
+        arguments: { thinkMemoryIds: ['mem-offered'] },
+      }),
+    }));
+
+    // The same saved tool stays registered, but a later Run that did not offer
+    // it must reject a newly signed call instead of inheriting prior authority.
+    f.resolveActiveContext.mockReturnValue({
+      runId: 'run-without-offer',
+      conversationId: 'conversation-one',
+      authorizedCanonicalTools: ['canvas.inspect'],
+    });
+    const stalePayload = envelope('2'.repeat(32));
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      stalePayload,
+      createHmac('sha256', token).update(stalePayload).digest('hex'),
+    )).rejects.toThrow('hermes_card_tool_authentication_failed:run_authorization');
   });
 
   it('resolves a verified native Magnetic worker claim to one existing saved Card authority', async () => {

@@ -135,8 +135,8 @@ export type GraphProjectionNode = {
   qualityState?: string;
   productionPath?: string;
   retrievalReason?: string;
-  material_kind?: 'solarpunk';
-  material_role?: GraphNodeMaterialRole;
+  material_kind?: 'solarpunk' | 'joined-cyber';
+  material_role?: GraphNodeMaterialRole | 'PAIRED_CYBER_MATERIAL';
   material_blue?: string;
   material_orange?: string;
   material_surface?: string;
@@ -347,6 +347,26 @@ function solarpunkMaterialFields(
   };
 }
 
+function joinedCyberMaterialFields(
+  source: 'think' | 'know' | 'paired',
+  thinkActive = false,
+  knowActive = false,
+  colors: SolarpunkColors = DEFAULT_JOINED_CYBER_COLORS,
+): Pick<GraphProjectionNode,
+  | 'material_kind'
+  | 'material_role'
+  | 'material_blue'
+  | 'material_orange'
+  | 'material_surface'
+  | 'material_think_active'
+  | 'material_know_active'> {
+  return {
+    ...solarpunkMaterialFields(source, thinkActive, knowActive, colors),
+    material_kind: 'joined-cyber',
+    material_role: source === 'paired' ? 'PAIRED_CYBER_MATERIAL' : materialRole(source),
+  };
+}
+
 function nativeMemberKey(authority: GraphAuthority, nativeId: string): string {
   return `${authority}:${nativeId}`;
 }
@@ -397,7 +417,7 @@ function presentationNode(
     id: visualId,
     canonicalId: undefined,
     authority: 'joined',
-    ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
+    ...joinedCyberMaterialFields(sourceKind, thinkActive, knowActive),
     properties: {
       ...(primary.node.properties || {}),
       attentionActive: active.length > 0,
@@ -1052,7 +1072,7 @@ export function composeJevAttentionPresentation(
         : variants.some(variant => variant.authority === 'knowgraph'
           && isAttentionActive(variant.node));
       const sourceFields = {
-        ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
+        ...joinedCyberMaterialFields(sourceKind, thinkActive, knowActive),
         community_id: `jev-source-${sourceKind}`,
         properties: {
           ...(node.properties || {}),
@@ -1314,10 +1334,16 @@ type GraphPresentationPreferences = {
   solarpunkColors: SolarpunkColors;
 };
 
+const SOLARPUNK_EDGE_BLUE = '#3979E8';
 const DEFAULT_SOLARPUNK_COLORS: SolarpunkColors = {
-  think: GRAPH_THEME.accent.primary,
+  think: GRAPH_THEME.accent.memory,
   know: GRAPH_THEME.accent.solar,
-  surface: GRAPH_THEME.accent.memory,
+  surface: GRAPH_THEME.surface.base,
+};
+const DEFAULT_JOINED_CYBER_COLORS: SolarpunkColors = {
+  think: SOLARPUNK_EDGE_BLUE,
+  know: GRAPH_THEME.accent.solar,
+  surface: GRAPH_THEME.surface.base,
 };
 const NATIVE_LAYOUTS = new Set<NativeLayout>([
   'compact', 'original', 'communities', 'radial', 'galaxy',
@@ -1367,6 +1393,9 @@ function safePresentationPreferences(
     const rawColors = parsed.solarpunkColors && typeof parsed.solarpunkColors === 'object'
       ? parsed.solarpunkColors as Partial<SolarpunkColors>
       : {};
+    const defaultColors = authority === 'joined'
+      ? DEFAULT_JOINED_CYBER_COLORS
+      : DEFAULT_SOLARPUNK_COLORS;
     return {
       ...(NATIVE_LAYOUTS.has(parsed.layout) ? { layout: parsed.layout } : {}),
       ...(NATIVE_STYLES.has(parsed.style) ? { style: parsed.style } : {}),
@@ -1374,11 +1403,11 @@ function safePresentationPreferences(
       ...(settings ? { settings } : {}),
       solarpunkColors: {
         think: SOLARPUNK_HEX.test(String(rawColors.think || ''))
-          ? String(rawColors.think) : DEFAULT_SOLARPUNK_COLORS.think,
+          ? String(rawColors.think) : defaultColors.think,
         know: SOLARPUNK_HEX.test(String(rawColors.know || ''))
-          ? String(rawColors.know) : DEFAULT_SOLARPUNK_COLORS.know,
+          ? String(rawColors.know) : defaultColors.know,
         surface: SOLARPUNK_HEX.test(String(rawColors.surface || ''))
-          ? String(rawColors.surface) : DEFAULT_SOLARPUNK_COLORS.surface,
+          ? String(rawColors.surface) : defaultColors.surface,
       },
     };
   } catch {
@@ -1388,6 +1417,14 @@ function safePresentationPreferences(
 
 function rendererNativeStyle(style: NativeStyle): RendererNativeStyle {
   return style === 'solarpunk' ? 'cyber' : style;
+}
+
+function initialPresentationStyle(
+  authority: GraphSurfaceAuthority,
+  savedStyle: NativeStyle | undefined,
+): NativeStyle {
+  if (authority === 'joined' && (!savedStyle || savedStyle === 'solarpunk')) return 'cyber';
+  return savedStyle || 'solarpunk';
 }
 
 function withoutSolarpunkMaterial(node: GraphProjectionNode): GraphProjectionNode {
@@ -1405,12 +1442,11 @@ function withoutSolarpunkMaterial(node: GraphProjectionNode): GraphProjectionNod
 
 function solarpunkEdgeFields(
   authority: GraphAuthority,
-  colors: SolarpunkColors,
 ): Pick<GraphProjectionEdge, 'material_kind' | 'material_authority' | 'material_color'> {
   return {
     material_kind: 'solarpunk',
     material_authority: authority,
-    material_color: authority === 'thinkgraph' ? colors.think : colors.know,
+    material_color: SOLARPUNK_EDGE_BLUE,
   };
 }
 
@@ -1641,13 +1677,16 @@ export function NativeGraphProjectionSurface({
     savedPresentation.settings || {},
   );
   const [layout, setLayout] = useState<NativeLayout>(savedPresentation.layout || 'compact');
-  const [style, setStyle] = useState<NativeStyle>(savedPresentation.style || 'solarpunk');
+  const [style, setStyle] = useState<NativeStyle>(
+    initialPresentationStyle(authority, savedPresentation.style),
+  );
   const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(
     savedPresentation.physicsProfile || 'galaxy',
   );
   const [solarpunkColors, setSolarpunkColors] = useState<SolarpunkColors>(
     savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS,
   );
+  const [appliedPresetNodeSize, setAppliedPresetNodeSize] = useState<number | null>(null);
   const [focusTrail, setFocusTrail] = useState<ManualFocusEntry[]>([]);
   const [expandedFocusResult, setExpandedFocusResult] = useState<ManualFocusEntry | null>(null);
   const [focusRelease, setFocusRelease] = useState<FocusReleaseView | null>(null);
@@ -1812,7 +1851,7 @@ export function NativeGraphProjectionSurface({
     const variants = activeJoinedPresentation?.nodeVariants.get(visualNodeId) || [];
     const nativeMembers = variants.map((variant): ContextualNodeNativeMember => ({
       authority: variant.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph',
-      nativeId: String(variant.node.canonicalId || variant.node.id),
+      nativeId: String(variant.node.id),
     })).filter((member, index, all) => all.findIndex(candidate => (
       candidate.authority === member.authority && candidate.nativeId === member.nativeId
     )) === index);
@@ -2139,7 +2178,7 @@ export function NativeGraphProjectionSurface({
         },
       });
       const restoredLayout = savedPresentation.layout || 'compact';
-      const restoredStyle = savedPresentation.style || 'solarpunk';
+      const restoredStyle = initialPresentationStyle(authority, savedPresentation.style);
       const restoredPhysics = savedPresentation.physicsProfile || 'galaxy';
       const defaults = graph.setPreset(restoredLayout);
       const restoredSettings = {
@@ -2161,7 +2200,8 @@ export function NativeGraphProjectionSurface({
   }, [authority]);
 
   useEffect(() => {
-    graphRef.current?.setThemeColors(style === 'solarpunk' ? {
+    graphRef.current?.setThemeColors(style === 'solarpunk'
+      || (authority === 'joined' && style === 'cyber') ? {
       material_blue: solarpunkColors.think,
       material_orange: solarpunkColors.know,
       material_surface: solarpunkColors.surface,
@@ -2170,7 +2210,7 @@ export function NativeGraphProjectionSurface({
       surface: solarpunkColors.surface,
       label: GRAPH_THEME.surface.text,
     } : {});
-  }, [solarpunkColors, style]);
+  }, [authority, solarpunkColors, style]);
 
   useEffect(() => {
     try {
@@ -2296,7 +2336,8 @@ export function NativeGraphProjectionSurface({
       ...(scene || {}),
       nodes: sceneNodes.map((rawNode) => {
         const node = rawNode as GraphProjectionNode;
-        if (style !== 'solarpunk') return withoutSolarpunkMaterial(node);
+        const joinedCyber = authority === 'joined' && style === 'cyber';
+        if (style !== 'solarpunk' && !joinedCyber) return withoutSolarpunkMaterial(node);
         const variants = authority === 'joined'
           ? activeJoinedPresentation?.nodeVariants.get(node.id) || []
           : [{ authority, node }] as JoinedGraphNodeVariant[];
@@ -2313,7 +2354,9 @@ export function NativeGraphProjectionSurface({
             && isAttentionActive(variant.node));
         return {
           ...node,
-          ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors),
+          ...(joinedCyber
+            ? joinedCyberMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)
+            : solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)),
         };
       }),
       links: sceneLinks.map(rawEdge => {
@@ -2324,8 +2367,9 @@ export function NativeGraphProjectionSurface({
         const edgeAuthority = authority === 'joined'
           ? activeJoinedPresentation?.edgeVariants.get(String(semanticEdge.id))?.authority
           : authority;
-        const materialEdge = style === 'solarpunk' && edgeAuthority
-          ? { ...semanticEdge, ...solarpunkEdgeFields(edgeAuthority, solarpunkColors) }
+        const materialEdge = (style === 'solarpunk'
+          || (authority === 'joined' && style === 'cyber')) && edgeAuthority
+          ? { ...semanticEdge, ...solarpunkEdgeFields(edgeAuthority) }
           : withoutSolarpunkEdgeMaterial(semanticEdge);
         if (edgeAuthority !== 'thinkgraph') {
           return { ...materialEdge, relation: materialEdge.predicate };
@@ -2608,6 +2652,7 @@ export function NativeGraphProjectionSurface({
             </select></label>
             <label>Layout<select aria-label="Layout" value={layout} onChange={event => {
               recordManualPresentationChange('layout');
+              setAppliedPresetNodeSize(null);
               const next = event.target.value as NativeLayout;
               const defaults = graphRef.current?.setPreset(next);
               setLayout(next); setSettings(current => ({ ...current, ...defaults }));
@@ -2625,9 +2670,11 @@ export function NativeGraphProjectionSurface({
               <option value="solarpunk">Solarpunk</option><option value="galaxy">Galaxy</option>
               <option value="solar">Solar</option>
             </select></label>
-            {style === 'solarpunk' ? <fieldset aria-label="Solarpunk colors" style={{ display: 'grid', gap: 6 }}>
-              <legend>Solarpunk colors</legend>
-              {([['Think color', 'think'], ['Know color', 'know'], ['Joined body color', 'surface']] as const)
+            {style === 'solarpunk' || (authority === 'joined' && style === 'cyber')
+              ? <fieldset aria-label={style === 'cyber' ? 'Joined Cyberpunk colors' : 'Solarpunk colors'} style={{ display: 'grid', gap: 6 }}>
+              <legend>{style === 'cyber' ? 'Joined Cyberpunk colors' : 'Solarpunk colors'}</legend>
+              {([['Think color', 'think'], ['Know color', 'know'],
+                ...(style === 'solarpunk' ? [['Joined body color', 'surface']] : [])] as const)
                 .map(([label, key]) => <label key={key}>
                   <span>{label}</span>
                   <input type="color" aria-label={label} value={solarpunkColors[key]}
@@ -2636,10 +2683,11 @@ export function NativeGraphProjectionSurface({
                       if (!SOLARPUNK_HEX.test(value)) return;
                       setSolarpunkColors(current => ({ ...current, [key]: value }));
                     }} />
-                </label>)}
+                  </label>)}
             </fieldset> : null}
             <label><input type="checkbox" checked={settings.labels === true} onChange={event => {
               recordManualPresentationChange('setting', 'labels');
+              setAppliedPresetNodeSize(null);
               const patch = { labels: event.target.checked };
               graphRef.current?.setSettings(patch);
               setSettings(current => ({ ...current, ...patch }));
@@ -2654,18 +2702,23 @@ export function NativeGraphProjectionSurface({
               <input aria-label={label} type="range" min={min} max={max} step={step}
                 value={Number(settings[key] ?? min)} onChange={event => {
                   recordManualPresentationChange('setting', key);
+                  setAppliedPresetNodeSize(null);
                   const patch = { [key]: Number(event.target.value) };
                   graphRef.current?.setSettings(patch);
                   setSettings(current => ({ ...current, ...patch }));
                 }} />
               <output>{settings[key]}</output>
             </label>)}
-            <button type="button" onClick={() => {
+            <button type="button" aria-label="Reset to preset defaults" onClick={() => {
               recordManualPresentationChange('all-settings');
               const defaults = graphRef.current?.setPreset(layout);
-              graphRef.current?.setSettings({ labels: true });
-              setSettings({ ...defaults, labels: true });
-            }}>Reset to preset defaults</button>
+              const nextSettings = { ...defaults, labels: true };
+              graphRef.current?.setSettings(nextSettings);
+              setSettings(nextSettings);
+              setAppliedPresetNodeSize(typeof defaults?.size === 'number' ? defaults.size : null);
+            }}>{appliedPresetNodeSize === null
+                ? 'Reset to preset defaults'
+                : `Preset defaults applied · node size ${appliedPresetNodeSize}`}</button>
           </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="native-authority-controls" role="region" aria-label={`${entryTitle} details`}>
         {authority === 'joined' && selectedVisual ? (
           <div className="native-authority-actions">

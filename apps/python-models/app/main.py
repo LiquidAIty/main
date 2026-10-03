@@ -297,7 +297,14 @@ async def thinkgraph_research_result_validate(payload: dict[str, Any]):
     try:
         return await asyncio.to_thread(validate_atomic_research_result, payload)
     except (AtomicResearchError, ValueError, KeyError) as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
+        raise HTTPException(
+            status_code=(
+                409
+                if str(err) == "atomic_research_episode_settlement_pending"
+                else 400
+            ),
+            detail=str(err),
+        ) from err
 
 
 

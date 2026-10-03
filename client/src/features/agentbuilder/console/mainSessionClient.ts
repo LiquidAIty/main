@@ -24,6 +24,7 @@ export type NativeSessionEvent = {
 
 export type JevAttentionAuthority = 'ThinkGraph' | 'KnowGraph';
 export type JevAttentionStatus = 'success' | 'unavailable' | 'timeout' | 'invalid' | 'error';
+const JEV_ATTENTION_NEW_SUBJECT = 'ATTENTION_NEW_SUBJECT';
 
 export type JevAttentionCandidate = {
   choiceId: string;
@@ -78,6 +79,7 @@ export function isJevAttentionEvent(value: unknown): value is JevAttentionEvent 
   for (const candidate of value.candidates) {
     if (!isRecord(candidate)
       || typeof candidate.choiceId !== 'string' || !candidate.choiceId.trim()
+      || candidate.choiceId === JEV_ATTENTION_NEW_SUBJECT
       || choiceIds.has(candidate.choiceId)
       || !['ThinkGraph', 'KnowGraph'].includes(String(candidate.authority || ''))
       || typeof candidate.nativeId !== 'string' || !candidate.nativeId.trim()
@@ -103,16 +105,21 @@ export function isJevAttentionEvent(value: unknown): value is JevAttentionEvent 
     const candidates = value.candidates as JevAttentionCandidate[];
     const distribution = value.distribution as Record<string, number>;
     const distributionKeys = Object.keys(distribution);
-    const probabilitySum = candidates.reduce((sum, candidate) => {
+    const candidateProbabilitiesMatch = candidates.every((candidate) => {
       if (candidate.probability === undefined
         || !(candidate.choiceId in distribution)
-        || Math.abs(distribution[candidate.choiceId] - candidate.probability) > 1e-9) return Number.NaN;
-      return sum + candidate.probability;
-    }, 0);
-    if (distributionKeys.length !== candidates.length
-      || distributionKeys.some((choiceId) => !choiceIds.has(choiceId))
-      || !Number.isFinite(probabilitySum)
-      || Math.abs(probabilitySum - 1) > 1e-6) return false;
+        || Math.abs(distribution[candidate.choiceId] - candidate.probability) > 1e-9) return false;
+      return true;
+    });
+    const expectedDistributionKeys = new Set([...choiceIds, JEV_ATTENTION_NEW_SUBJECT]);
+    const distributionSum = Object.values(distribution).reduce(
+      (sum, probability) => sum + probability,
+      0,
+    );
+    if (!candidateProbabilitiesMatch
+      || distributionKeys.length !== expectedDistributionKeys.size
+      || distributionKeys.some((choiceId) => !expectedDistributionKeys.has(choiceId))
+      || Math.abs(distributionSum - 1) > 1e-6) return false;
     const selectedCandidateRefs = new Set(candidates
       .filter((candidate) => candidate.selected && candidate.hydrated)
       .map((candidate) => `${candidate.authority}\u0000${candidate.nativeId}`));

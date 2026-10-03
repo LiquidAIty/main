@@ -36,6 +36,7 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof AgentBui
     onSplitterPointerLeave: vi.fn(),
     onSplitterPointerDown: vi.fn(),
     companionMinWidth: 720,
+    companionContentMinWidth: 720,
     companionOverlayWidth: 150,
     companionViewportWidth: 720,
     companionVisibleWidth: 570,
@@ -89,7 +90,7 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
     expect(onPointerDown).toHaveBeenCalledOnce();
   });
 
-  it('keeps one Canvas instance mounted when responsive resize crosses into overlap', () => {
+  it('keeps one Canvas instance mounted while its true adjacent pane shrinks', () => {
     let mounts = 0;
     let unmounts = 0;
     function CanvasProbe() {
@@ -104,6 +105,7 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
       companion: null,
       canvas: <CanvasProbe />,
       companionMinWidth: 520,
+      companionContentMinWidth: 520,
       companionVisibleWidth: 770,
       companionViewportWidth: 770,
       companionOverlayWidth: 0,
@@ -118,15 +120,32 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
       chatPanelWidth: 800,
       companionVisibleWidth: 390,
       companionViewportWidth: 520,
-      companionOverlayWidth: 130,
+      companionOverlayWidth: 0,
     });
     const content = view.host.querySelector(
       '[data-testid="workspace-companion-content"]',
     ) as HTMLElement;
     expect(content.style.width).toBe('520px');
+    expect(content.style.minWidth).toBe('520px');
     expect(view.host.querySelector('[data-testid="canvas-probe"]')).not.toBeNull();
     expect(mounts).toBe(1);
     expect(unmounts).toBe(0);
+  });
+
+  it('allows Canvas underplane overlap only at the extreme collision floor', () => {
+    const { host } = renderWorkspace({
+      workspaceView: 'canvas',
+      companionMinWidth: 520,
+      companionContentMinWidth: 520,
+      companionVisibleWidth: 50,
+      companionViewportWidth: 520,
+      companionOverlayWidth: 46,
+    });
+    const main = host.querySelector('[data-testid="workspace-large-region"]') as HTMLElement;
+    const content = host.querySelector('[data-testid="workspace-companion-content"]') as HTMLElement;
+    expect(main.dataset.mainOverCompanion).toBe('true');
+    expect(content.style.width).toBe('520px');
+    expect(content.style.minWidth).toBe('520px');
   });
 
   it.each([
@@ -138,6 +157,7 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
     const { host } = renderWorkspace({
       workspaceView,
       companionMinWidth: minimum,
+      companionContentMinWidth: minimum,
       companionViewportWidth: minimum,
       companionVisibleWidth: 300,
       companionOverlayWidth: minimum - 300,

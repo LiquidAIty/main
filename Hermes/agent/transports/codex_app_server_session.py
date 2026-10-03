@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -187,6 +188,7 @@ class CodexAppServerSession:
         model: Optional[str] = None,
         instructions: Optional[str] = None,
         effort: Optional[str] = None,
+        native_mcp_servers: Optional[dict[str, dict[str, Any]]] = None,
     ) -> None:
         self._cwd = cwd or os.getcwd()
         self._codex_bin = codex_bin
@@ -203,6 +205,8 @@ class CodexAppServerSession:
         self._model = model
         self._instructions = instructions
         self._effort = effort
+        self._native_mcp_servers = copy.deepcopy(native_mcp_servers or {})
+        self._native_mcp_fingerprint = self.native_mcp_fingerprint_for(self._native_mcp_servers)
         self._dynamic_schemas: dict[str, Any] = {}
         self._dynamic_call_responses: dict[tuple[str, str], tuple[dict, dict]] = {}
         if dynamic_tools is not None:
@@ -229,6 +233,18 @@ class CodexAppServerSession:
         self._pending_file_changes: dict[str, str] = {}
         self._closed = False
 
+    @staticmethod
+    def native_mcp_fingerprint_for(servers: dict[str, dict[str, Any]]) -> str:
+        """Opaque identity for the complete thread-local native MCP authority."""
+        encoded = json.dumps(
+            servers or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @property
+    def native_mcp_fingerprint(self) -> str:
+        return self._native_mcp_fingerprint
+
     def ensure_started(self) -> str:
         """Spawn, handshake, and ``thread/start``; idempotent, returns the codex thread id."""
         if self._thread_id is not None:
@@ -243,7 +259,16 @@ class CodexAppServerSession:
         )
         # Permissions are NOT sent on thread/start: codex gates ``thread/start.permissions``
         # behind experimentalApi + a matching ``[permissions]`` table in ~/.codex/config.toml.
-        params: dict[str, Any] = {"cwd": self._cwd}
+        # A Hermes saved Card owns its exact Dynamic Tools and native MCP
+        # connections. Ambient account-level Codex Apps are a separate global
+        # surface and must not duplicate or widen those saved grants.
+        thread_config: dict[str, Any] = {"apps": {"_default": {"enabled": False}}}
+        if self._native_mcp_servers:
+            thread_config["mcp_servers"] = copy.deepcopy(self._native_mcp_servers)
+        params: dict[str, Any] = {
+            "cwd": self._cwd,
+            "config": thread_config,
+        }
         if self._dynamic_tools is not None:
             params["dynamicTools"] = self._dynamic_tools
         if self._model is not None:

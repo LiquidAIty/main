@@ -1,6 +1,7 @@
 import { Router, type Response } from 'express';
 import {
   agentTerminalManager,
+  cardToolAuthenticationFailureStage,
   PROJECT_ROSTER_AUTHORITY_TOOL,
   RUNTIME_OBSERVATION_AUTHORITY_TOOL,
   resolveHermesBotRosterProjections,
@@ -193,7 +194,9 @@ export function createHermesCardToolsRouter(
           envelope.payload,
           envelope.signature,
         );
-      } catch {
+      } catch (error) {
+        const stage = cardToolAuthenticationFailureStage(error);
+        if (stage) console.warn(`[hermes-card-tools] authentication failed stage=${stage}`);
         routeError(401, 'hermes_card_tool_authentication_failed');
       }
       const executionContext = authenticated!.executionContext;

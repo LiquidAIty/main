@@ -68,43 +68,44 @@ describe('ThinkGraph Jev semantic physics', () => {
   });
 
   it.each([
-    ['THINK_MATERIAL', 'think', 'rgb(55,173,170)'],
-    ['KNOW_MATERIAL', 'know', 'rgb(242,166,74)'],
-    ['PAIRED_SOLARPUNK_MATERIAL', 'paired', 'rgb(55,173,170)'],
+    ['THINK_MATERIAL', 'think', 'rgb(110,95,174)', false],
+    ['KNOW_MATERIAL', 'know', 'rgb(242,166,74)', false],
+    ['PAIRED_SOLARPUNK_MATERIAL', 'paired', 'rgb(11,14,18)', true],
   ])('builds the %s renderer recipe from canonical node colors', (
     materialRole,
     modality,
     dominant,
+    splitSurface,
   ) => {
     const internals = (window as any).EngraphisGraph._internals;
     const recipe = internals.solarpunkMaterialRecipe({
       material_kind: 'solarpunk',
       material_role: materialRole,
-      material_blue: '#37ADAA',
+      material_blue: '#6E5FAE',
       material_orange: '#F2A64A',
-      material_surface: '#6E5FAE',
+      material_surface: '#0B0E12',
     }, {}, '#ffffff');
 
     expect(recipe).toMatchObject({
       family: 'solarpunk',
       materialRole,
       modality,
-      materialBlue: 'rgb(55,173,170)',
+      materialBlue: 'rgb(110,95,174)',
       materialOrange: 'rgb(242,166,74)',
-      materialSurface: 'rgb(110,95,174)',
+      materialSurface: 'rgb(11,14,18)',
       dominant,
-      splitSurface: false,
+      splitSurface,
     });
   });
 
-  it('keeps paired Solarpunk material unified and strengthens exposure without changing modality', () => {
+  it('paints joined Solarpunk material as separate purple and orange halves', () => {
     const internals = (window as any).EngraphisGraph._internals;
     const base = {
       material_kind: 'solarpunk',
       material_role: 'PAIRED_SOLARPUNK_MATERIAL',
-      material_blue: '#37ADAA',
+      material_blue: '#6E5FAE',
       material_orange: '#F2A64A',
-      material_surface: '#6E5FAE',
+      material_surface: '#0B0E12',
     };
     const resting = internals.solarpunkMaterialRecipe(base, {}, '#ffffff');
     const activated = internals.solarpunkMaterialRecipe({
@@ -122,12 +123,21 @@ describe('ThinkGraph Jev semantic physics', () => {
 
     expect(resting).toMatchObject({
       modality: 'paired',
-      surfaceModel: 'unified-dark-gloss',
+      surfaceModel: 'split-bicolor-gloss',
       dualBloom: true,
-      splitSurface: false,
-      innerLight: 'rgb(55,173,170)',
+      splitSurface: true,
+      innerLight: 'rgb(110,95,174)',
       solarRim: 'rgb(242,166,74)',
     });
+    const splitFills: string[] = [];
+    const context: any = {
+      beginPath: vi.fn(), arc: vi.fn(), clip: vi.fn(), fill: vi.fn(), stroke: vi.fn(),
+      save: vi.fn(), restore: vi.fn(),
+      fillRect: vi.fn(function (this: any) { splitFills.push(this.fillStyle); }),
+      fillStyle: '', strokeStyle: '', lineWidth: 1,
+    };
+    internals.paintMaterialDirect(context, 0, 0, 10, resting, 'signature');
+    expect(splitFills).toEqual(['rgb(110,95,174)', 'rgb(242,166,74)']);
     expect(heated.modality).toBe('paired');
     expect(activated.activeExposure).toBeGreaterThan(resting.activeExposure);
     expect(heated.activeExposure).toBeGreaterThan(activated.activeExposure);
@@ -136,6 +146,66 @@ describe('ThinkGraph Jev semantic physics', () => {
       ...base,
       material_kind: 'ordinary',
     }, {}, '#ffffff')).toBeNull();
+  });
+
+  it('uses one blue Solarpunk relationship color regardless of authority or predicate', () => {
+    const internals = (window as any).EngraphisGraph._internals;
+    for (const edge of [
+      { material_kind: 'solarpunk', material_color: '#3979E8',
+        material_authority: 'thinkgraph', predicate: 'DEPENDS_ON' },
+      { material_kind: 'solarpunk', material_color: '#3979E8',
+        material_authority: 'knowgraph', predicate: 'SOURCED_BY' },
+    ]) {
+      expect(internals.solarpunkLinkColour(edge, true, false))
+        .toBe('rgba(57,121,232,0.4)');
+    }
+    expect(internals.solarpunkLinkColour({ material_kind: 'ordinary' }, true, false))
+      .toBeNull();
+  });
+
+  it('keeps the Cyberpunk recipe unchanged while Joined substitutes only its node palette', () => {
+    const internals = (window as any).EngraphisGraph._internals;
+    const ordinary = internals.materialRecipe('cyber', {}, 'theme', '#ffffff');
+    expect(ordinary).toMatchObject({
+      family: 'iridescent-pvd',
+      fixedPalette: {
+        cyan: '#21dff3', blue: '#367cff', violet: '#8d61ff',
+        magenta: '#ec4fc4', teal: '#4ce4cf',
+      },
+    });
+
+    const think = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
+      material_kind: 'joined-cyber', material_role: 'THINK_MATERIAL',
+      material_blue: '#3979E8', material_orange: '#F2A64A',
+    });
+    const know = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
+      material_kind: 'joined-cyber', material_role: 'KNOW_MATERIAL',
+      material_blue: '#3979E8', material_orange: '#F2A64A',
+    });
+    const paired = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
+      material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
+      material_blue: '#3979E8', material_orange: '#F2A64A',
+    });
+
+    expect(think).toMatchObject({
+      family: ordinary.family,
+      fixedPalette: {
+        cyan: '#3979E8', blue: '#3979E8', violet: '#3979E8',
+        magenta: '#3979E8', teal: '#3979E8',
+      },
+    });
+    expect(know).toMatchObject({
+      family: ordinary.family,
+      fixedPalette: {
+        cyan: '#F2A64A', blue: '#F2A64A', violet: '#F2A64A',
+        magenta: '#F2A64A', teal: '#F2A64A',
+      },
+    });
+    expect(paired.family).toBe(ordinary.family);
+    expect(paired.fixedPalette).toMatchObject({
+      cyan: '#3979E8', blue: '#3979E8', magenta: '#F2A64A', teal: '#3979E8',
+    });
+    expect(paired.fixedPalette.violet).not.toBe(ordinary.fixedPalette.violet);
   });
 
   it('keeps established coordinates across graph revisions without overwriting graph fields', () => {

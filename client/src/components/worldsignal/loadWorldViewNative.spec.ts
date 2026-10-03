@@ -3,13 +3,75 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  importNativeWorldViewMount,
   observeNativeWorldViewVisualReadiness,
   WORLDVIEW_CANVAS_SIZE_DEADLINE_MS,
   WORLDVIEW_FIRST_CONTENT_DEADLINE_MS,
+  WORLDVIEW_NATIVE_MOUNT_MODULE_URL,
   WORLDVIEW_RENDER_FRAME_DEADLINE_MS,
 } from './loadWorldViewNative';
 
 vi.mock('virtual:worldview-native-css', () => ({ default: '' }));
+vi.mock('virtual:worldview-native-mount', () => ({
+  importNativeWorldViewMount: vi.fn(),
+}));
+
+describe('WorldView native module doorway', () => {
+  it('waits for the dev module server and imports without a machine-path Vite URL', async () => {
+    const module = { mountWorldView: vi.fn() };
+    const moduleImporter = vi.fn(async () => module);
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    await expect(importNativeWorldViewMount({
+      dev: true,
+      moduleImporter,
+      fetcher,
+      attempts: 2,
+      retryDelayMs: 0,
+    })).resolves.toBe(module);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenLastCalledWith(
+      WORLDVIEW_NATIVE_MOUNT_MODULE_URL,
+      { method: 'HEAD', cache: 'no-store' },
+    );
+    expect(moduleImporter).toHaveBeenCalledTimes(1);
+    expect(WORLDVIEW_NATIVE_MOUNT_MODULE_URL).not.toContain('/@fs/');
+    expect(WORLDVIEW_NATIVE_MOUNT_MODULE_URL).not.toMatch(/[A-Z]:\//);
+  });
+
+  it('uses the bundled production module without localhost readiness traffic', async () => {
+    const module = { mountWorldView: vi.fn() };
+    const moduleImporter = vi.fn(async () => module);
+    const fetcher = vi.fn();
+
+    await expect(importNativeWorldViewMount({
+      dev: false,
+      moduleImporter,
+      fetcher,
+    })).resolves.toBe(module);
+
+    expect(moduleImporter).toHaveBeenCalledTimes(1);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('fails after the bounded dev readiness window without importing the renderer', async () => {
+    const moduleImporter = vi.fn();
+    const fetcher = vi.fn(async () => new Response(null, { status: 503 }));
+
+    await expect(importNativeWorldViewMount({
+      dev: true,
+      moduleImporter,
+      fetcher,
+      attempts: 2,
+      retryDelayMs: 0,
+    })).rejects.toThrow('worldview_native_module_http_503');
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(moduleImporter).not.toHaveBeenCalled();
+  });
+});
 
 function nativeEvent() {
   const listeners = new Set<(...args: any[]) => void>();

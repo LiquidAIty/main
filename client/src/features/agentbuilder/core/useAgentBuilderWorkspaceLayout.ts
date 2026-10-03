@@ -4,6 +4,10 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 const CHAT_MIN_WIDTH = 280;
 const SPLITTER_WIDTH = 10;
 const DEFAULT_CHAT_WIDTH = 420;
+// The Canvas switches from adjacent resize to under-Main overlap only when its
+// complete graph-tab strip reaches the right wall (through CodeGraph).
+export const CANVAS_COLLISION_WIDTH = 520;
+export const CANVAS_INSPECTOR_WIDTH = 344;
 
 export const COMPANION_MIN_WIDTHS = Object.freeze({
   canvas: 520,
@@ -23,34 +27,60 @@ export function resolveHybridWorkspaceGeometry({
   workspaceWidth,
   mainWidth,
   companionMinWidth,
+  collisionWidth = companionMinWidth,
   splitterWidth = SPLITTER_WIDTH,
 }: {
   workspaceWidth: number;
   mainWidth: number;
   companionMinWidth: number;
+  collisionWidth?: number;
   splitterWidth?: number;
 }) {
   const boundedWorkspaceWidth = Math.max(0, Number(workspaceWidth) || 0);
   const boundedSplitterWidth = Math.max(0, Number(splitterWidth) || 0);
   const boundedMainWidth = Math.max(0, Number(mainWidth) || 0);
   const boundedCompanionMinWidth = Math.max(0, Number(companionMinWidth) || 0);
+  const boundedCollisionWidth = Math.min(
+    boundedCompanionMinWidth,
+    Math.max(0, Number(collisionWidth) || 0),
+  );
   const companionVisibleWidth = Math.max(
     0,
     boundedWorkspaceWidth - boundedMainWidth - boundedSplitterWidth,
   );
+  // Keep the real renderer at its safe surface width even while its adjacent
+  // pane is clipped narrower. Resizing a force/canvas renderer down to the
+  // collision sliver can clear its viewport and leave it blank when expanded.
   const companionViewportWidth = Math.max(
     boundedCompanionMinWidth,
     companionVisibleWidth,
   );
   const companionOverlayWidth = Math.max(
     0,
-    companionViewportWidth - companionVisibleWidth,
+    boundedCollisionWidth - companionVisibleWidth,
   );
   return {
     companionOverlayWidth,
+    companionContentMinWidth: boundedCompanionMinWidth,
     companionViewportWidth,
     companionVisibleWidth,
   };
+}
+
+export function shouldCloseCanvasInspector({
+  workspaceView,
+  inspectorOpen,
+  companionVisibleWidth,
+  inspectorWidth = CANVAS_INSPECTOR_WIDTH,
+}: {
+  workspaceView: string;
+  inspectorOpen: boolean;
+  companionVisibleWidth: number;
+  inspectorWidth?: number;
+}): boolean {
+  return workspaceView === 'canvas'
+    && inspectorOpen
+    && companionVisibleWidth <= Math.max(0, inspectorWidth) + CANVAS_COLLISION_WIDTH;
 }
 
 type UseAgentBuilderWorkspaceLayoutArgs<T extends string> = {
@@ -243,8 +273,11 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
       workspaceWidth,
       mainWidth: chatPanelWidth,
       companionMinWidth,
+      collisionWidth: workspaceView === 'canvas'
+        ? CANVAS_COLLISION_WIDTH
+        : companionMinWidth,
     }),
-    [chatPanelWidth, companionMinWidth, workspaceWidth],
+    [chatPanelWidth, companionMinWidth, workspaceView, workspaceWidth],
   );
 
   return {

@@ -2149,6 +2149,9 @@ export function AgentManager({
     : activeTab === 'Runtime'
       ? (
           <div data-testid="agent-manager-runtime-surface" style={{ display: 'grid', gap: 16 }}>
+            {projectId && deckId && cardId ? (
+              <CardRuntimeDashboard projectId={projectId} deckId={deckId} cardId={cardId} />
+            ) : null}
             <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>
             {runtimeKind === 'hermes'
             && runtimeMode !== 'magentic_one'
@@ -2187,9 +2190,6 @@ export function AgentManager({
                   ))}
                 </select>
               </label>
-            ) : null}
-            {projectId && deckId && cardId ? (
-              <CardRuntimeDashboard projectId={projectId} deckId={deckId} cardId={cardId} />
             ) : null}
           </div>
         )

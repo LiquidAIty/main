@@ -410,6 +410,91 @@ def _codex_dynamic_tools(agent) -> list[dict]:
     return definitions
 
 
+def _codex_native_mcp_servers(agent) -> dict[str, dict[str, Any]]:
+    """Project exact effective transient MCP grants into Codex's thread config.
+
+    The saved-Card materializer owns these signed localhost definitions. Hermes
+    ``trust`` authorizes this projection but is not a Codex config field.
+    """
+    from urllib.parse import urlparse
+
+    from hermes_cli.config import load_config_readonly
+    from tools.mcp_tool_schema import mcp_prefixed_tool_name
+
+    try:
+        config = load_config_readonly() or {}
+    except Exception:
+        logger.debug("codex app-server: native MCP config read failed", exc_info=True)
+        return {}
+    servers = config.get("mcp_servers")
+    if not isinstance(servers, dict):
+        return {}
+    valid_names = set(getattr(agent, "valid_tool_names", set()) or set())
+    effective_names = {
+        str((tool.get("function") or tool).get("name") or "")
+        for tool in (getattr(agent, "tools", None) or [])
+        if isinstance(tool, dict)
+    } & valid_names
+    projected: dict[str, dict[str, Any]] = {}
+    for raw_server_name, raw_config in servers.items():
+        if not isinstance(raw_config, dict):
+            continue
+        server_name = str(raw_server_name or "").strip()
+        raw_url = str(raw_config.get("url") or "").strip()
+        try:
+            parsed = urlparse(raw_url)
+        except Exception:
+            continue
+        headers = raw_config.get("headers")
+        tools = raw_config.get("tools")
+        include = tools.get("include") if isinstance(tools, dict) else None
+        normalized_headers = (
+            {str(name): str(value) for name, value in headers.items()}
+            if isinstance(headers, dict)
+            else {}
+        )
+        has_authorization = any(
+            name.lower() == "authorization" and bool(value.strip())
+            for name, value in normalized_headers.items()
+        )
+        eligible = (
+            bool(server_name)
+            and parsed.scheme == "http"
+            and (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path == "/mcp"
+            and not parsed.query
+            and not parsed.fragment
+            and raw_config.get("trust") == "full"
+            and raw_config.get("default_tools_approval_mode") == "approve"
+            and has_authorization
+            and isinstance(tools, dict)
+            and tools.get("prompts") is False
+            and tools.get("resources") is False
+            and isinstance(include, list)
+            and bool(include)
+            and all(isinstance(name, str) and name.strip() for name in include)
+            and len(set(include)) == len(include)
+        )
+        if not eligible:
+            continue
+        selected = sorted(
+            native_name.strip()
+            for native_name in include
+            if mcp_prefixed_tool_name(server_name, native_name.strip()) in effective_names
+        )
+        if not selected:
+            continue
+        projected[server_name] = {
+            "url": raw_url,
+            "http_headers": normalized_headers,
+            "default_tools_approval_mode": "approve",
+            "enabled_tools": selected,
+        }
+    return projected
+
+
 def _codex_tool_executor(agent, messages: list, effective_task_id: str):
     """Execute app-server dynamic calls through the ordinary Hermes tool owner and transcript."""
     def execute(name: str, arguments: dict, call_id: str) -> dict:
@@ -465,12 +550,19 @@ def _ensure_codex_session(
     agent, *, messages: list, effective_task_id: str, active_system_prompt: str | None,
 ) -> None:
     """Lazily spawn one CodexAppServerSession per AIAgent (reused across turns, closed by the _cleanup hook)."""
-    if getattr(agent, "_codex_session", None) is not None:
-        # The native thread persists, but the executor must always target this turn's transcript/task.
-        agent._codex_session._tool_executor = _codex_tool_executor(agent, messages, effective_task_id)
-        return
-    from agent.runtime_cwd import resolve_agent_cwd
     from agent.transports.codex_app_server_session import CodexAppServerSession, _ServerRequestRouting
+
+    native_mcp_servers = _codex_native_mcp_servers(agent)
+    native_mcp_fingerprint = CodexAppServerSession.native_mcp_fingerprint_for(native_mcp_servers)
+    if getattr(agent, "_codex_session", None) is not None:
+        if getattr(agent._codex_session, "native_mcp_fingerprint", None) == native_mcp_fingerprint:
+            # The native thread persists, but the executor must always target this turn's transcript/task.
+            agent._codex_session._tool_executor = _codex_tool_executor(agent, messages, effective_task_id)
+            return
+        # Native thread config is immutable. A renewed bearer or changed exact
+        # include must never reuse the prior authority.
+        _close_codex_session(agent)
+    from agent.runtime_cwd import resolve_agent_cwd
     # Approval callback: Hermes' standard prompt flow when a CLI thread installed one.
     approval_callback = None
     with suppress(Exception):
@@ -498,6 +590,7 @@ def _ensure_codex_session(
         model=agent.model,
         instructions=active_system_prompt,
         effort=(getattr(agent, "reasoning_config", None) or {}).get("effort"),
+        native_mcp_servers=native_mcp_servers,
     )
 
 

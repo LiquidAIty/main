@@ -21,7 +21,9 @@ import WorldViewSurface from '../features/worldview/WorldViewSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
-import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
+import useAgentBuilderWorkspaceLayout, {
+  shouldCloseCanvasInspector,
+} from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework, {
   type KnowledgeSurfaceKind,
@@ -282,6 +284,7 @@ export default function AgentBuilder(): React.ReactElement {
   const {
     chatMinWidth,
     chatPanelWidth,
+    companionContentMinWidth,
     companionMinWidth,
     companionOverlayWidth,
     companionViewportWidth,
@@ -367,6 +370,15 @@ export default function AgentBuilder(): React.ReactElement {
   const registerCardLeave = useCallback((save: (() => Promise<boolean>) | null) => {
     cardLeaveRef.current = save;
   }, []);
+
+  useEffect(() => {
+    if (!shouldCloseCanvasInspector({
+      workspaceView,
+      inspectorOpen: inspectorDrawerOpen,
+      companionVisibleWidth,
+    })) return;
+    setInspectorDrawerOpen(false);
+  }, [companionVisibleWidth, inspectorDrawerOpen, setInspectorDrawerOpen, workspaceView]);
 
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
   const [transientCardGraphContext, setTransientCardGraphContext] =
@@ -2003,6 +2015,7 @@ export default function AgentBuilder(): React.ReactElement {
           onSplitterPointerLeave={onSplitterPointerLeave}
           onSplitterPointerDown={handleSplitterPointerDown}
           companionMinWidth={companionMinWidth}
+          companionContentMinWidth={companionContentMinWidth}
           companionOverlayWidth={companionOverlayWidth}
           companionViewportWidth={companionViewportWidth}
           companionVisibleWidth={companionVisibleWidth}

@@ -1200,13 +1200,7 @@ async def _native_graphiti_tools() -> list[Tool]:
 
 async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
     arguments = dict(arguments)
-    question = arguments.pop("questionEvidence", None)
     context = _authenticated_main_context()
-    if question is not None:
-        from app.python_models.question_evidence import validate_question_evidence
-        if name != "add_memory" or not context:
-            raise ValueError("question_evidence_requires_authenticated_ingestion")
-        question = await asyncio.to_thread(validate_question_evidence, question, str(context["projectId"]), _thinkgraph_via_python_rails_sync)
     try:
         await asyncio.wait_for(
             _ensure_native_graphiti_service(),
@@ -1217,7 +1211,7 @@ async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
     if _NATIVE_GRAPHITI_MODULE is None:
         raise RuntimeError("native_graphiti_not_initialized")
     observation: dict[str, Any] | None = (
-        {"context": context, "event": None, "questionEvidence": question}
+        {"context": context, "event": None}
         if name == "add_memory" else None
     )
     token = _ACTIVE_GRAPHITI_ATTENTION.set(observation)
@@ -1273,16 +1267,6 @@ def _instrument_graphiti_attention(client: Any, queue: Any) -> None:
     async def observed_add_episode(*args: Any, **kwargs: Any) -> Any:
         result = await add_episode(*args, **kwargs)
         observation = _ACTIVE_GRAPHITI_ATTENTION.get()
-        if observation and observation.get("questionEvidence"):
-            from app.python_models.question_evidence import link_question_evidence
-            episode_id = getattr(getattr(result, "episode", None), "uuid", None)
-            if not episode_id:
-                raise ValueError("question_evidence_native_episode_missing")
-            observation["questionResult"] = await link_question_evidence(
-                client.driver, observation["questionEvidence"], str(episode_id),
-                graphiti_project_group_id(str(observation["context"]["projectId"])),
-                _thinkgraph_via_python_rails_sync,
-            )
         if observation and observation.get("event"):
             from app.python_models.native_attention import build_native_attention_event
 
@@ -2607,15 +2591,6 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 f"mcp_tool_dispatch_keys_missing:{tool.name}:{','.join(missing)}"
             )
     _complete_catalog_family("liquidaity")
-    from app.python_models.question_evidence import QuestionEvidence
-    question_schema = QuestionEvidence.model_json_schema()
-    reference_schema = question_schema["$defs"]["GraphReference"]
-    reference_schema["properties"].pop("projectId")
-    reference_schema["required"].remove("projectId")
-    for tool in tools:
-        if tool.name == "graphiti.add_memory":
-            tool.inputSchema.setdefault("$defs", {}).update(question_schema.get("$defs", {}))
-            tool.inputSchema["properties"]["questionEvidence"] = {key: value for key, value in question_schema.items() if key != "$defs"}
     tools = [_bind_operation_access(tool) for tool in tools]
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
@@ -2706,17 +2681,6 @@ async def _materialize_requested_native_catalog(
             _register_native_cbm_catalog(namespaced)
         tools.extend(namespaced)
 
-    from app.python_models.question_evidence import QuestionEvidence
-    question_schema = QuestionEvidence.model_json_schema()
-    reference_schema = question_schema["$defs"]["GraphReference"]
-    reference_schema["properties"].pop("projectId")
-    reference_schema["required"].remove("projectId")
-    for tool in tools:
-        if tool.name == "graphiti.add_memory":
-            tool.inputSchema.setdefault("$defs", {}).update(question_schema.get("$defs", {}))
-            tool.inputSchema["properties"]["questionEvidence"] = {
-                key: value for key, value in question_schema.items() if key != "$defs"
-            }
     tools = [_bind_operation_access(tool) for tool in tools]
     return (
         _bind_authenticated_catalog(tools)

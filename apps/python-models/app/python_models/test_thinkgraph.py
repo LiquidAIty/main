@@ -1,10 +1,9 @@
 import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
 
-from app.python_models import engraphis, question_evidence
+from app.python_models import engraphis
 from app.python_models.thinkgraph import validate_cognition
 
 
@@ -23,21 +22,14 @@ def test_runtime_supplies_scope_without_asking_model_to_reconstruct_identity():
     assert stored["projectScope"] == stored["originRefs"][0]["projectId"] == "project-one"
 
 
-def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, monkeypatch):
+def test_legacy_cognition_metadata_remains_readable(tmp_path, monkeypatch):
     from engraphis.service import MemoryService
     from engraphis.mcp_server import set_service
     owner = MemoryService.create(str(tmp_path / "memory.sqlite"), embed_model="hash",
                                  extractor="none", graph_extractor="none")
     monkeypatch.setattr(engraphis, "_service", owner)
     set_service(owner)
-    request = lambda operation, project, arguments: engraphis.private_operation(project, operation, arguments)
     call = lambda name, args: asyncio.run(engraphis.invoke_tool("project-one", name, args))
-    calls = []
-
-    class Driver:
-        async def execute_query(self, cypher, **params):
-            calls.append(params)
-            return SimpleNamespace(records=[{"uuid": params["episode_id"]}])
 
     try:
         saved = call("engraphis_remember", {
@@ -45,26 +37,69 @@ def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, mo
             "content": "Compare supporting and conflicting evidence before selecting an alternative.",
         })
         native_id = saved["id"]
-        # Existing metadata remains readable by the retained evidence-linking
-        # contract; it is no longer an added field on Engraphis MCP tools.
+        # Existing cognition metadata remains readable even though the retired
+        # cross-database Question/evidence writer is no longer live.
+        legacy_cognition = validate_cognition({
+            **question(),
+            "questionStatus": "contested",
+            "answerRefs": [{
+                "authority": "knowgraph",
+                "nativeId": "existing-knowgraph-evidence",
+                "projectId": "project-one",
+            }],
+        }, "project-one")
+        expected_bytes = json.dumps(
+            legacy_cognition,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
         legacy = owner.store.get_memory(native_id)
-        legacy.metadata = {"cognition": validate_cognition(question(), "project-one")}
+        legacy.metadata = {"cognition": legacy_cognition}
         owner.store.add_memory(legacy)
-        link = question_evidence.validate_question_evidence(dict(
-            questionRef=dict(authority="thinkgraph", nativeId=native_id, projectId="project-one"),
-            outcome="contested", relation="contradicts"), "project-one", request)
-        asyncio.run(question_evidence.link_question_evidence(Driver(), link, "episode-actual", "liquidaity-project-one", request))
-        asyncio.run(question_evidence.link_question_evidence(Driver(), link, "episode-actual", "liquidaity-project-one", request))
         native = engraphis.inspect("project-one", native_id)
         stored = native["memory"]["metadata"]["cognition"]
+        assert json.dumps(
+            stored, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode() == expected_bytes
         assert stored["questionStatus"] == "contested"
-        assert len(stored["answerRefs"]) == 1
+        assert stored["answerRefs"] == [{
+            "authority": "knowgraph",
+            "nativeId": "existing-knowgraph-evidence",
+            "projectId": "project-one",
+        }]
         assert stored["authoredBy"] == "assistant"
         assert stored["originRefs"] == question()["originRefs"]
-        assert json.loads(calls[0]["link"])["questionRef"]["nativeId"] == native_id
+        with pytest.raises(ValueError, match="thinkgraph_operation_unavailable"):
+            engraphis.private_operation("project-one", "attach_answer", {
+                "nativeId": native_id,
+                "evidence": {
+                    "authority": "knowgraph",
+                    "nativeId": "retired-cross-graph-pointer",
+                    "projectId": "project-one",
+                },
+                "status": "answered",
+            })
+        after_rejected_write = engraphis.inspect(
+            "project-one", native_id
+        )["memory"]["metadata"]["cognition"]
+        assert json.dumps(
+            after_rejected_write,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode() == expected_bytes
         # Ordinary metadata updates cannot discard cognition.
         call("engraphis_update_memory", {"memory_id": native_id, "title": "Evidence for alternatives"})
-        assert engraphis.inspect("project-one", native_id)["memory"]["metadata"]["cognition"] == stored
+        after_update = engraphis.inspect(
+            "project-one", native_id
+        )["memory"]["metadata"]["cognition"]
+        assert json.dumps(
+            after_update,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode() == expected_bytes
     finally:
         owner.close()
 
@@ -78,14 +113,6 @@ def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, mo
 def test_structural_contract_does_not_guess_missing_authority(change, error):
     with pytest.raises(ValueError, match=error):
         validate_cognition({**question(), **change}, "project-one")
-
-
-def test_evidence_scope_is_checked_before_question_write(monkeypatch):
-    async def query(*args, **kwargs):
-        return SimpleNamespace(records=[])
-    with pytest.raises(ValueError, match="not_found_in_project"):
-        asyncio.run(question_evidence.link_question_evidence(SimpleNamespace(execute_query=query), {
-            "questionRef": dict(authority="thinkgraph", nativeId="q", projectId="p"), "outcome": "answered"}, "foreign-episode", "p", lambda *args: pytest.fail("must not write ThinkGraph")))
 
 
 def test_native_relationship_projection_does_not_invent_strength_or_authorship(tmp_path, monkeypatch):

@@ -227,6 +227,7 @@ def test_dynamic_tool_binding_preserves_card_configuration_and_executes_once():
         "thread/start",
         {
             "cwd": "/tmp",
+            "config": {"apps": {"_default": {"enabled": False}}},
             "dynamicTools": [tool],
             "model": "saved-model",
             "allowProviderModelFallback": False,
@@ -240,6 +241,49 @@ def test_dynamic_tool_binding_preserves_card_configuration_and_executes_once():
     assert turn_start["input"] == [{"type": "text", "text": dynamic_user_task}]
     assert client.requests[1][1]["effort"] == "medium"
     assert [method for method, _ in client.requests] == ["thread/start", "turn/start"]
+
+
+def test_saved_card_thread_disables_ambient_apps_without_touching_native_mcp_config():
+    client = FakeClient()
+    session = make_session(client)
+
+    assert session.ensure_started() == "thread-fake-001"
+    assert "capabilities" not in client.initialize_kwargs
+    assert client.requests == [(
+        "thread/start",
+        {
+            "cwd": "/tmp",
+            "config": {"apps": {"_default": {"enabled": False}}},
+        },
+    )]
+    config = client.requests[0][1]["config"]
+    assert set(config) == {"apps"}
+    assert "mcp_servers" not in config
+
+
+def test_saved_card_thread_projects_exact_native_mcp_without_ambient_apps():
+    client = FakeClient()
+    native_mcp = {
+        "graphiti": {
+            "url": "http://127.0.0.1:8765/mcp",
+            "http_headers": {"Authorization": "Bearer run-token"},
+            "default_tools_approval_mode": "approve",
+            "enabled_tools": ["graphiti.add_memory"],
+        },
+    }
+    session = make_session(client, native_mcp_servers=native_mcp)
+
+    assert session.ensure_started() == "thread-fake-001"
+    thread_params = client.requests[0][1]
+    assert thread_params["config"] == {
+        "apps": {"_default": {"enabled": False}},
+        "mcp_servers": native_mcp,
+    }
+    assert [method for method, _ in client.requests] == ["thread/start"]
+    first_fingerprint = session.native_mcp_fingerprint
+    native_mcp["graphiti"]["http_headers"]["Authorization"] = "Bearer changed-outside"
+    assert session.native_mcp_fingerprint == first_fingerprint
+    assert CodexAppServerSession.native_mcp_fingerprint_for(native_mcp) != first_fingerprint
 
 
 def test_failed_dynamic_call_is_not_reexecuted_after_response_loss():
