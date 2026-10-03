@@ -151,6 +151,20 @@ _REQUEST_FULFILLMENT_LEVELS = (
     "The requested outcome and material requirements are delivered, with only a minor omission or correction remaining.",
     "The applicable requested outcome and material constraints are fully delivered, with no material omission, contradiction, or unsupported completion claim visible in the supplied input and execution evidence.",
 )
+_REQUEST_NOVELTY_CHOICES = (
+    "new_evidence", "contradiction", "changed_thesis", "repeated_only",
+)
+_REQUEST_CITATION_COVERAGE_CHOICES = (
+    "complete", "gap", "not_applicable",
+)
+_REQUEST_FOLLOW_UP_CHOICES = (
+    "accept", "ask_one_clarification", "send_one_bounded_follow_up", "stop",
+)
+_MISSION_READINESS_CHOICES = (
+    "ready", "missing_evidence", "contradictory", "source_blocked",
+)
+_RESEARCH_PROGRESS_TOPIC_SHIFT_THRESHOLD = 0.80
+_RESEARCH_PROGRESS_REPEAT_LIMIT = 2
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -3553,11 +3567,8 @@ def _atomic_research_assignment(
     reason: str,
 ) -> str:
     result_schema = {
-        "schemaVersion": "atomic-research-result.v1",
-        "assessmentId": assessment_id,
-        "sourceRunId": source_run_id,
+        "schemaVersion": "atomic-research-response.v1",
         "results": [{
-            "thinkMemoryId": "one exact supplied Think memory ID",
             "status": "supported|contradicted|source-unavailable",
             "summary": "concise sourced result",
             "citations": [{
@@ -3573,9 +3584,9 @@ def _atomic_research_assignment(
         "The supplied ThinkGraph Data Anchors are question framing, not factual evidence.",
         "Each exact Think body is already hydrated in actualGraphData. Do not call",
         "engraphis_get_memory for it again unless the supplied data explicitly reports a freshness mismatch.",
-        "For each exact Think memory ID, inspect existing current project-scoped Knows and their",
+        "For each supplied hydrated Think body, inspect existing current project-scoped Knows and their",
         "source dates first. Use at most four distinct current primary sources across this assignment.",
-        "A Think memory ID is correlation metadata for RESULT_SCHEMA only. Never place a Think",
+        "A Think memory ID is runtime correlation metadata only. Never place a Think",
         "memory ID, assessment ID, Run ID, Card ID, conversation/message/session ID, or schema",
         "label in graphiti.add_memory name, episode body, source_description, extraction instructions,",
         "entity names, or relationship facts. Research and write only the named real-world subjects",
@@ -3602,13 +3613,13 @@ def _atomic_research_assignment(
         "same pending settlement path. Keep each summary strictly about evidence and the semantic",
         "finding; never put queue, readback, persistence-pending, or settlement status in summary.",
         "Do not exceed the saved Card's model, maxTokens, maxTurns, tools, profile, or grants.",
-        "Return only one JSON object matching RESULT_SCHEMA, with one result per supplied Think ID.",
+        "Return only one JSON object matching RESULT_SCHEMA, with one result per supplied Think",
+        "in exact supplied order. Do not echo any supplied Think, assessment, source Run, child",
+        "Run, Card, conversation, message, or session identifier in the JSON response.",
         "A supported or contradicted result requires at least one exact primary-source citation URL.",
         "Never invent an episode UUID. Use source-unavailable only for a semantic/source/tool failure,",
         "not merely because the exactly-once Graphiti write is still processing.",
-        f"ASSESSMENT_ID: {assessment_id}",
-        f"SOURCE_RUN_ID: {source_run_id}",
-        "THINK_MEMORY_IDS: " + json.dumps(memory_ids, separators=(",", ":")),
+        f"EXPECTED_RESULT_COUNT: {len(memory_ids)}",
         "MAIN_REASON: " + (reason or "No additional reason supplied."),
         "RESULT_SCHEMA: " + json.dumps(result_schema, separators=(",", ":")),
     ))
@@ -7286,6 +7297,275 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validated_request_semantic_answer(
+    answer: Any,
+    choices: tuple[str, ...],
+) -> dict[str, Any]:
+    """Validate one semantic answer without giving it persistence authority."""
+
+    validated = _validated_choice_answer(
+        answer,
+        choices,
+        error_code="request_fulfillment_response_invalid",
+    )
+    return {
+        "classification": validated["winner"],
+        "distribution": validated["probabilities"],
+        "confidence": validated["confidence"],
+        "winnerProbability": validated["probabilities"][validated["winner"]],
+    }
+
+
+def _trusted_research_progress_context(
+    *,
+    run_id: str,
+    project_id: str,
+    deck_id: str,
+    runtime_mode: str,
+) -> dict[str, Any]:
+    """Read the exact AGE parent/gap boundary; callers cannot supply lineage state."""
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            params = {
+                "projectId": project_id,
+                "deckId": deck_id,
+                "runId": run_id,
+            }
+            rows: list[dict[str, Any]] = []
+            tracks_current_result = False
+            if runtime_mode == "main":
+                rows = _age_rows(
+                    cursor,
+                    """
+                    MATCH (current:Run {
+                      projectId: $projectId, deckId: $deckId, runId: $runId
+                    })
+                    MATCH (owner:Run {
+                      projectId: $projectId, deckId: $deckId
+                    })
+                    WHERE current.atomicResearchOriginatingRunId=owner.runId
+                      AND current.atomicResearchAssessmentId IS NOT NULL
+                      AND owner.atomicResearchAssessment IS NOT NULL
+                      AND owner.atomicResearchAssessment.assessmentId=
+                          current.atomicResearchAssessmentId
+                      AND owner.conversationId=current.conversationId
+                    RETURN owner.runId AS progressOwnerRunId,
+                           owner.atomicResearchAssessment AS assessment,
+                           owner.researchProgressLineageId AS priorLineageId,
+                           owner.researchRepeatedOnlyCount AS priorRepeatedOnlyCount
+                    LIMIT 1
+                    """,
+                    params,
+                    (
+                        "progress_owner_run_id agtype, assessment agtype, "
+                        "prior_lineage_id agtype, prior_repeated_only_count agtype"
+                    ),
+                )
+            else:
+                rows = _age_rows(
+                    cursor,
+                    """
+                    MATCH (main:Run {
+                      projectId: $projectId, deckId: $deckId
+                    })-[:CHILD_RUN]->(current:Run {
+                      projectId: $projectId, deckId: $deckId, runId: $runId
+                    })
+                    MATCH (owner:Run {
+                      projectId: $projectId, deckId: $deckId
+                    })
+                    WHERE main.atomicResearchOriginatingRunId=owner.runId
+                      AND main.atomicResearchAssessmentId IS NOT NULL
+                      AND owner.atomicResearchAssessment IS NOT NULL
+                      AND owner.atomicResearchAssessment.assessmentId=
+                          main.atomicResearchAssessmentId
+                      AND owner.conversationId=main.conversationId
+                      AND current.conversationId=main.conversationId
+                    RETURN owner.runId AS progressOwnerRunId,
+                           owner.atomicResearchAssessment AS assessment,
+                           owner.researchProgressLineageId AS priorLineageId,
+                           owner.researchRepeatedOnlyCount AS priorRepeatedOnlyCount
+                    LIMIT 1
+                    """,
+                    params,
+                    (
+                        "progress_owner_run_id agtype, assessment agtype, "
+                        "prior_lineage_id agtype, prior_repeated_only_count agtype"
+                    ),
+                )
+                tracks_current_result = len(rows) == 1
+    if len(rows) != 1 or not isinstance(rows[0].get("assessment"), dict):
+        return {
+            "active": False,
+            "automaticContinuationAllowed": False,
+            "stopReason": (
+                "trusted_research_lineage_unavailable"
+                if runtime_mode == "main" else "recursive_research_forbidden"
+            ),
+            "tracksCurrentResult": False,
+        }
+    row = rows[0]
+    assessment = dict(row["assessment"])
+    automatic_ids = assessment.get("automaticMemoryIds")
+    evidence_gap_id = str(assessment.get("thinkMemoryId") or "").strip()
+    progress_owner_run_id = str(
+        row.get("progress_owner_run_id") or row.get("progressOwnerRunId") or ""
+    ).strip()
+    if (
+        assessment.get("schemaVersion") != "atomic-research-assessment.v1"
+        or assessment.get("status") != "success"
+        or not isinstance(automatic_ids, list)
+        or any(not isinstance(value, str) or not value.strip() for value in automatic_ids)
+        or not evidence_gap_id
+        or not progress_owner_run_id
+    ):
+        return {
+            "active": False,
+            "automaticContinuationAllowed": False,
+            "stopReason": "trusted_research_lineage_invalid",
+            "tracksCurrentResult": False,
+        }
+    prior_lineage_id = str(
+        row.get("prior_lineage_id") or row.get("priorLineageId") or ""
+    ).strip()
+    raw_count = row.get(
+        "prior_repeated_only_count",
+        row.get("priorRepeatedOnlyCount"),
+    )
+    prior_count = raw_count if isinstance(raw_count, int) and not isinstance(raw_count, bool) else 0
+    prior_count = max(0, prior_count)
+    if not prior_lineage_id:
+        prior_lineage_id = "research-lineage:" + _sha(_canonical_json({
+            "projectId": project_id,
+            "deckId": deck_id,
+            "progressOwnerRunId": progress_owner_run_id,
+            "assessmentId": str(assessment.get("assessmentId") or ""),
+            "evidenceGapId": evidence_gap_id,
+        }))[:32]
+        prior_count = 0
+    return {
+        "active": bool(automatic_ids),
+        "progressOwnerRunId": progress_owner_run_id,
+        "evidenceGapId": evidence_gap_id,
+        "lineageId": prior_lineage_id,
+        "priorRepeatedOnlyCount": prior_count,
+        "tracksCurrentResult": tracks_current_result,
+        "automaticContinuationAllowed": (
+            bool(automatic_ids) and prior_count < _RESEARCH_PROGRESS_REPEAT_LIMIT
+        ),
+        "stopReason": (
+            "repeated_only_limit"
+            if bool(automatic_ids) and prior_count >= _RESEARCH_PROGRESS_REPEAT_LIMIT
+            else None
+        ),
+    }
+
+
+def _settled_research_progress(
+    *,
+    context: dict[str, Any],
+    novelty: dict[str, Any] | None,
+    run_id: str,
+    output_sha256: str,
+) -> dict[str, Any]:
+    """Advance the trusted counter from the current classification only."""
+
+    active = context.get("active") is True
+    tracks_current_result = context.get("tracksCurrentResult") is True
+    lineage_id = str(context.get("lineageId") or "").strip() or None
+    prior_count = context.get("priorRepeatedOnlyCount")
+    prior_count = prior_count if isinstance(prior_count, int) else 0
+    classification = str((novelty or {}).get("classification") or "")
+    confidence = (novelty or {}).get("confidence")
+    winner_probability = (novelty or {}).get("winnerProbability")
+    changed_thesis = (
+        classification == "changed_thesis"
+        and isinstance(confidence, (int, float))
+        and not isinstance(confidence, bool)
+        and float(confidence) >= _RESEARCH_PROGRESS_TOPIC_SHIFT_THRESHOLD
+        and isinstance(winner_probability, (int, float))
+        and not isinstance(winner_probability, bool)
+        and float(winner_probability) >= _RESEARCH_PROGRESS_TOPIC_SHIFT_THRESHOLD
+    )
+    if active and tracks_current_result and changed_thesis:
+        lineage_id = "research-lineage:" + _sha(_canonical_json({
+            "runId": run_id,
+            "outputSha256": output_sha256,
+            "reason": "changed_thesis",
+        }))[:32]
+        repeated_count = 0
+        lineage_action = "changed_thesis"
+    elif active and tracks_current_result and classification == "repeated_only":
+        repeated_count = prior_count + 1
+        lineage_action = "continued"
+    elif active and tracks_current_result:
+        repeated_count = 0 if novelty is not None else prior_count
+        lineage_action = "continued"
+    elif active:
+        repeated_count = prior_count
+        lineage_action = "continued"
+    else:
+        repeated_count = 0
+        lineage_action = "inactive"
+    allowed = bool(active and repeated_count < _RESEARCH_PROGRESS_REPEAT_LIMIT)
+    stop_reason = (
+        "repeated_only_limit"
+        if active and repeated_count >= _RESEARCH_PROGRESS_REPEAT_LIMIT
+        else context.get("stopReason") if not active else None
+    )
+    return {
+        "schemaVersion": "research-progress.v1",
+        "active": active,
+        "lineageId": lineage_id,
+        "progressOwnerRunId": context.get("progressOwnerRunId"),
+        "parentRunId": context.get("progressOwnerRunId"),
+        "evidenceGapId": context.get("evidenceGapId"),
+        "tracksCurrentResult": tracks_current_result,
+        "lineageAction": lineage_action,
+        "priorRepeatedOnlyCount": prior_count,
+        "repeatedOnlyCount": repeated_count,
+        "automaticContinuationAllowed": allowed,
+        "stopReason": stop_reason,
+    }
+
+
+def _persist_research_progress_guard(
+    cursor: Any,
+    run_id: str,
+    progress: dict[str, Any],
+) -> None:
+    """Persist derived lineage/counter properties on the existing AGE Run."""
+
+    rows = _age_rows(
+        cursor,
+        """
+        MATCH (run:Run {runId: $progressOwnerRunId})
+        SET run.researchProgressLineageId=$lineageId,
+            run.researchRepeatedOnlyCount=$repeatedOnlyCount,
+            run.researchAutomaticContinuationAllowed=$automaticContinuationAllowed,
+            run.researchProgressLastResultRunId=$assessedRunId,
+            run.researchProgressEvidenceGapId=$evidenceGapId,
+            run.researchProgressStopReason=$stopReason
+        RETURN run.runId AS runId
+        """,
+        {
+            "progressOwnerRunId": progress.get("progressOwnerRunId"),
+            "lineageId": progress.get("lineageId"),
+            "repeatedOnlyCount": progress.get("repeatedOnlyCount", 0),
+            "automaticContinuationAllowed": progress.get(
+                "automaticContinuationAllowed", False
+            ),
+            "assessedRunId": run_id,
+            "evidenceGapId": progress.get("evidenceGapId"),
+            "stopReason": progress.get("stopReason"),
+        },
+        "run_id agtype",
+    )
+    if len(rows) != 1:
+        raise CardDomainError("research_progress_persistence_failed")
+
+
 def _validated_request_fulfillment_answer(answer: Any) -> dict[str, Any]:
     """Validate TypeSafe's native five-level Score without repairing it."""
 
@@ -7391,6 +7671,13 @@ def _persist_request_fulfillment(
         )
         stored = cursor.fetchone()
         if stored is not None:
+            progress = assessment.get("researchProgress")
+            if (
+                isinstance(progress, dict)
+                and progress.get("progressOwnerRunId")
+                and progress.get("tracksCurrentResult") is True
+            ):
+                _persist_research_progress_guard(cursor, run_id, progress)
             return dict(stored["request_fulfillment"])
         cursor.execute(
             "SELECT request_fulfillment FROM ag_catalog.agent_runs WHERE run_id=%s",
@@ -7410,6 +7697,13 @@ def _persist_request_fulfillment(
         )
         if any(existing.get(field) != assessment.get(field) for field in binding_fields):
             raise CardDomainError("request_fulfillment_binding_conflict")
+        progress = existing.get("researchProgress")
+        if (
+            isinstance(progress, dict)
+            and progress.get("progressOwnerRunId")
+            and progress.get("tracksCurrentResult") is True
+        ):
+            _persist_research_progress_guard(cursor, run_id, progress)
         return dict(existing)
 
 
@@ -7443,7 +7737,7 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                 SELECT run.project_id, run.deck_id, run.target_card_revision_id,
                        run.state, run.final_result, run.effective_provider,
                        run.provider_model_id, run.request_fulfillment,
-                       revision.card_id
+                       revision.card_id, revision.runtime_mode
                 FROM ag_catalog.agent_runs AS run
                 JOIN ag_catalog.agent_card_revisions AS revision
                   ON revision.revision_id=run.target_card_revision_id
@@ -7494,6 +7788,25 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
     idf_sha256 = str((input_file or {}).get("idfSha256") or "")
     output_sha256 = _sha(final_result)
     evidence_sha256 = sha256(evidence_bytes).hexdigest()
+    research_context: dict[str, Any] = {
+        "active": False,
+        "automaticContinuationAllowed": False,
+        "stopReason": "trusted_research_lineage_unavailable",
+    }
+    if materialized is not None:
+        try:
+            research_context = _trusted_research_progress_context(
+                run_id=run_id,
+                project_id=str(row["project_id"]),
+                deck_id=str(row["deck_id"]),
+                runtime_mode=str(row.get("runtime_mode") or ""),
+            )
+        except Exception:
+            research_context = {
+                "active": False,
+                "automaticContinuationAllowed": False,
+                "stopReason": "trusted_research_lineage_unavailable",
+            }
     evaluated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     base: dict[str, Any] = {
         "schemaVersion": "request-fulfillment-assessment.v1",
@@ -7534,10 +7847,17 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
 
     assessment: dict[str, Any]
     if unavailable_reason:
+        research_progress = _settled_research_progress(
+            context=research_context,
+            novelty=None,
+            run_id=run_id,
+            output_sha256=output_sha256,
+        )
         assessment = {
             **base,
             "status": "unavailable",
             "failureReason": unavailable_reason,
+            "researchProgress": research_progress,
             "requestCount": 0,
             "questionCount": 0,
             "timingMs": 0.0,
@@ -7557,6 +7877,12 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                 "model": actual_model,
                 "exposed_tools": exposed_tools,
                 "observable_tool_calls_and_results": evidence,
+            },
+            "trusted_research_lineage": {
+                key: research_context.get(key)
+                for key in (
+                    "active", "progressOwnerRunId", "evidenceGapId",
+                )
             },
             "final_response": final_result,
         }
@@ -7579,7 +7905,54 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                         "instructions, assess that response rather than demanding a prohibited action."
                     ),
                     "criteria": list(_REQUEST_FULFILLMENT_LEVELS),
-                }
+                },
+                "novelty": {
+                    "type": "choice",
+                    "instructions": (
+                        "Classify only the current completed result relative to the supplied "
+                        "request, trusted research gap, selected graph context, and observable "
+                        "execution evidence. Choose new_evidence for materially new sourced "
+                        "evidence, contradiction for materially contradictory evidence, "
+                        "changed_thesis for a material thesis revision, or repeated_only when "
+                        "the result only restates prior input/evidence without material progress. "
+                        "Report only this current classification; never create, rename, increment, "
+                        "or reset a lineage or counter."
+                    ),
+                    "criteria": {
+                        "new_evidence": "Materially new sourced evidence advances the request or gap.",
+                        "contradiction": "Material evidence contradicts the active thesis or prior evidence.",
+                        "changed_thesis": "The result materially revises the active thesis.",
+                        "repeated_only": "The result adds no material evidence or thesis change.",
+                    },
+                },
+                "citation_coverage": {
+                    "type": "choice",
+                    "instructions": (
+                        "Assess visible citation coverage only for externally verifiable objective "
+                        "claims in the final response. Preferences, questions, hypotheticals, "
+                        "clearly labeled speculation, and purely procedural statements are not "
+                        "citation gaps. Choose not_applicable when no objective claim needs a citation."
+                    ),
+                    "criteria": {
+                        "complete": "Every material objective claim needing support has visible support.",
+                        "gap": "At least one material objective claim needing support lacks visible support.",
+                        "not_applicable": "No objective claim in this response requires citation support.",
+                    },
+                },
+                "follow_up": {
+                    "type": "choice",
+                    "instructions": (
+                        "Advise the smallest next conversational action. This answer is advisory "
+                        "only and never asks a question, launches a Run, grants a tool, or controls "
+                        "automatic research."
+                    ),
+                    "criteria": {
+                        "accept": "Accept the result without another action.",
+                        "ask_one_clarification": "One user clarification would resolve the key ambiguity.",
+                        "send_one_bounded_follow_up": "One bounded follow-up could materially advance the same request.",
+                        "stop": "Stop because further continuation is unsupported or unproductive.",
+                    },
+                },
             },
         }
         started = time.perf_counter()
@@ -7596,36 +7969,64 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                     "invalid", "request_fulfillment_response_invalid"
                 )
             answers = response.get("answers")
-            if not isinstance(answers, dict) or set(answers) != {"response_fit"}:
+            if not isinstance(answers, dict) or set(answers) != {
+                "response_fit", "novelty", "citation_coverage", "follow_up",
+            }:
                 raise _CardJevError(
                     "invalid", "request_fulfillment_response_invalid"
                 )
             score = _validated_request_fulfillment_answer(
                 answers["response_fit"]
             )
+            novelty = _validated_request_semantic_answer(
+                answers["novelty"], _REQUEST_NOVELTY_CHOICES,
+            )
+            citation_coverage = _validated_request_semantic_answer(
+                answers["citation_coverage"], _REQUEST_CITATION_COVERAGE_CHOICES,
+            )
+            follow_up = _validated_request_semantic_answer(
+                answers["follow_up"], _REQUEST_FOLLOW_UP_CHOICES,
+            )
+            research_progress = _settled_research_progress(
+                context=research_context,
+                novelty=novelty,
+                run_id=run_id,
+                output_sha256=output_sha256,
+            )
             assessment = {
                 **base,
                 "status": "scored",
                 **score,
+                "novelty": novelty,
+                "citationCoverage": citation_coverage,
+                "followUp": follow_up,
+                "researchProgress": research_progress,
                 **response_identity,
                 "usage": (
                     response.get("usage")
                     if isinstance(response.get("usage"), dict) else {}
                 ),
                 "requestCount": 1,
-                "questionCount": 1,
+                "questionCount": 4,
                 "timingMs": round((time.perf_counter() - started) * 1000, 3),
             }
         except _CardJevError as error:
+            research_progress = _settled_research_progress(
+                context=research_context,
+                novelty=None,
+                run_id=run_id,
+                output_sha256=output_sha256,
+            )
             assessment = {
                 **base,
                 "status": "unavailable",
                 "failureReason": error.code,
+                "researchProgress": research_progress,
                 "requestCount": (
                     0 if error.status == "limit"
                     or error.code.endswith("_openrouter_key_unavailable") else 1
                 ),
-                "questionCount": 1,
+                "questionCount": 4,
                 "timingMs": round((time.perf_counter() - started) * 1000, 3),
                 **{
                     key: value for key, value in response_identity.items() if value
@@ -7633,6 +8034,176 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
             }
     stored = _persist_request_fulfillment(run_id, assessment)
     return {"ok": True, "runId": run_id, "assessment": stored}
+
+
+def assess_magentic_mission_readiness(payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist at most one advisory Jev readiness receipt at the frozen mission seam."""
+
+    run_id = _required_text(payload.get("runId"), "run_id")
+    mission = _required_text(payload.get("mission"), "magentic_mission")
+    workers = payload.get("workers")
+    if len(mission.encode("utf-8")) > 40_000:
+        raise CardDomainError("magentic_mission_readiness_mission_too_large")
+    if not isinstance(workers, list) or not 1 <= len(workers) <= 64:
+        raise CardDomainError("magentic_mission_readiness_workers_invalid")
+    bounded_workers: list[dict[str, Any]] = []
+    for worker in workers:
+        if not isinstance(worker, dict):
+            raise CardDomainError("magentic_mission_readiness_workers_invalid")
+        card_id = _required_text(worker.get("cardId"), "magentic_worker_card")
+        revision_id = _required_text(
+            worker.get("cardRevisionId"), "magentic_worker_revision"
+        )
+        profile = _required_text(worker.get("profile"), "magentic_worker_profile")
+        bounded_workers.append({
+            "cardId": card_id,
+            "cardRevisionId": revision_id,
+            "profile": profile,
+            "title": str(worker.get("title") or card_id)[:256],
+            "description": str(worker.get("description") or "")[:1_000],
+        })
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"magentic-mission-readiness:{run_id}",),
+        )
+        cursor.execute(
+            """
+            SELECT run.project_id, run.deck_id, run.target_card_revision_id,
+                   revision.card_id, revision.runtime_mode
+            FROM ag_catalog.agent_runs AS run
+            JOIN ag_catalog.agent_card_revisions AS revision
+              ON revision.revision_id=run.target_card_revision_id
+            WHERE run.run_id=%s
+            """,
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise CardDomainError("run_not_found")
+        if str(row.get("runtime_mode") or "") != "magentic_one":
+            raise CardDomainError("magentic_mission_readiness_authority_invalid")
+        existing_rows = _age_rows(
+            cursor,
+            """
+            MATCH (run:Run {
+              projectId: $projectId, deckId: $deckId, runId: $runId
+            })
+            RETURN run.missionReadiness AS missionReadiness
+            """,
+            {
+                "projectId": str(row["project_id"]),
+                "deckId": str(row["deck_id"]),
+                "runId": run_id,
+            },
+            "mission_readiness agtype",
+        )
+        existing = (
+            existing_rows[0].get("mission_readiness")
+            if len(existing_rows) == 1 else None
+        )
+        if isinstance(existing, dict):
+            return {"ok": True, "runId": run_id, "assessment": dict(existing)}
+        body = {
+            "model": JEV_MODEL,
+            "state": {
+                "description": (
+                    "One already-authorized frozen Magnetic mission and its exact bounded "
+                    "saved worker roster. This assessment is advisory only and cannot authorize, "
+                    "block, rewrite, decompose, dispatch, or add a worker."
+                ),
+                "mission": mission,
+                "workers": bounded_workers,
+            },
+            "questions": {
+                "mission_readiness": {
+                    "type": "choice",
+                    "instructions": (
+                        "Assess whether the frozen mission is sufficiently concrete for the "
+                        "supplied exact roster. Return one advisory classification only."
+                    ),
+                    "criteria": {
+                        "ready": "The mission is concrete enough for this exact roster.",
+                        "missing_evidence": "The mission is bounded but material evidence is still missing.",
+                        "contradictory": "The supplied evidence materially contradicts the mission premise.",
+                        "source_blocked": "A required source is unavailable or cannot be validated.",
+                    },
+                }
+            },
+        }
+        started = time.perf_counter()
+        try:
+            response = _jev_request(body, error_prefix="magentic_mission_readiness")
+            answers = response.get("answers")
+            if not isinstance(answers, dict) or set(answers) != {"mission_readiness"}:
+                raise _CardJevError(
+                    "invalid", "magentic_mission_readiness_response_invalid"
+                )
+            readiness = _validated_request_semantic_answer(
+                answers["mission_readiness"], _MISSION_READINESS_CHOICES,
+            )
+            assessment = {
+                "schemaVersion": "magentic-mission-readiness.v1",
+                "status": "assessed",
+                "runId": run_id,
+                "missionSha256": _sha(mission),
+                "workerRosterSha256": _sha(_canonical_json(bounded_workers)),
+                "advisory": readiness,
+                "decisionId": str(response.get("id") or "").strip(),
+                "provider": str(response.get("provider") or "").strip(),
+                "requestedModel": JEV_MODEL,
+                "resolvedModel": str(response.get("model") or "").strip(),
+                "requestCount": 1,
+                "questionCount": 1,
+                "timingMs": round((time.perf_counter() - started) * 1000, 3),
+            }
+            if any(not assessment[key] for key in ("decisionId", "provider", "resolvedModel")):
+                raise _CardJevError(
+                    "invalid", "magentic_mission_readiness_response_invalid"
+                )
+        except _CardJevError as error:
+            assessment = {
+                "schemaVersion": "magentic-mission-readiness.v1",
+                "status": "unavailable",
+                "runId": run_id,
+                "missionSha256": _sha(mission),
+                "workerRosterSha256": _sha(_canonical_json(bounded_workers)),
+                "failureReason": error.code,
+                "requestedModel": JEV_MODEL,
+                "requestCount": (
+                    0 if error.status == "limit"
+                    or error.code.endswith("_openrouter_key_unavailable") else 1
+                ),
+                "questionCount": 1,
+                "timingMs": round((time.perf_counter() - started) * 1000, 3),
+            }
+        stored_rows = _age_rows(
+            cursor,
+            """
+            MATCH (run:Run {
+              projectId: $projectId, deckId: $deckId, runId: $runId
+            })
+            WHERE run.missionReadiness IS NULL
+            SET run.missionReadiness=$assessment
+            RETURN run.missionReadiness AS missionReadiness
+            """,
+            {
+                "projectId": str(row["project_id"]),
+                "deckId": str(row["deck_id"]),
+                "runId": run_id,
+                "assessment": assessment,
+            },
+            "mission_readiness agtype",
+        )
+        if len(stored_rows) != 1 or not isinstance(
+            stored_rows[0].get("mission_readiness"), dict
+        ):
+            raise CardDomainError("magentic_mission_readiness_persistence_failed")
+        return {
+            "ok": True,
+            "runId": run_id,
+            "assessment": dict(stored_rows[0]["mission_readiness"]),
+        }
 
 
 def _observe_run_result_ready(run_id: str) -> bool:

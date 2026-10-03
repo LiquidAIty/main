@@ -1,206 +1,179 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CardRuntimeDashboard } from './CardRuntimeDashboard';
 
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
+  .IS_REACT_ACT_ENVIRONMENT = true;
+
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+
+async function renderDashboard(cardId = 'builder') {
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => {
+    root!.render(<CardRuntimeDashboard projectId="project-one" deckId="deck-one" cardId={cardId} />);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  });
+  return container;
+}
+
 afterEach(() => {
-  cleanup();
+  if (root) act(() => root!.unmount());
+  container?.remove();
+  root = null;
+  container = null;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('CardRuntimeDashboard', () => {
-  it('leads with the newest failed Run and labels unknown measurements honestly', async () => {
+  it('shows only the selected Card newest failed Run aggregates', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         ok: true,
         result: {
-          limit: 8,
+          cardId: 'builder',
           latest: {
-            runId: 'run-failed', state: 'failed', cardId: 'builder',
-            acceptedAt: '2026-10-01T20:00:00Z', startedAt: '2026-10-01T20:00:02Z',
-            finishedAt: '2026-10-01T20:00:07Z', preparationMs: 2000,
-            elapsedMs: 5000, totalElapsedMs: 7000,
-            provider: 'openai', effectiveProvider: 'openai-codex', model: 'gpt-5.6-sol',
-            runtimeProfile: 'builder', runtimeKind: 'hermes', runtimeMode: 'delegate',
-            inputTokens: null, outputTokens: null, cachedTokens: null,
-            reasoningTokens: null, costUsd: null,
-            errorCode: 'provider_unavailable', errorSummary: 'Provider unavailable.',
-            idf: { sha256: 'a'.repeat(64), bytes: 400 },
-            jevDecisions: [{ schemaVersion: 'card-auto-tools.v1', status: 'unavailable' }],
-            attemptEvents: [
-              { eventId: 'llm-one', attemptId: 'llm-one', kind: 'llm', phase: 'completed',
-                model: 'gpt-5.6-sol', durationMs: 900, firstTokenMs: 120, retryCount: 1,
-                inputTokens: 80, outputTokens: 20, cachedTokens: 10, reasoningTokens: 4,
-                totalTokens: 100, costStatus: 'unknown', observationGap: 2 },
-              { eventId: 'tool-one', attemptId: 'tool-one', kind: 'tool', phase: 'failed',
-                toolName: 'graphiti.search_nodes', durationMs: 30, errorType: 'Timeout',
-                errorMessage: 'Native read timed out.' },
-            ],
-            toolEvents: [], materializedNativeReferences: [], nativeReferences: [], artifacts: [],
-            requestFulfillment: null,
+            state: 'failed',
+            acceptedAt: '2026-10-03T12:00:00Z',
+            model: 'gpt-5.6-sol',
+            elapsedMs: 17_490,
+            totalTokens: 12_340,
+            costUsd: 0.08,
+            costStatus: 'estimated',
+            toolCallCount: 7,
           },
-          runs: [
-            { runId: 'run-failed', state: 'failed', cardRevisionId: 'revision-one',
-              startedAt: '2026-10-01T20:00:02Z', finishedAt: '2026-10-01T20:00:07Z' },
-            { runId: 'run-active', state: 'running', cardRevisionId: 'revision-one' },
-            { runId: 'run-completed', state: 'completed', cardRevisionId: 'revision-one',
-              startedAt: '2026-10-01T19:00:00Z', finishedAt: '2026-10-01T19:00:04Z',
-              inputTokens: 100, outputTokens: 20, costUsd: 0.002,
-              requestFulfillment: { status: 'scored', normalizedScore100: 75 } },
-            { runId: 'run-cancelled', state: 'cancelled', cardRevisionId: 'revision-one' },
-          ],
         },
       }),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<CardRuntimeDashboard projectId="project-one" deckId="deck-one" cardId="builder" />);
+    const view = await renderDashboard();
 
-    await waitFor(() => expect(screen.getAllByText('run-failed').length).toBeGreaterThan(0));
-    expect(screen.getAllByText('provider_unavailable').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('run-completed').length).toBeGreaterThan(0);
-    expect(screen.getByText('No comparable baseline')).toBeTruthy();
-    expect(screen.getByText(/Card revision alone is not comparability/)).toBeTruthy();
-    expect(screen.queryByText(/fastest comparable/)).toBeNull();
-    expect(screen.queryByText(/cheapest comparable/)).toBeNull();
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(3);
-    expect(screen.getByText(/Preparation 2.00 s/)).toBeTruthy();
-    expect(screen.getByText(/Native 5.00 s/)).toBeTruthy();
-    expect(screen.getByText(/Total 7.00 s/)).toBeTruthy();
-    expect(screen.getAllByRole('alert').some((node) => (
-      node.textContent?.includes('Observation gap: 2 observer events')
-    ))).toBe(true);
-    expect(screen.getByText(/input 80 · output 20 · cache 10 · reasoning 4 · total 100/)).toBeTruthy();
-    expect(screen.getByText('Timeout · Native read timed out.')).toBeTruthy();
-    expect(screen.getAllByText('run-cancelled').length).toBeGreaterThan(0);
-    expect([...screen.getByRole('region', { name: 'Recent Card runs' }).querySelectorAll('code')]
-      .map((node) => node.textContent)).toEqual([
-        'run-failed', 'run-active', 'run-completed', 'run-cancelled',
-      ]);
-    expect(screen.getByText('graphiti.search_nodes · failed')).toBeTruthy();
-    expect(screen.getByText(/Count and name metadata only/)).toBeTruthy();
+    expect(view.textContent).toContain('Model: gpt-5.6-sol');
+    expect(view.textContent).toContain('Time: 00:17.49');
+    expect(view.textContent).toContain('Tokens: 12,340');
+    expect(view.textContent).toContain('Cost: ~$0.08 estimated');
+    expect(view.textContent).toContain('Tools: 7');
+    expect(view.textContent).not.toMatch(/receipt/i);
+    expect(view.textContent).not.toMatch(/history|provider|retry|artifact|reference|context|Jev/i);
     expect(fetchMock).toHaveBeenCalledWith('/api/cards/run', expect.objectContaining({
       body: JSON.stringify({ action: 'history', projectId: 'project-one', deckId: 'deck-one',
-        cardId: 'builder', limit: 8 }),
+        cardId: 'builder', limit: 1 }),
     }));
   });
 
-  it('shows an honest empty state and loads retained input only on demand', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true,
-        result: { limit: 8, latest: null, runs: [] } }) });
-    vi.stubGlobal('fetch', fetchMock);
-    const view = render(<CardRuntimeDashboard projectId="project-one" deckId="deck-one" cardId="builder" />);
-    await waitFor(() => expect(screen.getByText('No saved Runs exist for this Card.')).toBeTruthy());
-    expect(screen.queryByText('Inspect retained input')).toBeNull();
+  it('keeps unknown cancelled Run aggregates unavailable instead of zero', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ok: true,
+      result: { cardId: 'builder', latest: {
+        state: 'cancelled', acceptedAt: null, model: null, elapsedMs: null,
+        totalTokens: null, costUsd: null, costStatus: 'unavailable', toolCallCount: null,
+      } },
+    }) })));
 
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true,
-      result: { limit: 8, latest: {
-        runId: 'run-one', state: 'completed', elapsedMs: 1000, totalElapsedMs: null,
-        inputTokens: 1, outputTokens: 2, idf: {}, jevDecisions: [], toolEvents: [],
-      }, runs: [{ runId: 'run-one', state: 'completed' }] } }) });
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true,
-      result: { available: true, runId: 'run-one', inputSummary: { idfBytes: 123 } } }) });
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(screen.getAllByText('run-one').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByText('Run details, calls, and recent history'));
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect retained input' }));
-    await waitFor(() => expect(screen.getByText('Retained canonical input')).toBeTruthy());
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/cards/run', expect.objectContaining({
-      body: JSON.stringify({ action: 'inputs', projectId: 'project-one', deckId: 'deck-one',
-        cardId: 'builder', runId: 'run-one' }),
-    }));
-    view.unmount();
+    const view = await renderDashboard();
+
+    expect(view.textContent).toContain('Model: unavailable');
+    expect(view.textContent).toContain('Time: unavailable');
+    expect(view.textContent).toContain('Tokens: unavailable');
+    expect(view.textContent).toContain('Cost: unavailable');
+    expect(view.textContent).toContain('Tools: unavailable');
+    expect(view.textContent).not.toMatch(/0/);
   });
 
-  it('shows a failed pre-Run attempt without invented native or provider activity', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true,
-      result: { limit: 8, latest: {
-        runId: 'prep-failed', state: 'failed', acceptedAt: '2026-10-02T12:00:00Z',
-        startedAt: null, finishedAt: '2026-10-02T12:00:01Z', preparationMs: 1000,
-        totalElapsedMs: 1000, elapsedMs: null, preparationState: 'failed',
-        preparationError: 'configured_tool_unknown:provider.tool', nativeRunId: null,
-        provider: null, model: null, inputTokens: null, outputTokens: null,
-        cachedTokens: null, reasoningTokens: null, costUsd: null, toolCallCount: null,
-        attemptEvents: [], toolEvents: [], jevDecisions: [], idf: {},
-        errorCode: 'configured_card_preparation_failed',
-        errorSummary: 'configured_tool_unknown:provider.tool',
-      }, runs: [{ runId: 'prep-failed', state: 'failed', startedAt: null }] },
-    }) }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('rejects a response scoped to a different Card', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ok: true,
+      result: { cardId: 'another-card', latest: null },
+    }) })));
 
-    render(<CardRuntimeDashboard projectId="project-one" deckId="deck-one" cardId="builder" />);
-    await waitFor(() => expect(screen.getAllByText('prep-failed').length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByText('Run details, calls, and recent history'));
-    expect(screen.getAllByText('configured_tool_unknown:provider.tool').length).toBeGreaterThan(0);
-    expect(screen.getByText('Native Run ID').parentElement?.textContent).toContain('Unavailable');
-    expect(screen.getByText('Provider').parentElement?.textContent).toContain('Unavailable');
-    expect(screen.getByText('Model').parentElement?.textContent).toContain('Unavailable');
-    expect(screen.getByText(/Native Unavailable/)).toBeTruthy();
-    expect(screen.getByText(/No per-call Hermes receipt is available/)).toBeTruthy();
+    const view = await renderDashboard();
+
+    expect(view.querySelector('[role="alert"]')?.textContent).toContain(
+      'card_run_status_unavailable',
+    );
+    expect(view.textContent).not.toContain('No runs yet.');
   });
 
-  it('shows included access, fallback, receipt coverage, and metadata-only tool logging', async () => {
+  it('ticks locally, refreshes existing aggregates, freezes terminal values, and replaces them with a newer Run', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-03T12:00:01Z'));
+    const responses = [
+      { state: 'running', acceptedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
+        elapsedMs: 1_000, totalTokens: null, costUsd: null, costStatus: 'unavailable',
+        toolCallCount: null },
+      { state: 'running', acceptedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
+        elapsedMs: 3_000, totalTokens: 30, costUsd: 0.01, costStatus: 'estimated',
+        toolCallCount: 2 },
+      { state: 'failed', acceptedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
+        elapsedMs: 3_500, totalTokens: 40, costUsd: 0.02, costStatus: 'estimated',
+        toolCallCount: 3 },
+      { state: 'cancelled', acceptedAt: '2026-10-03T12:00:05Z', model: null,
+        elapsedMs: 250, totalTokens: null, costUsd: null, costStatus: 'unavailable',
+        toolCallCount: null },
+    ];
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true,
-      result: { limit: 8, latest: {
-        runId: 'included-run', state: 'completed', acceptedAt: '2026-10-02T12:00:00Z',
-        finishedAt: '2026-10-02T12:00:02Z', totalElapsedMs: 2000,
-        provider: 'openai', effectiveProvider: 'openai-codex', model: 'gpt-6-sol',
-        inputTokens: null, outputTokens: null, cachedTokens: null, reasoningTokens: null,
-        costUsd: null, toolCallCount: 2, modelFallbackOccurred: true,
-        modelFallbackReason: 'saved model unavailable', output: 'Produced the requested summary.',
-        observationGap: 1, idf: {}, jevDecisions: [],
-        attemptEvents: [{ eventId: 'llm', kind: 'llm', phase: 'completed',
-          inputTokens: 10, outputTokens: 4, cachedTokens: 3, reasoningTokens: 2,
-          totalTokens: 14, costStatus: 'included' }],
-        toolEvents: [{ toolName: 'graphiti.search_nodes', status: 'completed',
-          arguments: { secret: 'RAW_ARGUMENT_MUST_NOT_RENDER' },
-          result: 'RAW_RESULT_MUST_NOT_RENDER' }],
-      }, runs: [{ runId: 'included-run', state: 'completed' }] },
+      result: { cardId: 'builder', latest: responses[Math.min(fetchMock.mock.calls.length - 1, 3)] },
     }) }));
     vi.stubGlobal('fetch', fetchMock);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
 
-    render(<CardRuntimeDashboard projectId="project-one" deckId="deck-one" cardId="builder" />);
-    await waitFor(() => expect(screen.getAllByText('included-run').length).toBeGreaterThan(0));
-    expect(screen.getAllByText('Included').length).toBeGreaterThan(0);
-    expect(screen.getByText(/1 visible receipt · observation gap 1 · fallback: saved model unavailable/)).toBeTruthy();
-    expect(screen.getAllByText('Produced the requested summary.').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByText('Run details, calls, and recent history'));
-    expect(screen.getByText('graphiti.search_nodes · completed')).toBeTruthy();
-    expect(screen.getByText(/Count and name metadata only/)).toBeTruthy();
-    expect(screen.queryByText('RAW_ARGUMENT_MUST_NOT_RENDER')).toBeNull();
-    expect(screen.queryByText('RAW_RESULT_MUST_NOT_RENDER')).toBeNull();
-  });
+    await act(async () => {
+      root!.render(<CardRuntimeDashboard projectId="project-one" deckId="deck-one" cardId="builder" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('Time: 00:01.00');
+    expect(container.textContent).toContain('Tokens: unavailable');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-  it('builds a moving accounting baseline only from the same execution authority', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true,
-      result: { limit: 8, latest: {
-        runId: 'latest', state: 'completed', totalElapsedMs: 5000,
-        inputTokens: 100, outputTokens: 20, cachedTokens: 10, reasoningTokens: 5,
-        costUsd: 0.004, attemptEvents: [], toolEvents: [], jevDecisions: [], idf: {},
-      }, runs: [
-        { runId: 'latest', state: 'completed', executionAuthorityFingerprint: 'same' },
-        { runId: 'prior-a', state: 'completed', executionAuthorityFingerprint: 'same',
-          acceptedAt: '2026-10-02T11:00:00Z', finishedAt: '2026-10-02T11:00:04Z',
-          inputTokens: 80, outputTokens: 20, cachedTokens: 8, reasoningTokens: 4, costUsd: 0.002 },
-        { runId: 'prior-b', state: 'completed', executionAuthorityFingerprint: 'same',
-          acceptedAt: '2026-10-02T10:00:00Z', finishedAt: '2026-10-02T10:00:06Z',
-          inputTokens: 120, outputTokens: 30, cachedTokens: 12, reasoningTokens: 6, costUsd: null },
-        { runId: 'different', state: 'completed', executionAuthorityFingerprint: 'different',
-          totalElapsedMs: 10, inputTokens: 1, outputTokens: 1, costUsd: 0 },
-      ] },
-    }) }));
-    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(container.textContent).toContain('Time: 00:01.50');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    render(<CardRuntimeDashboard projectId="project-one" deckId="deck-one" cardId="builder" />);
-    await waitFor(() => expect(screen.getByText('Moving baseline · 2 same-authority Runs')).toBeTruthy());
-    expect(screen.getByText(/5.00 s avg wall · In 100 · Out 25 · \$0.002000 avg reported cost/)).toBeTruthy();
-    expect(screen.getByText(/Lowest observed wall 4.00 s \(prior-a\)/)).toBeTruthy();
-    expect(screen.getByText(/accounting comparison only, not a quality rank/)).toBeTruthy();
-    expect(screen.getByText('Moving baseline / comparable low').parentElement?.textContent).not.toContain('different');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('Tokens: 30');
+    expect(container.textContent).toContain('Tools: 2');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(container.textContent).toContain('Time: 00:03.50');
+    expect(container.textContent).toContain('Tokens: 40');
+    expect(container.textContent).toContain('Tools: 3');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(container.textContent).toContain('Time: 00:03.50');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(container.textContent).toContain('Model: unavailable');
+    expect(container.textContent).toContain('Time: 00:00.25');
+    expect(container.textContent).toContain('Tokens: unavailable');
+    expect(container.textContent).toContain('Tools: unavailable');
   });
 });

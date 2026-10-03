@@ -1098,6 +1098,25 @@ def test_subject_directory_rejects_ambiguous_same_authority_canonical_name() -> 
         )
 
 
+def test_subject_directory_preserves_writer_canonical_name_bytes() -> None:
+    think = _subject("ThinkGraph", 1)
+    know = _subject("KnowGraph", 1)
+    think["canonicalName"] = "  Writer-preserved subject  "
+    know["canonicalName"] = "Writer-preserved subject"
+
+    directory = assemble_canonical_subject_directory(
+        "project-1",
+        {"complete": True, "count": 1, "revision": "think-r1",
+         "subjects": [think]},
+        {"complete": True, "count": 1, "revision": "know-r1",
+         "subjects": [know]},
+    )
+
+    assert [item["canonicalName"] for item in directory["subjects"]] == [
+        "Writer-preserved subject", "  Writer-preserved subject  ",
+    ]
+
+
 def test_subject_directory_rejects_combined_context_over_existing_limit() -> None:
     directory = assemble_canonical_subject_directory(
         "project-1",

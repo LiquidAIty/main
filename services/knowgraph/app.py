@@ -14,17 +14,20 @@ from typing import Any
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
 
 from runtime_config import load_runtime_environment
 
 load_runtime_environment()
 
 from ingest import (
+    _create_graphiti_runtime,
     graphiti_runtime_versions,
     ingest_pdf,
     ingest_web_documents,
     reconcile_jev_annotations,
 )
+from graphiti_identity import graphiti_project_group_id
 
 app = FastAPI(title="KnowGraph")
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
@@ -60,6 +63,12 @@ class JevReconciliationRequest(BaseModel):
     native_fact_uuids: list[str] = Field(default_factory=list, max_length=64)
 
 
+class NativeKnowDeleteRequest(BaseModel):
+    project_id: str
+    native_id: str
+    kind: str = "fact"
+
+
 def _model_dump(model: BaseModel) -> dict[str, Any]:
     if hasattr(model, "model_dump"):
         return getattr(model, "model_dump")()
@@ -69,6 +78,62 @@ def _model_dump(model: BaseModel) -> dict[str, Any]:
 def _sanitize_filename(name: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in name)
     return safe or "upload.pdf"
+
+
+async def _delete_native_know(
+    payload: NativeKnowDeleteRequest,
+    *,
+    provider: str | None,
+    model_key: str | None,
+    model_id: str | None,
+) -> dict[str, str]:
+    from graphiti_core.edges import EntityEdge
+    from graphiti_core.nodes import EpisodicNode
+
+    if payload.kind not in {"fact", "episode"}:
+        raise ValueError("knowgraph_delete_kind_invalid")
+    expected_group = graphiti_project_group_id(payload.project_id)
+    _, graphiti, _ = _create_graphiti_runtime(
+        provider=provider,
+        model_key=model_key,
+        model_id=model_id,
+    )
+    try:
+        if payload.kind == "episode":
+            record = await EpisodicNode.get_by_uuid(graphiti.driver, payload.native_id)
+            if record.group_id != expected_group:
+                raise LookupError("knowgraph_native_record_not_found")
+            await graphiti.remove_episode(payload.native_id)
+        else:
+            record = await EntityEdge.get_by_uuid(graphiti.driver, payload.native_id)
+            if record.group_id != expected_group:
+                raise LookupError("knowgraph_native_record_not_found")
+            await record.delete(graphiti.driver)
+        return {"kind": payload.kind, "native_id": payload.native_id}
+    finally:
+        await graphiti.close()
+
+
+@app.post("/delete_native")
+async def delete_native(request: Request, payload: NativeKnowDeleteRequest) -> JSONResponse:
+    try:
+        result = await _delete_native_know(
+            payload,
+            provider=(request.headers.get("x-agent-provider") or "").strip() or None,
+            model_key=(request.headers.get("x-agent-model-key") or "").strip() or None,
+            model_id=(request.headers.get("x-agent-model-id") or "").strip() or None,
+        )
+        return JSONResponse(status_code=200, content={"ok": True, **result})
+    except (LookupError, EdgeNotFoundError, NodeNotFoundError):
+        return JSONResponse(
+            status_code=404,
+            content={"ok": False, "error": {"message": "KnowGraph item not found."}},
+        )
+    except (RuntimeError, ValueError, KeyError) as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"ok": False, "error": {"message": str(exc)}},
+        )
 
 
 @app.post("/ingest")

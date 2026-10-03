@@ -9,6 +9,11 @@ import React, {
 } from 'react';
 
 import BuilderChat from '../components/builder/BuilderChat';
+import {
+  createCanonicalSubjectMatcher,
+  type CanonicalSubjectFocusRequest,
+  type CanonicalSubjectFocusTarget,
+} from '../components/builder/canonicalSubjectLinks';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import WorldSignalSurface, {
   type WorldSignalsInspectorBridge,
@@ -467,6 +472,33 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId,
     selectedCardId,
   });
+  const canonicalSubjectMatcher = useMemo(
+    () => createCanonicalSubjectMatcher({
+      thinkgraph: graphAttention.projections.thinkgraph,
+      knowgraph: graphAttention.projections.knowgraph,
+    }),
+    [graphAttention.projections.knowgraph, graphAttention.projections.thinkgraph],
+  );
+  const subjectFocusRequestIdentityRef = useRef(0);
+  const [subjectFocusRequest, setSubjectFocusRequest] =
+    useState<CanonicalSubjectFocusRequest | null>(null);
+  useEffect(() => {
+    if (workspaceView !== 'knowledge') setSubjectFocusRequest(null);
+  }, [activeProject, workspaceView]);
+  const handleKnowledgeGraphKindChange = useCallback((kind: KnowledgeSurfaceKind) => {
+    setSubjectFocusRequest(null);
+    setKnowledgeGraphKind(kind);
+  }, []);
+  const handleCanonicalSubjectFocus = useCallback((target: CanonicalSubjectFocusTarget) => {
+    if (!activeProject || target.projectId !== activeProject) return;
+    subjectFocusRequestIdentityRef.current += 1;
+    setKnowledgeGraphKind(target.view);
+    setWorkspaceView('knowledge');
+    setSubjectFocusRequest({
+      ...target,
+      requestId: subjectFocusRequestIdentityRef.current,
+    });
+  }, [activeProject]);
   useEffect(() => {
     if (!activeProject) return undefined;
     const params = new URLSearchParams({
@@ -1565,6 +1597,8 @@ export default function AgentBuilder(): React.ReactElement {
             });
           }}
           knowledgeProjectId={projectId}
+          subjectMatcher={canonicalSubjectMatcher}
+          onSubjectFocus={handleCanonicalSubjectFocus}
           colors={C}
           busy={nativeSessionActive}
           connecting={nativeSessionConnecting}
@@ -1699,6 +1733,7 @@ export default function AgentBuilder(): React.ReactElement {
             surfaceRole={surfaceRole}
             attentionProjections={graphAttention.projections}
             onRemoveThinkGraphEvidence={graphAttention.removeThinkGraphEvidence}
+            onRemoveKnowGraphEvidence={graphAttention.removeKnowGraphEvidence}
             attentionErrors={graphAttention.errors}
             attentionStatuses={graphAttention.statuses}
             jevAttentionVisual={graphAttention.jevAttentionVisual}
@@ -1714,7 +1749,8 @@ export default function AgentBuilder(): React.ReactElement {
             })}
             onUseAttentionNode={handleUseAttentionNode}
             onUseContextualNodeRead={handleUseContextualNodeRead}
-            onKindChange={setKnowledgeGraphKind}
+            onKindChange={handleKnowledgeGraphKindChange}
+            subjectFocusRequest={subjectFocusRequest}
           />
         </KnowledgeSurfaceErrorBoundary>
       </div>

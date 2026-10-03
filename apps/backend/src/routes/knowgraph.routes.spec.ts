@@ -17,6 +17,7 @@ vi.mock('../db/pool', () => ({
 
 async function createApiServer(userId?: string): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
+  app.use(express.json());
   if (userId) {
     app.use((req, _res, next) => {
       (req as any).userId = userId;
@@ -219,6 +220,40 @@ describe('KnowGraph PDF upload project authority', () => {
       expect(response.status).toBe(401);
       expect(mocks.poolQuery).not.toHaveBeenCalled();
       expect(upstreamFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('proxies one authenticated project-scoped native Know deletion', async () => {
+    process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
+    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (String(input) === 'http://knowgraph.test/delete_native') {
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true, kind: 'fact', native_id: 'fact-1',
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      return realFetch(input, init);
+    });
+    const { server, baseUrl } = await createApiServer('user-1');
+    try {
+      const response = await fetch(`${baseUrl}/delete-native`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project_id: 'project-alias', native_id: 'fact-1', kind: 'fact',
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, kind: 'fact', native_id: 'fact-1' });
+      const forwarded = upstreamFetch.mock.calls.find(([input]) => (
+        String(input) === 'http://knowgraph.test/delete_native'
+      ));
+      expect(JSON.parse(String(forwarded?.[1]?.body))).toEqual({
+        project_id: 'project-canonical', native_id: 'fact-1', kind: 'fact',
+      });
     } finally {
       await closeServer(server);
     }

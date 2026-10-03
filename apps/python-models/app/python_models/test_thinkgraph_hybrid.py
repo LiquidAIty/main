@@ -1170,6 +1170,13 @@ def test_structured_proposal_reuses_canonical_node_and_freezes_prior_think(
         edge.id for edge in service.store.neighbors([prior["source"]])
         if edge.provenance.get("jev")
     }
+    projected = hybrid.projection("project-one")
+    assert projected["canonicalSubjectDirectory"]["complete"] is True
+    assert projected["canonicalSubjectDirectory"]["projectId"] == "project-one"
+    assert {item["canonicalName"] for item in projected["nodes"]} == {
+        "Alpha", "Beta", "Prior Context",
+    }
+    assert all(item["entityKind"] == item["type"] for item in projected["nodes"])
 
 
 def test_saved_card_freeform_proposal_becomes_think_context_and_jev_edge(hybrid):

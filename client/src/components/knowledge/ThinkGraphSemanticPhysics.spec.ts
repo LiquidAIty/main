@@ -148,16 +148,18 @@ describe('ThinkGraph Jev semantic physics', () => {
     }, {}, '#ffffff')).toBeNull();
   });
 
-  it('uses one blue Solarpunk relationship color regardless of authority or predicate', () => {
+  it('uses the supplied authority relationship colors without changing predicates', () => {
     const internals = (window as any).EngraphisGraph._internals;
     for (const edge of [
-      { material_kind: 'solarpunk', material_color: '#3979E8',
+      { material_kind: 'solarpunk', material_color: '#4FA2AD',
         material_authority: 'thinkgraph', predicate: 'DEPENDS_ON' },
-      { material_kind: 'solarpunk', material_color: '#3979E8',
+      { material_kind: 'solarpunk', material_color: '#F2A64A',
         material_authority: 'knowgraph', predicate: 'SOURCED_BY' },
     ]) {
       expect(internals.solarpunkLinkColour(edge, true, false))
-        .toBe('rgba(57,121,232,0.4)');
+        .toBe(edge.material_authority === 'knowgraph'
+          ? 'rgba(242,166,74,0.4)'
+          : 'rgba(79,162,173,0.4)');
     }
     expect(internals.solarpunkLinkColour({ material_kind: 'ordinary' }, true, false))
       .toBeNull();
@@ -176,22 +178,22 @@ describe('ThinkGraph Jev semantic physics', () => {
 
     const think = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
       material_kind: 'joined-cyber', material_role: 'THINK_MATERIAL',
-      material_blue: '#3979E8', material_orange: '#F2A64A',
+      material_blue: '#4FA2AD', material_orange: '#F2A64A',
     });
     const know = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
       material_kind: 'joined-cyber', material_role: 'KNOW_MATERIAL',
-      material_blue: '#3979E8', material_orange: '#F2A64A',
+      material_blue: '#4FA2AD', material_orange: '#F2A64A',
     });
     const paired = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
       material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
-      material_blue: '#3979E8', material_orange: '#F2A64A',
+      material_blue: '#4FA2AD', material_orange: '#F2A64A',
     });
 
     expect(think).toMatchObject({
       family: ordinary.family,
       fixedPalette: {
-        cyan: '#3979E8', blue: '#3979E8', violet: '#3979E8',
-        magenta: '#3979E8', teal: '#3979E8',
+        cyan: '#4FA2AD', blue: '#4FA2AD', violet: '#4FA2AD',
+        magenta: '#4FA2AD', teal: '#4FA2AD',
       },
     });
     expect(know).toMatchObject({
@@ -203,7 +205,7 @@ describe('ThinkGraph Jev semantic physics', () => {
     });
     expect(paired.family).toBe(ordinary.family);
     expect(paired.fixedPalette).toMatchObject({
-      cyan: '#3979E8', blue: '#3979E8', magenta: '#F2A64A', teal: '#3979E8',
+      cyan: '#4FA2AD', blue: '#4FA2AD', magenta: '#F2A64A', teal: '#4FA2AD',
     });
     expect(paired.fixedPalette.violet).not.toBe(ordinary.fixedPalette.violet);
   });

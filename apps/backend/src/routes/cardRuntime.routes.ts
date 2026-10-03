@@ -155,6 +155,46 @@ function isRoundedDecisionDistribution(values: number[]): boolean {
   return lower <= 1 + arithmeticTolerance && upper >= 1 - arithmeticTolerance;
 }
 
+function isSemanticChoiceReceipt(value: unknown, choices: readonly string[]): boolean {
+  if (!isRecord(value)) return false;
+  const classification = String(value.classification || '');
+  const distribution = value.distribution;
+  if (!choices.includes(classification)
+    || typeof value.confidence !== 'number' || !Number.isFinite(value.confidence)
+    || value.confidence < 0 || value.confidence > 1
+    || typeof value.winnerProbability !== 'number'
+    || !Number.isFinite(value.winnerProbability)
+    || value.winnerProbability < 0 || value.winnerProbability > 1
+    || !isRecord(distribution)
+    || Object.keys(distribution).length !== choices.length
+    || Object.keys(distribution).some((key) => !choices.includes(key))) return false;
+  const probabilities = choices.map((choice) => distribution[choice]);
+  return probabilities.every((probability) => (
+    typeof probability === 'number' && Number.isFinite(probability)
+    && probability >= 0 && probability <= 1
+  )) && isRoundedDecisionDistribution(probabilities as number[])
+    && Math.abs(Number(distribution[classification]) - value.winnerProbability) < 1e-9;
+}
+
+function isResearchProgressReceipt(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return value.schemaVersion === 'research-progress.v1'
+    && typeof value.active === 'boolean'
+    && ['inactive', 'continued', 'changed_thesis'].includes(String(value.lineageAction || ''))
+    && Number.isInteger(value.priorRepeatedOnlyCount)
+    && Number(value.priorRepeatedOnlyCount) >= 0
+    && Number.isInteger(value.repeatedOnlyCount)
+    && Number(value.repeatedOnlyCount) >= 0
+    && typeof value.automaticContinuationAllowed === 'boolean'
+    && (value.lineageId === null || typeof value.lineageId === 'string')
+    && (value.parentRunId === null || value.parentRunId === undefined
+      || typeof value.parentRunId === 'string')
+    && (value.evidenceGapId === null || value.evidenceGapId === undefined
+      || typeof value.evidenceGapId === 'string')
+    && (value.stopReason === null || value.stopReason === undefined
+      || typeof value.stopReason === 'string');
+}
+
 function isSha256(value: unknown): boolean {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
@@ -171,7 +211,8 @@ function preparedRequestFulfillmentAssessment(
     'actualProvider', 'actualModel', 'requestedModel', 'scale', 'evaluatedAt',
     'failureReason', 'requestCount', 'questionCount', 'timingMs', 'rawScore',
     'normalizedScore100', 'probabilities', 'confidence', 'provider',
-    'resolvedModel', 'decisionId', 'usage',
+    'resolvedModel', 'decisionId', 'usage', 'novelty', 'citationCoverage',
+    'followUp', 'researchProgress',
   ]);
   if (Object.keys(value).some((key) => !allowed.has(key))
     || value.schemaVersion !== 'request-fulfillment-assessment.v1'
@@ -205,12 +246,28 @@ function preparedRequestFulfillmentAssessment(
     const probabilityValues = isRecord(probabilities)
       ? keys.map((key) => probabilities[key])
       : [];
+    const legacySemanticReceipt = value.questionCount === 1
+      && value.novelty === undefined
+      && value.citationCoverage === undefined
+      && value.followUp === undefined
+      && value.researchProgress === undefined;
+    const extendedSemanticReceipt = value.questionCount === 4
+      && isSemanticChoiceReceipt(value.novelty, [
+        'new_evidence', 'contradiction', 'changed_thesis', 'repeated_only',
+      ])
+      && isSemanticChoiceReceipt(value.citationCoverage, [
+        'complete', 'gap', 'not_applicable',
+      ])
+      && isSemanticChoiceReceipt(value.followUp, [
+        'accept', 'ask_one_clarification', 'send_one_bounded_follow_up', 'stop',
+      ])
+      && isResearchProgressReceipt(value.researchProgress);
     if (requiredText.some((field) => typeof value[field] !== 'string' || !String(value[field]).trim())
       || value.executionEvidenceComplete !== true
       || value.executionEvidenceError !== null
       || value.failureReason !== undefined
       || value.requestCount !== 1
-      || value.questionCount !== 1
+      || (!legacySemanticReceipt && !extendedSemanticReceipt)
       || !isRecord(probabilities)
       || Object.keys(probabilities).length !== keys.length
       || Object.keys(probabilities).some((key) => !keys.includes(key))
@@ -231,7 +288,8 @@ function preparedRequestFulfillmentAssessment(
       throw new Error('request_fulfillment_receipt_invalid');
     }
   } else if (typeof value.failureReason !== 'string' || !value.failureReason.trim()
-    || ['rawScore', 'normalizedScore100', 'probabilities', 'confidence']
+    || ['rawScore', 'normalizedScore100', 'probabilities', 'confidence',
+      'novelty', 'citationCoverage', 'followUp']
       .some((field) => value[field] !== undefined)) {
     throw new Error('request_fulfillment_receipt_invalid');
   }
@@ -1150,7 +1208,6 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       savedDeck: run.savedDeck,
       savedCard: run.savedCard,
     });
-    scheduleAutomaticAtomicResearch(req, run);
     const postTurnCompaction = postTurnCompactionRequest(run, result);
     let requestFulfillmentDeferred = false;
     try {
@@ -1175,7 +1232,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
           userMessage: message,
           mainResponse: result.text,
         },
-      }, result.nativeCompletion);
+      }, result.nativeCompletion, run);
     } catch (error) {
       logHarnessTrace(
         `[thinkgraph] external Main intake unavailable: ${error instanceof Error ? error.message : String(error)}`,
@@ -1371,14 +1428,6 @@ function requireMagenticTaskProjections(
         endedAt: endedAt as string | number | null,
       };
     }
-    const workerSessionId = task.workerSessionId === null
-      ? null
-      : typeof task.workerSessionId === 'string'
-        && task.workerSessionId === task.workerSessionId.trim()
-        && task.workerSessionId.length > 0
-        && task.workerSessionId.length <= 512
-        ? task.workerSessionId
-        : undefined;
     const handoffSummary = task.handoffSummary === null
       ? null
       : typeof task.handoffSummary === 'string'
@@ -1386,79 +1435,7 @@ function requireMagenticTaskProjections(
         && task.handoffSummary.length <= 2_000
         ? task.handoffSummary
         : undefined;
-    const rawReceipts = Array.isArray(task.toolReceipts) && task.toolReceipts.length <= 64
-      ? task.toolReceipts
-      : null;
-    const receiptIds = new Set<string>();
-    const toolReceipts = rawReceipts?.map((candidateReceipt) => {
-      if (!candidateReceipt || typeof candidateReceipt !== 'object'
-        || Array.isArray(candidateReceipt)) {
-        throw new Error('magentic_execution_tasks_invalid');
-      }
-      const receipt = candidateReceipt as Record<string, unknown>;
-      const toolCallId = typeof receipt.toolCallId === 'string' ? receipt.toolCallId : '';
-      const toolName = typeof receipt.toolName === 'string' ? receipt.toolName : '';
-      const state = receipt.state;
-      const resultPreview = receipt.resultPreview;
-      const rawExecutionReceipt = receipt.executionReceipt;
-      let executionReceipt: {
-        schema: 'agent-runtime.execution-receipt.v1';
-        tool: string;
-        correlationId: string;
-        state: 'completed' | 'failed';
-      } | null = null;
-      if (rawExecutionReceipt !== null) {
-        if (!rawExecutionReceipt || typeof rawExecutionReceipt !== 'object'
-          || Array.isArray(rawExecutionReceipt)) {
-          throw new Error('magentic_execution_tasks_invalid');
-        }
-        const exactReceipt = rawExecutionReceipt as Record<string, unknown>;
-        const executionTool = typeof exactReceipt.tool === 'string' ? exactReceipt.tool : '';
-        const correlationId = typeof exactReceipt.correlationId === 'string'
-          ? exactReceipt.correlationId : '';
-        if (
-          Object.keys(exactReceipt).sort().join('\0')
-            !== 'correlationId\0schema\0state\0tool'
-          || exactReceipt.schema !== 'agent-runtime.execution-receipt.v1'
-          || !executionTool || executionTool !== executionTool.trim()
-          || executionTool.length > 128
-          || !correlationId || correlationId !== correlationId.trim()
-          || correlationId.length > 512
-          || (exactReceipt.state !== 'completed' && exactReceipt.state !== 'failed')
-        ) throw new Error('magentic_execution_tasks_invalid');
-        executionReceipt = {
-          schema: 'agent-runtime.execution-receipt.v1',
-          tool: executionTool,
-          correlationId,
-          state: exactReceipt.state,
-        };
-      }
-      if (
-        !toolCallId || toolCallId !== toolCallId.trim() || toolCallId.length > 512
-        || !toolName || toolName !== toolName.trim() || toolName.length > 512
-        || receiptIds.has(toolCallId)
-        || (state !== null && state !== 'returned' && state !== 'failed')
-        || typeof resultPreview !== 'string' || resultPreview.length > 1_000
-      ) throw new Error('magentic_execution_tasks_invalid');
-      receiptIds.add(toolCallId);
-      return {
-        toolCallId,
-        toolName,
-        state: state as 'returned' | 'failed' | null,
-        resultPreview,
-        executionReceipt,
-      };
-    });
-    const toolReceiptsComplete = typeof task.toolReceiptsComplete === 'boolean'
-      ? task.toolReceiptsComplete
-      : undefined;
-    if (
-      workerSessionId === undefined
-      || handoffSummary === undefined
-      || !toolReceipts
-      || toolReceiptsComplete === undefined
-      || (workerSessionId === null && (toolReceipts.length > 0 || toolReceiptsComplete))
-    ) throw new Error('magentic_execution_tasks_invalid');
+    if (handoffSummary === undefined) throw new Error('magentic_execution_tasks_invalid');
     return {
       taskId,
       title,
@@ -1467,10 +1444,7 @@ function requireMagenticTaskProjections(
       dependencyIds: dependencyIds as string[],
       latestAttempt,
       resultAvailable: task.resultAvailable,
-      workerSessionId,
       handoffSummary,
-      toolReceipts,
-      toolReceiptsComplete,
     };
   });
   if (!taskIds.has(nativeRootId)) throw new Error('magentic_execution_tasks_invalid');
@@ -1630,6 +1604,22 @@ async function executePreparedMagenticRun(args: {
   const sender = args.senderCardId
     ? agentTerminalManager.findCard(args.projectId, args.deckId, args.senderCardId)
     : null;
+  await requestPythonRailsJson('/domain/runs/magentic-mission-readiness', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      runId: args.runId,
+      mission: args.prepared.magenticExecution?.mission,
+      workers: args.prepared.magenticExecution?.workers,
+    }),
+  }).catch((error) => {
+    logHarnessTrace(
+      `[magentic] advisory mission readiness unavailable run=${args.runId} reason=${redactTrace(
+        error instanceof Error ? error.message : String(error),
+      )}`,
+    );
+    return undefined;
+  });
   const submitted = await requestPythonRailsJson('/magentic/execution/submit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1995,7 +1985,19 @@ async function readConfiguredCardRunHistory(args: {
   deckId: string;
   cardId: string;
   limit: number;
-}): Promise<{ latest: ConfiguredCardRunStatus | null; runs: any[]; limit: number }> {
+}): Promise<{
+  cardId: string;
+  latest: {
+    state: string;
+    acceptedAt: string | null;
+    model: string | null;
+    elapsedMs: number | null;
+    totalTokens: number | null;
+    costUsd: number | null;
+    costStatus: 'estimated' | 'unavailable';
+    toolCallCount: number | null;
+  } | null;
+}> {
   const history = await requestPythonRailsJson('/domain/runs/history', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2003,16 +2005,35 @@ async function readConfiguredCardRunHistory(args: {
   }) as any;
   const runs = Array.isArray(history?.runs) ? history.runs : [];
   const latestRunId = String(runs[0]?.runId || '').trim();
-  const latest = latestRunId
+  const latestRun = latestRunId
     ? await readConfiguredCardRunStatus({
         projectId: args.projectId,
         deckId: args.deckId,
         runId: latestRunId,
-        includeTerminal: true,
+        includeTerminal: false,
         inspectOnly: true,
       })
     : null;
-  return { latest, runs, limit: args.limit };
+  const inputTokens = latestRun?.inputTokens;
+  const outputTokens = latestRun?.outputTokens;
+  const totalTokens = inputTokens !== null && inputTokens !== undefined
+    && outputTokens !== null && outputTokens !== undefined
+    ? inputTokens + outputTokens
+    : null;
+  const costUsd = latestRun?.costUsd ?? null;
+  return {
+    cardId: args.cardId,
+    latest: latestRun ? {
+      state: latestRun.state,
+      acceptedAt: latestRun.acceptedAt,
+      model: latestRun.model,
+      elapsedMs: latestRun.totalElapsedMs,
+      totalTokens,
+      costUsd,
+      costStatus: costUsd === null ? 'unavailable' : 'estimated',
+      toolCallCount: latestRun.toolCallCount,
+    } : null,
+  };
 }
 
 type GatewayCardExecution = {
@@ -2693,6 +2714,7 @@ async function launchAtomicResearch(args: {
           attachTui: false,
         });
         continuationRef = execution.nativeSessionId;
+        await assessGatewayRunCompletion(runId, execution.nativeCompletion);
         await enqueueAtomicResearchSettlement({
           authorization,
           projectId: args.projectId,
@@ -2731,7 +2753,13 @@ async function launchAtomicResearch(args: {
 function scheduleAutomaticAtomicResearch(
   req: Request,
   run: PreparedMainCliRun,
+  requestFulfillment?: Record<string, unknown>,
 ): void {
+  const progress = requestFulfillment?.researchProgress;
+  if (isRecord(progress)
+    && progress.active === true
+    && progress.automaticContinuationAllowed === false
+    && progress.stopReason === 'repeated_only_limit') return;
   const assessment = run.prepared?.atomicResearchAssessment;
   const thinkMemoryIds = Array.isArray(assessment?.automaticMemoryIds)
     ? assessment.automaticMemoryIds.map(String).slice(0, 2)
@@ -3028,6 +3056,7 @@ function enqueueCompletedPairThinkGraphLifecycle(
 function enqueueAssessedCompletedPairThinkGraphLifecycle(
   args: CompletedPairThinkGraphLifecycleArgs,
   completion: GatewayCardExecution['nativeCompletion'],
+  automaticResearchRun?: PreparedMainCliRun,
 ): Promise<void> {
   const scope = `${args.projectId}\u0000${args.deckId}`;
   const prior = completedPairThinkGraphLifecycleTails.get(scope) || Promise.resolve();
@@ -3038,6 +3067,9 @@ function enqueueAssessedCompletedPairThinkGraphLifecycle(
         args.originatingRunId,
         completion,
       );
+      if (automaticResearchRun) {
+        scheduleAutomaticAtomicResearch(args.req, automaticResearchRun, sourceResponseFit);
+      }
       await runCompletedPairThinkGraphLifecycle({
         ...args,
         completedPair: {
@@ -4444,7 +4476,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
     } catch {
       throw new Error('shared_conversation_persistence_failed');
     }
-    if (!directAddressed) scheduleAutomaticAtomicResearch(req, run);
     writeSse('done', {
       fullText: resultText,
       turnOwner: directAddressed ? 'addressed_card' : 'main',
@@ -4467,6 +4498,9 @@ mainRoutes.post('/session/chat', async (req, res) => {
         requestCount: 0,
         questionCount: 0,
       };
+    if (!directAddressed) {
+      scheduleAutomaticAtomicResearch(req, run, requestFulfillment);
+    }
     writeSse('request_fulfillment', {
       kind: 'request_fulfillment',
       assessment: requestFulfillment,

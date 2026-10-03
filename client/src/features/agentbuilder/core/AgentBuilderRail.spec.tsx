@@ -3,7 +3,9 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SOLARPUNK_PALETTE } from '../../../components/graph/graphVisualTokens';
 import AgentBuilderRail from './AgentBuilderRail';
+import { BuilderRailMoonOrb } from './BuilderRailMoonOrb';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -110,6 +112,35 @@ describe('AgentBuilderRail product destinations', () => {
     expect(worldview.querySelector('svg')).toBeNull();
     expect(world.getAttribute('aria-label')).toBe('World');
     expect(worldview.getAttribute('aria-label')).toBe('WorldView');
+  });
+
+  it('uses the shared sea and sun palette for the WorldView moon without a purple rim', () => {
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        moonOrb={<BuilderRailMoonOrb phase01={0.5} />}
+        visibleRailItems={{ ...baseVisibility, showWorldview: true }}
+      />,
+    );
+    const worldview = host.querySelector(
+      '[data-testid="rail-worldview-button"]',
+    ) as HTMLButtonElement;
+    const wrapper = worldview.firstElementChild as HTMLDivElement;
+    const orb = wrapper.querySelector('svg') as SVGSVGElement;
+    const rimColors = Array.from(orb.querySelectorAll('circle[stroke]')).map((circle) =>
+      circle.getAttribute('stroke'),
+    );
+    const gradientColors = Array.from(orb.querySelectorAll('stop')).map((stop) =>
+      stop.getAttribute('stop-color'),
+    );
+
+    expect(wrapper.style.boxShadow).toContain(`${SOLARPUNK_PALETTE.sea}24`);
+    expect(wrapper.style.boxShadow).toContain(`${SOLARPUNK_PALETTE.sun}14`);
+    expect(rimColors).toEqual([SOLARPUNK_PALETTE.sun, SOLARPUNK_PALETTE.sea]);
+    expect(gradientColors).toContain(SOLARPUNK_PALETTE.sun);
+    expect(`${wrapper.style.boxShadow}${orb.innerHTML}`).not.toMatch(
+      /rgba\(125,\s*105,\s*180|#7d69b4/i,
+    );
   });
 
   it('shows the graph launcher with the stable rail treatment', () => {

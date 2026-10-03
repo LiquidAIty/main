@@ -1295,10 +1295,7 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
                 "endedAt": waiting["nativeTasks"][0]["latestAttempt"]["endedAt"],
             },
             "resultAvailable": True,
-            "workerSessionId": None,
             "handoffSummary": "Waiting for the selected workers.",
-            "toolReceipts": [],
-            "toolReceiptsComplete": False,
         },
         {
             "taskId": worker_a,
@@ -1308,10 +1305,7 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
             "dependencyIds": [],
             "latestAttempt": None,
             "resultAvailable": False,
-            "workerSessionId": None,
             "handoffSummary": None,
-            "toolReceipts": [],
-            "toolReceiptsComplete": False,
         },
         {
             "taskId": worker_b,
@@ -1321,10 +1315,7 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
             "dependencyIds": [],
             "latestAttempt": None,
             "resultAvailable": False,
-            "workerSessionId": None,
             "handoffSummary": None,
-            "toolReceipts": [],
-            "toolReceiptsComplete": False,
         },
     ]
 
@@ -1370,10 +1361,7 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
             "endedAt": status["nativeTasks"][0]["latestAttempt"]["endedAt"],
         },
         "resultAvailable": True,
-        "workerSessionId": None,
         "handoffSummary": "The real synthesized answer.",
-        "toolReceipts": [],
-        "toolReceiptsComplete": False,
     }
     assert [task["resultAvailable"] for task in status["nativeTasks"]] == [True, True, True]
     assert "finalTaskId" not in status
@@ -1382,293 +1370,7 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
     assert "activeWorkers" not in status
 
 
-def test_status_projects_only_the_correlated_redacted_worker_tool_receipts(
-    native_task_store, tmp_path, monkeypatch,
-) -> None:
-    from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
-    from hermes_state import SessionDB
-
-    root_id = _submit_root(monkeypatch)
-    hermes_root = tmp_path / "Hermes"
-    hermes_home = hermes_root / ".hermes"
-    profile_home = hermes_home / "profiles" / "worker-a"
-    profile_home.mkdir(parents=True)
-    plugin_home = profile_home / "plugins" / "card-tools"
-    plugin_home.mkdir(parents=True)
-    (plugin_home / "tools.json").write_text(json.dumps({"tools": [{
-        "canonicalName": "saved_card.read",
-        "hermesName": "card__saved_card_read",
-    }]}), encoding="utf-8")
-    session_id = "worker-session-one"
-    session_db = SessionDB(db_path=profile_home / "state.db")
-    try:
-        session_db.create_session(session_id, "kanban", profile_name="worker-a")
-        session_db.append_message(
-            session_id,
-            "assistant",
-            None,
-            tool_calls=[{
-                "id": "codex_dyn_saved_card_read_call-one",
-                "type": "function",
-                "function": {
-                    "name": "card__saved_card_read",
-                    "arguments": '{"query":"bounded"}',
-                },
-            }],
-        )
-        session_db.append_message(
-            session_id,
-            "tool",
-            json.dumps([
-                {
-                    "type": "inputText",
-                    "text": (
-                        "OPENAI_API_KEY=sk-proj-abcdef1234567890abcdef1234567890abcdef12 "
-                        "Found evidence. " + "r" * 1_100
-                    ),
-                },
-                {
-                    "type": "inputText",
-                    "text": json.dumps({
-                        "executionReceipt": {
-                            "schema": "agent-runtime.execution-receipt.v1",
-                            "tool": "saved_card.read",
-                            "correlationId": "mcp:receipt-one",
-                            "operationPhase": "dispatch",
-                            "local": True,
-                            "state": "completed",
-                        },
-                    }),
-                },
-            ]),
-            tool_call_id="codex_dyn_saved_card_read_call-one",
-        )
-    finally:
-        session_db.close()
-
-    with task_db_connect.connect_closing(native_task_store) as connection:
-        worker_id = task_db.create_task(
-            connection,
-            title="Worker receipt task",
-            assignee="worker-a",
-            created_by="card_magentic",
-            creator_task_id=root_id,
-            initial_status="running",
-        )
-        claimed = task_db.claim_task(connection, worker_id, claimer="dispatcher:worker-a")
-        assert claimed is not None
-        assert task_db.complete_task(
-            connection,
-            worker_id,
-            summary=("Worker used the saved Card result. " + "x" * 2_100),
-            expected_run_id=claimed.current_run_id,
-            metadata={"worker_session_id": session_id},
-        )
-
-    monkeypatch.setattr(
-        magentic_execution,
-        "_runtime_paths",
-        lambda: (hermes_root, hermes_home),
-    )
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
-    worker = next(task for task in status["nativeTasks"] if task["taskId"] == worker_id)
-
-    assert worker["workerSessionId"] == session_id
-    assert len(worker["handoffSummary"]) == 2_000
-    assert worker["handoffSummary"].endswith("…")
-    assert worker["toolReceiptsComplete"] is True
-    assert worker["toolReceipts"] == [{
-        "toolCallId": "codex_dyn_saved_card_read_call-one",
-        "toolName": "card__saved_card_read",
-        "state": "returned",
-        "resultPreview": worker["toolReceipts"][0]["resultPreview"],
-        "executionReceipt": {
-            "schema": "agent-runtime.execution-receipt.v1",
-            "tool": "saved_card.read",
-            "correlationId": "mcp:receipt-one",
-            "state": "completed",
-        },
-    }]
-    assert len(worker["toolReceipts"][0]["resultPreview"]) == 1_000
-    assert worker["toolReceipts"][0]["resultPreview"].endswith("…")
-    assert "Found evidence." in worker["toolReceipts"][0]["resultPreview"]
-    assert "sk-proj-abcdef1234567890abcdef1234567890abcdef12" not in (
-        worker["toolReceipts"][0]["resultPreview"]
-    )
-    assert {receipt["toolName"] for receipt in worker["toolReceipts"]}.isdisjoint({
-        "exec_command", "apply_patch",
-    })
-
-
-@pytest.mark.parametrize(
-    "content",
-    [
-        json.dumps({"executionReceipt": {
-            "schema": "agent-runtime.execution-receipt.v1",
-            "tool": "another.tool",
-            "correlationId": "mcp:mismatch",
-            "state": "completed",
-        }}),
-        json.dumps([
-            {"executionReceipt": {
-                "schema": "agent-runtime.execution-receipt.v1",
-                "tool": "saved_card.read",
-                "correlationId": "mcp:one",
-                "state": "completed",
-            }},
-            {"executionReceipt": {
-                "schema": "agent-runtime.execution-receipt.v1",
-                "tool": "saved_card.read",
-                "correlationId": "mcp:two",
-                "state": "completed",
-            }},
-        ]),
-        json.dumps({"executionReceipt": {
-            "schema": "wrong-schema",
-            "tool": "saved_card.read",
-            "correlationId": "",
-            "state": "invented",
-        }}),
-    ],
-)
-def test_execution_receipt_parser_fails_closed_on_mismatch_duplicate_or_malformed_evidence(
-    content: str,
-) -> None:
-    receipt, complete = magentic_execution._execution_receipt_from_tool_result(
-        content, "saved_card.read",
-    )
-    assert receipt is None
-    assert complete is False
-
-
-def test_worker_receipt_parser_accepts_the_production_newline_delimited_card_output(
-    tmp_path, monkeypatch,
-) -> None:
-    from hermes_state import SessionDB
-
-    hermes_root = tmp_path / "Hermes"
-    hermes_home = hermes_root / ".hermes"
-    profile_home = hermes_home / "profiles" / "worker-a"
-    profile_home.mkdir(parents=True)
-    plugin_home = profile_home / "plugins" / "card-tools"
-    plugin_home.mkdir(parents=True)
-    (plugin_home / "tools.json").write_text(json.dumps({"tools": [{
-        "canonicalName": "saved_card.read",
-        "hermesName": "card__saved_card_read",
-    }]}), encoding="utf-8")
-    session_id = "worker-session-newline-output"
-    call_id = "codex_dyn_saved_card_read_newline"
-    session_db = SessionDB(db_path=profile_home / "state.db")
-    try:
-        session_db.create_session(session_id, "kanban", profile_name="worker-a")
-        session_db.append_message(
-            session_id,
-            "assistant",
-            None,
-            tool_calls=[{
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "card__saved_card_read",
-                    "arguments": '{"query":"bounded"}',
-                },
-            }],
-        )
-        session_db.append_message(
-            session_id,
-            "tool",
-            "\n".join([
-                json.dumps({"ok": True, "cardId": "saved-card-one"}),
-                json.dumps({
-                    "executionReceipt": {
-                        "schema": "agent-runtime.execution-receipt.v1",
-                        "tool": "saved_card.read",
-                        "correlationId": "mcp:newline-receipt",
-                        "state": "completed",
-                    },
-                }),
-            ]),
-            tool_call_id=call_id,
-        )
-    finally:
-        session_db.close()
-
-    monkeypatch.setattr(
-        magentic_execution,
-        "_runtime_paths",
-        lambda: (hermes_root, hermes_home),
-    )
-    receipts, complete = magentic_execution._worker_tool_receipts(
-        "worker-a", session_id,
-    )
-
-    assert complete is True
-    assert receipts[0]["toolCallId"] == call_id
-    assert receipts[0]["toolName"] == "card__saved_card_read"
-    assert receipts[0]["state"] == "returned"
-    assert receipts[0]["executionReceipt"] == {
-        "schema": "agent-runtime.execution-receipt.v1",
-        "tool": "saved_card.read",
-        "correlationId": "mcp:newline-receipt",
-        "state": "completed",
-    }
-
-
-def test_unpaired_tool_call_preserves_the_nullable_execution_receipt_shape(
-    tmp_path, monkeypatch,
-) -> None:
-    from hermes_state import SessionDB
-
-    hermes_root = tmp_path / "Hermes"
-    hermes_home = hermes_root / ".hermes"
-    profile_home = hermes_home / "profiles" / "worker-a"
-    profile_home.mkdir(parents=True)
-    plugin_home = profile_home / "plugins" / "card-tools"
-    plugin_home.mkdir(parents=True)
-    (plugin_home / "tools.json").write_text(json.dumps({"tools": [{
-        "canonicalName": "saved_card.read",
-        "hermesName": "card__saved_card_read",
-    }]}), encoding="utf-8")
-    session_id = "worker-session-unpaired"
-    session_db = SessionDB(db_path=profile_home / "state.db")
-    try:
-        session_db.create_session(session_id, "kanban", profile_name="worker-a")
-        session_db.append_message(
-            session_id,
-            "assistant",
-            None,
-            tool_calls=[{
-                "id": "codex_dyn_saved_card_read_unpaired",
-                "type": "function",
-                "function": {
-                    "name": "card__saved_card_read",
-                    "arguments": '{"query":"bounded"}',
-                },
-            }],
-        )
-    finally:
-        session_db.close()
-
-    monkeypatch.setattr(
-        magentic_execution,
-        "_runtime_paths",
-        lambda: (hermes_root, hermes_home),
-    )
-    receipts, complete = magentic_execution._worker_tool_receipts(
-        "worker-a", session_id,
-    )
-
-    assert receipts == [{
-        "toolCallId": "codex_dyn_saved_card_read_unpaired",
-        "toolName": "card__saved_card_read",
-        "state": None,
-        "resultPreview": "",
-        "executionReceipt": None,
-    }]
-    assert complete is False
-
-
-def test_status_fails_closed_on_malformed_worker_session_metadata(
+def test_status_does_not_project_detached_worker_session_metadata(
     native_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
@@ -1677,7 +1379,7 @@ def test_status_fails_closed_on_malformed_worker_session_metadata(
     with task_db_connect.connect_closing(native_task_store) as connection:
         worker_id = task_db.create_task(
             connection,
-            title="Malformed receipt metadata",
+            title="Worker task",
             assignee="worker-a",
             created_by="card_magentic",
             creator_task_id=root_id,
@@ -1695,10 +1397,10 @@ def test_status_fails_closed_on_malformed_worker_session_metadata(
 
     status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
     worker = next(task for task in status["nativeTasks"] if task["taskId"] == worker_id)
-    assert worker["workerSessionId"] is None
     assert worker["handoffSummary"] == "Bounded handoff."
-    assert worker["toolReceipts"] == []
-    assert worker["toolReceiptsComplete"] is False
+    assert "workerSessionId" not in worker
+    assert "toolReceipts" not in worker
+    assert "toolReceiptsComplete" not in worker
 
 
 def test_completed_root_without_its_own_result_fails_closed(

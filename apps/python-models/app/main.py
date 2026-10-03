@@ -18,6 +18,7 @@ from app.python_models.card_domain import (
     accept_run_request,
     begin_main_chat_run,
     begin_run,
+    assess_magentic_mission_readiness,
     assess_run_request_fulfillment,
     describe_magentic_agents,
     delete_card,
@@ -717,6 +718,14 @@ def domain_run_attempt(payload: dict[str, Any]):
 def domain_run_input_files(payload: dict[str, Any]):
     try:
         return read_run_input_files(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/runs/magentic-mission-readiness")
+def domain_magentic_mission_readiness(payload: dict[str, Any]):
+    try:
+        return assess_magentic_mission_readiness(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

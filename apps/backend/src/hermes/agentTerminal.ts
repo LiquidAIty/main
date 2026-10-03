@@ -46,6 +46,7 @@ import {
 
 const GATEWAY_READY_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
+const NATIVE_TURN_SETTLEMENT_TIMEOUT_MS = 5_000;
 const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
 const LIQUIDAITY_SESSION_TITLE_PREFIX = 'Bot Chat:';
 const AUTH_MAX_FUTURE_SECONDS = 10 * 60;
@@ -260,6 +261,8 @@ type Session = {
   gatewayEventListeners: Set<(event: AgentTerminalGatewayEvent) => void>;
   stopping: boolean;
   turnTail: Promise<void>;
+  nativeTurnSettled: boolean;
+  nativeTurnSettlementWaiters: Set<(settled: boolean) => void>;
 };
 
 type PendingStart = {
@@ -308,6 +311,25 @@ function nativeTurnRouting(
     throw new Error('agent_terminal_turn_tools_invalid');
   }
   return { managedTools, allowedTools, modelOnce: routing.modelOnce };
+}
+
+function nativeCompactionRequestError(error: unknown): string {
+  const value = error && typeof error === 'object'
+    ? error as { code?: unknown; message?: unknown }
+    : {};
+  const code = typeof value.code === 'number' && Number.isSafeInteger(value.code)
+    ? value.code
+    : null;
+  if (code === 4009) return 'agent_terminal_context_compaction_native_session_busy';
+  if (code === -32601) return 'agent_terminal_context_compaction_native_method_unavailable';
+  if (code !== null) {
+    return `agent_terminal_context_compaction_native_rpc_${code < 0 ? `negative_${Math.abs(code)}` : code}`;
+  }
+  const message = typeof value.message === 'string' ? value.message.trim() : '';
+  if (/^request timed out after \d+s: session\.compress$/i.test(message)) {
+    return 'agent_terminal_context_compaction_request_timeout';
+  }
+  return 'agent_terminal_context_compaction_request_failed';
 }
 
 function sameSavedCardToolAuthority(left: HermesCardTools, right: HermesCardTools): boolean {
@@ -1323,12 +1345,21 @@ export class AgentTerminalManager {
         gatewayEventListeners: new Set(),
         stopping: false,
         turnTail: Promise.resolve(),
+        nativeTurnSettled: true,
+        nativeTurnSettlementWaiters: new Set(),
       };
       session.detachGatewayEvents = client.onEvent((event) => {
         if (event.session_id !== session.state.nativeSessionId) return;
+        if (event.type === 'message.start') {
+          session.nativeTurnSettled = false;
+        }
         if (event.type === 'session.info') {
           const stored = String(event.payload?.stored_session_id || '').trim();
           if (stored) this.recordStoredSessionId(session, stored);
+          if (event.payload?.running === false) {
+            session.nativeTurnSettled = true;
+            for (const settle of [...session.nativeTurnSettlementWaiters]) settle(true);
+          }
         }
         for (const listener of session.gatewayEventListeners) {
           try { listener(event); } catch {}
@@ -1540,6 +1571,31 @@ export class AgentTerminalManager {
       session.priorStoredSessionIds.delete(oldest);
     }
     session.state.storedSessionId = stored;
+  }
+
+  private waitForNativeTurnSettlement(
+    session: Session,
+    timeoutMs = NATIVE_TURN_SETTLEMENT_TIMEOUT_MS,
+  ): Promise<boolean> {
+    if (session.nativeTurnSettled) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (settled: boolean) => {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        session.nativeTurnSettlementWaiters.delete(finish);
+        resolve(settled);
+      };
+      session.nativeTurnSettlementWaiters.add(finish);
+      if (session.nativeTurnSettled) {
+        finish(true);
+        return;
+      }
+      timer = setTimeout(() => finish(false), timeoutMs);
+      timer.unref?.();
+    });
   }
 
   private async authenticateMagenticWorkerToolRequest(
@@ -1969,6 +2025,7 @@ export class AgentTerminalManager {
     session.detachGatewayState();
     session.detachGatewayEvents();
     session.gatewayEventListeners.clear();
+    for (const settle of [...session.nativeTurnSettlementWaiters]) settle(false);
     session.priorStoredSessionIds.clear();
     session.cardToolNonces.clear();
     session.client.close();
@@ -2109,6 +2166,14 @@ export class AgentTerminalManager {
         return { ...base(), status: 'unavailable',
           errorCode: 'agent_terminal_context_compaction_identity_changed' };
       }
+      if (!await this.waitForNativeTurnSettlement(session)) {
+        return { ...base(), status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_settlement_timeout' };
+      }
+      if (!identityMatches()) {
+        return { ...base(), status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_identity_changed' };
+      }
       try {
         if (this.resolveActiveContext(session.state.sessionId) !== null) {
           return { ...base(), status: 'unavailable',
@@ -2132,9 +2197,9 @@ export class AgentTerminalManager {
           session_id: expected.nativeSessionId,
           profile: expected.profile,
         });
-      } catch {
+      } catch (error) {
         return { ...base(), status: 'failed',
-          errorCode: 'agent_terminal_context_compaction_request_failed' };
+          errorCode: nativeCompactionRequestError(error) };
       }
       if (!identityMatches() || !result || typeof result !== 'object' || Array.isArray(result)) {
         return { ...base(), status: 'failed', errorCode: identityMatches()

@@ -961,6 +961,46 @@ router.post('/reconcile-jev-annotations', async (req, res) => {
   }
 });
 
+router.post('/delete-native', async (req, res) => {
+  try {
+    const userId = String((req as any).userId || '').trim();
+    if (!userId) {
+      return res.status(401).json({
+        ok: false,
+        error: { message: 'Authentication required for KnowGraph deletion.' },
+      });
+    }
+    const requestedProjectId = String(req.body?.project_id || '').trim();
+    const nativeId = String(req.body?.native_id || '').trim();
+    const kind = req.body?.kind === 'episode' ? 'episode' : req.body?.kind === 'fact' ? 'fact' : '';
+    if (!requestedProjectId || !nativeId || !kind) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'project_id, native_id, and kind are required.' },
+      });
+    }
+    const projectId = await resolveAuthenticatedKnowGraphProjectId(userId, requestedProjectId);
+    if (!projectId) {
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'KnowGraph project not found for the authenticated user.' },
+      });
+    }
+    const response = await fetch(`${knowgraphBaseUrl()}/delete_native`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, native_id: nativeId, kind }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    return res.status(response.status).json(await readResponseDataSafe(response));
+  } catch (error: any) {
+    return res.status(502).json({
+      ok: false,
+      error: { message: error?.message || 'KnowGraph deletion proxy failed' },
+    });
+  }
+});
+
 // Real-source web/document ingestion passthrough to the KnowGraph API's
 // existing Neo/Python pipeline (/ingest_web_results): document loading,
 // chunking, extraction prompts, entity/relationship extraction, provenance,

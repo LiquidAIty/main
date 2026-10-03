@@ -2468,19 +2468,17 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('returns bounded newest-first Card history with truthful latest details', async () => {
+  it('projects only the selected Card newest failed Run aggregates', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.requestPythonRailsJson
       .mockImplementationOnce(async (endpoint, init) => {
         expect(endpoint).toBe('/domain/runs/history');
         expect(JSON.parse(String(init?.body))).toEqual({
-          projectId: 'p', deckId: 'd', cardId: 'builder', limit: 3,
+          projectId: 'p', deckId: 'd', cardId: 'builder', limit: 1,
         });
         return { ok: true, runs: [
-          { runId: 'failed-new', state: 'failed', startedAt: '2026-10-01T20:00:04Z',
-            finishedAt: '2026-10-01T20:00:09Z', inputTokens: null },
-          { runId: 'completed-old', state: 'completed', startedAt: '2026-10-01T19:00:00Z',
-            finishedAt: '2026-10-01T19:00:02Z', inputTokens: 12 },
+          { runId: 'failed-new', state: 'failed' },
+          { runId: 'completed-old', state: 'completed' },
         ] };
       })
       .mockImplementationOnce(async (endpoint) => {
@@ -2488,25 +2486,18 @@ describe('saved Card routes', () => {
         return { ok: true, run: {
           runId: 'failed-new', correlationId: 'failed-new', projectId: 'p', deckId: 'd',
           cardId: 'builder', runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'builder',
-          provider: 'openai', model: 'gpt-5.6-sol', accessMode: 'chatgpt-account',
-          state: 'failed', startedAt: '2026-10-01T20:00:04Z', finishedAt: '2026-10-01T20:00:09Z',
-          errorCode: 'provider_unavailable', errorSummary: 'Provider unavailable.',
-          inputTokens: null, outputTokens: null,
+          provider: 'openai', model: 'saved-model', accessMode: 'chatgpt-account',
+          state: 'failed', startedAt: '2026-10-01T20:00:04Z', finishedAt: '2026-10-01T20:00:17.490Z',
+          inputTokens: 12_000, outputTokens: 340, toolCallCount: 7, costUsd: 0.08,
         } };
       })
       .mockImplementationOnce(async (endpoint) => {
         expect(endpoint).toBe('/domain/agentgraph/inspect');
         return { ok: true, runs: [{
-          runId: 'failed-new', cardId: 'builder', conversationId: 'main',
-          acceptedAt: '2026-10-01T20:00:00Z',
-           idf: { sha256: 'a'.repeat(64), bytes: 400 },
-           jevDecisions: [{ schemaVersion: 'card-auto-tools.v1', status: 'unavailable' }],
-           attemptEvents: [{ eventId: 'attempt-one', kind: 'llm',
-             provider: 'actual-provider', model: 'actual-model', observationGap: 3 },
-           { eventId: 'tool-attempt-one', attemptId: 'native-tool-call-one', kind: 'tool',
-             phase: 'completed', toolName: 'message_agent', status: 'ok' }],
-           attentionEvents: [{ eventId: 'tool-1', operation: 'read', toolName: 'graphiti.search_nodes' }],
-          nativeReferences: [], materializedNativeReferences: [], artifacts: [],
+          runId: 'failed-new', cardId: 'builder', acceptedAt: '2026-10-01T20:00:00Z',
+          attemptEvents: [{ eventId: 'latest-model', kind: 'llm',
+            provider: 'actual-provider', model: 'gpt-5.6-sol' }],
+          attentionEvents: [],
         }] };
       });
     const { server, baseUrl } = await createApiServer();
@@ -2514,100 +2505,54 @@ describe('saved Card routes', () => {
       const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'history', projectId: 'p', deckId: 'd',
-          cardId: 'builder', limit: 3 }),
+          cardId: 'builder', limit: 1 }),
       });
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({
+      await expect(response.json()).resolves.toEqual({
         ok: true,
         result: {
-          limit: 3,
-          runs: [{ runId: 'failed-new' }, { runId: 'completed-old' }],
+          cardId: 'builder',
           latest: {
-            runId: 'failed-new', state: 'failed', acceptedAt: '2026-10-01T20:00:00Z',
-            preparationMs: 4000, totalElapsedMs: 9000, elapsedMs: 5000,
-             inputTokens: null, outputTokens: null,
-             provider: 'actual-provider', model: 'actual-model',
-            idf: { sha256: 'a'.repeat(64), bytes: 400 },
-             jevDecisions: [{ status: 'unavailable' }],
-             observationGap: 3,
-             toolEvents: [{ toolName: 'message_agent', status: 'ok' }],
+            state: 'failed', acceptedAt: '2026-10-01T20:00:00Z',
+            model: 'gpt-5.6-sol', elapsedMs: 17_490, totalTokens: 12_340,
+            costUsd: 0.08, costStatus: 'estimated', toolCallCount: 7,
           },
         },
       });
     } finally { await closeServer(server); }
   });
 
-  it('reads back a failed preparation attempt without inventing native usage', async () => {
+  it('keeps newest cancelled Run unknown aggregates unavailable without older fallback', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.requestPythonRailsJson
-      .mockImplementationOnce(async (endpoint, init) => {
-        expect(endpoint).toBe('/domain/runs/history');
-        expect(JSON.parse(String(init?.body))).toEqual({
-          projectId: 'project-prep', deckId: 'deck-prep', cardId: 'builder', limit: 2,
-        });
-        return { ok: true, runs: [{
-          runId: 'prep-failed', state: 'failed',
-          acceptedAt: '2026-10-02T12:00:00.000Z',
-          createdAt: '2026-10-02T12:00:00.000Z',
-          startedAt: null, finishedAt: '2026-10-02T12:00:01.250Z',
-          nativeRunId: null, inputTokens: null, outputTokens: null,
-        }] };
-      })
-      .mockImplementationOnce(async (endpoint, init) => {
-        expect(endpoint).toBe('/domain/runs/read');
-        expect(JSON.parse(String(init?.body))).toMatchObject({
-          projectId: 'project-prep', deckId: 'deck-prep', runId: 'prep-failed',
-        });
-        return { ok: true, run: {
-          runId: 'prep-failed', correlationId: 'prep-failed',
-          projectId: 'project-prep', deckId: 'deck-prep', cardId: 'builder',
-          runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'builder',
-          state: 'failed', acceptedAt: '2026-10-02T12:00:00.000Z',
-          createdAt: '2026-10-02T12:00:00.000Z', startedAt: null,
-          finishedAt: '2026-10-02T12:00:01.250Z', nativeRunId: null,
-          provider: null, model: null, inputTokens: null, outputTokens: null,
-          errorCode: 'configured_card_preparation_failed',
-          errorSummary: 'configured_tool_unknown:provider.tool',
-        } };
-      })
-      .mockImplementationOnce(async (endpoint, init) => {
-        expect(endpoint).toBe('/domain/agentgraph/inspect');
-        expect(JSON.parse(String(init?.body))).toMatchObject({
-          projectId: 'project-prep', deckId: 'deck-prep', runId: 'prep-failed',
-        });
-        return { ok: true, runs: [{
-          runId: 'prep-failed', cardId: 'builder', conversationId: 'main',
-          acceptedAt: '2026-10-02T12:00:00.000Z',
-          preparationStartedAt: '2026-10-02T12:00:00.005Z',
-          preparationEndedAt: '2026-10-02T12:00:01.250Z',
-          preparationElapsedMs: 1250,
-          preparationState: 'failed',
-          preparationError: 'configured_tool_unknown:provider.tool',
-          nativeRunId: null, attentionEvents: [], attemptEvents: [],
-        }] };
-      });
+      .mockImplementationOnce(async () => ({ ok: true, runs: [
+        { runId: 'cancelled-new', state: 'cancelled' },
+        { runId: 'completed-old', state: 'completed', inputTokens: 50, outputTokens: 25 },
+      ] }))
+      .mockImplementationOnce(async () => ({ ok: true, run: {
+        runId: 'cancelled-new', correlationId: 'cancelled-new', projectId: 'p', deckId: 'd',
+        cardId: 'builder', runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'builder',
+        state: 'cancelled', acceptedAt: null, startedAt: null, finishedAt: null,
+        model: null, inputTokens: null, outputTokens: null, toolCallCount: null, costUsd: null,
+      } }))
+      .mockImplementationOnce(async () => ({ ok: true, runs: [{
+        runId: 'cancelled-new', cardId: 'builder', attemptEvents: [], attentionEvents: [],
+      }] }));
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'history', projectId: 'project-prep',
-          deckId: 'deck-prep', cardId: 'builder', limit: 2 }),
+        body: JSON.stringify({ action: 'history', projectId: 'p', deckId: 'd',
+          cardId: 'builder', limit: 1 }),
       });
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toMatchObject({
+      await expect(response.json()).resolves.toEqual({
         ok: true,
         result: {
+          cardId: 'builder',
           latest: {
-            runId: 'prep-failed', state: 'failed', nativeRunId: null,
-            acceptedAt: '2026-10-02T12:00:00.000Z',
-            preparationStartedAt: '2026-10-02T12:00:00.005Z',
-            preparationEndedAt: '2026-10-02T12:00:01.250Z',
-            preparationMs: 1250, totalElapsedMs: 1250,
-             preparationState: 'failed',
-             preparationError: 'configured_tool_unknown:provider.tool',
-             elapsedMs: null,
-             provider: null, model: null, inputTokens: null, outputTokens: null,
-            errorSummary: 'configured_tool_unknown:provider.tool',
+            state: 'cancelled', acceptedAt: null, model: null, elapsedMs: null,
+            totalTokens: null, costUsd: null, costStatus: 'unavailable', toolCallCount: null,
           },
         },
       });
@@ -3153,6 +3098,10 @@ describe('saved Card routes', () => {
         magenticExecution,
       };
     });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/magentic-mission-readiness');
+      return { ok: true, runId: 'corr-mag-1' };
+    });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
       expect(endpoint).toBe('/magentic/execution/submit');
       expect(JSON.parse(String(init?.body))).toEqual({
@@ -3255,6 +3204,7 @@ describe('saved Card routes', () => {
         .map(([endpoint]) => endpoint);
       expect(executeEndpoints).toEqual([
         '/domain/runs/begin',
+        '/domain/runs/magentic-mission-readiness',
         '/magentic/execution/submit',
         '/domain/runs/progress',
       ]);
@@ -3405,6 +3355,10 @@ describe('saved Card routes', () => {
       };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/magentic-mission-readiness');
+      return { ok: true, runId: 'corr-team-only' };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/magentic/execution/submit');
       return {
         ok: true, state: 'running', nativeStatus: 'triage', nativeRootId: 't_team_root',
@@ -3458,17 +3412,16 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('observes exact Magnetic tasks without reconciling or mutating the outer Run', async () => {
+  it('keeps Magnetic task and handoff state without mutating the outer Run', async () => {
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestPythonRailsJson.mockClear();
     const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
-    const startedAt = new Date().toISOString();
     orchestratorMocks.runRecords.set('magnetic-inspection', {
       runId: 'magnetic-inspection', correlationId: 'magnetic-inspection',
       projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
       state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
       runtimeProfile: 'card_magentic', nativeRootId: 't_magnetic_inspection',
-      nativeStatus: 'ready', startedAt, result: null,
+      nativeStatus: 'ready', startedAt: new Date().toISOString(), result: null,
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
       if (endpoint === '/magentic/execution/status') {
@@ -3479,21 +3432,7 @@ describe('saved Card routes', () => {
             taskId: 't_magnetic_inspection', title: 'Magnetic mission',
             assignee: 'card_magentic', status: 'ready', dependencyIds: [],
             latestAttempt: null, resultAvailable: false,
-            workerSessionId: 'worker-session-one',
             handoffSummary: 'Worker returned one bounded saved Card result.',
-            toolReceiptsComplete: true,
-            toolReceipts: [{
-              toolCallId: 'card-tool-call-one',
-              toolName: 'get_paper_account_readiness',
-              state: 'returned',
-              resultPreview: '{"configured":false}',
-              executionReceipt: {
-                schema: 'agent-runtime.execution-receipt.v1',
-                tool: 'get_paper_account_readiness',
-                correlationId: 'card-runtime:receipt-one',
-                state: 'completed',
-              },
-            }],
           }],
         };
       }
@@ -3515,21 +3454,7 @@ describe('saved Card routes', () => {
           runId: 'magnetic-inspection', state: 'running', nativeStatus: 'ready',
           nativeTasks: [{
             taskId: 't_magnetic_inspection', status: 'ready',
-            workerSessionId: 'worker-session-one',
             handoffSummary: 'Worker returned one bounded saved Card result.',
-            toolReceiptsComplete: true,
-            toolReceipts: [{
-              toolCallId: 'card-tool-call-one',
-              toolName: 'get_paper_account_readiness',
-              state: 'returned',
-              resultPreview: '{"configured":false}',
-              executionReceipt: {
-                schema: 'agent-runtime.execution-receipt.v1',
-                tool: 'get_paper_account_readiness',
-                correlationId: 'card-runtime:receipt-one',
-                state: 'completed',
-              },
-            }],
           }],
         },
       });
@@ -3545,70 +3470,57 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('fails Magnetic receipt projection closed on malformed or incomplete native evidence', async () => {
+  it('does not project detached Magnetic transcript detail through the backend boundary', async () => {
     orchestratorMocks.runRecords.clear();
     const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
-    orchestratorMocks.runRecords.set('magnetic-invalid-receipts', {
-      runId: 'magnetic-invalid-receipts', correlationId: 'magnetic-invalid-receipts',
+    orchestratorMocks.runRecords.set('magnetic-invalid-detail', {
+      runId: 'magnetic-invalid-detail', correlationId: 'magnetic-invalid-detail',
       projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
       state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-      runtimeProfile: 'card_magentic', nativeRootId: 't_magnetic_invalid_receipts',
+      runtimeProfile: 'card_magentic', nativeRootId: 't_magnetic_invalid_detail',
       nativeStatus: 'ready', startedAt: new Date().toISOString(), result: null,
     });
-    const baseTask = {
-      taskId: 't_magnetic_invalid_receipts', title: 'Magnetic mission',
-      assignee: 'card_magentic', status: 'ready', dependencyIds: [],
-      latestAttempt: null, resultAvailable: false,
-      workerSessionId: 'worker-session-one', handoffSummary: 'Bounded handoff.',
-      toolReceiptsComplete: true,
-      toolReceipts: [{
-        toolCallId: 'call-one', toolName: 'get_paper_account_readiness',
-        state: 'returned', resultPreview: '{"configured":false}',
-        executionReceipt: {
-          schema: 'agent-runtime.execution-receipt.v1',
-          tool: 'get_paper_account_readiness',
-          correlationId: 'card-runtime:receipt-one',
-          state: 'completed',
-        },
-      }],
-    };
-    const invalidTasks = [
-      { ...baseTask, workerSessionId: 7 },
-      { ...baseTask, toolReceipts: [baseTask.toolReceipts[0], baseTask.toolReceipts[0]] },
-      { ...baseTask, toolReceipts: [{ ...baseTask.toolReceipts[0], state: 'invented' }] },
-      { ...baseTask, toolReceipts: Array.from({ length: 65 }, (_, index) => ({
-        ...baseTask.toolReceipts[0], toolCallId: `call-${index}`,
-      })) },
-      { ...baseTask, toolReceipts: [{
-        ...baseTask.toolReceipts[0], resultPreview: 'x'.repeat(1_001),
-      }] },
-      { ...baseTask, workerSessionId: null, toolReceipts: [], toolReceiptsComplete: true },
-    ];
+    orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
+      if (endpoint === '/magentic/execution/status') {
+        return {
+          ok: true, state: 'running', nativeStatus: 'ready',
+          nativeRootId: 't_magnetic_invalid_detail', nativeRunId: null,
+          nativeTasks: [{
+            taskId: 't_magnetic_invalid_detail', title: 'Magnetic mission',
+            assignee: 'card_magentic', status: 'ready', dependencyIds: [],
+            latestAttempt: null, resultAvailable: false,
+            workerSessionId: 'worker-session-one', handoffSummary: 'Bounded handoff.',
+            toolReceiptsComplete: true,
+            toolReceipts: [{ executionReceipt: { state: 'completed' } }],
+          }],
+        };
+      }
+      return railsImplementation(endpoint, init);
+    });
     const { server, baseUrl } = await createApiServer();
     try {
-      for (const invalidTask of invalidTasks) {
-        orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
-          if (endpoint === '/magentic/execution/status') {
-            return {
-              ok: true, state: 'running', nativeStatus: 'ready',
-              nativeRootId: 't_magnetic_invalid_receipts', nativeRunId: null,
-              nativeTasks: [invalidTask],
-            };
-          }
-          return railsImplementation(endpoint, init);
-        });
-        const response = await fetch(`${baseUrl}/cards/run`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'status', inspectOnly: true, projectId: 'project-1',
-            deckId: 'deck_builder', cardId: 'card_magentic',
-          }),
-        });
-        expect(response.status).toBe(502);
-        await expect(response.json()).resolves.toEqual({
-          ok: false, error: 'magentic_execution_tasks_invalid',
-        });
-      }
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'status', inspectOnly: true, projectId: 'project-1',
+          deckId: 'deck_builder', cardId: 'card_magentic',
+        }),
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        ok: true,
+        result: {
+          nativeTasks: [{
+            taskId: 't_magnetic_invalid_detail',
+            handoffSummary: 'Bounded handoff.',
+          }],
+        },
+      });
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toContain('workerSessionId');
+      expect(serialized).not.toContain('toolReceipts');
+      expect(serialized).not.toContain('executionReceipt');
     } finally {
       orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
       await closeServer(server);
@@ -3654,6 +3566,10 @@ describe('saved Card routes', () => {
         cardRevisionId: 'revision:card_magentic',
         magenticExecution,
       };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/magentic-mission-readiness');
+      return { ok: true, runId: 'corr-mag-unbound' };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/magentic/execution/submit');
@@ -3706,6 +3622,7 @@ describe('saved Card routes', () => {
       });
       expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([endpoint]) => endpoint)).toEqual([
         '/domain/runs/begin',
+        '/domain/runs/magentic-mission-readiness',
         '/magentic/execution/submit',
         '/domain/runs/progress',
         '/magentic/execution/stop',
@@ -3885,7 +3802,9 @@ describe('saved Card routes', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-LiquidAIty-Internal-MCP-Secret': process.env.LIQUIDAITY_INTERNAL_MCP_SECRET,
+          'X-LiquidAIty-Internal-MCP-Secret': String(
+            process.env.LIQUIDAITY_INTERNAL_MCP_SECRET || '',
+          ),
         },
         body: JSON.stringify({ issuer: 'https://tenant.auth0.com/', subject: 'auth0|jeremiah' }),
       });
@@ -4392,6 +4311,10 @@ describe('saved Card routes', () => {
               ],
             },
           };
+        }
+        if (endpoint === '/domain/runs/magentic-mission-readiness') {
+          expect(request).toMatchObject({ runId: preparedRunId });
+          return { ok: true, runId: preparedRunId };
         }
         if (endpoint === '/magentic/execution/submit') {
           expect(request).toMatchObject({
@@ -5276,11 +5199,9 @@ describe('saved Card routes', () => {
         return value;
       });
       const provisional = JSON.stringify({
-        schemaVersion: 'atomic-research-result.v1',
-        assessmentId: 'atomic-assessment-one',
-        sourceRunId: 'main-source-run',
+        schemaVersion: 'atomic-research-response.v1',
         results: [{
-          thinkMemoryId: 'think-one', status: 'source-unavailable',
+          status: 'source-unavailable',
           summary: 'Sources were found but the native write is still persistence-pending.',
           citations: [{
             url: 'https://primary.example/report', title: 'Primary report',
@@ -5321,6 +5242,11 @@ describe('saved Card routes', () => {
             ([endpoint]) => endpoint === '/thinkgraph/research/result/validate',
           ),
         ).toHaveLength(1));
+        const childAssessments = orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint, init]) => endpoint === '/domain/runs/request-fulfillment'
+            && JSON.parse(String(init?.body || '{}')).runId === childRunId,
+        );
+        expect(childAssessments).toHaveLength(1);
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
         expect(chatSessionMocks.appendSharedConversationReplyOnce).not.toHaveBeenCalled();
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
@@ -5489,11 +5415,9 @@ describe('saved Card routes', () => {
         return value;
       });
       const provisional = JSON.stringify({
-        schemaVersion: 'atomic-research-result.v1',
-        assessmentId: 'atomic-assessment-one',
-        sourceRunId: 'main-source-run',
+        schemaVersion: 'atomic-research-response.v1',
         results: [{
-          thinkMemoryId: 'think-one', status: 'supported',
+          status: 'supported',
           summary: 'The write is still pending.',
           citations: [{
             url: 'https://primary.example/report', title: 'Primary report', publishedAt: null,
@@ -5514,7 +5438,9 @@ describe('saved Card routes', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-LiquidAIty-Internal-MCP-Secret': process.env.LIQUIDAITY_INTERNAL_MCP_SECRET,
+          'X-LiquidAIty-Internal-MCP-Secret': String(
+            process.env.LIQUIDAITY_INTERNAL_MCP_SECRET || '',
+          ),
         },
         body: JSON.stringify({
           projectId: 'project-1', deckId: 'deck_builder',
@@ -5577,12 +5503,26 @@ describe('saved Card routes', () => {
           throw new Error('stop_after_schedule_proof');
         }
         const value = await railsImplementation(endpoint, init, options);
-        return endpoint === '/domain/main/runs/begin'
-          ? { ...value, atomicResearchAssessment: {
+        if (endpoint === '/domain/main/runs/begin') return {
+          ...value, atomicResearchAssessment: {
             schemaVersion: 'atomic-research-assessment.v1', status: 'success',
             automaticMemoryIds: ['think-auto-one'],
-          } }
-          : value;
+          },
+        };
+        if (endpoint === '/domain/runs/request-fulfillment') return {
+          ...(value as any),
+          assessment: {
+            ...(value as any).assessment,
+            researchProgress: {
+              schemaVersion: 'research-progress.v1', active: false,
+              lineageId: null, parentRunId: null, evidenceGapId: null,
+              lineageAction: 'inactive', priorRepeatedOnlyCount: 0,
+              repeatedOnlyCount: 0, automaticContinuationAllowed: false,
+              stopReason: 'trusted_research_lineage_unavailable',
+            },
+          },
+        };
+        return value;
       });
       const { server, baseUrl } = await createApiServer();
       try {
@@ -5596,6 +5536,51 @@ describe('saved Card routes', () => {
             ([endpoint]) => endpoint === '/domain/research/atomic/authorize',
           ),
         ).toBe(true));
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
+    it('does not continue automatic research after the trusted second repeated-only result', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        const value = await railsImplementation(endpoint, init, options);
+        if (endpoint === '/domain/main/runs/begin') return {
+          ...value,
+          atomicResearchAssessment: {
+            schemaVersion: 'atomic-research-assessment.v1', status: 'success',
+            automaticMemoryIds: ['think-auto-one'],
+          },
+        };
+        if (endpoint === '/domain/runs/request-fulfillment') {
+          const assessment = structuredClone((value as any).assessment);
+          assessment.researchProgress = {
+            schemaVersion: 'research-progress.v1', active: true,
+            lineageId: 'research-lineage:one', parentRunId: 'run-parent',
+            evidenceGapId: 'think-gap', lineageAction: 'continued',
+            priorRepeatedOnlyCount: 1, repeatedOnlyCount: 2,
+            automaticContinuationAllowed: false, stopReason: 'repeated_only_limit',
+          };
+          return { ...(value as any), assessment };
+        }
+        return value;
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'auto-repeat-stop',
+            message: 'Do not repeat the same evidence.',
+          }),
+        });
+        expect(await response.text()).toContain('event: done');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+          ([endpoint]) => endpoint === '/domain/research/atomic/authorize',
+        )).toBe(false);
       } finally {
         orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
         await closeServer(server);

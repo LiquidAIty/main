@@ -15,6 +15,20 @@ if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
 
+def _tool_result_wire_text(result) -> str:
+    if hasattr(result, "model_dump"):
+        value = result.model_dump(by_alias=True, exclude_none=True)
+    elif isinstance(result, list):
+        value = [
+            item.model_dump(by_alias=True, exclude_none=True)
+            if hasattr(item, "model_dump") else item
+            for item in result
+        ]
+    else:
+        value = result
+    return json.dumps(value, default=str)
+
+
 @pytest.fixture
 def clear_live_cbm_operations():
     try:
@@ -152,9 +166,8 @@ def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch)
     assert json.loads(result.content[0].text) == {
         "ok": False, "error": "thinkgraph_project_id_invalid",
     }
-    receipt = json.loads(result.content[-1].text)["executionReceipt"]
-    assert receipt["state"] == "failed"
-    assert receipt["failureCode"] == "thinkgraph_project_id_invalid"
+    assert len(result.content) == 1
+    assert "executionReceipt" not in _tool_result_wire_text(result)
     assert len(requests) == 1
     assert requests[0]["projectId"] == "project-one"
 
@@ -623,7 +636,7 @@ def test_graphiti_catalog_discovery_does_not_open_provider_connections(monkeypat
     assert mcp_host._NATIVE_GRAPHITI_SERVICE_READY is False
 
 
-def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypatch):
+def test_call_tool_preserves_exact_results_without_runtime_observation_leak(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -642,16 +655,14 @@ def test_call_tool_appends_canonical_receipt_and_typed_provider_failure(monkeypa
     failure = json.loads(failed.content[0].text)
     assert failure["failureCode"] == "insufficient_credits"
     assert failure["retryable"] is False
-    failed_receipt = json.loads(failed.content[-1].text)["executionReceipt"]
-    assert failed_receipt["state"] == "failed"
-    assert failed_receipt["failureCode"] == "insufficient_credits"
+    assert len(failed.content) == 1
+    assert "executionReceipt" not in _tool_result_wire_text(failed)
+    assert "nativeAttention" not in _tool_result_wire_text(failed)
 
     later = asyncio.run(mcp_host.call_tool("main.context", {}))
     assert json.loads(later[0].text)["ok"] is True
-    later_receipt = json.loads(later[-1].text)["executionReceipt"]
-    assert "compute" not in later_receipt
-    assert "risk" not in later_receipt
-    assert later_receipt["state"] == "completed"
+    assert len(later) == 1
+    assert "executionReceipt" not in _tool_result_wire_text(later)
 
 
 def test_main_context_reads_only_the_current_request_claims(monkeypatch):
@@ -1371,9 +1382,9 @@ def test_child_scoped_dispatch_attaches_attention_to_the_real_child_run_and_card
 
     assert isinstance(result, CallToolResult)
     assert result.content[0].text == native_text
-    assert json.loads(result.content[-1].text)["executionReceipt"]["state"] == "completed"
-    assert result.meta is not None
-    attention = result.meta["nativeAttention"]
+    assert len(result.content) == 1
+    assert result.meta is None
+    attention = observed[0]
     assert attention["toolName"] == "cbm.search_graph"
     assert attention["nativeNodeIds"] == ["pkg._runtime_owner"]
     assert attention["nativeEdgeIds"] == []
@@ -1437,8 +1448,9 @@ def test_helper_root_context_is_active_before_native_cbm_dispatch_and_persists_e
     assert dispatched_contexts == [context]
     assert isinstance(result, CallToolResult)
     assert result.content[0].text == "current native CBM result"
-    assert result.meta is not None
-    attention = result.meta["nativeAttention"]
+    assert result.structuredContent == native_result.structuredContent
+    assert result.meta is None
+    attention = observed[0]
     assert attention["runId"] == "helper-run-one"
     assert attention["cardId"] == "card_delegate"
     assert attention["toolName"] == "cbm.search_code"
@@ -1700,6 +1712,33 @@ def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
     assert results["internal"]["failureCode"] == "internal_failure"
     assert results["session"]["failureCode"] != "invalid_arguments"
     assert results["auth"]["failureCode"] != "invalid_arguments"
+
+
+def test_worldsignals_connection_refusal_is_dependency_unavailable(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    async def refuse(name, _arguments):
+        assert name == "worldsignals.capabilities"
+        raise RuntimeError(
+            "worldsignals_unreachable: <urlopen error [WinError 10061] "
+            "No connection could be made because the target machine actively refused it>"
+        )
+
+    monkeypatch.setattr(mcp_host.DEFAULT_TOOL_REGISTRY, "invoke", refuse)
+    result = asyncio.run(mcp_host._dispatch_tool("worldsignals.capabilities", {}))
+
+    assert isinstance(result, mcp_host.CallToolResult)
+    assert result.isError is False
+    assert result.structuredContent == {"error_code": "DEPENDENCY_UNAVAILABLE"}
+    assert json.loads(result.content[0].text) == {
+        "ok": False,
+        "error": "service_unavailable",
+        "failureCode": "service_unavailable",
+        "errorCategory": "DEPENDENCY_UNAVAILABLE",
+        "retryable": True,
+        "dependency": "worldsignals",
+    }
 
 
 def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
@@ -2471,7 +2510,7 @@ def test_atomic_research_model_result_is_only_a_natural_status(
         assert forbidden not in lowered
 
 
-def test_atomic_research_dispatch_keeps_receipt_in_runtime_metadata_only(monkeypatch):
+def test_atomic_research_dispatch_returns_only_the_model_result(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -2523,15 +2562,14 @@ def test_atomic_research_dispatch_keeps_receipt_in_runtime_metadata_only(monkeyp
             "reason": "Resolve one factual gap.",
         },
     }
-    assert isinstance(result, mcp_host.CallToolResult)
-    assert json.loads(result.content[0].text)["status"] == "started"
-    assert len(result.content) == 1
+    assert isinstance(result, list)
+    assert json.loads(result[0].text)["status"] == "started"
+    assert len(result) == 1
     visible = mcp_host._card_tool_output(result)
     assert json.loads(visible)["status"] == "started"
     assert "executionReceipt" not in visible
     assert "control-plane" not in visible
-    assert result.meta["executionReceipt"]["tool"] == "research_atomic_thinks"
-    assert result.meta["executionReceipt"]["state"] == "completed"
+    assert "executionReceipt" not in _tool_result_wire_text(result)
 
 
 def test_atomic_research_bridge_failure_is_natural_and_runtime_diagnostic_only(monkeypatch):
@@ -2571,10 +2609,8 @@ def test_atomic_research_bridge_failure_is_natural_and_runtime_diagnostic_only(m
     assert "backend_http_503" not in visible
     assert "session-secret" not in visible
     assert result.isError is True
-    assert result.meta["executionReceipt"]["state"] == "failed"
-    assert result.meta["executionReceipt"]["controlPlaneFailureCode"] == (
-        "backend_http_503:session-secret"
-    )
+    assert result.meta is None
+    assert "backend_http_503" not in _tool_result_wire_text(result)
 
 
 
@@ -3640,21 +3676,16 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                             if inspect_main:
                                 result = await session.call_tool("main.context", {})
                                 visible_context = json.loads(result.content[0].text)["context"]
-                                receipt = json.loads(result.content[-1].text)["executionReceipt"]
                                 invalid = await session.call_tool("not_a_real_tool", {})
-                                invalid_receipt = json.loads(
-                                    invalid.content[-1].text
-                                )["executionReceipt"]
                 assert response_session_ids
                 assert all(value is None for value in response_session_ids)
                 assert isinstance(cbm_payload, dict)
                 if inspect_main:
-                    assert receipt["tool"] == "main.context"
-                    assert receipt["state"] == "completed"
+                    assert len(result.content) == 1
+                    assert "executionReceipt" not in _tool_result_wire_text(result)
                     assert invalid.isError is True
-                    assert invalid_receipt["tool"] == "not_a_real_tool"
-                    assert invalid_receipt["state"] == "failed"
-                    assert invalid_receipt["failureCode"]
+                    assert len(invalid.content) == 1
+                    assert "executionReceipt" not in _tool_result_wire_text(invalid)
                 native_process = mcp_host._NATIVE_CBM_CLIENT._process
                 assert native_process.poll() is None
                 return actual, visible_context, catalog_identity, native_process.pid
@@ -4004,9 +4035,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         mcp_host.call_tool("cbm.search_graph", {"project": "C-Projects-main"})
     )
     assert calls[-1] == ("search_graph", {"project": "C-Projects-main"})
-    cbm_receipt = json.loads(cbm_result.content[-1].text)["executionReceipt"]
-    assert "risk" not in cbm_receipt
-    assert "compute" not in cbm_receipt
+    assert len(cbm_result.content) == 1
+    assert "executionReceipt" not in _tool_result_wire_text(cbm_result)
 
     asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "Main"}))
     assert calls[-1] == (

@@ -3,6 +3,7 @@ import { Suspense, lazy } from 'react';
 import { graphDrawerSectionStyle } from '../graph/graphVisualTokens';
 import { GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
+import type { CanonicalSubjectFocusRequest } from '../builder/canonicalSubjectLinks';
 
 const NativeCodeGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
@@ -58,6 +59,8 @@ type Props = {
   ) => void;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
+  onRemoveKnowGraphEvidence?: (nativeFactId: string) => Promise<void>;
+  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
 };
 
 export default function KnowledgeGraphFramework({
@@ -78,6 +81,8 @@ export default function KnowledgeGraphFramework({
   onUseContextualNodeRead,
   onKindChange,
   onRemoveThinkGraphEvidence,
+  onRemoveKnowGraphEvidence,
+  subjectFocusRequest,
 }: Props) {
   return (
     <div
@@ -176,18 +181,26 @@ export default function KnowledgeGraphFramework({
             onUseAsContext={onUseAttentionNode}
             onUseContextualNodeRead={onUseContextualNodeRead}
             onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
+            onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
+            subjectFocusRequest={subjectFocusRequest}
           />
         ) : kind === 'knowgraph' ? (
           <NativeKnowGraphSurface
             projection={attentionProjections.knowgraph}
+            canonicalSubjectDirectory={
+              attentionProjections.thinkgraph.canonicalSubjectDirectory
+            }
+            subjectFocusRequest={subjectFocusRequest}
             status={attentionStatuses?.knowgraph || 'ready'}
             error={attentionErrors.knowgraph || null}
             onExpand={(node) => onExpandAttentionNode('knowgraph', node)}
             onUseAsContext={(node) => onUseAttentionNode('knowgraph', node)}
+            onRemoveEvidence={onRemoveKnowGraphEvidence}
           />
         ) : (
           <NativeThinkGraphSurface
             projection={attentionProjections.thinkgraph}
+            subjectFocusRequest={subjectFocusRequest}
             status={attentionStatuses?.thinkgraph
               || (attentionErrors.thinkgraph ? 'error' : 'ready')}
             error={attentionErrors.thinkgraph || null}

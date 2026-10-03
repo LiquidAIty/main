@@ -2,6 +2,7 @@
 // project/intelligence affordance. Extracted verbatim from
 // pages/agentbuilder.tsx (decomposition pass 2026-07-08).
 import React from 'react';
+import { SOLARPUNK_PALETTE } from '../../../components/graph/graphVisualTokens';
 
 const SYNODIC_MONTH_DAYS = 29.530588861;
 /** Reference Julian Date of a known new moon (2000-01-06 18:14 UTC ≈ JD 2451550.09765). */
@@ -87,7 +88,7 @@ export function BuilderRailMoonOrb({
   const shadowCx = waxing ? cx - sep : cx + sep;
 
   const limbGlowOpacity = 0.06 + 0.14 * illumination;
-  const purpleRimOpacity = 0.12 + 0.08 * illumination;
+  const sunRimOpacity = 0.12 + 0.08 * illumination;
 
   return (
     <svg
@@ -106,7 +107,11 @@ export function BuilderRailMoonOrb({
         <radialGradient id={litGradId} cx="32%" cy="30%" r="78%">
           <stop offset="0%" stopColor="rgba(255,252,244,0.98)" />
           <stop offset="42%" stopColor="rgba(255,228,196,0.92)" />
-          <stop offset="100%" stopColor="rgba(223,146,84,0.55)" />
+          <stop
+            offset="100%"
+            stopColor={SOLARPUNK_PALETTE.sun}
+            stopOpacity={0.55}
+          />
         </radialGradient>
         <filter id={glowFilterId} x="-35%" y="-35%" width="170%" height="170%">
           <feGaussianBlur in="SourceGraphic" stdDeviation="0.9" result="b" />
@@ -140,7 +145,8 @@ export function BuilderRailMoonOrb({
           cy={cy}
           r={R - 0.5}
           fill="none"
-          stroke={`rgba(125,105,180,${purpleRimOpacity.toFixed(3)})`}
+          stroke={SOLARPUNK_PALETTE.sun}
+          strokeOpacity={sunRimOpacity}
           strokeWidth={0.9}
         />
         <circle
@@ -148,7 +154,8 @@ export function BuilderRailMoonOrb({
           cy={cy}
           r={R - 1.25}
           fill="none"
-          stroke={`rgba(79,162,173,${limbGlowOpacity.toFixed(3)})`}
+          stroke={SOLARPUNK_PALETTE.sea}
+          strokeOpacity={limbGlowOpacity}
           strokeWidth={1.1}
         />
       </g>
@@ -157,4 +164,3 @@ export function BuilderRailMoonOrb({
 }
 
 // -------- Main page --------
-

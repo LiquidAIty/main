@@ -160,22 +160,24 @@ def test_authenticated_external_mcp_read_uses_the_real_writer_once_and_reports_f
     result = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
     assert result.isError is not True
     assert len(age_boundary[1]) == 1
-    assert result.meta["nativeAttention"]["cardId"] == "card-main"
+    observed_event = next(iter(age_boundary[1].values()))
+    assert observed_event["cardId"] == "card-main"
+    assert result.meta is None
     readback = card_domain.inspect_agentgraph({"projectId": "project-one", "deckId": "deck-one",
                                               "runId": context["parentRunId"], "limit": 1})
-    assert [event["eventId"] for event in readback["runs"][0]["attentionEvents"]] == [result.meta["nativeAttention"]["eventId"]]
+    assert [event["eventId"] for event in readback["runs"][0]["attentionEvents"]] == [observed_event["eventId"]]
     monkeypatch.setattr(card_domain, "observe_native_attention", lambda *_args, **_kwargs: False)
     failed_observation = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
     assert failed_observation.isError is not True  # the native read succeeded
-    assert failed_observation.meta["nativeAttention"]["persisted"] is False
-    import json
-    assert json.loads(failed_observation.content[-1].text)["executionReceipt"]["attentionFailureCode"] == "native_attention_persistence_failed"
+    assert failed_observation.meta is None
+    assert failed_observation.structuredContent == {"results": [{"qualified_name": "pkg.actual"}]}
     def broken_observer(*_args, **_kwargs):
         raise RuntimeError("AGE observation unavailable")
     monkeypatch.setattr(card_domain, "observe_native_attention", broken_observer)
     exception_observation = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
     assert exception_observation.isError is not True
-    assert exception_observation.meta["nativeAttention"]["persisted"] is False
+    assert exception_observation.meta is None
+    assert exception_observation.structuredContent == failed_observation.structuredContent
 
 
 def test_missing_materialized_read_schema_is_visible_even_without_runs(monkeypatch, age_boundary):

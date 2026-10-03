@@ -19,11 +19,8 @@ def _payload() -> dict:
         "knowGraphCardId": "knowgraph",
         "thinkMemoryIds": ["think-one"],
         "output": {
-            "schemaVersion": "atomic-research-result.v1",
-            "assessmentId": "atomic-research-assessment:one",
-            "sourceRunId": "run-main",
+            "schemaVersion": "atomic-research-response.v1",
             "results": [{
-                "thinkMemoryId": "think-one",
                 "status": "supported",
                 "summary": "The current primary source supports the bounded Think.",
                 "citations": [{
@@ -77,6 +74,7 @@ def test_atomic_research_result_requires_exact_persisted_episode_readback() -> N
     assert result["citationCount"] == 1
     assert result["episodeCount"] == 1
     assert result["result"]["results"][0]["status"] == "supported"
+    assert result["result"]["results"][0]["thinkMemoryId"] == "think-one"
     assert result["result"]["results"][0]["episodeUuids"] == ["episode-one"]
     assert result["settlement"] == {
         "eventId": "native-attention:write-one",
@@ -93,6 +91,48 @@ def test_atomic_research_result_requires_exact_persisted_episode_readback() -> N
     assert reads == [(
         "project-one", ["episode-one", "entity-one", "entity-two"],
     )]
+
+
+def test_atomic_research_model_response_rejects_echoed_runtime_ids() -> None:
+    payload = _payload()
+    payload["output"]["assessmentId"] = payload["assessmentId"]
+    payload["output"]["sourceRunId"] = payload["sourceRunId"]
+    payload["output"]["results"][0]["thinkMemoryId"] = "think-one"
+
+    with pytest.raises(
+        AtomicResearchError,
+        match="atomic_research_result_contract_invalid",
+    ):
+        validate_atomic_research_result(payload)
+
+
+def test_atomic_research_result_rejects_transport_id_in_summary_prose() -> None:
+    payload = _payload()
+    payload["output"]["results"][0]["summary"] = (
+        "The sourced result for think-one is supported."
+    )
+
+    with pytest.raises(
+        AtomicResearchError,
+        match="atomic_research_transport_identifier_in_prose",
+    ):
+        validate_atomic_research_result(payload)
+
+
+def test_atomic_research_result_rejects_transport_id_in_native_episode_prose() -> None:
+    with pytest.raises(
+        AtomicResearchError,
+        match="atomic_research_transport_identifier_in_prose",
+    ):
+        validate_atomic_research_result(
+            _payload(),
+            episode_reader=lambda *_args: [{
+                "uuid": "episode-one",
+                "content": "Research packet for Think memory think-one.",
+                "source_description": '["https://primary.example/report"]',
+            }],
+            attention_reader=lambda *_args: _event(),
+        )
 
 
 def test_atomic_research_result_rejects_mismatched_episode_ref() -> None:

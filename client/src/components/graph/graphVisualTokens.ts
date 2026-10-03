@@ -1,6 +1,11 @@
 import type { CSSProperties } from 'react';
 import { GRAPH_PAPER, GRAPH_WORKSPACE } from './graphWorkspaceContract';
 
+export const SOLARPUNK_PALETTE = Object.freeze({
+  sea: '#4FA2AD',
+  sun: '#F2A64A',
+} as const);
+
 function withAlpha(hexColor: string, alpha: number): string {
   const hex = String(hexColor || '')
     .replace('#', '')
@@ -24,7 +29,7 @@ const graphGridCanvas = withAlpha(
   GRAPH_PAPER.baseColor,
   GRAPH_PAPER.minorOpacity,
 );
-const graphEdgeThink = 'rgba(55, 173, 170, 0.56)';
+const graphEdgeThink = withAlpha(SOLARPUNK_PALETTE.sea, 0.56);
 const graphEdgeKnow = 'rgba(167, 176, 186, 0.5)';
 const graphEdgeMixed = 'rgba(167, 176, 186, 0.42)';
 
@@ -50,21 +55,21 @@ export const GRAPH_THEME = {
     shadow: '0 16px 36px rgba(0, 0, 0, 0.28)',
   },
   accent: {
-    primary: '#37ADAA',
-    primarySoft: 'rgba(55, 173, 170, 0.12)',
-    primaryBorder: 'rgba(55, 173, 170, 0.34)',
-    primaryGlow: 'rgba(55, 173, 170, 0.18)',
-    solar: '#F2A64A',
-    solarSoft: 'rgba(242, 166, 74, 0.14)',
-    solarGlow: 'rgba(242, 166, 74, 0.16)',
+    primary: SOLARPUNK_PALETTE.sea,
+    primarySoft: withAlpha(SOLARPUNK_PALETTE.sea, 0.12),
+    primaryBorder: withAlpha(SOLARPUNK_PALETTE.sea, 0.34),
+    primaryGlow: withAlpha(SOLARPUNK_PALETTE.sea, 0.18),
+    solar: SOLARPUNK_PALETTE.sun,
+    solarSoft: withAlpha(SOLARPUNK_PALETTE.sun, 0.14),
+    solarGlow: withAlpha(SOLARPUNK_PALETTE.sun, 0.16),
     hover: '#F5F7FA',
     magentic: '#2B8C8A',
     graph: 'rgba(167, 176, 186, 0.78)',
-    workflow: '#F2A64A',
-    workflowGlow: 'rgba(242, 166, 74, 0.12)',
+    workflow: SOLARPUNK_PALETTE.sun,
+    workflowGlow: withAlpha(SOLARPUNK_PALETTE.sun, 0.12),
     memory: '#6E5FAE',
     memorySoft: 'rgba(110, 95, 174, 0.14)',
-    think: '#37ADAA',
+    think: SOLARPUNK_PALETTE.sea,
     know: '#A7B0BA',
     mixed: '#A7B0BA',
   },
@@ -83,7 +88,7 @@ export const GRAPH_THEME = {
     think: graphEdgeThink,
     know: graphEdgeKnow,
     mixed: graphEdgeMixed,
-    selected: '#37ADAA',
+    selected: SOLARPUNK_PALETTE.sea,
     hover: '#F5F7FA',
   },
   edgeMotion: {

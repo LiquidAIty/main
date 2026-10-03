@@ -122,6 +122,33 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showKnowledge).toBe(true);
   });
 
+  it('routes assistant subject labels through ephemeral page state into the existing graph inspector', () => {
+    const page = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    const chat = readFileSync(
+      new URL('../components/builder/BuilderChat.tsx', import.meta.url),
+      'utf8',
+    );
+    const graph = readFileSync(
+      new URL('../components/knowledge/NativeAuthorityGraphSurface.tsx', import.meta.url),
+      'utf8',
+    );
+    const handler = page.slice(
+      page.indexOf('const handleCanonicalSubjectFocus'),
+      page.indexOf('useEffect(() => {', page.indexOf('const handleCanonicalSubjectFocus')),
+    );
+    expect(page).toContain('createCanonicalSubjectMatcher({');
+    expect(page).toContain('subjectMatcher={canonicalSubjectMatcher}');
+    expect(page).toContain('subjectFocusRequest={subjectFocusRequest}');
+    expect(handler).toContain("setWorkspaceView('knowledge')");
+    expect(handler).toContain('setKnowledgeGraphKind(target.view)');
+    expect(handler).not.toContain('fetch(');
+    expect(handler).not.toContain('localStorage');
+    expect(chat).toContain('subjectMatcher?.segmentMessage(message.role, text)');
+    expect(chat).toContain('aria-label={`Open ${segment.text} in graph`}');
+    expect(graph).toContain('resolveCanonicalSubjectFocusVisualId({');
+    expect(graph).toContain('inspectNodeRef.current(visualNodeId)');
+  });
+
   it('requires the KnowGraph flow connection to originate from Main', () => {
     const withoutHermesFlow = INITIAL_DECK.edges.filter((edge) => edge.id !== 'edge_main_chat_hermes');
     const replacement = (edgeType: string, source = 'card_main_chat', target = 'card_knowgraph') => ({

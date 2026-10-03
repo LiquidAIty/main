@@ -5653,6 +5653,322 @@ def test_request_fulfillment_missing_idf_persists_explicit_unavailable(
     assert stored == [assessment]
 
 
+@pytest.mark.parametrize("classification", card_domain._REQUEST_NOVELTY_CHOICES)
+def test_request_fulfillment_accepts_every_novelty_class(classification: str) -> None:
+    answer = {
+        "type": "choice",
+        "choice": classification,
+        "confidence": 0.91,
+        "probabilities": {
+            choice: 1.0 if choice == classification else 0.0
+            for choice in card_domain._REQUEST_NOVELTY_CHOICES
+        },
+    }
+
+    validated = card_domain._validated_request_semantic_answer(
+        answer, card_domain._REQUEST_NOVELTY_CHOICES,
+    )
+
+    assert validated["classification"] == classification
+    assert validated["winnerProbability"] == 1.0
+
+
+def test_research_progress_stops_second_repeat_and_resets_only_from_current_result() -> None:
+    context = {
+        "active": True,
+        "lineageId": "research-lineage:existing",
+        "progressOwnerRunId": "run-gap-owner",
+        "evidenceGapId": "think-gap",
+        "priorRepeatedOnlyCount": 1,
+        "tracksCurrentResult": True,
+    }
+    repeated = card_domain._settled_research_progress(
+        context=context,
+        novelty={
+            "classification": "repeated_only", "confidence": 0.6,
+            "winnerProbability": 0.6,
+        },
+        run_id="run-current",
+        output_sha256="a" * 64,
+    )
+    advanced = card_domain._settled_research_progress(
+        context={**context, "priorRepeatedOnlyCount": 2},
+        novelty={
+            "classification": "new_evidence", "confidence": 0.7,
+            "winnerProbability": 0.7,
+        },
+        run_id="run-current",
+        output_sha256="a" * 64,
+    )
+    changed = card_domain._settled_research_progress(
+        context=context,
+        novelty={
+            "classification": "changed_thesis", "confidence": 0.80,
+            "winnerProbability": 0.80,
+        },
+        run_id="run-current",
+        output_sha256="b" * 64,
+    )
+    low_confidence_change = card_domain._settled_research_progress(
+        context=context,
+        novelty={
+            "classification": "changed_thesis", "confidence": 0.79,
+            "winnerProbability": 0.99,
+        },
+        run_id="run-current",
+        output_sha256="c" * 64,
+    )
+
+    assert repeated["repeatedOnlyCount"] == 2
+    assert repeated["automaticContinuationAllowed"] is False
+    assert repeated["stopReason"] == "repeated_only_limit"
+    assert advanced["lineageId"] == "research-lineage:existing"
+    assert advanced["repeatedOnlyCount"] == 0
+    assert advanced["automaticContinuationAllowed"] is True
+    assert changed["lineageId"] != "research-lineage:existing"
+    assert changed["lineageAction"] == "changed_thesis"
+    assert low_confidence_change["lineageId"] == "research-lineage:existing"
+    assert low_confidence_change["lineageAction"] == "continued"
+
+
+def test_research_progress_rejects_recursive_knowgraph_lineage(monkeypatch) -> None:
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args): return None
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_age_rows", lambda *_args, **_kwargs: [])
+    context = card_domain._trusted_research_progress_context(
+        run_id="run-know",
+        project_id="project-one",
+        deck_id="deck-one",
+        runtime_mode="delegate",
+    )
+
+    assert context == {
+        "active": False,
+        "automaticContinuationAllowed": False,
+        "stopReason": "recursive_research_forbidden",
+        "tracksCurrentResult": False,
+    }
+
+
+def test_research_progress_reads_and_writes_the_same_evidence_gap_owner(
+    monkeypatch,
+) -> None:
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args): return None
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    writes: list[dict] = []
+
+    def age_rows(_cursor, query, params, _columns):
+        if "SET run.researchProgressLineageId" in query:
+            writes.append({"query": query, "params": dict(params)})
+            return [{"run_id": params["progressOwnerRunId"]}]
+        return [{
+            "progress_owner_run_id": "run-gap-owner",
+            "assessment": {
+                "schemaVersion": "atomic-research-assessment.v1",
+                "status": "success",
+                "assessmentId": "assessment-one",
+                "thinkMemoryId": "think-gap",
+                "automaticMemoryIds": ["think-gap"],
+            },
+            "prior_lineage_id": "research-lineage:one",
+            "prior_repeated_only_count": 1,
+        }]
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+    context = card_domain._trusted_research_progress_context(
+        run_id="atomic-child",
+        project_id="project-one",
+        deck_id="deck-one",
+        runtime_mode="delegate",
+    )
+    progress = card_domain._settled_research_progress(
+        context=context,
+        novelty={
+            "classification": "repeated_only", "confidence": 0.9,
+            "winnerProbability": 0.9,
+        },
+        run_id="atomic-child",
+        output_sha256="a" * 64,
+    )
+    card_domain._persist_research_progress_guard(Cursor(), "atomic-child", progress)
+
+    assert context["progressOwnerRunId"] == "run-gap-owner"
+    assert context["tracksCurrentResult"] is True
+    assert progress["repeatedOnlyCount"] == 2
+    assert progress["automaticContinuationAllowed"] is False
+    assert len(writes) == 1
+    assert writes[0]["params"]["progressOwnerRunId"] == "run-gap-owner"
+    assert writes[0]["params"]["assessedRunId"] == "atomic-child"
+
+
+def test_request_fulfillment_batches_semantics_in_exactly_one_post_result_call(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    run_row = {
+        "project_id": "project-one", "deck_id": "deck-one",
+        "target_card_revision_id": "revision-one", "state": "completed",
+        "final_result": "The objective claim is supported by https://example.test/source.",
+        "effective_provider": "openrouter", "provider_model_id": "configured/model",
+        "request_fulfillment": None, "card_id": "main", "runtime_mode": "main",
+    }
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args): return None
+        def fetchone(self): return run_row
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    materialized = SimpleNamespace(idf=SimpleNamespace(
+        stableSavedCardContext=SimpleNamespace(
+            instructions="Follow instructions.", outputRequirements="Return evidence.",
+        ),
+        actualGraphData=SimpleNamespace(modelText="Bounded evidence."),
+        dynamicContext=SimpleNamespace(task="Find objective evidence.", images=[]),
+        selectedToolsAndGrants=SimpleNamespace(toolDefinitions=[], skills=[]),
+    ))
+    captured: list[dict] = []
+
+    def choice(choice: str, choices: tuple[str, ...]) -> dict:
+        return {
+            "type": "choice", "choice": choice, "confidence": 0.9,
+            "probabilities": {item: 1.0 if item == choice else 0.0 for item in choices},
+        }
+
+    def decide(body, **_kwargs):
+        captured.append(body)
+        return {
+            "id": "decision-one", "provider": "typesafe", "model": "jev-test",
+            "usage": {},
+            "answers": {
+                "response_fit": _request_fulfillment_answer(),
+                "novelty": choice("new_evidence", card_domain._REQUEST_NOVELTY_CHOICES),
+                "citation_coverage": choice(
+                    "complete", card_domain._REQUEST_CITATION_COVERAGE_CHOICES,
+                ),
+                "follow_up": choice("accept", card_domain._REQUEST_FOLLOW_UP_CHOICES),
+            },
+        }
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda _run_id: {
+        "idfSha256": "a" * 64,
+    })
+    monkeypatch.setattr(card_domain, "load_idf", lambda *_args, **_kwargs: materialized)
+    monkeypatch.setattr(card_domain, "_trusted_research_progress_context", lambda **_kwargs: {
+        "active": True, "lineageId": "research-lineage:one",
+        "parentRunId": "run-parent", "evidenceGapId": "think-gap",
+        "priorRepeatedOnlyCount": 0,
+    })
+    monkeypatch.setattr(card_domain, "_jev_request", decide)
+    monkeypatch.setattr(
+        card_domain, "_persist_request_fulfillment", lambda _run_id, value: value,
+    )
+
+    assessment = card_domain.assess_run_request_fulfillment({
+        "runId": "run-one", "actualProvider": "openrouter",
+        "actualModel": "configured/model", "exposedTools": [],
+        "executionEvidence": [], "executionEvidenceComplete": True,
+    })["assessment"]
+
+    assert len(captured) == 1
+    assert set(captured[0]["questions"]) == {
+        "response_fit", "novelty", "citation_coverage", "follow_up",
+    }
+    citation_instructions = captured[0]["questions"]["citation_coverage"]["instructions"]
+    for excluded in ("Preferences", "questions", "hypotheticals", "speculation"):
+        assert excluded in citation_instructions
+    assert assessment["questionCount"] == 4
+    assert assessment["novelty"]["classification"] == "new_evidence"
+    assert assessment["citationCoverage"]["classification"] == "complete"
+    assert assessment["followUp"]["classification"] == "accept"
+    assert assessment["researchProgress"]["automaticContinuationAllowed"] is True
+
+
+def test_magentic_mission_readiness_calls_jev_at_most_once_per_run(
+    monkeypatch,
+) -> None:
+    run_row = {
+        "project_id": "project-one", "deck_id": "deck-one",
+        "target_card_revision_id": "revision-magnetic",
+        "card_id": "card_magentic", "runtime_mode": "magentic_one",
+    }
+    stored: dict[str, object] = {"assessment": None}
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args): return None
+        def fetchone(self): return run_row
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    def age_rows(_cursor, query, params, _columns):
+        if "WHERE run.missionReadiness IS NULL" in query:
+            stored["assessment"] = params["assessment"]
+        return [{"mission_readiness": stored["assessment"]}]
+
+    calls: list[dict] = []
+
+    def decide(body, **_kwargs):
+        calls.append(body)
+        return {
+            "id": "mission-ready-one", "provider": "typesafe", "model": "jev-test",
+            "answers": {"mission_readiness": {
+                "type": "choice", "choice": "ready", "confidence": 0.9,
+                "probabilities": {
+                    "ready": 0.9, "missing_evidence": 0.04,
+                    "contradictory": 0.03, "source_blocked": 0.03,
+                },
+            }},
+        }
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+    monkeypatch.setattr(card_domain, "_jev_request", decide)
+    payload = {
+        "runId": "run-magnetic", "mission": "Evaluate the bounded mission.",
+        "workers": [{
+            "cardId": "worker-one", "cardRevisionId": "revision-worker",
+            "profile": "worker", "title": "Worker", "description": "Bounded role.",
+        }],
+    }
+
+    first = card_domain.assess_magentic_mission_readiness(payload)
+    second = card_domain.assess_magentic_mission_readiness(payload)
+
+    assert len(calls) == 1
+    assert first["assessment"] == second["assessment"]
+    assert first["assessment"]["advisory"]["classification"] == "ready"
+
+
 def test_request_fulfillment_persistence_replay_is_idempotent_and_binding_safe(
     monkeypatch,
 ) -> None:
@@ -6569,7 +6885,7 @@ def test_atomic_research_assignment_does_not_refetch_hydrated_think() -> None:
     assert "already hydrated in actualGraphData" in assignment
     assert "Do not call\nengraphis_get_memory" in assignment
     assert "unless the supplied data explicitly reports a freshness mismatch" in assignment
-    assert "Think memory ID is correlation metadata for RESULT_SCHEMA only" in assignment
+    assert "Think memory ID is runtime correlation metadata only" in assignment
     assert "Never place a Think\nmemory ID, assessment ID, Run ID, Card ID" in assignment
     assert "Research and write only the named real-world subjects" in assignment
     assert "Preserve your semantic supported or" in assignment
@@ -6583,6 +6899,11 @@ def test_atomic_research_assignment_does_not_refetch_hydrated_think() -> None:
     assert "one URL source of truth" in assignment
     assert "copy each URL\nbyte-for-byte" in assignment
     assert "correct RESULT_SCHEMA from the exact\nsource_description strings" in assignment
+    assert "atomic-research-response.v1" in assignment
+    assert "EXPECTED_RESULT_COUNT: 1" in assignment
+    assert "assessment-one" not in assignment
+    assert "source-run-one" not in assignment
+    assert "mem-one" not in assignment
 
 
 def test_atomic_research_write_event_read_is_exact_run_and_card_scoped(

@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
 
-import { GRAPH_THEME } from '../../../components/graph/graphVisualTokens';
+import {
+  GRAPH_THEME,
+  SOLARPUNK_PALETTE,
+} from '../../../components/graph/graphVisualTokens';
 
 type RailColors = {
   panel: string;
@@ -119,8 +122,11 @@ export default function AgentBuilderRail({
               borderRadius: '50%',
               overflow: 'visible',
               animation: 'builder-orb-float 21s ease-in-out infinite',
-              boxShadow:
-                'inset 0 1px 1px rgba(255,255,255,0.12), 0 0 14px rgba(79,162,173,0.14), 0 0 26px rgba(125,105,180,0.08)',
+              boxShadow: [
+                'inset 0 1px 1px rgba(255,255,255,0.12)',
+                `0 0 14px ${SOLARPUNK_PALETTE.sea}24`,
+                `0 0 26px ${SOLARPUNK_PALETTE.sun}14`,
+              ].join(', '),
             }}
           >
             {moonOrb}

@@ -339,8 +339,8 @@ def read_subject_directory(project: str) -> dict[str, Any]:
             by_canonical[canonical_id] = {
                 "authority": "ThinkGraph",
                 "nativeId": canonical_id,
-                "canonicalName": str(canonical.get("name") or "").strip(),
-                "entityKind": str(canonical.get("etype") or "").strip(),
+                "canonicalName": str(canonical.get("name") or ""),
+                "entityKind": str(canonical.get("etype") or ""),
             }
         subjects = sorted(
             by_canonical.values(),
@@ -891,6 +891,19 @@ def _subject_directory_for_project(project: str) -> dict[str, Any]:
     from app.python_models.data_anchor import build_canonical_subject_directory
 
     return build_canonical_subject_directory(project)
+
+
+def _projection_subject_directory(project: str) -> dict[str, Any] | None:
+    """Attach one current cross-authority identity snapshot when both owners read."""
+
+    from app.python_models.data_anchor import DataAnchorError
+
+    try:
+        return _subject_directory_for_project(project)
+    except DataAnchorError:
+        # ThinkGraph remains independently readable when KnowGraph is unavailable.
+        # Joined then fails closed because it has no complete authority snapshot.
+        return None
 
 
 def _turn_start_prior_think_snapshot(
@@ -3087,6 +3100,42 @@ def _atomic_episode_citation_urls(episode: dict[str, Any]) -> set[str]:
     return urls
 
 
+_ATOMIC_NATIVE_PROSE_FIELDS = {
+    "name", "title", "summary", "content", "content_preview", "body",
+    "episode_body", "fact", "source_description", "entity_name",
+    "source_name", "target_name",
+}
+
+
+def _atomic_native_prose_contains_transport_id(
+    value: Any,
+    transport_ids: set[str],
+    *,
+    prose: bool = False,
+) -> bool:
+    """Find literal supplied transport identities without rewriting native prose."""
+
+    if isinstance(value, str):
+        return prose and any(identity in value for identity in transport_ids)
+    if isinstance(value, list):
+        return any(
+            _atomic_native_prose_contains_transport_id(
+                item, transport_ids, prose=prose,
+            )
+            for item in value
+        )
+    if isinstance(value, dict):
+        return any(
+            _atomic_native_prose_contains_transport_id(
+                item,
+                transport_ids,
+                prose=prose or str(key) in _ATOMIC_NATIVE_PROSE_FIELDS,
+            )
+            for key, item in value.items()
+        )
+    return False
+
+
 def validate_atomic_research_result(
     payload: dict[str, Any],
     *,
@@ -3117,16 +3166,20 @@ def validate_atomic_research_result(
         or not isinstance(raw_output, (str, dict))
     ):
         raise AtomicResearchError("atomic_research_result_payload_invalid")
+    transport_ids = {
+        value for value in (
+            assessment_id, source_run_id, child_run_id, knowgraph_card_id,
+            *(str(item).strip() for item in expected_ids),
+        ) if value
+    }
     try:
         result = json.loads(raw_output) if isinstance(raw_output, str) else deepcopy(raw_output)
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         raise AtomicResearchError("atomic_research_result_json_invalid") from error
     if (
         not isinstance(result, dict)
-        or set(result) != {"schemaVersion", "assessmentId", "sourceRunId", "results"}
-        or result.get("schemaVersion") != "atomic-research-result.v1"
-        or result.get("assessmentId") != assessment_id
-        or result.get("sourceRunId") != source_run_id
+        or set(result) != {"schemaVersion", "results"}
+        or result.get("schemaVersion") != "atomic-research-response.v1"
         or not isinstance(result.get("results"), list)
         or len(result["results"]) != len(expected_ids)
     ):
@@ -3134,23 +3187,21 @@ def validate_atomic_research_result(
     normalized: list[dict[str, Any]] = []
     all_episode_ids: list[str] = []
     all_urls: set[str] = set()
-    for item in result["results"]:
+    for result_index, item in enumerate(result["results"]):
         if (
             not isinstance(item, dict)
             or set(item) != {
-                "thinkMemoryId", "status", "summary", "citations", "episodeUuids",
+                "status", "summary", "citations", "episodeUuids",
             }
         ):
             raise AtomicResearchError("atomic_research_result_contract_invalid")
-        memory_id = str(item.get("thinkMemoryId") or "").strip()
+        memory_id = str(expected_ids[result_index]).strip()
         status = str(item.get("status") or "").strip()
         summary = str(item.get("summary") or "").strip()
         citations = item.get("citations")
         episode_ids = item.get("episodeUuids")
         if (
-            memory_id not in expected_ids
-            or any(entry["thinkMemoryId"] == memory_id for entry in normalized)
-            or status not in {"supported", "contradicted", "source-unavailable"}
+            status not in {"supported", "contradicted", "source-unavailable"}
             or not summary or len(summary) > 4_000
             or not isinstance(citations, list)
             or not isinstance(episode_ids, list)
@@ -3158,6 +3209,12 @@ def validate_atomic_research_result(
             or len(set(episode_ids)) != len(episode_ids)
         ):
             raise AtomicResearchError("atomic_research_result_contract_invalid")
+        if _atomic_native_prose_contains_transport_id(
+            {"summary": summary}, transport_ids,
+        ):
+            raise AtomicResearchError(
+                "atomic_research_transport_identifier_in_prose"
+            )
         normalized_citations: list[dict[str, Any]] = []
         for citation in citations:
             if (
@@ -3247,6 +3304,10 @@ def validate_atomic_research_result(
     }
     if set(by_id) != set(all_episode_ids):
         raise AtomicResearchError("atomic_research_episode_reference_invalid")
+    if _atomic_native_prose_contains_transport_id(episodes, transport_ids):
+        raise AtomicResearchError(
+            "atomic_research_transport_identifier_in_prose"
+        )
     for item in normalized:
         if not item["citations"]:
             continue
@@ -5708,6 +5769,8 @@ def _bounded_entity_projection(
         nodes.append({
             "id": entity_id,
             "canonicalId": str(native_node.get("canonical_id") or entity_id),
+            "canonicalName": title,
+            "entityKind": str(native_node.get("type") or "Concept"),
             "label": title,
             "title": title,
             "type": str(native_node.get("type") or "Concept"),
@@ -5936,6 +5999,8 @@ def projection(project: str, native_id: str | None = None) -> dict:
         nodes.append({
             **node,
             "canonicalId": node["id"],
+            "canonicalName": node["label"],
+            "entityKind": node["type"],
             "title": node["label"],
             "type": node["type"],
             "authority": "engraphis",
@@ -5972,5 +6037,6 @@ def projection(project: str, native_id: str | None = None) -> dict:
             "revision": revision, "nodes": nodes, "edges": edges, "scene": scene,
             "counts": {"nodes": len(nodes), "edges": len(edges)},
             "truncated": scene["meta"]["truncated"],
+            "canonicalSubjectDirectory": _projection_subject_directory(project),
             "embedding": {"state": "ready" if service.stats(workspace=project).get("embedding", {}).get("ready") else "unavailable"},
             "runtime": {"engine": "engraphis", "version": "1.7.4"}}

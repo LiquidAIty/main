@@ -520,7 +520,14 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
         code, retryable = "malformed_model_output", False
     elif any(term in lowered for term in ("queue", "worker")):
         code, retryable = "queue_failure", True
-    elif any(term in lowered for term in ("service unavailable", "connection refused", "backend_unreachable")):
+    elif any(term in lowered for term in (
+        "service unavailable",
+        "connection refused",
+        "actively refused",
+        "backend_unreachable",
+        "worldsignals_unreachable",
+        "winerror 10061",
+    )):
         code, retryable = "service_unavailable", True
     elif any(term in lowered for term in ("neo4j", "database")):
         code, retryable = "database_failure", True
@@ -3511,6 +3518,24 @@ async def _dispatch_tool(
             result = await DEFAULT_TOOL_REGISTRY.invoke(name, args)
             return [TextContent(type="text", text=json.dumps(result, default=str))]
         except Exception as error:
+            if name.startswith("worldsignals."):
+                failure = _typed_failure(error, dependency="worldsignals")
+                payload = {
+                    key: failure[key]
+                    for key in (
+                        "ok",
+                        "error",
+                        "failureCode",
+                        "errorCategory",
+                        "retryable",
+                        "dependency",
+                    )
+                }
+                return CallToolResult(
+                    content=[TextContent(type="text", text=json.dumps(payload))],
+                    structuredContent={"error_code": failure["errorCategory"]},
+                    isError=False,
+                )
             return [TextContent(type="text", text=json.dumps({
                 "ok": False, "error": str(error),
             }))]
@@ -3572,58 +3597,23 @@ def _failure_code_from_result(result: Any) -> str | None:
     return None
 
 
-def _attach_execution_receipt(
-    result: Any,
-    receipt: dict[str, Any],
-    native_attention: dict[str, Any] | None = None,
-    *,
-    model_visible: bool = True,
-) -> Any:
-    if not model_visible:
-        metadata = {
-            "executionReceipt": receipt,
-            **(
-                {"nativeAttention": native_attention}
-                if native_attention is not None else {}
-            ),
-        }
-        if isinstance(result, CallToolResult):
-            payload = result.model_dump(exclude_none=True)
-            payload["_meta"] = {**(result.meta or {}), **metadata}
-            return CallToolResult.model_validate(payload)
-        content = result if isinstance(result, list) else [
-            TextContent(type="text", text=str(result)),
-        ]
-        return CallToolResult.model_validate({
-            "content": content,
-            "_meta": metadata,
-        })
+def _without_model_visible_runtime_observation(result: Any) -> Any:
+    """Keep runtime observations internal while preserving the actual tool result."""
 
-    block = TextContent(
-        type="text",
-        text=json.dumps({"executionReceipt": receipt}, ensure_ascii=False),
-    )
-    if isinstance(result, CallToolResult):
-        payload = result.model_dump(exclude_none=True)
-        payload["content"] = [*result.content, block]
-        if native_attention is not None:
-            payload["_meta"] = {
-                **(result.meta or {}),
-                "nativeAttention": native_attention,
-            }
-        return CallToolResult.model_validate(payload)
-    if isinstance(result, list):
-        content = [*result, block]
-        if native_attention is None:
-            return content
-        return CallToolResult(
-            content=content,
-            meta={"nativeAttention": native_attention},
-        )
-    return CallToolResult(
-        content=[TextContent(type="text", text=str(result)), block],
-        meta={"nativeAttention": native_attention} if native_attention is not None else None,
-    )
+    if not isinstance(result, CallToolResult) or not result.meta:
+        return result
+    remaining = {
+        key: value
+        for key, value in result.meta.items()
+        if key not in {"executionReceipt", "nativeAttention"}
+    }
+    if len(remaining) == len(result.meta):
+        return result
+    payload = result.model_dump(exclude_none=True)
+    payload.pop("meta", None)
+    if remaining:
+        payload["_meta"] = remaining
+    return CallToolResult.model_validate(payload)
 
 
 def _mcp_tool_timeout_seconds(name: str) -> float:
@@ -3712,12 +3702,7 @@ async def _execute_tool_request(
         )
         if result_category == "tool_error" and isinstance(result, list):
             result = CallToolResult(content=result, isError=True)
-        return _attach_execution_receipt(
-            result,
-            receipt,
-            native_attention,
-            model_visible=tool_name != "research_atomic_thinks",
-        )
+        return _without_model_visible_runtime_observation(result)
     except Exception as error:
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed"
@@ -3753,11 +3738,7 @@ async def _execute_tool_request(
             ],
             isError=True,
         )
-        return _attach_execution_receipt(
-            result,
-            receipt,
-            model_visible=tool_name != "research_atomic_thinks",
-        )
+        return _without_model_visible_runtime_observation(result)
     finally:
         _ACTIVE_EXECUTION_RECEIPT.reset(receipt_token)
         _ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)

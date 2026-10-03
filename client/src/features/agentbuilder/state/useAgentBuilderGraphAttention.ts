@@ -137,6 +137,7 @@ type ExpandRequest = {
 export type GraphAttentionState = {
   refreshThinkGraph: (revision?: ThinkGraphRevisionEvent) => Promise<void>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
+  removeKnowGraphEvidence: (nativeFactId: string) => Promise<void>;
   projections: Record<GraphAttentionAuthority, GraphProjectionV1>;
   errors: Partial<Record<GraphAttentionAuthority, string>>;
   statuses: Record<GraphAttentionAuthority, 'idle' | 'loading' | 'ready' | 'error'>;
@@ -220,13 +221,33 @@ export function knowGraphProjection(payload: Record<string, any>, projectId: str
   // Episodes are provenance containers, not peer subjects. They remain native
   // KnowGraph records for contextual reads/inspectors but do not occupy the
   // top-level entity canvas or participate in exact-name Joined matching.
-  const subjectNodes = payload.nodes.filter((node: any) => (
-    String(node.type || '').toLocaleLowerCase('en-US') !== 'episodic'
-  ));
-  const provenanceNodes = payload.nodes.filter((node: any) => (
-    String(node.type || '').toLocaleLowerCase('en-US') === 'episodic'
-  ));
-  const subjectIds = new Set(subjectNodes.map((node: any) => node.id));
+  const rawSubjectNodes = payload.nodes.filter((node: any) => node.type !== 'Episodic');
+  const provenanceNodes = payload.nodes.filter((node: any) => node.type === 'Episodic');
+  const subjectIds = new Set(rawSubjectNodes.map((node: any) => node.id));
+  const provenanceIds = new Set(provenanceNodes.map((node: any) => node.id));
+  const episodeIdsBySubject = new Map<string, Set<string>>();
+  for (const relationship of payload.relationships) {
+    if (relationship.type !== 'MENTIONS') continue;
+    const episodeId = provenanceIds.has(relationship.from)
+      ? relationship.from
+      : provenanceIds.has(relationship.to) ? relationship.to : null;
+    const subjectId = subjectIds.has(relationship.from)
+      ? relationship.from
+      : subjectIds.has(relationship.to) ? relationship.to : null;
+    if (!episodeId || !subjectId) continue;
+    const episodeIds = episodeIdsBySubject.get(subjectId) || new Set<string>();
+    episodeIds.add(episodeId);
+    episodeIdsBySubject.set(subjectId, episodeIds);
+  }
+  const subjectNodes = rawSubjectNodes.map((node: any) => ({
+      ...node,
+      canonicalName: node.label,
+      entityKind: node.type,
+      projectId,
+      ...(episodeIdsBySubject.has(node.id)
+        ? { provenanceEpisodeIds: [...episodeIdsBySubject.get(node.id)!] }
+        : {}),
+    }));
   return applyKnowGraphJevPhysics({
     ...projection(
     'knowgraph',
@@ -1258,11 +1279,21 @@ export default function useAgentBuilderGraphAttention({
     await refreshThinkGraph();
   }, [projectId, refreshThinkGraph]);
 
+  const removeKnowGraphEvidence = useCallback(async (nativeFactId: string) => {
+    const response = await fetch('/api/knowgraph/delete-native', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, native_id: nativeFactId, kind: 'fact' }),
+    });
+    if (!response.ok) throw new Error('Could not delete this Know.');
+    await refreshKnowGraph();
+  }, [projectId, refreshKnowGraph]);
+
   return {
     refreshThinkGraph,
     projections,
     jevAttentionVisual,
     removeThinkGraphEvidence,
+    removeKnowGraphEvidence,
     errors,
     statuses,
     startAttentionScope,

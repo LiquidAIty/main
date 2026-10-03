@@ -56,11 +56,12 @@ vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
 import {
   composeJevAttentionPresentation,
-  composeThinkKnowPresentation,
+  composeThinkKnowPresentation as composeNativeThinkKnowPresentation,
   NativeCodeGraphSurface,
   NativeJoinedGraphSurface,
   NativeGraphProjectionSurface,
   NativeKnowGraphSurface,
+  type GraphProjectionV1,
 } from './NativeAuthorityGraphSurface';
 import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
@@ -72,7 +73,7 @@ afterEach(() => {
 });
 
 describe('native authority graph surfaces', () => {
-  const empty = (authority: 'thinkgraph' | 'knowgraph' | 'codegraph') => ({
+  const empty = (authority: 'thinkgraph' | 'knowgraph' | 'codegraph'): GraphProjectionV1 => ({
     schemaVersion: `${authority}.attention.projection.v1`,
     authority,
     projectId: 'project-1',
@@ -80,17 +81,84 @@ describe('native authority graph surfaces', () => {
     edges: [],
   });
 
+  const currentProjections = (
+    think: GraphProjectionV1,
+    know: GraphProjectionV1,
+  ) => {
+    const thinkNodes = think.nodes.map(node => ({
+      ...node,
+      canonicalName: node.canonicalName ?? node.label,
+      entityKind: node.entityKind ?? node.type ?? 'person_or_concept',
+      projectId: node.projectId ?? think.projectId,
+    }));
+    const knowNodes = know.nodes.map(node => ({
+      ...node,
+      canonicalName: node.canonicalName ?? node.label,
+      entityKind: node.entityKind ?? node.type ?? 'Entity',
+      projectId: node.projectId ?? know.projectId,
+    }));
+    const thinkSubjects = thinkNodes.filter(node => Boolean(node.canonicalName));
+    const knowSubjects = knowNodes.filter(node => (
+      Boolean(node.canonicalName) && node.type !== 'Episodic'
+    ));
+    const directory = {
+      schemaVersion: 'cross-graph-subject-directory.v1' as const,
+      projectId: think.projectId,
+      complete: true as const,
+      counts: {
+        ThinkGraph: thinkSubjects.length,
+        KnowGraph: knowSubjects.length,
+        total: thinkSubjects.length + knowSubjects.length,
+      },
+      revisions: { ThinkGraph: 'think-current', KnowGraph: 'know-current' },
+      subjects: [
+        ...thinkSubjects.map(node => ({
+          authority: 'ThinkGraph' as const,
+          nativeId: node.id,
+          canonicalName: node.canonicalName,
+          entityKind: node.entityKind,
+        })),
+        ...knowSubjects.map(node => ({
+          authority: 'KnowGraph' as const,
+          nativeId: node.id,
+          canonicalName: node.canonicalName,
+          entityKind: node.entityKind,
+        })),
+      ],
+      sha256: 'a'.repeat(64),
+    };
+    return {
+      thinkgraph: {
+        ...think,
+        nodes: thinkNodes,
+        canonicalSubjectDirectory: directory,
+      },
+      knowgraph: { ...know, nodes: knowNodes },
+    };
+  };
+
+  const composeThinkKnowPresentation = (
+    think: GraphProjectionV1,
+    know: GraphProjectionV1,
+    mode: 'joined' | 'all' = 'all',
+  ) => {
+    const projections = currentProjections(think, know);
+    return composeNativeThinkKnowPresentation(
+      projections.thinkgraph, projections.knowgraph, mode,
+    );
+  };
+
   it('passes the bounded native projection to the embedded CBM GraphTab', async () => {
     render(<Suspense fallback={null}><NativeCodeGraphSurface project="C-Projects-main" projection={empty('codegraph')} onExpand={vi.fn()} /></Suspense>);
     await waitFor(() => expect(screen.getByTestId('cbm-graph-tab').textContent).toBe('C-Projects-main:0'));
   });
 
-  it('groups exact non-empty names while retaining every authority-native member and edge', () => {
+  it('groups one exact authoritative subject per authority while retaining native evidence and edges', () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
-        { id: 'think-1', canonicalId: 'shared-entity', label: 'Shared', properties: { attentionActive: true } },
-        { id: 'think-2', canonicalId: 'shared-entity', label: 'Shared', properties: {} },
+        { id: 'think-1', canonicalId: 'shared-entity', label: 'Shared',
+          properties: { attentionActive: true, evidence: [{ id: 'think-evidence' }] } },
         { id: 'same-id', label: 'Case', properties: {} },
         { id: 'think-target', label: 'Think target', properties: {} },
         { id: 'empty', label: '', properties: {} },
@@ -103,7 +171,8 @@ describe('native authority graph surfaces', () => {
     const know = {
       ...empty('knowgraph'),
       nodes: [
-        { id: 'know-1', canonicalId: 'shared-entity', label: 'Shared', properties: { attentionActive: true } },
+        { id: 'know-1', canonicalId: 'shared-entity', label: 'Shared',
+          properties: { attentionActive: true, evidence: [{ id: 'know-evidence' }] } },
         { id: 'same-id', label: 'case', properties: {} },
         { id: 'know-target', label: 'Know target', properties: {} },
         { id: 'empty', label: '', properties: {} },
@@ -117,12 +186,18 @@ describe('native authority graph surfaces', () => {
 
     const presentation = composeThinkKnowPresentation(think, know);
     const sharedVisualId = presentation.visualNodeIdByNativeMember.get('thinkgraph:think-1');
-    expect(sharedVisualId).toBe(presentation.visualNodeIdByNativeMember.get('thinkgraph:think-2'));
     expect(sharedVisualId).toBe(presentation.visualNodeIdByNativeMember.get('knowgraph:know-1'));
-    expect(presentation.nodeVariants.get(sharedVisualId!)).toEqual([
-      { authority: 'thinkgraph', node: think.nodes[0] },
-      { authority: 'thinkgraph', node: think.nodes[1] },
-      { authority: 'knowgraph', node: know.nodes[0] },
+    expect(presentation.nodeVariants.get(sharedVisualId!)?.map(
+      variant => [variant.authority, variant.node.id],
+    )).toEqual([
+      ['thinkgraph', think.nodes[0].id],
+      ['knowgraph', know.nodes[0].id],
+    ]);
+    expect(presentation.nodeVariants.get(sharedVisualId!)?.map(
+      variant => [variant.authority, variant.node.properties?.evidence],
+    )).toEqual([
+      ['thinkgraph', [{ id: 'think-evidence' }]],
+      ['knowgraph', [{ id: 'know-evidence' }]],
     ]);
     expect(presentation.visualNodeIdByNativeMember.get('thinkgraph:same-id'))
       .not.toBe(presentation.visualNodeIdByNativeMember.get('knowgraph:same-id'));
@@ -138,9 +213,9 @@ describe('native authority graph surfaces', () => {
     expect(presentation.edgeVariants.get('thinkgraph:same-edge')?.edge).toBe(think.edges[0]);
     expect(presentation.edgeVariants.get('knowgraph:same-edge')?.edge).toBe(know.edges[0]);
     expect(presentation.projection.nodes.find(node => node.id === sharedVisualId)).toMatchObject({
-      material_kind: 'joined-cyber',
-      material_role: 'PAIRED_CYBER_MATERIAL',
-      material_blue: '#3979E8',
+      material_kind: 'solarpunk',
+      material_role: 'PAIRED_SOLARPUNK_MATERIAL',
+      material_blue: '#4FA2AD',
       material_orange: '#F2A64A',
       turn_heat_active: true,
     });
@@ -186,9 +261,11 @@ describe('native authority graph surfaces', () => {
     expect(exactVisualId).toBe(
       presentation.visualNodeIdByNativeMember.get('knowgraph:know-exact'),
     );
-    expect(presentation.nodeVariants.get(exactVisualId!)).toEqual([
-      { authority: 'thinkgraph', node: think.nodes[0] },
-      { authority: 'knowgraph', node: know.nodes[0] },
+    expect(presentation.nodeVariants.get(exactVisualId!)?.map(
+      variant => [variant.authority, variant.node.id],
+    )).toEqual([
+      ['thinkgraph', think.nodes[0].id],
+      ['knowgraph', know.nodes[0].id],
     ]);
     expect(presentation.visualNodeIdByNativeMember.get('thinkgraph:think-different'))
       .not.toBe(presentation.visualNodeIdByNativeMember.get('knowgraph:know-different'));
@@ -215,9 +292,42 @@ describe('native authority graph surfaces', () => {
       { ...empty('knowgraph'), nodes: [{ id: 'know-trimmed', label: 'Trimmed name', properties: {} }] },
       'joined',
     );
-    expect(trimmed.projection.nodes).toHaveLength(1);
+    expect(trimmed.projection.nodes).toHaveLength(0);
     expect(trimmed.visualNodeIdByNativeMember.get('thinkgraph:think-trimmed'))
-      .toBe(trimmed.visualNodeIdByNativeMember.get('knowgraph:know-trimmed'));
+      .toBeUndefined();
+    expect(trimmed.visualNodeIdByNativeMember.get('knowgraph:know-trimmed'))
+      .toBeUndefined();
+  });
+
+  it('fails Joined closed for duplicate one-side subjects, native kind conflicts, and cross-Project inputs', () => {
+    const think = {
+      ...empty('thinkgraph'),
+      nodes: [
+        { id: 'think-a', label: 'Shared', type: 'person_or_concept', properties: {} },
+        { id: 'think-b', label: 'Shared', type: 'person_or_concept', properties: {} },
+      ],
+    };
+    const know = {
+      ...empty('knowgraph'),
+      nodes: [{ id: 'know-a', label: 'Shared', type: 'Organization', properties: {} }],
+    };
+    expect(composeThinkKnowPresentation(think, know, 'joined').projection.nodes).toEqual([]);
+    expect(composeThinkKnowPresentation(think, know, 'all').projection.nodes.map(node => node.id))
+      .toEqual(['thinkgraph:think-a', 'thinkgraph:think-b', 'knowgraph:know-a']);
+
+    const current = currentProjections(
+      { ...empty('thinkgraph'), nodes: [{ id: 'think-kind', label: 'Subject', type: 'person_or_concept', properties: {} }] },
+      { ...empty('knowgraph'), nodes: [{ id: 'know-kind', label: 'Subject', type: 'Organization', properties: {} }] },
+    );
+    const currentThink = current.thinkgraph;
+    currentThink.nodes[0] = { ...currentThink.nodes[0], entityKind: 'conflicting-kind' };
+    const currentKnow = current.knowgraph;
+    expect(composeNativeThinkKnowPresentation(currentThink, currentKnow, 'joined').projection.nodes)
+      .toEqual([]);
+
+    const otherProject = { ...currentKnow, projectId: 'project-2' };
+    expect(composeNativeThinkKnowPresentation(currentThink, otherProject, 'joined').projection.nodes)
+      .toEqual([]);
   });
 
   it('joins exact Rocket Lab names while retaining both authority-native records', () => {
@@ -556,7 +666,7 @@ describe('native authority graph surfaces', () => {
       modelContext: 'four exact native blocks',
     }));
     render(<NativeJoinedGraphSurface
-      projections={{ thinkgraph: think, knowgraph: know }}
+      projections={currentProjections(think, know)}
       onExpand={onExpand}
       onReadContextualNode={onRead}
       contextualReaderRevision="conversation-r1"
@@ -585,9 +695,8 @@ describe('native authority graph surfaces', () => {
     ]);
     fireEvent.change(members, { target: { value: 'thinkgraph:think-2' } });
     expect(onRead).toHaveBeenCalledTimes(1);
-    const attention = screen.getByTestId('joined-attention-members');
-    expect(attention.textContent).toContain('ThinkGraph · think-1');
-    expect(attention.textContent).toContain('KnowGraph · know-1');
+    expect(screen.queryByText(/ThinkGraph · think-1/)).toBeNull();
+    expect(screen.queryByText(/KnowGraph · know-1/)).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
     expect(screen.getAllByText('Sourced Know.')).toHaveLength(2);
@@ -672,7 +781,7 @@ describe('native authority graph surfaces', () => {
     }));
 
     render(<NativeJoinedGraphSurface
-      projections={{ thinkgraph: think, knowgraph: know }}
+      projections={currentProjections(think, know)}
       onExpand={vi.fn()}
       onReadContextualNode={onRead}
       contextualReaderRevision="conversation-r1"
@@ -752,7 +861,7 @@ describe('native authority graph surfaces', () => {
       } as Response;
     });
     render(<NativeJoinedGraphSurface
-      projections={{ thinkgraph: think, knowgraph: know }}
+      projections={currentProjections(think, know)}
       onReadNativeFocusNeighborhood={onReadNativeFocusNeighborhood}
       onExpand={vi.fn()}
     />);
@@ -1167,7 +1276,7 @@ describe('native authority graph surfaces', () => {
     }));
   });
 
-  it('puts only Jev probability on the ThinkGraph line and keeps the winner in hover data', () => {
+  it('keeps the relationship word and probability hover-only on a ThinkGraph edge', () => {
     const projection = {
       ...empty('thinkgraph'),
       nodes: [{ id: 'subject', label: 'Subject' }, { id: 'idea', label: 'Idea' }],
@@ -1182,10 +1291,10 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.data.links).toHaveLength(1);
     expect(graph.data.links[0]).toMatchObject({
-      ...projection.edges[0], relation: 'DEPENDS_ON', label: '.71',
-      hover_label: 'DEPENDS_ON · .71', label_min_scale: 0.01,
+      ...projection.edges[0], relation: 'DEPENDS_ON', hover_label: 'DEPENDS_ON · .71',
       directional_arrow_length: 3, directional_arrow_rel_pos: 0.9,
     });
+    expect(graph.data.links[0].label).toBe('');
     expect(graph.data.nodes.map((node: any) => [node.id, node.label])).toEqual([['subject', 'Subject'], ['idea', 'Idea']]);
     expect(JSON.stringify(projection)).toBe(before);
     act(() => graph.linkClick(graph.data.links[0]));
@@ -1212,13 +1321,16 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
     expect(screen.getByRole('button', { name: 'Reset to preset defaults' }).textContent)
       .toBe('Preset defaults applied · node size 5');
-    expect(graph.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ size: 5, labels: true }));
+    expect(graph.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      size: 5, labels: true, linkw: 1,
+    }));
     expect(screen.queryByRole('button', { name: /^Freeze$/ })).toBeNull();
   });
 
   it('preserves a valid saved node size on load and visibly applies the current preset default on request', async () => {
     const key = 'liquidaity.graph.thinkgraph.presentation.v1';
     window.localStorage.setItem(key, JSON.stringify({
+      schemaVersion: 6,
       layout: 'compact',
       style: 'solarpunk',
       physicsProfile: 'galaxy',
@@ -1238,7 +1350,40 @@ describe('native authority graph surfaces', () => {
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem(key) || '{}').settings.size).toBe(5));
   });
 
-  it('reuses Cyberpunk for Joined with Think blue, Know orange, paired color, and liquid-blue edges', async () => {
+  it('migrates the superseded Cyberpunk size-3 presentation to the Solarpunk size-5 baseline once', async () => {
+    const key = 'liquidaity.graph.joined.presentation.v1';
+    window.localStorage.setItem(key, JSON.stringify({
+      schemaVersion: 3,
+      layout: 'compact',
+      style: 'cyber',
+      physicsProfile: 'galaxy',
+      settings: { size: 3, labels: true, linkw: 0.4 },
+      solarpunkColors: {
+        think: '#6e5fae', know: '#f2a64a', relationship: '#123456',
+      },
+    }));
+    render(<NativeJoinedGraphSurface
+      mode="all"
+      projections={currentProjections(empty('thinkgraph'), empty('knowgraph'))}
+      onExpand={vi.fn()}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+
+    expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
+    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
+    expect(screen.getByRole('slider', { name: 'Line width' }).getAttribute('value')).toBe('1');
+    expect((screen.getByLabelText('Think nodes') as HTMLInputElement).value).toBe('#4fa2ad');
+    expect((screen.getByLabelText('Know nodes') as HTMLInputElement).value).toBe('#f2a64a');
+    expect((screen.getByLabelText('Think edges') as HTMLInputElement).value).toBe('#4fa2ad');
+    expect((screen.getByLabelText('Know edges') as HTMLInputElement).value).toBe('#f2a64a');
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(key) || '{}')).toMatchObject({
+      schemaVersion: 6,
+      style: 'solarpunk',
+      settings: { size: 5, linkw: 1 },
+    }));
+  });
+
+  it('renders Joined with Cyberpunk material and authority-matched node and relationship colors', async () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -1263,7 +1408,7 @@ describe('native authority graph surfaces', () => {
     };
     render(<NativeJoinedGraphSurface
       mode="all"
-      projections={{ thinkgraph: think, knowgraph: know }}
+      projections={currentProjections(think, know)}
       onExpand={vi.fn()}
     />);
     const graph = forceGraphMocks.instances.at(-1);
@@ -1272,10 +1417,10 @@ describe('native authority graph surfaces', () => {
 
     expect(graph.data.nodes.find((node: any) => node.label === 'Shared')).toMatchObject({
       material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
-      material_blue: '#3979E8', material_orange: '#F2A64A', material_surface: '#0B0E12',
+      material_blue: '#4FA2AD', material_orange: '#F2A64A', material_surface: '#0B0E12',
     });
     expect(graph.data.nodes.find((node: any) => node.label === 'Think only')).toMatchObject({
-      material_kind: 'joined-cyber', material_role: 'THINK_MATERIAL', material_blue: '#3979E8',
+      material_kind: 'joined-cyber', material_role: 'THINK_MATERIAL', material_blue: '#4FA2AD',
     });
     expect(graph.data.nodes.find((node: any) => node.label === 'Know only')).toMatchObject({
       material_kind: 'joined-cyber', material_role: 'KNOW_MATERIAL', material_orange: '#F2A64A',
@@ -1291,17 +1436,19 @@ describe('native authority graph surfaces', () => {
     }))).toEqual([
       {
         id: 'thinkgraph:think-edge', source: 'node-name:Shared', target: 'node-name:Think%20only',
-        predicate: 'REASONS_ABOUT', authority: 'thinkgraph', color: '#3979E8', native: 'think',
+        predicate: 'REASONS_ABOUT', authority: 'thinkgraph', color: '#4FA2AD', native: 'think',
       },
       {
         id: 'knowgraph:know-edge', source: 'node-name:Shared', target: 'node-name:Know%20only',
-        predicate: 'SOURCED_BY', authority: 'knowgraph', color: '#3979E8', native: 'know',
+        predicate: 'SOURCED_BY', authority: 'knowgraph', color: '#F2A64A', native: 'know',
       },
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    fireEvent.change(screen.getByLabelText('Think color'), { target: { value: '#123456' } });
-    fireEvent.change(screen.getByLabelText('Know color'), { target: { value: '#abcdef' } });
+    fireEvent.change(screen.getByLabelText('Think nodes'), { target: { value: '#123456' } });
+    fireEvent.change(screen.getByLabelText('Know nodes'), { target: { value: '#abcdef' } });
+    fireEvent.change(screen.getByLabelText('Think edges'), { target: { value: '#2468ac' } });
+    fireEvent.change(screen.getByLabelText('Know edges'), { target: { value: '#ac6824' } });
     await waitFor(() => expect(graph.data.nodes.find((node: any) => node.label === 'Shared'))
       .toMatchObject({ material_blue: '#123456', material_orange: '#abcdef' }));
     expect(graph.data.nodes.find((node: any) => node.label === 'Think only').material_blue)
@@ -1309,13 +1456,13 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.nodes.find((node: any) => node.label === 'Know only').material_orange)
       .toBe('#abcdef');
     expect(graph.data.links.map((edge: any) => edge.material_color))
-      .toEqual(['#3979E8', '#3979E8']);
-    expect(screen.getByRole('group', { name: 'Joined Cyberpunk colors' })).toBeTruthy();
+      .toEqual(['#2468ac', '#ac6824']);
+    expect(screen.getByRole('group', { name: 'Solarpunk colors' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Style'), { target: { value: 'classic' } });
     await waitFor(() => expect(graph.data.nodes.every((node: any) => !node.material_kind)).toBe(true));
     expect(graph.data.links.every((edge: any) => !edge.material_kind && !edge.material_color)).toBe(true);
     expect(graph.setThemeColors).toHaveBeenLastCalledWith({});
-    expect(screen.queryByRole('group', { name: 'Joined Cyberpunk colors' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
   });
 
   it('validates and reloads per-authority preferences without reading or changing the old combined key', async () => {
@@ -1331,7 +1478,7 @@ describe('native authority graph surfaces', () => {
     />);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '7' } });
-    fireEvent.change(screen.getByLabelText('Think color'), { target: { value: '#123456' } });
+    fireEvent.change(screen.getByLabelText('Think nodes'), { target: { value: '#123456' } });
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem(key) || '{}')).toMatchObject({
       style: 'solarpunk', settings: { size: 7 }, solarpunkColors: { think: '#123456' },
     }));
@@ -1343,7 +1490,7 @@ describe('native authority graph surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('7');
-    expect((screen.getByLabelText('Think color') as HTMLInputElement).value).toBe('#123456');
+    expect((screen.getByLabelText('Think nodes') as HTMLInputElement).value).toBe('#123456');
     expect(window.localStorage.getItem(oldKey)).toBe('leave-this-untouched');
   });
 
@@ -1352,7 +1499,10 @@ describe('native authority graph surfaces', () => {
       style: 'unknown', layout: 'everything', physicsProfile: 'unsafe',
       settings: { size: 99, font: 0, linkw: -1, labelDensity: 101, repel: -2,
         link: 1000, gravity: Infinity, labels: 'yes', arbitrary: 'kept' },
-      solarpunkColors: { think: 'red', know: '#12345g', surface: '#12345678' },
+      solarpunkColors: {
+        think: 'red', know: '#12345g',
+        thinkRelationship: '#12345678', knowRelationship: 'orange',
+      },
     }));
     render(<NativeGraphProjectionSurface
       authority="knowgraph" projection={empty('knowgraph')} status="ready" error={null}
@@ -1363,9 +1513,10 @@ describe('native authority graph surfaces', () => {
     expect((screen.getByLabelText('Layout') as HTMLSelectElement).value).toBe('compact');
     expect((screen.getByLabelText('Physics profile') as HTMLSelectElement).value).toBe('galaxy');
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
-    expect((screen.getByLabelText('Think color') as HTMLInputElement).value).toBe('#6e5fae');
-    expect((screen.getByLabelText('Know color') as HTMLInputElement).value).toBe('#f2a64a');
-    expect((screen.getByLabelText('Joined body color') as HTMLInputElement).value).toBe('#0b0e12');
+    expect((screen.getByLabelText('Think nodes') as HTMLInputElement).value).toBe('#4fa2ad');
+    expect((screen.getByLabelText('Know nodes') as HTMLInputElement).value).toBe('#f2a64a');
+    expect((screen.getByLabelText('Think edges') as HTMLInputElement).value).toBe('#4fa2ad');
+    expect((screen.getByLabelText('Know edges') as HTMLInputElement).value).toBe('#f2a64a');
   });
 
   it('keeps Joined exact-name-only and moves the union into All', async () => {
@@ -1527,7 +1678,8 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText('Earlier saved Think.')).toBeTruthy();
     expect(document.querySelector('time')?.getAttribute('datetime'))
       .toBe('1970-01-01T00:03:20.000Z');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Think' }));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Think' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
     expect(remove).toHaveBeenCalledExactlyOnceWith('memory-new');
     expect(screen.getByText('Latest saved Think.')).toBeTruthy();
@@ -1649,6 +1801,38 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByTestId('portable-know').textContent).toContain('PROVIDES');
     expect(screen.getByText('Jev relationship probabilities')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'NASA' })).toBeTruthy();
+  });
+
+  it('shows native episode citations as direct clickable sources on a selected Know', () => {
+    const projection = {
+      ...empty('knowgraph'),
+      nodes: [{
+        id: 'company', label: 'Rocket Lab', mentionCount: 1,
+        provenanceEpisodeIds: ['article'], properties: { summary: 'Launch provider.' },
+      }],
+      provenanceNodes: [
+        {
+          id: 'article', label: 'Rocket Lab Form 10-K', type: 'Episodic',
+          properties: {
+            source_url: 'https://www.sec.gov/Archives/rocket-lab-10-k',
+            source_title: 'SEC filing',
+          },
+        },
+        {
+          id: 'unrelated', label: 'Unrelated source', type: 'Episodic',
+          properties: { source_url: 'https://example.org/unrelated' },
+        },
+      ],
+    };
+    render(<NativeKnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+
+    expect(screen.getByTestId('selected-know-sources').textContent)
+      .toContain('Rocket Lab Form 10-K');
+    expect(screen.getByRole('link', { name: 'SEC filing' }).getAttribute('href'))
+      .toBe('https://www.sec.gov/Archives/rocket-lab-10-k');
+    expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)('opens a compact movable %s inspector and preserves graph settings without exposing record plumbing', async authority => {

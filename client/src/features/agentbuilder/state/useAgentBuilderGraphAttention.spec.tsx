@@ -870,7 +870,9 @@ describe('attention-activated native graph projection', () => {
       nodes: [
         { id: 'rocket-lab', label: 'Rocket Lab', type: 'Entity', properties: {} },
         { id: 'redwire', label: 'Redwire', type: 'Entity', properties: {} },
-        { id: 'filing', label: 'Rocket Lab Form 10-Q', type: 'Episodic', properties: {} },
+        { id: 'filing', label: 'Rocket Lab Form 10-Q', type: 'Episodic', properties: {
+          source_url: 'https://www.sec.gov/example',
+        } },
       ],
       relationships: [
         { id: 'filing-mentions-rocket-lab', from: 'filing', to: 'rocket-lab', type: 'MENTIONS', properties: {} },
@@ -881,6 +883,10 @@ describe('attention-activated native graph projection', () => {
     expect(projected.nodes.map((node) => node.id)).toEqual(['rocket-lab', 'redwire']);
     expect(projected.edges.map((edge) => edge.id)).toEqual(['rocket-lab-redwire']);
     expect(projected.provenanceNodes?.map((node) => node.id)).toEqual(['filing']);
+    expect(projected.nodes.find((node) => node.id === 'rocket-lab')?.provenanceEpisodeIds)
+      .toEqual(['filing']);
+    expect(projected.nodes.find((node) => node.id === 'redwire')?.provenanceEpisodeIds)
+      .toBeUndefined();
   });
 
   it('refreshes exactly once for a project revision produced by another conversation', async () => {

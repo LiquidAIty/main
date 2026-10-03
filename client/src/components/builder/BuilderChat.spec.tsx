@@ -60,7 +60,7 @@ describe('BuilderChat', () => {
 
     expect(screen.getByTestId('builder-chat-active-indicator').textContent).toBe('');
     expect(screen.queryByText('Working…')).toBeNull();
-    expect((screen.getByPlaceholderText('Type a message…') as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
     const send = screen.getByRole('button', { name: 'Send' });
     expect((send as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(send);
@@ -137,7 +137,7 @@ describe('BuilderChat', () => {
 
     expect(screen.queryByText('Loading conversation…')).toBeNull();
     expect(screen.queryByTestId('builder-chat-active-indicator')).toBeNull();
-    expect((screen.getByPlaceholderText('Type a message…') as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
     const send = screen.getByRole('button', { name: 'Send' });
     expect((send as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(send);
@@ -177,7 +177,7 @@ describe('BuilderChat', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Attach images' })).not.toBeNull();
-    expect(screen.getByPlaceholderText('Type a message…')).not.toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Message' })).not.toBeNull();
     expect(screen.queryByTestId('builder-chat-current-responder')).toBeNull();
   });
 

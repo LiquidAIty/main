@@ -11,19 +11,6 @@ export const HERMES_KANBAN_TASK_STATUSES = [
 
 export type HermesKanbanTaskStatus = typeof HERMES_KANBAN_TASK_STATUSES[number];
 
-export type HermesKanbanToolReceipt = {
-  toolCallId: string;
-  toolName: string;
-  state: 'returned' | 'failed' | null;
-  resultPreview: string;
-  executionReceipt: {
-    schema: 'agent-runtime.execution-receipt.v1';
-    tool: string;
-    correlationId: string;
-    state: 'completed' | 'failed';
-  } | null;
-};
-
 export type HermesKanbanTaskProjection = {
   taskId: string;
   title: string;
@@ -37,8 +24,5 @@ export type HermesKanbanTaskProjection = {
     endedAt: string | number | null;
   } | null;
   resultAvailable: boolean;
-  workerSessionId: string | null;
   handoffSummary: string | null;
-  toolReceipts: HermesKanbanToolReceipt[];
-  toolReceiptsComplete: boolean;
 };

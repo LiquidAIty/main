@@ -87,6 +87,7 @@ class FakeGatewayClient {
   private voiceTts = false;
   private completedTurnIndex = 0;
   compressBarrier: Promise<void> | null = null;
+  settlementBarrier: Promise<void> | null = null;
   compressError: Error | null = null;
   compressResult: unknown = null;
   private readonly botMeta = new Map<string, { value: Record<string, unknown>; revision: number }>();
@@ -287,18 +288,29 @@ class FakeGatewayClient {
         ? params.allowed_tools as string[]
         : ['card__canvas_inspect'];
       const nativeRunId = `native-turn-${++this.completedTurnIndex}`;
-      queueMicrotask(() => this.emitEvent({
-        type: 'message.complete',
-        session_id: sessionId,
-        payload: {
-          text: `reply:${String(params.text || '')}`,
-          status: 'completed',
-          actualProvider: String(modelOnce.provider || 'openai-codex'),
-          actualModel: String(modelOnce.model || 'gpt-5.6-sol'),
-          exposedTools: ['memory', ...allowedTools],
-          nativeRunId,
-        },
-      }));
+      this.emitEvent({ type: 'message.start', session_id: sessionId });
+      queueMicrotask(() => {
+        this.emitEvent({
+          type: 'message.complete',
+          session_id: sessionId,
+          payload: {
+            text: `reply:${String(params.text || '')}`,
+            status: 'completed',
+            actualProvider: String(modelOnce.provider || 'openai-codex'),
+            actualModel: String(modelOnce.model || 'gpt-5.6-sol'),
+            exposedTools: ['memory', ...allowedTools],
+            nativeRunId,
+          },
+        });
+        void (async () => {
+          if (this.settlementBarrier) await this.settlementBarrier;
+          this.emitEvent({
+            type: 'session.info',
+            session_id: sessionId,
+            payload: { running: false, stored_session_id: this.activeStored },
+          });
+        })();
+      });
       return { status: 'streaming' } as T;
     }
     if (method === 'plugins.list') {
@@ -958,6 +970,42 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     });
   });
 
+  it.each(['thinkgraph', 'knowgraph'])(
+    'waits for the native %s turn to settle before requesting one compaction',
+    async (profile) => {
+      const f = fixture();
+      f.cards[0].runtime = { kind: 'hermes', mode: 'delegate', profile };
+      f.resolveActiveContext.mockReturnValue(null);
+      const state = await f.manager.open(
+        f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+      );
+      let release!: () => void;
+      f.clients[0].settlementBarrier = new Promise<void>((resolve) => { release = resolve; });
+
+      const turn = await f.manager.submit(f.owners[0], state.sessionId, `${profile} turn`);
+      expect(turn.text).toBe(`reply:${profile} turn`);
+      const identity = f.manager.state(f.owners[0], state.sessionId);
+      const compaction = f.manager.queueNativeContextCompaction(f.owners[0], identity);
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
+      expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress'))
+        .toEqual([]);
+
+      release();
+      await expect(compaction).resolves.toMatchObject({
+        status: 'compressed',
+        profile,
+        errorCode: null,
+      });
+      expect(f.clients[0].requests.filter(({ method }) => method === 'prompt.submit'))
+        .toHaveLength(1);
+      expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress'))
+        .toEqual([{
+          method: 'session.compress',
+          params: { session_id: state.nativeSessionId, profile },
+        }]);
+    },
+  );
+
   it('makes a later prompt wait behind fire-and-forget native compaction', async () => {
     const f = fixture();
     f.resolveActiveContext.mockReturnValue(null);
@@ -1072,6 +1120,13 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       error: new Error('private transport detail'),
       status: 'failed',
       errorCode: 'agent_terminal_context_compaction_request_failed',
+    },
+    {
+      label: 'native session-busy refusal',
+      result: null,
+      error: Object.assign(new Error('private native busy detail'), { code: 4009 }),
+      status: 'failed',
+      errorCode: 'agent_terminal_context_compaction_native_session_busy',
     },
   ])('keeps $label nonfatal and excludes native summary/error prose', async ({
     result, error, status, errorCode,

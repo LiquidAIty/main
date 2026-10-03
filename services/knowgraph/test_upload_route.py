@@ -6,7 +6,9 @@ import tempfile
 import unittest
 import importlib.util
 import sys
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -113,6 +115,67 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         self.assertEqual(
             kwargs["organizing_principle"], "Preserve source provenance."
         )
+
+    def test_delete_native_routes_one_project_scoped_fact_to_graphiti(self) -> None:
+        delete_native = AsyncMock(
+            return_value={"kind": "fact", "native_id": "fact-1"}
+        )
+        with (
+            patch.object(app, "_delete_native_know", delete_native),
+            TestClient(app.app) as client,
+        ):
+            response = client.post(
+                "/delete_native",
+                json={
+                    "project_id": "project-1",
+                    "native_id": "fact-1",
+                    "kind": "fact",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "ok": True,
+            "kind": "fact",
+            "native_id": "fact-1",
+        })
+        delete_native.assert_awaited_once()
+        payload = delete_native.await_args.args[0]
+        self.assertEqual(payload.project_id, "project-1")
+        self.assertEqual(payload.native_id, "fact-1")
+        self.assertEqual(payload.kind, "fact")
+
+    def test_delete_native_removes_only_a_fact_in_the_requested_project(self) -> None:
+        edge = SimpleNamespace(
+            group_id="liquidaity-project-1",
+            delete=AsyncMock(),
+        )
+        graphiti = SimpleNamespace(driver=object(), close=AsyncMock())
+        with (
+            patch.object(
+                app,
+                "_create_graphiti_runtime",
+                return_value=(object(), graphiti, "neo4j"),
+            ),
+            patch(
+                "graphiti_core.edges.EntityEdge.get_by_uuid",
+                new=AsyncMock(return_value=edge),
+            ),
+        ):
+            result = asyncio.run(app._delete_native_know(
+                app.NativeKnowDeleteRequest(
+                    project_id="project-1",
+                    native_id="fact-1",
+                    kind="fact",
+                ),
+                provider=None,
+                model_key=None,
+                model_id=None,
+            ))
+
+        self.assertEqual(result, {"kind": "fact", "native_id": "fact-1"})
+        edge.delete.assert_awaited_once_with(graphiti.driver)
+        graphiti.close.assert_awaited_once()
 
 
 if __name__ == "__main__":

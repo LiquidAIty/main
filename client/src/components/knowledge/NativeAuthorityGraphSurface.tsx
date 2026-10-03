@@ -6,7 +6,7 @@ import '../../vendor/engraphis/engraphis-graph.js';
 import type { GraphData } from '../../vendor/codebase-memory-ui/src/lib/types';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
-import { GRAPH_THEME } from '../graph/graphVisualTokens';
+import { GRAPH_THEME, SOLARPUNK_PALETTE } from '../graph/graphVisualTokens';
 import {
   applyJevGraphPhysics,
   JEV_GRAPH_PHYSICS_PROFILE_LABELS,
@@ -14,6 +14,10 @@ import {
   mapJevAttentionProminence,
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
+import {
+  resolveCanonicalSubjectFocusVisualId,
+  type CanonicalSubjectFocusRequest,
+} from '../builder/canonicalSubjectLinks';
 import './nativeAuthorityGraphSurface.css';
 
 const CbmGraphTab = lazy(async () => {
@@ -93,6 +97,8 @@ export type ReadContextualNode = (
 export type GraphProjectionNode = {
   id: string;
   canonicalId?: string;
+  canonicalName?: string;
+  entityKind?: string;
   label: string;
   title?: string;
   type?: string;
@@ -116,6 +122,7 @@ export type GraphProjectionNode = {
   properties?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
   provenanceCount?: number;
+  provenanceEpisodeIds?: string[];
   degree?: number;
   semantic_mass?: number;
   gravity_mass?: number;
@@ -136,13 +143,30 @@ export type GraphProjectionNode = {
   productionPath?: string;
   retrievalReason?: string;
   material_kind?: 'solarpunk' | 'joined-cyber';
-  material_role?: GraphNodeMaterialRole | 'PAIRED_CYBER_MATERIAL';
+  material_role?: GraphNodeMaterialRole;
   material_blue?: string;
   material_orange?: string;
   material_surface?: string;
   material_think_active?: boolean;
   material_know_active?: boolean;
   material_focus_active?: boolean;
+};
+
+export type CanonicalSubjectHeader = {
+  authority: 'ThinkGraph' | 'KnowGraph';
+  nativeId: string;
+  canonicalName: string;
+  entityKind: string;
+};
+
+export type CanonicalSubjectDirectory = {
+  schemaVersion: 'cross-graph-subject-directory.v1';
+  projectId: string;
+  complete: true;
+  counts: { ThinkGraph: number; KnowGraph: number; total: number };
+  revisions: { ThinkGraph: string; KnowGraph: string };
+  subjects: CanonicalSubjectHeader[];
+  sha256: string;
 };
 
 export type GraphProjectionEdge = {
@@ -166,7 +190,7 @@ export type GraphProjectionEdge = {
   rest_length?: number;
   visual_width?: number;
   layer?: string;
-  material_kind?: 'solarpunk';
+  material_kind?: 'solarpunk' | 'joined-cyber';
   material_authority?: GraphAuthority;
   material_color?: string;
 };
@@ -187,6 +211,7 @@ export type GraphProjectionV1 = {
   counts?: { nodes: number; edges: number };
   nodes: GraphProjectionNode[];
   edges: GraphProjectionEdge[];
+  canonicalSubjectDirectory?: CanonicalSubjectDirectory | null;
   /** Native provenance records retained for inspectors, never rendered as subjects. */
   provenanceNodes?: GraphProjectionNode[];
 };
@@ -319,7 +344,11 @@ export const GRAPH_NODE_MATERIALS = {
   paired: 'PAIRED_SOLARPUNK_MATERIAL',
 } as const;
 
-export type GraphNodeMaterialRole = typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS];
+const COMBINED_CYBER_MATERIAL = 'PAIRED_CYBER_MATERIAL' as const;
+
+export type GraphNodeMaterialRole =
+  | typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS]
+  | typeof COMBINED_CYBER_MATERIAL;
 
 function materialRole(source: 'think' | 'know' | 'paired'): GraphNodeMaterialRole {
   return GRAPH_NODE_MATERIALS[source];
@@ -343,17 +372,17 @@ function solarpunkMaterialFields(
     material_role: materialRole(source),
     material_blue: colors.think,
     material_orange: colors.know,
-    material_surface: colors.surface,
+    material_surface: GRAPH_THEME.surface.base,
     material_think_active: thinkActive,
     material_know_active: knowActive,
   };
 }
 
-function joinedCyberMaterialFields(
+function combinedCyberMaterialFields(
   source: 'think' | 'know' | 'paired',
   thinkActive = false,
   knowActive = false,
-  colors: SolarpunkColors = DEFAULT_JOINED_CYBER_COLORS,
+  colors: SolarpunkColors = DEFAULT_SOLARPUNK_COLORS,
 ): Pick<GraphProjectionNode,
   | 'material_kind'
   | 'material_role'
@@ -365,7 +394,7 @@ function joinedCyberMaterialFields(
   return {
     ...solarpunkMaterialFields(source, thinkActive, knowActive, colors),
     material_kind: 'joined-cyber',
-    material_role: source === 'paired' ? 'PAIRED_CYBER_MATERIAL' : materialRole(source),
+    material_role: source === 'paired' ? COMBINED_CYBER_MATERIAL : materialRole(source),
   };
 }
 
@@ -379,6 +408,76 @@ function nativeRenderId(authority: GraphAuthority, nativeId: string): string {
 
 function namedRenderId(name: string): string {
   return `node-name:${encodeURIComponent(name)}`;
+}
+
+type CanonicalSubjectIndex = {
+  directory: CanonicalSubjectDirectory;
+  byNativeId: Record<GraphAuthority, Map<string, CanonicalSubjectHeader>>;
+};
+
+function canonicalSubjectIndex(
+  thinkProjection: GraphProjectionV1,
+  knowProjection: GraphProjectionV1,
+): CanonicalSubjectIndex | null {
+  const directory = thinkProjection.canonicalSubjectDirectory;
+  if (!directory
+    || directory.schemaVersion !== 'cross-graph-subject-directory.v1'
+    || directory.complete !== true
+    || !thinkProjection.projectId
+    || thinkProjection.projectId !== knowProjection.projectId
+    || directory.projectId !== thinkProjection.projectId
+    || typeof directory.revisions?.ThinkGraph !== 'string'
+    || !directory.revisions.ThinkGraph
+    || typeof directory.revisions?.KnowGraph !== 'string'
+    || !directory.revisions.KnowGraph
+    || typeof directory.sha256 !== 'string'
+    || directory.sha256.length !== 64
+    || [...directory.sha256].some(character => !'0123456789abcdef'.includes(character))
+    || !Array.isArray(directory.subjects)
+    || directory.counts?.total !== directory.subjects.length) return null;
+
+  const byNativeId: CanonicalSubjectIndex['byNativeId'] = {
+    thinkgraph: new Map(),
+    knowgraph: new Map(),
+  };
+  const byCanonicalName: Record<GraphAuthority, Set<string>> = {
+    thinkgraph: new Set(),
+    knowgraph: new Set(),
+  };
+  const counts = { thinkgraph: 0, knowgraph: 0 };
+  for (const subject of directory.subjects) {
+    const authority: GraphAuthority | null = subject?.authority === 'ThinkGraph'
+      ? 'thinkgraph' : subject?.authority === 'KnowGraph' ? 'knowgraph' : null;
+    if (!authority
+      || typeof subject.nativeId !== 'string' || !subject.nativeId
+      || typeof subject.canonicalName !== 'string' || !subject.canonicalName
+      || typeof subject.entityKind !== 'string' || !subject.entityKind
+      || byNativeId[authority].has(subject.nativeId)
+      || byCanonicalName[authority].has(subject.canonicalName)) return null;
+    byNativeId[authority].set(subject.nativeId, subject);
+    byCanonicalName[authority].add(subject.canonicalName);
+    counts[authority] += 1;
+  }
+  if (counts.thinkgraph !== directory.counts.ThinkGraph
+    || counts.knowgraph !== directory.counts.KnowGraph
+    || counts.thinkgraph + counts.knowgraph !== directory.counts.total) return null;
+  return { directory, byNativeId };
+}
+
+function canonicalSubjectHeader(
+  index: CanonicalSubjectIndex | null,
+  authority: GraphAuthority,
+  node: GraphProjectionNode,
+): CanonicalSubjectHeader | null {
+  const header = index?.byNativeId[authority].get(node.id);
+  if (!header
+    || node.canonicalName !== header.canonicalName
+    || node.label !== header.canonicalName
+    || node.entityKind !== header.entityKind
+    || node.projectId !== index!.directory.projectId
+    || node.episodeId !== undefined
+    || node.memoryType !== undefined) return null;
+  return header;
 }
 
 function isAttentionActive(node: GraphProjectionNode): boolean {
@@ -419,7 +518,7 @@ function presentationNode(
     id: visualId,
     canonicalId: undefined,
     authority: 'joined',
-    ...joinedCyberMaterialFields(sourceKind, thinkActive, knowActive),
+    ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
     properties: {
       ...(primary.node.properties || {}),
       attentionActive: active.length > 0,
@@ -434,10 +533,11 @@ function presentationNode(
 
 /**
  * Builds one non-authoritative renderer view over the two native projections.
- * Exact, trimmed, non-empty node names are the only visual join key. The
- * comparison is case-sensitive and performs no fuzzy, similarity, ID, or
- * cross-graph-reference inference. Native records and relationships remain
- * authority-qualified side-map entries and are never mutated.
+ * A complete current native subject directory supplies each authority's exact
+ * stored canonical name, kind, native identity, Project, and revision. Joined
+ * co-covers a name only when exactly one projection record from each authority
+ * byte-matches its own header. No label normalization, fuzzy/alias inference,
+ * shared native ID, or persisted cross-graph identity is introduced.
  */
 export function composeThinkKnowPresentation(
   thinkProjection: GraphProjectionV1,
@@ -448,14 +548,30 @@ export function composeThinkKnowPresentation(
     thinkgraph: thinkProjection,
     knowgraph: knowProjection,
   };
+  const subjectIndex = canonicalSubjectIndex(thinkProjection, knowProjection);
+  const eligibleByName: Record<GraphAuthority, Map<string, GraphProjectionNode[]>> = {
+    thinkgraph: new Map(),
+    knowgraph: new Map(),
+  };
+  const registerEligible = (authority: GraphAuthority, node: GraphProjectionNode) => {
+    const header = canonicalSubjectHeader(subjectIndex, authority, node);
+    if (!header) return;
+    const records = eligibleByName[authority].get(header.canonicalName) || [];
+    records.push(node);
+    eligibleByName[authority].set(header.canonicalName, records);
+  };
+  thinkProjection.nodes.forEach(node => registerEligible('thinkgraph', node));
+  knowProjection.nodes.forEach(node => registerEligible('knowgraph', node));
+  const pairedNames = new Set([...eligibleByName.thinkgraph.entries()]
+    .filter(([name, records]) => records.length === 1
+      && eligibleByName.knowgraph.get(name)?.length === 1)
+    .map(([name]) => name));
   const nodeVariants = new Map<string, JoinedGraphNodeVariant[]>();
   const visualNodeIdByNativeMember = new Map<string, string>();
   const addNode = (authority: GraphAuthority, node: GraphProjectionNode) => {
-    const exactName = typeof node.label === 'string' && node.label.trim()
-      ? node.label.trim()
-      : '';
-    const visualId = exactName
-      ? namedRenderId(exactName)
+    const header = canonicalSubjectHeader(subjectIndex, authority, node);
+    const visualId = header && pairedNames.has(header.canonicalName)
+      ? namedRenderId(header.canonicalName)
       : nativeRenderId(authority, node.id);
     const variants = nodeVariants.get(visualId) || [];
     variants.push({ authority, node });
@@ -465,12 +581,9 @@ export function composeThinkKnowPresentation(
   thinkProjection.nodes.forEach(node => addNode('thinkgraph', node));
   knowProjection.nodes.forEach(node => addNode('knowgraph', node));
 
-  const visibleNodeVariants = new Map([...nodeVariants.entries()].filter(([, variants]) => (
-    mode === 'all'
-    || (
-      variants.some(variant => variant.authority === 'thinkgraph')
-      && variants.some(variant => variant.authority === 'knowgraph')
-    )
+  const pairedVisualIds = new Set([...pairedNames].map(namedRenderId));
+  const visibleNodeVariants = new Map([...nodeVariants.entries()].filter(([visualId]) => (
+    mode === 'all' || pairedVisualIds.has(visualId)
   )));
   const nodes = [...visibleNodeVariants.entries()]
     .map(([visualId, variants]) => presentationNode(visualId, variants));
@@ -513,6 +626,9 @@ export function composeThinkKnowPresentation(
       counts: { nodes: nodes.length, edges: edges.length },
       nodes,
       edges,
+      ...(subjectIndex
+        ? { canonicalSubjectDirectory: subjectIndex.directory }
+        : {}),
     },
     nativeProjections,
     nodeVariants: visibleNodeVariants,
@@ -550,6 +666,10 @@ export function composeFocusNeighborhoodPresentation(
       counts: { nodes: nodes.size, edges: boundedEdges.length },
       nodes: [...nodes.values()],
       edges: boundedEdges,
+      ...(authority === 'thinkgraph'
+        ? { canonicalSubjectDirectory:
+          base.nativeProjections.thinkgraph.canonicalSubjectDirectory }
+        : {}),
     };
   };
   return composeThinkKnowPresentation(merged('thinkgraph'), merged('knowgraph'), base.mode);
@@ -1074,7 +1194,7 @@ export function composeJevAttentionPresentation(
         : variants.some(variant => variant.authority === 'knowgraph'
           && isAttentionActive(variant.node));
       const sourceFields = {
-        ...joinedCyberMaterialFields(sourceKind, thinkActive, knowActive),
+        ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
         community_id: `jev-source-${sourceKind}`,
         properties: {
           ...(node.properties || {}),
@@ -1125,31 +1245,8 @@ export function composeJevAttentionPresentation(
 
 export function NativeKnowGraphSurface({
   projection,
-  status = 'ready',
-  error,
-  onExpand,
-  onUseAsContext,
-}: {
-  projection: GraphProjectionV1;
-  status?: 'idle' | 'loading' | 'ready' | 'error';
-  error: string | null;
-  onExpand: (node: GraphProjectionNode) => Promise<void>;
-  onUseAsContext?: (node: GraphProjectionNode) => void;
-}) {
-  return (
-    <NativeGraphProjectionSurface
-      projection={projection}
-      status={error ? 'error' : status}
-      error={error}
-      authority="knowgraph"
-      onExpand={onExpand}
-      onUseAsContext={onUseAsContext}
-    />
-  );
-}
-
-export function NativeThinkGraphSurface({
-  projection,
+  canonicalSubjectDirectory,
+  subjectFocusRequest,
   status = 'ready',
   error,
   onExpand,
@@ -1157,6 +1254,40 @@ export function NativeThinkGraphSurface({
   onRemoveEvidence,
 }: {
   projection: GraphProjectionV1;
+  canonicalSubjectDirectory?: CanonicalSubjectDirectory | null;
+  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
+  status?: 'idle' | 'loading' | 'ready' | 'error';
+  error: string | null;
+  onExpand: (node: GraphProjectionNode) => Promise<void>;
+  onUseAsContext?: (node: GraphProjectionNode) => void;
+  onRemoveEvidence?: (nativeFactId: string) => Promise<void>;
+}) {
+  return (
+    <NativeGraphProjectionSurface
+      projection={projection}
+      status={error ? 'error' : status}
+      error={error}
+      authority="knowgraph"
+      canonicalSubjectDirectory={canonicalSubjectDirectory}
+      subjectFocusRequest={subjectFocusRequest}
+      onExpand={onExpand}
+      onUseAsContext={onUseAsContext}
+      onRemoveKnowEvidence={onRemoveEvidence}
+    />
+  );
+}
+
+export function NativeThinkGraphSurface({
+  projection,
+  subjectFocusRequest,
+  status = 'ready',
+  error,
+  onExpand,
+  onUseAsContext,
+  onRemoveEvidence,
+}: {
+  projection: GraphProjectionV1;
+  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
   status?: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   onExpand: (node: GraphProjectionNode) => Promise<void>;
@@ -1169,6 +1300,8 @@ export function NativeThinkGraphSurface({
       status={error ? 'error' : status}
       error={error}
       authority="thinkgraph"
+      canonicalSubjectDirectory={projection.canonicalSubjectDirectory}
+      subjectFocusRequest={subjectFocusRequest}
       onExpand={onExpand}
       onUseAsContext={onUseAsContext}
       onRemoveEvidence={onRemoveEvidence}
@@ -1188,6 +1321,8 @@ export function NativeJoinedGraphSurface({
   onUseAsContext,
   onUseContextualNodeRead,
   onRemoveThinkGraphEvidence,
+  onRemoveKnowGraphEvidence,
+  subjectFocusRequest,
   mode = 'all',
 }: {
   projections: Record<GraphAuthority, GraphProjectionV1>;
@@ -1204,6 +1339,8 @@ export function NativeJoinedGraphSurface({
     node: GraphProjectionNode,
   ) => void;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
+  onRemoveKnowGraphEvidence?: (nativeFactId: string) => Promise<void>;
+  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
   mode?: 'joined' | 'all';
 }) {
   const presentation = useMemo(
@@ -1241,6 +1378,10 @@ export function NativeJoinedGraphSurface({
   return (
     <NativeGraphProjectionSurface
       authority="joined"
+      canonicalSubjectDirectory={
+        projections.thinkgraph.canonicalSubjectDirectory
+      }
+      subjectFocusRequest={subjectFocusRequest}
       projection={turnLocalProjection}
       joinedPresentation={presentation}
       attentionVisualPhase={jevAttentionVisual?.phase || null}
@@ -1254,6 +1395,7 @@ export function NativeJoinedGraphSurface({
       onUseAsContextNative={onUseAsContext}
       onUseContextualNodeRead={onUseContextualNodeRead}
       onRemoveEvidence={onRemoveThinkGraphEvidence}
+      onRemoveKnowEvidence={onRemoveKnowGraphEvidence}
     />
   );
 }
@@ -1327,8 +1469,14 @@ export function NativeCodeGraphSurface({
 type NativeLayout = 'compact' | 'original' | 'communities' | 'radial' | 'galaxy';
 type NativeStyle = 'classic' | 'cyber' | 'galaxy' | 'solar' | 'solarpunk';
 type RendererNativeStyle = Exclude<NativeStyle, 'solarpunk'>;
-type SolarpunkColors = { think: string; know: string; surface: string };
+type SolarpunkColors = {
+  think: string;
+  know: string;
+  thinkRelationship: string;
+  knowRelationship: string;
+};
 type GraphPresentationPreferences = {
+  schemaVersion: 2 | 3 | 4 | 5 | 6;
   layout: NativeLayout;
   style: NativeStyle;
   physicsProfile: JevGraphPhysicsProfile;
@@ -1336,16 +1484,11 @@ type GraphPresentationPreferences = {
   solarpunkColors: SolarpunkColors;
 };
 
-const SOLARPUNK_EDGE_BLUE = '#3979E8';
 const DEFAULT_SOLARPUNK_COLORS: SolarpunkColors = {
-  think: GRAPH_THEME.accent.memory,
-  know: GRAPH_THEME.accent.solar,
-  surface: GRAPH_THEME.surface.base,
-};
-const DEFAULT_JOINED_CYBER_COLORS: SolarpunkColors = {
-  think: SOLARPUNK_EDGE_BLUE,
-  know: GRAPH_THEME.accent.solar,
-  surface: GRAPH_THEME.surface.base,
+  think: SOLARPUNK_PALETTE.sea,
+  know: SOLARPUNK_PALETTE.sun,
+  thinkRelationship: SOLARPUNK_PALETTE.sea,
+  knowRelationship: SOLARPUNK_PALETTE.sun,
 };
 const NATIVE_LAYOUTS = new Set<NativeLayout>([
   'compact', 'original', 'communities', 'radial', 'galaxy',
@@ -1395,21 +1538,29 @@ function safePresentationPreferences(
     const rawColors = parsed.solarpunkColors && typeof parsed.solarpunkColors === 'object'
       ? parsed.solarpunkColors as Partial<SolarpunkColors>
       : {};
-    const defaultColors = authority === 'joined'
-      ? DEFAULT_JOINED_CYBER_COLORS
-      : DEFAULT_SOLARPUNK_COLORS;
+    const defaultColors = DEFAULT_SOLARPUNK_COLORS;
+    const legacyThinkColor = /^(?:#6e5fae|#3979e8)$/i.test(String(rawColors.think || ''));
+    const legacyThinkEdgeColor = /^#3979e8$/i.test(
+      String(rawColors.thinkRelationship || ''),
+    );
     return {
+      ...([2, 3, 4, 5, 6].includes(parsed.schemaVersion)
+        ? { schemaVersion: parsed.schemaVersion as 2 | 3 | 4 | 5 | 6 }
+        : {}),
       ...(NATIVE_LAYOUTS.has(parsed.layout) ? { layout: parsed.layout } : {}),
       ...(NATIVE_STYLES.has(parsed.style) ? { style: parsed.style } : {}),
       ...(JEV_PHYSICS.has(parsed.physicsProfile) ? { physicsProfile: parsed.physicsProfile } : {}),
       ...(settings ? { settings } : {}),
       solarpunkColors: {
-        think: SOLARPUNK_HEX.test(String(rawColors.think || ''))
+        think: !legacyThinkColor && SOLARPUNK_HEX.test(String(rawColors.think || ''))
           ? String(rawColors.think) : defaultColors.think,
         know: SOLARPUNK_HEX.test(String(rawColors.know || ''))
           ? String(rawColors.know) : defaultColors.know,
-        surface: SOLARPUNK_HEX.test(String(rawColors.surface || ''))
-          ? String(rawColors.surface) : defaultColors.surface,
+        thinkRelationship: !legacyThinkEdgeColor
+          && SOLARPUNK_HEX.test(String(rawColors.thinkRelationship || ''))
+          ? String(rawColors.thinkRelationship) : defaultColors.thinkRelationship,
+        knowRelationship: SOLARPUNK_HEX.test(String(rawColors.knowRelationship || ''))
+          ? String(rawColors.knowRelationship) : defaultColors.knowRelationship,
       },
     };
   } catch {
@@ -1425,7 +1576,6 @@ function initialPresentationStyle(
   authority: GraphSurfaceAuthority,
   savedStyle: NativeStyle | undefined,
 ): NativeStyle {
-  if (authority === 'joined' && (!savedStyle || savedStyle === 'solarpunk')) return 'cyber';
   return savedStyle || 'solarpunk';
 }
 
@@ -1444,11 +1594,14 @@ function withoutSolarpunkMaterial(node: GraphProjectionNode): GraphProjectionNod
 
 function solarpunkEdgeFields(
   authority: GraphAuthority,
+  colors: SolarpunkColors,
 ): Pick<GraphProjectionEdge, 'material_kind' | 'material_authority' | 'material_color'> {
   return {
     material_kind: 'solarpunk',
     material_authority: authority,
-    material_color: SOLARPUNK_EDGE_BLUE,
+    material_color: authority === 'knowgraph'
+      ? colors.knowRelationship
+      : colors.thinkRelationship,
   };
 }
 
@@ -1648,8 +1801,10 @@ function ThinkGraphThink({
     {concepts.length ? <section className="graph-think-section">
       <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
     </section> : null}
-    {onRemove ? <button type="button" disabled={removing} onClick={onRemove}>
-      {removing ? 'Removing…' : 'Remove Think'}
+    {onRemove ? <button type="button" disabled={removing} onClick={() => {
+      if (window.confirm(`Delete ${heading}?`)) onRemove();
+    }}>
+      {removing ? 'Deleting…' : 'Delete Think'}
     </button> : null}
   </section>;
 }
@@ -1671,6 +1826,9 @@ export function NativeGraphProjectionSurface({
   onUseAsContextNative,
   onUseContextualNodeRead,
   onRemoveEvidence,
+  onRemoveKnowEvidence,
+  canonicalSubjectDirectory,
+  subjectFocusRequest,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -1691,9 +1849,13 @@ export function NativeGraphProjectionSurface({
     node: GraphProjectionNode,
   ) => void;
   onRemoveEvidence?: (memoryId: string) => Promise<void>;
+  onRemoveKnowEvidence?: (nativeFactId: string) => Promise<void>;
+  canonicalSubjectDirectory?: CanonicalSubjectDirectory | null;
+  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
 }) {
   const savedPresentationRef = useRef(safePresentationPreferences(authority));
   const savedPresentation = savedPresentationRef.current;
+  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6;
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<EngraphisRenderer | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1703,17 +1865,24 @@ export function NativeGraphProjectionSurface({
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [settings, setSettings] = useState<Record<string, number | boolean | string>>(
-    savedPresentation.settings || {},
+    savedPresentationIsCurrent
+      ? savedPresentation.settings || {}
+      : { ...(savedPresentation.settings || {}), size: 5 },
   );
   const [layout, setLayout] = useState<NativeLayout>(savedPresentation.layout || 'compact');
   const [style, setStyle] = useState<NativeStyle>(
-    initialPresentationStyle(authority, savedPresentation.style),
+    initialPresentationStyle(
+      authority,
+      savedPresentationIsCurrent ? savedPresentation.style : undefined,
+    ),
   );
   const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(
     savedPresentation.physicsProfile || 'galaxy',
   );
   const [solarpunkColors, setSolarpunkColors] = useState<SolarpunkColors>(
-    savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS,
+    savedPresentationIsCurrent
+      ? savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS
+      : DEFAULT_SOLARPUNK_COLORS,
   );
   const [appliedPresetNodeSize, setAppliedPresetNodeSize] = useState<number | null>(null);
   const [focusTrail, setFocusTrail] = useState<ManualFocusEntry[]>([]);
@@ -1726,6 +1895,7 @@ export function NativeGraphProjectionSurface({
   const focusActionRef = useRef<(id: string) => void>(() => undefined);
   const exitFocusRef = useRef<() => void>(() => undefined);
   const inspectNodeRef = useRef<(id: string) => void>(() => undefined);
+  const consumedSubjectFocusRequestRef = useRef<number | null>(null);
   const contextualNodeRequestRef = useRef<{
     identity: number;
     controller: AbortController;
@@ -2207,14 +2377,24 @@ export function NativeGraphProjectionSurface({
         },
       });
       const restoredLayout = savedPresentation.layout || 'compact';
-      const restoredStyle = initialPresentationStyle(authority, savedPresentation.style);
+      const restoredStyle = initialPresentationStyle(
+        authority,
+        savedPresentationIsCurrent ? savedPresentation.style : undefined,
+      );
       const restoredPhysics = savedPresentation.physicsProfile || 'galaxy';
       const defaults = graph.setPreset(restoredLayout);
-      const restoredSettings = {
+      const savedSettings = savedPresentationIsCurrent
+        ? savedPresentation.settings || {}
+        : { ...(savedPresentation.settings || {}), size: 5 };
+      const upgradingLegacyPresentation = !savedPresentationIsCurrent;
+      const restoredSettings: Record<string, number | boolean | string> = {
         ...defaults,
         labels: true,
-        ...(savedPresentation.settings || {}),
+        ...savedSettings,
       };
+      if (upgradingLegacyPresentation) {
+        restoredSettings.linkw = Math.max(1, Number(restoredSettings.linkw) || 1);
+      }
       graph.setCollapse(false);
       setLayout(restoredLayout); setStyle(restoredStyle); setPhysicsProfile(restoredPhysics);
       graph.setStyle(rendererNativeStyle(restoredStyle));
@@ -2226,17 +2406,16 @@ export function NativeGraphProjectionSurface({
       setRenderError(failure instanceof Error ? failure.message : String(failure));
       return undefined;
     }
-  }, [authority]);
+  }, [authority, savedPresentationIsCurrent]);
 
   useEffect(() => {
-    graphRef.current?.setThemeColors(style === 'solarpunk'
-      || (authority === 'joined' && style === 'cyber') ? {
+    graphRef.current?.setThemeColors(style === 'solarpunk' ? {
       material_blue: solarpunkColors.think,
       material_orange: solarpunkColors.know,
-      material_surface: solarpunkColors.surface,
+      material_surface: GRAPH_THEME.surface.base,
       accent: solarpunkColors.think,
       solar: solarpunkColors.know,
-      surface: solarpunkColors.surface,
+      surface: GRAPH_THEME.surface.base,
       label: GRAPH_THEME.surface.text,
     } : {});
   }, [authority, solarpunkColors, style]);
@@ -2244,7 +2423,7 @@ export function NativeGraphProjectionSurface({
   useEffect(() => {
     try {
       window.localStorage.setItem(presentationStorageKey(authority), JSON.stringify({
-        layout, style, physicsProfile, settings, solarpunkColors,
+        schemaVersion: 6, layout, style, physicsProfile, settings, solarpunkColors,
       } satisfies GraphPresentationPreferences));
     } catch {
       // Presentation preferences are optional; graph rendering remains authoritative.
@@ -2365,8 +2544,8 @@ export function NativeGraphProjectionSurface({
       ...(scene || {}),
       nodes: sceneNodes.map((rawNode) => {
         const node = rawNode as GraphProjectionNode;
-        const joinedCyber = authority === 'joined' && style === 'cyber';
-        if (style !== 'solarpunk' && !joinedCyber) return withoutSolarpunkMaterial(node);
+        if (style !== 'solarpunk') return withoutSolarpunkMaterial(node);
+        const combinedCyber = authority === 'joined';
         const variants = authority === 'joined'
           ? activeJoinedPresentation?.nodeVariants.get(node.id) || []
           : [{ authority, node }] as JoinedGraphNodeVariant[];
@@ -2383,9 +2562,13 @@ export function NativeGraphProjectionSurface({
             && isAttentionActive(variant.node));
         return {
           ...node,
-          ...(joinedCyber
-            ? joinedCyberMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)
-            : solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors)),
+          ...(combinedCyber
+            ? combinedCyberMaterialFields(
+              sourceKind, thinkActive, knowActive, solarpunkColors,
+            )
+            : solarpunkMaterialFields(
+              sourceKind, thinkActive, knowActive, solarpunkColors,
+            )),
         };
       }),
       links: sceneLinks.map(rawEdge => {
@@ -2396,12 +2579,16 @@ export function NativeGraphProjectionSurface({
         const edgeAuthority = authority === 'joined'
           ? activeJoinedPresentation?.edgeVariants.get(String(semanticEdge.id))?.authority
           : authority;
-        const materialEdge = (style === 'solarpunk'
-          || (authority === 'joined' && style === 'cyber')) && edgeAuthority
-          ? { ...semanticEdge, ...solarpunkEdgeFields(edgeAuthority) }
+        const materialEdge = style === 'solarpunk' && edgeAuthority
+          ? { ...semanticEdge, ...solarpunkEdgeFields(edgeAuthority, solarpunkColors) }
           : withoutSolarpunkEdgeMaterial(semanticEdge);
         if (edgeAuthority !== 'thinkgraph') {
-          return { ...materialEdge, relation: materialEdge.predicate };
+          return {
+            ...materialEdge,
+            relation: materialEdge.predicate,
+            label: '',
+            hover_label: materialEdge.predicate,
+          };
         }
         const jev = materialEdge.properties?.jev;
         const distribution = jev && typeof jev === 'object' && !Array.isArray(jev)
@@ -2420,9 +2607,8 @@ export function NativeGraphProjectionSurface({
         return {
           ...materialEdge,
           relation: materialEdge.predicate,
-          label: probability,
+          label: '',
           hover_label: `${winner}${probability ? ` · ${probability}` : ''}`,
-          label_min_scale: 0.01,
           directional_arrow_length: 3,
           directional_arrow_rel_pos: 0.9,
         };
@@ -2444,6 +2630,38 @@ export function NativeGraphProjectionSurface({
   useEffect(() => {
     graphRef.current?.setHighlight(selectedId || successfulFocusedEntry?.centerId || null);
   }, [selectedId, successfulFocusedEntry?.centerId]);
+
+  useEffect(() => {
+    if (!subjectFocusRequest
+      || consumedSubjectFocusRequestRef.current === subjectFocusRequest.requestId
+      || !displayProjection) return;
+    const baseProjection = authority === 'joined'
+      ? joinedPresentation?.projection
+      : projection;
+    if (!baseProjection) return;
+    const visualNodeId = resolveCanonicalSubjectFocusVisualId({
+      authority,
+      projection: baseProjection,
+      joinedPresentation,
+      directory: canonicalSubjectDirectory,
+      request: subjectFocusRequest,
+    });
+    if (!visualNodeId) return;
+    if (!displayProjection.nodes.some(node => node.id === visualNodeId)) {
+      if (authority === 'joined' && manualNavigationActive) exitFocusRef.current();
+      return;
+    }
+    consumedSubjectFocusRequestRef.current = subjectFocusRequest.requestId;
+    inspectNodeRef.current(visualNodeId);
+  }, [
+    authority,
+    canonicalSubjectDirectory,
+    displayProjection,
+    joinedPresentation,
+    manualNavigationActive,
+    projection,
+    subjectFocusRequest,
+  ]);
 
   useEffect(() => {
     if (selectedId && !displayProjection?.nodes.some(node => node.id === selectedId)) {
@@ -2472,11 +2690,35 @@ export function NativeGraphProjectionSurface({
     setInspectorOpen(false);
     setControlsOpen(false);
   };
+  const deleteThink = async (memoryId: string) => {
+    if (!onRemoveEvidence) return;
+    setRemovingId(memoryId);
+    setRemoveError(null);
+    try { await onRemoveEvidence(memoryId); }
+    catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
+    finally { setRemovingId(null); }
+  };
+  const deleteKnow = async (nativeFactId: string) => {
+    if (!onRemoveKnowEvidence) return;
+    setRemovingId(nativeFactId);
+    setRemoveError(null);
+    try {
+      await onRemoveKnowEvidence(nativeFactId);
+      if (selectedVisual) inspectNodeRef.current(selectedVisual.id);
+    } catch (failure) {
+      setRemoveError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
   const allNodes = displayProjection?.nodes.length ?? 0;
   const selectedNative = inspectedProjection?.nodes.find(node => node.id === selected?.id);
   const selectedSource = selectedNative ? sourceDocument(selectedNative) : null;
   const evidenceIds = new Set<string>(selected ? [selected.id] : []);
+  for (const episodeId of selected?.provenanceEpisodeIds || []) {
+    evidenceIds.add(episodeId);
+  }
   for (const edge of selectedEdge ? [selectedEdge] : []) {
     for (const value of [edge.properties?.episodes, edge.properties?.supportingEpisodeUuids]) {
       for (const id of Array.isArray(value) ? value : typeof value === 'string' ? [value] : []) {
@@ -2518,16 +2760,17 @@ export function NativeGraphProjectionSurface({
         ingestedAt: item.block.properties?.ingestedAt,
       }))
     : [];
-  const thinks = authority === 'joined'
-    ? contextualThinks
-    : inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
-      ? evidenceRecords.filter(item => item.metadata !== null
-        && typeof item.metadata === 'object'
-        && item.metadata.structured_extraction !== null
-        && typeof item.metadata.structured_extraction === 'object'
-        && item.metadata.structured_extraction.think !== null
-        && typeof item.metadata.structured_extraction.think === 'object')
-      : evidenceRecords;
+  const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
+    ? evidenceRecords.filter(item => item.metadata !== null
+      && typeof item.metadata === 'object'
+      && item.metadata.structured_extraction !== null
+      && typeof item.metadata.structured_extraction === 'object'
+      && item.metadata.structured_extraction.think !== null
+      && typeof item.metadata.structured_extraction.think === 'object')
+    : [];
+  const thinks = [...directThinks, ...contextualThinks].filter((item, index, all) => (
+    all.findIndex(candidate => candidate.id === item.id) === index
+  ));
   const latestThink = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
     ? thinks[0] : null;
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
@@ -2570,9 +2813,6 @@ export function NativeGraphProjectionSurface({
   );
   const availableNodeAuthorities = (['thinkgraph', 'knowgraph'] as const)
     .filter(candidate => selectedNodeVariants.some(variant => variant.authority === candidate));
-  const activeSelectedVariants = selectedNodeVariants.filter(
-    variant => isAttentionActive(variant.node),
-  );
   const visualNodeIdForNative = (nativeId: string) => inspectedAuthority
     ? activeJoinedPresentation?.visualNodeIdByNativeMember.get(
       nativeMemberKey(inspectedAuthority, nativeId),
@@ -2688,7 +2928,10 @@ export function NativeGraphProjectionSurface({
               recordManualPresentationChange('layout');
               setAppliedPresetNodeSize(null);
               const next = event.target.value as NativeLayout;
-              const defaults = graphRef.current?.setPreset(next);
+              const preset = graphRef.current?.setPreset(next);
+              const defaults = preset
+                ? { ...preset, linkw: Math.max(1, Number(preset.linkw) || 1) }
+                : preset;
               setLayout(next); setSettings(current => ({ ...current, ...defaults }));
             }}>
               <option value="compact">Compact</option><option value="original">Original</option>
@@ -2704,11 +2947,12 @@ export function NativeGraphProjectionSurface({
               <option value="solarpunk">Solarpunk</option><option value="galaxy">Galaxy</option>
               <option value="solar">Solar</option>
             </select></label>
-            {style === 'solarpunk' || (authority === 'joined' && style === 'cyber')
-              ? <fieldset aria-label={style === 'cyber' ? 'Joined Cyberpunk colors' : 'Solarpunk colors'} style={{ display: 'grid', gap: 6 }}>
-              <legend>{style === 'cyber' ? 'Joined Cyberpunk colors' : 'Solarpunk colors'}</legend>
-              {([['Think color', 'think'], ['Know color', 'know'],
-                ...(style === 'solarpunk' ? [['Joined body color', 'surface']] : [])] as const)
+            {style === 'solarpunk'
+              ? <fieldset aria-label="Solarpunk colors" style={{ display: 'grid', gap: 6 }}>
+              <legend>Solarpunk colors</legend>
+              {([['Think nodes', 'think'], ['Know nodes', 'know'],
+                ['Think edges', 'thinkRelationship'],
+                ['Know edges', 'knowRelationship']] as const)
                 .map(([label, key]) => <label key={key}>
                   <span>{label}</span>
                   <input type="color" aria-label={label} value={solarpunkColors[key]}
@@ -2746,7 +2990,11 @@ export function NativeGraphProjectionSurface({
             <button type="button" aria-label="Reset to preset defaults" onClick={() => {
               recordManualPresentationChange('all-settings');
               const defaults = graphRef.current?.setPreset(layout);
-              const nextSettings = { ...defaults, labels: true };
+              const nextSettings = {
+                ...defaults,
+                labels: true,
+                linkw: Math.max(1, Number(defaults?.linkw) || 1),
+              };
               graphRef.current?.setSettings(nextSettings);
               setSettings(nextSettings);
               setAppliedPresetNodeSize(typeof defaults?.size === 'number' ? defaults.size : null);
@@ -2826,18 +3074,6 @@ export function NativeGraphProjectionSurface({
             </select>
           </label>
         ) : null}
-        {authority === 'joined' && selected && activeSelectedVariants.length ? (
-          <section data-testid="joined-attention-members">
-            <h4>Attention</h4>
-            <ul>
-              {activeSelectedVariants.map(variant => (
-                <li key={nativeMemberKey(variant.authority, variant.node.id)}>
-                  {`${variant.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph'} · ${variant.node.id}`}
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
         {authority === 'joined' && selected && contextualRead?.status === 'loading' ? (
           <p role="status" data-testid="contextual-node-read-loading">
             Selecting the most useful native {inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'}…
@@ -2889,28 +3125,37 @@ export function NativeGraphProjectionSurface({
             .filter((value, index, values): value is string => typeof value === 'string' && !!value && values.indexOf(value) === index)
             .map(value => <p key={value}>{value}</p>) : null}
           {inspectedAuthority === 'knowgraph' && selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
+          {inspectedAuthority === 'knowgraph' && evidence.length ? (
+            <section className="knowgraph-sources" data-testid="selected-know-sources">
+              <h5>Sources</h5>
+              {evidence.map(({ node, links }) => <div key={node.id}>
+                <span>{node.label}</span>
+                {links.map(link => <a
+                  key={link.url}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >{link.label}</a>)}
+              </div>)}
+            </section>
+          ) : null}
         </article> : null}
-        {authority === 'joined' ? thinks.map((item, index) => <ThinkGraphThink
-          key={item.id}
-          item={item}
-          heading={thinks.length > 1 ? `Selected Think ${index + 1}` : 'Selected Think'}
-        />) : latestThink ? <ThinkGraphThink
+        {latestThink ? <ThinkGraphThink
           item={latestThink}
           heading="Latest Think"
           removing={removingId === latestThink.id}
-          onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence ? async () => {
-            setRemovingId(latestThink.id); setRemoveError(null);
-            try { await onRemoveEvidence(latestThink.id); }
-            catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
-            finally { setRemovingId(null); }
-          } : undefined}
+          onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
+            ? () => { void deleteThink(latestThink.id); }
+            : undefined}
         /> : null}
-        {authority !== 'joined' && thinks.length > 1 ? <details className="graph-think-history">
+        {thinks.length > 1 ? <details className="graph-think-history">
           <summary>Earlier Thinks ({thinks.length - 1})</summary>
           <div>{thinks.slice(1).map((item, index) => <ThinkGraphThink
             key={item.id}
             item={item}
             heading={`Earlier Think ${index + 1}`}
+            removing={removingId === item.id}
+            onRemove={onRemoveEvidence ? () => { void deleteThink(item.id); } : undefined}
           />)}</div>
         </details> : null}
         {contextualKnowItems.length ? <section className="graph-note" data-testid="contextual-selected-know">
@@ -2925,7 +3170,6 @@ export function NativeGraphProjectionSurface({
                   : null}
               <dl className="graph-record-fields">
                 {([
-                  ['Native fact', know.nativeFactUuid],
                   ['Native relation', know.nativeRelation],
                   ['Recorded', know.createdAt],
                   ['Reference time', know.referenceTime],
@@ -2955,6 +3199,16 @@ export function NativeGraphProjectionSurface({
                   </div>;
                 })}
               </section> : null}
+              {onRemoveKnowEvidence ? <button
+                type="button"
+                disabled={removingId === String(know.nativeFactUuid || nativeId)}
+                onClick={() => {
+                  if (!window.confirm('Delete this Know?')) return;
+                  void deleteKnow(String(know.nativeFactUuid || nativeId));
+                }}
+              >{removingId === String(know.nativeFactUuid || nativeId)
+                  ? 'Deleting…'
+                  : 'Delete Know'}</button> : null}
             </article>
           ))}
         </section> : null}
@@ -3021,7 +3275,7 @@ export function NativeGraphProjectionSurface({
           })}</dl>
         </details> : null}
         {removeError ? <p role="alert">{removeError}</p> : null}
-        {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) =>
+        {evidence.length && !(selected && inspectedAuthority === 'knowgraph') ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) =>
           <details key={node.id}>
             <summary>{node.label}</summary>
             {links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}

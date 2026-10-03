@@ -75,16 +75,16 @@ def _subject_directory_source(
         }:
             raise DataAnchorError("subject_directory_subject_invalid")
         record = {
-            key: str(raw.get(key) or "").strip()
+            key: str(raw.get(key) or "")
             for key in ("authority", "nativeId", "canonicalName", "entityKind")
         }
         if (
             record["authority"] != authority
-            or not record["nativeId"]
+            or not record["nativeId"].strip()
             or len(record["nativeId"]) > 1_024
-            or not record["canonicalName"]
+            or not record["canonicalName"].strip()
             or len(record["canonicalName"]) > 256
-            or not record["entityKind"]
+            or not record["entityKind"].strip()
             or len(record["entityKind"]) > 128
         ):
             raise DataAnchorError("subject_directory_subject_invalid")
@@ -209,7 +209,7 @@ def _read_knowgraph_subject_directory(
         subjects.append({
             "authority": "KnowGraph",
             "nativeId": str(row.get("nativeId") or "").strip(),
-            "canonicalName": str(row.get("canonicalName") or "").strip(),
+            "canonicalName": str(row.get("canonicalName") or ""),
             "entityKind": entity_labels[0] if entity_labels else "Entity",
         })
     count = int(raw_count)

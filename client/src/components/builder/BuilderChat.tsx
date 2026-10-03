@@ -12,6 +12,10 @@ import {
   prepareChatBubbleText,
   tightChatBubbleTextWidth,
 } from "./pretextBubbleLayout";
+import type {
+  CanonicalSubjectFocusTarget,
+  CanonicalSubjectMatcher,
+} from "./canonicalSubjectLinks";
 
 type BuilderChatColors = {
   primary: string;
@@ -46,7 +50,8 @@ export function chatDisplayText(value: unknown): string {
       results?: unknown;
     };
     if (
-      parsed.schemaVersion !== 'atomic-research-result.v1'
+      !['atomic-research-result.v1', 'atomic-research-response.v1']
+        .includes(String(parsed.schemaVersion || ''))
       || !Array.isArray(parsed.results)
     ) return text;
     const lines = ['Research result'];
@@ -130,14 +135,22 @@ function BuilderChatMessageBubble({
   laneWidth,
   mainCardId,
   message,
+  subjectMatcher,
+  onSubjectFocus,
 }: {
   colors: BuilderChatColors;
   laneWidth: number | null;
   mainCardId?: string;
   message: BuilderChatMessage;
+  subjectMatcher?: CanonicalSubjectMatcher | null;
+  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
 }) {
   const text = chatDisplayText(message.text);
   const isUser = message.role !== "assistant";
+  const textSegments = useMemo(
+    () => subjectMatcher?.segmentMessage(message.role, text) || [{ text }],
+    [message.role, subjectMatcher, text],
+  );
   const horizontalPadding = isUser ? 30 : 32;
   const maximumBubbleWidth = laneWidth == null
     ? null
@@ -223,7 +236,32 @@ function BuilderChatMessageBubble({
               : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
           }}
         >
-          {text}
+          {textSegments.map((segment, index) => segment.target && onSubjectFocus ? (
+              <button
+                key={index}
+                type="button"
+                aria-label={`Open ${segment.text} in graph`}
+                onClick={() => onSubjectFocus(segment.target!)}
+                style={{
+                  display: "inline",
+                  margin: 0,
+                  padding: 0,
+                  border: 0,
+                  background: "transparent",
+                  color: colors.primary,
+                  cursor: "pointer",
+                  font: "inherit",
+                  letterSpacing: "inherit",
+                  lineHeight: "inherit",
+                  textAlign: "inherit",
+                  textDecoration: "underline",
+                  textDecorationStyle: "dotted",
+                  textUnderlineOffset: 3,
+                }}
+              >
+                {segment.text}
+              </button>
+          ) : segment.text)}
         </div>
       </div>
     </div>
@@ -249,6 +287,8 @@ export default function BuilderChat({
   onStop,
   draft,
   onDraftChange,
+  subjectMatcher,
+  onSubjectFocus,
 }: {
   messages: BuilderChatMessage[];
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
@@ -274,6 +314,8 @@ export default function BuilderChat({
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
+  subjectMatcher?: CanonicalSubjectMatcher | null;
+  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
 }) {
   const [localDraft, setLocalDraft] = useState("");
   const [selectedAddressIndex, setSelectedAddressIndex] = useState(0);
@@ -418,9 +460,18 @@ export default function BuilderChat({
         laneWidth={messageLaneWidth}
         mainCardId={mainCardId}
         message={message}
+        subjectMatcher={subjectMatcher}
+        onSubjectFocus={onSubjectFocus}
       />
     </div>
-  ), [colors, mainCardId, messageLaneWidth, renderableMessages.length]);
+  ), [
+    colors,
+    mainCardId,
+    messageLaneWidth,
+    onSubjectFocus,
+    renderableMessages.length,
+    subjectMatcher,
+  ]);
 
   const returnToLatest = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({
@@ -635,7 +686,7 @@ export default function BuilderChat({
                 send();
               }
             }}
-            placeholder="Type a message…"
+            aria-label="Message"
             className="builder-chat-composer flex-1"
             style={{
               boxSizing: "border-box",
