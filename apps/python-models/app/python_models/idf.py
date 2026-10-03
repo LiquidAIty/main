@@ -17,7 +17,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 IDF_FILENAME = "in.idf"
@@ -26,6 +26,28 @@ _FORBIDDEN_SECRET_KEYS = frozenset({
     "access_token", "refreshtoken", "refresh_token", "clientsecret",
     "client_secret", "oauthstate", "oauth_state",
 })
+_SELECTED_NATIVE_REFERENCE_FIELDS = frozenset({
+    "authority", "nativeId", "nativeKind", "label", "reason", "asOf",
+    "required", "readOperation", "contentSha256", "provenance",
+    "selectionScope", "materializedContentBytes", "materializedRecordSha256",
+    "sourcePath", "sourceUrl", "truncated",
+})
+_RUNTIME_RECEIPT_REFERENCE_KEYS = frozenset({
+    "attemptEvents", "requestFulfillment", "observationGap", "timingMs",
+    "inputTokens", "outputTokens", "cachedTokens", "reasoningTokens",
+    "costUsd", "totalCostUsd", "toolReceipt", "executionReceipt",
+    "atomicResearchAssessment", "atomicResearchOutcome",
+})
+
+
+def _reference_contains_runtime_receipt(value: Any) -> bool:
+    if isinstance(value, dict):
+        return bool(set(value) & _RUNTIME_RECEIPT_REFERENCE_KEYS) or any(
+            _reference_contains_runtime_receipt(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(_reference_contains_runtime_receipt(item) for item in value)
+    return False
 
 
 class InputMaterializationError(ValueError):
@@ -78,6 +100,20 @@ class ActualGraphData(BaseModel):
     provenanceSummary: list[dict[str, Any]] = Field(default_factory=list)
     records: list[GraphDataRecord] = Field(default_factory=list)
     modelText: str = ""
+
+    @field_validator("selectedNativeReferences", mode="before")
+    @classmethod
+    def reject_non_reference_fields(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            raise ValueError("input_graph_references_invalid")
+        for item in value:
+            if (
+                not isinstance(item, dict)
+                or set(item) - _SELECTED_NATIVE_REFERENCE_FIELDS
+                or _reference_contains_runtime_receipt(item)
+            ):
+                raise ValueError("input_graph_reference_field_forbidden")
+        return value
 
 
 class SelectedToolsAndGrants(BaseModel):
@@ -392,6 +428,13 @@ def materialize_idf(
 
     if set(variable) - {"task", "images"}:
         raise InputMaterializationError("input_dynamic_field_forbidden")
+    if any(
+        not isinstance(reference, dict)
+        or set(reference) - _SELECTED_NATIVE_REFERENCE_FIELDS
+        or _reference_contains_runtime_receipt(reference)
+        for reference in native_references
+    ):
+        raise InputMaterializationError("input_graph_reference_field_forbidden")
     timestamp = materialized_at or _timestamp()
     records = _graph_records(
         graph_context=graph_context,

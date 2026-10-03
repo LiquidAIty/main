@@ -3276,17 +3276,8 @@ def validate_atomic_research_result(
             "",
             f"{status_labels[item['status']]}: {item['summary']}",
         ))
-        if item["citations"]:
-            chat_lines.append("")
-            chat_lines.append("Sources:")
-            for citation in item["citations"]:
-                date = (
-                    f" ({citation['publishedAt']})"
-                    if citation["publishedAt"] else ""
-                )
-                chat_lines.append(
-                    f"- [{citation['title']}]({citation['url']}){date}"
-                )
+    if cited_results:
+        chat_lines.extend(("", "Evidence and sources are retained in KnowGraph."))
     return {
         "ok": True,
         "result": normalized_result,
@@ -4715,9 +4706,13 @@ def _llm_structured_contract(
         "separate concepts rather than `Rocket Lab launch cadence`; express their meaning with "
         "a directed relationship. Apply the same rule to explicitly discussed companies such "
         "as `Redwire`, `RTX`, and `Parsons`. If a named company is only an unverified candidate "
-        "in the pair, retain it as a standalone endpoint linked to the hypothesis with "
-        "ASSOCIATED_WITH. This records subject framing, not a factual supplier relationship; "
-        "do not use PROVIDES or another factual predicate unless the pair establishes it.\n"
+        "in the pair, retain it as a standalone endpoint linked with ASSOCIATED_WITH to the "
+        "nearest concrete reusable subject in the proposal, such as `Recurring revenue` or "
+        "`Launch cadence`. This records subject framing, not a factual supplier relationship; "
+        "do not use PROVIDES or another factual predicate unless the pair establishes it. Never "
+        "create a generic wrapper entity such as `Falsifiable thesis`, `Hypothesis`, `Claim`, "
+        "`Proposal`, `Explanation`, or `Research run`; that framing belongs in the Think body, "
+        "not in the subject graph.\n"
         "CANONICAL SUBJECT DIRECTORY:\n"
         "canonical_subject_directory is the complete compact write-time directory of current "
         "ThinkGraph and KnowGraph subjects. Use model reasoning to reuse an exact supplied "

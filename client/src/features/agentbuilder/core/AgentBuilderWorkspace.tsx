@@ -140,8 +140,11 @@ export default function AgentBuilderWorkspace({
                 style={{
                   position: 'absolute',
                   top: 0,
-                  right: 0,
                   bottom: 0,
+                  // Stay physically adjacent to Main until the surface-specific
+                  // collision edge is reached. After that, hold the companion
+                  // at that edge while Main covers only its underplane.
+                  left: -companionOverlayWidth,
                   width: companionViewportWidth,
                   minWidth: companionContentMinWidth,
                 }}

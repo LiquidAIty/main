@@ -6569,9 +6569,20 @@ def test_atomic_research_assignment_does_not_refetch_hydrated_think() -> None:
     assert "already hydrated in actualGraphData" in assignment
     assert "Do not call\nengraphis_get_memory" in assignment
     assert "unless the supplied data explicitly reports a freshness mismatch" in assignment
+    assert "Think memory ID is correlation metadata for RESULT_SCHEMA only" in assignment
+    assert "Never place a Think\nmemory ID, assessment ID, Run ID, Card ID" in assignment
+    assert "Research and write only the named real-world subjects" in assignment
     assert "Preserve your semantic supported or" in assignment
     assert "Never invent an episode UUID" in assignment
     assert "source_description to one JSON array" in assignment
+    assert "complete canonical_subject_directory" in assignment
+    assert "exact existing canonicalName values" in assignment
+    assert "custom_extraction_instructions" in assignment
+    assert "titles as provenance/source material" in assignment
+    assert "Do not concatenate a named" in assignment
+    assert "one URL source of truth" in assignment
+    assert "copy each URL\nbyte-for-byte" in assignment
+    assert "correct RESULT_SCHEMA from the exact\nsource_description strings" in assignment
 
 
 def test_atomic_research_write_event_read_is_exact_run_and_card_scoped(

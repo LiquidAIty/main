@@ -48,7 +48,6 @@ const GATEWAY_READY_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
 const LIQUIDAITY_SESSION_TITLE_PREFIX = 'Bot Chat:';
-const CARD_TERMINAL_CONVERSATION_ID = 'card-terminal';
 const AUTH_MAX_FUTURE_SECONDS = 10 * 60;
 const PRIOR_SESSION_LIMIT = 8;
 const CARD_TOOL_NONCE_LIMIT = 512;
@@ -61,7 +60,7 @@ export type AgentTerminalOwner = {
   projectId: string;
   deckId: string;
   cardId: string;
-  /** Exact bounded conversation. Presentation-only terminals use card-terminal. */
+  /** Current turn/presentation scope. It does not create another native Card session. */
   conversationId?: string;
 };
 export type HermesBotRosterProjection = {
@@ -377,7 +376,6 @@ function ownerKey(owner: AgentTerminalOwner): string {
     owner.projectId,
     owner.deckId,
     owner.cardId,
-    String(owner.conversationId || CARD_TERMINAL_CONVERSATION_ID).trim(),
   ]);
 }
 
@@ -388,7 +386,8 @@ function sameOwner(left: AgentTerminalOwner, right: AgentTerminalOwner): boolean
 /**
  * Hermes owns the durable session mapping. The opaque title is only a lookup
  * key inside the selected stable profile; it contains the complete application
- * scope without leaking user, Project, Card, or conversation names.
+ * Project/Card scope without leaking user, Project, or Card names. Conversation
+ * identity remains per-turn transport/persistence and never forks native memory.
  */
 export function agentTerminalNativeSessionTitle(owner: AgentTerminalOwner): string {
   const scope = [
@@ -396,7 +395,6 @@ export function agentTerminalNativeSessionTitle(owner: AgentTerminalOwner): stri
     String(owner.projectId || '').trim(),
     String(owner.deckId || '').trim(),
     String(owner.cardId || '').trim(),
-    String(owner.conversationId || CARD_TERMINAL_CONVERSATION_ID).trim(),
   ];
   if (scope.some((value) => !value)) throw new Error('agent_terminal_session_scope_incomplete');
   const digest = createHash('sha256').update(JSON.stringify(scope), 'utf8').digest('hex');
@@ -1500,7 +1498,7 @@ export class AgentTerminalManager {
     return session ? { ...session.state } : null;
   }
 
-  findCard(projectId: string, deckId: string, cardId: string, conversationId?: string): {
+  findCard(projectId: string, deckId: string, cardId: string): {
     owner: AgentTerminalOwner;
     state: AgentTerminalState;
   } | null {
@@ -1508,8 +1506,6 @@ export class AgentTerminalManager {
       candidate.owner.projectId === projectId
       && candidate.owner.deckId === deckId
       && candidate.owner.cardId === cardId
-      && (conversationId === undefined
-        || String(candidate.owner.conversationId || CARD_TERMINAL_CONVERSATION_ID) === conversationId)
       && candidate.state.status === 'running'
     ));
     if (matches.length > 1) throw new Error('agent_terminal_card_runtime_ambiguous');
@@ -2641,39 +2637,12 @@ export class AgentTerminalManager {
     for (const session of this.sessions.values()) {
       if (session.state.status !== 'running') continue;
       const target = wantedOwners.get(ownerKey(session.owner));
-      const conversationId = String(
-        session.owner.conversationId || CARD_TERMINAL_CONVERSATION_ID,
-      ).trim();
-      if (!target && conversationId !== CARD_TERMINAL_CONVERSATION_ID) {
-        const sameDeckTarget = desired.find((candidate) => (
-          candidate.owner.projectId === session.owner.projectId
-          && candidate.owner.deckId === session.owner.deckId
-          && candidate.owner.cardId === session.owner.cardId
-        ));
-        const sameProfileTarget = desired.find((candidate) => (
-          candidate.card.runtime.kind === 'hermes'
-          && candidate.card.runtime.profile.toLowerCase() === session.state.profile.toLowerCase()
-        ));
-        const authorityTarget = sameDeckTarget ?? sameProfileTarget;
-        if (authorityTarget) {
-          const authorityProfile = requireAgentTerminalCard(
-            authorityTarget.card, authorityTarget.deck,
-          );
-          if (
-            authorityProfile.toLowerCase() !== session.state.profile.toLowerCase()
-            || authorityTarget.card.id !== session.owner.cardId
-            || agentTerminalProfileCardFingerprint(authorityTarget.card)
-              !== session.profileCardFingerprint
-          ) this.stopSession(session);
-          continue;
-        }
-        const reconcilesOwningDeck = desired.some((candidate) => (
-          candidate.owner.projectId === session.owner.projectId
-          && candidate.owner.deckId === session.owner.deckId
-        ));
-        if (reconcilesOwningDeck) this.stopSession(session);
-        // Another Project/deck's reconciliation is not authority to interrupt
-        // this conversation-bound session.
+      if (!target && !desired.some((candidate) => (
+        candidate.owner.projectId === session.owner.projectId
+        && candidate.owner.deckId === session.owner.deckId
+      ))) {
+        // Reconciliation is scoped to the Projects/decks present in `desired`.
+        // Another Project cannot retire this Project/Card session.
         continue;
       }
       const targetProfile = target ? requireAgentTerminalCard(target.card, target.deck) : null;

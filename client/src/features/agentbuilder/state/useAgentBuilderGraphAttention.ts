@@ -217,14 +217,29 @@ export function knowGraphProjection(payload: Record<string, any>, projectId: str
       || typeof edge.type !== 'string' || !edge.type)) {
     throw new Error('invalid_knowgraph_projection');
   }
-  return applyKnowGraphJevPhysics(projection(
+  // Episodes are provenance containers, not peer subjects. They remain native
+  // KnowGraph records for contextual reads/inspectors but do not occupy the
+  // top-level entity canvas or participate in exact-name Joined matching.
+  const subjectNodes = payload.nodes.filter((node: any) => (
+    String(node.type || '').toLocaleLowerCase('en-US') !== 'episodic'
+  ));
+  const provenanceNodes = payload.nodes.filter((node: any) => (
+    String(node.type || '').toLocaleLowerCase('en-US') === 'episodic'
+  ));
+  const subjectIds = new Set(subjectNodes.map((node: any) => node.id));
+  return applyKnowGraphJevPhysics({
+    ...projection(
     'knowgraph',
     projectId,
-    payload.nodes,
-    payload.relationships.map((edge: any) => ({
+    subjectNodes,
+    payload.relationships.filter((edge: any) => (
+      subjectIds.has(edge.from) && subjectIds.has(edge.to)
+    )).map((edge: any) => ({
       ...edge, source: edge.from, target: edge.to, predicate: edge.type,
     })),
-  ));
+    ),
+    provenanceNodes,
+  });
 }
 
 function exactThinkGraphProjection(

@@ -865,6 +865,24 @@ describe('attention-activated native graph projection', () => {
     expect(refreshed.nodes.find((node) => node.id === 'b')?.semantic_mass).toBeCloseTo(1.4);
   });
 
+  it('keeps Episodic provenance out of the subject canvas and Joined matching', () => {
+    const projected = knowGraphProjection({
+      nodes: [
+        { id: 'rocket-lab', label: 'Rocket Lab', type: 'Entity', properties: {} },
+        { id: 'redwire', label: 'Redwire', type: 'Entity', properties: {} },
+        { id: 'filing', label: 'Rocket Lab Form 10-Q', type: 'Episodic', properties: {} },
+      ],
+      relationships: [
+        { id: 'filing-mentions-rocket-lab', from: 'filing', to: 'rocket-lab', type: 'MENTIONS', properties: {} },
+        { id: 'rocket-lab-redwire', from: 'rocket-lab', to: 'redwire', type: 'ASSOCIATED_WITH', properties: {} },
+      ],
+    }, 'project-1');
+
+    expect(projected.nodes.map((node) => node.id)).toEqual(['rocket-lab', 'redwire']);
+    expect(projected.edges.map((edge) => edge.id)).toEqual(['rocket-lab-redwire']);
+    expect(projected.provenanceNodes?.map((node) => node.id)).toEqual(['filing']);
+  });
+
   it('refreshes exactly once for a project revision produced by another conversation', async () => {
     let response = thinkgraphResponse();
     const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')

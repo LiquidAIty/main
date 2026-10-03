@@ -2182,6 +2182,48 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=text)]
 
 
+def _model_visible_atomic_research_result(text: str) -> str:
+    """Keep code-owned launch receipts out of Main's model-visible tool result."""
+
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError):
+        payload = None
+    state = str(payload.get("state") or "").strip() if isinstance(payload, dict) else ""
+    rejoined = payload.get("rejoined") if isinstance(payload, dict) else None
+    run_id = payload.get("runId") if isinstance(payload, dict) else None
+    valid_launch = (
+        isinstance(payload, dict)
+        and payload.get("ok") is True
+        and isinstance(run_id, str)
+        and bool(run_id.strip())
+        and isinstance(rejoined, bool)
+        and state in {"running", "completed"}
+        and (state != "completed" or rejoined is True)
+    )
+    if valid_launch:
+        already_complete = state == "completed"
+        return json.dumps({
+            "ok": True,
+            "status": "already_complete" if already_complete else "started",
+            "message": (
+                "The bounded research is already complete; its cited result is delivered "
+                "separately after native persistence."
+                if already_complete
+                else "Bounded research started. Continue naturally or wait for the cited "
+                "result, which is delivered separately after native persistence."
+            ),
+        })
+    return json.dumps({
+        "ok": False,
+        "status": "unavailable",
+        "message": (
+            "Bounded research could not be started. Technical failure details are available "
+            "only in Runtime."
+        ),
+    })
+
+
 def _grounded_data_anchors_schema() -> dict[str, Any]:
     """One optional public native-reference list shared by review and execution."""
 
@@ -2398,7 +2440,9 @@ def _application_tools() -> list[Tool]:
             description=(
                 "Main only: start one bounded saved KnowGraph research Run for one or two "
                 "exact atomic Think memory IDs offered by the current Jev assessment. "
-                "Accepts no query, topic, source list, Card identity, or runtime override."
+                "Accepts no query, topic, source list, Card identity, or runtime override. "
+                "The model receives only a natural launch or availability status; technical "
+                "Run, claim, session, and receipt identities remain in the Runtime ledger."
             ),
             inputSchema={
                 "type": "object",
@@ -3267,18 +3311,29 @@ async def _dispatch_tool(
             },
         )
     if name == "research_atomic_thinks":
-        return await _bridge(
-            "atomic_research",
-            {
-                "projectId": str(args.get("projectId") or ""),
-                "deckId": str(args.get("deckId") or ""),
-                "conversationId": str(args.get("conversationId") or ""),
-                "sourceRunId": str(args.get("parentRunId") or ""),
-                "mainCardId": caller_card_id,
-                "thinkMemoryIds": args.get("thinkMemoryIds"),
-                "reason": str(args.get("reason") or ""),
-            },
-        )
+        try:
+            receipt_text = await asyncio.to_thread(
+                _bridge_sync,
+                "atomic_research",
+                {
+                    "projectId": str(args.get("projectId") or ""),
+                    "deckId": str(args.get("deckId") or ""),
+                    "conversationId": str(args.get("conversationId") or ""),
+                    "sourceRunId": str(args.get("parentRunId") or ""),
+                    "mainCardId": caller_card_id,
+                    "thinkMemoryIds": args.get("thinkMemoryIds"),
+                    "reason": str(args.get("reason") or ""),
+                },
+            )
+        except Exception as error:
+            active_receipt = _ACTIVE_EXECUTION_RECEIPT.get()
+            if isinstance(active_receipt, dict):
+                active_receipt["controlPlaneFailureCode"] = _sanitize_failure_detail(error)
+            receipt_text = ""
+        return [TextContent(
+            type="text",
+            text=_model_visible_atomic_research_result(receipt_text),
+        )]
     if name == "main.context":
         if context is None:
             return [
@@ -3521,7 +3576,29 @@ def _attach_execution_receipt(
     result: Any,
     receipt: dict[str, Any],
     native_attention: dict[str, Any] | None = None,
+    *,
+    model_visible: bool = True,
 ) -> Any:
+    if not model_visible:
+        metadata = {
+            "executionReceipt": receipt,
+            **(
+                {"nativeAttention": native_attention}
+                if native_attention is not None else {}
+            ),
+        }
+        if isinstance(result, CallToolResult):
+            payload = result.model_dump(exclude_none=True)
+            payload["_meta"] = {**(result.meta or {}), **metadata}
+            return CallToolResult.model_validate(payload)
+        content = result if isinstance(result, list) else [
+            TextContent(type="text", text=str(result)),
+        ]
+        return CallToolResult.model_validate({
+            "content": content,
+            "_meta": metadata,
+        })
+
     block = TextContent(
         type="text",
         text=json.dumps({"executionReceipt": receipt}, ensure_ascii=False),
@@ -3635,7 +3712,12 @@ async def _execute_tool_request(
         )
         if result_category == "tool_error" and isinstance(result, list):
             result = CallToolResult(content=result, isError=True)
-        return _attach_execution_receipt(result, receipt, native_attention)
+        return _attach_execution_receipt(
+            result,
+            receipt,
+            native_attention,
+            model_visible=tool_name != "research_atomic_thinks",
+        )
     except Exception as error:
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed"
@@ -3671,7 +3753,11 @@ async def _execute_tool_request(
             ],
             isError=True,
         )
-        return _attach_execution_receipt(result, receipt)
+        return _attach_execution_receipt(
+            result,
+            receipt,
+            model_visible=tool_name != "research_atomic_thinks",
+        )
     finally:
         _ACTIVE_EXECUTION_RECEIPT.reset(receipt_token)
         _ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)

@@ -1623,7 +1623,9 @@ describe('native authority graph surfaces', () => {
       nodes: [
         { id: 'company', label: 'Rocket Lab', mentionCount: 1, properties: { summary: 'Launch provider.' } },
         { id: 'mission', label: 'CAPSTONE', mentionCount: 1 },
-        { id: 'article', label: 'NASA launch report', type: 'Episodic', mentionCount: 1, properties: { content: JSON.stringify({ source_url: 'https://www.nasa.gov/mission', publisher: 'NASA', summary: 'The launch report.' }) } },
+      ],
+      provenanceNodes: [
+        { id: 'article', label: 'NASA launch report', type: 'Episodic', mentionCount: 1, properties: { content: JSON.stringify({ source_description: '["https://www.nasa.gov/mission"]', publisher: 'NASA', summary: 'The launch report.' }) } },
         { id: 'unrelated', label: 'Unrelated source', type: 'Episodic', mentionCount: 1, properties: { source_url: 'https://example.org/unrelated' } },
       ],
       edges: [{ id: 'launch', source: 'company', target: 'mission', predicate: 'PROVIDES', mentionCount: 1, properties: {
@@ -1647,8 +1649,6 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByTestId('portable-know').textContent).toContain('PROVIDES');
     expect(screen.getByText('Jev relationship probabilities')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'NASA' })).toBeTruthy();
-    act(() => graph.nodeClick(graph.data.nodes[2]));
-    expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The launch report.');
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)('opens a compact movable %s inspector and preserves graph settings without exposing record plumbing', async authority => {

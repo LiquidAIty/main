@@ -2378,6 +2378,205 @@ def test_mag_one_tools_use_direct_transient_input_contract():
     }
 
 
+@pytest.mark.parametrize(
+    ("backend_result", "expected_status", "expected_ok"),
+    [
+        (
+            {
+                "ok": True,
+                "runId": "atomic-research:started-secret",
+                "state": "running",
+                "rejoined": False,
+                "correlationId": "correlation-secret",
+                "conversationId": "conversation-secret",
+                "messageId": "message-secret",
+                "claimId": "claim-secret",
+                "idempotencyKey": "idempotency-secret",
+                "sessionId": "session-secret",
+                "executionReceipt": {"failureCode": "backend-secret"},
+            },
+            "started",
+            True,
+        ),
+        (
+            {
+                "ok": True,
+                "runId": "atomic-research:rejoined-secret",
+                "state": "running",
+                "rejoined": True,
+                "receipt": {"correlationId": "rejoined-correlation-secret"},
+            },
+            "started",
+            True,
+        ),
+        (
+            {
+                "ok": True,
+                "runId": "atomic-research:complete-secret",
+                "state": "completed",
+                "rejoined": True,
+                "providerMessageId": "provider-message-secret",
+                "hermesSessionId": "hermes-session-secret",
+            },
+            "already_complete",
+            True,
+        ),
+        (
+            {
+                "ok": False,
+                "error": "backend_http_409",
+                "runId": "failed-run-secret",
+                "receipt": {"correlationId": "failed-correlation-secret"},
+            },
+            "unavailable",
+            False,
+        ),
+        (
+            {
+                "ok": True,
+                "runId": "terminal-run-secret",
+                "state": "failed",
+                "rejoined": True,
+                "errorCode": "atomic_research_failed",
+            },
+            "unavailable",
+            False,
+        ),
+        ({"ok": True, "state": "running", "rejoined": False}, "unavailable", False),
+        ([{"ok": True}], "unavailable", False),
+        ("not-json", "unavailable", False),
+    ],
+)
+def test_atomic_research_model_result_is_only_a_natural_status(
+    backend_result, expected_status, expected_ok,
+):
+    import mcp_host
+
+    text = backend_result if isinstance(backend_result, str) else json.dumps(backend_result)
+    visible = mcp_host._model_visible_atomic_research_result(text)
+    parsed = json.loads(visible)
+
+    assert parsed == {
+        "ok": expected_ok,
+        "status": expected_status,
+        "message": parsed["message"],
+    }
+    assert "cited result" in parsed["message"].lower() or expected_status == "unavailable"
+    lowered = visible.lower()
+    for forbidden in (
+        "runid", "correlationid", "conversationid", "messageid", "claimid",
+        "idempotency", "sessionid", "receipt", "backend_http_409",
+        "atomic_research_failed", "-secret",
+    ):
+        assert forbidden not in lowered
+
+
+def test_atomic_research_dispatch_keeps_receipt_in_runtime_metadata_only(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    captured = {}
+
+    def bridge(path, payload):
+        captured.update({"path": path, "payload": payload})
+        return json.dumps({
+            "ok": True,
+            "runId": "atomic-research:runtime-only",
+            "state": "running",
+            "rejoined": False,
+            "correlationId": "control-plane-correlation",
+            "conversationId": "control-plane-conversation",
+            "messageId": "control-plane-message",
+            "claimId": "control-plane-claim",
+            "idempotencyKey": "control-plane-idempotency",
+            "sessionId": "control-plane-session",
+            "receipt": {"failureCode": None},
+        })
+
+    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "main-run-1",
+        "mainCardId": "card_main_chat",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "main",
+    }
+    result = asyncio.run(mcp_host._execute_tool_request(
+        "research_atomic_thinks",
+        {"thinkMemoryIds": ["think-one"], "reason": "Resolve one factual gap."},
+        authenticated_context=context,
+        granted_tools={"research_atomic_thinks"},
+        transport="hermes-plugin",
+    ))
+
+    assert captured == {
+        "path": "atomic_research",
+        "payload": {
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "conversationId": "conversation-1",
+            "sourceRunId": "main-run-1",
+            "mainCardId": "card_main_chat",
+            "thinkMemoryIds": ["think-one"],
+            "reason": "Resolve one factual gap.",
+        },
+    }
+    assert isinstance(result, mcp_host.CallToolResult)
+    assert json.loads(result.content[0].text)["status"] == "started"
+    assert len(result.content) == 1
+    visible = mcp_host._card_tool_output(result)
+    assert json.loads(visible)["status"] == "started"
+    assert "executionReceipt" not in visible
+    assert "control-plane" not in visible
+    assert result.meta["executionReceipt"]["tool"] == "research_atomic_thinks"
+    assert result.meta["executionReceipt"]["state"] == "completed"
+
+
+def test_atomic_research_bridge_failure_is_natural_and_runtime_diagnostic_only(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    def bridge(_path, _payload):
+        raise RuntimeError("backend_http_503:session-secret")
+
+    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
+    context = {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "main-run-1",
+        "mainCardId": "card_main_chat",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "main",
+    }
+    result = asyncio.run(mcp_host._execute_tool_request(
+        "research_atomic_thinks",
+        {"thinkMemoryIds": ["think-one"]},
+        authenticated_context=context,
+        granted_tools={"research_atomic_thinks"},
+        transport="hermes-plugin",
+    ))
+
+    visible = mcp_host._card_tool_output(result)
+    assert json.loads(visible) == {
+        "ok": False,
+        "status": "unavailable",
+        "message": (
+            "Bounded research could not be started. Technical failure details are available "
+            "only in Runtime."
+        ),
+    }
+    assert "backend_http_503" not in visible
+    assert "session-secret" not in visible
+    assert result.isError is True
+    assert result.meta["executionReceipt"]["state"] == "failed"
+    assert result.meta["executionReceipt"]["controlPlaneFailureCode"] == (
+        "backend_http_503:session-secret"
+    )
+
+
 
 
 

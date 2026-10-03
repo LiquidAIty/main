@@ -4,9 +4,11 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 const CHAT_MIN_WIDTH = 280;
 const SPLITTER_WIDTH = 10;
 const DEFAULT_CHAT_WIDTH = 420;
-// The Canvas switches from adjacent resize to under-Main overlap only when its
-// complete graph-tab strip reaches the right wall (through CodeGraph).
-export const CANVAS_COLLISION_WIDTH = 520;
+// The existing 12px knowledge-tab row (10px left inset, five labels with 12px
+// horizontal padding, 1px borders, and 6px gaps) ends at 400.84375px in the
+// product font stack. Keep the full CodeGraph control visible in integer CSS
+// pixels, then let Main overlap the graph underplane beyond that boundary.
+export const KNOWLEDGE_TAB_STRIP_SAFE_WIDTH = 401;
 export const CANVAS_INSPECTOR_WIDTH = 344;
 
 export const COMPANION_MIN_WIDTHS = Object.freeze({
@@ -21,6 +23,15 @@ export function companionMinimumWidth(workspaceView: string): number {
   return COMPANION_MIN_WIDTHS[
     workspaceView as keyof typeof COMPANION_MIN_WIDTHS
   ] ?? COMPANION_MIN_WIDTHS.knowledge;
+}
+
+export function workspaceCollisionWidth(
+  workspaceView: string,
+  companionMinWidth: number,
+): number {
+  return workspaceView === 'knowledge'
+    ? KNOWLEDGE_TAB_STRIP_SAFE_WIDTH
+    : companionMinWidth;
 }
 
 export function resolveHybridWorkspaceGeometry({
@@ -80,7 +91,7 @@ export function shouldCloseCanvasInspector({
 }): boolean {
   return workspaceView === 'canvas'
     && inspectorOpen
-    && companionVisibleWidth <= Math.max(0, inspectorWidth) + CANVAS_COLLISION_WIDTH;
+    && companionVisibleWidth <= Math.max(0, inspectorWidth) + COMPANION_MIN_WIDTHS.canvas;
 }
 
 type UseAgentBuilderWorkspaceLayoutArgs<T extends string> = {
@@ -273,9 +284,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
       workspaceWidth,
       mainWidth: chatPanelWidth,
       companionMinWidth,
-      collisionWidth: workspaceView === 'canvas'
-        ? CANVAS_COLLISION_WIDTH
-        : companionMinWidth,
+      collisionWidth: workspaceCollisionWidth(workspaceView, companionMinWidth),
     }),
     [chatPanelWidth, companionMinWidth, workspaceView, workspaceWidth],
   );

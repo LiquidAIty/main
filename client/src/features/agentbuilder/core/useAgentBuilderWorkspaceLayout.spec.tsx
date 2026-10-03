@@ -4,10 +4,11 @@ import { act, renderHook } from '@testing-library/react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import useAgentBuilderWorkspaceLayout, {
-  CANVAS_COLLISION_WIDTH,
+  KNOWLEDGE_TAB_STRIP_SAFE_WIDTH,
   companionMinimumWidth,
   resolveHybridWorkspaceGeometry,
   shouldCloseCanvasInspector,
+  workspaceCollisionWidth,
 } from './useAgentBuilderWorkspaceLayout';
 
 function attachShell(
@@ -70,37 +71,48 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
     });
   });
 
-  it('keeps Canvas side-by-side while room remains and overlaps only at the extreme floor', () => {
+  it('keeps the graph adjacent through the CodeGraph edge and overlaps immediately after it', () => {
     expect(resolveHybridWorkspaceGeometry({
       workspaceWidth: 1000,
-      mainWidth: 600,
+      mainWidth: 588,
       companionMinWidth: 520,
-      collisionWidth: CANVAS_COLLISION_WIDTH,
+      collisionWidth: KNOWLEDGE_TAB_STRIP_SAFE_WIDTH,
     })).toEqual({
-      companionVisibleWidth: 390,
+      companionVisibleWidth: 402,
       companionViewportWidth: 520,
       companionOverlayWidth: 0,
       companionContentMinWidth: 520,
     });
     expect(resolveHybridWorkspaceGeometry({
       workspaceWidth: 1000,
-      mainWidth: 940,
+      mainWidth: 589,
       companionMinWidth: 520,
-      collisionWidth: CANVAS_COLLISION_WIDTH,
+      collisionWidth: KNOWLEDGE_TAB_STRIP_SAFE_WIDTH,
     })).toEqual({
-      companionVisibleWidth: 50,
+      companionVisibleWidth: 401,
       companionViewportWidth: 520,
-      companionOverlayWidth: 46,
+      companionOverlayWidth: 0,
+      companionContentMinWidth: 520,
+    });
+    expect(resolveHybridWorkspaceGeometry({
+      workspaceWidth: 1000,
+      mainWidth: 590,
+      companionMinWidth: 520,
+      collisionWidth: KNOWLEDGE_TAB_STRIP_SAFE_WIDTH,
+    })).toEqual({
+      companionVisibleWidth: 400,
+      companionViewportWidth: 520,
+      companionOverlayWidth: 1,
       companionContentMinWidth: 520,
     });
   });
 
   it('closes the open Canvas inspector before the chat reaches the overlap threshold', () => {
     expect(shouldCloseCanvasInspector({
-      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 441,
+      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 865,
     })).toBe(false);
     expect(shouldCloseCanvasInspector({
-      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 440,
+      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 864,
     })).toBe(true);
     expect(shouldCloseCanvasInspector({
       workspaceView: 'worldview', inspectorOpen: true, companionVisibleWidth: 0,
@@ -113,6 +125,13 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
     expect(companionMinimumWidth('trading')).toBe(520);
     expect(companionMinimumWidth('worldsignal')).toBe(360);
     expect(companionMinimumWidth('worldview')).toBe(720);
+  });
+
+  it('applies the tab-strip threshold only to the knowledge graph workspace', () => {
+    expect(workspaceCollisionWidth('knowledge', 520)).toBe(401);
+    expect(workspaceCollisionWidth('canvas', 520)).toBe(520);
+    expect(workspaceCollisionWidth('worldsignal', 360)).toBe(360);
+    expect(workspaceCollisionWidth('worldview', 720)).toBe(720);
   });
 
   it('tracks exact continuous drag widths without switching workspace or snapping', () => {
@@ -131,7 +150,7 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
     expect(result.current.chatPanelWidth).toBe(600);
     expect(result.current.companionVisibleWidth).toBe(390);
     expect(result.current.companionViewportWidth).toBe(520);
-    expect(result.current.companionOverlayWidth).toBe(0);
+    expect(result.current.companionOverlayWidth).toBe(130);
     expect(result.current.companionContentMinWidth).toBe(520);
   });
 

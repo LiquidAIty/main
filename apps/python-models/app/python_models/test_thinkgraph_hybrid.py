@@ -453,12 +453,15 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
 
 
 def test_native_llm_structured_relation_uses_dynamic_predicate_guidance():
-    schema, _prompt = adapter._llm_structured_contract("pair", {})
+    schema, prompt = adapter._llm_structured_contract("pair", {})
     relation = schema["$defs"]["ThinkGraphStructuredRelation"]["properties"]["relation"]
     assert relation["type"] == "string"
     assert "enum" not in relation
     assert "current_project_relationship_vocabulary" in relation["description"]
     assert "never exceed three words" in relation["description"]
+    assert "nearest concrete reusable subject" in prompt
+    assert "Never create a generic wrapper entity" in prompt
+    assert "that framing belongs in the Think body" in prompt
     assert adapter.ThinkGraphStructuredRelation(
         source="Jev",
         relation=FREEFORM_RELATION,

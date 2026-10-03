@@ -117,22 +117,18 @@ const agentTerminalMocks = vi.hoisted(() => {
       : cardId === 'card_knowgraph' ? 'knowgraph'
       : cardId === 'card_hermes_steward' ? 'liquidaity-hermes-steward' : 'delegate';
   const stateFor = (owner: any) => {
-    const conversationId = String(owner.conversationId || 'card-terminal');
-    const conversationSuffix = ['main', 'card-terminal'].includes(conversationId)
-      ? ''
-      : `:${conversationId}`;
     return ({
-    sessionId: `terminal:${owner.cardId}${conversationSuffix}`,
+    sessionId: `terminal:${owner.cardId}`,
     cardId: owner.cardId,
     profile: profileFor(owner.cardId),
     pid: 9000,
     gatewayPid: 9000,
     tuiPid: 9001,
     ptyId: `pty:${owner.cardId}`,
-    nativeSessionId: `native:${profileFor(owner.cardId)}${conversationSuffix}`,
-    storedSessionId: `native:${profileFor(owner.cardId)}${conversationSuffix}`,
+    nativeSessionId: `native:${profileFor(owner.cardId)}`,
+    storedSessionId: `native:${profileFor(owner.cardId)}`,
     completedTurnGeneration: completedTurnGenerations.get(
-      `terminal:${owner.cardId}${conversationSuffix}`,
+      `terminal:${owner.cardId}`,
     ) || 0,
     completedNativeRunId: null,
     hermesHome: `C:\\profiles\\${profileFor(owner.cardId)}`,
@@ -143,6 +139,7 @@ const agentTerminalMocks = vi.hoisted(() => {
   });
   };
   const find = vi.fn((owner: any): ReturnType<typeof stateFor> | null => stateFor(owner));
+  const state = vi.fn((owner: any) => stateFor(owner));
   const open = vi.fn(async (owner: any) => stateFor(owner));
   const magenticCardToolAuthority = vi.fn((owner: any) => ({
     cardId: owner.cardId,
@@ -151,9 +148,9 @@ const agentTerminalMocks = vi.hoisted(() => {
     configurationFingerprint: 'a'.repeat(64),
   }));
   const findCard = vi.fn((
-    projectId: string, deckId: string, cardId: string, conversationId?: string,
+    projectId: string, deckId: string, cardId: string,
   ): { owner: any; state: ReturnType<typeof stateFor> } | null => {
-    const owner = { userId: 'owner-user', projectId, deckId, cardId, ...(conversationId ? { conversationId } : {}) };
+    const owner = { userId: 'owner-user', projectId, deckId, cardId };
     return { owner, state: stateFor(owner) };
   });
   const history = vi.fn(async () => ({ count: 0, messages: [] as Array<Record<string, unknown>> }));
@@ -382,7 +379,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     staged, completed, cancelled, gatewayListeners, emitGatewayEvent,
     profileFor, stateFor, complete, finishSubmitted,
     manager: {
-      find, findCard, open, history, verifyConfiguration, submit, interrupt,
+      find, findCard, state, open, history, verifyConfiguration, submit, interrupt,
       dispatchLearn, requestProfile, subscribeGatewayEvents, magenticCardToolAuthority,
       queueNativeContextCompaction,
       startVoiceCapture, stopVoiceCapture,
@@ -1168,8 +1165,8 @@ describe('saved Card routes', () => {
       const payload = await response.json();
       expect(payload).toMatchObject({
         ok: true,
-        sessionId: 'native:default:other',
-        runtimeSessionId: 'terminal:card_main_chat:other',
+        sessionId: 'native:default',
+        runtimeSessionId: 'terminal:card_main_chat',
         mainCardId: 'card_main_chat',
         messages: [],
         terminalEvents: [],
@@ -1184,7 +1181,7 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('resolves Main history A to B to A without crossing conversation sessions', async () => {
+  it('resolves Main history A to B to A through one Project/Card native session', async () => {
     agentTerminalMocks.manager.findCard.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
@@ -1198,17 +1195,13 @@ describe('saved Card routes', () => {
         runtimeIds.push(payload.runtimeSessionId);
       }
       expect(runtimeIds).toEqual([
-        'terminal:card_main_chat:conversation-a',
-        'terminal:card_main_chat:conversation-b',
-        'terminal:card_main_chat:conversation-a',
+        'terminal:card_main_chat',
+        'terminal:card_main_chat',
+        'terminal:card_main_chat',
       ]);
-      const selectedConversations = agentTerminalMocks.manager.findCard.mock.calls
+      expect(agentTerminalMocks.manager.findCard.mock.calls
         .filter((call: unknown[]) => call[2] === 'card_main_chat')
-        .map((call: unknown[]) => call[3]);
-      expect(selectedConversations).toEqual(expect.arrayContaining([
-        'conversation-a', 'conversation-b',
-      ]));
-      expect(selectedConversations.at(-1)).toBe('conversation-a');
+        .every((call: unknown[]) => call.length === 3)).toBe(true);
     } finally { await closeServer(server); }
   });
 
@@ -1478,7 +1471,7 @@ describe('saved Card routes', () => {
       expect(agentTerminalMocks.manager.startVoiceCapture).toHaveBeenCalledWith(
         expect.objectContaining({
           projectId: 'project-1', deckId: 'deck_builder',
-          cardId: 'card_test_delegate', conversationId: 'main',
+          cardId: 'card_test_delegate',
         }),
         'terminal:card_test_delegate',
         { tts: true },
@@ -2680,6 +2673,70 @@ describe('saved Card routes', () => {
           },
         },
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('reuses one Project/Card session and queues one metadata-only compaction after each delegate Run', async () => {
+    agentTerminalMocks.manager.submit.mockClear();
+    agentTerminalMocks.manager.queueNativeContextCompaction.mockClear();
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    const invoke = (conversationId: string, correlationId: string) => fetch(`${baseUrl}/cards/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_test_delegate',
+        senderCardId: 'card_main_chat', correlationId, conversationId,
+        input: `Inspect ${conversationId}.`, action: 'execute',
+        cardRevisionId: 'revision:card_test_delegate',
+      }),
+    });
+    try {
+      await expect(invoke('delegate-a', 'delegate-project-run-a')).resolves.toMatchObject({ status: 200 });
+      await expect(invoke('delegate-b', 'delegate-project-run-b')).resolves.toMatchObject({ status: 200 });
+
+      expect(agentTerminalMocks.manager.submit.mock.calls.map(([, sessionId]) => sessionId))
+        .toEqual(['terminal:card_test_delegate', 'terminal:card_test_delegate']);
+      expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledTimes(2);
+      const identities = agentTerminalMocks.manager.queueNativeContextCompaction.mock.calls
+        .map(([, identity]) => identity);
+      expect(identities).toEqual([
+        expect.objectContaining({
+          sessionId: 'terminal:card_test_delegate', nativeSessionId: 'native:delegate',
+          storedSessionId: 'native:delegate', profile: 'delegate',
+        }),
+        expect.objectContaining({
+          sessionId: 'terminal:card_test_delegate', nativeSessionId: 'native:delegate',
+          storedSessionId: 'native:delegate', profile: 'delegate',
+        }),
+      ]);
+      expect(identities[1].completedTurnGeneration)
+        .toBe(identities[0].completedTurnGeneration + 1);
+      await vi.waitFor(() => expect(
+        orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/runs/attempt',
+        ),
+      ).toHaveLength(2));
+      const attempts = orchestratorMocks.requestPythonRailsJson.mock.calls
+        .filter(([endpoint]) => endpoint === '/domain/runs/attempt')
+        .map(([, init]) => JSON.parse(String(init?.body)));
+      expect(attempts.map((value) => value.runId)).toEqual([
+        'delegate-project-run-a', 'delegate-project-run-b',
+      ]);
+      for (const value of attempts) {
+        expect(value.attempt).toMatchObject({
+          kind: 'tool', toolName: 'session.compress', status: 'compressed',
+          redaction: 'metadata_only_no_summary', retryable: false,
+        });
+        expect(value.attempt).not.toHaveProperty('summary');
+        expect(value.attempt).not.toHaveProperty('messages');
+        expect(value.attempt).not.toHaveProperty('prompt');
+        expect(value.attempt).not.toHaveProperty('result');
+      }
+      expect(agentTerminalMocks.manager.submit.mock.calls.map(([, , message]) => message)
+        .join('\n')).not.toContain('session.compress');
     } finally {
       await closeServer(server);
     }
@@ -3991,18 +4048,18 @@ describe('saved Card routes', () => {
         expect(body).not.toContain('event: tool_result');
         const sessionFrame = body.split('\n\n').find((frame) => frame.startsWith('event: session'))!;
         const session = JSON.parse(sessionFrame.split('\ndata: ')[1]);
-        expect(session).toMatchObject({ cardId: 'card_main_chat', sessionId: 'native:default:attention',
+        expect(session).toMatchObject({ cardId: 'card_main_chat', sessionId: 'native:default',
           driverSource: 'internal_chat',
           contextAuthorityMode: 'main_native_honcho',
           configuration: { profile: 'default', provider: 'openai', model: 'gpt-5.6-luna' } });
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
           { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'attention' },
-          'terminal:card_main_chat:attention',
+          'terminal:card_main_chat',
           'inspect',
           expect.any(Object),
         );
         expect(agentTerminalMocks.completed.get(session.runId)).toMatchObject({
-          state: 'completed', finalResult: 'Real assistant reply.', hermesSessionId: 'native:default:attention',
+          state: 'completed', finalResult: 'Real assistant reply.', hermesSessionId: 'native:default',
         });
       } finally {
         await closeServer(server);
@@ -4199,7 +4256,7 @@ describe('saved Card routes', () => {
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
           { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'direct-builder' },
-          'terminal:builder:direct-builder',
+          'terminal:builder',
           exactMessage,
           expect.objectContaining({ surface: 'card-shared-chat' }),
         );
@@ -4219,9 +4276,16 @@ describe('saved Card routes', () => {
         }));
         expect(agentTerminalMocks.completed.get(runEvent.runId)).toMatchObject({
           state: 'completed', finalResult: fullReply,
-          hermesSessionId: 'native:builder:direct-builder',
+          hermesSessionId: 'native:builder',
         });
-        expect(agentTerminalMocks.manager.queueNativeContextCompaction).not.toHaveBeenCalled();
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledOnce();
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledWith(
+          expect.objectContaining({ cardId: 'builder', conversationId: 'direct-builder' }),
+          expect.objectContaining({
+            sessionId: 'terminal:builder', nativeSessionId: 'native:builder', profile: 'builder',
+          }),
+          expect.any(Function),
+        );
       } finally {
         await closeServer(server);
       }
@@ -4396,6 +4460,7 @@ describe('saved Card routes', () => {
 
     it('attributes a failed direct Builder turn without invoking Main or recording fake delivery', async () => {
       agentTerminalMocks.manager.submit.mockClear();
+      agentTerminalMocks.manager.queueNativeContextCompaction.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
       agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 2, messages: [
@@ -4403,6 +4468,9 @@ describe('saved Card routes', () => {
         { role: 'assistant', text: 'Existing native answer' },
       ] });
       agentTerminalMocks.manager.submit.mockRejectedValueOnce(new Error('native_builder_unavailable'));
+      agentTerminalMocks.manager.queueNativeContextCompaction.mockRejectedValueOnce(
+        new Error('native_compaction_unavailable'),
+      );
       const { server, baseUrl } = await createApiServer();
       try {
         const exactMessage = '@builder Native failure probe';
@@ -4432,10 +4500,20 @@ describe('saved Card routes', () => {
         )).toHaveLength(0);
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
           { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'direct-builder-failure' },
-          'terminal:builder:direct-builder-failure',
+          'terminal:builder',
           exactMessage,
           expect.any(Object),
         );
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledWith(
+          expect.objectContaining({ cardId: 'builder', conversationId: 'direct-builder-failure' }),
+          expect.objectContaining({
+            sessionId: 'terminal:builder', nativeSessionId: 'native:builder',
+            storedSessionId: 'native:builder', profile: 'builder',
+          }),
+          expect.any(Function),
+        );
+        expect(body).not.toContain('native_compaction_unavailable');
+        expect(body).not.toContain('session.compress');
         expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
       } finally {
         await closeServer(server);
@@ -5015,6 +5093,7 @@ describe('saved Card routes', () => {
           '/domain/runs/request-fulfillment',
           '/thinkgraph/completed-pair/prepare',
           '/domain/runs/begin',
+          '/domain/runs/attempt',
           '/thinkgraph/completed-pair/settle',
         ]);
         const prepareCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
@@ -5027,7 +5106,7 @@ describe('saved Card routes', () => {
           conversationId: 'chat',
           runId: expect.stringMatching(/^req_/),
           cardId: 'card_main_chat',
-          nativeSessionRef: 'native:default:chat',
+          nativeSessionRef: 'native:default',
           completedAt: expect.any(String),
           userMessage: exactMessage,
           mainResponse: 'Real assistant reply.',
@@ -5076,6 +5155,9 @@ describe('saved Card routes', () => {
           'Main does not author or initiate this automatic Think',
         );
         expect(cardBeginBody.assignment).toContain('canonical_subject_directory');
+        expect(cardBeginBody.assignment).toContain('nearest concrete reusable subject');
+        expect(cardBeginBody.assignment).toContain('generic wrapper entity');
+        expect(cardBeginBody.assignment).toContain('belongs in the Think body');
         expect(cardBeginBody.assignment).toContain(
           'with the complete compact cross-graph subject',
         );
@@ -5102,7 +5184,7 @@ describe('saved Card routes', () => {
             cardId: 'card_thinkgraph',
             revisionId: 'revision:card_thinkgraph',
             profile: 'thinkgraph',
-            nativeSessionRef: 'native:thinkgraph:chat',
+            nativeSessionRef: 'native:thinkgraph',
             resolvedModel: 'gpt-5.6-luna',
           },
         });
@@ -5221,7 +5303,9 @@ describe('saved Card routes', () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-LiquidAIty-Internal-MCP-Secret': process.env.LIQUIDAITY_INTERNAL_MCP_SECRET,
+            'X-LiquidAIty-Internal-MCP-Secret': String(
+              process.env.LIQUIDAITY_INTERNAL_MCP_SECRET,
+            ),
           },
           body: JSON.stringify({
             projectId: 'project-1', deckId: 'deck_builder',
@@ -5270,6 +5354,91 @@ describe('saved Card routes', () => {
         );
       } finally {
         releaseValidation();
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        deckMocks.getDeckDocument.mockImplementation(deckImplementation);
+        if (priorSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+        else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = priorSecret;
+        await closeServer(server);
+      }
+    });
+
+    it('queues fail-open compaction on the exact KnowGraph child session after native failure', async () => {
+      const priorSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+      process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'atomic-failure-test-secret-0123456789abcdef';
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      const deckImplementation = deckMocks.getDeckDocument.getMockImplementation()!;
+      const childRunId = 'atomic_research:native-failure';
+      let persistedOutcome: Record<string, unknown> | null = null;
+      deckMocks.getDeckDocument.mockImplementation(async (...args) => (
+        withKnowGraphCard(await deckImplementation(...args))
+      ));
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        const request = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        if (endpoint === '/domain/research/atomic/authorize') {
+          return atomicResearchAuthorization({ correlationId: childRunId, rejoined: false });
+        }
+        const value = await railsImplementation(endpoint, init, options);
+        if (endpoint === '/domain/runs/begin' && request.cardId === 'card_knowgraph') {
+          return preparedKnowGraphRun(value);
+        }
+        if (endpoint === '/domain/research/atomic/outcome') {
+          persistedOutcome = request.outcome;
+          return { ok: true };
+        }
+        return value;
+      });
+      agentTerminalMocks.manager.submit.mockRejectedValueOnce(
+        new Error('knowgraph_native_failure'),
+      );
+      agentTerminalMocks.manager.queueNativeContextCompaction.mockClear();
+      chatSessionMocks.appendSharedConversationReplyOnce.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/research/atomic`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-LiquidAIty-Internal-MCP-Secret': process.env.LIQUIDAITY_INTERNAL_MCP_SECRET,
+          },
+          body: JSON.stringify({
+            projectId: 'project-1', deckId: 'deck_builder',
+            conversationId: 'atomic-failure', sourceRunId: 'main-source-run',
+            mainCardId: 'card_main_chat', thinkMemoryIds: ['think-one'],
+          }),
+        });
+        await expect(response.json()).resolves.toEqual({
+          ok: true, runId: childRunId, state: 'running', rejoined: false,
+        });
+        await vi.waitFor(() => expect(persistedOutcome).toMatchObject({
+          schemaVersion: 'atomic-research-outcome.v1', status: 'failed', childRunId,
+        }));
+        expect(chatSessionMocks.appendSharedConversationReplyOnce).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: expect.objectContaining({
+              content: [
+                'Research result',
+                '',
+                'Source unavailable: KnowGraph could not validate sourced evidence for this question.',
+              ].join('\n'),
+            }),
+          }),
+        );
+        expect(JSON.stringify(
+          chatSessionMocks.appendSharedConversationReplyOnce.mock.calls,
+        )).not.toContain('knowgraph_native_failure');
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledTimes(1);
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledWith(
+          expect.objectContaining({ cardId: 'card_knowgraph', conversationId: 'atomic-failure' }),
+          expect.objectContaining({
+            sessionId: 'terminal:card_knowgraph', nativeSessionId: 'native:knowgraph',
+            storedSessionId: 'native:knowgraph', profile: 'knowgraph',
+          }),
+          expect.any(Function),
+        );
+        expect(JSON.stringify(
+          agentTerminalMocks.manager.submit.mock.calls.at(-1)?.[2],
+        )).not.toContain('session.compress');
+      } finally {
         orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
         deckMocks.getDeckDocument.mockImplementation(deckImplementation);
         if (priorSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
@@ -5567,29 +5736,30 @@ describe('saved Card routes', () => {
         });
         expect(await response.text()).toContain('event: done');
         await waitForCompletedPairThinkGraphLifecycles();
-        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledTimes(1);
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledTimes(2);
         expect(agentTerminalMocks.manager.queueNativeContextCompaction).toHaveBeenCalledWith(
           expect.objectContaining({ cardId: 'card_main_chat' }),
           {
-            sessionId: 'terminal:card_main_chat:shifted-compaction',
-            nativeSessionId: 'native:default:shifted-compaction',
-            storedSessionId: 'native:default:shifted-compaction',
+            sessionId: 'terminal:card_main_chat',
+            nativeSessionId: 'native:default',
+            storedSessionId: 'native:default',
             profile: 'default',
-            completedTurnGeneration: 1,
+            completedTurnGeneration: expect.any(Number),
             completedNativeRunId: null,
           },
           expect.any(Function),
         );
-        const endpoints = orchestratorMocks.requestPythonRailsJson.mock.calls.map(([endpoint]) => endpoint);
+        const calls = orchestratorMocks.requestPythonRailsJson.mock.calls;
+        const endpoints = calls.map(([endpoint]) => endpoint);
+        const mainAttemptIndex = calls.findIndex(([endpoint, init]) => (
+          endpoint === '/domain/runs/attempt'
+          && JSON.parse(String(init?.body)).cardId === 'card_main_chat'
+        ));
         expect(endpoints.indexOf('/thinkgraph/completed-pair/settle')).toBeLessThan(
-          endpoints.indexOf('/domain/runs/attempt'),
+          mainAttemptIndex,
         );
-        expect(endpoints.indexOf('/domain/runs/attempt')).toBeLessThan(
-          endpoints.indexOf('/domain/research/atomic/register'),
-        );
-        const attemptCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
-          ([endpoint]) => endpoint === '/domain/runs/attempt',
-        );
+        expect(mainAttemptIndex).toBeLessThan(endpoints.indexOf('/domain/research/atomic/register'));
+        const attemptCall = calls[mainAttemptIndex];
         expect(JSON.parse(String(attemptCall?.[1]?.body))).toMatchObject({
           cardId: 'card_main_chat',
           attempt: {
@@ -5652,7 +5822,9 @@ describe('saved Card routes', () => {
         });
         expect(await response.text()).toContain('event: done');
         await waitForCompletedPairThinkGraphLifecycles();
-        expect(agentTerminalMocks.manager.queueNativeContextCompaction).not.toHaveBeenCalled();
+        expect(agentTerminalMocks.manager.queueNativeContextCompaction.mock.calls.some(
+          ([owner]) => owner.cardId === 'card_main_chat',
+        )).toBe(false);
       } finally {
         orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
         await closeServer(server);
@@ -5741,7 +5913,7 @@ describe('saved Card routes', () => {
           driverSource: 'external_plugin',
           contextAuthorityMode: 'plugin_context_only',
           finalText: 'Real assistant reply.',
-          nativeSessionId: 'native:default:external-mcp:grant-1',
+          nativeSessionId: 'native:default',
           requestFulfillmentDeferred: true,
         });
         expect(scoreStarted).toBe(true);
@@ -5761,7 +5933,7 @@ describe('saved Card routes', () => {
           expect.objectContaining({
             cardId: 'card_main_chat', conversationId: 'external-mcp:grant-1',
           }),
-          'terminal:card_main_chat:external-mcp:grant-1',
+          'terminal:card_main_chat',
           'hello from the connector',
           expect.any(Object),
         );
@@ -5975,17 +6147,17 @@ describe('saved Card routes', () => {
         expect(stopResponse.status, JSON.stringify(stopped)).toBe(202);
         expect(stopped).toMatchObject({ ok: true, runId: activeRunId, state: 'stopping' });
         expect(agentTerminalMocks.execution.requestCancellation).toHaveBeenCalledWith(
-          'terminal:card_main_chat:stop-main', activeRunId,
+          'terminal:card_main_chat', activeRunId,
         );
         expect(agentTerminalMocks.manager.interrupt).toHaveBeenCalledWith(
-          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'stop-main' },
-          'terminal:card_main_chat:stop-main',
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
+          'terminal:card_main_chat',
         );
         const stream = await chatResponse.text();
         expect(stream).toContain('hermes_turn_cancelled');
         expect(stream).toContain('event: end');
         expect(agentTerminalMocks.execution.cancelStaged).toHaveBeenCalledWith(
-          'terminal:card_main_chat:stop-main', 'hermes_turn_cancelled', 'cancelled',
+          'terminal:card_main_chat', 'hermes_turn_cancelled', 'cancelled',
         );
       } finally {
         await closeServer(server);

@@ -83,6 +83,13 @@ def test_atomic_research_result_requires_exact_persisted_episode_readback() -> N
         "phase": "completed",
         "episodeUuids": ["episode-one"],
     }
+    assert result["sharedChatText"] == (
+        "Research result\n\n"
+        "Supported: The current primary source supports the bounded Think.\n\n"
+        "Evidence and sources are retained in KnowGraph."
+    )
+    assert "https://primary.example/report" not in result["sharedChatText"]
+    assert "Primary report" not in result["sharedChatText"]
     assert reads == [(
         "project-one", ["episode-one", "entity-one", "entity-two"],
     )]
@@ -258,6 +265,10 @@ def test_atomic_research_source_unavailable_without_episode_id_does_not_infer_on
     assert result["result"]["results"][0]["status"] == "source-unavailable"
     assert result["result"]["results"][0]["episodeUuids"] == []
     assert result["episodeCount"] == 0
+    assert result["sharedChatText"] == (
+        "Research result\n\n"
+        "Source unavailable: No usable primary-source evidence was available."
+    )
 
 
 def test_cited_source_unavailable_result_settles_same_native_write() -> None:

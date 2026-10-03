@@ -187,6 +187,8 @@ export type GraphProjectionV1 = {
   counts?: { nodes: number; edges: number };
   nodes: GraphProjectionNode[];
   edges: GraphProjectionEdge[];
+  /** Native provenance records retained for inspectors, never rendered as subjects. */
+  provenanceNodes?: GraphProjectionNode[];
 };
 
 export type JoinedGraphNodeVariant = {
@@ -1487,6 +1489,37 @@ declare global {
   }
 }
 
+function sourceLinks(candidate: Record<string, unknown>) {
+  const rawUrls: unknown[] = [candidate.source_url, candidate.url];
+  const described = candidate.source_description ?? candidate.sourceDescription;
+  if (Array.isArray(described)) rawUrls.push(...described);
+  else if (typeof described === 'string' && described.trim()) {
+    try {
+      const parsed = JSON.parse(described);
+      if (Array.isArray(parsed)) rawUrls.push(...parsed);
+      else rawUrls.push(described);
+    } catch {
+      rawUrls.push(described);
+    }
+  }
+  const links = new Map<string, { url: string; label: string }>();
+  for (const rawUrl of rawUrls) {
+    if (typeof rawUrl !== 'string') continue;
+    const url = rawUrl.trim();
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) continue;
+      links.set(url, {
+        url,
+        label: String(
+          candidate.source_title || candidate.title || candidate.publisher || parsed.hostname,
+        ),
+      });
+    } catch { /* Invalid URLs are not clickable citations. */ }
+  }
+  return [...links.values()];
+}
+
 function sourceDocument(node: GraphProjectionNode) {
   const properties = node.properties || {};
   let body: Record<string, unknown> = {};
@@ -1496,17 +1529,13 @@ function sourceDocument(node: GraphProjectionNode) {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed;
     } catch { /* Plain-text episodes keep their original content. */ }
   }
-  const candidates = [properties, body, ...(Array.isArray(body.sources) ? body.sources : []), ...(Array.isArray(body.findings) ? body.findings : [])];
+  const candidates = [{ ...properties, ...body }, ...(Array.isArray(body.sources) ? body.sources : []), ...(Array.isArray(body.findings) ? body.findings : [])];
   const links = new Map<string, { url: string; label: string }>();
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object') continue;
-    const url = candidate.source_url || candidate.url;
-    if (typeof url !== 'string') continue;
-    try {
-      const parsed = new URL(url);
-      if (!['http:', 'https:'].includes(parsed.protocol)) continue;
-      links.set(url, { url, label: String(candidate.source_title || candidate.title || candidate.publisher || parsed.hostname) });
-    } catch { /* Invalid URLs are not clickable citations. */ }
+    for (const link of sourceLinks(candidate as Record<string, unknown>)) {
+      links.set(link.url, link);
+    }
   }
   return { links: [...links.values()], summary: typeof body.summary === 'string' ? body.summary : null };
 }
@@ -2456,7 +2485,12 @@ export function NativeGraphProjectionSurface({
     }
     if (edge.predicate === 'MENTIONS') evidenceIds.add(edge.source);
   }
-  const evidence = (inspectedProjection?.nodes || []).filter(node => evidenceIds.has(node.id)).map(node => ({ node, ...sourceDocument(node) })).filter(item => item.links.length);
+  const evidence = [
+    ...(inspectedProjection?.nodes || []),
+    ...(inspectedProjection?.provenanceNodes || []),
+  ].filter(node => evidenceIds.has(node.id))
+    .map(node => ({ node, ...sourceDocument(node) }))
+    .filter(item => item.links.length);
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
   const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
@@ -2905,12 +2939,15 @@ export function NativeGraphProjectionSurface({
               {episodes.length ? <section className="knowgraph-sources">
                 <h5>Sources</h5>
                 {episodes.map((episode) => {
-                  const url = String(episode.source_url || episode.url || '').trim();
                   const label = String(
                     episode.name || episode.source_name || episode.uuid || 'Source',
                   );
-                  return <div key={String(episode.uuid || url || label)}>
-                    {url ? <a href={url} target="_blank" rel="noreferrer">{label}</a> : <span>{label}</span>}
+                  const links = sourceLinks(episode);
+                  return <div key={String(episode.uuid || links[0]?.url || label)}>
+                    <span>{label}</span>
+                    {links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">
+                      {link.label}
+                    </a>)}
                     {episode.valid_at ? <time dateTime={String(episode.valid_at)}>
                       {String(episode.valid_at)}
                     </time> : null}

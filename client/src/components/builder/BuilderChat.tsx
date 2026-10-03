@@ -35,7 +35,7 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
-/** Render the exact saved research receipt as chat prose; its schema remains in Run data. */
+/** Render the result summary in chat; citations stay on native KnowGraph evidence. */
 export function chatDisplayText(value: unknown): string {
   const text = safeText(value);
   const trimmed = text.trim();
@@ -64,21 +64,12 @@ export function chatDisplayText(value: unknown): string {
           ? 'Contradicted'
           : 'Source unavailable';
       lines.push('', `${label}: ${summary}`);
-      const citations = Array.isArray(item.citations) ? item.citations : [];
-      const formatted = citations.flatMap((citation) => {
-        if (!citation || typeof citation !== 'object' || Array.isArray(citation)) return [];
-        const source = citation as Record<string, unknown>;
-        const title = typeof source.title === 'string' ? source.title.trim() : '';
-        const url = typeof source.url === 'string' ? source.url.trim() : '';
-        const date = typeof source.publishedAt === 'string' && source.publishedAt.trim()
-          ? ` (${source.publishedAt.trim()})`
-          : '';
-        return title && /^https?:\/\/\S+$/.test(url)
-          ? [`- ${title}${date} — ${url}`]
-          : [];
-      });
-      if (formatted.length) lines.push('', 'Sources:', ...formatted);
     }
+    if (parsed.results.some((raw) => (
+      raw && typeof raw === 'object' && !Array.isArray(raw)
+      && Array.isArray((raw as Record<string, unknown>).citations)
+      && ((raw as Record<string, unknown>).citations as unknown[]).length > 0
+    ))) lines.push('', 'Evidence and sources are retained in KnowGraph.');
     return lines.join('\n');
   } catch {
     return text;

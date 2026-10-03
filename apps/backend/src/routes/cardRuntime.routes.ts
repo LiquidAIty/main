@@ -5,6 +5,7 @@ import {
   agentTerminalPresentationOptions,
   requireAgentTerminalCard,
   resolveHermesBotRosterProjections,
+  type AgentTerminalCompactionIdentity,
   type AgentTerminalGatewayEvent,
   type AgentTerminalOwner,
   type HermesBotRosterProjection,
@@ -912,12 +913,12 @@ async function resolveCardRuntimeOwner(
     }
   }
 
-  const runtime = agentTerminalManager.findCard(projectId, deckId, cardId, conversationId);
+  const runtime = agentTerminalManager.findCard(projectId, deckId, cardId);
   if (runtime) {
     if (runtime.owner.userId !== savedOwnerUserId) {
       throw new Error('agent_terminal_runtime_owner_mismatch');
     }
-    return runtime.owner;
+    return { ...runtime.owner, conversationId };
   }
   return { userId: savedOwnerUserId, projectId, deckId, cardId, conversationId };
 }
@@ -1129,7 +1130,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
     const owner = await resolveCardRuntimeOwner(
       req, projectId, deckId, mainCardId, conversationId,
     );
-    let runtime = agentTerminalManager.findCard(projectId, deckId, mainCardId, conversationId);
+    let runtime = agentTerminalManager.findCard(projectId, deckId, mainCardId);
     if (!runtime) {
       const state = await agentTerminalManager.open(
         owner,
@@ -1142,7 +1143,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       runtime = { owner, state };
     }
     const result = await executePreparedGatewayCardRun({
-      owner: runtime.owner,
+      owner,
       conversationId,
       runId: run.runId,
       prepared: run.prepared,
@@ -1627,9 +1628,7 @@ async function executePreparedMagenticRun(args: {
     args.req, args.projectId, args.deckId, args.conversationId, args.prepared, args.savedDeck,
   );
   const sender = args.senderCardId
-    ? agentTerminalManager.findCard(
-      args.projectId, args.deckId, args.senderCardId, args.conversationId,
-    )
+    ? agentTerminalManager.findCard(args.projectId, args.deckId, args.senderCardId)
     : null;
   const submitted = await requestPythonRailsJson('/magentic/execution/submit', {
     method: 'POST',
@@ -2028,6 +2027,77 @@ type GatewayCardExecution = {
   text: string;
 };
 
+type PassiveContextCompaction = {
+  owner: AgentTerminalOwner;
+  identity: AgentTerminalCompactionIdentity;
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  runId: string;
+  nativeTurnId?: string;
+};
+
+function queuePassiveContextCompaction(args: PassiveContextCompaction): void {
+  const persistReceipt = (receipt: {
+    status: 'compressed' | 'aborted' | 'unavailable' | 'failed';
+    errorCode: string | null;
+  }) => {
+    const phase = receipt.status === 'compressed'
+      ? 'completed'
+      : receipt.status === 'aborted' ? 'cancelled' : 'failed';
+    void requestPythonRailsJson('/domain/runs/attempt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: args.projectId,
+        deckId: args.deckId,
+        cardId: args.cardId,
+        runId: args.runId,
+        attempt: {
+          eventId: `session.compress:${args.runId}`,
+          attemptId: `session.compress:${args.runId}`,
+          kind: 'tool',
+          phase,
+          observedAt: new Date().toISOString(),
+          toolName: 'session.compress',
+          toolCallId: `session.compress:${args.runId}`,
+          turnId: args.nativeTurnId || undefined,
+          status: receipt.status,
+          errorType: receipt.errorCode || undefined,
+          errorMessage: receipt.errorCode || undefined,
+          retryable: false,
+          redaction: 'metadata_only_no_summary',
+        },
+      }),
+    }).catch((error) => {
+      logHarnessTrace(
+        `[context-compaction] receipt persistence failed reason=${redactTrace(
+          error instanceof Error ? error.message : String(error),
+        )}`,
+      );
+    });
+  };
+  try {
+    void agentTerminalManager.queueNativeContextCompaction(
+      args.owner,
+      args.identity,
+      persistReceipt,
+    ).catch((error) => {
+      logHarnessTrace(
+        `[context-compaction] queue failed open reason=${redactTrace(
+          error instanceof Error ? error.message : String(error),
+        )}`,
+      );
+    });
+  } catch (error) {
+    logHarnessTrace(
+      `[context-compaction] queue failed open reason=${redactTrace(
+        error instanceof Error ? error.message : String(error),
+      )}`,
+    );
+  }
+}
+
 async function assessGatewayRunCompletion(
   runId: string,
   completion: GatewayCardExecution['nativeCompletion'],
@@ -2110,6 +2180,45 @@ async function executePreparedGatewayCardRun(args: {
 }): Promise<GatewayCardExecution> {
   let terminalSessionId = '';
   let staged = false;
+  let nativeTurnQueued = false;
+  let compactionQueued = false;
+  let compactionIdentity: AgentTerminalCompactionIdentity | null = null;
+  const passiveCompactionEnabled = (
+    args.prepared?.runtimeOwner === 'hermes'
+    && args.prepared?.hermesTransport?.request?.runtime?.mode === 'delegate'
+  );
+  const refreshCompactionIdentity = () => {
+    if (!terminalSessionId) return;
+    try {
+      const state = agentTerminalManager.state(args.owner, terminalSessionId);
+      compactionIdentity = {
+        sessionId: state.sessionId,
+        nativeSessionId: state.nativeSessionId,
+        storedSessionId: state.storedSessionId,
+        profile: state.profile,
+        completedTurnGeneration: state.completedTurnGeneration,
+        completedNativeRunId: state.completedNativeRunId,
+      };
+    } catch {
+      // The queued manager call returns an honest unavailable receipt if the
+      // exact session disappeared after settlement.
+    }
+  };
+  const queueDelegateCompaction = (nativeTurnId?: string) => {
+    if (!passiveCompactionEnabled || !nativeTurnQueued || compactionQueued || !compactionIdentity) {
+      return;
+    }
+    compactionQueued = true;
+    queuePassiveContextCompaction({
+      owner: args.owner,
+      identity: compactionIdentity,
+      projectId: args.owner.projectId,
+      deckId: args.owner.deckId,
+      cardId: args.owner.cardId,
+      runId: args.runId,
+      nativeTurnId,
+    });
+  };
   try {
     const loaded = args.savedDeck
       ? { deck: args.savedDeck }
@@ -2140,6 +2249,14 @@ async function executePreparedGatewayCardRun(args: {
       );
     agentTerminalManager.verifyConfiguration(args.owner, terminal.sessionId, card, deck);
     terminalSessionId = terminal.sessionId;
+    compactionIdentity = {
+      sessionId: terminal.sessionId,
+      nativeSessionId: terminal.nativeSessionId,
+      storedSessionId: terminal.storedSessionId,
+      profile: terminal.profile,
+      completedTurnGeneration: terminal.completedTurnGeneration,
+      completedNativeRunId: terminal.completedNativeRunId,
+    };
     args.onBound?.(terminal);
 
     let stagedPrepared = args.prepared;
@@ -2171,6 +2288,7 @@ async function executePreparedGatewayCardRun(args: {
       args.conversationId,
     );
     staged = true;
+    nativeTurnQueued = true;
     const pending = agentTerminalManager.submit(
       args.owner,
       terminal.sessionId,
@@ -2184,17 +2302,29 @@ async function executePreparedGatewayCardRun(args: {
     );
     args.onSubmitted?.();
     const result = await pending;
+    if (
+      Number.isSafeInteger(result.completedTurnGeneration)
+      && Number(result.completedTurnGeneration) >= 0
+    ) {
+      compactionIdentity = {
+        ...compactionIdentity,
+        completedTurnGeneration: Number(result.completedTurnGeneration),
+        completedNativeRunId: result.completedNativeRunId ?? null,
+      };
+    }
     const nativeCompletion = await agentTerminalExecution.completeStaged(
       terminal.sessionId,
       terminal.nativeSessionId,
       result,
     );
     staged = false;
+    refreshCompactionIdentity();
+    queueDelegateCompaction(String(nativeCompletion.nativeRunId || '').trim() || undefined);
     return {
       owner: args.owner,
       terminalSessionId: terminal.sessionId,
       nativeSessionId: terminal.nativeSessionId,
-      storedSessionId: terminal.storedSessionId,
+      storedSessionId: compactionIdentity?.storedSessionId || terminal.storedSessionId,
       profile: terminal.profile,
       completedTurnGeneration: Number.isSafeInteger(result.completedTurnGeneration)
         ? Number(result.completedTurnGeneration)
@@ -2229,6 +2359,8 @@ async function executePreparedGatewayCardRun(args: {
         }),
       }).catch(() => undefined);
     }
+    refreshCompactionIdentity();
+    queueDelegateCompaction();
     throw error;
   }
 }
@@ -2259,9 +2391,12 @@ function thinkGraphCardAssignment(preparation: any): string {
     'directed relationship. Likewise, use `Redwire`, `RTX`, and `Parsons` as company entities when',
     'the exchange makes claims or asks questions about those exact companies.',
     'When an explicitly named company is an unverified candidate in the pair, preserve it as a',
-    'standalone endpoint linked to the hypothesis with ASSOCIATED_WITH. That relationship records',
-    'the pair\'s subject framing only; never replace it with PROVIDES or another factual business',
-    'relationship unless the completed pair itself establishes that relationship.',
+    'standalone endpoint linked with ASSOCIATED_WITH to the nearest concrete reusable subject in',
+    'the proposal, such as `Recurring revenue` or `Launch cadence`. That relationship records the',
+    'pair\'s subject framing only; never replace it with PROVIDES or another factual business',
+    'relationship unless the completed pair itself establishes that relationship. Never create',
+    'a generic wrapper entity such as `Falsifiable thesis`, `Hypothesis`, `Claim`, `Proposal`,',
+    '`Explanation`, or `Research run`; that framing belongs in the Think body, not the subject graph.',
     'Do not use casing, keywords, stopword lists, or regex surface form as concept authority. Remove',
     'discourse/request framing when it is not itself the concept.',
     'Preserve directed relations as source/relation/target extraction hints. The native prompt',
@@ -2370,7 +2505,7 @@ async function settleAtomicResearchPublication(
     sharedChatText = [
       'Research result',
       '',
-      `Source unavailable: KnowGraph research did not produce validated source references: ${reason}`,
+      'Source unavailable: KnowGraph could not validate sourced evidence for this question.',
     ].join('\n');
   }
   try {
@@ -2657,46 +2792,15 @@ function queuePostTurnCompactionReceipt(
 ): void {
   const request = args.postTurnCompaction;
   if (!request) return;
-  void agentTerminalManager.queueNativeContextCompaction(
-    request.owner,
-    request.identity,
-    (receipt) => {
-      const phase = receipt.status === 'compressed'
-        ? 'completed'
-        : receipt.status === 'aborted' ? 'cancelled' : 'failed';
-      void requestPythonRailsJson('/domain/runs/attempt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: args.projectId,
-          deckId: args.deckId,
-          cardId: args.authority.main.cardId,
-          runId: args.originatingRunId,
-          attempt: {
-            eventId: `session.compress:${args.originatingRunId}`,
-            attemptId: `session.compress:${args.originatingRunId}`,
-            kind: 'tool',
-            phase,
-            observedAt: new Date().toISOString(),
-            toolName: 'session.compress',
-            toolCallId: `session.compress:${args.originatingRunId}`,
-            turnId: request.nativeTurnId || undefined,
-            status: receipt.status,
-            errorType: receipt.errorCode || undefined,
-            errorMessage: receipt.errorCode || undefined,
-            retryable: false,
-            redaction: 'metadata_only_no_summary',
-          },
-        }),
-      }).catch((error) => {
-        logHarnessTrace(
-          `[context-compaction] receipt persistence failed reason=${redactTrace(
-            error instanceof Error ? error.message : String(error),
-          )}`,
-        );
-      });
-    },
-  );
+  queuePassiveContextCompaction({
+    owner: request.owner,
+    identity: request.identity,
+    projectId: args.projectId,
+    deckId: args.deckId,
+    cardId: args.authority.main.cardId,
+    runId: args.originatingRunId,
+    nativeTurnId: request.nativeTurnId,
+  });
 }
 
 async function runCompletedPairThinkGraphLifecycle(
@@ -3618,11 +3722,11 @@ async function resolveMainGatewayRuntime(
   )) || [];
   if (!deck || cards.length !== 1) throw new Error('persisted_main_chat_mismatch');
   const card = cards[0];
-  let resolved = agentTerminalManager.findCard(projectId, deckId, card.id, conversationId);
+  const owner = await resolveCardRuntimeOwner(
+    req, projectId, deckId, card.id, conversationId,
+  );
+  let resolved = agentTerminalManager.findCard(projectId, deckId, card.id);
   if (!resolved) {
-    const owner = await resolveCardRuntimeOwner(
-      req, projectId, deckId, card.id, conversationId,
-    );
     const state = await agentTerminalManager.open(
       owner,
       card,
@@ -3632,6 +3736,8 @@ async function resolveMainGatewayRuntime(
       agentTerminalPresentationOptions(card, false),
     );
     resolved = { owner, state };
+  } else {
+    resolved = { owner, state: resolved.state };
   }
   agentTerminalManager.verifyConfiguration(resolved.owner, resolved.state.sessionId, card, deck);
   return { ...resolved, card, deck };
@@ -3653,20 +3759,15 @@ async function resolveSharedChatVoiceRuntime(
   if (!card || card.runtime.kind !== 'hermes' || card.runtime.mode === 'magentic_one') {
     throw new Error('card_voice_runtime_unsupported');
   }
+  const owner = await resolveCardRuntimeOwner(
+    req, projectId, deckId, card.id, conversationId,
+  );
   let resolved = agentTerminalManager.findCard(
     projectId,
     deckId,
     card.id,
-    conversationId,
   );
   if (!resolved) {
-    const owner = await resolveCardRuntimeOwner(
-      req,
-      projectId,
-      deckId,
-      card.id,
-      conversationId,
-    );
     const state = await agentTerminalManager.open(
       owner,
       card,
@@ -3676,6 +3777,8 @@ async function resolveSharedChatVoiceRuntime(
       agentTerminalPresentationOptions(card, false),
     );
     resolved = { owner, state };
+  } else {
+    resolved = { owner, state: resolved.state };
   }
   agentTerminalManager.verifyConfiguration(
     resolved.owner,
@@ -4511,7 +4614,7 @@ mainRoutes.post('/session/stop', async (req, res) => {
       await finishMagenticOuterRun(expectedRunId, stopped);
       return res.status(202).json({ ok: true, runId: expectedRunId, state: 'cancelled' });
     }
-    const runtime = agentTerminalManager.findCard(projectId, deckId, cardId, conversationId);
+    const runtime = agentTerminalManager.findCard(projectId, deckId, cardId);
     if (!runtime) return res.status(404).json({ ok: false, error: 'no_active_turn' });
     if (!agentTerminalExecution.ownsRun(runtime.state.sessionId, expectedRunId)) {
       return res.status(404).json({ ok: false, error: 'no_active_turn' });
@@ -4562,7 +4665,6 @@ mainRoutes.get('/session/history', async (req, res) => {
     projectId,
     deckId,
     authority.main.cardId,
-    conversationId,
   );
   if (runtime) {
     nativeSessionId = runtime.state.nativeSessionId;

@@ -23,6 +23,8 @@ def _idf(
     capabilities: dict | None = None, task: str = "Inspect the exact bounded slice.",
     images: list[dict] | None = None, materialized_record_sha256: str = "",
     projection_payload_chars: int = 0,
+    stable_extra: dict | None = None, variable_extra: dict | None = None,
+    reference_extra: dict | None = None, projection_extra: dict | None = None,
 ):
     reference = {
         "authority": "CodeGraph",
@@ -43,6 +45,7 @@ def _idf(
             if materialized_record_sha256 else {}
         ),
         "truncated": False,
+        **(reference_extra or {}),
     }
     references = [reference] if graph_context else []
     projection = {
@@ -60,6 +63,7 @@ def _idf(
             "provenance": {"repository": "C-Projects-LiquidAIty-main"},
         }] if graph_context else []),
         "edges": [],
+        **(projection_extra or {}),
     }
     return materialize_idf(
         stable={
@@ -76,10 +80,12 @@ def _idf(
                 "providerModelId": "gpt-5.6",
                 **({"apiKey": "forbidden"} if secret else {}),
             },
+            **(stable_extra or {}),
         },
         variable={
             "task": task,
             "images": list(images or []),
+            **(variable_extra or {}),
         },
         capabilities={
             "enabledTools": ["codegraph.search_graph"],
@@ -95,6 +101,35 @@ def _idf(
         graph_projection=projection,
         materialized_at="2026-08-23T12:00:00Z",
     )
+
+
+def _runtime_receipt_ledger() -> dict:
+    return {
+        "attemptEvents": [{"marker": "LEDGER_ATTEMPT_EVENT"}],
+        "requestFulfillment": {"marker": "LEDGER_REQUEST_FULFILLMENT"},
+        "observationGap": {"marker": "LEDGER_OBSERVATION_GAP"},
+        "timingMs": {"marker": "LEDGER_TIMING"},
+        "inputTokens": "LEDGER_INPUT_TOKENS",
+        "outputTokens": "LEDGER_OUTPUT_TOKENS",
+        "totalCostUsd": "LEDGER_COST",
+        "toolReceipt": {"marker": "LEDGER_TOOL_RECEIPT"},
+        "executionReceipt": {"marker": "LEDGER_EXECUTION_RECEIPT"},
+        "atomicResearchOutcome": {"marker": "LEDGER_ATOMIC_RESEARCH_OUTCOME"},
+    }
+
+
+def _all_keys(value) -> set[str]:
+    if isinstance(value, dict):
+        keys = set(value)
+        for item in value.values():
+            keys.update(_all_keys(item))
+        return keys
+    if isinstance(value, list):
+        keys: set[str] = set()
+        for item in value:
+            keys.update(_all_keys(item))
+        return keys
+    return set()
 
 
 def test_empty_graph_section_is_valid_and_idf_is_graph_first() -> None:
@@ -309,3 +344,98 @@ def test_noncanonical_or_secret_bearing_idf_fails_closed() -> None:
         load_idf_bytes(corrupted)
     with pytest.raises(InputMaterializationError, match="input_file_secret_field_forbidden"):
         _idf(secret=True)
+
+
+def test_runtime_receipt_ledger_is_not_materialized_or_projected() -> None:
+    ledger = _runtime_receipt_ledger()
+    materialized = _idf(
+        stable_extra=ledger,
+        capabilities=ledger,
+        projection_extra=ledger,
+    )
+    retained = json.loads(materialized.idf_bytes)
+    projected = runtime_projection(load_idf_bytes(materialized.idf_bytes))
+
+    assert list(retained) == [
+        "actualGraphData",
+        "stableSavedCardContext",
+        "selectedToolsAndGrants",
+        "dynamicContext",
+    ]
+    assert not set(ledger) & _all_keys(retained)
+    assert not set(ledger) & _all_keys(projected)
+    encoded = materialized.idf_bytes.decode("utf-8")
+    projected_json = json.dumps(projected, ensure_ascii=False, sort_keys=True)
+    for marker in (
+        "LEDGER_ATTEMPT_EVENT",
+        "LEDGER_REQUEST_FULFILLMENT",
+        "LEDGER_OBSERVATION_GAP",
+        "LEDGER_TIMING",
+        "LEDGER_INPUT_TOKENS",
+        "LEDGER_OUTPUT_TOKENS",
+        "LEDGER_COST",
+        "LEDGER_TOOL_RECEIPT",
+        "LEDGER_EXECUTION_RECEIPT",
+        "LEDGER_ATOMIC_RESEARCH_OUTCOME",
+    ):
+        assert marker not in encoded
+        assert marker not in projected_json
+
+
+def test_runtime_receipt_ledger_cannot_enter_dynamic_or_reference_input() -> None:
+    ledger = _runtime_receipt_ledger()
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_dynamic_field_forbidden",
+    ):
+        _idf(variable_extra=ledger)
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_graph_reference_field_forbidden",
+    ):
+        _idf(graph_context="bounded", reference_extra=ledger)
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_graph_reference_field_forbidden",
+    ):
+        _idf(
+            graph_context="bounded",
+            reference_extra={"provenance": {"executionReceipt": ledger}},
+        )
+
+
+def test_retained_idf_rejects_root_or_reference_receipt_ledger_fields() -> None:
+    ledger = _runtime_receipt_ledger()
+    materialized = _idf(graph_context="bounded")
+
+    root_value = json.loads(materialized.idf_bytes)
+    root_value.update(ledger)
+    with pytest.raises(InputMaterializationError, match="input_file_invalid"):
+        load_idf_bytes((
+            json.dumps(root_value, ensure_ascii=False, separators=(",", ":"))
+            + "\n"
+        ).encode())
+
+    reference_value = json.loads(materialized.idf_bytes)
+    reference_value["actualGraphData"]["selectedNativeReferences"][0].update(
+        ledger
+    )
+    with pytest.raises(InputMaterializationError, match="input_file_invalid"):
+        load_idf_bytes((
+            json.dumps(
+                reference_value, ensure_ascii=False, separators=(",", ":")
+            ) + "\n"
+        ).encode())
+
+    nested_reference_value = json.loads(materialized.idf_bytes)
+    nested_reference_value["actualGraphData"]["selectedNativeReferences"][0][
+        "provenance"
+    ]["attemptEvents"] = ledger["attemptEvents"]
+    with pytest.raises(InputMaterializationError, match="input_file_invalid"):
+        load_idf_bytes((
+            json.dumps(
+                nested_reference_value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ) + "\n"
+        ).encode())

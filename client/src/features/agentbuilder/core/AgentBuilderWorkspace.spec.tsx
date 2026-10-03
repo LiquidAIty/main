@@ -77,6 +77,8 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
     expect(clip.dataset.companionVisibleViewport).toBe('true');
     expect(clip.dataset.companionVisibleWidth).toBe('0');
     expect(content.style.width).toBe('720px');
+    expect(content.style.left).toBe('-720px');
+    expect(content.style.right).toBe('');
   });
 
   it('uses only the existing unlabeled pointer-captured drag boundary', () => {
@@ -114,6 +116,7 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
       '[data-testid="workspace-companion-content"]',
     ) as HTMLElement;
     expect(initialContent.style.width).toBe('770px');
+    expect(initialContent.style.left).toBe('0px');
     expect(mounts).toBe(1);
 
     view.rerender({
@@ -127,6 +130,7 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
     ) as HTMLElement;
     expect(content.style.width).toBe('520px');
     expect(content.style.minWidth).toBe('520px');
+    expect(content.style.left).toBe('0px');
     expect(view.host.querySelector('[data-testid="canvas-probe"]')).not.toBeNull();
     expect(mounts).toBe(1);
     expect(unmounts).toBe(0);
@@ -146,6 +150,31 @@ describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
     expect(main.dataset.mainOverCompanion).toBe('true');
     expect(content.style.width).toBe('520px');
     expect(content.style.minWidth).toBe('520px');
+    expect(content.style.left).toBe('-46px');
+  });
+
+  it('holds the knowledge tab strip at the viewport edge only after collision', () => {
+    const view = renderWorkspace({
+      workspaceView: 'knowledge',
+      companionMinWidth: 520,
+      companionContentMinWidth: 520,
+      companionVisibleWidth: 401,
+      companionViewportWidth: 520,
+      companionOverlayWidth: 0,
+    });
+    let content = view.host.querySelector(
+      '[data-testid="workspace-companion-content"]',
+    ) as HTMLElement;
+    expect(content.style.left).toBe('0px');
+
+    view.rerender({
+      companionVisibleWidth: 350,
+      companionOverlayWidth: 51,
+    });
+    content = view.host.querySelector(
+      '[data-testid="workspace-companion-content"]',
+    ) as HTMLElement;
+    expect(content.style.left).toBe('-51px');
   });
 
   it.each([

@@ -1527,27 +1527,28 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.durableByTitle.get('signal-analyst\u0000Card runtime: signal @ old')).toBe('stored-old');
   });
 
-  it('derives opaque collision-safe titles from the complete application session scope', () => {
+  it('derives opaque collision-safe titles from Project/Card scope, not conversation scope', () => {
     const base: AgentTerminalOwner = {
       userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'signal', conversationId: 'one',
     };
-    const titles = [
+    const projectCardTitles = [
       base,
       { ...base, userId: 'other-owner' },
       { ...base, projectId: 'other-project' },
       { ...base, deckId: 'other-deck' },
       { ...base, cardId: 'other-card' },
-      { ...base, conversationId: 'two' },
     ].map(agentTerminalNativeSessionTitle);
-    expect(agentTerminalNativeSessionTitle({ ...base })).toBe(titles[0]);
-    expect(new Set(titles)).toHaveProperty('size', titles.length);
-    for (const title of titles) expect(title).toMatch(/^Bot Chat:[a-f0-9]{64}$/);
-    expect(titles.join(' ')).not.toContain('owner');
-    expect(titles.join(' ')).not.toContain('project');
-    expect(titles.join(' ')).not.toContain('signal');
+    expect(agentTerminalNativeSessionTitle({ ...base })).toBe(projectCardTitles[0]);
+    expect(agentTerminalNativeSessionTitle({ ...base, conversationId: 'two' }))
+      .toBe(projectCardTitles[0]);
+    expect(new Set(projectCardTitles)).toHaveProperty('size', projectCardTitles.length);
+    for (const title of projectCardTitles) expect(title).toMatch(/^Bot Chat:[a-f0-9]{64}$/);
+    expect(projectCardTitles.join(' ')).not.toContain('owner');
+    expect(projectCardTitles.join(' ')).not.toContain('project');
+    expect(projectCardTitles.join(' ')).not.toContain('signal');
   });
 
-  it('isolates concurrent conversations on one unchanged saved profile and resumes each exactly', async () => {
+  it('serializes conversations through one Project/Card native session and resumes it exactly', async () => {
     const f = fixture();
     const ownerA = { ...f.owners[0], conversationId: 'conversation-a' };
     const ownerB = { ...f.owners[0], conversationId: 'conversation-b' };
@@ -1558,30 +1559,29 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
 
     expect(a.profile).toBe('signal-analyst');
     expect(b.profile).toBe('signal-analyst');
-    expect(a.sessionId).not.toBe(b.sessionId);
-    expect(a.storedSessionId).not.toBe(b.storedSessionId);
-    expect(agentTerminalNativeSessionTitle(ownerA)).not.toBe(agentTerminalNativeSessionTitle(ownerB));
-    expect(f.manager.findCard('project', 'deck', 'signal', 'conversation-a')?.state.sessionId)
-      .toBe(a.sessionId);
-    expect(f.manager.findCard('project', 'deck', 'signal', 'conversation-b')?.state.sessionId)
-      .toBe(b.sessionId);
+    expect(b.sessionId).toBe(a.sessionId);
+    expect(b.nativeSessionId).toBe(a.nativeSessionId);
+    expect(b.storedSessionId).toBe(a.storedSessionId);
+    expect(agentTerminalNativeSessionTitle(ownerA)).toBe(agentTerminalNativeSessionTitle(ownerB));
+    expect(f.manager.findCard('project', 'deck', 'signal')?.state.sessionId).toBe(a.sessionId);
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
 
     await f.manager.submit(ownerA, a.sessionId, 'a-one');
     await f.manager.submit(ownerB, b.sessionId, 'b-one');
     await f.manager.submit(ownerA, a.sessionId, 'a-two');
     expect(f.clients[0].requests.filter(({ method }) => method === 'prompt.submit')
-      .map(({ params }) => params.session_id)).toEqual([a.nativeSessionId, a.nativeSessionId]);
-    expect(f.clients[1].requests.filter(({ method }) => method === 'prompt.submit')
-      .map(({ params }) => params.session_id)).toEqual([b.nativeSessionId]);
+      .map(({ params }) => params.session_id)).toEqual([
+        a.nativeSessionId, a.nativeSessionId, a.nativeSessionId,
+      ]);
 
     f.manager.stop(ownerA, a.sessionId);
     const resumedA = await f.manager.open(
-      ownerA, f.cards[0], f.deck, 80, 24, { attachTui: false },
+      ownerB, f.cards[0], f.deck, 80, 24, { attachTui: false },
     );
     expect(resumedA.storedSessionId).toBe(a.storedSessionId);
-    expect(f.manager.findCard('project', 'deck', 'signal', 'conversation-b')?.state.sessionId)
-      .toBe(b.sessionId);
-    expect(f.clients[2].requests.map(({ method }) => method)).toContain('session.resume');
+    expect(f.manager.findCard('project', 'deck', 'signal')?.state.sessionId)
+      .toBe(resumedA.sessionId);
+    expect(f.clients[1].requests.map(({ method }) => method)).toContain('session.resume');
   });
 
   it('derives one registered Card tool from the signed live runtime and rejects replay', async () => {
@@ -2280,14 +2280,14 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const other = await f.manager.open(
       otherOwner, main, deck, 120, 36, { attachTui: false, workingDirectory },
     );
-    expect(other.sessionId).not.toBe(ordinary.sessionId);
-    expect(other.nativeSessionId).not.toBe(ordinary.nativeSessionId);
-    expect(other.storedSessionId).not.toBe(ordinary.storedSessionId);
-    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+    expect(other.sessionId).toBe(ordinary.sessionId);
+    expect(other.nativeSessionId).toBe(ordinary.nativeSessionId);
+    expect(other.storedSessionId).toBe(ordinary.storedSessionId);
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
 
     await reconcileConnectedAgentTerminals(dependencies);
     expect(f.manager.find(ordinaryOwner)?.sessionId).toBe(ordinary.sessionId);
-    expect(f.manager.find(otherOwner)?.sessionId).toBe(other.sessionId);
+    expect(f.manager.find(otherOwner)?.sessionId).toBe(ordinary.sessionId);
     expect(f.gateways.every((gateway) => !gateway.kill.mock.calls.length)).toBe(true);
     expect(f.clients.flatMap((client) => client.requests).some((request) => (
       request.method === 'profiles.configure'
