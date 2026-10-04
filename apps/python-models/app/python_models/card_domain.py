@@ -1566,6 +1566,10 @@ def observe_native_attention(
         str(value).strip() for value in event.get("nativeNodeIds") or []
         if str(value).strip()
     ][:128]
+    episode_ids = [
+        str(value).strip() for value in event.get("nativeEpisodeIds") or []
+        if str(value).strip()
+    ][:128]
     edge_ids = [
         str(value).strip() for value in event.get("nativeEdgeIds") or []
         if str(value).strip()
@@ -1591,9 +1595,18 @@ def observe_native_attention(
     if not all((project_id, deck_id, run_id, card_id, event_id, tool_name, authority,
                 operation, timestamp, result_hash)):
         return False
+    call_id = str(event.get("callId") or "").strip()
+    if tool_name == "graphiti.add_memory" and (
+        call_id != event_id
+        or phase == "completed" and len(episode_ids) != 1
+        or phase in {"pending", "failed"} and episode_ids
+    ):
+        return False
     references = [
         {"nativeId": native_id, "nativeKind": native_kind}
-        for native_kind, native_ids in (("node", node_ids), ("edge", edge_ids))
+        for native_kind, native_ids in (
+            ("episode", episode_ids), ("node", node_ids), ("edge", edge_ids),
+        )
         for native_id in native_ids
     ]
     if not references and not (operation == "write" and (
@@ -1668,6 +1681,8 @@ def observe_native_attention(
                     used.phase=$phase, used.change=$change,
                     used.nativeChildId=$nativeChildId, used.nativeRunId=$nativeRunId,
                     used.scopeGroupIds=$scopeGroupIds,
+                    used.callId=$callId,
+                    used.nativeEpisodeIds=$nativeEpisodeIds,
                     used.nativeNodeIds=$nativeNodeIds,
                     used.nativeEdgeIds=$nativeEdgeIds,
                     used.nativeEdges=$nativeEdges,
@@ -1690,6 +1705,8 @@ def observe_native_attention(
                     "nativeChildId": event.get("nativeChildId"),
                     "nativeRunId": event.get("nativeRunId"),
                     "scopeGroupIds": event.get("scopeGroupIds") or [],
+                    "callId": call_id or None,
+                    "nativeEpisodeIds": episode_ids,
                     "nativeNodeIds": node_ids,
                     "nativeEdgeIds": edge_ids,
                     "nativeEdges": native_edges,
@@ -2200,6 +2217,12 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                                 "authority": str(event.get("authority") or ""),
                                 "operation": str(event.get("operation") or ""),
                                 "toolName": str(event.get("toolName") or tool_id),
+                                **({
+                                    "nativeEpisodeIds": [
+                                        str(value)
+                                        for value in event.get("nativeEpisodeIds") or []
+                                    ],
+                                } if "nativeEpisodeIds" in event else {}),
                                 "nativeNodeIds": [str(value) for value in event.get("nativeNodeIds") or []],
                                 "nativeEdgeIds": [str(value) for value in event.get("nativeEdgeIds") or []],
                                 "nativeEdges": [
@@ -2210,6 +2233,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                                 "truncated": event.get("truncated") is True,
                                 **{key: event[key] for key in (
                                     "phase", "change", "nativeChildId", "nativeRunId", "scopeGroupIds",
+                                    "callId",
                                 ) if event.get(key) is not None},
                             })
                 for row in telemetry["tool_totals"]:
@@ -3169,7 +3193,7 @@ def _attention_retrieval(
 
 
 def register_atomic_research_candidate(payload: dict[str, Any]) -> dict[str, Any]:
-    """Attach one settled Think to its existing originating Main Run receipt."""
+    """Attach the ordered settled Think facets to the originating Main Run receipt."""
 
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
@@ -3177,7 +3201,16 @@ def register_atomic_research_candidate(payload: dict[str, Any]) -> dict[str, Any
     originating_run_id = _required_text(
         payload.get("originatingRunId"), "originating_run_id"
     )
-    think_memory_id = _required_text(payload.get("thinkMemoryId"), "think_memory_id")
+    raw_think_ids = payload.get("thinkMemoryIds")
+    if (
+        not isinstance(raw_think_ids, list)
+        or not 1 <= len(raw_think_ids) <= 2
+        or any(not isinstance(value, str) or not value.strip() for value in raw_think_ids)
+    ):
+        raise CardDomainError("atomic_research_think_ids_invalid")
+    think_memory_ids = [value.strip() for value in raw_think_ids]
+    if len(set(think_memory_ids)) != len(think_memory_ids):
+        raise CardDomainError("atomic_research_think_ids_invalid")
     main_card_id = _required_text(payload.get("mainCardId"), "main_card_id")
     main_revision_id = _required_text(
         payload.get("mainCardRevisionId"), "main_card_revision_id"
@@ -3228,7 +3261,7 @@ def register_atomic_research_candidate(payload: dict[str, Any]) -> dict[str, Any
         "deckId": deck_id,
         "conversationId": conversation_id,
         "originatingRunId": originating_run_id,
-        "thinkMemoryId": think_memory_id,
+        "thinkMemoryIds": think_memory_ids,
         "mainCardId": main_card_id,
         "mainCardRevisionId": main_revision_id,
         "thinkGraphCardId": think_card_id,
@@ -3360,11 +3393,20 @@ def _pending_atomic_research_seed(
                         for key, value in current.items()
                     ):
                         continue
-                    think_memory_id = str(candidate.get("thinkMemoryId") or "").strip()
-                    if not think_memory_id:
+                    raw_think_ids = candidate.get("thinkMemoryIds")
+                    if (
+                        not isinstance(raw_think_ids, list)
+                        or not 1 <= len(raw_think_ids) <= 2
+                    ):
                         continue
-                    if _current_atomic_think_exists(
-                        str(loaded["projectId"]), think_memory_id
+                    think_memory_ids = [
+                        str(value or "").strip() for value in raw_think_ids
+                    ]
+                    if all(think_memory_ids) and all(
+                        _current_atomic_think_exists(
+                            str(loaded["projectId"]), memory_id
+                        )
+                        for memory_id in think_memory_ids
                     ):
                         return candidate
                 if len(rows) < 32:
@@ -3567,16 +3609,11 @@ def _atomic_research_assignment(
     reason: str,
 ) -> str:
     result_schema = {
-        "schemaVersion": "atomic-research-response.v1",
+        "schemaVersion": "atomic-research-response.v2",
         "results": [{
             "status": "supported|contradicted|source-unavailable",
             "summary": "concise sourced result",
-            "citations": [{
-                "url": "exact primary-source URL",
-                "title": "source title",
-                "publishedAt": "source date or null",
-            }],
-            "episodeUuids": ["exact Graphiti episode UUID"],
+            "callId": "exact server-returned know-call ID or null",
         }],
     }
     return "\n".join((
@@ -3593,22 +3630,28 @@ def _atomic_research_assignment(
         "and concepts from the hydrated Think and canonical subject directory.",
         "actualGraphData includes the complete canonical_subject_directory. Before writing, select",
         "the exact existing canonicalName values relevant to this research and reuse those spellings.",
-        "Pass those relevant exact names in graphiti.add_memory custom_extraction_instructions so",
-        "Graphiti reuses them as entity names. Treat article, filing, contract, report, and episode",
+        "Pass those relevant exact names only in each observation's relevantEntities so",
+        "Graphiti can reuse them as entity names. Treat article, filing, contract, report, and episode",
         "titles as provenance/source material, not peer subject entities. Do not concatenate a named",
         "company with a metric, event, role, or thesis to manufacture another entity name.",
         "Write useful source material through your existing Graphiti tools and saved grants only.",
-        "Make exactly one graphiti.add_memory call for the bounded research packet. Do not retry",
-        "after a queued acknowledgement. Set source_description to one JSON array containing",
-        "every exact primary-source citation URL used in RESULT_SCHEMA and no other values.",
-        "Treat that source_description array as the one URL source of truth: copy each URL",
-        "byte-for-byte into RESULT_SCHEMA citations instead of retyping it from memory. Before",
-        "returning, compare the two ordered URL arrays and correct RESULT_SCHEMA from the exact",
-        "source_description strings if any character differs.",
-        "A queue acknowledgement is not persistence proof. Preserve your semantic supported or",
-        "contradicted finding when the write is still pending, but return episodeUuids as [] unless",
-        "you obtained exact native episode UUIDs. Python settlement binds the same native write",
-        "event to persisted Episodic readback before the finding can be published.",
+        "For each result, make exactly one graphiti.add_memory call using schemaVersion",
+        "knowgraph.source-observation.v2, one specific scan-friendly name, and observations[].",
+        "Each observation contains one complete independently readable datum, one bounded",
+        "interpretation, one-or-more citations[], and relevantEntities[]. Every citation contains",
+        "exactly url, title, publishedAt, and a nonempty sourceNote explaining precisely what that",
+        "link establishes for its observation. Keep every citation attached to its observation.",
+        "Never send a flat citation array, naked link, combined report summary, bibliography, or",
+        "research-package narrative. Reuse exact canonicalName values in relevantEntities and list",
+        "each logical entity once per observation even when both native authorities supplied it.",
+        "Do not split inseparable meaning, merge independent observations merely to reduce count,",
+        "pad simple observations, or truncate qualifications. Concision comes only from removing",
+        "repetition, process narration, irrelevant background, and report padding.",
+        "The one canonical call persists the complete Know as exactly one native Graphiti episode",
+        "regardless of its observation or citation count. Do not retry after its queued",
+        "acknowledgement. Copy the exact server-returned callId into RESULT_SCHEMA; never invent",
+        "or return an episode UUID. Python settlement binds that call/event identity to the one",
+        "persisted episode and exact structured readback before the finding can be published.",
         "A source-unavailable semantic result may still contain useful cited research and use the",
         "same pending settlement path. Keep each summary strictly about evidence and the semantic",
         "finding; never put queue, readback, persistence-pending, or settlement status in summary.",
@@ -3616,8 +3659,8 @@ def _atomic_research_assignment(
         "Return only one JSON object matching RESULT_SCHEMA, with one result per supplied Think",
         "in exact supplied order. Do not echo any supplied Think, assessment, source Run, child",
         "Run, Card, conversation, message, or session identifier in the JSON response.",
-        "A supported or contradicted result requires at least one exact primary-source citation URL.",
-        "Never invent an episode UUID. Use source-unavailable only for a semantic/source/tool failure,",
+        "A supported or contradicted result requires a non-null callId from its canonical Know write.",
+        "Use source-unavailable only for a semantic/source/tool failure,",
         "not merely because the exactly-once Graphiti write is still processing.",
         f"EXPECTED_RESULT_COUNT: {len(memory_ids)}",
         "MAIN_REASON: " + (reason or "No additional reason supplied."),
@@ -3828,13 +3871,13 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def read_atomic_research_write_event(
+def read_atomic_research_write_events(
     project_ref: str,
     deck_id: str,
     child_run_id: str,
     knowgraph_card_id: str,
-) -> dict[str, Any] | None:
-    """Read the one observed Graphiti write event for an atomic child Run."""
+) -> list[dict[str, Any]]:
+    """Read every observed canonical Know write for one atomic child Run."""
 
     project_ref = _required_text(project_ref, "project_id")
     deck_id = _required_text(deck_id, "deck_id")
@@ -3859,7 +3902,8 @@ def read_atomic_research_write_event(
                   AND used.authority='knowgraph'
                   AND used.operation='write'
                 RETURN properties(used) AS event
-                LIMIT 2
+                ORDER BY used.timestamp ASC, used.eventId ASC
+                LIMIT 16
                 """,
                 {
                     "projectId": str(project["id"]),
@@ -3870,16 +3914,16 @@ def read_atomic_research_write_event(
                 "event agtype",
             )
     if not rows:
-        return None
-    if len(rows) != 1 or not isinstance(rows[0].get("event"), dict):
-        raise CardDomainError("atomic_research_write_event_ambiguous")
-    return {
-        **dict(rows[0]["event"]),
+        return []
+    if any(not isinstance(row.get("event"), dict) for row in rows):
+        raise CardDomainError("atomic_research_write_event_invalid")
+    return [{
+        **dict(row["event"]),
         "projectId": str(project["id"]),
         "deckId": deck_id,
         "runId": child_run_id,
         "cardId": knowgraph_card_id,
-    }
+    } for row in rows]
 
 
 def record_atomic_research_outcome(payload: dict[str, Any]) -> dict[str, Any]:

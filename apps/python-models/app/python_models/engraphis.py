@@ -24,7 +24,7 @@ from typing import Any, Callable, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from engraphis.core.interfaces import Edge, MemoryType, Node, Scope, SearchFilter
+from engraphis.core.interfaces import Edge, FactSpec, MemoryType, Node, Scope, SearchFilter
 
 from .jev_edge_ontology import (
     SHARED_JEV_RELATIONSHIPS,
@@ -66,6 +66,8 @@ THINKGRAPH_CONTROL_OUTCOMES = (
 )
 THINKGRAPH_JEV_CHOICES = SHARED_JEV_RELATIONSHIPS + THINKGRAPH_CONTROL_OUTCOMES
 _THINK_INCIDENCE_KIND = "structured_extractor"
+_LEGACY_THINK_FACET_SCHEMA_VERSION = "thinkgraph.facets.v1"
+_THINK_FACET_SCHEMA_VERSION = "thinkgraph.aligned-facets.v2"
 _TRUSTED_STRUCTURED_GRAPH_KEYS = frozenset(
     ("entities", "relations", "structured_extraction")
 )
@@ -133,9 +135,10 @@ ATOMIC_RESEARCH_STATES = (
 ATOMIC_RESEARCH_KINDS = frozenset((
     "CLAIM", "DECISION", "QUESTION", "PREDICTION", "CONSTRAINT",
     "CORRECTION", "PROPOSAL", "PREFERENCE", "PROCEDURE", "OBSERVATION",
+    "BELIEF", "JUDGMENT", "UNCERTAINTY", "PLAN", "HYPOTHESIS",
 ))
 ATOMIC_RESEARCH_EVIDENCE_KINDS = frozenset((
-    "CLAIM", "PREDICTION", "CORRECTION", "OBSERVATION",
+    "CLAIM", "PREDICTION", "CORRECTION", "OBSERVATION", "BELIEF", "HYPOTHESIS",
 ))
 ATOMIC_RESEARCH_AUTO_KINDS = ATOMIC_RESEARCH_EVIDENCE_KINDS | {"QUESTION"}
 ATOMIC_RESEARCH_SUBJECT_BOUNDARIES = ("same_subject", "shifted", "uncertain")
@@ -410,7 +413,8 @@ def _source_pair(payload: dict[str, Any]) -> dict[str, Any]:
         key: payload[key]
         for key in (
             "projectId", "deckId", "conversationId", "runId", "cardId",
-            "nativeSessionRef", "completedAt",
+            "nativeSessionRef", "completedAt", "userMessageId", "userMessageAt",
+            "mainMessageId", "mainMessageAt",
         )
         if payload.get(key)
     } | {
@@ -580,6 +584,12 @@ def _think_metadata(memory: Any) -> dict[str, Any] | None:
     origin = metadata.get("thinkgraph_origin")
     if not isinstance(origin, dict) or origin.get("authority") != "thinkgraph":
         return None
+    facet = metadata.get("thinkgraph_facet")
+    if isinstance(facet, dict):
+        try:
+            return ThinkGraphThink.model_validate(facet).model_dump(mode="json")
+        except Exception:
+            return None
     structured = metadata.get("structured_extraction")
     if not isinstance(structured, dict):
         return None
@@ -2022,15 +2032,22 @@ def _atomic_related_thinks(
     service: Any,
     project: str,
     workspace_id: str,
-    required_memory_id: str,
+    required_memory_ids: str | list[str],
     query: str,
 ) -> list[dict[str, Any]]:
-    required = _atomic_memory_candidate(
-        service.store, workspace_id, required_memory_id
+    required_ids = (
+        [required_memory_ids]
+        if isinstance(required_memory_ids, str)
+        else list(required_memory_ids)
     )
-    if required is None:
-        raise AtomicResearchError("atomic_research_settled_think_required")
-    ordered = [required]
+    ordered: list[dict[str, Any]] = []
+    for memory_id in required_ids:
+        required = _atomic_memory_candidate(
+            service.store, workspace_id, memory_id
+        )
+        if required is None:
+            raise AtomicResearchError("atomic_research_settled_think_required")
+        ordered.append(required)
     try:
         recalled = service.recall(
             query=query,
@@ -2059,7 +2076,7 @@ def _atomic_related_thinks(
         raise AtomicResearchError(
             "atomic_research_think_recall_unavailable"
         )
-    seen = {required_memory_id}
+    seen = set(required_ids)
     for raw in recalled["memories"]:
         memory_id = str(raw.get("id") or "").strip() if isinstance(raw, dict) else ""
         if not memory_id or memory_id in seen:
@@ -2184,6 +2201,20 @@ def _atomic_coverage_state(
     return candidates, bounded_evidence
 
 
+def _atomic_required_think_ids(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("thinkMemoryIds")
+    if (
+        not isinstance(raw, list)
+        or not 1 <= len(raw) <= ATOMIC_RESEARCH_MAX_SELECTED
+        or any(not isinstance(value, str) or not value.strip() for value in raw)
+    ):
+        raise AtomicResearchError("atomic_research_payload_invalid")
+    values = [value.strip() for value in raw]
+    if len(set(values)) != len(values):
+        raise AtomicResearchError("atomic_research_payload_invalid")
+    return values
+
+
 def prepare_atomic_research_frame(
     payload: dict[str, Any],
     *,
@@ -2197,13 +2228,14 @@ def prepare_atomic_research_frame(
         raise AtomicResearchError("atomic_research_payload_invalid")
     required_fields = (
         "projectId", "deckId", "conversationId", "originatingRunId",
-        "thinkMemoryId", "mainCardId", "mainCardRevisionId",
+        "mainCardId", "mainCardRevisionId",
         "thinkGraphCardId", "thinkGraphCardRevisionId",
         "knowGraphCardId", "knowGraphCardRevisionId", "evidenceCutoff",
     )
     values = {key: str(payload.get(key) or "").strip() for key in required_fields}
     if any(not value for value in values.values()):
         raise AtomicResearchError("atomic_research_payload_invalid")
+    think_memory_ids = _atomic_required_think_ids(payload)
     project = project_id(values["projectId"])
     service = service or get_service()
     with _lock:
@@ -2213,17 +2245,23 @@ def prepare_atomic_research_frame(
         if workspace_row is None:
             raise AtomicResearchError("atomic_research_workspace_unavailable")
         workspace_id = str(workspace_row["id"])
-        required = _atomic_memory_candidate(
-            service.store, workspace_id, values["thinkMemoryId"]
-        )
-        if (
+        required_candidates = [
+            _atomic_memory_candidate(service.store, workspace_id, memory_id)
+            for memory_id in think_memory_ids
+        ]
+        if any(
             required is None
             or required["sourceRunId"] != values["originatingRunId"]
+            for required in required_candidates
         ):
             raise AtomicResearchError("atomic_research_settled_think_required")
-        query = "\n".join((required["summary"], required["content"]))[:6_000]
+        query = "\n".join(
+            text
+            for required in required_candidates
+            for text in (required["summary"], required["content"])
+        )[:6_000]
         candidates = _atomic_related_thinks(
-            service, project, workspace_id, values["thinkMemoryId"], query
+            service, project, workspace_id, think_memory_ids, query
         )
     if subject_directory_reader is None:
         from app.python_models.data_anchor import build_canonical_subject_directory
@@ -2244,7 +2282,10 @@ def prepare_atomic_research_frame(
         for index, evidence in enumerate(know_evidence)
     }
     public_frame = {
-        "required_new_think": next(iter(opaque_thinks)),
+        "required_new_thinks": [
+            choice_id for choice_id, candidate in opaque_thinks.items()
+            if candidate["memoryId"] in think_memory_ids
+        ],
         "atomic_thinks": [{
             "choice_id": choice_id,
             "title": candidate["title"],
@@ -2266,6 +2307,7 @@ def prepare_atomic_research_frame(
         "schemaVersion": "atomic-research-frame.v1",
         **values,
         "projectId": project,
+        "thinkMemoryIds": think_memory_ids,
         "researchFrameSha256": frame_hash,
         "subjectDirectorySha256": directory["sha256"],
         "candidates": candidates,
@@ -2465,7 +2507,7 @@ def validate_atomic_research_jev_response(
     identity = {
         "projectId": frame["projectId"],
         "originatingRunId": frame["originatingRunId"],
-        "thinkMemoryId": frame["thinkMemoryId"],
+        "thinkMemoryIds": frame["thinkMemoryIds"],
         "researchFrameSha256": frame["researchFrameSha256"],
         "evidenceCutoff": frame["evidenceCutoff"],
     }
@@ -2474,7 +2516,7 @@ def validate_atomic_research_jev_response(
         "status": "success",
         **{key: frame[key] for key in (
             "projectId", "deckId", "conversationId", "originatingRunId",
-            "thinkMemoryId", "mainCardId", "mainCardRevisionId",
+            "thinkMemoryIds", "mainCardId", "mainCardRevisionId",
             "thinkGraphCardId", "thinkGraphCardRevisionId",
             "knowGraphCardId", "knowGraphCardRevisionId", "evidenceCutoff",
             "researchFrameSha256", "subjectDirectorySha256",
@@ -2537,7 +2579,7 @@ def _terminal_atomic_research_assessment(
     identity = {
         "projectId": frame["projectId"],
         "originatingRunId": frame["originatingRunId"],
-        "thinkMemoryId": frame["thinkMemoryId"],
+        "thinkMemoryIds": frame["thinkMemoryIds"],
         "researchFrameSha256": frame["researchFrameSha256"],
         "evidenceCutoff": frame["evidenceCutoff"],
     }
@@ -2547,7 +2589,7 @@ def _terminal_atomic_research_assessment(
         "failureReason": failure_reason,
         **{key: frame[key] for key in (
             "projectId", "deckId", "conversationId", "originatingRunId",
-            "thinkMemoryId", "mainCardId", "mainCardRevisionId",
+            "thinkMemoryIds", "mainCardId", "mainCardRevisionId",
             "thinkGraphCardId", "thinkGraphCardRevisionId",
             "knowGraphCardId", "knowGraphCardRevisionId", "evidenceCutoff",
             "researchFrameSha256", "subjectDirectorySha256",
@@ -2594,13 +2636,14 @@ def assess_atomic_research(
         raise AtomicResearchError("atomic_research_payload_invalid")
     required_fields = (
         "projectId", "deckId", "conversationId", "sourceRunId",
-        "thinkMemoryId", "mainCardId", "mainCardRevisionId",
+        "mainCardId", "mainCardRevisionId",
         "thinkGraphCardId", "thinkGraphCardRevisionId",
         "knowGraphCardId", "knowGraphCardRevisionId", "evidenceCutoff",
     )
     values = {key: str(payload.get(key) or "").strip() for key in required_fields}
     if any(not value for value in values.values()):
         raise AtomicResearchError("atomic_research_payload_invalid")
+    think_memory_ids = _atomic_required_think_ids(payload)
     project = project_id(values["projectId"])
     service = service or get_service()
     with _lock:
@@ -2610,17 +2653,23 @@ def assess_atomic_research(
         if workspace_row is None:
             raise AtomicResearchError("atomic_research_workspace_unavailable")
         workspace_id = str(workspace_row["id"])
-        required = _atomic_memory_candidate(
-            service.store, workspace_id, values["thinkMemoryId"]
-        )
-        if (
+        required_candidates = [
+            _atomic_memory_candidate(service.store, workspace_id, memory_id)
+            for memory_id in think_memory_ids
+        ]
+        if any(
             required is None
             or required["sourceRunId"] != values["sourceRunId"]
+            for required in required_candidates
         ):
             raise AtomicResearchError("atomic_research_settled_think_required")
-        query = "\n".join((required["summary"], required["content"]))[:6_000]
+        query = "\n".join(
+            text
+            for required in required_candidates
+            for text in (required["summary"], required["content"])
+        )[:6_000]
         candidates = _atomic_related_thinks(
-            service, project, workspace_id, values["thinkMemoryId"], query
+            service, project, workspace_id, think_memory_ids, query
         )
 
     if subject_directory_reader is None:
@@ -2645,9 +2694,10 @@ def assess_atomic_research(
             "status": "source-unavailable",
             "failureReason": failure,
             **values,
+            "thinkMemoryIds": think_memory_ids,
             "projectId": project,
             "assessmentId": "atomic-research-assessment:" + hashlib.sha256(
-                f"{project}\0{values['sourceRunId']}\0{values['thinkMemoryId']}\0{failure}".encode()
+                f"{project}\0{values['sourceRunId']}\0{'|'.join(think_memory_ids)}\0{failure}".encode()
             ).hexdigest()[:32],
             "requestCount": 0,
             "questionCount": 0,
@@ -2880,6 +2930,7 @@ def assess_atomic_research(
             "failureReason": error.error_code,
             **values,
             "projectId": project,
+            "thinkMemoryIds": think_memory_ids,
             "assessmentId": "atomic-research-assessment:" + hashlib.sha256(
                 f"{project}\0{values['sourceRunId']}\0{frame_hash}\0{error.error_code}".encode()
             ).hexdigest()[:32],
@@ -2911,7 +2962,7 @@ def assess_atomic_research(
     assessment_identity = {
         "projectId": project,
         "sourceRunId": values["sourceRunId"],
-        "thinkMemoryId": values["thinkMemoryId"],
+        "thinkMemoryIds": think_memory_ids,
         "revisions": {
             "main": values["mainCardRevisionId"],
             "thinkGraph": values["thinkGraphCardRevisionId"],
@@ -2925,6 +2976,7 @@ def assess_atomic_research(
         "status": "success",
         **values,
         "projectId": project,
+        "thinkMemoryIds": think_memory_ids,
         "assessmentId": "atomic-research-assessment:" + hashlib.sha256(
             json.dumps(assessment_identity, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()[:32],
@@ -2955,60 +3007,41 @@ def assess_atomic_research(
     }
 
 
-def _wait_for_atomic_research_episodes(
-    project: str,
-    episode_ids: list[str],
-    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    """Wait only for exact queued Graphiti IDs to become natively readable."""
-
-    requested = set(episode_ids)
-    deadline = (
-        time.monotonic()
-        + ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS
-    )
-    while True:
-        episodes = episode_reader(project, episode_ids)
-        observed = {
-            str(item.get("uuid") or "")
-            for item in episodes
-            if isinstance(item, dict) and item.get("uuid")
-        }
-        if observed == requested:
-            return episodes
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return episodes
-        time.sleep(min(
-            ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS,
-            remaining,
-        ))
-
-
 def _wait_for_atomic_research_write_settlement(
     *,
     project: str,
     deck_id: str,
     child_run_id: str,
     knowgraph_card_id: str,
-    attention_reader: Callable[[str, str, str, str], dict[str, Any] | None],
+    attention_reader: Callable[
+        [str, str, str, str],
+        dict[str, Any] | list[dict[str, Any]] | None,
+    ],
     episode_reader: Callable[[str, list[str]], list[dict[str, Any]]],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Settle one exact observed Graphiti write without repeating the write."""
+    call_ids: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Settle each requested call through its exact event and one episode UUID."""
 
     deadline = (
         time.monotonic()
         + ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS
     )
-    observed_event_id = ""
+    expected_call_ids = list(dict.fromkeys(call_ids))
+    if not expected_call_ids or len(expected_call_ids) != len(call_ids):
+        raise AtomicResearchError("atomic_research_call_identity_invalid")
     while True:
-        event = attention_reader(
+        raw_events = attention_reader(
             project, deck_id, child_run_id, knowgraph_card_id,
         )
-        if event is not None:
+        events = (
+            raw_events if isinstance(raw_events, list)
+            else [raw_events] if isinstance(raw_events, dict)
+            else []
+        )
+        events_by_call: dict[str, dict[str, Any]] = {}
+        for event in events:
             if (
-                not isinstance(event, dict)
-                or event.get("projectId") != project
+                event.get("projectId") != project
                 or event.get("deckId") != deck_id
                 or event.get("runId") != child_run_id
                 or event.get("cardId") != knowgraph_card_id
@@ -3019,57 +3052,78 @@ def _wait_for_atomic_research_write_settlement(
             ):
                 raise AtomicResearchError(
                     "atomic_research_write_event_scope_mismatch"
-                )
+            )
             event_id = str(event["eventId"])
-            if observed_event_id and event_id != observed_event_id:
+            call_id = str(event.get("callId") or "").strip()
+            if (
+                call_id != event_id
+                or call_id not in expected_call_ids
+                or call_id in events_by_call
+            ):
                 raise AtomicResearchError(
-                    "atomic_research_write_event_identity_changed"
+                    "atomic_research_write_event_identity_mismatch"
                 )
-            observed_event_id = event_id
+            events_by_call[call_id] = event
             phase = str(event.get("phase") or "").strip()
             if phase == "failed":
-                raise AtomicResearchError(
-                    "atomic_research_episode_write_failed"
-                )
-            if phase == "completed":
-                candidate_ids = list(dict.fromkeys(
-                    str(value or "").strip()
-                    for value in event.get("nativeNodeIds") or []
-                    if str(value or "").strip()
-                ))
-                if not candidate_ids:
-                    raise AtomicResearchError(
-                        "atomic_research_completed_write_missing_native_ids"
-                    )
-                while True:
-                    episodes = episode_reader(project, candidate_ids)
-                    by_id = {
-                        str(item.get("uuid") or ""): item
-                        for item in episodes
-                        if isinstance(item, dict) and item.get("uuid")
-                    }
-                    if not set(by_id) <= set(candidate_ids):
-                        raise AtomicResearchError(
-                            "atomic_research_episode_reference_invalid"
-                        )
-                    if len(by_id) == 1:
-                        return event, [next(iter(by_id.values()))]
-                    if len(by_id) > 1:
-                        raise AtomicResearchError(
-                            "atomic_research_episode_settlement_ambiguous"
-                        )
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise AtomicResearchError(
-                            "atomic_research_episode_settlement_pending"
-                        )
-                    time.sleep(min(
-                        ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS,
-                        remaining,
-                    ))
-            if phase != "pending":
+                raise AtomicResearchError("atomic_research_episode_write_failed")
+            if phase not in {"pending", "completed"}:
                 raise AtomicResearchError(
                     "atomic_research_write_event_phase_invalid"
+                )
+            episode_ids = list(dict.fromkeys(
+                str(value or "").strip()
+                for value in event.get("nativeEpisodeIds") or []
+                if str(value or "").strip()
+            ))
+            if phase == "pending" and episode_ids:
+                raise AtomicResearchError(
+                    "atomic_research_pending_write_has_episode"
+                )
+            if phase == "completed" and len(episode_ids) != 1:
+                raise AtomicResearchError(
+                    "atomic_research_completed_write_episode_identity_invalid"
+                )
+        if (
+            set(events_by_call) == set(expected_call_ids)
+            and all(
+                str(events_by_call[call_id].get("phase") or "") == "completed"
+                for call_id in expected_call_ids
+            )
+        ):
+            candidate_ids = [
+                str(events_by_call[call_id]["nativeEpisodeIds"][0])
+                for call_id in expected_call_ids
+            ]
+            if len(set(candidate_ids)) != len(candidate_ids):
+                raise AtomicResearchError(
+                    "atomic_research_episode_identity_reused"
+                )
+            episodes = episode_reader(project, candidate_ids)
+            by_id = {
+                str(item.get("uuid") or ""): item
+                for item in episodes
+                if isinstance(item, dict) and item.get("uuid")
+            }
+            if set(by_id) == set(candidate_ids):
+                ordered_episodes = [by_id[value] for value in candidate_ids]
+                for call_id, episode in zip(expected_call_ids, ordered_episodes):
+                    if (
+                        episode.get("liquidaity_call_id") != call_id
+                        or episode.get("liquidaity_record_kind") != "canonical_know"
+                        or episode.get("liquidaity_schema_version")
+                        != "knowgraph.source-observation.v2"
+                    ):
+                        raise AtomicResearchError(
+                            "atomic_research_episode_call_identity_mismatch"
+                        )
+                return (
+                    [events_by_call[call_id] for call_id in expected_call_ids],
+                    ordered_episodes,
+                )
+            if not set(by_id) <= set(candidate_ids):
+                raise AtomicResearchError(
+                    "atomic_research_episode_reference_invalid"
                 )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -3082,28 +3136,82 @@ def _wait_for_atomic_research_write_settlement(
         ))
 
 
-def _atomic_episode_citation_urls(episode: dict[str, Any]) -> set[str]:
-    urls: set[str] = set()
-    source_url = str(episode.get("source_url") or "").strip()
-    if source_url:
-        urls.add(source_url)
-    source_description = episode.get("source_description")
-    if isinstance(source_description, str):
-        try:
-            described = json.loads(source_description)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            described = None
-        if isinstance(described, list) and all(
-            isinstance(value, str) for value in described
+def _canonical_know_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
+    """Validate exact v2 structure and its datum-only native extraction body."""
+
+    know = episode.get("canonicalKnow")
+    if (
+        not isinstance(know, dict)
+        or set(know) != {"schemaVersion", "name", "observations"}
+        or know.get("schemaVersion") != "knowgraph.source-observation.v2"
+        or not isinstance(know.get("name"), str)
+        or not know["name"].strip()
+        or not isinstance(know.get("observations"), list)
+        or not know["observations"]
+    ):
+        raise AtomicResearchError("atomic_research_know_readback_invalid")
+    objective_observations: list[dict[str, Any]] = []
+    for observation in know["observations"]:
+        if (
+            not isinstance(observation, dict)
+            or set(observation) != {
+                "datum", "interpretation", "citations", "relevantEntities",
+            }
+            or not isinstance(observation.get("datum"), str)
+            or not observation["datum"].strip()
+            or not isinstance(observation.get("interpretation"), str)
+            or not observation["interpretation"].strip()
+            or not isinstance(observation.get("citations"), list)
+            or not observation["citations"]
+            or not isinstance(observation.get("relevantEntities"), list)
+            or not observation["relevantEntities"]
+            or any(
+                not isinstance(value, str) or not value.strip()
+                for value in observation["relevantEntities"]
+            )
+            or len(set(observation["relevantEntities"]))
+            != len(observation["relevantEntities"])
         ):
-            urls.update(value.strip() for value in described if value.strip())
-    return urls
+            raise AtomicResearchError("atomic_research_know_readback_invalid")
+        for citation in observation["citations"]:
+            if (
+                not isinstance(citation, dict)
+                or set(citation) != {
+                    "url", "title", "publishedAt", "sourceNote",
+                }
+                or not isinstance(citation.get("url"), str)
+                or not citation["url"]
+                or citation["url"] != citation["url"].strip()
+                or not re.fullmatch(r"https?://[^\s]{1,2048}", citation["url"])
+                or not isinstance(citation.get("title"), str)
+                or (
+                    citation.get("publishedAt") is not None
+                    and (
+                        not isinstance(citation["publishedAt"], str)
+                        or not citation["publishedAt"].strip()
+                    )
+                )
+                or not isinstance(citation.get("sourceNote"), str)
+                or not citation["sourceNote"].strip()
+            ):
+                raise AtomicResearchError("atomic_research_know_readback_invalid")
+        objective_observations.append({
+            "datum": observation["datum"],
+        })
+    try:
+        objective_body = json.loads(str(episode.get("content") or ""))
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise AtomicResearchError("atomic_research_know_objective_body_invalid") from error
+    if objective_body != {"observations": objective_observations}:
+        raise AtomicResearchError("atomic_research_know_objective_body_invalid")
+    return know
 
 
 _ATOMIC_NATIVE_PROSE_FIELDS = {
     "name", "title", "summary", "content", "content_preview", "body",
     "episode_body", "fact", "source_description", "entity_name",
-    "source_name", "target_name",
+    "source_name", "target_name", "datum", "interpretation", "sourceNote",
+    "relevantEntities",
 }
 
 
@@ -3141,7 +3249,10 @@ def validate_atomic_research_result(
     *,
     episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
     attention_reader: (
-        Callable[[str, str, str, str], dict[str, Any] | None] | None
+        Callable[
+            [str, str, str, str],
+            dict[str, Any] | list[dict[str, Any]] | None,
+        ] | None
     ) = None,
 ) -> dict[str, Any]:
     """Validate exact per-Think status and project-scoped citation/episode refs."""
@@ -3179,34 +3290,35 @@ def validate_atomic_research_result(
     if (
         not isinstance(result, dict)
         or set(result) != {"schemaVersion", "results"}
-        or result.get("schemaVersion") != "atomic-research-response.v1"
+        or result.get("schemaVersion") != "atomic-research-response.v2"
         or not isinstance(result.get("results"), list)
         or len(result["results"]) != len(expected_ids)
     ):
         raise AtomicResearchError("atomic_research_result_contract_invalid")
     normalized: list[dict[str, Any]] = []
-    all_episode_ids: list[str] = []
-    all_urls: set[str] = set()
+    call_ids: list[str] = []
     for result_index, item in enumerate(result["results"]):
         if (
             not isinstance(item, dict)
-            or set(item) != {
-                "status", "summary", "citations", "episodeUuids",
-            }
+            or set(item) != {"status", "summary", "callId"}
         ):
             raise AtomicResearchError("atomic_research_result_contract_invalid")
         memory_id = str(expected_ids[result_index]).strip()
         status = str(item.get("status") or "").strip()
-        summary = str(item.get("summary") or "").strip()
-        citations = item.get("citations")
-        episode_ids = item.get("episodeUuids")
+        summary = item.get("summary")
+        call_id = item.get("callId")
         if (
             status not in {"supported", "contradicted", "source-unavailable"}
-            or not summary or len(summary) > 4_000
-            or not isinstance(citations, list)
-            or not isinstance(episode_ids, list)
-            or any(not isinstance(value, str) or not value.strip() for value in episode_ids)
-            or len(set(episode_ids)) != len(episode_ids)
+            or not isinstance(summary, str)
+            or not summary.strip()
+            or call_id is not None and (
+                not isinstance(call_id, str)
+                or re.fullmatch(
+                    r"know-call:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                    call_id,
+                ) is None
+            )
+            or status in {"supported", "contradicted"} and call_id is None
         ):
             raise AtomicResearchError("atomic_research_result_contract_invalid")
         if _atomic_native_prose_contains_transport_id(
@@ -3215,45 +3327,15 @@ def validate_atomic_research_result(
             raise AtomicResearchError(
                 "atomic_research_transport_identifier_in_prose"
             )
-        normalized_citations: list[dict[str, Any]] = []
-        for citation in citations:
-            if (
-                not isinstance(citation, dict)
-                or set(citation) != {"url", "title", "publishedAt"}
-            ):
-                raise AtomicResearchError("atomic_research_citation_invalid")
-            url = str(citation.get("url") or "").strip()
-            title = str(citation.get("title") or "").strip()
-            published_at = citation.get("publishedAt")
-            if (
-                not re.fullmatch(r"https?://[^\s]{1,2000}", url)
-                or not title or len(title) > 500
-                or (published_at is not None and (
-                    not isinstance(published_at, str) or len(published_at) > 128
-                ))
-            ):
-                raise AtomicResearchError("atomic_research_citation_invalid")
-            normalized_citations.append({
-                "url": url,
-                "title": title,
-                "publishedAt": published_at,
-            })
-            all_urls.add(url)
-        if len(all_urls) > 4:
-            raise AtomicResearchError("atomic_research_primary_source_limit_exceeded")
-        if status in {"supported", "contradicted"} and not normalized_citations:
-            raise AtomicResearchError("atomic_research_supported_references_required")
-        if episode_ids and not normalized_citations:
-            raise AtomicResearchError("atomic_research_result_contract_invalid")
-        for episode_id in episode_ids:
-            if episode_id not in all_episode_ids:
-                all_episode_ids.append(episode_id)
+        if call_id is not None:
+            if call_id in call_ids:
+                raise AtomicResearchError("atomic_research_call_identity_reused")
+            call_ids.append(call_id)
         normalized.append({
             "thinkMemoryId": memory_id,
             "status": status,
             "summary": summary,
-            "citations": normalized_citations,
-            "episodeUuids": list(episode_ids),
+            "callId": call_id,
         })
     if {entry["thinkMemoryId"] for entry in normalized} != set(expected_ids):
         raise AtomicResearchError("atomic_research_result_contract_invalid")
@@ -3261,66 +3343,60 @@ def validate_atomic_research_result(
         from app.python_models.data_anchor import read_knowgraph_episodes_exact
         episode_reader = read_knowgraph_episodes_exact
     settlement: dict[str, Any] | None = None
-    cited_results = [item for item in normalized if item["citations"]]
-    if cited_results:
+    episodes: list[dict[str, Any]] = []
+    if call_ids:
         if attention_reader is None:
             from app.python_models.card_domain import (
-                read_atomic_research_write_event,
+                read_atomic_research_write_events,
             )
-            attention_reader = read_atomic_research_write_event
-        event, episodes = _wait_for_atomic_research_write_settlement(
+            attention_reader = read_atomic_research_write_events
+        events, episodes = _wait_for_atomic_research_write_settlement(
             project=project,
             deck_id=deck_id,
             child_run_id=child_run_id,
             knowgraph_card_id=knowgraph_card_id,
             attention_reader=attention_reader,
             episode_reader=episode_reader,
+            call_ids=call_ids,
         )
-        settled_ids = [str(episodes[0]["uuid"])]
-        for item in cited_results:
-            if item["episodeUuids"] and set(item["episodeUuids"]) != set(
-                settled_ids
-            ):
+        episodes_by_call: dict[str, dict[str, Any]] = {}
+        for event, episode in zip(events, episodes):
+            call_id = str(event["callId"])
+            know = _canonical_know_from_episode(episode)
+            if _atomic_native_prose_contains_transport_id(know, transport_ids):
                 raise AtomicResearchError(
-                    "atomic_research_episode_reference_mismatch"
+                    "atomic_research_transport_identifier_in_prose"
                 )
-            item["episodeUuids"] = list(settled_ids)
-        all_episode_ids = list(settled_ids)
+            episodes_by_call[call_id] = {
+                "episode": episode,
+                "know": know,
+            }
+        for item in normalized:
+            call_id = item.get("callId")
+            if call_id is None:
+                item["episodeUuid"] = None
+                continue
+            settled = episodes_by_call.get(call_id)
+            if settled is None:
+                raise AtomicResearchError(
+                    "atomic_research_episode_reference_invalid"
+                )
+            item["episodeUuid"] = str(settled["episode"]["uuid"])
+            item["know"] = settled["know"]
+        all_episode_ids = [str(episode["uuid"]) for episode in episodes]
         settlement = {
-            "eventId": str(event["eventId"]),
+            "eventIds": [str(event["eventId"]) for event in events],
+            "callIds": list(call_ids),
             "phase": "completed",
-            "episodeUuids": list(settled_ids),
+            "episodeUuids": list(all_episode_ids),
         }
     else:
-        episodes = (
-            _wait_for_atomic_research_episodes(
-                project, all_episode_ids, episode_reader,
-            )
-            if all_episode_ids else []
-        )
-    by_id = {
-        str(item.get("uuid") or ""): item
-        for item in episodes if isinstance(item, dict) and item.get("uuid")
-    }
-    if set(by_id) != set(all_episode_ids):
-        raise AtomicResearchError("atomic_research_episode_reference_invalid")
-    if _atomic_native_prose_contains_transport_id(episodes, transport_ids):
-        raise AtomicResearchError(
-            "atomic_research_transport_identifier_in_prose"
-        )
-    for item in normalized:
-        if not item["citations"]:
-            continue
-        citation_urls = {citation["url"] for citation in item["citations"]}
-        episode_urls = set().union(*(
-            _atomic_episode_citation_urls(by_id[episode_id])
-            for episode_id in item["episodeUuids"]
-        ))
-        if not citation_urls <= episode_urls:
-            raise AtomicResearchError("atomic_research_citation_episode_mismatch")
+        all_episode_ids = []
+        for item in normalized:
+            item["episodeUuid"] = None
     ordered = sorted(normalized, key=lambda item: expected_ids.index(item["thinkMemoryId"]))
     normalized_result = {
-        "schemaVersion": "atomic-research-result.v1",
+        "schemaVersion": "atomic-research-result.v2",
         "assessmentId": assessment_id,
         "sourceRunId": source_run_id,
         "childRunId": child_run_id,
@@ -3337,12 +3413,17 @@ def validate_atomic_research_result(
             "",
             f"{status_labels[item['status']]}: {item['summary']}",
         ))
-    if cited_results:
+    if call_ids:
         chat_lines.extend(("", "Evidence and sources are retained in KnowGraph."))
+    citation_count = sum(
+        len(observation["citations"])
+        for item in normalized
+        for observation in (item.get("know") or {}).get("observations", [])
+    )
     return {
         "ok": True,
         "result": normalized_result,
-        "citationCount": sum(len(item["citations"]) for item in ordered),
+        "citationCount": citation_count,
         "episodeCount": len(all_episode_ids),
         "sharedChatText": "\n".join(chat_lines),
         **({"settlement": settlement} if settlement is not None else {}),
@@ -4586,9 +4667,14 @@ atexit.register(close_engine)
 
 class ThinkGraphKind(str, Enum):
     CLAIM = "CLAIM"
+    BELIEF = "BELIEF"
     DECISION = "DECISION"
+    JUDGMENT = "JUDGMENT"
     QUESTION = "QUESTION"
+    UNCERTAINTY = "UNCERTAINTY"
     PREDICTION = "PREDICTION"
+    PLAN = "PLAN"
+    HYPOTHESIS = "HYPOTHESIS"
     CONSTRAINT = "CONSTRAINT"
     CORRECTION = "CORRECTION"
     PROPOSAL = "PROPOSAL"
@@ -4612,7 +4698,7 @@ class ThinkGraphThinkProperty(_StructuredModel):
 
 class ThinkGraphThink(_StructuredModel):
     kind: ThinkGraphKind
-    summary: str = Field(min_length=1, max_length=4_000)
+    summary: str = Field(min_length=1, max_length=100_000)
     propositions: list[str] = Field(default_factory=list, max_length=24)
     questions: list[str] = Field(default_factory=list, max_length=16)
     predictions: list[str] = Field(default_factory=list, max_length=16)
@@ -4640,6 +4726,51 @@ class ThinkGraphStructuredRelation(_StructuredModel):
         ),
     )
     target: str = Field(min_length=1, max_length=256)
+
+
+class ThinkGraphFacetKind(str, Enum):
+    CLAIM = "claim"
+    PREFERENCE = "preference"
+    BELIEF = "belief"
+    DECISION = "decision"
+    JUDGMENT = "judgment"
+    QUESTION = "question"
+    UNCERTAINTY = "uncertainty"
+    PLAN = "plan"
+    HYPOTHESIS = "hypothesis"
+    CONSTRAINT = "constraint"
+    CORRECTION = "correction"
+    PROPOSAL = "proposal"
+    PROCEDURE = "procedure"
+    OBSERVATION = "observation"
+
+
+class ThinkGraphFacetRelationship(_StructuredModel):
+    subject: str = Field(min_length=1, max_length=256)
+    relation: str = Field(
+        min_length=1,
+        max_length=512,
+        description=(
+            "A concise directional predicate grounded in this facet. Prefer an exact label "
+            "from current_project_relationship_vocabulary when it fits. Otherwise propose "
+            "one UPPER_SNAKE_CASE label: prefer one word and never exceed three words."
+        ),
+    )
+    object: str = Field(min_length=1, max_length=256)
+
+
+class ThinkGraphFacet(_StructuredModel):
+    name: str = Field(min_length=1, max_length=1_000)
+    body: str = Field(min_length=1, max_length=100_000)
+    kind: ThinkGraphFacetKind
+    concepts: list[str] = Field(default_factory=list, max_length=24)
+    relationships: list[ThinkGraphFacetRelationship] = Field(
+        default_factory=list, max_length=10
+    )
+
+
+class ThinkGraphFacetExtraction(_StructuredModel):
+    thinks: list[ThinkGraphFacet] = Field(max_length=6)
 
 
 class ThinkGraphStructuredFact(_StructuredModel):
@@ -4670,7 +4801,7 @@ class _ProjectedPairing(_StructuredModel):
     source: _ProjectedPairEndpoint
     target: _ProjectedPairEndpoint
     direction: Literal["source_to_target"]
-    supporting_proposition: str = Field(min_length=1, max_length=4_000)
+    supporting_proposition: str = Field(min_length=1, max_length=100_000)
     relationship_proposal: str = Field(min_length=1, max_length=512)
 
 
@@ -4684,6 +4815,41 @@ class _ProjectedStructuredOutput(_StructuredModel):
         default_factory=list, max_length=10
     )
     pairings: list[_ProjectedPairing] = Field(default_factory=list, max_length=120)
+
+
+class _ProjectedThinkFacet(_StructuredModel):
+    facet_id: str = Field(min_length=1, max_length=128)
+    ordinal: int = Field(ge=0, le=5)
+    name: str = Field(min_length=1, max_length=1_000)
+    body: str = Field(min_length=1, max_length=100_000)
+    kind: ThinkGraphFacetKind
+    concepts: list[str] = Field(default_factory=list, max_length=24)
+    relations: list[ThinkGraphStructuredRelation] = Field(default_factory=list, max_length=10)
+    pairings: list[_ProjectedPairing] = Field(default_factory=list, max_length=120)
+
+
+class _ProjectedThinkBatch(_StructuredModel):
+    thought_id: str = Field(min_length=1, max_length=128)
+    facets: list[_ProjectedThinkFacet] = Field(default_factory=list, max_length=6)
+
+
+class _LegacyRoleSplitThinkFacet(_StructuredModel):
+    """Read-only compatibility contract for already-persisted v1 manifests."""
+
+    facet_id: str = Field(min_length=1, max_length=128)
+    source_role: Literal["user", "main"]
+    ordinal: int = Field(ge=0, le=47)
+    name: str = Field(min_length=1, max_length=1_000)
+    body: str = Field(min_length=1, max_length=100_000)
+    kind: ThinkGraphFacetKind
+    concepts: list[str] = Field(default_factory=list, max_length=24)
+    relations: list[ThinkGraphStructuredRelation] = Field(default_factory=list, max_length=10)
+    pairings: list[_ProjectedPairing] = Field(default_factory=list, max_length=120)
+
+
+class _LegacyRoleSplitThinkBatch(_StructuredModel):
+    batch_id: str = Field(min_length=1, max_length=128)
+    facets: list[_LegacyRoleSplitThinkFacet] = Field(default_factory=list, max_length=48)
 
 
 def _remember_without_graph(service: Any, **kwargs: Any) -> dict[str, Any]:
@@ -4734,32 +4900,40 @@ class _SavedCardStructuredResult:
         return self.value
 
 
-def _native_structured_extractor(llm: Any) -> Any:
-    from engraphis.backends.extractor import StructuredLLMExtractor
-
-    extractor_type = StructuredLLMExtractor.with_schema(ThinkGraphStructuredFact)
-    return extractor_type(llm, max_facts=1)
-
-
 def _llm_structured_contract(
     pair_text: str,
     context: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    extractor = _native_structured_extractor(
-        _SavedCardStructuredResult({}, "schema-only")
-    )
     context_text = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    prompt = extractor._build_prompt(pair_text, context_text)
-    prompt += (
-        "\nTHINKGRAPH TEMPORAL THINK:\n"
-        "Represent what this completed User/Main exchange thought. Return exactly one "
-        "object in the facts array with mtype='episodic' and one first-class `think` "
-        "payload. Preserve claims, questions, predictions, assumptions, preferences, "
-        "corrections, disagreement, and uncertainty in their actual epistemic form; do "
-        "not turn them into established facts. Extract canonical entities/concepts and "
-        "natural directed relationships that actually occur in this pair. Do not browse, "
-        "research, continue the thesis, read historical Think bodies, or split the pair "
-        "into multiple memories.\n"
+    prompt = (
+        "TASK:\n"
+        "First interpret the exact completed User/Main exchange in TEXT as one combined "
+        "conversation pair. Return one JSON object with exactly one `thinks` array matching "
+        "OUTPUT_SCHEMA. A Think condenses one jointly established decision, preference, plan, "
+        "question, uncertainty, correction, constraint, hypothesis, belief, judgment, or "
+        "observation into natural reusable prose. It is not a transcript, a report, per-speaker "
+        "state, a per-sentence record, an entity record, a relationship record, or an objective "
+        "unsourced fact. Normally return one to three Thinks and never more than six. Return zero "
+        "for filler or when the pair establishes no reusable thought. A Main-only proposal that "
+        "the User did not accept is not jointly established and must not be stored as alignment. "
+        "If User and Main express, refine, correct, or agree on the same idea, emit one Think, not "
+        "speaker paraphrases. A User correction controls the final meaning; never preserve the "
+        "superseded formulation as a second active Think. Do not merge independent ideas merely "
+        "because they mention the same entity. A question or uncertainty that the pair leaves "
+        "genuinely unresolved is valid. A Think "
+        "may be one sentence, several sentences, or a compact paragraph when its qualification, "
+        "reason, condition, uncertainty, or proposed test is inseparable. Split only independently "
+        "reusable thoughts; never split merely for length. Remove repetition and transcript "
+        "narration. Each Think must take the natural size of its meaning: remove repetition, process "
+        "narration, irrelevant background, and report padding, but never shorten, split, expand, "
+        "merge, or truncate to meet a sentence, word, character, token, or record-count target. "
+        "Atomicity is semantic, not length. Do not split one inseparable long idea, merge independent "
+        "ideas to reduce the count, or pad a simple idea. Preserve every qualification, condition, "
+        "uncertainty, and falsifier that changes the idea. Do not browse or turn research claims "
+        "into established facts.\n"
+        "The model may emit only name, body, kind, concepts, and relationships. Never emit "
+        "IDs, timestamps, authority, importance, confidence, project/session/run/card/message fields, "
+        "provenance, hashes, ingestion state, or source metadata.\n"
         "NAMED ENTITY BOUNDARY:\n"
         "Keep each central organization, person, product, or asset as a standalone proper-name "
         "entity. Never concatenate a named entity with its metric, action, attribute, thesis, "
@@ -4774,15 +4948,26 @@ def _llm_structured_contract(
         "create a generic wrapper entity such as `Falsifiable thesis`, `Hypothesis`, `Claim`, "
         "`Proposal`, `Explanation`, or `Research run`; that framing belongs in the Think body, "
         "not in the subject graph.\n"
-        "CANONICAL SUBJECT DIRECTORY:\n"
-        "canonical_subject_directory is the complete compact write-time directory of current "
-        "ThinkGraph and KnowGraph subjects. Use model reasoning to reuse an exact supplied "
-        "canonicalName when the pair means the same subject; propose a new name only for a "
-        "genuinely distinct subject. The two authorities retain separate native IDs and the "
-        "shared name denotes subject identity, not agreement. Do not infer facts from the "
-        "directory or copy its IDs into prose.\n"
+        "CANONICAL ENTITY DIRECTORY:\n"
+        "canonical_subject_directory is the complete compact identity directory assembled from "
+        "current ThinkGraph and KnowGraph entity headers. Each binding preserves canonicalName, "
+        "entityKind, authority, and its authority-scoped nativeId. Equal canonicalName values across "
+        "authority bindings represent one logical entity for semantic output, never duplicate Thinks. "
+        "Use model reasoning to reuse the exact supplied canonicalName byte-for-byte when the pair "
+        "means the same entity, regardless of which authority supplies the binding. Propose a new "
+        "name only for a genuinely distinct reusable entity. The directory is identity context only: "
+        "do not infer facts from it, copy its native IDs into prose, or equate native IDs across "
+        "authorities.\n"
+        f"\nCONTEXT:\n{context_text}\n"
+        f"\nTEXT:\n{pair_text}\n"
+        "\nOUTPUT_SCHEMA:\n"
+        + json.dumps(
+            ThinkGraphFacetExtraction.model_json_schema(),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     )
-    return extractor._output_schema(), prompt
+    return ThinkGraphFacetExtraction.model_json_schema(), prompt
 
 
 def _extract_saved_card_facts(
@@ -4791,88 +4976,69 @@ def _extract_saved_card_facts(
     pair_text: str,
     context: dict[str, Any],
     card_run: dict[str, str],
-) -> list[Any]:
-    extractor = _native_structured_extractor(
-        _SavedCardStructuredResult(
-            _strict_card_json(value),
-            card_run.get("resolvedModel") or card_run.get("profile") or "saved-card",
-        )
-    )
-    facts = extractor.extract(
-        pair_text,
-        context=json.dumps(context, ensure_ascii=False, sort_keys=True),
-    )
-    if len(facts) != 1 or any(
-        isinstance(fact.metadata, dict) and fact.metadata.get("extraction_fallback")
-        for fact in facts
-    ):
-        raise ThinkGraphIntakeError("thinkgraph_card_llm_structured_invalid")
-    return facts
-
-
-def _project_structured_facts(facts: list[Any]) -> _ProjectedStructuredOutput:
-    from engraphis.backends.graph_extractor import StructuredMetadataGraphExtractor
-
-    if len(facts) != 1:
-        raise ThinkGraphIntakeError("thinkgraph_card_single_think_required")
-    fact = facts[0]
-    metadata = fact.metadata if isinstance(fact.metadata, dict) else {}
-    extra = metadata.get("structured_extraction")
-    extra = extra if isinstance(extra, dict) else {}
-    native_graph = StructuredMetadataGraphExtractor(metadata).extract(
-        str(fact.content), title=str(fact.title or ""),
-    )
-    entities = list(dict.fromkeys(
-        _clean_concept(name)
-        for name, _entity_type in native_graph.entities
-        if _clean_concept(name)
-    ))
+) -> ThinkGraphFacetExtraction:
+    del pair_text, context, card_run
     try:
-        think = ThinkGraphThink.model_validate(extra.get("think"))
+        return ThinkGraphFacetExtraction.model_validate(_strict_card_json(value))
     except Exception as error:
         raise ThinkGraphIntakeError(
-            "thinkgraph_card_think_payload_invalid"
+            "thinkgraph_card_llm_structured_invalid"
         ) from error
-    relation_observations = list(think.relationship_observations)
-    pairings: list[_ProjectedPairing] = []
-    seen_pairs: set[tuple[str, str, str]] = set()
-    for raw_source, raw_label, raw_target in native_graph.relations:
-        source = _clean_concept(raw_source)
-        label = _clean_concept(raw_label)
-        target = _clean_concept(raw_target)
-        if source and label and target:
-            relation_observations.append(f"{source} {label} {target}")
-            identity = (source.casefold(), target.casefold(), fact.content.casefold())
-            if identity not in seen_pairs:
-                seen_pairs.add(identity)
-                pairings.append(_ProjectedPairing(
-                    source=_ProjectedPairEndpoint(canonical_name=source),
-                    target=_ProjectedPairEndpoint(canonical_name=target),
-                    direction="source_to_target",
-                    supporting_proposition=str(fact.content)[:4_000],
-                    relationship_proposal=label,
-                ))
-    think = think.model_copy(update={
-        "relationship_observations": list(dict.fromkeys(
-            relation_observations
-        ))[:24],
-    })
-    return _ProjectedStructuredOutput(
-        pair_summary=str(fact.content)[:4_000],
-        title=str(fact.title or "")[:1_000],
-        keywords=list(fact.keywords)[:16],
-        think=think,
-        entities=entities,
-        relations=[
-            ThinkGraphStructuredRelation(
-                source=source,
-                relation=relation,
-                target=target,
-            )
-            for source, relation, target in native_graph.relations
-        ],
-        pairings=pairings,
-    )
+
+
+def _project_structured_facts(
+    extraction: ThinkGraphFacetExtraction,
+    *,
+    completed: dict[str, Any],
+) -> _ProjectedThinkBatch:
+    thought_id = "thought_" + _text_hash(json.dumps({
+        "schemaVersion": _THINK_FACET_SCHEMA_VERSION,
+        "pairReference": _pair_reference(completed),
+    }, sort_keys=True, separators=(",", ":")))[:40]
+    facets: list[_ProjectedThinkFacet] = []
+    for ordinal, facet in enumerate(extraction.thinks):
+        facet_id = "think_facet_" + _text_hash(
+            f"{thought_id}\0{ordinal}"
+        )[:40]
+        concepts = list(dict.fromkeys(
+            concept for value in facet.concepts
+            if (concept := _clean_concept(value))
+        ))[:24]
+        relations: list[ThinkGraphStructuredRelation] = []
+        pairings: list[_ProjectedPairing] = []
+        seen: set[tuple[str, str, str]] = set()
+        for relation in facet.relationships:
+            source = _clean_concept(relation.subject)
+            label = _clean_concept(relation.relation)
+            target = _clean_concept(relation.object)
+            identity = (source.casefold(), label.casefold(), target.casefold())
+            if not source or not label or not target or identity in seen:
+                continue
+            seen.add(identity)
+            relations.append(ThinkGraphStructuredRelation(
+                source=source, relation=label, target=target,
+            ))
+            pairings.append(_ProjectedPairing(
+                source=_ProjectedPairEndpoint(canonical_name=source),
+                target=_ProjectedPairEndpoint(canonical_name=target),
+                direction="source_to_target",
+                supporting_proposition=facet.body,
+                relationship_proposal=label,
+            ))
+            for endpoint in (source, target):
+                if endpoint not in concepts:
+                    concepts.append(endpoint)
+        facets.append(_ProjectedThinkFacet(
+            facet_id=facet_id,
+            ordinal=ordinal,
+            name=facet.name,
+            body=facet.body,
+            kind=facet.kind,
+            concepts=concepts[:24],
+            relations=relations,
+            pairings=pairings,
+        ))
+    return _ProjectedThinkBatch(thought_id=thought_id, facets=facets)
 
 
 def _pair_reference(payload: dict[str, Any]) -> str:
@@ -4906,89 +5072,283 @@ def _existing_source_pair_think(
     return None
 
 
-def _save_think_memory(
+def _manifest_subject_key(pair_reference: str, schema_version: str) -> str:
+    if schema_version == _LEGACY_THINK_FACET_SCHEMA_VERSION:
+        return f"thinkgraph-manifest:{pair_reference}"
+    return f"thinkgraph-manifest:{schema_version}:{pair_reference}"
+
+
+def _facet_subject_key(facet_id: str, schema_version: str) -> str:
+    if schema_version == _LEGACY_THINK_FACET_SCHEMA_VERSION:
+        return f"thinkgraph-facet:{facet_id}"
+    return f"thinkgraph-facet:{schema_version}:{facet_id}"
+
+
+def _source_event_timestamp(completed: dict[str, Any], role: str) -> float:
+    field = "userMessageAt" if role == "user" else "mainMessageAt"
+    raw = str(completed.get(field) or "").strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ThinkGraphIntakeError("thinkgraph_source_message_time_invalid") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _existing_facet_manifest(
+    store: Any,
+    *,
+    workspace_id: str,
+    pair_reference: str,
+    schema_version: str,
+) -> Any | None:
+    rows = store.conn.execute(
+        "SELECT id FROM memories WHERE workspace_id=? AND subject_key=? "
+        "AND claim_kind='think_manifest' AND valid_to IS NULL AND expired_at IS NULL "
+        "ORDER BY COALESCE(ingested_at,0) DESC, id DESC",
+        (workspace_id, _manifest_subject_key(pair_reference, schema_version)),
+    ).fetchall()
+    for row in rows:
+        memory = store.get_memory(str(row["id"]))
+        metadata = memory.metadata if memory is not None else None
+        if not isinstance(metadata, dict):
+            continue
+        manifest = metadata.get("thinkgraph_facet_manifest")
+        if not isinstance(manifest, dict):
+            continue
+        recorded_version = str(manifest.get("schema_version") or "")
+        if recorded_version != schema_version:
+            raise ThinkGraphIntakeError("thinkgraph_manifest_schema_mismatch")
+        return memory
+    return None
+
+
+def _existing_facet_memory(
+    store: Any,
+    *,
+    workspace_id: str,
+    facet_id: str,
+    schema_version: str,
+) -> Any | None:
+    rows = store.conn.execute(
+        "SELECT id FROM memories WHERE workspace_id=? AND subject_key=? "
+        "AND claim_kind='think' AND valid_to IS NULL AND expired_at IS NULL "
+        "ORDER BY COALESCE(ingested_at,0) DESC, id DESC",
+        (workspace_id, _facet_subject_key(facet_id, schema_version)),
+    ).fetchall()
+    for row in rows:
+        memory = store.get_memory(str(row["id"]))
+        if memory is not None and _think_metadata(memory) is not None:
+            return memory
+    return None
+
+
+def _manifest_batch(
+    memory: Any,
+) -> tuple[
+    _ProjectedThinkBatch | _LegacyRoleSplitThinkBatch,
+    dict[str, str],
+    str,
+]:
+    metadata = memory.metadata if memory is not None else None
+    manifest = (
+        metadata.get("thinkgraph_facet_manifest")
+        if isinstance(metadata, dict) else None
+    )
+    if not isinstance(manifest, dict):
+        raise ThinkGraphIntakeError("thinkgraph_facet_manifest_invalid")
+    schema_version = str(manifest.get("schema_version") or "")
+    try:
+        if schema_version == _THINK_FACET_SCHEMA_VERSION:
+            batch: _ProjectedThinkBatch | _LegacyRoleSplitThinkBatch = (
+                _ProjectedThinkBatch.model_validate(manifest.get("batch"))
+            )
+        elif schema_version == _LEGACY_THINK_FACET_SCHEMA_VERSION:
+            batch = _LegacyRoleSplitThinkBatch.model_validate(manifest.get("batch"))
+        else:
+            raise ThinkGraphIntakeError("thinkgraph_manifest_schema_unsupported")
+    except ThinkGraphIntakeError:
+        raise
+    except Exception as error:
+        raise ThinkGraphIntakeError("thinkgraph_facet_manifest_invalid") from error
+    raw_card_run = manifest.get("card_run")
+    if not isinstance(raw_card_run, dict):
+        raise ThinkGraphIntakeError("thinkgraph_facet_manifest_invalid")
+    card_run = {key: str(raw_card_run.get(key) or "") for key in (
+        "runId", "cardId", "revisionId", "profile", "nativeSessionRef",
+        "resolvedModel",
+    )}
+    if any(not value for value in card_run.values()):
+        raise ThinkGraphIntakeError("thinkgraph_facet_manifest_invalid")
+    return batch, card_run, schema_version
+
+
+def _save_facet_manifest(
     service: Any,
     *,
     workspace_id: str,
     completed: dict[str, Any],
-    output: _ProjectedStructuredOutput,
+    batch: _ProjectedThinkBatch,
     card_run: dict[str, str],
     pair_reference: str,
 ) -> dict[str, Any]:
-    logical = output.think.model_dump(mode="json")
-    kind_value = (
-        output.think.kind.value
-        if isinstance(output.think.kind, Enum)
-        else str(output.think.kind)
-    )
-    relations = [item.model_dump(mode="json") for item in output.relations]
     source_pair = _source_pair(completed)
+    existing = _existing_facet_manifest(
+        service.store,
+        workspace_id=workspace_id,
+        pair_reference=pair_reference,
+        schema_version=_THINK_FACET_SCHEMA_VERSION,
+    )
+    if existing is not None:
+        return {"id": existing.id, "op": "noop"}
+    manifest = {
+        "schema_version": _THINK_FACET_SCHEMA_VERSION,
+        "batch": batch.model_dump(mode="json"),
+        "source_pair": source_pair,
+        "card_run": dict(card_run),
+    }
     metadata = {
-        "entities": list(output.entities),
-        "relations": relations,
-        "structured_extraction": {
-            "think": deepcopy(logical),
-            "entities": list(output.entities),
-            "relations": relations,
-        },
-        # Native Engraphis episodic consolidation must not digest or archive the
-        # authoritative append-only Think history.
+        "thinkgraph_facet_manifest": manifest,
         "consolidation_exempt": True,
-        "thinkgraph_origin": {
-            "authority": "thinkgraph",
-            "writer": "saved_thinkgraph_card",
-            "card_id": card_run["cardId"],
-            "card_revision_id": card_run["revisionId"],
-            "run_id": card_run["runId"],
-            "profile": card_run["profile"],
-            "native_session_ref": card_run["nativeSessionRef"],
-            "resolved_model": card_run["resolvedModel"],
-            "completed_pair_reference": pair_reference,
-            "source_pair": source_pair,
-        },
         "provenance": {
-            "source": "saved_thinkgraph_card",
-            "trusted": True,
-            "review_state": "approved",
-            "trust_origin": "saved_card_runtime",
+            "source": "thinkgraph_facet_manifest",
+            "trusted": False,
+            "review_state": "pending",
+            "trust_origin": "completed_pair_manifest",
         },
     }
-    subject_key = _think_subject_key(completed)
-
-    def existing() -> dict[str, Any] | None:
-        memory = _existing_source_pair_think(
-            service.store,
-            workspace_id=workspace_id,
-            subject_key=subject_key,
-        )
-        if memory is None:
-            return None
-        return {
-            "id": memory.id,
-            "op": "noop",
-            "reason": "completed pair already has an authoritative Think",
-        }
-
     previous = getattr(_intake_local, "context", None)
     _intake_local.context = {"suppress_graph": True}
     try:
         return service.engine.remember_with_resolution(
-            output.pair_summary,
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True),
             workspace_id=workspace_id,
             mtype=MemoryType.EPISODIC,
             scope=Scope.WORKSPACE,
-            title=output.title or f"{kind_value} Think",
-            importance=output.think.importance,
-            keywords=list(output.keywords),
+            title="Think facet manifest",
+            importance=0.0,
+            keywords=[],
             metadata=metadata,
             resolve_conflicts=False,
-            subject_key=subject_key,
-            claim_kind="think",
-            _trusted_graph_keys=_TRUSTED_STRUCTURED_GRAPH_KEYS,
-            _transactional_validator=existing,
+            subject_key=_manifest_subject_key(
+                pair_reference, _THINK_FACET_SCHEMA_VERSION,
+            ),
+            claim_kind="think_manifest",
         )
     finally:
         _intake_local.context = previous
+
+
+def _save_think_facets(
+    service: Any,
+    *,
+    workspace_id: str,
+    completed: dict[str, Any],
+    batch: _ProjectedThinkBatch,
+    card_run: dict[str, str],
+    pair_reference: str,
+) -> list[dict[str, Any]]:
+    source_pair = _source_pair(completed)
+    source_message_refs = {
+        "user": {
+            "message_id": str(completed["userMessageId"]),
+            "event_at": str(completed["userMessageAt"]),
+        },
+        "main": {
+            "message_id": str(completed["mainMessageId"]),
+            "event_at": str(completed["mainMessageAt"]),
+        },
+    }
+    specs: list[FactSpec] = []
+    missing_positions: list[int] = []
+    ordered_results: list[dict[str, Any] | None] = []
+    for facet in batch.facets:
+        existing = _existing_facet_memory(
+            service.store,
+            workspace_id=workspace_id,
+            facet_id=facet.facet_id,
+            schema_version=_THINK_FACET_SCHEMA_VERSION,
+        )
+        if existing is not None:
+            ordered_results.append({"id": str(existing.id), "op": "noop"})
+            continue
+        missing_positions.append(len(ordered_results))
+        ordered_results.append(None)
+        relations = [item.model_dump(mode="json") for item in facet.relations]
+        think = {
+            "kind": str(facet.kind).upper(),
+            "summary": facet.body,
+            "concepts": list(facet.concepts),
+            "relationship_observations": [
+                f"{item.source} {item.relation} {item.target}"
+                for item in facet.relations
+            ],
+        }
+        metadata = {
+            "thinkgraph_facet": think,
+            "thinkgraph_relationships": relations,
+            "consolidation_exempt": True,
+            "thinkgraph_origin": {
+                "authority": "thinkgraph",
+                "writer": "saved_thinkgraph_card",
+                "schema_version": _THINK_FACET_SCHEMA_VERSION,
+                "thought_id": batch.thought_id,
+                "facet_id": facet.facet_id,
+                "facet_ordinal": facet.ordinal,
+                "source_message_refs": deepcopy(source_message_refs),
+                "completed_at": str(completed["mainMessageAt"]),
+                "semantic_sha256": _text_hash(facet.body),
+                "card_id": card_run["cardId"],
+                "card_revision_id": card_run["revisionId"],
+                "run_id": card_run["runId"],
+                "profile": card_run["profile"],
+                "native_session_ref": card_run["nativeSessionRef"],
+                "resolved_model": card_run["resolvedModel"],
+                "completed_pair_reference": pair_reference,
+                "source_pair": source_pair,
+            },
+            "provenance": {
+                "source": "saved_thinkgraph_card",
+                "trusted": True,
+                "review_state": "approved",
+                "trust_origin": "saved_card_runtime",
+            },
+        }
+        specs.append(FactSpec(
+            content=facet.body,
+            title=facet.name,
+            mtype=MemoryType.EPISODIC,
+            importance=0.0,
+            keywords=list(facet.concepts),
+            metadata=metadata,
+            subject_key=_facet_subject_key(
+                facet.facet_id, _THINK_FACET_SCHEMA_VERSION,
+            ),
+            claim_kind="think",
+            valid_from=_source_event_timestamp(completed, "main"),
+        ))
+    previous = getattr(_intake_local, "context", None)
+    _intake_local.context = {"suppress_graph": True}
+    try:
+        written = (
+            service.engine.remember_many(
+                specs,
+                workspace_id=workspace_id,
+                mtype=MemoryType.EPISODIC,
+                scope=Scope.WORKSPACE,
+            )
+            if specs else []
+        )
+    finally:
+        _intake_local.context = previous
+    if len(written) != len(missing_positions):
+        raise ThinkGraphIntakeError("thinkgraph_think_store_failed")
+    for position, result in zip(missing_positions, written, strict=True):
+        ordered_results[position] = result
+    if any(result is None for result in ordered_results):
+        raise ThinkGraphIntakeError("thinkgraph_think_store_failed")
+    return [result for result in ordered_results if result is not None]
 
 
 def _invalidate_current_jev_pair(
@@ -5026,6 +5386,7 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "nativeSessionRef", "completedAt", "userMessage", "mainResponse",
+        "userMessageId", "userMessageAt", "mainMessageId", "mainMessageAt",
         "sourceResponseFit",
     }
     if set(payload) - allowed:
@@ -5039,6 +5400,26 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned["mainResponse"] = str(cleaned.get("mainResponse") or "")
     if not cleaned["userMessage"].strip() or not cleaned["mainResponse"].strip():
         raise ValueError("thinkgraph_completed_pair_text_required")
+    lineage_fields = (
+        "conversationId", "runId", "cardId", "completedAt", "userMessageId",
+        "userMessageAt", "mainMessageId", "mainMessageAt",
+    )
+    if any(not str(cleaned.get(field) or "").strip() for field in lineage_fields):
+        raise ValueError("thinkgraph_completed_pair_lineage_required")
+    _source_event_timestamp(cleaned, "user")
+    main_completed_at = _source_event_timestamp(cleaned, "main")
+    try:
+        pair_completed_at = datetime.fromisoformat(
+            str(cleaned["completedAt"]).replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise ThinkGraphIntakeError(
+            "thinkgraph_source_message_time_invalid"
+        ) from error
+    if pair_completed_at.tzinfo is None:
+        pair_completed_at = pair_completed_at.replace(tzinfo=timezone.utc)
+    if pair_completed_at.timestamp() != main_completed_at:
+        raise ValueError("thinkgraph_main_completion_time_mismatch")
     if "sourceResponseFit" in cleaned:
         cleaned["sourceResponseFit"] = _validate_source_response_fit(
             cleaned["sourceResponseFit"], str(cleaned.get("runId") or "")
@@ -5056,23 +5437,72 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
         workspace_id = service.store.get_or_create_workspace(project)
         revision_before = _graph_revision(service.store, workspace_id)
         pair_reference = _pair_reference(payload)
-        existing = _existing_source_pair_think(
+        existing_single = _existing_source_pair_think(
             service.store,
             workspace_id=workspace_id,
             subject_key=_think_subject_key(payload),
         )
-        if existing is not None:
+        if existing_single is not None:
             return {
                 "ok": True,
                 "projectId": project,
-                "pairMemoryId": existing.id,
+                "pairMemoryId": str(existing_single.id),
                 "pairReference": pair_reference,
+                "thinkMemoryIds": [str(existing_single.id)],
                 "intakeOperation": "noop",
                 "structuredExtractionRequired": False,
                 "revision": revision_before,
                 "revisionChanged": False,
+                "preparation": {"status": "duplicate_noop"},
+            }
+        legacy_manifest = _existing_facet_manifest(
+            service.store,
+            workspace_id=workspace_id,
+            pair_reference=pair_reference,
+            schema_version=_LEGACY_THINK_FACET_SCHEMA_VERSION,
+        )
+        current_manifest = _existing_facet_manifest(
+            service.store,
+            workspace_id=workspace_id,
+            pair_reference=pair_reference,
+            schema_version=_THINK_FACET_SCHEMA_VERSION,
+        )
+        if legacy_manifest is not None and current_manifest is not None:
+            raise ThinkGraphIntakeError("thinkgraph_manifest_schema_conflict")
+        existing_manifest = current_manifest or legacy_manifest
+        if existing_manifest is not None:
+            batch, _card_run, schema_version = _manifest_batch(existing_manifest)
+            existing_ids = [
+                str(memory.id)
+                for facet in batch.facets
+                if (memory := _existing_facet_memory(
+                    service.store,
+                    workspace_id=workspace_id,
+                    facet_id=facet.facet_id,
+                    schema_version=schema_version,
+                )) is not None
+            ]
+            complete = len(existing_ids) == len(batch.facets)
+            if (
+                schema_version == _LEGACY_THINK_FACET_SCHEMA_VERSION
+                and not complete
+            ):
+                raise ThinkGraphIntakeError(
+                    "thinkgraph_legacy_v1_manifest_incomplete"
+                )
+            return {
+                "ok": True,
+                "projectId": project,
+                "pairMemoryId": pair_reference,
+                "pairReference": pair_reference,
+                "schemaVersion": schema_version,
+                "thinkMemoryIds": existing_ids,
+                "intakeOperation": "noop" if complete else "resume",
+                "structuredExtractionRequired": False,
+                "revision": revision_before,
+                "revisionChanged": False,
                 "preparation": {
-                    "status": "duplicate_noop",
+                    "status": "duplicate_noop" if complete else "manifest_resume",
                 },
             }
         subject_directory = _subject_directory_for_project(project)
@@ -5100,6 +5530,7 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             # reference, then returns the one real Think Memory id.
             "pairMemoryId": pair_reference,
             "pairReference": pair_reference,
+            "schemaVersion": _THINK_FACET_SCHEMA_VERSION,
             "intakeOperation": "pending",
             "structuredExtractionRequired": True,
             "revision": revision_before,
@@ -5118,12 +5549,13 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _validate_settle_payload(
     payload: dict[str, Any],
-) -> tuple[dict[str, Any], str, Any, dict[str, str]]:
+) -> tuple[dict[str, Any], str, Any | None, dict[str, str] | None]:
     if not isinstance(payload, dict):
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     completed_keys = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "nativeSessionRef", "completedAt", "userMessage", "mainResponse",
+        "userMessageId", "userMessageAt", "mainMessageId", "mainMessageAt",
         "sourceResponseFit",
     }
     extras = {"pairMemoryId", "structuredOutput", "cardRun"}
@@ -5136,9 +5568,11 @@ def _validate_settle_payload(
     if pair_reference != _pair_reference(completed):
         raise ValueError("thinkgraph_pair_reference_invalid")
     structured_output = payload.get("structuredOutput")
-    if not isinstance(structured_output, (str, dict, list)):
-        raise ValueError("thinkgraph_card_output_invalid_json")
     raw_run = payload.get("cardRun")
+    if structured_output is None and raw_run is None:
+        return completed, pair_reference, None, None
+    if not isinstance(structured_output, (str, dict)) or not isinstance(raw_run, dict):
+        raise ValueError("thinkgraph_card_output_invalid_json")
     if not isinstance(raw_run, dict):
         raise ValueError("thinkgraph_card_run_invalid")
     allowed_run = {
@@ -5178,7 +5612,7 @@ def settle_completed_pair(
     *,
     classifier: Callable[..., dict[str, Any]] = classify_relationship,
 ) -> dict[str, Any]:
-    """Append one native episodic Think, then apply only Jev-settled edges."""
+    """Settle one immutable facet manifest and its native transactional Think batch."""
     completed, pair_reference, card_output, card_run = _validate_settle_payload(payload)
     project = completed["projectId"]
     service = get_service()
@@ -5186,59 +5620,166 @@ def settle_completed_pair(
         store = service.store
         workspace_id = store.get_or_create_workspace(project)
         revision_before = _graph_revision(store, workspace_id)
-        structured_context = {
-            "exact_user_message": completed["userMessage"],
-            "exact_main_response": completed["mainResponse"],
-        }
-        facts = _extract_saved_card_facts(
-            card_output,
-            pair_text=(
-                f"USER:\n{completed['userMessage']}\n\n"
-                f"MAIN:\n{completed['mainResponse']}"
-            ),
-            context=structured_context,
-            card_run=card_run,
+        existing_single = _existing_source_pair_think(
+            store,
+            workspace_id=workspace_id,
+            subject_key=_think_subject_key(completed),
         )
-        output = _project_structured_facts(facts)
+        if existing_single is not None:
+            existing_id = str(existing_single.id)
+            return {
+                "ok": True,
+                "projectId": project,
+                "pairMemoryId": existing_id,
+                "pairReference": pair_reference,
+                "thinkMemoryId": existing_id,
+                "thinkMemoryIds": [existing_id],
+                "intakeOperation": "noop",
+                "revision": revision_before,
+                "revisionChanged": False,
+                "status": "completed",
+                "relationships": [],
+                "failures": [],
+                "changedNodeIds": [],
+                "changedEdgeIds": [],
+                "affectedNodeIds": [],
+                "turnHeat": {},
+                "topActiveNodes": [],
+            }
+        legacy_manifest = _existing_facet_manifest(
+            store,
+            workspace_id=workspace_id,
+            pair_reference=pair_reference,
+            schema_version=_LEGACY_THINK_FACET_SCHEMA_VERSION,
+        )
+        current_manifest = _existing_facet_manifest(
+            store,
+            workspace_id=workspace_id,
+            pair_reference=pair_reference,
+            schema_version=_THINK_FACET_SCHEMA_VERSION,
+        )
+        if legacy_manifest is not None and current_manifest is not None:
+            raise ThinkGraphIntakeError("thinkgraph_manifest_schema_conflict")
+        manifest_memory = current_manifest or legacy_manifest
+        if manifest_memory is not None:
+            batch, manifest_card_run, schema_version = _manifest_batch(
+                manifest_memory
+            )
+            card_run = manifest_card_run
+            persisted_manifest_ids = [
+                str(memory.id)
+                for facet in batch.facets
+                if (memory := _existing_facet_memory(
+                    store,
+                    workspace_id=workspace_id,
+                    facet_id=facet.facet_id,
+                    schema_version=schema_version,
+                )) is not None
+            ]
+            manifest_complete = len(persisted_manifest_ids) == len(batch.facets)
+            if (
+                schema_version == _LEGACY_THINK_FACET_SCHEMA_VERSION
+                and not manifest_complete
+            ):
+                raise ThinkGraphIntakeError(
+                    "thinkgraph_legacy_v1_manifest_incomplete"
+                )
+            if manifest_complete:
+                return {
+                    "ok": True,
+                    "projectId": project,
+                    "pairMemoryId": pair_reference,
+                    "pairReference": pair_reference,
+                    "schemaVersion": schema_version,
+                    "thinkMemoryId": (
+                        persisted_manifest_ids[0]
+                        if persisted_manifest_ids else ""
+                    ),
+                    "thinkMemoryIds": persisted_manifest_ids,
+                    "intakeOperation": "noop",
+                    "revision": revision_before,
+                    "revisionChanged": False,
+                    "status": "completed",
+                    "cardRun": card_run,
+                    "relationships": [],
+                    "failures": [],
+                    "changedNodeIds": [],
+                    "changedEdgeIds": [],
+                    "affectedNodeIds": [],
+                    "turnHeat": {},
+                    "topActiveNodes": [],
+                }
+        else:
+            if card_output is None or card_run is None:
+                raise ThinkGraphIntakeError("thinkgraph_facet_manifest_missing")
+            structured_context = {
+                "exact_user_message": completed["userMessage"],
+                "exact_main_response": completed["mainResponse"],
+            }
+            extraction = _extract_saved_card_facts(
+                card_output,
+                pair_text=(
+                    f"USER:\n{completed['userMessage']}\n\n"
+                    f"MAIN:\n{completed['mainResponse']}"
+                ),
+                context=structured_context,
+                card_run=card_run,
+            )
+            batch = _project_structured_facts(
+                extraction,
+                completed=completed,
+            )
+            schema_version = _THINK_FACET_SCHEMA_VERSION
+            _save_facet_manifest(
+                service,
+                workspace_id=workspace_id,
+                completed=completed,
+                batch=batch,
+                card_run=card_run,
+                pair_reference=pair_reference,
+            )
         opportunities: list[dict[str, Any]] = []
         propositions: dict[int, str] = {}
         relationship_proposals: dict[int, str] = {}
+        opportunity_facets: dict[int, int] = {}
         seen_pairings: set[tuple[str, str, str, str]] = set()
-        for pairing in output.pairings:
-            source_name = _clean_concept(pairing.source.canonical_name)
-            target_name = _clean_concept(pairing.target.canonical_name)
-            if (
-                not source_name
-                or not target_name
-                or source_name.casefold() == target_name.casefold()
-            ):
-                raise ThinkGraphIntakeError("thinkgraph_card_pair_self_reference")
-            identity = (
-                source_name.casefold(),
-                target_name.casefold(),
-                pairing.relationship_proposal.casefold(),
-                pairing.supporting_proposition.casefold(),
-            )
-            if identity in seen_pairings:
-                raise ThinkGraphIntakeError("thinkgraph_card_pair_duplicate")
-            seen_pairings.add(identity)
-            index = len(opportunities)
-            opportunities.append({
-                "id": f"card_pair_{index:04d}",
-                "source": {
-                    "name": source_name,
-                    "type": "person_or_concept",
-                },
-                "target": {
-                    "name": target_name,
-                    "type": "person_or_concept",
-                },
-                "native_relation": pairing.relationship_proposal,
-                "native_weight": 0.0,
-                "provenance": {},
-            })
-            propositions[index] = pairing.supporting_proposition
-            relationship_proposals[index] = pairing.relationship_proposal
+        for facet_index, facet in enumerate(batch.facets):
+            for pairing in facet.pairings:
+                source_name = _clean_concept(pairing.source.canonical_name)
+                target_name = _clean_concept(pairing.target.canonical_name)
+                if (
+                    not source_name
+                    or not target_name
+                    or source_name.casefold() == target_name.casefold()
+                ):
+                    raise ThinkGraphIntakeError("thinkgraph_card_pair_self_reference")
+                identity = (
+                    source_name.casefold(),
+                    target_name.casefold(),
+                    pairing.relationship_proposal.casefold(),
+                    pairing.supporting_proposition.casefold(),
+                )
+                if identity in seen_pairings:
+                    raise ThinkGraphIntakeError("thinkgraph_card_pair_duplicate")
+                seen_pairings.add(identity)
+                index = len(opportunities)
+                opportunities.append({
+                    "id": f"card_pair_{index:04d}",
+                    "source": {
+                        "name": source_name,
+                        "type": "person_or_concept",
+                    },
+                    "target": {
+                        "name": target_name,
+                        "type": "person_or_concept",
+                    },
+                    "native_relation": pairing.relationship_proposal,
+                    "native_weight": 0.0,
+                    "provenance": {"thinkFacetId": facet.facet_id},
+                })
+                opportunity_facets[index] = facet_index
+                propositions[index] = pairing.supporting_proposition
+                relationship_proposals[index] = pairing.relationship_proposal
 
         # Freeze prior temporal context before the current Think exists. Settled
         # Jev must reuse this map and never re-query the just-written current Think.
@@ -5264,24 +5805,34 @@ def settle_completed_pair(
         )
 
         try:
-            saved_think = _save_think_memory(
+            if not isinstance(batch, _ProjectedThinkBatch):
+                raise ThinkGraphIntakeError(
+                    "thinkgraph_facet_manifest_invalid"
+                )
+            saved_facets = _save_think_facets(
                 service,
                 workspace_id=workspace_id,
                 completed=completed,
-                output=output,
+                batch=batch,
                 card_run=card_run,
                 pair_reference=pair_reference,
             )
         except Exception as error:
             raise ThinkGraphIntakeError("thinkgraph_think_store_failed") from error
-        think_memory_id = str(saved_think["id"])
-        think_memory = store.get_memory(think_memory_id)
-        if think_memory is None or _think_metadata(think_memory) is None:
+        if len(saved_facets) != len(batch.facets):
+            raise ThinkGraphIntakeError("thinkgraph_think_store_failed")
+        think_memory_ids = [str(item["id"]) for item in saved_facets]
+        think_memories = [store.get_memory(memory_id) for memory_id in think_memory_ids]
+        if any(
+            memory is None or _think_metadata(memory) is None
+            for memory in think_memories
+        ):
             raise ThinkGraphIntakeError("thinkgraph_think_store_failed")
         failures: list[dict[str, Any]] = []
         heat: dict[str, float] = {}
         direct_think_ids = {
-            index: [think_memory_id] for index in range(len(opportunities))
+            index: [think_memory_ids[opportunity_facets[index]]]
+            for index in range(len(opportunities))
         }
 
         card_persisted = _persist_opportunity_decisions(
@@ -5306,33 +5857,37 @@ def settle_completed_pair(
         # or was just born through an accepted Jev edge; do not create rejected
         # standalone nodes merely because the Card named them.
         with store._write_operation("thinkgraph_structured_incidence", commit=True):
-            for entity_name in output.entities:
-                row = _existing_entity_for_name(
-                    store,
-                    workspace_id=workspace_id,
-                    name=entity_name,
-                )
-                if row is None:
-                    continue
-                native_id = str(row["id"])
-                store.link_memory_entity(
-                    memory_id=think_memory_id,
-                    entity_id=native_id,
-                    workspace_id=workspace_id,
-                    repo_id=None,
-                    source_kind=_THINK_INCIDENCE_KIND,
-                    confidence=1.0,
-                    valid_from=think_memory.valid_from,
-                    ingested_at=think_memory.ingested_at,
-                    provenance={
-                        "source": "structured_extractor",
-                        "source_kind": "structured_extractor",
-                        "memory_id": think_memory_id,
-                    },
-                    commit=False,
-                )
-                changed_node_ids.append(native_id)
-                heat[native_id] = heat.get(native_id, 0.0) + 1.0
+            for facet_index, facet in enumerate(batch.facets):
+                memory_id = think_memory_ids[facet_index]
+                think_memory = think_memories[facet_index]
+                for entity_name in facet.concepts:
+                    row = _existing_entity_for_name(
+                        store,
+                        workspace_id=workspace_id,
+                        name=entity_name,
+                    )
+                    if row is None:
+                        continue
+                    native_id = str(row["id"])
+                    store.link_memory_entity(
+                        memory_id=memory_id,
+                        entity_id=native_id,
+                        workspace_id=workspace_id,
+                        repo_id=None,
+                        source_kind=_THINK_INCIDENCE_KIND,
+                        confidence=1.0,
+                        valid_from=think_memory.valid_from,
+                        ingested_at=think_memory.ingested_at,
+                        provenance={
+                            "source": "structured_extractor",
+                            "source_kind": "structured_extractor",
+                            "memory_id": memory_id,
+                            "think_facet_id": facet.facet_id,
+                        },
+                        commit=False,
+                    )
+                    changed_node_ids.append(native_id)
+                    heat[native_id] = heat.get(native_id, 0.0) + 1.0
 
         # Thinks never trigger broad edge maintenance. Only an explicit structured
         # A -> B proposal can update, supersede, or close that exact live pair.
@@ -5386,15 +5941,19 @@ def settle_completed_pair(
         return {
             "ok": True,
             "projectId": project,
-            "pairMemoryId": think_memory_id,
+            "pairMemoryId": pair_reference,
             "pairReference": pair_reference,
-            "thinkMemoryId": think_memory_id,
-            "intakeOperation": str(saved_think.get("op") or ""),
+            "schemaVersion": schema_version,
+            "thinkMemoryId": think_memory_ids[0] if think_memory_ids else "",
+            "thinkMemoryIds": think_memory_ids,
+            "intakeOperation": (
+                "noop" if saved_facets and all(item.get("op") == "noop" for item in saved_facets)
+                else "add"
+            ),
             "revision": revision,
             "revisionChanged": revision != revision_before,
             "status": "completed" if not failures else "completed_with_failures",
             "cardRun": card_run,
-            "pairSummary": output.pair_summary,
             "relationships": card_persisted["relationships"],
             "relationshipVocabulary": {
                 "before": _relationship_vocabulary_state(

@@ -1033,7 +1033,7 @@ function settledAtomicResearchResult(
   status: 'supported' | 'source-unavailable' = 'supported',
 ): Record<string, unknown> {
   const result = {
-    schemaVersion: 'atomic-research-result.v1',
+    schemaVersion: 'atomic-research-result.v2',
     assessmentId: 'atomic-assessment-one',
     sourceRunId: 'main-source-run',
     childRunId,
@@ -1043,12 +1043,8 @@ function settledAtomicResearchResult(
       summary: status === 'supported'
         ? 'The exact primary source supports this Think.'
         : 'The sources were stored, but no candidate could be ranked semantically.',
-      citations: [{
-        url: 'https://primary.example/report',
-        title: 'Primary report',
-        publishedAt: '2026-10-01',
-      }],
-      episodeUuids: ['episode-settled-one'],
+      callId: 'know-call:11111111-1111-4111-8111-111111111111',
+      episodeUuid: 'episode-settled-one',
     }],
   };
   return {
@@ -1058,7 +1054,8 @@ function settledAtomicResearchResult(
     episodeCount: 1,
     sharedChatText: JSON.stringify(result),
     settlement: {
-      eventId: 'native-attention:atomic-one',
+      eventIds: ['know-call:11111111-1111-4111-8111-111111111111'],
+      callIds: ['know-call:11111111-1111-4111-8111-111111111111'],
       phase: 'completed',
       episodeUuids: ['episode-settled-one'],
     },
@@ -5054,8 +5051,8 @@ describe('saved Card routes', () => {
           },
           enrichmentSchema: {
             type: 'object',
-            properties: { facts: { type: 'array' } },
-            required: ['facts'],
+            properties: { thinks: { type: 'array', maxItems: 6 } },
+            required: ['thinks'],
           },
           enrichmentPrompt: [
             'Native Engraphis llm_structured prompt.',
@@ -5071,6 +5068,18 @@ describe('saved Card routes', () => {
       agentTerminalMocks.manager.submit.mockReset();
       agentTerminalMocks.manager.submit.mockImplementation(defaultSubmitImplementation);
       agentTerminalMocks.execution.stage.mockClear();
+      (chatSessionMocks.appendSharedConversationTurn as any).mockImplementationOnce(async (input: any) => (
+        input.messages.map((message: any, index: number) => ({
+          ...message,
+          messageId: index === 0 ? 'msg-user-persisted' : 'msg-main-persisted',
+          projectId: input.projectId,
+          conversationId: input.conversationId,
+          status: 'complete',
+          createdAt: message.createdAt,
+          completedAt: message.completedAt,
+          seq: index + 1,
+        }))
+      ));
       const { server, baseUrl } = await createApiServer();
       try {
         const exactMessage = 'complete with hybrid ThinkGraph intake';
@@ -5105,6 +5114,10 @@ describe('saved Card routes', () => {
           ([route]) => route === '/thinkgraph/completed-pair/prepare',
         );
         expect(prepareCall?.[1]).toMatchObject({ method: 'POST' });
+        const persistedTurn = (chatSessionMocks.appendSharedConversationTurn.mock.calls as any[][])
+          .at(-1)?.[0];
+        const persistedUserAt = String(persistedTurn?.messages?.[0]?.createdAt || '');
+        const persistedMainAt = String(persistedTurn?.messages?.[1]?.completedAt || '');
         const completedPair = {
           projectId: 'project-1',
           deckId: 'deck_builder',
@@ -5115,10 +5128,18 @@ describe('saved Card routes', () => {
           completedAt: expect.any(String),
           userMessage: exactMessage,
           mainResponse: 'Real assistant reply.',
+          userMessageId: 'msg-user-persisted',
+          userMessageAt: persistedUserAt,
+          mainMessageId: 'msg-main-persisted',
+          mainMessageAt: persistedMainAt,
           sourceResponseFit,
         };
         const { sourceResponseFit: _sourceResponseFit, ...extractorPair } = completedPair;
-        expect(JSON.parse(String(prepareCall?.[1]?.body))).toEqual(extractorPair);
+        const preparedPairBody = JSON.parse(String(prepareCall?.[1]?.body));
+        expect(preparedPairBody).toEqual(extractorPair);
+        expect(preparedPairBody.completedAt).toBe(persistedMainAt);
+        expect(preparedPairBody.mainMessageAt).toBe(persistedMainAt);
+        expect(preparedPairBody.userMessageAt).toBe(persistedUserAt);
 
         const cardBegin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
           ([route]) => route === '/domain/runs/begin',
@@ -5141,28 +5162,31 @@ describe('saved Card routes', () => {
         expect(cardBeginBody.assignment).toContain(
           'Jev alone classifies any durable graph edge',
         );
+        expect(cardBeginBody.assignment).toContain('zero to a few aligned reusable Thinks');
         expect(cardBeginBody.assignment).toContain(
-          'Create the current temporal ThinkGraph Think from this completed User/Main exchange',
-        );
-        expect(cardBeginBody.assignment).toContain(
-          'Main does not author or initiate this automatic Think',
+          'Main does not author or initiate this automatic intake',
         );
         expect(cardBeginBody.assignment).toContain('canonical_subject_directory');
         expect(cardBeginBody.assignment).toContain('nearest concrete reusable subject');
         expect(cardBeginBody.assignment).toContain('generic wrapper entity');
         expect(cardBeginBody.assignment).toContain('belongs in the Think body');
         expect(cardBeginBody.assignment).toContain(
-          'with the complete compact cross-graph subject',
+          'complete identity directory contains current ThinkGraph and KnowGraph entity headers',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Do not read historical Think bodies',
+          'Do not read prior',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Never derive Think content or agreement from the directory',
+          'derive Think content, agreement, or facts from the directory',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Do not compare, merge, rewrite, or suppress the current Think against earlier Thinks',
+          'Do not compare, merge, rewrite, or suppress current Thinks against earlier Thinks',
         );
+        expect(cardBeginBody.assignment).toContain('emit one Think');
+        expect(cardBeginBody.assignment).toContain('correction controls the final aligned meaning');
+        expect(cardBeginBody.assignment).toContain('must not duplicate a Think');
+        expect(cardBeginBody.assignment).toContain('natural size of its meaning');
+        expect(cardBeginBody.assignment).toContain('Atomicity is semantic, not length');
         expect(cardBeginBody.assignment).not.toContain('RegexGraphExtractor');
         expect(cardBeginBody.assignment).toContain(exactMessage);
         expect(cardBeginBody.assignment).toContain('Real assistant reply.');
@@ -5282,15 +5306,11 @@ describe('saved Card routes', () => {
         return value;
       });
       const provisional = JSON.stringify({
-        schemaVersion: 'atomic-research-response.v1',
+        schemaVersion: 'atomic-research-response.v2',
         results: [{
           status: 'source-unavailable',
           summary: 'Sources were found but the native write is still persistence-pending.',
-          citations: [{
-            url: 'https://primary.example/report', title: 'Primary report',
-            publishedAt: '2026-10-01',
-          }],
-          episodeUuids: [],
+          callId: 'know-call:11111111-1111-4111-8111-111111111111',
         }],
       });
       agentTerminalMocks.manager.submit.mockClear();
@@ -5498,14 +5518,11 @@ describe('saved Card routes', () => {
         return value;
       });
       const provisional = JSON.stringify({
-        schemaVersion: 'atomic-research-response.v1',
+        schemaVersion: 'atomic-research-response.v2',
         results: [{
           status: 'supported',
           summary: 'The write is still pending.',
-          citations: [{
-            url: 'https://primary.example/report', title: 'Primary report', publishedAt: null,
-          }],
-          episodeUuids: [],
+          callId: 'know-call:11111111-1111-4111-8111-111111111111',
         }],
       });
       agentTerminalMocks.manager.submit.mockClear();
@@ -5773,6 +5790,10 @@ describe('saved Card routes', () => {
           enrichmentPrompt: 'Pair-derived extraction prompt.',
         };
         const value = await railsImplementation(endpoint, init, options);
+        if (endpoint === '/thinkgraph/completed-pair/settle') return {
+          ...value,
+          thinkMemoryIds: ['think-shifted'],
+        };
         if (endpoint === '/domain/main/runs/begin') return {
           ...value,
           atomicResearchAssessment: shiftedAssessment,

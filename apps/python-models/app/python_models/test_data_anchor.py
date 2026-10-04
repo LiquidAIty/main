@@ -1161,10 +1161,9 @@ def test_contextual_know_candidates_read_complete_direct_facts_and_sources() -> 
         episode_reader=lambda _project, ids: [episodes[item] for item in ids],
     )
 
-    assert [candidate["nativeId"] for candidate in candidates] == ["fact-2", "fact-1"]
-    assert candidates[0]["fact"] == "Older qualifying fact."
-    assert candidates[0]["dates"]["validAt"] == "2024-01-01T00:00:00Z"
-    assert candidates[1]["supportingEpisodes"] == [episodes["episode-1"]]
+    # Derived facts and unmarked legacy source episodes remain topology. They
+    # do not become product Know records merely because they touch the entity.
+    assert candidates == []
     query, params = driver.calls[0]
     assert "MATCH (a)-[r]->(b)" in query
     assert "LIMIT" not in query.upper()
@@ -1236,7 +1235,113 @@ def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
     assert driver.closed is True
 
 
-def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None:
+def test_canonical_know_episode_readback_recovers_complete_observation_structure() -> None:
+    know = {
+        "schemaVersion": "knowgraph.source-observation.v2",
+        "name": "Rocket Lab evidence",
+        "observations": [{
+            "datum": "One complete qualified datum.",
+            "interpretation": "One bounded interpretation.",
+            "citations": [{
+                "url": "https://primary.example/report",
+                "title": "Primary report",
+                "publishedAt": "2026-10-01",
+                "sourceNote": "This report establishes the datum.",
+            }],
+            "relevantEntities": ["Rocket Lab", "Revenue attribution"],
+        }],
+    }
+    objective = {
+        "name": know["name"],
+        "observations": [{
+            "datum": know["observations"][0]["datum"],
+            "relevantEntities": know["observations"][0]["relevantEntities"],
+        }],
+    }
+    driver = _FakeNeo4jDriver([[{
+        "uuid": "episode-one",
+        "properties": {
+            "name": know["name"],
+            "group_id": "liquidaity-project-1",
+            "content": json.dumps(objective, separators=(",", ":")),
+            "liquidaity_record_kind": "canonical_know",
+            "liquidaity_schema_version": "knowgraph.source-observation.v2",
+            "liquidaity_call_id": (
+                "know-call:11111111-1111-4111-8111-111111111111"
+            ),
+            "canonical_know_json": json.dumps(
+                know, sort_keys=True, separators=(",", ":"),
+            ),
+            "observed_at": "2026-10-04T12:00:00Z",
+        },
+    }]])
+
+    episodes = read_knowgraph_episodes_exact(
+        "project-1", ["episode-one"], driver_factory=lambda: driver,
+    )
+
+    assert episodes == [{
+        "uuid": "episode-one",
+        "name": know["name"],
+        "liquidaity_record_kind": "canonical_know",
+        "liquidaity_schema_version": "knowgraph.source-observation.v2",
+        "observed_at": "2026-10-04T12:00:00Z",
+        "liquidaity_call_id": (
+            "know-call:11111111-1111-4111-8111-111111111111"
+        ),
+        "canonicalKnow": know,
+        "content_chars": len(json.dumps(objective, separators=(",", ":"))),
+        "content": json.dumps(objective, separators=(",", ":")),
+        "content_truncated": False,
+    }]
+
+
+def test_exact_canonical_know_read_renders_clean_observations_not_raw_properties() -> None:
+    know = {
+        "schemaVersion": "knowgraph.source-observation.v2",
+        "name": "Rocket Lab evidence",
+        "observations": [{
+            "datum": "Rocket Lab reported one exact result.",
+            "interpretation": "The result is relevant to revenue attribution.",
+            "citations": [{
+                "url": "https://primary.example/report",
+                "title": "Primary report",
+                "publishedAt": None,
+                "sourceNote": "This report establishes the reported result.",
+            }],
+            "relevantEntities": ["Rocket Lab", "Revenue attribution"],
+        }],
+    }
+    driver = _FakeNeo4jDriver([[{
+        "nativeId": "episode-one",
+        "labels": ["Episodic"],
+        "properties": {
+            "name": know["name"],
+            "group_id": "liquidaity-project-1",
+            "liquidaity_record_kind": "canonical_know",
+            "liquidaity_schema_version": "knowgraph.source-observation.v2",
+            "canonical_know_json": json.dumps(know, separators=(",", ":")),
+            "observed_at": "2026-10-04T12:00:00Z",
+        },
+    }]])
+
+    record = read_knowgraph_exact(
+        "project-1", "episode-one", driver_factory=lambda: driver,
+    )
+
+    assert record is not None
+    assert record["nativeId"] == "episode-one"
+    assert record["portableKind"] == "know"
+    assert record["know"]["observations"] == know["observations"]
+    assert record["know"]["citationCount"] == 1
+    assert record["content"] == (
+        "Rocket Lab reported one exact result.\n"
+        "Interpretation: The result is relevant to revenue attribution."
+    )
+    assert "canonical_know_json" not in record["content"]
+
+
+def test_knowgraph_exact_fact_remains_topology_with_exact_sources() -> None:
     driver = _FakeNeo4jDriver([[], [{
         "nativeId": "fact-1",
         "labels": ["RELATES_TO"],
@@ -1276,40 +1381,11 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
     )
 
     assert record is not None
-    assert record["portableKind"] == "know"
     assert record["nativeId"] == "fact-1"
-    assert record["know"] == {
-        "portableKind": "know",
-        "nativeFactUuid": "fact-1",
-        "sourceEntity": {"uuid": "entity-a", "name": "Alpha"},
-        "targetEntity": {"uuid": "entity-b", "name": "Beta"},
-        "nativeRelation": "partners with",
-        "fact": "Alpha partners with Beta.",
-        "supportingEpisodeUuids": ["episode-1"],
-        "supportingEpisodes": [episode],
-        "createdAt": "2026-09-23T12:00:00Z",
-        "referenceTime": None,
-        "validAt": "2026-09-01T00:00:00Z",
-        "invalidAt": None,
-        "expiredAt": None,
-        "temporalStatus": "current",
-        "jevCanonicalRelation": "ASSOCIATED_WITH",
-        "relationship_strength": 1.0,
-        "jev": {
-            "nativeFactUuid": "fact-1",
-            "status": "success",
-            "winner": "ASSOCIATED_WITH",
-            "distribution": {"ASSOCIATED_WITH": 1.0},
-            "label_confidence": 1.0,
-            "requested_model": "typesafe/jev-1.13",
-            "resolved_model": "typesafe/jev-1.13",
-            "evaluated_at": "2026-09-24T12:00:00Z",
-            "question_schema_version": "knowgraph.relationship-choice.v2",
-            "vocabulary_version": "jev.semantic-relationships.v1",
-            "vocabulary_hash": "hash-1",
-        },
-    }
-    assert record["jev"]["winner"] == "ASSOCIATED_WITH"
+    assert record["nativeKind"] == "edge"
+    assert "portableKind" not in record
+    assert "know" not in record
+    assert record["properties"]["fact"] == "Alpha partners with Beta."
     assert record["provenance"]["episodes"] == [episode]
 
 
@@ -1347,15 +1423,10 @@ def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malform
 
     assert record is not None
     assert record["nativeId"] == "fact-malformed"
-    assert record["know"]["nativeFactUuid"] == "fact-malformed"
-    assert record["know"]["nativeRelation"] == "supports"
-    assert record["know"]["fact"] == "Alpha supports Beta."
-    assert record["know"]["sourceEntity"] == {"uuid": "entity-a", "name": "Alpha"}
-    assert record["know"]["targetEntity"] == {"uuid": "entity-b", "name": "Beta"}
-    assert record["know"]["supportingEpisodes"] == [episode]
-    assert "jev" not in record["know"]
-    assert "jevCanonicalRelation" not in record["know"]
-    assert "relationship_strength" not in record["know"]
+    assert record["nativeKind"] == "edge"
+    assert "portableKind" not in record
+    assert "know" not in record
+    assert record["properties"]["fact"] == "Alpha supports Beta."
     assert driver.closed is True
 
 

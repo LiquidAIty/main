@@ -2037,6 +2037,230 @@ def test_graphiti_add_memory_dispatch_preserves_native_arguments(monkeypatch):
     }
 
 
+def _source_observation_payload(*, observation_count=1):
+    return {
+        "schemaVersion": "knowgraph.source-observation.v2",
+        "name": "Rocket Lab evidence",
+        "observations": [{
+            "datum": f"Complete qualified datum {index}.",
+            "interpretation": f"Bounded interpretation {index}.",
+            "citations": [{
+                "url": f"https://primary.example/report/{index}",
+                "title": f"Primary report {index}",
+                "publishedAt": "2026-10-01",
+                "sourceNote": f"This link establishes datum {index}.",
+            }],
+            "relevantEntities": ["Rocket Lab", "Revenue attribution"],
+        } for index in range(observation_count)],
+    }
+
+
+def _source_observation_context():
+    return {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "conversationId": "conversation-one",
+        "parentRunId": "run-one",
+        "mainCardId": "card_knowgraph",
+    }
+
+
+def test_graphiti_add_memory_advertises_only_source_observation_v2():
+    import mcp_host
+
+    native = mcp_host.Tool(
+        name="add_memory",
+        description="Native add",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "episode_body": {"type": "string"},
+                "group_id": {"type": "string"},
+            },
+        },
+    )
+    advertised = mcp_host._namespace_native_tools("graphiti", [native])[0]
+    schema = advertised.inputSchema
+
+    assert set(schema["properties"]) == {"schemaVersion", "name", "observations"}
+    assert schema["properties"]["schemaVersion"]["const"] == (
+        "knowgraph.source-observation.v2"
+    )
+    observation = schema["properties"]["observations"]["items"]
+    assert set(observation["properties"]) == {
+        "datum", "interpretation", "citations", "relevantEntities",
+    }
+    citation = observation["properties"]["citations"]["items"]
+    assert set(citation["properties"]) == {
+        "url", "title", "publishedAt", "sourceNote",
+    }
+    assert "maxLength" not in schema["properties"]["name"]
+    assert "maxItems" not in schema["properties"]["observations"]
+
+
+def test_source_observation_v2_four_observations_map_to_one_native_episode():
+    import mcp_host
+
+    payload = _source_observation_payload(observation_count=4)
+    qualified = "Qualification remains attached. " * 500
+    payload["observations"][3]["interpretation"] = qualified
+    native, authority = mcp_host._canonical_know_submission(
+        payload, _source_observation_context(),
+    )
+    canonical = json.loads(authority["canonical_know_json"])
+    objective = json.loads(native["episode_body"])
+
+    assert canonical == payload
+    assert canonical["observations"][3]["interpretation"] == qualified
+    assert len(canonical["observations"]) == 4
+    assert len({citation["url"] for observation in canonical["observations"]
+                for citation in observation["citations"]}) == 4
+    assert all(observation["citations"][0]["sourceNote"]
+               for observation in canonical["observations"])
+    assert objective == {
+        "observations": [{
+            "datum": observation["datum"],
+        } for observation in payload["observations"]],
+    }
+    assert "interpretation" not in native["episode_body"]
+    assert "sourceNote" not in native["episode_body"]
+    assert "relevantEntities" not in native["episode_body"]
+    assert native["source"] == "json"
+    assert native["uuid"] == authority["episode_uuid"]
+    assert authority["call_id"].startswith("know-call:")
+
+
+def test_source_observation_v2_simple_observation_is_not_padded_or_split():
+    import mcp_host
+
+    payload = _source_observation_payload()
+    payload["observations"][0]["datum"] = "Simple datum."
+    payload["observations"][0]["interpretation"] = "Simple interpretation."
+    native, authority = mcp_host._canonical_know_submission(
+        payload, _source_observation_context(),
+    )
+    canonical = json.loads(authority["canonical_know_json"])
+
+    assert canonical["observations"] == payload["observations"]
+    assert json.loads(native["episode_body"])["observations"] == [{
+        "datum": "Simple datum.",
+    }]
+    second_native, second_authority = mcp_host._canonical_know_submission(
+        payload, _source_observation_context(),
+    )
+    assert second_native["uuid"] != native["uuid"]
+    assert second_authority["call_id"] != authority["call_id"]
+    assert second_authority["observed_at"].endswith("Z")
+
+
+def test_same_url_requires_distinct_source_notes_for_distinct_observations():
+    import mcp_host
+
+    payload = _source_observation_payload(observation_count=2)
+    shared_url = payload["observations"][0]["citations"][0]["url"]
+    payload["observations"][1]["citations"][0]["url"] = shared_url
+    native, authority = mcp_host._canonical_know_submission(
+        payload, _source_observation_context(),
+    )
+    assert native["uuid"] == authority["episode_uuid"]
+
+    payload["observations"][1]["citations"][0]["sourceNote"] = (
+        payload["observations"][0]["citations"][0]["sourceNote"]
+    )
+    with pytest.raises(ValueError, match="citation_contribution_duplicate"):
+        mcp_host._canonical_know_submission(payload, _source_observation_context())
+
+
+@pytest.mark.parametrize("url", [
+    " https://primary.example/report",
+    "https://primary.example/report ",
+    "ftp://primary.example/report",
+    "https://user:pass@primary.example/report",
+    "https://primary.example/report https://other.example/report",
+    "https://primary.example/reporthttps://other.example/report",
+    "https://bad_host.example/report",
+    "https:///missing-host",
+    ["https://primary.example/report", "https://other.example/report"],
+])
+def test_source_observation_v2_rejects_noncanonical_citation_urls(url):
+    import mcp_host
+
+    payload = _source_observation_payload()
+    payload["observations"][0]["citations"][0]["url"] = url
+    with pytest.raises(ValueError, match="single_citation_url_required"):
+        mcp_host._canonical_know_submission(payload, _source_observation_context())
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda payload: payload.update(summary="Detached report summary"),
+    lambda payload: payload.update(citations=[{"url": "https://primary.example/report"}]),
+    lambda payload: payload["observations"][0].update(
+        citation={"url": "https://primary.example/report"}
+    ),
+    lambda payload: payload["observations"][0]["citations"][0].pop("sourceNote"),
+    lambda payload: payload["observations"][0].update(citations=[
+        "https://primary.example/report"
+    ]),
+])
+def test_source_observation_v2_rejects_detached_report_and_unexplained_links(mutate):
+    import mcp_host
+
+    payload = _source_observation_payload()
+    mutate(payload)
+    with pytest.raises(ValueError, match="source_observation"):
+        mcp_host._canonical_know_submission(payload, _source_observation_context())
+
+
+def test_source_observation_v2_dispatches_one_native_call_for_four_observations(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+
+    calls = []
+    native_tool = mcp_host.Tool(
+        name="add_memory",
+        description="Native add",
+        inputSchema={
+            "type": "object",
+            "properties": {"group_id": {"type": "string"}},
+        },
+    )
+
+    async def initialize():
+        return None
+
+    async def native_tools():
+        return [native_tool]
+
+    async def call_native(name, arguments, *, know_authority=None):
+        calls.append((name, arguments, know_authority))
+        acknowledgement = {
+            "ok": True, "state": "queued", "callId": know_authority["call_id"],
+        }
+        return mcp_host.CallToolResult(
+            content=[mcp_host.TextContent(type="text", text=json.dumps(acknowledgement))],
+            structuredContent={"result": acknowledgement},
+        )
+
+    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialize)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", native_tools)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_NAMES", frozenset({"add_memory"}))
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", _source_observation_context)
+    monkeypatch.setattr(mcp_host, "_call_native_graphiti", call_native)
+
+    result = asyncio.run(mcp_host._dispatch_tool(
+        "graphiti.add_memory", _source_observation_payload(observation_count=4),
+    ))
+
+    assert len(calls) == 1
+    assert calls[0][0] == "add_memory"
+    assert calls[0][1]["group_id"] == mcp_host.graphiti_project_group_id("project-one")
+    assert len(json.loads(calls[0][2]["canonical_know_json"])["observations"]) == 4
+    assert result.structuredContent["result"]["callId"] == calls[0][2]["call_id"]
+
+
 def test_application_catalog_preserves_saved_card_schemas_without_native_discovery(monkeypatch):
     import asyncio
     import jsonschema
@@ -2356,11 +2580,19 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_native_metadata
         for fixture in fixtures:
             tool = canonical_by_name[f"{namespace}.{fixture.name}"]
             assert tool.title == fixture.title
-            assert tool.description == fixture.description
+            if tool.name == "graphiti.add_memory":
+                assert "one product Know" in str(tool.description)
+            else:
+                assert tool.description == fixture.description
             assert tool.outputSchema == fixture.outputSchema
             assert tool.annotations == fixture.annotations
             assert tool.meta["canonicalFixture"] == fixture.meta["canonicalFixture"]
-            assert tool.inputSchema["properties"]["probe"] == {"type": "string"}
+            if tool.name == "graphiti.add_memory":
+                assert set(tool.inputSchema["properties"]) == {
+                    "schemaVersion", "name", "observations",
+                }
+            else:
+                assert tool.inputSchema["properties"]["probe"] == {"type": "string"}
     assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
     assert canonical_by_name["cbm.search_graph"].meta["liquidaityAccess"] == "read"
     assert canonical_by_name["cbm.unfamiliar_current_tool"].meta[

@@ -6580,7 +6580,7 @@ def _atomic_candidate(memory_id: str, cutoff: str) -> dict:
         "schemaVersion": "atomic-research-candidate.v1",
         "projectId": "project-one", "deckId": "deck-one",
         "conversationId": "conversation-one",
-        "originatingRunId": f"run-{memory_id}", "thinkMemoryId": memory_id,
+        "originatingRunId": f"run-{memory_id}", "thinkMemoryIds": [memory_id],
         "mainCardId": "main", "mainCardRevisionId": "revision-main",
         "thinkGraphCardId": "think", "thinkGraphCardRevisionId": "revision-think",
         "knowGraphCardId": "know", "knowGraphCardRevisionId": "revision-know",
@@ -6888,18 +6888,18 @@ def test_atomic_research_assignment_does_not_refetch_hydrated_think() -> None:
     assert "Think memory ID is runtime correlation metadata only" in assignment
     assert "Never place a Think\nmemory ID, assessment ID, Run ID, Card ID" in assignment
     assert "Research and write only the named real-world subjects" in assignment
-    assert "Preserve your semantic supported or" in assignment
-    assert "Never invent an episode UUID" in assignment
-    assert "source_description to one JSON array" in assignment
     assert "complete canonical_subject_directory" in assignment
     assert "exact existing canonicalName values" in assignment
-    assert "custom_extraction_instructions" in assignment
+    assert "observation's relevantEntities" in assignment
     assert "titles as provenance/source material" in assignment
     assert "Do not concatenate a named" in assignment
-    assert "one URL source of truth" in assignment
-    assert "copy each URL\nbyte-for-byte" in assignment
-    assert "correct RESULT_SCHEMA from the exact\nsource_description strings" in assignment
-    assert "atomic-research-response.v1" in assignment
+    assert "observations[]" in assignment
+    assert "one-or-more citations[]" in assignment
+    assert "nonempty sourceNote" in assignment
+    assert "Never send a flat citation array" in assignment
+    assert "exactly one native Graphiti episode" in assignment
+    assert "server-returned callId" in assignment
+    assert "atomic-research-response.v2" in assignment
     assert "EXPECTED_RESULT_COUNT: 1" in assignment
     assert "assessment-one" not in assignment
     assert "source-run-one" not in assignment
@@ -6932,32 +6932,36 @@ def test_atomic_research_write_event_read_is_exact_run_and_card_scoped(
     def age_rows(_cursor, query, params, columns):
         seen.append((query, params, columns))
         return [{"event": {
-            "eventId": "native-attention:one",
+            "eventId": "know-call:11111111-1111-4111-8111-111111111111",
+            "callId": "know-call:11111111-1111-4111-8111-111111111111",
             "phase": "completed",
             "authority": "knowgraph",
             "operation": "write",
             "toolName": "graphiti.add_memory",
-            "nativeNodeIds": ["episode-one", "entity-one"],
+            "nativeEpisodeIds": ["episode-one"],
+            "nativeNodeIds": ["entity-one"],
         }}]
 
     monkeypatch.setattr(card_domain, "_age_rows", age_rows)
 
-    event = card_domain.read_atomic_research_write_event(
+    events = card_domain.read_atomic_research_write_events(
         "project-one", "deck-one", "atomic_research:child", "knowgraph",
     )
 
-    assert event == {
-        "eventId": "native-attention:one",
+    assert events == [{
+        "eventId": "know-call:11111111-1111-4111-8111-111111111111",
+        "callId": "know-call:11111111-1111-4111-8111-111111111111",
         "phase": "completed",
         "authority": "knowgraph",
         "operation": "write",
         "toolName": "graphiti.add_memory",
-        "nativeNodeIds": ["episode-one", "entity-one"],
+        "nativeEpisodeIds": ["episode-one"],
+        "nativeNodeIds": ["entity-one"],
         "projectId": "project-canonical",
         "deckId": "deck-one",
         "runId": "atomic_research:child",
         "cardId": "knowgraph",
-    }
+    }]
     assert seen[0][1] == {
         "projectId": "project-canonical",
         "deckId": "deck-one",

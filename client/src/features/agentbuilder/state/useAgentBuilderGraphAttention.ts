@@ -135,7 +135,7 @@ type ExpandRequest = {
 export type GraphAttentionState = {
   refreshThinkGraph: (revision?: ThinkGraphRevisionEvent) => Promise<void>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
-  removeKnowGraphEvidence: (nativeFactId: string) => Promise<void>;
+  removeKnowGraphEvidence: (nativeEpisodeId: string) => Promise<void>;
   projections: Record<GraphAttentionAuthority, GraphProjectionV1>;
   errors: Partial<Record<GraphAttentionAuthority, string>>;
   statuses: Record<GraphAttentionAuthority, 'idle' | 'loading' | 'ready' | 'error'>;
@@ -1258,10 +1258,10 @@ export default function useAgentBuilderGraphAttention({
     await refreshThinkGraph();
   }, [projectId, refreshThinkGraph]);
 
-  const removeKnowGraphEvidence = useCallback(async (nativeFactId: string) => {
+  const removeKnowGraphEvidence = useCallback(async (nativeEpisodeId: string) => {
     const response = await fetch('/api/knowgraph/delete-native', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, native_id: nativeFactId, kind: 'fact' }),
+      body: JSON.stringify({ project_id: projectId, native_id: nativeEpisodeId, kind: 'episode' }),
     });
     if (!response.ok) throw new Error('Could not delete this Know.');
     await refreshKnowGraph();

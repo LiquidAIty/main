@@ -2391,19 +2391,22 @@ function thinkGraphCardAssignment(preparation: any): string {
     'Run one Engraphis llm_structured extraction pass using the native prompt and schema below.',
     'Use your saved ThinkGraph Card instructions and configured model. Do not call tools.',
     'Return only one JSON object that validates against OUTPUT_SCHEMA. Do not wrap it in prose.',
-    'Create the current temporal ThinkGraph Think from this completed User/Main exchange.',
-    'The exchange is observable input; Main does not author or initiate this automatic Think.',
-    'Interpret the current completed User/Main pair with the complete compact cross-graph subject',
-    'directory so the current Think can reuse an existing canonical subject name. Use the exact',
-    'current pair and canonical_subject_directory supplied in the native prompt. Do not read historical Think bodies.',
+    'First combine the completed User/Main pair into one hidden Thought lineage, then create',
+    'zero to a few aligned reusable Thinks; normally create one to three and never more than six.',
+    'The exchange is observable input; Main does not author or initiate this automatic intake.',
+    'Use the exact current pair and canonical_subject_directory supplied in the native prompt.',
+    'That complete identity directory contains current ThinkGraph and KnowGraph entity headers:',
+    'canonicalName, entityKind, authority, and an authority-scoped nativeId. Do not read prior',
+    'Think or Know bodies, citations, evidence, or edges.',
     'Do not browse, investigate, introduce evidence, extend the analysis, answer the user again,',
     'or continue the exchange beyond semantic interpretation grounded in the current pair.',
-    'canonical_subject_directory contains every current ThinkGraph and KnowGraph subject header',
-    '(authority, native ID, canonical name, and kind), without bodies, evidence, or edges. Use it',
-    'only to reuse canonical subject names. Never derive Think content or agreement from the directory.',
+    'Use canonical_subject_directory only to reuse an exact canonicalName byte-for-byte. Equal',
+    'canonical names across authority bindings are one logical entity for semantic output and',
+    'must not duplicate a Think. Never equate authority-scoped native IDs, copy IDs into prose,',
+    'or derive Think content, agreement, or facts from the directory.',
     'Extract only meaningful reusable concepts grounded in this pair, including concepts that a',
     'lexical extractor would miss. Reuse an exact supplied canonical name when it is the same concept.',
-    'Do not compare, merge, rewrite, or suppress the current Think against earlier Thinks.',
+    'Do not compare, merge, rewrite, or suppress current Thinks against earlier Thinks.',
     'Canonicalize entities semantically as concise standalone reusable concepts grounded in the pair.',
     'Keep every central named organization, person, product, or asset as its standalone proper name.',
     'Never concatenate a named entity with one of its metrics, actions, attributes, hypotheses, or',
@@ -2430,9 +2433,23 @@ function thinkGraphCardAssignment(preparation: any): string {
     'Omit a relation if no meaningful directed relationship is grounded in the current pair.',
     'Do not emit an entity solely to make it durable; a new entity becomes a graph node only if Jev',
     'accepts a structured relationship involving it after this Card returns.',
-    'The Think preserves the full explanatory meaning; Jev alone classifies any durable graph edge',
+    'Each Think must condense one jointly established decision, preference, plan, question,',
+    'uncertainty, correction, constraint, hypothesis, belief, judgment, or observation into natural',
+    'reusable prose. A Think is not a transcript, report, per-speaker state, per-sentence record,',
+    'entity record, relationship record, or objective unsourced fact. A Main-only proposal the User',
+    'did not accept is not alignment. A genuinely unresolved shared question remains valid.',
+    'When both speakers express, refine, correct, or agree on the same idea, emit one Think. A User',
+    'correction controls the final aligned meaning; never retain the superseded version as a second',
+    'Think. Do not merge independent ideas merely because they mention the same entity.',
+    'Each Think takes the natural size of its meaning: one line, several sentences, or a paragraph.',
+    'Remove repetition, process narration, irrelevant background, and report padding, but never',
+    'shorten, split, expand, merge, or truncate for a sentence, word, character, token, or count',
+    'target. Atomicity is semantic, not length. Do not split one inseparable long idea, merge',
+    'independent ideas to reduce the count, or pad a simple idea. Preserve every qualification,',
+    'condition, uncertainty, and falsifier that changes a Think.',
+    'Jev alone classifies any durable graph edge',
     'by making the proposed predicate compete with the entire current project vocabulary.',
-    'The one episodic Think must be self-contained. Apart from each required relation.source, do not',
+    'Every Think must be self-contained. Apart from each required relationship endpoint, do not',
     'emit timestamps, external source references, citations, origin/provenance fields, or final edge labels.',
     '',
     'OUTPUT_SCHEMA',
@@ -2446,6 +2463,7 @@ function thinkGraphCardAssignment(preparation: any): string {
 const COMPLETED_PAIR_EXTRACTOR_FIELDS = [
   'projectId', 'deckId', 'conversationId', 'runId', 'cardId',
   'nativeSessionRef', 'completedAt', 'userMessage', 'mainResponse',
+  'userMessageId', 'userMessageAt', 'mainMessageId', 'mainMessageAt',
 ] as const;
 
 function completedPairExtractorPayload(
@@ -2866,10 +2884,12 @@ async function runCompletedPairThinkGraphLifecycle(
       preparation?.structuredExtractionRequired === false
       && intakeOperation === 'noop'
     ) return;
-    if (
+    const resumeManifest = preparation?.structuredExtractionRequired === false
+      && intakeOperation === 'resume';
+    if (!resumeManifest && (
       preparation?.structuredExtractionRequired !== true
       || intakeOperation !== 'pending'
-    ) {
+    )) {
       throw new Error('thinkgraph_prepare_intake_contract_invalid');
     }
 
@@ -2881,63 +2901,74 @@ async function runCompletedPairThinkGraphLifecycle(
         : 'thinkgraph_saved_card_unavailable',
     );
     const thinkGraphCard = matches[0];
-    const cardRunId = `req_${randomUUID().slice(0, 8)}`;
-    const savedPreparation = await prepareSavedCardRun({
-      projectId: args.projectId,
-      deckId: args.deckId,
-      cardId: thinkGraphCard.cardId,
-      cardRevisionId: thinkGraphCard.cardRevisionId,
-      assignment: thinkGraphCardAssignment(preparation),
-      senderCardId: args.authority.main.cardId,
-      originatingRunId: args.originatingRunId,
-      conversationId: args.conversationId,
-      correlationId: cardRunId,
-    });
-    const prepared = savedPreparation.prepared;
-    const exactIdentity = prepared.runtimeOwner === 'hermes'
-      && String(prepared.runId || '') === cardRunId
-      && String(prepared.cardRevisionId || '') === thinkGraphCard.cardRevisionId
-      && String(prepared.hermesTransport?.cardIdentity?.cardId || '') === thinkGraphCard.cardId
-      && String(prepared.hermesTransport?.request?.runtime?.profile || '') === thinkGraphCard.profile
-      && Boolean(prepared.hermesTransport?.request);
-    if (!exactIdentity) throw new Error('thinkgraph_saved_card_runtime_identity_mismatch');
-    const owner = await resolveCardRuntimeOwner(
-      args.req,
-      args.projectId,
-      args.deckId,
-      thinkGraphCard.cardId,
-      args.conversationId,
-    );
-    const cardResult = await executePreparedGatewayCardRun({
-      owner,
-      conversationId: args.conversationId,
-      runId: cardRunId,
-      prepared,
-      savedDeck: savedPreparation.savedDeck,
-      savedCard: savedPreparation.savedCard,
-      attachTui: false,
-    });
-
     stage = 'settle';
-    const settled: any = await requestPythonRailsJson('/thinkgraph/completed-pair/settle', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...extractorPair,
-        pairMemoryId: String(preparation.pairMemoryId || ''),
-        structuredOutput: cardResult.text,
-        cardRun: {
-          runId: cardRunId,
-          cardId: thinkGraphCard.cardId,
-          revisionId: thinkGraphCard.cardRevisionId,
-          profile: cardResult.profile,
-          nativeSessionRef: cardResult.nativeSessionId,
-          resolvedModel: String(
-            prepared.hermesTransport?.request?.provider?.providerModelId || '',
-          ),
-        },
-      }),
-    });
+    let settled: any;
+    if (resumeManifest) {
+      settled = await requestPythonRailsJson('/thinkgraph/completed-pair/settle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...extractorPair,
+          pairMemoryId: String(preparation.pairMemoryId || ''),
+        }),
+      });
+    } else {
+      const cardRunId = `req_${randomUUID().slice(0, 8)}`;
+      const savedPreparation = await prepareSavedCardRun({
+        projectId: args.projectId,
+        deckId: args.deckId,
+        cardId: thinkGraphCard.cardId,
+        cardRevisionId: thinkGraphCard.cardRevisionId,
+        assignment: thinkGraphCardAssignment(preparation),
+        senderCardId: args.authority.main.cardId,
+        originatingRunId: args.originatingRunId,
+        conversationId: args.conversationId,
+        correlationId: cardRunId,
+      });
+      const prepared = savedPreparation.prepared;
+      const exactIdentity = prepared.runtimeOwner === 'hermes'
+        && String(prepared.runId || '') === cardRunId
+        && String(prepared.cardRevisionId || '') === thinkGraphCard.cardRevisionId
+        && String(prepared.hermesTransport?.cardIdentity?.cardId || '') === thinkGraphCard.cardId
+        && String(prepared.hermesTransport?.request?.runtime?.profile || '') === thinkGraphCard.profile
+        && Boolean(prepared.hermesTransport?.request);
+      if (!exactIdentity) throw new Error('thinkgraph_saved_card_runtime_identity_mismatch');
+      const owner = await resolveCardRuntimeOwner(
+        args.req,
+        args.projectId,
+        args.deckId,
+        thinkGraphCard.cardId,
+        args.conversationId,
+      );
+      const cardResult = await executePreparedGatewayCardRun({
+        owner,
+        conversationId: args.conversationId,
+        runId: cardRunId,
+        prepared,
+        savedDeck: savedPreparation.savedDeck,
+        savedCard: savedPreparation.savedCard,
+        attachTui: false,
+      });
+      settled = await requestPythonRailsJson('/thinkgraph/completed-pair/settle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...extractorPair,
+          pairMemoryId: String(preparation.pairMemoryId || ''),
+          structuredOutput: cardResult.text,
+          cardRun: {
+            runId: cardRunId,
+            cardId: thinkGraphCard.cardId,
+            revisionId: thinkGraphCard.cardRevisionId,
+            profile: cardResult.profile,
+            nativeSessionRef: cardResult.nativeSessionId,
+            resolvedModel: String(
+              prepared.hermesTransport?.request?.provider?.providerModelId || '',
+            ),
+          },
+        }),
+      });
+    }
     const settleFailures = Array.isArray(settled?.failures) ? settled.failures : [];
     if (settleFailures.length) {
       logHarnessTrace(
@@ -2996,8 +3027,12 @@ async function runCompletedPairThinkGraphLifecycle(
       (card) => card.id === currentAuthority.main.cardId,
     );
     const dataControl = currentMainNode?.runtimeOptions?.configuration?.dataControl;
+    const settledThinkMemoryIds = Array.isArray(settled?.thinkMemoryIds)
+      ? settled.thinkMemoryIds.map(String).filter(Boolean).slice(0, 2)
+      : [];
     if (dataControl && typeof dataControl === 'object'
-      && (dataControl as Record<string, unknown>).automaticResearch === true) {
+      && (dataControl as Record<string, unknown>).automaticResearch === true
+      && settledThinkMemoryIds.length) {
       const currentThink = currentAuthority.cards.filter(
         (agent) => agent.title === 'ThinkGraph',
       );
@@ -3017,7 +3052,7 @@ async function runCompletedPairThinkGraphLifecycle(
           deckId: args.deckId,
           conversationId: args.conversationId,
           originatingRunId: args.originatingRunId,
-          thinkMemoryId: String(settled?.thinkMemoryId || ''),
+          thinkMemoryIds: settledThinkMemoryIds,
           mainCardId: args.authority.main.cardId,
           mainCardRevisionId: args.authority.main.cardRevisionId,
           thinkGraphCardId: currentThink[0].cardId,
@@ -4466,8 +4501,10 @@ mainRoutes.post('/session/chat', async (req, res) => {
     if (!resultText.trim()) {
       throw new Error(directAddressed ? 'addressed_card_empty_response' : 'main_empty_response');
     }
+    const mainCompletedAt = new Date().toISOString();
+    let persistedPair: Awaited<ReturnType<typeof appendSharedConversationTurn>> = [];
     try {
-      await appendSharedConversationTurn({
+      persistedPair = await appendSharedConversationTurn({
         projectId,
         conversationId,
         messages: [
@@ -4476,12 +4513,16 @@ mainRoutes.post('/session/chat', async (req, res) => {
             content: message,
             speaker: SHARED_CHAT_USER,
             target: cardParticipant(target),
+            createdAt: acceptedAt,
+            completedAt: acceptedAt,
             providerMessageId: run.runId,
           },
           {
             role: 'assistant',
             content: resultText,
             speaker: cardParticipant(target),
+            createdAt: mainCompletedAt,
+            completedAt: mainCompletedAt,
             providerContinuationRef: continuationRef,
             providerMessageId: run.runId,
           },
@@ -4531,9 +4572,17 @@ mainRoutes.post('/session/chat', async (req, res) => {
         runId: run.runId,
         cardId: run.cardId,
         nativeSessionRef: continuationRef,
-        completedAt: new Date().toISOString(),
+        completedAt: mainCompletedAt,
         userMessage: message,
         mainResponse: resultText,
+        userMessageId: String(persistedPair.find(item => item.role === 'user'
+          && item.providerMessageId === run.runId)?.messageId || ''),
+        userMessageAt: String(persistedPair.find(item => item.role === 'user'
+          && item.providerMessageId === run.runId)?.createdAt || acceptedAt),
+        mainMessageId: String(persistedPair.find(item => item.role === 'assistant'
+          && item.providerMessageId === run.runId)?.messageId || ''),
+        mainMessageAt: String(persistedPair.find(item => item.role === 'assistant'
+          && item.providerMessageId === run.runId)?.completedAt || mainCompletedAt),
         sourceResponseFit: requestFulfillment,
       },
     };

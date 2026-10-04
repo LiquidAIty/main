@@ -1,15 +1,86 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.python_models import engraphis as adapter
-from app.python_models.engraphis import (
-    AtomicResearchError,
-    validate_atomic_research_result,
-)
+from app.python_models.engraphis import AtomicResearchError, validate_atomic_research_result
 
 
-def _payload() -> dict:
+CALL_ONE = "know-call:11111111-1111-4111-8111-111111111111"
+CALL_TWO = "know-call:22222222-2222-4222-8222-222222222222"
+
+
+def _know(name: str = "Rocket Lab evidence", count: int = 1) -> dict:
+    return {
+        "schemaVersion": "knowgraph.source-observation.v2",
+        "name": name,
+        "observations": [
+            {
+                "datum": f"Complete qualified datum {index}.",
+                "interpretation": f"Bounded interpretation {index}.",
+                "citations": [{
+                    "url": f"https://primary.example/report/{index}",
+                    "title": f"Primary report {index}",
+                    "publishedAt": "2026-10-01",
+                    "sourceNote": f"This source establishes datum {index}.",
+                }],
+                "relevantEntities": ["Rocket Lab", "Revenue attribution"],
+            }
+            for index in range(count)
+        ],
+    }
+
+
+def _episode(
+    episode_id: str = "episode-one",
+    call_id: str = CALL_ONE,
+    *,
+    know: dict | None = None,
+) -> dict:
+    canonical = know or _know()
+    objective = {
+        "observations": [
+            {"datum": observation["datum"]}
+            for observation in canonical["observations"]
+        ],
+    }
+    return {
+        "uuid": episode_id,
+        "liquidaity_record_kind": "canonical_know",
+        "liquidaity_schema_version": "knowgraph.source-observation.v2",
+        "liquidaity_call_id": call_id,
+        "canonicalKnow": canonical,
+        "content": json.dumps(objective, separators=(",", ":")),
+    }
+
+
+def _event(
+    call_id: str = CALL_ONE,
+    episode_id: str = "episode-one",
+    phase: str = "completed",
+    **changes,
+) -> dict:
+    return {
+        "eventId": call_id,
+        "callId": call_id,
+        "phase": phase,
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runId": "atomic_research:child",
+        "cardId": "knowgraph",
+        "authority": "knowgraph",
+        "operation": "write",
+        "toolName": "graphiti.add_memory",
+        "nativeEpisodeIds": [episode_id] if phase == "completed" else [],
+        "nativeNodeIds": ["entity-one", "entity-two"],
+        "nativeEdgeIds": ["fact-one"],
+        **changes,
+    }
+
+
+def _payload(*, call_id: str | None = CALL_ONE) -> dict:
     return {
         "projectId": "project-one",
         "deckId": "deck-one",
@@ -19,34 +90,16 @@ def _payload() -> dict:
         "knowGraphCardId": "knowgraph",
         "thinkMemoryIds": ["think-one"],
         "output": {
-            "schemaVersion": "atomic-research-response.v1",
+            "schemaVersion": "atomic-research-response.v2",
             "results": [{
-                "status": "supported",
-                "summary": "The current primary source supports the bounded Think.",
-                "citations": [{
-                    "url": "https://primary.example/report",
-                    "title": "Primary report",
-                    "publishedAt": "2026-10-01",
-                }],
-                "episodeUuids": [],
+                "status": "supported" if call_id else "source-unavailable",
+                "summary": (
+                    "The primary evidence supports the bounded Think."
+                    if call_id else "No usable primary-source evidence was available."
+                ),
+                "callId": call_id,
             }],
         },
-    }
-
-
-def _event(phase="completed", **changes) -> dict:
-    return {
-        "eventId": "native-attention:write-one",
-        "phase": phase,
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "runId": "atomic_research:child",
-        "cardId": "knowgraph",
-        "authority": "knowgraph",
-        "operation": "write",
-        "toolName": "graphiti.add_memory",
-        "nativeNodeIds": ["episode-one", "entity-one", "entity-two"],
-        **changes,
     }
 
 
@@ -55,115 +108,144 @@ def test_atomic_research_settlement_bound_covers_measured_native_completion() ->
     assert adapter.ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS == 2.0
 
 
-def test_atomic_research_result_requires_exact_persisted_episode_readback() -> None:
+def test_one_grouped_structured_know_settles_to_exactly_one_episode() -> None:
+    know = _know(count=4)
     reads = []
 
     def episodes(project, ids):
         reads.append((project, list(ids)))
-        return [{
-            "uuid": "episode-one",
-            "source_description": '["https://primary.example/report"]',
-        }]
+        return [_episode(know=know)]
 
     result = validate_atomic_research_result(
         _payload(),
         episode_reader=episodes,
-        attention_reader=lambda *_args: _event(),
+        attention_reader=lambda *_args: [_event()],
     )
-    assert result["ok"] is True
-    assert result["citationCount"] == 1
+
+    settled = result["result"]["results"][0]
+    assert result["citationCount"] == 4
     assert result["episodeCount"] == 1
-    assert result["result"]["results"][0]["status"] == "supported"
-    assert result["result"]["results"][0]["thinkMemoryId"] == "think-one"
-    assert result["result"]["results"][0]["episodeUuids"] == ["episode-one"]
+    assert settled["episodeUuid"] == "episode-one"
+    assert settled["know"] == know
+    assert [citation["sourceNote"] for observation in know["observations"]
+            for citation in observation["citations"]] == [
+        "This source establishes datum 0.",
+        "This source establishes datum 1.",
+        "This source establishes datum 2.",
+        "This source establishes datum 3.",
+    ]
     assert result["settlement"] == {
-        "eventId": "native-attention:write-one",
+        "eventIds": [CALL_ONE],
+        "callIds": [CALL_ONE],
         "phase": "completed",
         "episodeUuids": ["episode-one"],
     }
-    assert result["sharedChatText"] == (
-        "Research result\n\n"
-        "Supported: The current primary source supports the bounded Think.\n\n"
-        "Evidence and sources are retained in KnowGraph."
+    assert reads == [("project-one", ["episode-one"])]
+
+
+def test_settlement_ignores_entity_and_fact_ids_as_episode_candidates() -> None:
+    observed_ids = []
+
+    def episodes(_project, ids):
+        observed_ids.extend(ids)
+        return [_episode()]
+
+    validate_atomic_research_result(
+        _payload(), episode_reader=episodes,
+        attention_reader=lambda *_args: [_event(
+            nativeNodeIds=["episode-lookalike", "entity-one"],
+            nativeEdgeIds=["fact-one"],
+        )],
     )
-    assert "https://primary.example/report" not in result["sharedChatText"]
-    assert "Primary report" not in result["sharedChatText"]
-    assert reads == [(
-        "project-one", ["episode-one", "entity-one", "entity-two"],
-    )]
+    assert observed_ids == ["episode-one"]
 
 
-def test_atomic_research_model_response_rejects_echoed_runtime_ids() -> None:
+def test_out_of_order_events_settle_by_call_identity_not_order_name_or_url() -> None:
     payload = _payload()
-    payload["output"]["assessmentId"] = payload["assessmentId"]
-    payload["output"]["sourceRunId"] = payload["sourceRunId"]
-    payload["output"]["results"][0]["thinkMemoryId"] = "think-one"
-
-    with pytest.raises(
-        AtomicResearchError,
-        match="atomic_research_result_contract_invalid",
-    ):
-        validate_atomic_research_result(payload)
-
-
-def test_atomic_research_result_rejects_transport_id_in_summary_prose() -> None:
-    payload = _payload()
-    payload["output"]["results"][0]["summary"] = (
-        "The sourced result for think-one is supported."
+    payload["thinkMemoryIds"] = ["think-one", "think-two"]
+    payload["output"]["results"].append({
+        "status": "contradicted",
+        "summary": "A second exact Know contradicts the second Think.",
+        "callId": CALL_TWO,
+    })
+    first = _know(name="Same name")
+    second = _know(name="Same name")
+    second["observations"][0]["datum"] = "Distinct second datum."
+    # Same URL is deliberate; URL cannot settle either write.
+    second["observations"][0]["citations"][0]["url"] = (
+        first["observations"][0]["citations"][0]["url"]
     )
 
-    with pytest.raises(
-        AtomicResearchError,
-        match="atomic_research_transport_identifier_in_prose",
-    ):
-        validate_atomic_research_result(payload)
+    result = validate_atomic_research_result(
+        payload,
+        attention_reader=lambda *_args: [
+            _event(CALL_TWO, "episode-two"),
+            _event(CALL_ONE, "episode-one"),
+        ],
+        episode_reader=lambda _project, _ids: [
+            _episode("episode-two", CALL_TWO, know=second),
+            _episode("episode-one", CALL_ONE, know=first),
+        ],
+    )
+
+    assert [item["episodeUuid"] for item in result["result"]["results"]] == [
+        "episode-one", "episode-two",
+    ]
+    assert [item["know"]["observations"][0]["datum"]
+            for item in result["result"]["results"]] == [
+        "Complete qualified datum 0.", "Distinct second datum.",
+    ]
 
 
-def test_atomic_research_result_rejects_transport_id_in_native_episode_prose() -> None:
-    with pytest.raises(
-        AtomicResearchError,
-        match="atomic_research_transport_identifier_in_prose",
+def test_result_contract_rejects_model_episode_or_flat_citation_fields() -> None:
+    for extra in (
+        {"episodeUuid": "invented"},
+        {"citations": [{"url": "https://primary.example/report"}]},
     ):
+        payload = _payload()
+        payload["output"]["results"][0].update(extra)
+        with pytest.raises(AtomicResearchError, match="result_contract_invalid"):
+            validate_atomic_research_result(payload)
+
+
+def test_readback_rejects_unexplained_or_detached_citation_shape() -> None:
+    malformed = _know()
+    citation = malformed["observations"][0]["citations"][0]
+    citation.pop("sourceNote")
+    with pytest.raises(AtomicResearchError, match="know_readback_invalid"):
         validate_atomic_research_result(
             _payload(),
-            episode_reader=lambda *_args: [{
-                "uuid": "episode-one",
-                "content": "Research packet for Think memory think-one.",
-                "source_description": '["https://primary.example/report"]',
-            }],
-            attention_reader=lambda *_args: _event(),
+            attention_reader=lambda *_args: [_event()],
+            episode_reader=lambda *_args: [_episode(know=malformed)],
         )
 
 
-def test_atomic_research_result_rejects_mismatched_episode_ref() -> None:
-    payload = _payload()
-    payload["output"]["results"][0]["episodeUuids"] = ["different-episode"]
-    with pytest.raises(
-        AtomicResearchError,
-        match="atomic_research_episode_reference_mismatch",
-    ):
+def test_readback_rejects_interpretation_or_source_note_in_objective_body() -> None:
+    episode = _episode()
+    body = json.loads(episode["content"])
+    body["observations"][0]["interpretation"] = "Must stay analysis only."
+    episode["content"] = json.dumps(body)
+    with pytest.raises(AtomicResearchError, match="know_objective_body_invalid"):
         validate_atomic_research_result(
-            payload,
-            episode_reader=lambda *_args: [{
-                "uuid": "episode-one",
-                "source_url": "https://primary.example/report",
-            }],
-            attention_reader=lambda *_args: _event(),
+            _payload(),
+            attention_reader=lambda *_args: [_event()],
+            episode_reader=lambda *_args: [episode],
         )
 
 
-def test_atomic_research_result_rejects_citation_episode_mismatch() -> None:
-    with pytest.raises(
-        AtomicResearchError,
-        match="atomic_research_citation_episode_mismatch",
-    ):
+def test_result_rejects_transport_id_in_summary_or_know_prose() -> None:
+    payload = _payload()
+    payload["output"]["results"][0]["summary"] = "Result for think-one."
+    with pytest.raises(AtomicResearchError, match="transport_identifier_in_prose"):
+        validate_atomic_research_result(payload)
+
+    know = _know()
+    know["observations"][0]["interpretation"] = "Analysis for think-one."
+    with pytest.raises(AtomicResearchError, match="transport_identifier_in_prose"):
         validate_atomic_research_result(
             _payload(),
-            episode_reader=lambda *_args: [{
-                "uuid": "episode-one",
-                "source_url": "https://different.example/source",
-            }],
-            attention_reader=lambda *_args: _event(),
+            attention_reader=lambda *_args: [_event()],
+            episode_reader=lambda *_args: [_episode(know=know)],
         )
 
 
@@ -180,164 +262,68 @@ class _ReadbackClock:
         self.now += seconds
 
 
-def test_atomic_research_result_waits_for_delayed_exact_episode(
+def test_pending_event_times_out_without_episode_substitution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = _ReadbackClock()
-    attention_reads = []
-    episode_reads = []
-
-    def attention(*args):
-        attention_reads.append(args)
-        return _event("pending" if len(attention_reads) < 3 else "completed")
-
-    def delayed_episode(project, ids):
-        episode_reads.append((project, list(ids)))
-        if len(episode_reads) < 2:
-            return []
-        return [{
-            "uuid": "episode-one",
-            "source_url": "https://primary.example/report",
-        }]
-
     monkeypatch.setattr(adapter.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(adapter.time, "sleep", clock.sleep)
-    monkeypatch.setattr(
-        adapter, "ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS", 3.0,
-    )
-    monkeypatch.setattr(
-        adapter, "ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS", 1.0,
-    )
+    monkeypatch.setattr(adapter, "ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS", 2.0)
+    monkeypatch.setattr(adapter, "ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS", 1.0)
 
-    result = validate_atomic_research_result(
-        _payload(),
-        episode_reader=delayed_episode,
-        attention_reader=attention,
-    )
-
-    assert result["result"]["results"][0]["status"] == "supported"
-    assert result["result"]["results"][0]["episodeUuids"] == ["episode-one"]
-    assert attention_reads == [
-        ("project-one", "deck-one", "atomic_research:child", "knowgraph"),
-        ("project-one", "deck-one", "atomic_research:child", "knowgraph"),
-        ("project-one", "deck-one", "atomic_research:child", "knowgraph"),
-    ]
-    assert episode_reads == [
-        ("project-one", ["episode-one", "entity-one", "entity-two"]),
-        ("project-one", ["episode-one", "entity-one", "entity-two"]),
-    ]
-    assert clock.sleeps == [1.0, 1.0, 1.0]
-
-
-def test_atomic_research_result_readback_timeout_remains_unverified(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = _ReadbackClock()
-    reads = []
-
-    def pending(*args):
-        reads.append(args)
-        return _event("pending")
-
-    monkeypatch.setattr(adapter.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(adapter.time, "sleep", clock.sleep)
-    monkeypatch.setattr(
-        adapter, "ATOMIC_RESEARCH_EPISODE_READBACK_TIMEOUT_SECONDS", 2.0,
-    )
-    monkeypatch.setattr(
-        adapter, "ATOMIC_RESEARCH_EPISODE_READBACK_POLL_SECONDS", 1.0,
-    )
-
-    with pytest.raises(
-        AtomicResearchError,
-        match="atomic_research_episode_settlement_pending",
-    ):
+    with pytest.raises(AtomicResearchError, match="episode_settlement_pending"):
         validate_atomic_research_result(
             _payload(),
+            attention_reader=lambda *_args: [_event(phase="pending")],
             episode_reader=lambda *_args: pytest.fail(
-                "pending event must not trigger native episode reads"
+                "pending event must not hydrate an entity or fact as an episode"
             ),
-            attention_reader=pending,
         )
-
-    assert reads == [
-        ("project-one", "deck-one", "atomic_research:child", "knowgraph"),
-        ("project-one", "deck-one", "atomic_research:child", "knowgraph"),
-        ("project-one", "deck-one", "atomic_research:child", "knowgraph"),
-    ]
     assert clock.sleeps == [1.0, 1.0]
 
 
-def test_atomic_research_result_rejects_mismatched_write_event_scope() -> None:
+def test_completed_event_requires_exactly_one_native_episode_id() -> None:
     with pytest.raises(
         AtomicResearchError,
-        match="atomic_research_write_event_scope_mismatch",
+        match="completed_write_episode_identity_invalid",
     ):
         validate_atomic_research_result(
             _payload(),
-            episode_reader=lambda *_args: pytest.fail(
-                "mismatched write event must fail before episode reads"
-            ),
-            attention_reader=lambda *_args: _event(runId="another-run"),
+            attention_reader=lambda *_args: [_event(
+                nativeEpisodeIds=["episode-one", "episode-two"],
+            )],
+            episode_reader=lambda *_args: pytest.fail("malformed event must fail first"),
         )
 
 
-def test_atomic_research_source_unavailable_without_episode_id_does_not_infer_one() -> None:
-    payload = _payload()
-    result_item = payload["output"]["results"][0]
-    result_item.update({
-        "status": "source-unavailable",
-        "summary": "No usable primary-source evidence was available.",
-        "citations": [],
-        "episodeUuids": [],
-    })
+def test_missing_or_mismatched_exact_episode_readback_is_not_success() -> None:
+    with pytest.raises(AtomicResearchError, match="episode_call_identity_mismatch"):
+        validate_atomic_research_result(
+            _payload(),
+            attention_reader=lambda *_args: [_event()],
+            episode_reader=lambda *_args: [_episode(call_id=CALL_TWO)],
+        )
 
+
+def test_source_unavailable_without_call_does_not_infer_an_episode() -> None:
     result = validate_atomic_research_result(
-        payload,
-        episode_reader=lambda *_args: pytest.fail(
-            "an absent native episode ID must not be inferred or searched"
-        ),
-        attention_reader=lambda *_args: pytest.fail(
-            "a semantic source failure must not wait for write settlement"
-        ),
+        _payload(call_id=None),
+        episode_reader=lambda *_args: pytest.fail("no call means no readback"),
+        attention_reader=lambda *_args: pytest.fail("no call means no settlement"),
     )
-
-    assert result["result"]["results"][0]["status"] == "source-unavailable"
-    assert result["result"]["results"][0]["episodeUuids"] == []
-    assert result["episodeCount"] == 0
-    assert result["sharedChatText"] == (
-        "Research result\n\n"
-        "Source unavailable: No usable primary-source evidence was available."
-    )
-
-
-def test_cited_source_unavailable_result_settles_same_native_write() -> None:
-    payload = _payload()
-    result_item = payload["output"]["results"][0]
-    result_item.update({
-        "status": "source-unavailable",
-        "summary": (
-            "Primary sources identify participants but do not support a "
-            "responsible supplier ranking."
-        ),
-        "episodeUuids": [],
-    })
-
-    result = validate_atomic_research_result(
-        payload,
-        episode_reader=lambda project, ids: [{
-            "uuid": "episode-one",
-            "source_description": '["https://primary.example/report"]',
-        }] if project == "project-one" and "episode-one" in ids else [],
-        attention_reader=lambda *_args: _event(),
-    )
-
     settled = result["result"]["results"][0]
     assert settled["status"] == "source-unavailable"
-    assert settled["summary"] == result_item["summary"]
-    assert settled["episodeUuids"] == ["episode-one"]
-    assert result["settlement"] == {
-        "eventId": "native-attention:write-one",
-        "phase": "completed",
-        "episodeUuids": ["episode-one"],
-    }
+    assert settled["episodeUuid"] is None
+    assert result["episodeCount"] == result["citationCount"] == 0
+
+
+def test_duplicate_call_identity_cannot_settle_two_results() -> None:
+    payload = _payload()
+    payload["thinkMemoryIds"] = ["think-one", "think-two"]
+    payload["output"]["results"].append({
+        "status": "supported",
+        "summary": "Second result.",
+        "callId": CALL_ONE,
+    })
+    with pytest.raises(AtomicResearchError, match="call_identity_reused"):
+        validate_atomic_research_result(payload)

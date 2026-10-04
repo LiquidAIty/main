@@ -1187,6 +1187,47 @@ async def _record_episode_authority(
     )
 
 
+async def delete_canonical_know(
+    project_id: str,
+    episode_id: str,
+) -> dict[str, str]:
+    """Remove one exact marked Know through Graphiti's native episode owner."""
+
+    from graphiti_core.nodes import EpisodicNode
+
+    runtime, graphiti, _database = _create_graphiti_runtime()
+    try:
+        episode = await EpisodicNode.get_by_uuid(graphiti.driver, episode_id)
+        if episode.group_id != graphiti_project_group_id(project_id):
+            raise LookupError("knowgraph_native_record_not_found")
+        result = await graphiti.driver.execute_query(
+            """
+            MATCH (episode:Episodic {uuid: $episode_id})
+            RETURN episode.liquidaity_record_kind AS record_kind,
+                   episode.liquidaity_schema_version AS schema_version
+            LIMIT 1
+            """,
+            episode_id=episode_id,
+            routing_="r",
+        )
+        records = _records(result)
+        if (
+            len(records) != 1
+            or records[0].get("record_kind") != "canonical_know"
+            or records[0].get("schema_version")
+            != "knowgraph.source-observation.v2"
+        ):
+            raise LookupError("knowgraph_native_record_not_found")
+        await graphiti.remove_episode(episode_id)
+        return {
+            "kind": "episode",
+            "native_id": episode_id,
+            "provider": runtime.provider,
+        }
+    finally:
+        await graphiti.driver.close()
+
+
 async def _ingest_episode(
     *,
     project_id: str,

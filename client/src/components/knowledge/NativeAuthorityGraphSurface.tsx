@@ -1345,11 +1345,9 @@ const PRESENTATION_SETTING_BOUNDS = {
 } as const;
 
 export function responsiveRepelForce(baseValue: unknown, containerWidth: number): number {
+  void containerWidth;
   const base = Math.max(0, Math.min(400, Number(baseValue) || 0));
-  const width = Math.max(440, Math.min(1_200, Number(containerWidth) || 440));
-  const progress = (width - 440) / (1_200 - 440);
-  const multiplier = 0.62 + progress * (1.28 - 0.62);
-  return Math.max(0, Math.min(400, Math.round(base * multiplier)));
+  return base;
 }
 
 export function nativeKnowFactIdentity(edge: GraphProjectionEdge): string | null {
@@ -1515,16 +1513,7 @@ function sourcePathLabel(url: URL): string {
 export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[] {
   const rawUrls: unknown[] = [candidate.source_url, candidate.url];
   const described = candidate.source_description ?? candidate.sourceDescription;
-  if (Array.isArray(described)) rawUrls.push(...described);
-  else if (typeof described === 'string' && described.trim()) {
-    try {
-      const parsed = JSON.parse(described);
-      if (Array.isArray(parsed)) rawUrls.push(...parsed);
-      else rawUrls.push(described);
-    } catch {
-      rawUrls.push(described);
-    }
-  }
+  if (typeof described === 'string' && described.trim()) rawUrls.push(described);
   const validUrls = new Map<string, URL>();
   for (const rawUrl of rawUrls) {
     if (typeof rawUrl !== 'string') continue;
@@ -1633,6 +1622,8 @@ function compactProbability(value: unknown): string | null {
 function thinkMetadata(item: Record<string, any>): Record<string, any> {
   const metadata = item.metadata;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+  const facet = metadata.thinkgraph_facet;
+  if (facet && typeof facet === 'object' && !Array.isArray(facet)) return facet;
   const structured = metadata.structured_extraction;
   if (!structured || typeof structured !== 'object' || Array.isArray(structured)) return {};
   const think = structured.think;
@@ -1660,7 +1651,10 @@ function ThinkGraphThink({
   const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
     ? item.metadata as Record<string, unknown>
     : {};
-  const entryTime = nativeEntryTime(item.ingestedAt);
+  const origin = metadata.thinkgraph_origin && typeof metadata.thinkgraph_origin === 'object'
+    ? metadata.thinkgraph_origin as Record<string, unknown>
+    : {};
+  const entryTime = nativeEntryTime(origin.source_message_at || item.validFrom || item.ingestedAt);
   const summary = typeof think.summary === 'string' && think.summary.trim()
     ? think.summary
     : typeof item.summary === 'string' && item.summary.trim()
@@ -1680,27 +1674,13 @@ function ThinkGraphThink({
     ['Uncertainty', thinkStrings(think.uncertainty)],
     ['Relationship observations', thinkStrings(think.relationship_observations)],
   ] as const).filter(([, values]) => values.length > 0);
-  const properties = Array.isArray(think.properties)
-    ? think.properties.filter((property: unknown): property is { name: string; value: unknown } => {
-      if (!property || typeof property !== 'object' || Array.isArray(property)) return false;
-      const candidate = property as Record<string, unknown>;
-      return typeof candidate.name === 'string' && candidate.name.trim().length > 0
-        && candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim().length > 0;
-    })
-    : [];
-  const importance = typeof think.importance === 'number' && Number.isFinite(think.importance)
-    ? think.importance
-    : null;
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
-      <h4>{heading}</h4>
+      <h4>{String(item.title || heading)}</h4>
       {typeof think.kind === 'string' && think.kind ? <span>{think.kind}</span> : null}
     </div>
-    {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
+    {entryTime ? <p className="graph-record-time"><span>Thought time</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
     {summary ? <p>{summary}</p> : null}
-    {importance !== null ? <dl className="graph-think-fields">
-      <div><dt>Importance</dt><dd>{String(importance)}</dd></div>
-    </dl> : null}
     {semanticSections.map(([label, values]) => <section className="graph-think-section" key={label}>
       <h5>{label}</h5><ul>{values.map(value => <li key={value}>{value}</li>)}</ul>
     </section>)}
@@ -1709,12 +1689,6 @@ function ThinkGraphThink({
     </section> : null}
     {concepts.length ? <section className="graph-think-section">
       <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
-    </section> : null}
-    {properties.length ? <section className="graph-think-section">
-      <h5>Properties</h5>
-      <dl>{properties.map(property => <div key={`${property.name}:${String(property.value)}`}>
-        <dt>{property.name}</dt><dd>{String(property.value)}</dd>
-      </div>)}</dl>
     </section> : null}
     {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
@@ -1750,22 +1724,16 @@ function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
 
 function KnowRecordCitation({
   record,
-  sourceListId,
 }: {
   record: KnowInspectorRecord;
   sourceListId: string;
 }) {
   const sources = uniqueRecordSources([record]);
   if (!sources.length) return null;
-  if (sources.length === 1) {
-    const source = sources[0];
-    return <p className="graph-know-citation">
-      <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a>
-      <span>{source.publisher}</span>
-    </p>;
-  }
+  const source = sources[0];
   return <p className="graph-know-citation">
-    <a href={`#${sourceListId}`}>Research package · {sources.length} sources</a>
+    <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a>
+    <span>{source.publisher}</span>
   </p>;
 }
 
@@ -1783,27 +1751,17 @@ function KnowGraphKnow({
   onRemove?: () => void;
 }) {
   const { nativeId, know } = record;
-  const entryTime = nativeEntryTime(know.createdAt);
-  const diagnosticFields = ([
-    ['Native relation', know.nativeRelation],
-    ['Reference time', know.referenceTime],
-    ['Valid from', know.validAt],
-    ['Invalid from', know.invalidAt],
-    ['Expired', know.expiredAt],
-  ] as const).flatMap(([label, value]) => {
-    const display = nativeTimeLabel(value);
-    return display ? [{ label, display }] : [];
-  });
+  const entryTime = nativeEntryTime(know.observedAt);
+  const sourceDate = nativeEntryTime(know.sourceDate);
   return <section className="graph-note graph-know" data-native-id={nativeId}>
-    <h5>{heading}</h5>
+    <div className="graph-think-heading"><h5>{String(know.title || heading)}</h5>
+      {typeof know.nativeRelation === 'string' && know.nativeRelation
+        ? <span>{know.nativeRelation}</span> : null}
+    </div>
     {typeof know.fact === 'string' && know.fact ? <p>{know.fact}</p> : null}
     <KnowRecordCitation record={record} sourceListId={sourceListId} />
-    {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
-    {diagnosticFields.length ? <dl className="graph-record-fields graph-record-diagnostics">
-      {diagnosticFields.map(({ label, display }) => (
-        <div key={label}><dt>{label}</dt><dd>{display}</dd></div>
-      ))}
-    </dl> : null}
+    {entryTime ? <p className="graph-record-time"><span>Observed</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
+    {sourceDate ? <p className="graph-record-time"><span>Source date</span>{' '}<time dateTime={sourceDate.dateTime}>{sourceDate.label}</time></p> : null}
     {onRemove ? <button
       type="button"
       aria-label="Delete record"
@@ -2371,16 +2329,9 @@ export function NativeGraphProjectionSurface({
     const graph = graphRef.current;
     if (!host || !graph || typeof ResizeObserver === 'undefined') return undefined;
     let frame = 0;
-    let lastApplied = -1;
     const apply = () => {
       frame = 0;
       graph.resize();
-      if (blackholePresentationActive || attentionVisualPhase === 'attention_space') return;
-      const effective = responsiveRepelForce(settings.repel, host.getBoundingClientRect().width);
-      if (effective === lastApplied) return;
-      lastApplied = effective;
-      graph.setSettings({ repel: effective });
-      graph.reheat();
     };
     const schedule = () => {
       if (frame) cancelAnimationFrame(frame);
@@ -2393,7 +2344,7 @@ export function NativeGraphProjectionSurface({
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [attentionVisualPhase, blackholePresentationActive, settings.repel]);
+  }, []);
 
   useEffect(() => {
     if (!controlsOpen) return;
@@ -2689,28 +2640,31 @@ export function NativeGraphProjectionSurface({
   const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
     ? evidenceRecords.filter(item => item.metadata !== null
       && typeof item.metadata === 'object'
-      && item.metadata.structured_extraction !== null
-      && typeof item.metadata.structured_extraction === 'object'
-      && item.metadata.structured_extraction.think !== null
-      && typeof item.metadata.structured_extraction.think === 'object')
+      && (
+        (item.metadata.thinkgraph_facet !== null
+          && typeof item.metadata.thinkgraph_facet === 'object')
+        || (item.metadata.structured_extraction !== null
+          && typeof item.metadata.structured_extraction === 'object'
+          && item.metadata.structured_extraction.think !== null
+          && typeof item.metadata.structured_extraction.think === 'object')
+      ))
     : [];
   const thinks = directThinks.map((item, index) => ({ item, index }))
     .sort((left, right) => {
-      const leftTime = nativeEntryTime(left.item.ingestedAt)?.dateTime || '';
-      const rightTime = nativeEntryTime(right.item.ingestedAt)?.dateTime || '';
-      return rightTime.localeCompare(leftTime) || left.index - right.index;
+      const leftOrigin = left.item.metadata?.thinkgraph_origin;
+      const rightOrigin = right.item.metadata?.thinkgraph_origin;
+      const leftTime = nativeEntryTime(leftOrigin?.source_message_at
+        || left.item.validFrom || left.item.ingestedAt)?.dateTime || '';
+      const rightTime = nativeEntryTime(rightOrigin?.source_message_at
+        || right.item.validFrom || right.item.ingestedAt)?.dateTime || '';
+      return rightTime.localeCompare(leftTime)
+        || String(left.item.id).localeCompare(String(right.item.id));
     })
     .map(({ item }) => item);
   const visibleThinks = thinks.slice(0, INSPECTOR_RECORD_LIMIT);
   const earlierThinks = thinks.slice(INSPECTOR_RECORD_LIMIT);
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => inspectedProjection?.nodes.find(node => node.id === id)?.label || id;
-  const relationshipStrength = probabilityLabel(selectedEdge?.properties?.relationship_strength);
-  const labelConfidence = probabilityLabel(selectedEdge?.properties?.label_confidence);
-  const portableKnow = inspectedAuthority === 'knowgraph'
-    && selectedEdge?.properties?.portableKind === 'know'
-    ? selectedEdge.properties
-    : null;
   const provenanceById = new Map<string, Record<string, any>>(
     (inspectedProjection?.provenanceNodes || []).map(node => [node.id, {
       uuid: node.id,
@@ -2719,32 +2673,37 @@ export function NativeGraphProjectionSurface({
     }]),
   );
   const directKnowItems = inspectedAuthority === 'knowgraph' && selected && !selectedEdge
-    ? (inspectedProjection?.edges || []).flatMap(edge => {
-        const know = edge.properties || {};
-        const nativeFactId = nativeKnowFactIdentity(edge);
-        if (
-          !nativeFactId
-          || (edge.source !== selected.id && edge.target !== selected.id)
-          || edge.predicate === 'MENTIONS'
-          || know.portableKind !== 'know'
-          || typeof know.fact !== 'string'
-          || !know.fact.trim()
-        ) return [];
-        const episodeIds = Array.isArray(know.supportingEpisodeUuids)
-          ? know.supportingEpisodeUuids.map(String)
-          : [];
-        return [{
-          nativeId: nativeFactId,
-          know,
-          episodes: episodeIds.flatMap(episodeId => {
-            const episode = provenanceById.get(episodeId);
-            return episode ? [episode] : [];
-          }),
-        }];
-      }).filter(record => record.know.temporalStatus !== 'historical')
+    ? (selected.provenanceEpisodeIds || []).flatMap(episodeId => {
+        const episode = provenanceById.get(String(episodeId));
+        if (!episode
+          || episode.liquidaity_record_kind !== 'canonical_know'
+          || episode.liquidaity_schema_version !== 'knowgraph.episode.v1') return [];
+        const citation = sourceLinks(episode);
+        const body = typeof episode.content === 'string' ? episode.content.trim() : '';
+        if (!body || citation.length !== 1) return [];
+        const supporting = (inspectedProjection?.edges || []).filter(edge => {
+          if (edge.source !== selected.id && edge.target !== selected.id) return false;
+          const ids = edge.properties?.supportingEpisodeUuids
+            ?? edge.properties?.episodes;
+          return (Array.isArray(ids) ? ids : typeof ids === 'string' ? [ids] : [])
+            .map(String).includes(String(episodeId));
+        }).sort((left, right) => left.id.localeCompare(right.id));
+        const relationship = supporting[0];
+        const know = {
+          portableKind: 'know',
+          title: String(episode.name || episodeId),
+          fact: body,
+          source_url: citation[0].url,
+          source_fingerprint: episode.source_fingerprint,
+          observedAt: episode.observed_at || episode.created_at,
+          sourceDate: episode.source_date || episode.reference_time,
+          nativeRelation: relationship?.predicate || null,
+        };
+        return [{ nativeId: String(episodeId), know, episodes: [episode] }];
+      })
         .sort((left, right) => {
-          const leftTime = nativeEntryTime(left.know.createdAt)?.dateTime || '';
-          const rightTime = nativeEntryTime(right.know.createdAt)?.dateTime || '';
+          const leftTime = nativeEntryTime(left.know.observedAt)?.dateTime || '';
+          const rightTime = nativeEntryTime(right.know.observedAt)?.dateTime || '';
           return rightTime.localeCompare(leftTime) || left.nativeId.localeCompare(right.nativeId);
         })
     : [];
@@ -3043,8 +3002,8 @@ export function NativeGraphProjectionSurface({
               : undefined}
           />)}
         </section> : null}
-        {earlierKnowItems.length ? <section className="graph-know-history">
-          <h4>Earlier Knows ({earlierKnowItems.length})</h4>
+        {earlierKnowItems.length ? <details className="graph-know-history">
+          <summary>Earlier Knows ({earlierKnowItems.length})</summary>
           <div>{earlierKnowItems.map((record, index) => <KnowGraphKnow
             key={record.nativeId}
             record={record}
@@ -3055,7 +3014,7 @@ export function NativeGraphProjectionSurface({
               ? () => { void deleteKnow(record.nativeId); }
               : undefined}
           />)}</div>
-        </section> : null}
+        </details> : null}
         {inspectedAuthority === 'knowgraph' && selected && !selectedEdge
           ? <KnowSourceList records={directKnowItems} id={knowSourceListId} />
           : null}
@@ -3085,31 +3044,7 @@ export function NativeGraphProjectionSurface({
           {jevWinner ? <div><dt>Jev winner</dt><dd>{jevWinner}</dd></div> : null}
           {jevWinnerProbability ? <div><dt>Probability</dt><dd>{jevWinnerProbability}</dd></div> : null}
           {naturalRelationship ? <div><dt>Natural extracted relationship</dt><dd>{naturalRelationship}</dd></div> : null}
-          {!jevWinnerProbability && relationshipStrength ? <div><dt>Relationship strength</dt><dd>{relationshipStrength}</dd></div> : null}
-          {!jevWinnerProbability && labelConfidence ? <div><dt>Label confidence</dt><dd>{labelConfidence}</dd></div> : null}
         </dl> : null}
-        {portableKnow ? <section className="graph-note" data-testid="portable-know">
-          <h4>{portableKnow.temporalStatus === 'historical' ? 'Historical Know' : 'Current Know'}</h4>
-          {typeof portableKnow.fact === 'string' && portableKnow.fact
-            ? <p>{portableKnow.fact}</p> : null}
-          <dl className="graph-record-fields">
-            {portableKnow.nativeRelation ? <div><dt>Native Graphiti relation</dt><dd>{String(portableKnow.nativeRelation)}</dd></div> : null}
-            {jev?.status === 'success' && jev.winner ? <div><dt>Jev canonical relation</dt><dd>{String(jev.winner)}</dd></div> : null}
-            {jev?.status && jev.status !== 'success' ? <div><dt>Jev classification</dt><dd>{String(jev.status)}</dd></div> : null}
-            {([
-              ['Learned', portableKnow.createdAt],
-              ['Reference time', portableKnow.referenceTime],
-              ['Valid from', portableKnow.validAt],
-              ['Invalid from', portableKnow.invalidAt],
-              ['Expired', portableKnow.expiredAt],
-            ] as const).flatMap(([label, value]) => {
-              const display = nativeTimeLabel(value);
-              return display
-                ? [<div key={label}><dt>{label}</dt><dd>{display}</dd></div>]
-                : [];
-            })}
-          </dl>
-        </section> : null}
         {jevDistribution.length ? <details className="graph-jev-distribution" open>
           <summary>Jev relationship probabilities</summary>
           <dl>{jevDistribution.map(([choice, probability]) => {

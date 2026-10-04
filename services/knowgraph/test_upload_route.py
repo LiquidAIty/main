@@ -9,10 +9,9 @@ import sys
 import asyncio
 import httpx
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from graphiti_core.errors import EdgeNotFoundError
+from graphiti_core.errors import NodeNotFoundError
 
 SERVICE_DIR = Path(__file__).resolve().parent
 if str(SERVICE_DIR) not in sys.path:
@@ -126,9 +125,9 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             kwargs["organizing_principle"], "Preserve source provenance."
         )
 
-    def test_delete_native_routes_one_project_scoped_fact_to_graphiti(self) -> None:
+    def test_delete_native_routes_one_project_scoped_episode_to_graphiti(self) -> None:
         delete_native = AsyncMock(
-            return_value={"kind": "fact", "native_id": "fact-1"}
+            return_value={"kind": "episode", "native_id": "episode-1"}
         )
         with (
             patch.object(app, "_delete_native_know", delete_native),
@@ -138,25 +137,25 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 "/delete_native",
                 json={
                     "project_id": "project-1",
-                    "native_id": "fact-1",
-                    "kind": "fact",
+                    "native_id": "episode-1",
+                    "kind": "episode",
                 },
             ))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {
             "ok": True,
-            "kind": "fact",
-            "native_id": "fact-1",
+            "kind": "episode",
+            "native_id": "episode-1",
         })
         delete_native.assert_awaited_once()
         payload = delete_native.await_args.args[0]
         self.assertEqual(payload.project_id, "project-1")
-        self.assertEqual(payload.native_id, "fact-1")
-        self.assertEqual(payload.kind, "fact")
+        self.assertEqual(payload.native_id, "episode-1")
+        self.assertEqual(payload.kind, "episode")
 
-    def test_delete_native_returns_not_found_for_unknown_fact(self) -> None:
-        delete_native = AsyncMock(side_effect=EdgeNotFoundError("missing-fact"))
+    def test_delete_native_returns_not_found_for_unknown_episode(self) -> None:
+        delete_native = AsyncMock(side_effect=NodeNotFoundError("missing-episode"))
         with (
             patch.object(app, "_delete_native_know", delete_native),
         ):
@@ -165,8 +164,8 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 "/delete_native",
                 json={
                     "project_id": "project-1",
-                    "native_id": "missing-fact",
-                    "kind": "fact",
+                    "native_id": "missing-episode",
+                    "kind": "episode",
                 },
             ))
 
@@ -176,69 +175,30 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             "error": {"message": "KnowGraph item not found."},
         })
 
-    def test_delete_native_removes_only_a_fact_in_the_requested_project(self) -> None:
-        edge = SimpleNamespace(
-            group_id="liquidaity-project-1",
-            delete=AsyncMock(),
-        )
-        driver = SimpleNamespace(close=AsyncMock())
-        with (
-            patch.object(
-                sys.modules["graphiti_core.driver.neo4j_driver"],
-                "Neo4jDriver",
-                return_value=driver,
-            ),
-            patch.dict("os.environ", {
-                "NEO4J_URI": "bolt://example",
-                "NEO4J_USER": "user",
-                "NEO4J_PASSWORD": "password",
-            }),
-            patch(
-                "graphiti_core.edges.EntityEdge.get_by_uuid",
-                new=AsyncMock(return_value=edge),
-            ),
-        ):
+    def test_delete_native_delegates_exact_episode_to_native_owner(self) -> None:
+        delete_episode = AsyncMock(return_value={
+            "kind": "episode", "native_id": "episode-1", "provider": "openai",
+        })
+        with patch.object(app, "delete_canonical_know", delete_episode):
             result = asyncio.run(app._delete_native_know(app.NativeKnowDeleteRequest(
                 project_id="project-1",
-                native_id="fact-1",
-                kind="fact",
+                native_id="episode-1",
+                kind="episode",
             )))
 
-        self.assertEqual(result, {"kind": "fact", "native_id": "fact-1"})
-        edge.delete.assert_awaited_once_with(driver)
-        driver.close.assert_awaited_once()
+        self.assertEqual(result["native_id"], "episode-1")
+        delete_episode.assert_awaited_once_with("project-1", "episode-1")
 
-    def test_delete_native_rejects_cross_project_fact_without_deleting(self) -> None:
-        edge = SimpleNamespace(
-            group_id="liquidaity-other-project",
-            delete=AsyncMock(),
-        )
-        driver = SimpleNamespace(close=AsyncMock())
-        with (
-            patch.object(
-                sys.modules["graphiti_core.driver.neo4j_driver"],
-                "Neo4jDriver",
-                return_value=driver,
-            ),
-            patch.dict("os.environ", {
-                "NEO4J_URI": "bolt://example",
-                "NEO4J_USER": "user",
-                "NEO4J_PASSWORD": "password",
-            }),
-            patch(
-                "graphiti_core.edges.EntityEdge.get_by_uuid",
-                new=AsyncMock(return_value=edge),
-            ),
-        ):
-            with self.assertRaisesRegex(LookupError, "knowgraph_native_record_not_found"):
+    def test_delete_native_rejects_fact_kind_without_calling_episode_owner(self) -> None:
+        delete_episode = AsyncMock()
+        with patch.object(app, "delete_canonical_know", delete_episode):
+            with self.assertRaisesRegex(ValueError, "knowgraph_delete_kind_invalid"):
                 asyncio.run(app._delete_native_know(app.NativeKnowDeleteRequest(
                     project_id="project-1",
                     native_id="fact-1",
                     kind="fact",
                 )))
-
-        edge.delete.assert_not_awaited()
-        driver.close.assert_awaited_once()
+        delete_episode.assert_not_awaited()
 
 
 if __name__ == "__main__":
