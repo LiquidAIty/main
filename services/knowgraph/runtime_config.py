@@ -28,5 +28,14 @@ def _resolve_file_backed_config() -> None:
 
 def load_runtime_environment() -> None:
     _resolve_file_backed_config()
-    load_dotenv(override=False)
+    service_dir = Path(__file__).resolve().parent
+    repo_root = service_dir.parents[1]
+    candidates = (
+        service_dir / ".env",
+        repo_root / "apps" / "backend" / ".env",
+        repo_root / ".env",
+    )
+    for candidate in dict.fromkeys(candidates):
+        if candidate.is_file():
+            load_dotenv(candidate, override=False)
     _resolve_file_backed_config()

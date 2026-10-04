@@ -4781,13 +4781,6 @@ def _llm_structured_contract(
         "genuinely distinct subject. The two authorities retain separate native IDs and the "
         "shared name denotes subject identity, not agreement. Do not infer facts from the "
         "directory or copy its IDs into prose.\n"
-        "SOURCE RESPONSE ASSESSMENT:\n"
-        "source_response_fit concerns only the Main response's fulfillment of its source "
-        "request. It is not a score of the user, a truth judgment, or a grade of the new "
-        "Think. Preserve explicit user intentions, preferences, constraints, and corrections "
-        "regardless of this status or score. Do not turn a high score into factual certainty "
-        "or a low score into blanket rejection. Application code attaches the original typed "
-        "assessment to the resulting Think; do not copy, average, improve, or recompute it.\n"
     )
     return extractor._output_schema(), prompt
 
@@ -4923,7 +4916,6 @@ def _save_think_memory(
     pair_reference: str,
 ) -> dict[str, Any]:
     logical = output.think.model_dump(mode="json")
-    source_response_fit = deepcopy(completed["sourceResponseFit"])
     kind_value = (
         output.think.kind.value
         if isinstance(output.think.kind, Enum)
@@ -4938,9 +4930,7 @@ def _save_think_memory(
             "think": deepcopy(logical),
             "entities": list(output.entities),
             "relations": relations,
-            "source_response_fit": deepcopy(source_response_fit),
         },
-        "source_response_fit": source_response_fit,
         # Native Engraphis episodic consolidation must not digest or archive the
         # authoritative append-only Think history.
         "consolidation_exempt": True,
@@ -5049,9 +5039,10 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned["mainResponse"] = str(cleaned.get("mainResponse") or "")
     if not cleaned["userMessage"].strip() or not cleaned["mainResponse"].strip():
         raise ValueError("thinkgraph_completed_pair_text_required")
-    cleaned["sourceResponseFit"] = _validate_source_response_fit(
-        cleaned.get("sourceResponseFit"), str(cleaned.get("runId") or "")
-    )
+    if "sourceResponseFit" in cleaned:
+        cleaned["sourceResponseFit"] = _validate_source_response_fit(
+            cleaned["sourceResponseFit"], str(cleaned.get("runId") or "")
+        )
     return cleaned
 
 
@@ -5096,7 +5087,6 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             "current_project_relationship_vocabulary": list(
                 relationship_vocabulary
             ),
-            "source_response_fit": deepcopy(payload["sourceResponseFit"]),
         }
         enrichment_schema, enrichment_prompt = _llm_structured_contract(
             pair_text,
@@ -5199,7 +5189,6 @@ def settle_completed_pair(
         structured_context = {
             "exact_user_message": completed["userMessage"],
             "exact_main_response": completed["mainResponse"],
-            "source_response_fit": deepcopy(completed["sourceResponseFit"]),
         }
         facts = _extract_saved_card_facts(
             card_output,

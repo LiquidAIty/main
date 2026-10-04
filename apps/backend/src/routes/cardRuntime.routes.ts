@@ -2443,6 +2443,19 @@ function thinkGraphCardAssignment(preparation: any): string {
   ].join('\n');
 }
 
+const COMPLETED_PAIR_EXTRACTOR_FIELDS = [
+  'projectId', 'deckId', 'conversationId', 'runId', 'cardId',
+  'nativeSessionRef', 'completedAt', 'userMessage', 'mainResponse',
+] as const;
+
+function completedPairExtractorPayload(
+  completedPair: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(COMPLETED_PAIR_EXTRACTOR_FIELDS
+    .filter((field) => Object.prototype.hasOwnProperty.call(completedPair, field))
+    .map((field) => [field, completedPair[field]]));
+}
+
 type AtomicResearchLaunchMode = 'automatic' | 'main';
 
 type AtomicResearchSettlementArgs = {
@@ -2836,10 +2849,11 @@ async function runCompletedPairThinkGraphLifecycle(
 ): Promise<void> {
   let stage: 'prepare' | 'thinkgraph_card' | 'settle' | 'research_register' = 'prepare';
   try {
+    const extractorPair = completedPairExtractorPayload(args.completedPair);
     const preparation: any = await requestPythonRailsJson('/thinkgraph/completed-pair/prepare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(args.completedPair),
+      body: JSON.stringify(extractorPair),
     });
     const intakeOperation = String(preparation?.intakeOperation || '');
     if (
@@ -2909,7 +2923,7 @@ async function runCompletedPairThinkGraphLifecycle(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...args.completedPair,
+        ...extractorPair,
         pairMemoryId: String(preparation.pairMemoryId || ''),
         structuredOutput: cardResult.text,
         cardRun: {

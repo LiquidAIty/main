@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import BuilderChat, { followLatestOutput } from './BuilderChat';
+import BuilderChat, {
+  CANONICAL_SUBJECT_LINK_STYLE,
+  followLatestOutput,
+} from './BuilderChat';
 
 const colors = {
   primary: '#4fa2ad',
@@ -70,6 +73,15 @@ describe('BuilderChat', () => {
   it('follows appended output only while the reader remains at the bottom', () => {
     expect(followLatestOutput(true)).toBe('auto');
     expect(followLatestOutput(false)).toBe(false);
+  });
+
+  it('keeps canonical subject links neutral and quietly italic', () => {
+    expect(CANONICAL_SUBJECT_LINK_STYLE).toMatchObject({
+      color: '#A7B0BA',
+      fontStyle: 'italic',
+      textDecorationStyle: 'dotted',
+    });
+    expect(CANONICAL_SUBJECT_LINK_STYLE.color).not.toBe(colors.primary);
   });
 
   it('shows a quiet activity indicator while the native turn is connecting', () => {

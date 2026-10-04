@@ -1,9 +1,8 @@
-import { lazy, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import '../../vendor/engraphis/vendor/d3.min.js';
 import '../../vendor/engraphis/vendor/force-graph.min.js';
 import '../../vendor/engraphis/engraphis-graph.js';
 
-import type { GraphData } from '../../vendor/codebase-memory-ui/src/lib/types';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import { GRAPH_THEME, SOLARPUNK_PALETTE } from '../graph/graphVisualTokens';
@@ -20,11 +19,6 @@ import {
 } from '../builder/canonicalSubjectLinks';
 import './nativeAuthorityGraphSurface.css';
 
-const CbmGraphTab = lazy(async () => {
-  const { GraphTab } = await import('../../vendor/codebase-memory-ui/src/components/GraphTab');
-  return { default: GraphTab };
-});
-
 type GraphAuthority = 'thinkgraph' | 'knowgraph';
 type GraphSurfaceAuthority = GraphAuthority | 'joined';
 
@@ -33,65 +27,6 @@ export type ReadNativeFocusNeighborhood = (
   nativeId: string,
   signal?: AbortSignal,
 ) => Promise<GraphProjectionV1>;
-
-export type ContextualNodeNativeMember = {
-  authority: 'ThinkGraph' | 'KnowGraph';
-  nativeId: string;
-};
-
-export type ContextualNodeDataAnchor = {
-  authority: 'ThinkGraph' | 'KnowGraph';
-  nativeId: string;
-  reason: string;
-  order: number;
-  boundedExpansion: number;
-  resultLimit: number;
-  required: boolean;
-};
-
-export type ContextualNodeReadSide = {
-  status: 'selected' | 'partial' | 'none_relevant' | 'empty' | 'missing' | 'context_unavailable'
-    | 'context_limit' | 'retrieval_failed' | 'limit' | 'unavailable' | 'timeout'
-    | 'invalid' | 'error' | 'hydration_failed';
-  candidateCount?: number;
-  errorCode?: string;
-  selectedNativeIds?: string[];
-  hydrationFailedNativeIds?: string[];
-  items?: Array<{
-    nativeId: string;
-    block: Record<string, any>;
-    dataAnchor: ContextualNodeDataAnchor;
-    reference: Record<string, any>;
-  }>;
-};
-
-export type ContextualNodeReadView = {
-  schemaVersion: 'contextual-node-read.v1';
-  status: 'success' | 'partial' | 'context_unavailable' | 'unavailable' | 'missing' | 'empty';
-  sourceRevision: string;
-  clientContextRevision: string;
-  operationId: string | null;
-  contextLabel: string;
-  requestCount: number;
-  questionCount: number;
-  provider: string;
-  requestedModel: string;
-  resolvedModel: string;
-  usage: Record<string, unknown>;
-  sides: { think: ContextualNodeReadSide; know: ContextualNodeReadSide };
-  dataAnchors: ContextualNodeDataAnchor[];
-  selectedReferences: Array<Record<string, any>>;
-  modelContext: string;
-};
-
-export type ReadContextualNode = (
-  request: {
-    sourceRevision: string;
-    clientContextRevision: string;
-    nativeMembers: ContextualNodeNativeMember[];
-  },
-  signal?: AbortSignal,
-) => Promise<ContextualNodeReadView>;
 
 // The server-owned graph projection contract rendered by the native surfaces.
 export type GraphProjectionNode = {
@@ -227,7 +162,6 @@ export type JoinedGraphEdgeVariant = {
 };
 
 export type JoinedGraphPresentation = {
-  mode: 'joined' | 'all';
   projection: GraphProjectionV1;
   nativeProjections: Record<GraphAuthority, GraphProjectionV1>;
   nodeVariants: Map<string, JoinedGraphNodeVariant[]>;
@@ -311,16 +245,6 @@ export type ManualFocusEntry = {
   projectionKey: string;
   presentation: JoinedGraphPresentation;
   readWarning: string | null;
-};
-
-type ContextualNodeReadState = {
-  visualNodeId: string;
-  requestIdentity: number;
-  sourceRevision: string;
-  contextRevision: string;
-  status: 'loading' | 'ready' | 'error';
-  result: ContextualNodeReadView | null;
-  error: string | null;
 };
 
 type FocusReleaseView = {
@@ -534,7 +458,8 @@ function presentationNode(
 /**
  * Builds one non-authoritative renderer view over the two native projections.
  * A complete current native subject directory supplies each authority's exact
- * stored canonical name, kind, native identity, Project, and revision. Joined
+ * stored canonical name, kind, native identity, Project, and revision. The
+ * single mixed presentation
  * co-covers a name only when exactly one projection record from each authority
  * byte-matches its own header. No label normalization, fuzzy/alias inference,
  * shared native ID, or persisted cross-graph identity is introduced.
@@ -542,7 +467,6 @@ function presentationNode(
 export function composeThinkKnowPresentation(
   thinkProjection: GraphProjectionV1,
   knowProjection: GraphProjectionV1,
-  mode: 'joined' | 'all' = 'all',
 ): JoinedGraphPresentation {
   const nativeProjections = {
     thinkgraph: thinkProjection,
@@ -581,10 +505,7 @@ export function composeThinkKnowPresentation(
   thinkProjection.nodes.forEach(node => addNode('thinkgraph', node));
   knowProjection.nodes.forEach(node => addNode('knowgraph', node));
 
-  const pairedVisualIds = new Set([...pairedNames].map(namedRenderId));
-  const visibleNodeVariants = new Map([...nodeVariants.entries()].filter(([visualId]) => (
-    mode === 'all' || pairedVisualIds.has(visualId)
-  )));
+  const visibleNodeVariants = nodeVariants;
   const nodes = [...visibleNodeVariants.entries()]
     .map(([visualId, variants]) => presentationNode(visualId, variants));
   const visibleNodeIds = new Set(nodes.map(node => node.id));
@@ -617,7 +538,6 @@ export function composeThinkKnowPresentation(
   addEdges('knowgraph', knowProjection);
 
   return {
-    mode,
     projection: {
       schemaVersion: 'think-know.presentation.v1',
       authority: 'joined',
@@ -672,7 +592,7 @@ export function composeFocusNeighborhoodPresentation(
         : {}),
     };
   };
-  return composeThinkKnowPresentation(merged('thinkgraph'), merged('knowgraph'), base.mode);
+  return composeThinkKnowPresentation(merged('thinkgraph'), merged('knowgraph'));
 }
 
 function visualSourceKind(variants: JoinedGraphNodeVariant[]): 'think' | 'know' | 'paired' {
@@ -1315,41 +1235,27 @@ export function NativeJoinedGraphSurface({
   errors,
   jevAttentionVisual,
   onReadNativeFocusNeighborhood,
-  onReadContextualNode,
-  contextualReaderRevision,
   onExpand,
-  onUseAsContext,
-  onUseContextualNodeRead,
   onRemoveThinkGraphEvidence,
   onRemoveKnowGraphEvidence,
   subjectFocusRequest,
-  mode = 'all',
 }: {
   projections: Record<GraphAuthority, GraphProjectionV1>;
   statuses?: Partial<Record<GraphAuthority, 'idle' | 'loading' | 'ready' | 'error'>>;
   errors?: Partial<Record<GraphAuthority, string>>;
   jevAttentionVisual?: JevAttentionVisualDescriptorView | null;
   onReadNativeFocusNeighborhood?: ReadNativeFocusNeighborhood;
-  onReadContextualNode?: ReadContextualNode;
-  contextualReaderRevision?: string;
   onExpand: (authority: GraphAuthority, node: GraphProjectionNode) => Promise<void>;
-  onUseAsContext?: (authority: GraphAuthority, node: GraphProjectionNode) => void;
-  onUseContextualNodeRead?: (
-    result: ContextualNodeReadView,
-    node: GraphProjectionNode,
-  ) => void;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
   onRemoveKnowGraphEvidence?: (nativeFactId: string) => Promise<void>;
   subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
-  mode?: 'joined' | 'all';
 }) {
   const presentation = useMemo(
     () => composeThinkKnowPresentation(
       projections.thinkgraph,
       projections.knowgraph,
-      mode,
     ),
-    [mode, projections.knowgraph, projections.thinkgraph],
+    [projections.knowgraph, projections.thinkgraph],
   );
   const turnLocalProjection = useMemo(
     () => composeJevAttentionPresentation(presentation, jevAttentionVisual),
@@ -1386,83 +1292,13 @@ export function NativeJoinedGraphSurface({
       joinedPresentation={presentation}
       attentionVisualPhase={jevAttentionVisual?.phase || null}
       onReadNativeFocusNeighborhood={onReadNativeFocusNeighborhood}
-      onReadContextualNode={onReadContextualNode}
-      contextualReaderRevision={contextualReaderRevision}
       status={status}
       error={error}
       warning={warning}
       onExpandNative={onExpand}
-      onUseAsContextNative={onUseAsContext}
-      onUseContextualNodeRead={onUseContextualNodeRead}
       onRemoveEvidence={onRemoveThinkGraphEvidence}
       onRemoveKnowEvidence={onRemoveKnowGraphEvidence}
     />
-  );
-}
-
-function toCodeGraphData(projection: GraphProjectionV1): GraphData {
-  const indexById = new Map(projection.nodes.map((node, index) => [node.id, index + 1]));
-  const count = Math.max(1, projection.nodes.length);
-  const nodes = projection.nodes.map((node, index) => {
-    const y = 1 - (2 * (index + 0.5)) / count;
-    const radial = Math.sqrt(Math.max(0, 1 - y * y));
-    const angle = index * Math.PI * (3 - Math.sqrt(5));
-    const properties = node.properties || {};
-    return {
-      id: index + 1,
-      x: Math.cos(angle) * radial * 180,
-      y: y * 180,
-      z: Math.sin(angle) * radial * 180,
-      label: String(node.type || 'Symbol'),
-      name: String(node.label || node.title || node.id),
-      file_path: typeof properties.file_path === 'string' ? properties.file_path : undefined,
-      size: 10,
-      color: String(properties.attentionActorColor || '#37ADAA'),
-      native_id: node.id,
-      canonical_id: node.canonicalId || node.id,
-      authority: 'codegraph',
-      actor_card_id: typeof properties.attentionActorCardId === 'string' ? properties.attentionActorCardId : undefined,
-      actor_color: typeof properties.attentionActorColor === 'string' ? properties.attentionActorColor : undefined,
-      tool_name: typeof properties.attentionToolName === 'string' ? properties.attentionToolName : undefined,
-      properties,
-      provenance: node.provenance,
-    };
-  });
-  const edges = projection.edges.flatMap((edge) => {
-    const source = indexById.get(edge.source);
-    const target = indexById.get(edge.target);
-    return source && target ? [{ source, target, type: edge.predicate }] : [];
-  });
-  return { nodes, edges, total_nodes: nodes.length };
-}
-
-export function NativeCodeGraphSurface({
-  project,
-  projection,
-  onExpand,
-  onUseAsContext,
-}: {
-  project: string | null;
-  projection: GraphProjectionV1;
-  onExpand: (node: GraphProjectionNode) => Promise<void>;
-  onUseAsContext?: (node: GraphProjectionNode) => void;
-}) {
-  const attentionData = useMemo(() => toCodeGraphData(projection), [projection]);
-  return (
-    <div data-testid="native-codegraph-surface" className="cbm-native-surface h-full w-full min-h-0 bg-background text-foreground">
-      <CbmGraphTab
-        project={project}
-        attentionData={attentionData}
-        onExpand={async (node) => {
-          const native = projection.nodes.find((candidate) => candidate.id === node.native_id);
-          if (native) await onExpand(native);
-        }}
-        onUseAsContext={(node) => {
-          const native = projection.nodes.find((candidate) => candidate.id === node.native_id);
-          if (native) onUseAsContext?.(native);
-        }}
-      />
-    </div>
   );
 }
 
@@ -1507,6 +1343,23 @@ const PRESENTATION_SETTING_BOUNDS = {
   link: [4, 80],
   gravity: [0, 400],
 } as const;
+
+export function responsiveRepelForce(baseValue: unknown, containerWidth: number): number {
+  const base = Math.max(0, Math.min(400, Number(baseValue) || 0));
+  const width = Math.max(440, Math.min(1_200, Number(containerWidth) || 440));
+  const progress = (width - 440) / (1_200 - 440);
+  const multiplier = 0.62 + progress * (1.28 - 0.62);
+  return Math.max(0, Math.min(400, Math.round(base * multiplier)));
+}
+
+export function nativeKnowFactIdentity(edge: GraphProjectionEdge): string | null {
+  const properties = edge.properties;
+  if (properties?.portableKind !== 'know') return null;
+  const nativeFactId = typeof properties.nativeFactUuid === 'string'
+    ? properties.nativeFactUuid.trim()
+    : '';
+  return nativeFactId || null;
+}
 
 function safePresentationSettings(value: unknown): Record<string, number | boolean | string> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -1642,7 +1495,24 @@ declare global {
   }
 }
 
-function sourceLinks(candidate: Record<string, unknown>) {
+type SourceLinkView = {
+  url: string;
+  label: string;
+  publisher: string;
+  fingerprint: string | null;
+};
+
+function sourcePathLabel(url: URL): string {
+  const finalSegment = decodeURIComponent(
+    url.pathname.split('/').filter(Boolean).at(-1) || '',
+  ).replace(/\.[a-z0-9]+$/i, '');
+  const readable = finalSegment.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return readable
+    ? readable.charAt(0).toUpperCase() + readable.slice(1)
+    : url.hostname;
+}
+
+export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[] {
   const rawUrls: unknown[] = [candidate.source_url, candidate.url];
   const described = candidate.source_description ?? candidate.sourceDescription;
   if (Array.isArray(described)) rawUrls.push(...described);
@@ -1655,20 +1525,36 @@ function sourceLinks(candidate: Record<string, unknown>) {
       rawUrls.push(described);
     }
   }
-  const links = new Map<string, { url: string; label: string }>();
+  const validUrls = new Map<string, URL>();
   for (const rawUrl of rawUrls) {
     if (typeof rawUrl !== 'string') continue;
     const url = rawUrl.trim();
     try {
       const parsed = new URL(url);
       if (!['http:', 'https:'].includes(parsed.protocol)) continue;
-      links.set(url, {
-        url,
-        label: String(
-          candidate.source_title || candidate.title || candidate.publisher || parsed.hostname,
-        ),
-      });
+      validUrls.set(url, parsed);
     } catch { /* Invalid URLs are not clickable citations. */ }
+  }
+  const fingerprint = validUrls.size === 1
+    ? String(
+      candidate.content_fingerprint
+      || candidate.source_fingerprint
+      || candidate.document_fingerprint
+      || '',
+    ).trim() || null
+    : null;
+  const explicitLabel = validUrls.size === 1
+    ? String(candidate.source_title || candidate.title || '').trim()
+    : '';
+  const links = new Map<string, SourceLinkView>();
+  for (const [url, parsed] of validUrls) {
+    const item = {
+      url,
+      label: explicitLabel || sourcePathLabel(parsed),
+      publisher: String(candidate.publisher || parsed.hostname),
+      fingerprint,
+    };
+    links.set(fingerprint ? `fingerprint:${fingerprint}` : `url:${url}`, item);
   }
   return [...links.values()];
 }
@@ -1695,6 +1581,27 @@ function sourceDocument(node: GraphProjectionNode) {
 
 function nativeEntryTime(value: unknown): { dateTime: string; label: string } | null {
   if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    const parts = value as Record<string, unknown>;
+    const year = Number(parts.year);
+    const month = Number(parts.month);
+    const day = Number(parts.day);
+    if (Number.isInteger(year) && Number.isInteger(month) && Number.isInteger(day)) {
+      const milliseconds = Date.UTC(
+        year,
+        month - 1,
+        day,
+        Number(parts.hour || 0),
+        Number(parts.minute || 0),
+        Number(parts.second || 0),
+        Math.floor(Number(parts.nanosecond || 0) / 1_000_000),
+      ) - Number(parts.timeZoneOffsetSeconds || 0) * 1_000;
+      const date = new Date(milliseconds);
+      if (!Number.isNaN(date.getTime())) {
+        return { dateTime: date.toISOString(), label: date.toLocaleString() };
+      }
+    }
+  }
   const numeric = Number(value);
   const milliseconds = Number.isFinite(numeric)
     ? numeric * (Math.abs(numeric) < 10_000_000_000 ? 1_000 : 1)
@@ -1703,6 +1610,12 @@ function nativeEntryTime(value: unknown): { dateTime: string; label: string } | 
   const date = new Date(milliseconds);
   if (Number.isNaN(date.getTime())) return null;
   return { dateTime: date.toISOString(), label: date.toLocaleString() };
+}
+
+export function nativeTimeLabel(value: unknown): string | null {
+  return nativeEntryTime(value)?.label || (
+    typeof value === 'string' && value.trim() ? value : null
+  );
 }
 
 function probabilityLabel(value: unknown): string | null {
@@ -1775,7 +1688,9 @@ function ThinkGraphThink({
         && candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim().length > 0;
     })
     : [];
-  const importance = Number(think.importance);
+  const importance = typeof think.importance === 'number' && Number.isFinite(think.importance)
+    ? think.importance
+    : null;
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
       <h4>{heading}</h4>
@@ -1783,15 +1698,9 @@ function ThinkGraphThink({
     </div>
     {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
     {summary ? <p>{summary}</p> : null}
-    {Number.isFinite(importance) ? <dl className="graph-think-fields">
+    {importance !== null ? <dl className="graph-think-fields">
       <div><dt>Importance</dt><dd>{String(importance)}</dd></div>
     </dl> : null}
-    {properties.length ? <section className="graph-think-section">
-      <h5>Properties</h5>
-      <dl>{properties.map(property => <div key={`${property.name}:${String(property.value)}`}>
-        <dt>{property.name}</dt><dd>{String(property.value)}</dd>
-      </div>)}</dl>
-    </section> : null}
     {semanticSections.map(([label, values]) => <section className="graph-think-section" key={label}>
       <h5>{label}</h5><ul>{values.map(value => <li key={value}>{value}</li>)}</ul>
     </section>)}
@@ -1801,11 +1710,127 @@ function ThinkGraphThink({
     {concepts.length ? <section className="graph-think-section">
       <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
     </section> : null}
-    {onRemove ? <button type="button" disabled={removing} onClick={() => {
-      if (window.confirm(`Delete ${heading}?`)) onRemove();
+    {properties.length ? <section className="graph-think-section">
+      <h5>Properties</h5>
+      <dl>{properties.map(property => <div key={`${property.name}:${String(property.value)}`}>
+        <dt>{property.name}</dt><dd>{String(property.value)}</dd>
+      </div>)}</dl>
+    </section> : null}
+    {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
+      style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
+      if (window.confirm('Delete this record?')) onRemove();
     }}>
-      {removing ? 'Deleting…' : 'Delete Think'}
+      {removing ? 'Deleting…' : 'Delete'}
     </button> : null}
+  </section>;
+}
+
+type KnowInspectorRecord = {
+  nativeId: string;
+  know: Record<string, any>;
+  episodes: Record<string, any>[];
+};
+
+const INSPECTOR_RECORD_LIMIT = 2;
+
+function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
+  const sources = new Map<string, SourceLinkView>();
+  for (const record of records) {
+    for (const episode of record.episodes) {
+      for (const link of sourceLinks(episode)) {
+        sources.set(
+          link.fingerprint ? `fingerprint:${link.fingerprint}` : `url:${link.url}`,
+          link,
+        );
+      }
+    }
+  }
+  return [...sources.values()];
+}
+
+function KnowRecordCitation({
+  record,
+  sourceListId,
+}: {
+  record: KnowInspectorRecord;
+  sourceListId: string;
+}) {
+  const sources = uniqueRecordSources([record]);
+  if (!sources.length) return null;
+  if (sources.length === 1) {
+    const source = sources[0];
+    return <p className="graph-know-citation">
+      <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a>
+      <span>{source.publisher}</span>
+    </p>;
+  }
+  return <p className="graph-know-citation">
+    <a href={`#${sourceListId}`}>Research package · {sources.length} sources</a>
+  </p>;
+}
+
+function KnowGraphKnow({
+  record,
+  heading,
+  sourceListId,
+  removing = false,
+  onRemove,
+}: {
+  record: KnowInspectorRecord;
+  heading: string;
+  sourceListId: string;
+  removing?: boolean;
+  onRemove?: () => void;
+}) {
+  const { nativeId, know } = record;
+  const entryTime = nativeEntryTime(know.createdAt);
+  const diagnosticFields = ([
+    ['Native relation', know.nativeRelation],
+    ['Reference time', know.referenceTime],
+    ['Valid from', know.validAt],
+    ['Invalid from', know.invalidAt],
+    ['Expired', know.expiredAt],
+  ] as const).flatMap(([label, value]) => {
+    const display = nativeTimeLabel(value);
+    return display ? [{ label, display }] : [];
+  });
+  return <section className="graph-note graph-know" data-native-id={nativeId}>
+    <h5>{heading}</h5>
+    {typeof know.fact === 'string' && know.fact ? <p>{know.fact}</p> : null}
+    <KnowRecordCitation record={record} sourceListId={sourceListId} />
+    {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
+    {diagnosticFields.length ? <dl className="graph-record-fields graph-record-diagnostics">
+      {diagnosticFields.map(({ label, display }) => (
+        <div key={label}><dt>{label}</dt><dd>{display}</dd></div>
+      ))}
+    </dl> : null}
+    {onRemove ? <button
+      type="button"
+      aria-label="Delete record"
+      disabled={removing}
+      style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }}
+      onClick={() => {
+        if (window.confirm('Delete this record?')) onRemove();
+      }}
+    >{removing ? 'Deleting…' : 'Delete'}</button> : null}
+  </section>;
+}
+
+function KnowSourceList({
+  records,
+  id,
+}: {
+  records: KnowInspectorRecord[];
+  id: string;
+}) {
+  const sources = uniqueRecordSources(records);
+  if (!sources.length) return null;
+  return <section id={id} className="knowgraph-sources graph-subject-sources">
+    <h4>Sources</h4>
+    {sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
+      <span>{source.label}</span>
+      <small>{source.publisher}</small>
+    </a>)}
   </section>;
 }
 
@@ -1818,13 +1843,10 @@ export function NativeGraphProjectionSurface({
   joinedPresentation,
   attentionVisualPhase,
   onReadNativeFocusNeighborhood,
-  onReadContextualNode,
-  contextualReaderRevision = '',
   onExpand,
   onUseAsContext,
   onExpandNative,
   onUseAsContextNative,
-  onUseContextualNodeRead,
   onRemoveEvidence,
   onRemoveKnowEvidence,
   canonicalSubjectDirectory,
@@ -1838,16 +1860,10 @@ export function NativeGraphProjectionSurface({
   joinedPresentation?: JoinedGraphPresentation;
   attentionVisualPhase?: JevAttentionVisualDescriptorView['phase'] | null;
   onReadNativeFocusNeighborhood?: ReadNativeFocusNeighborhood;
-  onReadContextualNode?: ReadContextualNode;
-  contextualReaderRevision?: string;
   onExpand?: (node: GraphProjectionNode) => Promise<void>;
   onUseAsContext?: (node: GraphProjectionNode) => void;
   onExpandNative?: (authority: GraphAuthority, node: GraphProjectionNode) => Promise<void>;
   onUseAsContextNative?: (authority: GraphAuthority, node: GraphProjectionNode) => void;
-  onUseContextualNodeRead?: (
-    result: ContextualNodeReadView,
-    node: GraphProjectionNode,
-  ) => void;
   onRemoveEvidence?: (memoryId: string) => Promise<void>;
   onRemoveKnowEvidence?: (nativeFactId: string) => Promise<void>;
   canonicalSubjectDirectory?: CanonicalSubjectDirectory | null;
@@ -1896,14 +1912,6 @@ export function NativeGraphProjectionSurface({
   const exitFocusRef = useRef<() => void>(() => undefined);
   const inspectNodeRef = useRef<(id: string) => void>(() => undefined);
   const consumedSubjectFocusRequestRef = useRef<number | null>(null);
-  const contextualNodeRequestRef = useRef<{
-    identity: number;
-    controller: AbortController;
-  } | null>(null);
-  const contextualNodeRequestIdentityRef = useRef(0);
-  const contextualSnapshotRef = useRef({ sourceRevision: '', contextRevision: '' });
-  const [contextualNodeReadState, setContextualNodeReadState] =
-    useState<ContextualNodeReadState | null>(null);
   const presentationStateRef = useRef<{
     layout: NativeLayout;
     style: NativeStyle;
@@ -1972,10 +1980,6 @@ export function NativeGraphProjectionSurface({
     ].join('|');
   }, [authority, joinedPresentation]);
   focusProjectionKeyRef.current = focusProjectionKey;
-  contextualSnapshotRef.current = {
-    sourceRevision: focusProjectionKey,
-    contextRevision: contextualReaderRevision,
-  };
   const manualNavigationActive = focusedEntry !== null || expandedFocusResult !== null;
   const blackholePresentationActive = successfulFocusedEntry !== null
     || (!manualNavigationActive && attentionVisualPhase === 'attention_space');
@@ -2006,11 +2010,35 @@ export function NativeGraphProjectionSurface({
     ? activeJoinedPresentation?.nodeVariants.get(selectedVisual.id)
       || (authority !== 'joined' ? [{ authority, node: selectedVisual }] : [])
     : [];
-  const defaultSelectedAuthority = selectedNodeVariants.some(variant => variant.authority === 'thinkgraph')
+  const directThinkAvailable = selectedNodeVariants.some(variant => (
+    variant.authority === 'thinkgraph'
+    && Array.isArray(variant.node.properties?.evidence)
+    && variant.node.properties.evidence.some((item: unknown) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const metadata = (item as Record<string, any>).metadata;
+      return metadata?.structured_extraction?.think
+        && typeof metadata.structured_extraction.think === 'object';
+    })
+  ));
+  const nativeKnowEdges = authority === 'joined'
+    ? activeJoinedPresentation?.nativeProjections.knowgraph.edges || []
+    : authority === 'knowgraph' ? displayProjection?.edges || [] : [];
+  const directKnowAvailable = selectedNodeVariants.some(variant => (
+    variant.authority === 'knowgraph'
+    && nativeKnowEdges.some(edge => (
+      (edge.source === variant.node.id || edge.target === variant.node.id)
+      && edge.predicate !== 'MENTIONS'
+      && nativeKnowFactIdentity(edge) !== null
+      && typeof edge.properties?.fact === 'string'
+      && edge.properties.fact.trim().length > 0
+    ))
+  ));
+  const defaultSelectedAuthority = directThinkAvailable
     ? 'thinkgraph'
-    : selectedNodeVariants[0]?.authority || null;
+    : directKnowAvailable ? 'knowgraph' : null;
   const inspectedNodeAuthority = selectedAuthority
-    && selectedNodeVariants.some(variant => variant.authority === selectedAuthority)
+    && ((selectedAuthority === 'thinkgraph' && directThinkAvailable)
+      || (selectedAuthority === 'knowgraph' && directKnowAvailable))
     ? selectedAuthority
     : defaultSelectedAuthority;
   const selectedAuthorityVariants = selectedNodeVariants.filter(
@@ -2034,92 +2062,10 @@ export function NativeGraphProjectionSurface({
   const openNodeInspector = (visualNodeId: string) => {
     setControlsOpen(false);
     setRemoveError(null);
-    setSelectedAuthority(null);
     setSelectedMemberKey(null);
     setSelectedId(visualNodeId);
     setSelectedEdgeId(null);
     setInspectorOpen(true);
-    if (authority !== 'joined') return;
-
-    contextualNodeRequestRef.current?.controller.abort();
-    contextualNodeRequestRef.current = null;
-    const requestIdentity = contextualNodeRequestIdentityRef.current + 1;
-    contextualNodeRequestIdentityRef.current = requestIdentity;
-    const sourceRevision = focusProjectionKey;
-    const contextRevision = contextualReaderRevision;
-    const variants = activeJoinedPresentation?.nodeVariants.get(visualNodeId) || [];
-    const nativeMembers = variants.map((variant): ContextualNodeNativeMember => ({
-      authority: variant.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph',
-      nativeId: String(variant.node.id),
-    })).filter((member, index, all) => all.findIndex(candidate => (
-      candidate.authority === member.authority && candidate.nativeId === member.nativeId
-    )) === index);
-    if (!onReadContextualNode || !nativeMembers.length || !sourceRevision) {
-      setContextualNodeReadState({
-        visualNodeId,
-        requestIdentity,
-        sourceRevision,
-        contextRevision,
-        status: 'error',
-        result: null,
-        error: !onReadContextualNode
-          ? 'Contextual node reader unavailable.'
-          : 'This visual node has no exact native members.',
-      });
-      return;
-    }
-    const controller = new AbortController();
-    contextualNodeRequestRef.current = { identity: requestIdentity, controller };
-    setContextualNodeReadState({
-      visualNodeId,
-      requestIdentity,
-      sourceRevision,
-      contextRevision,
-      status: 'loading',
-      result: null,
-      error: null,
-    });
-    void onReadContextualNode({
-      sourceRevision,
-      clientContextRevision: contextRevision,
-      nativeMembers,
-    }, controller.signal).then((result) => {
-      const pending = contextualNodeRequestRef.current;
-      const snapshot = contextualSnapshotRef.current;
-      if (
-        controller.signal.aborted
-        || pending?.identity !== requestIdentity
-        || snapshot.sourceRevision !== sourceRevision
-        || snapshot.contextRevision !== contextRevision
-      ) return;
-      setContextualNodeReadState({
-        visualNodeId,
-        requestIdentity,
-        sourceRevision,
-        contextRevision,
-        status: 'ready',
-        result,
-        error: null,
-      });
-    }).catch((failure: unknown) => {
-      if (controller.signal.aborted
-        || contextualNodeRequestRef.current?.identity !== requestIdentity) return;
-      setContextualNodeReadState({
-        visualNodeId,
-        requestIdentity,
-        sourceRevision,
-        contextRevision,
-        status: 'error',
-        result: null,
-        error: failure instanceof Error
-          ? failure.message
-          : 'Contextual node read failed.',
-      });
-    }).finally(() => {
-      if (contextualNodeRequestRef.current?.identity === requestIdentity) {
-        contextualNodeRequestRef.current = null;
-      }
-    });
   };
   inspectNodeRef.current = openNodeInspector;
   const syncPaper = () => {
@@ -2350,25 +2296,15 @@ export function NativeGraphProjectionSurface({
           },
         } : {}),
         onLinkClick: link => {
-          contextualNodeRequestRef.current?.controller.abort();
-          contextualNodeRequestRef.current = null;
-          contextualNodeRequestIdentityRef.current += 1;
-          setContextualNodeReadState(null);
           setControlsOpen(false);
           setRemoveError(null);
-          setSelectedAuthority(null);
           setSelectedMemberKey(null);
           setSelectedId(null);
           setSelectedEdgeId(String(link.id));
           setInspectorOpen(true);
         },
         onBackgroundClick: () => {
-          contextualNodeRequestRef.current?.controller.abort();
-          contextualNodeRequestRef.current = null;
-          contextualNodeRequestIdentityRef.current += 1;
-          setContextualNodeReadState(null);
           exitFocusRef.current();
-          setSelectedAuthority(null);
           setSelectedMemberKey(null);
           setSelectedId(null);
           setSelectedEdgeId(null);
@@ -2431,6 +2367,35 @@ export function NativeGraphProjectionSurface({
   }, [authority, layout, physicsProfile, settings, solarpunkColors, style]);
 
   useEffect(() => {
+    const host = hostRef.current;
+    const graph = graphRef.current;
+    if (!host || !graph || typeof ResizeObserver === 'undefined') return undefined;
+    let frame = 0;
+    let lastApplied = -1;
+    const apply = () => {
+      frame = 0;
+      graph.resize();
+      if (blackholePresentationActive || attentionVisualPhase === 'attention_space') return;
+      const effective = responsiveRepelForce(settings.repel, host.getBoundingClientRect().width);
+      if (effective === lastApplied) return;
+      lastApplied = effective;
+      graph.setSettings({ repel: effective });
+      graph.reheat();
+    };
+    const schedule = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(apply);
+    };
+    const observer = new ResizeObserver(schedule);
+    observer.observe(host);
+    schedule();
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [attentionVisualPhase, blackholePresentationActive, settings.repel]);
+
+  useEffect(() => {
     if (!controlsOpen) return;
     const scrollHost = panelBodyRef.current?.parentElement;
     if (scrollHost) scrollHost.scrollTop = 0;
@@ -2439,17 +2404,8 @@ export function NativeGraphProjectionSurface({
   useEffect(() => () => {
     for (const controller of focusRequestControllersRef.current.values()) controller.abort();
     focusRequestControllersRef.current.clear();
-    contextualNodeRequestRef.current?.controller.abort();
-    contextualNodeRequestRef.current = null;
     if (focusReleaseTimeoutRef.current) clearTimeout(focusReleaseTimeoutRef.current);
   }, []);
-
-  useEffect(() => {
-    contextualNodeRequestRef.current?.controller.abort();
-    contextualNodeRequestRef.current = null;
-    contextualNodeRequestIdentityRef.current += 1;
-    setContextualNodeReadState(null);
-  }, [contextualReaderRevision, focusProjectionKey]);
 
   useEffect(() => {
     for (const controller of focusRequestControllersRef.current.values()) controller.abort();
@@ -2634,10 +2590,9 @@ export function NativeGraphProjectionSurface({
   useEffect(() => {
     if (!subjectFocusRequest
       || consumedSubjectFocusRequestRef.current === subjectFocusRequest.requestId
-      || !displayProjection) return;
-    const baseProjection = authority === 'joined'
-      ? joinedPresentation?.projection
-      : projection;
+      || !displayProjection
+      || authority !== 'joined') return;
+    const baseProjection = joinedPresentation?.projection;
     if (!baseProjection) return;
     const visualNodeId = resolveCanonicalSubjectFocusVisualId({
       authority,
@@ -2665,10 +2620,6 @@ export function NativeGraphProjectionSurface({
 
   useEffect(() => {
     if (selectedId && !displayProjection?.nodes.some(node => node.id === selectedId)) {
-      contextualNodeRequestRef.current?.controller.abort();
-      contextualNodeRequestRef.current = null;
-      contextualNodeRequestIdentityRef.current += 1;
-      setContextualNodeReadState(null);
       setSelectedId(null);
       setInspectorOpen(false);
       setControlsOpen(true);
@@ -2713,8 +2664,6 @@ export function NativeGraphProjectionSurface({
   };
 
   const allNodes = displayProjection?.nodes.length ?? 0;
-  const selectedNative = inspectedProjection?.nodes.find(node => node.id === selected?.id);
-  const selectedSource = selectedNative ? sourceDocument(selectedNative) : null;
   const evidenceIds = new Set<string>(selected ? [selected.id] : []);
   for (const episodeId of selected?.provenanceEpisodeIds || []) {
     evidenceIds.add(episodeId);
@@ -2736,30 +2685,6 @@ export function NativeGraphProjectionSurface({
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
   const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
-  const contextualRead = authority === 'joined'
-    && selectedId
-    && contextualNodeReadState?.visualNodeId === selectedId
-    ? contextualNodeReadState
-    : null;
-  const contextualResult = contextualRead?.status === 'ready'
-    ? contextualRead.result
-    : null;
-  const contextualSide = inspectedAuthority === 'thinkgraph'
-    ? contextualResult?.sides.think
-    : inspectedAuthority === 'knowgraph'
-      ? contextualResult?.sides.know
-      : null;
-  const contextualItems = contextualSide?.items || [];
-  const contextualThinks = inspectedAuthority === 'thinkgraph'
-    ? contextualItems.map(item => ({
-        id: String(item.block.nativeId || item.nativeId),
-        title: item.block.title,
-        content: item.block.content,
-        metadata: item.block.metadata,
-        provenance: item.block.provenance,
-        ingestedAt: item.block.properties?.ingestedAt,
-      }))
-    : [];
   const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
     ? evidenceRecords.filter(item => item.metadata !== null
       && typeof item.metadata === 'object'
@@ -2768,11 +2693,15 @@ export function NativeGraphProjectionSurface({
       && item.metadata.structured_extraction.think !== null
       && typeof item.metadata.structured_extraction.think === 'object')
     : [];
-  const thinks = [...directThinks, ...contextualThinks].filter((item, index, all) => (
-    all.findIndex(candidate => candidate.id === item.id) === index
-  ));
-  const latestThink = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
-    ? thinks[0] : null;
+  const thinks = directThinks.map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftTime = nativeEntryTime(left.item.ingestedAt)?.dateTime || '';
+      const rightTime = nativeEntryTime(right.item.ingestedAt)?.dateTime || '';
+      return rightTime.localeCompare(leftTime) || left.index - right.index;
+    })
+    .map(({ item }) => item);
+  const visibleThinks = thinks.slice(0, INSPECTOR_RECORD_LIMIT);
+  const earlierThinks = thinks.slice(INSPECTOR_RECORD_LIMIT);
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => inspectedProjection?.nodes.find(node => node.id === id)?.label || id;
   const relationshipStrength = probabilityLabel(selectedEdge?.properties?.relationship_strength);
@@ -2781,18 +2710,46 @@ export function NativeGraphProjectionSurface({
     && selectedEdge?.properties?.portableKind === 'know'
     ? selectedEdge.properties
     : null;
-  const contextualKnowItems = inspectedAuthority === 'knowgraph'
-    ? contextualItems.flatMap((item) => {
-        const know = item.block.know;
-        if (!know || typeof know !== 'object' || Array.isArray(know)) return [];
-        const episodes = Array.isArray(know.supportingEpisodes)
-          ? know.supportingEpisodes.filter((episode: unknown): episode is Record<string, any> => (
-            Boolean(episode) && typeof episode === 'object' && !Array.isArray(episode)
-          ))
+  const provenanceById = new Map<string, Record<string, any>>(
+    (inspectedProjection?.provenanceNodes || []).map(node => [node.id, {
+      uuid: node.id,
+      name: node.label,
+      ...(node.properties || {}),
+    }]),
+  );
+  const directKnowItems = inspectedAuthority === 'knowgraph' && selected && !selectedEdge
+    ? (inspectedProjection?.edges || []).flatMap(edge => {
+        const know = edge.properties || {};
+        const nativeFactId = nativeKnowFactIdentity(edge);
+        if (
+          !nativeFactId
+          || (edge.source !== selected.id && edge.target !== selected.id)
+          || edge.predicate === 'MENTIONS'
+          || know.portableKind !== 'know'
+          || typeof know.fact !== 'string'
+          || !know.fact.trim()
+        ) return [];
+        const episodeIds = Array.isArray(know.supportingEpisodeUuids)
+          ? know.supportingEpisodeUuids.map(String)
           : [];
-        return [{ nativeId: item.nativeId, block: item.block, know, episodes }];
-      })
+        return [{
+          nativeId: nativeFactId,
+          know,
+          episodes: episodeIds.flatMap(episodeId => {
+            const episode = provenanceById.get(episodeId);
+            return episode ? [episode] : [];
+          }),
+        }];
+      }).filter(record => record.know.temporalStatus !== 'historical')
+        .sort((left, right) => {
+          const leftTime = nativeEntryTime(left.know.createdAt)?.dateTime || '';
+          const rightTime = nativeEntryTime(right.know.createdAt)?.dateTime || '';
+          return rightTime.localeCompare(leftTime) || left.nativeId.localeCompare(right.nativeId);
+        })
     : [];
+  const visibleKnowItems = directKnowItems.slice(0, INSPECTOR_RECORD_LIMIT);
+  const earlierKnowItems = directKnowItems.slice(INSPECTOR_RECORD_LIMIT);
+  const knowSourceListId = 'knowgraph-subject-sources';
   const jev = selectedEdge?.properties?.jev
     && typeof selectedEdge.properties.jev === 'object'
     && !Array.isArray(selectedEdge.properties.jev)
@@ -2812,7 +2769,7 @@ export function NativeGraphProjectionSurface({
     jevDistribution.find(([choice]) => choice === jevWinner)?.[1],
   );
   const availableNodeAuthorities = (['thinkgraph', 'knowgraph'] as const)
-    .filter(candidate => selectedNodeVariants.some(variant => variant.authority === candidate));
+    .filter(candidate => candidate === 'thinkgraph' ? directThinkAvailable : directKnowAvailable);
   const visualNodeIdForNative = (nativeId: string) => inspectedAuthority
     ? activeJoinedPresentation?.visualNodeIdByNativeMember.get(
       nativeMemberKey(inspectedAuthority, nativeId),
@@ -3014,13 +2971,6 @@ export function NativeGraphProjectionSurface({
             >
               {successfulFocusedEntry ? 'Expand' : 'Focus'}
             </button>
-            <button
-              type="button"
-              disabled={contextualRead?.status === 'loading'}
-              onClick={() => inspectNodeRef.current(selectedVisual.id)}
-            >
-              {contextualRead?.status === 'loading' ? 'Reading…' : 'Reread contents'}
-            </button>
           </div>
         ) : null}
         {authority === 'joined' && selected && availableNodeAuthorities.length ? (
@@ -3053,104 +3003,25 @@ export function NativeGraphProjectionSurface({
             ))}
           </div>
         ) : null}
-        {authority === 'joined' && selected && selectedAuthorityVariants.length > 1 ? (
-          <label>
-            {inspectedAuthority === 'thinkgraph' ? 'Think native member' : 'Know native member'}
-            <select
-              aria-label={inspectedAuthority === 'thinkgraph' ? 'Think native member' : 'Know native member'}
-              value={selectedNodeVariant
-                ? nativeMemberKey(selectedNodeVariant.authority, selectedNodeVariant.node.id)
-                : ''}
-              onChange={event => setSelectedMemberKey(event.target.value)}
-            >
-              {selectedAuthorityVariants.map((variant) => (
-                <option
-                  key={nativeMemberKey(variant.authority, variant.node.id)}
-                  value={nativeMemberKey(variant.authority, variant.node.id)}
-                >
-                  {`${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} · ${variant.node.id}`}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {authority === 'joined' && selected && contextualRead?.status === 'loading' ? (
-          <p role="status" data-testid="contextual-node-read-loading">
-            Selecting the most useful native {inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'}…
-          </p>
-        ) : null}
-        {authority === 'joined' && selected && contextualRead?.status === 'error' ? (
-          <p role="alert" data-testid="contextual-node-read-error">
-            {contextualRead.error || 'Contextual node read unavailable.'}
-          </p>
-        ) : null}
-        {authority === 'joined' && selected && contextualResult?.contextLabel ? (
-          <p className="graph-note" data-testid="contextual-node-read-for">
-            <strong>For:</strong> {contextualResult.contextLabel}
-          </p>
-        ) : null}
-        {authority === 'joined' && selected && contextualSide
-          && contextualSide.status !== 'selected' && contextualSide.status !== 'partial' ? (
-            <p role="status" data-testid={`contextual-node-${inspectedAuthority}-status`}>
-              {contextualSide.status === 'none_relevant'
-                ? inspectedAuthority === 'knowgraph'
-                  && Number(contextualSide.candidateCount || 0) > 0
-                  ? `${contextualSide.candidateCount} native ${contextualSide.candidateCount === 1 ? 'Know is' : 'Knows are'} attached; none ${contextualSide.candidateCount === 1 ? 'was' : 'were'} selected for this request.`
-                  : `No supplied native ${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} is relevant to this request.`
-                : contextualSide.status === 'empty' || contextualSide.status === 'missing'
-                  ? `No native ${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} is attached to this node.`
-                  : contextualSide.status === 'context_unavailable'
-                    ? 'A current question or task is required for this contextual read.'
-                    : contextualSide.status === 'limit' || contextualSide.status === 'context_limit'
-                      ? 'This node is too large for one complete contextual selection.'
-                      : `Contextual ${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} unavailable (${contextualSide.status}).`}
-            </p>
-          ) : null}
-        {authority === 'joined' && selected && contextualSide?.status === 'partial' ? (
-          <p role="status" data-testid={`contextual-node-${inspectedAuthority}-status`}>
-            Some selected native content could not be hydrated; only the exact hydrated items below are usable.
-          </p>
-        ) : null}
-        {authority === 'joined' && selectedVisual && contextualResult
-          && contextualResult.dataAnchors.length && onUseContextualNodeRead ? (
-            <div className="native-authority-actions">
-              <button type="button" onClick={() => (
-                onUseContextualNodeRead(contextualResult, selectedVisual)
-              )}>Use selected in chat</button>
-            </div>
-          ) : null}
-        {selected ? <article data-testid={`${inspectedAuthority}-node-inspector`} data-native-id={selected.id}>
-          <h4 tabIndex={-1}>{selected.label}</h4>
-          {inspectedAuthority === 'knowgraph' ? (['statement', 'fact', 'content', 'summary', 'reason'] as const).map(key => selectedProperties[key])
-            .filter((value, index, values): value is string => typeof value === 'string' && !!value && values.indexOf(value) === index)
-            .map(value => <p key={value}>{value}</p>) : null}
-          {inspectedAuthority === 'knowgraph' && selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
-          {inspectedAuthority === 'knowgraph' && evidence.length ? (
-            <section className="knowgraph-sources" data-testid="selected-know-sources">
-              <h5>Sources</h5>
-              {evidence.map(({ node, links }) => <div key={node.id}>
-                <span>{node.label}</span>
-                {links.map(link => <a
-                  key={link.url}
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >{link.label}</a>)}
-              </div>)}
-            </section>
-          ) : null}
-        </article> : null}
-        {latestThink ? <ThinkGraphThink
-          item={latestThink}
-          heading="Latest Think"
-          removing={removingId === latestThink.id}
-          onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
-            ? () => { void deleteThink(latestThink.id); }
-            : undefined}
-        /> : null}
-        {thinks.length > 1 ? <details className="graph-think-history">
-          <summary>Earlier Thinks ({thinks.length - 1})</summary>
-          <div>{thinks.slice(1).map((item, index) => <ThinkGraphThink
+        {selected ? <span className="graph-inspector-subject" tabIndex={-1} aria-hidden="true"
+          data-testid={`${inspectedAuthority}-node-inspector`} data-native-id={selected.id}>
+          {selected.label}
+        </span> : null}
+        {visibleThinks.length ? <section className="graph-inspector-records" data-testid="native-think-records">
+          <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
+          {visibleThinks.map((item, index) => <ThinkGraphThink
+            key={item.id}
+            item={item}
+            heading={visibleThinks.length > 1 ? `Think ${index + 1}` : 'Think'}
+            removing={removingId === item.id}
+            onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
+              ? () => { void deleteThink(item.id); }
+              : undefined}
+          />)}
+        </section> : null}
+        {earlierThinks.length ? <details className="graph-think-history">
+          <summary>Earlier Thinks ({earlierThinks.length})</summary>
+          <div>{earlierThinks.map((item, index) => <ThinkGraphThink
             key={item.id}
             item={item}
             heading={`Earlier Think ${index + 1}`}
@@ -3158,60 +3029,35 @@ export function NativeGraphProjectionSurface({
             onRemove={onRemoveEvidence ? () => { void deleteThink(item.id); } : undefined}
           />)}</div>
         </details> : null}
-        {contextualKnowItems.length ? <section className="graph-note" data-testid="contextual-selected-know">
-          <h4>{contextualKnowItems.length > 1 ? 'Selected Knows' : 'Selected Know'}</h4>
-          {contextualKnowItems.map(({ nativeId, block, know, episodes }, index) => (
-            <article key={nativeId} data-native-id={nativeId}>
-              {contextualKnowItems.length > 1 ? <h5>{`Know ${index + 1}`}</h5> : null}
-              {typeof know.fact === 'string' && know.fact
-                ? <p>{know.fact}</p>
-                : typeof block.content === 'string' && block.content
-                  ? <p>{block.content}</p>
-                  : null}
-              <dl className="graph-record-fields">
-                {([
-                  ['Native relation', know.nativeRelation],
-                  ['Recorded', know.createdAt],
-                  ['Reference time', know.referenceTime],
-                  ['Valid from', know.validAt],
-                  ['Invalid from', know.invalidAt],
-                  ['Expired', know.expiredAt],
-                ] as const).map(([label, value]) => value
-                  ? <div key={label}><dt>{label}</dt><dd>{String(value)}</dd></div>
-                  : null)}
-              </dl>
-              {episodes.length ? <section className="knowgraph-sources">
-                <h5>Sources</h5>
-                {episodes.map((episode) => {
-                  const label = String(
-                    episode.name || episode.source_name || episode.uuid || 'Source',
-                  );
-                  const links = sourceLinks(episode);
-                  return <div key={String(episode.uuid || links[0]?.url || label)}>
-                    <span>{label}</span>
-                    {links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">
-                      {link.label}
-                    </a>)}
-                    {episode.valid_at ? <time dateTime={String(episode.valid_at)}>
-                      {String(episode.valid_at)}
-                    </time> : null}
-                    {episode.content_preview ? <p>{String(episode.content_preview)}</p> : null}
-                  </div>;
-                })}
-              </section> : null}
-              {onRemoveKnowEvidence ? <button
-                type="button"
-                disabled={removingId === String(know.nativeFactUuid || nativeId)}
-                onClick={() => {
-                  if (!window.confirm('Delete this Know?')) return;
-                  void deleteKnow(String(know.nativeFactUuid || nativeId));
-                }}
-              >{removingId === String(know.nativeFactUuid || nativeId)
-                  ? 'Deleting…'
-                  : 'Delete Know'}</button> : null}
-            </article>
-          ))}
+        {visibleKnowItems.length ? <section className="graph-inspector-records" data-testid="native-know-records">
+          <h4>{visibleKnowItems.length > 1 ? 'Current Knows' : 'Current Know'}</h4>
+          {visibleKnowItems.map((record, index) => <KnowGraphKnow
+            key={record.nativeId}
+            record={record}
+            heading={visibleKnowItems.length > 1 ? `Know ${index + 1}` : 'Know'}
+            sourceListId={knowSourceListId}
+            removing={removingId === record.nativeId}
+            onRemove={onRemoveKnowEvidence
+              ? () => { void deleteKnow(record.nativeId); }
+              : undefined}
+          />)}
         </section> : null}
+        {earlierKnowItems.length ? <details className="graph-know-history">
+          <summary>Earlier Knows ({earlierKnowItems.length})</summary>
+          <div>{earlierKnowItems.map((record, index) => <KnowGraphKnow
+            key={record.nativeId}
+            record={record}
+            heading={`Earlier Know ${index + 1}`}
+            sourceListId={knowSourceListId}
+            removing={removingId === record.nativeId}
+            onRemove={onRemoveKnowEvidence
+              ? () => { void deleteKnow(record.nativeId); }
+              : undefined}
+          />)}</div>
+        </details> : null}
+        {inspectedAuthority === 'knowgraph' && selected && !selectedEdge
+          ? <KnowSourceList records={directKnowItems} id={knowSourceListId} />
+          : null}
         {selectedEdge ? <article data-testid={`${inspectedAuthority}-edge-inspector`} data-native-id={selectedEdge.id}>
           <h4 tabIndex={-1}>{nativeLabel(selectedEdge.source)} → {selectedEdge.predicate} → {nativeLabel(selectedEdge.target)}</h4>
           {(['fact', 'summary', 'reason'] as const).map(key => typeof selectedEdge.properties?.[key] === 'string'
@@ -3255,9 +3101,12 @@ export function NativeGraphProjectionSurface({
               ['Valid from', portableKnow.validAt],
               ['Invalid from', portableKnow.invalidAt],
               ['Expired', portableKnow.expiredAt],
-            ] as const).map(([label, value]) => value
-              ? <div key={label}><dt>{label}</dt><dd>{String(value)}</dd></div>
-              : null)}
+            ] as const).flatMap(([label, value]) => {
+              const display = nativeTimeLabel(value);
+              return display
+                ? [<div key={label}><dt>{label}</dt><dd>{display}</dd></div>]
+                : [];
+            })}
           </dl>
         </section> : null}
         {jevDistribution.length ? <details className="graph-jev-distribution" open>

@@ -514,11 +514,8 @@ def test_prepare_is_nonpersistent_without_regex_jev_or_graph_mutation(hybrid):
     }
     assert set(prepared["enrichmentInput"]) == {
         "exact_user_message", "exact_main_response", "canonical_subject_directory",
-        "current_project_relationship_vocabulary", "source_response_fit",
+        "current_project_relationship_vocabulary",
     }
-    assert prepared["enrichmentInput"]["source_response_fit"] == (
-        payload()["sourceResponseFit"]
-    )
     assert prepared["enrichmentInput"][
         "current_project_relationship_vocabulary"
     ] == list(SHARED_JEV_RELATIONSHIPS)
@@ -538,6 +535,128 @@ def test_prepare_is_nonpersistent_without_regex_jev_or_graph_mutation(hybrid):
     assert hybrid.get_service().store.conn.execute(
         "SELECT COUNT(*) FROM memories"
     ).fetchone()[0] == 0
+
+
+def test_completed_pair_extractor_and_saved_semantics_exclude_runtime_sentinels(
+    hybrid,
+):
+    visible_user = "VISIBLE_USER_BYTES_SENTINEL asks about Jev."
+    visible_main = "VISIBLE_MAIN_BYTES_SENTINEL answers only that question."
+    completed = payload("runtime-sentinel-source-run")
+    completed.update({
+        "userMessage": visible_user,
+        "mainResponse": visible_main,
+        "sourceResponseFit": {
+            **scored_source_response_fit("runtime-sentinel-source-run"),
+            "actualProvider": "SOURCE_PROVIDER_SENTINEL",
+            "actualModel": "SOURCE_MODEL_SENTINEL",
+            "requestedModel": "ASSESSMENT_REQUESTED_MODEL_SENTINEL",
+            "provider": "ASSESSMENT_PROVIDER_SENTINEL",
+            "resolvedModel": "ASSESSMENT_RESOLVED_MODEL_SENTINEL",
+            "decisionId": "ASSESSMENT_DECISION_SENTINEL",
+            "usage": {
+                "providerInputTokens": 101,
+                "providerOutputTokens": 17,
+                "totalCostUsd": 0.123,
+                "source": "RUNTIME_USAGE_COST_TOKEN_SENTINEL",
+            },
+        },
+    })
+    excluded_runtime_sentinels = {
+        "SOURCE_PROVIDER_SENTINEL",
+        "SOURCE_MODEL_SENTINEL",
+        "ASSESSMENT_REQUESTED_MODEL_SENTINEL",
+        "ASSESSMENT_PROVIDER_SENTINEL",
+        "ASSESSMENT_RESOLVED_MODEL_SENTINEL",
+        "ASSESSMENT_DECISION_SENTINEL",
+        "RUNTIME_USAGE_COST_TOKEN_SENTINEL",
+    }
+
+    prepared = hybrid.prepare_completed_pair(completed)
+    exact_extractor_input = json.dumps({
+        "schema": prepared["enrichmentSchema"],
+        "prompt": prepared["enrichmentPrompt"],
+        "input": prepared["enrichmentInput"],
+    }, ensure_ascii=False, sort_keys=True)
+
+    assert visible_user in exact_extractor_input
+    assert visible_main in exact_extractor_input
+    assert "canonical_subject_directory" in exact_extractor_input
+    assert "know-jev" in exact_extractor_input
+    assert "THINKGRAPH TEMPORAL THINK" in exact_extractor_input
+    assert not any(
+        sentinel in exact_extractor_input
+        for sentinel in excluded_runtime_sentinels
+    )
+
+    output = structured_output(content=visible_main)
+    output["facts"][0].update({
+        "title": "Current pair only",
+        "keywords": ["Jev"],
+        "entities": ["Jev"],
+        "relations": [],
+        "think": {
+            "kind": "OBSERVATION",
+            "summary": visible_main,
+            "propositions": [visible_main],
+            "questions": [visible_user],
+            "predictions": [],
+            "assumptions": [],
+            "preferences": [],
+            "corrections": [],
+            "uncertainty": [],
+            "properties": [{"name": "pair_scope", "value": "current"}],
+            "concepts": ["Jev"],
+            "relationship_observations": [],
+            "importance": 0.6,
+        },
+    })
+    authorized_card_run = {
+        "runId": "AUTHORIZED_RUN_ID_SENTINEL",
+        "cardId": "AUTHORIZED_CARD_ID_SENTINEL",
+        "revisionId": "AUTHORIZED_REVISION_ID_SENTINEL",
+        "profile": "AUTHORIZED_PROFILE_SENTINEL",
+        "nativeSessionRef": "AUTHORIZED_SESSION_SENTINEL",
+        "resolvedModel": "AUTHORIZED_MODEL_SENTINEL",
+    }
+    settled = hybrid.settle_completed_pair({
+        **completed,
+        "pairMemoryId": prepared["pairMemoryId"],
+        "structuredOutput": output,
+        "cardRun": authorized_card_run,
+    })
+    memory = hybrid.get_service().store.get_memory(settled["thinkMemoryId"])
+    assert memory is not None
+    saved_semantics = json.dumps({
+        "summary": memory.content,
+        "title": memory.title,
+        "keywords": memory.keywords,
+        "structured_extraction": memory.metadata["structured_extraction"],
+    }, ensure_ascii=False, sort_keys=True)
+
+    assert visible_user in saved_semantics
+    assert visible_main in saved_semantics
+    assert "source_response_fit" not in memory.metadata
+    assert not any(
+        sentinel in saved_semantics
+        for sentinel in excluded_runtime_sentinels
+    )
+    assert not any(
+        value in saved_semantics
+        for value in authorized_card_run.values()
+    )
+    assert memory.metadata["thinkgraph_origin"] == {
+        "authority": "thinkgraph",
+        "writer": "saved_thinkgraph_card",
+        "card_id": authorized_card_run["cardId"],
+        "card_revision_id": authorized_card_run["revisionId"],
+        "run_id": authorized_card_run["runId"],
+        "profile": authorized_card_run["profile"],
+        "native_session_ref": authorized_card_run["nativeSessionRef"],
+        "resolved_model": authorized_card_run["resolvedModel"],
+        "completed_pair_reference": prepared["pairReference"],
+        "source_pair": hybrid._source_pair(completed),
+    }
 
 
 @pytest.mark.parametrize(
@@ -1107,7 +1226,6 @@ def test_structured_proposal_reuses_canonical_node_and_freezes_prior_think(
         "exact_main_response",
         "canonical_subject_directory",
         "current_project_relationship_vocabulary",
-        "source_response_fit",
     }
     assert "Alpha already has durable project context." not in prepared["enrichmentPrompt"]
     directory = enrichment["canonical_subject_directory"]
@@ -1630,7 +1748,6 @@ def test_structured_writer_gets_complete_subject_directory_not_prior_think_bodie
         "exact_main_response",
         "canonical_subject_directory",
         "current_project_relationship_vocabulary",
-        "source_response_fit",
     }
     assert "Jev normalizes expressive graph relations." not in prepared["enrichmentPrompt"]
     directory = prepared["enrichmentInput"]["canonical_subject_directory"]

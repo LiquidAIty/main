@@ -4942,12 +4942,92 @@ describe('saved Card routes', () => {
     });
 
     it('returns Main normally and starts one exact completed-pair ThinkGraph intake', async () => {
+      const sourceCardSentinels = [
+        'SOURCE_SOUL_SENTINEL',
+        'SOURCE_ROLE_SENTINEL',
+        'SOURCE_GOAL_SENTINEL',
+        'SOURCE_SYSTEM_PROMPT_SENTINEL',
+        'SOURCE_TOOL_METADATA_SENTINEL',
+        'SOURCE_TOOL_GRANT_SENTINEL',
+        'SOURCE_MCP_CONFIG_SENTINEL',
+        'SOURCE_PROVIDER_SETTING_SENTINEL',
+        'SOURCE_MODEL_SETTING_SENTINEL',
+        'SOURCE_RUNTIME_OBSERVATION_SENTINEL',
+        'SOURCE_COST_TOKEN_SENTINEL',
+        'SOURCE_TEAMMATE_BLOCK_SENTINEL',
+        'SOURCE_CARD_UI_CONFIG_SENTINEL',
+        'UNRELATED_TRANSCRIPT_SENTINEL',
+        'SOURCE_ASSESSMENT_PROVIDER_SENTINEL',
+        'SOURCE_ASSESSMENT_MODEL_SENTINEL',
+        'SOURCE_ASSESSMENT_USAGE_SENTINEL',
+      ];
+      const sourceResponseFit = {
+        schemaVersion: 'request-fulfillment-assessment.v1',
+        metric: 'request_fulfillment',
+        rubricVersion: 'request-fulfillment.v1',
+        status: 'unavailable',
+        runId: expect.stringMatching(/^req_/),
+        executionEvidenceComplete: true,
+        executionEvidenceError: null,
+        actualProvider: 'SOURCE_ASSESSMENT_PROVIDER_SENTINEL',
+        actualModel: 'SOURCE_ASSESSMENT_MODEL_SENTINEL',
+        failureReason: 'test_jev_provider_unavailable',
+        usage: { source: 'SOURCE_ASSESSMENT_USAGE_SENTINEL' },
+        requestCount: 0,
+        questionCount: 0,
+      };
+      const exactSourceResponseFit = {
+        ...sourceResponseFit,
+        runId: 'runtime-source-run-placeholder',
+      };
+      const defaultDeckImplementation = deckMocks.getDeckDocument.getMockImplementation()!;
+      deckMocks.getDeckDocument.mockImplementation(async () => {
+        const loaded = await defaultDeckImplementation();
+        return {
+          deck: {
+            ...loaded.deck,
+            nodes: loaded.deck.nodes.map((node: any) => node.id === 'card_main_chat' ? {
+              ...node,
+              prompt: [
+                '[SOUL] SOURCE_SOUL_SENTINEL',
+                '[ROLE] SOURCE_ROLE_SENTINEL',
+                '[GOAL] SOURCE_GOAL_SENTINEL',
+                '[SYSTEM] SOURCE_SYSTEM_PROMPT_SENTINEL',
+                '[ALL CONNECTED AGENTS] SOURCE_TEAMMATE_BLOCK_SENTINEL',
+              ].join('\n'),
+              runtimeOptions: {
+                ...node.runtimeOptions,
+                tools: ['SOURCE_TOOL_GRANT_SENTINEL'],
+                toolDefinitions: [{ description: 'SOURCE_TOOL_METADATA_SENTINEL' }],
+                mcpConnectionIds: ['SOURCE_MCP_CONFIG_SENTINEL'],
+                provider: 'SOURCE_PROVIDER_SETTING_SENTINEL',
+                modelKey: 'SOURCE_MODEL_SETTING_SENTINEL',
+                runtimeObservation: 'SOURCE_RUNTIME_OBSERVATION_SENTINEL',
+                usage: 'SOURCE_COST_TOKEN_SENTINEL',
+              },
+              uiConfiguration: 'SOURCE_CARD_UI_CONFIG_SENTINEL',
+            } : node),
+          },
+        } as any;
+      });
+      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([{
+        role: 'user', status: 'complete', content: 'UNRELATED_TRANSCRIPT_SENTINEL',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+          { kind: 'shared_chat_target', status: 'card', label: 'Main',
+            cardId: 'card_main_chat', profile: 'default', address: 'Main' },
+        ],
+      }] as any);
       const defaultRailsImplementation = orchestratorMocks.requestPythonRailsJson
         .getMockImplementation()!;
       const defaultSubmitImplementation = agentTerminalMocks.manager.submit
         .getMockImplementation()!;
       orchestratorMocks.requestPythonRailsJson.mockReset();
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
+        if (endpoint === '/domain/runs/request-fulfillment') {
+          const request = JSON.parse(String(init?.body || '{}'));
+          return { ...exactSourceResponseFit, runId: request.runId };
+        }
         if (endpoint === '/thinkgraph/completed-pair/prepare') return {
           ok: true,
           pairMemoryId: 'pair_reference_one',
@@ -4979,6 +5059,8 @@ describe('saved Card routes', () => {
           },
           enrichmentPrompt: [
             'Native Engraphis llm_structured prompt.',
+            'exact_user_message: complete with hybrid ThinkGraph intake',
+            'exact_main_response: Real assistant reply.',
             'canonical_subject_directory: complete compact subject headers',
             'current_project_relationship_vocabulary:',
             '["IS_A","PART_OF","HAS_PART","CAUSES","AFFECTS","DEPENDS_ON","ENABLES","CONSTRAINS","REQUIRES","SUPPORTS","CONTRADICTS","QUALIFIES","EXPLAINS","ASSOCIATED_WITH","ALTERNATIVE_TO","COMPETES_WITH","PROVIDES","USES","PRECEDES","FOLLOWS"]',
@@ -5033,22 +5115,10 @@ describe('saved Card routes', () => {
           completedAt: expect.any(String),
           userMessage: exactMessage,
           mainResponse: 'Real assistant reply.',
-          sourceResponseFit: {
-            schemaVersion: 'request-fulfillment-assessment.v1',
-            metric: 'request_fulfillment',
-            rubricVersion: 'request-fulfillment.v1',
-            status: 'unavailable',
-            runId: expect.stringMatching(/^req_/),
-            executionEvidenceComplete: true,
-            executionEvidenceError: null,
-            actualProvider: 'openai-codex',
-            actualModel: 'gpt-5.6-luna',
-            failureReason: 'test_jev_provider_unavailable',
-            requestCount: 0,
-            questionCount: 0,
-          },
+          sourceResponseFit,
         };
-        expect(JSON.parse(String(prepareCall?.[1]?.body))).toEqual(completedPair);
+        const { sourceResponseFit: _sourceResponseFit, ...extractorPair } = completedPair;
+        expect(JSON.parse(String(prepareCall?.[1]?.body))).toEqual(extractorPair);
 
         const cardBegin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
           ([route]) => route === '/domain/runs/begin',
@@ -5094,12 +5164,24 @@ describe('saved Card routes', () => {
           'Do not compare, merge, rewrite, or suppress the current Think against earlier Thinks',
         );
         expect(cardBeginBody.assignment).not.toContain('RegexGraphExtractor');
+        expect(cardBeginBody.assignment).toContain(exactMessage);
+        expect(cardBeginBody.assignment).toContain('Real assistant reply.');
+        const extractorSubmit = agentTerminalMocks.manager.submit.mock.calls.find(
+          ([owner]) => owner.cardId === 'card_thinkgraph',
+        );
+        expect(extractorSubmit).toBeDefined();
+        expect(String(extractorSubmit?.[2])).toBe(cardBeginBody.assignment);
+        expect(String(extractorSubmit?.[2])).toContain('canonical_subject_directory');
+        for (const sentinel of sourceCardSentinels) {
+          expect(cardBeginBody.assignment).not.toContain(sentinel);
+          expect(String(extractorSubmit?.[2])).not.toContain(sentinel);
+        }
 
         const settleCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
           ([route]) => route === '/thinkgraph/completed-pair/settle',
         );
         expect(JSON.parse(String(settleCall?.[1]?.body))).toEqual({
-          ...completedPair,
+          ...extractorPair,
           pairMemoryId: 'pair_reference_one',
           structuredOutput: 'Real assistant reply.',
           cardRun: {
@@ -5113,6 +5195,7 @@ describe('saved Card routes', () => {
         });
       } finally {
         await closeServer(server);
+        deckMocks.getDeckDocument.mockImplementation(defaultDeckImplementation);
         orchestratorMocks.requestPythonRailsJson.mockReset();
         orchestratorMocks.requestPythonRailsJson.mockImplementation(defaultRailsImplementation);
         agentTerminalMocks.manager.submit.mockReset();

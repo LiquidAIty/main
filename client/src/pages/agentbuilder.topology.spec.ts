@@ -88,7 +88,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(source).toContain("card?.id === 'card_magentic' || card?.id === 'card_team'");
     const magneticGate = source.slice(
       source.indexOf('function isMagneticCard'),
-      source.indexOf('// Hermes owns one project-intelligence canvas'),
+      source.indexOf('// The launch surface renders one mixed human graph'),
     );
     expect(magneticGate).not.toContain('runtime.mode');
     expect(tabProjection).toContain("hasTaskLedger(selectedCard) ? ['Tasks'] : []");
@@ -140,7 +140,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(page).toContain('subjectMatcher={canonicalSubjectMatcher}');
     expect(page).toContain('subjectFocusRequest={subjectFocusRequest}');
     expect(handler).toContain("setWorkspaceView('knowledge')");
-    expect(handler).toContain('setKnowledgeGraphKind(target.view)');
+    expect(handler).not.toContain('setKnowledgeGraphKind');
     expect(handler).not.toContain('fetch(');
     expect(handler).not.toContain('localStorage');
     expect(chat).toContain('subjectMatcher?.segmentMessage(message.role, text)');
@@ -480,14 +480,32 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(JSON.stringify(INITIAL_DECK.nodes)).not.toContain('"mode":"kanban"');
   });
 
-  it('resolves CodeGraph identity only after the user opens the CodeGraph surface', () => {
+  it('keeps one All graph surface and removes the deferred CodeGraph tab scaffolding', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const call = source.indexOf('void resolveCbmProjectName');
-    const effect = source.slice(source.lastIndexOf('useEffect(() => {', call), call);
-    expect(effect).toContain("workspaceView !== 'knowledge'");
-    expect(effect).toContain("knowledgeGraphKind !== 'codegraph'");
-    expect(source).toContain("useState<KnowledgeSurfaceKind>('joined')");
-    expect(source).toContain("setKnowledgeGraphKind('joined')");
+    const framework = readFileSync(
+      new URL('../components/knowledge/KnowledgeGraphFramework.tsx', import.meta.url),
+      'utf8',
+    );
+    const nativeSurface = readFileSync(
+      new URL('../components/knowledge/NativeAuthorityGraphSurface.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).not.toContain('resolveCbmProjectName');
+    expect(source).not.toContain('knowledgeGraphKind');
+    expect(framework).toContain('<NativeJoinedGraphSurface');
+    expect(framework).not.toContain('Knowledge graph view');
+    expect(framework).not.toContain('graph-kind-codegraph');
+    expect(framework).not.toContain('onReadContextualNode');
+    expect(framework).not.toContain('onUseContextualNodeRead');
+    expect(source).not.toContain('handleUseContextualNodeRead');
+    expect(source).not.toContain('handleUseAttentionNode');
+    for (const forbiddenForeground of [
+      'Reread contents',
+      '<strong>For:</strong>',
+      'Use selected in chat',
+    ]) {
+      expect(nativeSurface).not.toContain(forbiddenForeground);
+    }
   });
 
 });

@@ -148,21 +148,30 @@ describe('canonical subject chat links', () => {
     const rocket = matcher.segmentMessage('assistant', 'Rocket Lab')[0].target!;
     const electron = matcher.segmentMessage('assistant', 'Electron')[0].target!;
     const visualId = 'node-name:Rocket%20Lab';
+    const electronVisualId = 'knowgraph:know-electron';
     const joinedPresentation: JoinedGraphPresentation = {
-      mode: 'all',
       projection: {
         schemaVersion: 'joined.v1', projectId: 'project-1',
-        nodes: [{ id: visualId, label: 'Rocket Lab' }], edges: [],
+        nodes: [
+          { id: visualId, label: 'Rocket Lab' },
+          { id: electronVisualId, label: 'Electron' },
+        ], edges: [],
       },
       nativeProjections: current,
-      nodeVariants: new Map([[visualId, [
-        { authority: 'thinkgraph', node: current.thinkgraph.nodes[0] },
-        { authority: 'knowgraph', node: current.knowgraph.nodes[0] },
-      ]]]),
+      nodeVariants: new Map([
+        [visualId, [
+          { authority: 'thinkgraph', node: current.thinkgraph.nodes[0] },
+          { authority: 'knowgraph', node: current.knowgraph.nodes[0] },
+        ]],
+        [electronVisualId, [
+          { authority: 'knowgraph', node: current.knowgraph.nodes[1] },
+        ]],
+      ]),
       edgeVariants: new Map(),
       visualNodeIdByNativeMember: new Map([
         ['thinkgraph:think-rocket', visualId],
         ['knowgraph:know-rocket', visualId],
+        ['knowgraph:know-electron', electronVisualId],
       ]),
     };
     const directory = current.thinkgraph.canonicalSubjectDirectory!;
@@ -174,11 +183,12 @@ describe('canonical subject chat links', () => {
       request: { ...rocket, requestId: 1 },
     })).toBe(visualId);
     expect(resolveCanonicalSubjectFocusVisualId({
-      authority: 'knowgraph',
-      projection: current.knowgraph,
+      authority: 'joined',
+      projection: joinedPresentation.projection,
+      joinedPresentation,
       directory,
       request: { ...electron, requestId: 2 },
-    })).toBe('know-electron');
+    })).toBe(electronVisualId);
     expect(resolveCanonicalSubjectFocusVisualId({
       authority: 'joined',
       projection: joinedPresentation.projection,

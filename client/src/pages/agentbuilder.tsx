@@ -30,13 +30,7 @@ import useAgentBuilderWorkspaceLayout, {
   shouldCloseCanvasInspector,
 } from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
-import KnowledgeGraphFramework, {
-  type KnowledgeSurfaceKind,
-} from '../components/knowledge/KnowledgeGraphFramework';
-import type {
-  ContextualNodeReadView,
-  GraphProjectionNode,
-} from '../components/knowledge/NativeAuthorityGraphSurface';
+import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import {
@@ -44,9 +38,6 @@ import {
   selectedConversationId,
 } from '../features/agentbuilder/console/mainSessionClient';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
-import type {
-  LoadedCardGraphReference,
-} from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
 } from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -75,7 +66,6 @@ import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 // deck primitives/new-project template/document logic and rail derivation live in the feature.
 import {
   cloneDeckDocument,
-  DEFAULT_WORKSPACE_ROOT,
   safeText,
 } from '../features/agentbuilder/deck/deckPrimitives';
 import {
@@ -125,8 +115,6 @@ const AgentManager = lazy(async () => {
   return { default: mod.AgentManager };
 });
 void loadAgentManager();
-
-import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
 // Agent Builder page: left workspace rail, Main Chat, canvas, and one six-tab Card inspector.
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
@@ -247,8 +235,8 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
   }
   return card.id;
 }
-// Hermes owns one project-intelligence canvas. ThinkGraph, KnowGraph, and
-// CodeGraph remain native authorities; Joined and All are presentation-only views.
+// The launch surface renders one mixed human graph. ThinkGraph and KnowGraph
+// remain separate native authorities; CodeGraph remains agent-facing through CBM.
 const PROJECTS_API = '/api/projects';
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -386,8 +374,6 @@ export default function AgentBuilder(): React.ReactElement {
   }, [companionVisibleWidth, inspectorDrawerOpen, setInspectorDrawerOpen, workspaceView]);
 
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
-  const [transientCardGraphContext, setTransientCardGraphContext] =
-    useState<Record<string, LoadedCardGraphReference[]>>({});
   const mainCardId = useMemo(
     () => deck.nodes.find((card) => (
       card.runtime.kind === 'hermes' && card.runtime.mode === 'main'
@@ -459,8 +445,6 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
     [deck.nodes],
   );
-  const [knowledgeGraphKind, setKnowledgeGraphKind] =
-    useState<KnowledgeSurfaceKind>('joined');
   // Resolve existing conversation links once; continuity stays project-owned,
   // without conversation navigation controls or a URL-driven swap mid-turn.
   const [conversationId] = useState(() => (
@@ -485,14 +469,9 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     if (workspaceView !== 'knowledge') setSubjectFocusRequest(null);
   }, [activeProject, workspaceView]);
-  const handleKnowledgeGraphKindChange = useCallback((kind: KnowledgeSurfaceKind) => {
-    setSubjectFocusRequest(null);
-    setKnowledgeGraphKind(kind);
-  }, []);
   const handleCanonicalSubjectFocus = useCallback((target: CanonicalSubjectFocusTarget) => {
     if (!activeProject || target.projectId !== activeProject) return;
     subjectFocusRequestIdentityRef.current += 1;
-    setKnowledgeGraphKind(target.view);
     setWorkspaceView('knowledge');
     setSubjectFocusRequest({
       ...target,
@@ -546,107 +525,6 @@ export default function AgentBuilder(): React.ReactElement {
     graphAttention.observeThinkGraphFailure,
     graphAttention.observeThinkGraphRevision,
   ]);
-  const handleUseAttentionNode = useCallback((
-    authority: 'thinkgraph' | 'knowgraph' | 'codegraph',
-    node: GraphProjectionNode,
-  ) => {
-    if (!mainCardId) {
-      setDeckStatusMessage('Main Card is unavailable for graph context selection.');
-      return;
-    }
-    const nativeId = String(node.canonicalId || node.id || '').trim();
-    if (!nativeId) {
-      setDeckStatusMessage('Selected graph object has no native identity.');
-      return;
-    }
-    const authorityName = ({
-      thinkgraph: 'ThinkGraph',
-      knowgraph: 'KnowGraph',
-      codegraph: 'CodeGraph',
-    } as const)[authority];
-    const sourceProjection = graphAttention.projections[authority];
-    const relatedEdges = sourceProjection.edges.filter(
-      (edge) => edge.source === node.id || edge.target === node.id,
-    );
-    const relatedNodeIds = new Set<string>([node.id]);
-    for (const edge of relatedEdges) {
-      relatedNodeIds.add(edge.source);
-      relatedNodeIds.add(edge.target);
-    }
-    setTransientCardGraphContext((current) => {
-      const existing = current[mainCardId] || [];
-      const replacementKey = `${authorityName}:${nativeId}`;
-      const next: LoadedCardGraphReference = {
-        targetCardId: mainCardId,
-        reference: {
-          authority: authorityName,
-          nativeId,
-          reason: 'Explicitly selected by the user as grounding for the next Main invocation.',
-          order: existing.length,
-          boundedExpansion: authority === 'thinkgraph' ? 0 : 1,
-          resultLimit: 12,
-          required: true,
-        },
-        resolvedReferences: [],
-        resolvedContextMarkdown: '',
-        graphProjection: {
-          ...sourceProjection,
-          nodes: sourceProjection.nodes.filter((candidate) => relatedNodeIds.has(candidate.id)),
-          edges: relatedEdges,
-        },
-        resolved: false,
-        ready: false,
-      };
-      return {
-        ...current,
-        [mainCardId]: [
-          ...existing.filter((item) => (
-            `${item.reference.authority}:${item.reference.nativeId}` !== replacementKey
-          )),
-          next,
-        ].map((item, order) => ({
-          ...item,
-          reference: { ...item.reference, order },
-        })),
-      };
-    });
-    setDeckStatusMessage(`${authorityName} reference selected for Main; Python will reread it on send.`);
-  }, [graphAttention.projections, mainCardId, setDeckStatusMessage]);
-  // CodeGraph repository identity is resolved from the authoritative CBM index.
-  // The canonical ready project wins over stale same-root validation indexes.
-  const [codeGraphProjectName, setCodeGraphProjectName] = useState<string>('');
-  const [codeGraphProjectError, setCodeGraphProjectError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    // CodeGraph is an explicitly opened product surface. Agent Canvas and the
-    // other graph tabs must not probe CBM merely because the workspace mounted.
-    if (
-      workspaceView !== 'knowledge'
-      || knowledgeGraphKind !== 'codegraph'
-      || !canvasProjectId
-      || !mainCardId
-    ) return;
-    void resolveCbmProjectName(DEFAULT_WORKSPACE_ROOT, {
-      context: { projectId: canvasProjectId, deckId: BUILDER_DECK_ID, cardId: mainCardId },
-    })
-      .then((name) => {
-        if (!cancelled) {
-          setCodeGraphProjectName(name);
-          setCodeGraphProjectError(null);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setCodeGraphProjectName('');
-          setCodeGraphProjectError(
-            error instanceof Error ? error.message : 'CBM project identity resolution failed',
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canvasProjectId, knowledgeGraphKind, mainCardId, workspaceView]);
   const prepareRunImages = useCallback(async (targetCardId: string | null) => {
     if (!targetCardId || targetCardId !== worldViewCard?.id || workspaceView !== 'worldview') {
       return [];
@@ -674,9 +552,6 @@ export default function AgentBuilder(): React.ReactElement {
     deckId: BUILDER_DECK_ID,
     conversationId,
     directChatTargets,
-    dataAnchors: mainCardId
-      ? (transientCardGraphContext[mainCardId] || []).map((item) => item.reference)
-      : [],
     prepareRunImages,
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
@@ -716,89 +591,6 @@ export default function AgentBuilder(): React.ReactElement {
     worldSignalsCardId,
     worldViewCard?.id,
   ]);
-  const contextualReaderRevision = useMemo(() => {
-    const serialized = JSON.stringify(messages.slice(-24).map((message) => ({
-      role: message.role,
-      text: message.text,
-      speaker: message.speaker.cardId || message.speaker.label,
-      target: message.target?.cardId || message.target?.label || '',
-      status: message.status || 'complete',
-    })));
-    let fingerprint = 2166136261;
-    for (let index = 0; index < serialized.length; index += 1) {
-      fingerprint ^= serialized.charCodeAt(index);
-      fingerprint = Math.imul(fingerprint, 16777619);
-    }
-    return `${conversationId}:${messages.length}:${(fingerprint >>> 0).toString(16)}`;
-  }, [conversationId, messages]);
-  const handleUseContextualNodeRead = useCallback((
-    result: ContextualNodeReadView,
-    _node: GraphProjectionNode,
-  ) => {
-    if (!mainCardId) {
-      setDeckStatusMessage('Main Card is unavailable for contextual graph selection.');
-      return;
-    }
-    const selected = result.dataAnchors.filter((anchor) => (
-      (anchor.authority === 'ThinkGraph' || anchor.authority === 'KnowGraph')
-      && Boolean(anchor.nativeId)
-    ));
-    if (!selected.length) {
-      setDeckStatusMessage('This contextual node read selected no native content.');
-      return;
-    }
-    setTransientCardGraphContext((current) => {
-      const existing = current[mainCardId] || [];
-      const replacementKeys = new Set(selected.map(
-        (anchor) => `${anchor.authority}:${anchor.nativeId}`,
-      ));
-      const retained = existing.filter((item) => !replacementKeys.has(
-        `${item.reference.authority}:${item.reference.nativeId}`,
-      ));
-      const additions: LoadedCardGraphReference[] = selected.map((anchor) => {
-        const side = anchor.authority === 'ThinkGraph'
-          ? result.sides.think
-          : result.sides.know;
-        const selectedItem = side.items?.find(
-          item => item.nativeId === anchor.nativeId,
-        );
-        return {
-          targetCardId: mainCardId,
-          reference: {
-            authority: anchor.authority,
-            nativeId: anchor.nativeId,
-            reason: anchor.reason,
-            order: 0,
-            boundedExpansion: 0,
-            resultLimit: 1,
-            required: true,
-          },
-          resolvedReferences: selectedItem ? [selectedItem.reference] : [],
-          resolvedContextMarkdown: result.modelContext,
-          graphProjection: {
-            schemaVersion: 'contextual-node-selection.v1',
-            authority: anchor.authority.toLowerCase(),
-            projectId: activeProject,
-            nodes: [],
-            edges: [],
-            counts: { nodes: 0, edges: 0 },
-          },
-          resolved: true,
-          ready: true,
-        };
-      });
-      return {
-        ...current,
-        [mainCardId]: [...retained, ...additions].map((item, order) => ({
-          ...item,
-          reference: { ...item.reference, order },
-        })),
-      };
-    });
-    setDeckStatusMessage(
-      `${selected.length} contextual native ${selected.length === 1 ? 'block' : 'blocks'} selected for Main; Python will reread the exact IDs on send.`,
-    );
-  }, [activeProject, mainCardId, setDeckStatusMessage]);
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -1724,11 +1516,8 @@ export default function AgentBuilder(): React.ReactElement {
   }) => {
     return (
       <div style={getSurfaceShellStyle(minHeight <= 320)}>
-        <KnowledgeSurfaceErrorBoundary key={`knowledge-${knowledgeGraphKind}`}>
+        <KnowledgeSurfaceErrorBoundary>
           <KnowledgeGraphFramework
-            codeGraphProjectName={codeGraphProjectName || null}
-            codeGraphProjectError={codeGraphProjectError}
-            kind={knowledgeGraphKind}
             minHeight={minHeight}
             surfaceRole={surfaceRole}
             attentionProjections={graphAttention.projections}
@@ -1738,18 +1527,13 @@ export default function AgentBuilder(): React.ReactElement {
             attentionStatuses={graphAttention.statuses}
             jevAttentionVisual={graphAttention.jevAttentionVisual}
             onReadNativeFocusNeighborhood={graphAttention.readNativeNeighborhood}
-            onReadContextualNode={graphAttention.readContextualNode}
-            contextualReaderRevision={contextualReaderRevision}
             onExpandAttentionNode={(authority, node) => graphAttention.expandNode({
               authority,
               node,
               projectId: activeProject,
-              codeGraphProject: codeGraphProjectName || null,
+              codeGraphProject: null,
               readerCardId: mainCardId,
             })}
-            onUseAttentionNode={handleUseAttentionNode}
-            onUseContextualNodeRead={handleUseContextualNodeRead}
-            onKindChange={handleKnowledgeGraphKindChange}
             subjectFocusRequest={subjectFocusRequest}
           />
         </KnowledgeSurfaceErrorBoundary>
@@ -1777,7 +1561,6 @@ export default function AgentBuilder(): React.ReactElement {
     if (!(await closeInspectorDrawer())) return;
     setCurrentResponderCardId(null);
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind('joined');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'knowledge');
     window.history.replaceState(

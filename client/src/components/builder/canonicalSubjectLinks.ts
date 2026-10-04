@@ -38,7 +38,7 @@ export type CanonicalSubjectMatcher = {
   ) => CanonicalSubjectTextSegment[];
 };
 
-export type CanonicalSubjectFocusSurface = CanonicalSubjectAuthority | 'joined';
+export type CanonicalSubjectFocusSurface = 'joined';
 
 type TrieNode = {
   children: Map<string, TrieNode>;
@@ -389,12 +389,21 @@ export function resolveCanonicalSubjectFocusVisualId({
     || projection.projectId !== request.projectId
     || !Number.isSafeInteger(request.requestId)
     || request.requestId < 1) return null;
-  if (authority !== 'joined') {
-    if (request.view !== authority || request.members.length !== 1) return null;
+  if (request.members.length === 1 && joinedPresentation) {
     const member = request.members[0];
-    return member.authority === authority
-      && exactFocusNode(projection, directory, request, member)
-      ? member.nativeId
+    if (request.view !== member.authority) return null;
+    const nativeProjection = joinedPresentation.nativeProjections[member.authority];
+    if (!exactFocusNode(nativeProjection, directory, request, member)) return null;
+    const visualId = joinedPresentation.visualNodeIdByNativeMember.get(
+      `${member.authority}:${member.nativeId}`,
+    );
+    if (!visualId) return null;
+    const variants = joinedPresentation.nodeVariants.get(visualId) || [];
+    return variants.length === 1
+      && variants[0].authority === member.authority
+      && variants[0].node.id === member.nativeId
+      && projection.nodes.some(node => node.id === visualId)
+      ? visualId
       : null;
   }
   if (request.view !== 'all'

@@ -1,136 +1,59 @@
-// @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
 
-import { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('../../vendor/codebase-memory-ui/src/components/GraphScene', () => ({
-  computeCameraTarget: vi.fn(() => null),
-  GraphScene: ({
-    data,
-  }: {
-    data: {
-      nodes: Array<{ native_id?: string }>;
-      edges: Array<{ type: string }>;
-    };
-  }) => (
-    <div data-testid="cbm-graph-scene">
-      {data.nodes.map((node) => node.native_id).join(',')}|{data.edges.map((edge) => edge.type).join(',')}
-    </div>
-  ),
-}));
-
-import KnowledgeGraphFramework from './KnowledgeGraphFramework';
-import AgentBuilderRail from '../../features/agentbuilder/core/AgentBuilderRail';
-import CompanionSurfaceHost from '../../features/agentbuilder/core/CompanionSurfaceHost';
-
-const empty = (authority: 'thinkgraph' | 'knowgraph') => ({
-  schemaVersion: `${authority}.attention.projection.v1`,
-  authority,
-  projectId: 'project-1',
-  nodes: [],
-  edges: [],
-});
-
-const boundedCodeGraphProjection = {
-  schemaVersion: 'codegraph.attention.projection.v1',
-  authority: 'codegraph' as const,
-  projectId: 'project-1',
-  counts: { nodes: 2, edges: 1 },
-  nodes: [
-    {
-      id: 'C-Projects-LiquidAIty-main.client.src.components.knowledge.NativeAuthorityGraphSurface.NativeCodeGraphSurface',
-      label: 'NativeCodeGraphSurface',
-      type: 'Function',
-      mentionCount: 1,
-      properties: { file_path: 'client/src/components/knowledge/NativeAuthorityGraphSurface.tsx' },
-    },
-    {
-      id: 'C-Projects-LiquidAIty-main.client.src.components.knowledge.KnowledgeGraphFramework.KnowledgeGraphFramework',
-      label: 'KnowledgeGraphFramework',
-      type: 'Function',
-      mentionCount: 1,
-      properties: { file_path: 'client/src/components/knowledge/KnowledgeGraphFramework.tsx' },
-    },
-  ],
-  edges: [
-    {
-      id: 'knowledge-framework:CALLS:native-codegraph-surface',
-      source: 'C-Projects-LiquidAIty-main.client.src.components.knowledge.KnowledgeGraphFramework.KnowledgeGraphFramework',
-      target: 'C-Projects-LiquidAIty-main.client.src.components.knowledge.NativeAuthorityGraphSurface.NativeCodeGraphSurface',
-      predicate: 'CALLS',
-      mentionCount: 1,
-    },
-  ],
-};
-
-function ProductGraphsHarness() {
-  const [workspaceView, setWorkspaceView] = useState('chat');
-  return (
-    <div style={{ width: 1200, height: 800 }}>
-      <AgentBuilderRail
-        colors={{ panel: '#000', border: '#222', primary: '#2dd4bf', text: '#fff' }}
-        workspaceView={workspaceView}
-        visibleRailItems={{
-          showKnowledge: true,
-          showWorldsignal: false,
-          showWorldview: false,
-          showTrading: false,
-        }}
-        moonOrb={null}
-        onShowWorldsignalWorkspace={vi.fn()}
-        onShowWorldviewWorkspace={vi.fn()}
-        onShowCanvasWorkspace={() => setWorkspaceView('canvas')}
-        onOpenAddAgent={vi.fn()}
-        onShowKnowledgeWorkspace={() => setWorkspaceView('knowledge')}
-        onShowTradingWorkspace={vi.fn()}
-        onOpenNavigationDrawer={vi.fn()}
-      />
-      <CompanionSurfaceHost
-        workspaceView={workspaceView}
-        tradingSurface={null}
-        worldsignalSurface={null}
-        knowledgeSurface={(
-          <KnowledgeGraphFramework
-            codeGraphProjectName="C-Projects-LiquidAIty-main"
-            codeGraphProjectError={null}
-            kind="codegraph"
-            attentionProjections={{
-              thinkgraph: empty('thinkgraph'),
-              knowgraph: empty('knowgraph'),
-              codegraph: boundedCodeGraphProjection,
-            }}
-            attentionErrors={{}}
-            onExpandAttentionNode={vi.fn()}
-            onUseAttentionNode={vi.fn()}
-            onKindChange={vi.fn()}
-          />
-        )}
-      />
-    </div>
-  );
-}
-
-describe('product Graphs tab CodeGraph preservation', () => {
-  it('opens the in-product Graphs surface and renders only supplied native CBM identities', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    render(<ProductGraphsHarness />);
-
-    expect(screen.queryByTestId('cbm-graph-scene')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Graphs' }));
-
-    const scene = await waitFor(
-      () => screen.getByTestId('cbm-graph-scene'),
-      { timeout: 30_000 },
+describe('launch Graphs surface', () => {
+  it('mounts one mixed native graph without graph-mode or CodeGraph presentation scaffolding', () => {
+    const framework = readFileSync(
+      new URL('./KnowledgeGraphFramework.tsx', import.meta.url),
+      'utf8',
     );
-    expect(scene.textContent).toContain('NativeAuthorityGraphSurface.NativeCodeGraphSurface');
-    expect(scene.textContent).toContain('KnowledgeGraphFramework.KnowledgeGraphFramework');
-    expect(scene.textContent).toContain('CALLS');
-    expect(screen.getByRole('tab', { name: /^ThinkGraph$/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /^KnowGraph$/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /^All$/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /^CodeGraph$/ })).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
-  }, 45_000);
+    const nativeSurface = readFileSync(
+      new URL('./NativeAuthorityGraphSurface.tsx', import.meta.url),
+      'utf8',
+    );
+
+    expect(framework).toContain('<NativeJoinedGraphSurface');
+    expect(framework).not.toContain('Knowledge graph view');
+    expect(framework).not.toContain('graph-kind-');
+    expect(framework).not.toContain('NativeCodeGraphSurface');
+    expect(framework).not.toContain('NativeThinkGraphSurface');
+    expect(framework).not.toContain('NativeKnowGraphSurface');
+    expect(nativeSurface).not.toContain('NativeCodeGraphSurface');
+    expect(nativeSurface).not.toContain('toCodeGraphData');
+    expect(nativeSurface).not.toContain("mode: 'joined' | 'all'");
+    expect(nativeSurface).not.toContain("mode === 'all'");
+  });
+
+  it('keeps complete semantic records in the calm inspector without click-time contextual reranking', () => {
+    const nativeSurface = readFileSync(
+      new URL('./NativeAuthorityGraphSurface.tsx', import.meta.url),
+      'utf8',
+    );
+    const graphAttention = readFileSync(
+      new URL('../../features/agentbuilder/state/useAgentBuilderGraphAttention.ts', import.meta.url),
+      'utf8',
+    );
+    const thinkCard = nativeSurface.slice(
+      nativeSurface.indexOf('function ThinkGraphThink'),
+      nativeSurface.indexOf('type KnowInspectorRecord'),
+    );
+    const openNodeInspector = nativeSurface.slice(
+      nativeSurface.indexOf('const openNodeInspector'),
+      nativeSurface.indexOf('inspectNodeRef.current = openNodeInspector'),
+    );
+
+    expect(nativeSurface).toContain('const INSPECTOR_RECORD_LIMIT = 2');
+    expect(nativeSurface).toContain('const visibleThinks = thinks.slice(0, INSPECTOR_RECORD_LIMIT)');
+    expect(nativeSurface).toContain('const visibleKnowItems = directKnowItems.slice(0, INSPECTOR_RECORD_LIMIT)');
+    expect(thinkCard.indexOf('semanticSections.map')).toBeLessThan(
+      thinkCard.indexOf('<h5>Properties</h5>'),
+    );
+    expect(nativeSurface).toContain('<KnowRecordCitation record={record}');
+    expect(nativeSurface).not.toContain('<summary>Details</summary>');
+    expect(nativeSurface).not.toContain('<summary>Technical details</summary>');
+    expect(nativeSurface).not.toMatch(/(?:slice|substring)\(0,\s*140\)/);
+    expect(openNodeInspector).not.toContain('setSelectedAuthority(null)');
+    expect(graphAttention).not.toContain('readContextualNode');
+    expect(graphAttention).not.toContain('/api/main/session/contextual-node-read');
+  });
 });

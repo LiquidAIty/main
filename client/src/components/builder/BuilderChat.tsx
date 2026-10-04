@@ -98,6 +98,24 @@ const COMPOSER_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gi
 const MAX_COMPOSER_IMAGE_BYTES = 10 * 1024 * 1024;
 const MESSAGE_LANE_MAX_WIDTH = 760;
 
+export const CANONICAL_SUBJECT_LINK_STYLE = Object.freeze({
+  display: "inline",
+  margin: 0,
+  padding: 0,
+  border: 0,
+  background: "transparent",
+  color: "#A7B0BA",
+  cursor: "pointer",
+  font: "inherit",
+  fontStyle: "italic",
+  letterSpacing: "inherit",
+  lineHeight: "inherit",
+  textAlign: "inherit",
+  textDecoration: "underline",
+  textDecorationStyle: "dotted",
+  textUnderlineOffset: 3,
+} as const);
+
 function readComposerImage(file: File): Promise<ComposerImage> {
   if (!COMPOSER_IMAGE_TYPES.includes(file.type)) {
     return Promise.reject(new Error("Choose a PNG, JPEG, WebP or GIF image."));
@@ -242,22 +260,7 @@ function BuilderChatMessageBubble({
                 type="button"
                 aria-label={`Open ${segment.text} in graph`}
                 onClick={() => onSubjectFocus(segment.target!)}
-                style={{
-                  display: "inline",
-                  margin: 0,
-                  padding: 0,
-                  border: 0,
-                  background: "transparent",
-                  color: colors.primary,
-                  cursor: "pointer",
-                  font: "inherit",
-                  letterSpacing: "inherit",
-                  lineHeight: "inherit",
-                  textAlign: "inherit",
-                  textDecoration: "underline",
-                  textDecorationStyle: "dotted",
-                  textUnderlineOffset: 3,
-                }}
+                style={CANONICAL_SUBJECT_LINK_STYLE}
               >
                 {segment.text}
               </button>
