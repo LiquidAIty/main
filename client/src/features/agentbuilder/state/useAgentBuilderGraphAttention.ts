@@ -158,6 +158,7 @@ export type GraphAttentionState = {
 const CARD_ACTIVE_COLOR = '#37ADAA';
 const WRITE_ATTENTION_COLOR = '#EE8C66';
 const UNKNOWN_ACTOR_COLOR = '#8B95A7';
+const KNOWGRAPH_STARTUP_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
 
 function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -684,40 +685,57 @@ export default function useAgentBuilderGraphAttention({
     return () => { thinkGraphRequestRef.current += 1; };
   }, [refreshThinkGraph, deckId]);
 
-  const refreshKnowGraph = useCallback(async (attention?: GraphHighlight) => {
+  const refreshKnowGraph = useCallback(async (
+    attention?: GraphHighlight,
+    retryCount = 0,
+  ): Promise<boolean> => {
     const requestId = ++knowGraphRequestRef.current;
     if (!projectId.trim()) {
       setStatuses((current) => ({ ...current, knowgraph: 'ready' }));
-      return;
+      return true;
     }
     setStatuses((current) => ({ ...current, knowgraph: 'loading' }));
-    try {
-      const query = new URLSearchParams({ projectId, limit: '200' });
-      const response = await fetch(`/api/knowgraph/graph?${query}`);
-      const payload = await response.json();
-      if (!response.ok || !isRecord(payload) || !Array.isArray(payload.nodes) || !Array.isArray(payload.relationships)) {
-        throw new Error('Knowledge could not be loaded.');
+    let lastFailure: unknown = null;
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      try {
+        const query = new URLSearchParams({ projectId, limit: '200' });
+        const response = await fetch(`/api/knowgraph/graph?${query}`);
+        const payload = await response.json();
+        if (!response.ok || !isRecord(payload) || !Array.isArray(payload.nodes) || !Array.isArray(payload.relationships)) {
+          throw new Error('Knowledge could not be loaded.');
+        }
+        if (requestId !== knowGraphRequestRef.current) return false;
+        // Native records supply topology and labels. Activity decorates matching
+        // IDs only; receipts and stale references never create knowledge nodes.
+        const native = knowGraphProjection(payload, projectId);
+        authoritativeKnowGraphProjectionRef.current = native;
+        setProjections((current) => {
+          const retained = attention
+            ? overlayAuthoritativeGraphAttention(overlayAuthoritativeGraphAttention(native, current.knowgraph), attention)
+            : overlayAuthoritativeGraphAttention(native, current.knowgraph);
+          return { ...current,
+            knowgraph: applyExactJevAttentionOverlays('knowgraph', retained, requestId),
+          };
+        });
+        setErrors((current) => ({ ...current, knowgraph: undefined }));
+        setStatuses((current) => ({ ...current, knowgraph: 'ready' }));
+        return true;
+      } catch (caught) {
+        lastFailure = caught;
+        if (requestId !== knowGraphRequestRef.current) return false;
+        if (attempt >= retryCount) break;
+        const delay = KNOWGRAPH_STARTUP_RETRY_DELAYS_MS[
+          Math.min(attempt, KNOWGRAPH_STARTUP_RETRY_DELAYS_MS.length - 1)
+        ];
+        await new Promise<void>(resolve => window.setTimeout(resolve, delay));
       }
-      if (requestId !== knowGraphRequestRef.current) return;
-      // Native records supply topology and labels. Activity decorates matching
-      // IDs only; receipts and stale references never create knowledge nodes.
-      const native = knowGraphProjection(payload, projectId);
-      authoritativeKnowGraphProjectionRef.current = native;
-      setProjections((current) => {
-        const retained = attention
-          ? overlayAuthoritativeGraphAttention(overlayAuthoritativeGraphAttention(native, current.knowgraph), attention)
-          : overlayAuthoritativeGraphAttention(native, current.knowgraph);
-        return { ...current,
-          knowgraph: applyExactJevAttentionOverlays('knowgraph', retained, requestId),
-        };
-      });
-      setErrors((current) => ({ ...current, knowgraph: undefined }));
-      setStatuses((current) => ({ ...current, knowgraph: 'ready' }));
-    } catch (caught) {
-      if (requestId !== knowGraphRequestRef.current) return;
-      setErrors((current) => ({ ...current, knowgraph: caught instanceof Error ? caught.message : String(caught) }));
-      setStatuses((current) => ({ ...current, knowgraph: 'error' }));
     }
+    setErrors((current) => ({
+      ...current,
+      knowgraph: lastFailure instanceof Error ? lastFailure.message : String(lastFailure),
+    }));
+    setStatuses((current) => ({ ...current, knowgraph: 'error' }));
+    return false;
   }, [applyExactJevAttentionOverlays, projectId]);
 
   const loadExactJevAttentionNode = useCallback(async ({
@@ -820,7 +838,7 @@ export default function useAgentBuilderGraphAttention({
   }, [projectId, updateJevAttentionResolution]);
 
   useEffect(() => {
-    void refreshKnowGraph();
+    void refreshKnowGraph(undefined, KNOWGRAPH_STARTUP_RETRY_DELAYS_MS.length);
     return () => { knowGraphRequestRef.current += 1; };
   }, [refreshKnowGraph, deckId]);
 

@@ -2197,7 +2197,7 @@ def test_only_externally_permitted_operations_are_in_the_mcp_catalog(monkeypatch
     assert len(tools) == len(names)
 
 
-def test_base_catalog_is_startup_safe_and_authorized_native_catalog_preserves_metadata(
+def test_complete_catalog_is_frozen_before_listing_and_preserves_native_metadata(
     monkeypatch, clear_live_cbm_operations,
 ):
     import asyncio
@@ -2287,17 +2287,11 @@ def test_base_catalog_is_startup_safe_and_authorized_native_catalog_preserves_me
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", cbm_tools)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_tools)
 
-    base_catalog = asyncio.run(mcp_host._materialize_complete_catalog())
-    assert {tool.name for tool in base_catalog} == base_expected_names
-    assert not any(tool.name.startswith(("cbm.", "graphiti.")) for tool in base_catalog)
-    native_catalog = asyncio.run(
-        mcp_host._materialize_requested_native_catalog(("cbm", "graphiti"))
-    )
-    canonical = [*base_catalog, *native_catalog]
+    canonical = asyncio.run(mcp_host._materialize_complete_catalog())
     canonical_by_name = {tool.name: tool for tool in canonical}
     assert set(canonical_by_name) == expected_names
     assert len(canonical) == len(canonical_by_name)
-    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tuple(base_catalog))
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tuple(canonical))
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: pytest.fail("catalog consulted an allowlist"))
     cbm_expected_names = base_expected_names | {
@@ -2791,7 +2785,7 @@ def test_catalog_initialization_has_no_arbitrary_30_second_deadline():
     assert "30" not in source
 
 
-def test_native_catalog_progress_begins_only_for_an_authorized_request(monkeypatch):
+def test_native_catalog_progress_is_part_of_canonical_startup(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -2814,10 +2808,6 @@ def test_native_catalog_progress_begins_only_for_an_authorized_request(monkeypat
     monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZING_FAMILY", "liquidaity")
 
     asyncio.run(mcp_host._materialize_complete_catalog())
-    assert snapshots == []
-    assert mcp_host._CATALOG_COMPLETED_FAMILIES == ("liquidaity",)
-    asyncio.run(mcp_host._materialize_requested_native_catalog(("cbm", "graphiti")))
-
     assert [item["initializingCatalogFamily"] for item in snapshots] == [
         "cbm",
         "graphiti",
@@ -2834,7 +2824,7 @@ def test_native_catalog_progress_begins_only_for_an_authorized_request(monkeypat
     assert mcp_host._CATALOG_INITIALIZING_FAMILY is None
 
 
-def test_cbm_catalog_failure_is_reported_without_blocking_application_catalog(
+def test_cbm_catalog_failure_is_reported_without_publishing_a_partial_catalog(
     monkeypatch,
 ):
     import asyncio
@@ -2863,20 +2853,22 @@ def test_cbm_catalog_failure_is_reported_without_blocking_application_catalog(
     monkeypatch.setattr(mcp_host, "_CATALOG_UNAVAILABLE_FAMILIES", ())
     monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZING_FAMILY", "liquidaity")
 
-    tools = asyncio.run(mcp_host._materialize_complete_catalog())
-    native_tools = asyncio.run(
-        mcp_host._materialize_requested_native_catalog(("cbm",))
-    )
+    asyncio.run(mcp_host._initialize_catalog_once())
+    tools = list(mcp_host._CATALOG_TOOLS or ())
 
     assert tools
     assert not any(tool.name.startswith("cbm.") for tool in tools)
-    assert native_tools == []
     assert closed == [True]
-    assert mcp_host._CATALOG_COMPLETED_FAMILIES == ("liquidaity",)
+    assert mcp_host._CATALOG_COMPLETED_FAMILIES == (
+        "liquidaity",
+        "graphiti",
+    )
     assert mcp_host._CATALOG_INITIALIZING_FAMILY is None
-    assert mcp_host._catalog_diagnostics()["unavailableCatalogFamilies"] == [
-        "cbm"
-    ]
+    diagnostics = mcp_host._catalog_diagnostics()
+    assert diagnostics["catalogReady"] is False
+    assert diagnostics["unavailableCatalogFamilies"] == ["cbm"]
+    with pytest.raises(RuntimeError, match="mcp_catalog_incomplete:cbm"):
+        asyncio.run(mcp_host.list_tools())
     assert any(
         event == "catalog_family_unavailable"
         and fields["catalog_family"] == "cbm"
@@ -4109,9 +4101,12 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
         "_native_graphiti_tools",
         lambda: asyncio.sleep(0, result=native_graphiti_tools),
     )
-    # Process startup freezes only the application catalog. An authenticated
-    # public MCP tools/list request late-binds the external native families.
+    # Process startup freezes the complete external catalog once. Public OAuth
+    # changes only which frozen view is returned; it never adds late metadata.
     asyncio.run(mcp_host._initialize_catalog_once())
+    frozen = list(mcp_host._CATALOG_TOOLS or ())
+    frozen_names = {tool.name for tool in frozen}
+    assert {"cbm.search_graph", "graphiti.get_status"}.issubset(frozen_names)
     canonical = asyncio.run(mcp_host.list_tools())
     canonical_names = {tool.name for tool in canonical}
     assert canonical
@@ -4121,15 +4116,16 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
 
     active_scopes[:] = ["main"]
     authenticated = asyncio.run(mcp_host.list_tools())
-    assert len(authenticated) == len(canonical) + 2
-    assert canonical_names < {tool.name for tool in authenticated}
+    assert len(authenticated) == len(frozen)
+    assert {tool.name for tool in authenticated} == frozen_names
+    assert canonical_names < frozen_names
     assert {"cbm.search_graph", "graphiti.get_status"}.issubset(
         {tool.name for tool in authenticated}
     )
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
     main_payload = json.loads(main_context[0].text)
     assert main_payload["ok"] is True
-    expected_count, expected_hash = mcp_host._catalog_identity(canonical)
+    expected_count, expected_hash = mcp_host._catalog_identity(frozen)
     assert main_payload["diagnostics"] == {
         "state": "ready",
         "catalogState": "ready",
@@ -4142,7 +4138,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
         "unavailableCatalogFamilies": [],
         "initializingCatalogFamily": None,
         "toolCount": expected_count,
-        "uniqueToolCount": len({tool.name for tool in canonical}),
+        "uniqueToolCount": len(frozen_names),
         "catalogHash": expected_hash,
         "processId": mcp_host._STARTUP_PROCESS_ID,
         "startupId": mcp_host._STARTUP_ID,

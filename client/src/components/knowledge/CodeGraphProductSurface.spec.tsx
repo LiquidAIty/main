@@ -51,9 +51,15 @@ describe('launch Graphs surface', () => {
     expect(nativeSurface).toContain('<KnowRecordCitation record={record}');
     expect(nativeSurface).not.toContain('<summary>Details</summary>');
     expect(nativeSurface).not.toContain('<summary>Technical details</summary>');
+    expect(nativeSurface).not.toContain('<details className="graph-know-history">');
     expect(nativeSurface).not.toMatch(/(?:slice|substring)\(0,\s*140\)/);
     expect(openNodeInspector).not.toContain('setSelectedAuthority(null)');
     expect(graphAttention).not.toContain('readContextualNode');
     expect(graphAttention).not.toContain('/api/main/session/contextual-node-read');
+    expect(graphAttention).toContain('KNOWGRAPH_STARTUP_RETRY_DELAYS_MS');
+    expect(graphAttention).toContain(
+      'refreshKnowGraph(undefined, KNOWGRAPH_STARTUP_RETRY_DELAYS_MS.length)',
+    );
+    expect(nativeSurface).toContain('panelBodyRef.current.scrollTop = 0');
   });
 });

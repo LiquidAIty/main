@@ -317,10 +317,17 @@ def _catalog_diagnostics() -> dict[str, Any]:
             current_source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
     except OSError:
         current_source_sha256 = None
+    required_families = {"liquidaity", *_NATIVE_PREFIXES.keys()}
+    catalog_ready = bool(
+        state == "ready"
+        and identity
+        and not unavailable_families
+        and required_families.issubset(completed_families)
+    )
     return {
         "state": state,
         "catalogState": state,
-        "catalogReady": state == "ready" and bool(identity),
+        "catalogReady": catalog_ready,
         **({"catalogFailure": failure} if failure else {}),
         **({"failureCode": failure_code} if failure_code else {}),
         **({"failureSummary": failure_summary} if failure_summary else {}),
@@ -2643,6 +2650,13 @@ async def _materialize_complete_catalog() -> list[Tool]:
             )
     _complete_catalog_family("liquidaity")
     tools = [_bind_operation_access(tool) for tool in tools]
+    native_tools = await _materialize_requested_native_catalog(
+        tuple(_NATIVE_PREFIXES)
+    )
+    existing_names = {tool.name for tool in tools}
+    tools.extend(
+        tool for tool in native_tools if tool.name not in existing_names
+    )
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -2885,6 +2899,8 @@ def _catalog_or_error() -> list[Tool]:
         state = _CATALOG_STATE
         failure = _CATALOG_FAILURE
         tools = _CATALOG_TOOLS
+        completed_families = set(_CATALOG_COMPLETED_FAMILIES)
+        unavailable_families = tuple(_CATALOG_UNAVAILABLE_FAMILIES)
     if state == "initializing":
         raise RuntimeError("mcp_catalog_initializing")
     if state == "failed":
@@ -2893,12 +2909,19 @@ def _catalog_or_error() -> list[Tool]:
         )
     if state != "ready" or tools is None:
         raise RuntimeError("mcp_catalog_readiness_invalid")
+    required_families = {"liquidaity", *_NATIVE_PREFIXES.keys()}
+    missing_families = sorted(required_families - completed_families)
+    if unavailable_families or missing_families:
+        detail = unavailable_families or tuple(missing_families)
+        raise RuntimeError(
+            "mcp_catalog_incomplete:" + ",".join(detail)
+        )
     return list(tools)
 
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    """Return the base catalog plus authorized request-scoped external families."""
+    """Return one frozen catalog, narrowed only for internal scoped callers."""
     with _CATALOG_DIAGNOSTIC_LOCK:
         initializing = _CATALOG_STATE == "initializing"
     if initializing:
@@ -2909,14 +2932,14 @@ async def list_tools() -> list[Tool]:
         # client cancellation, then return only its frozen terminal catalog.
         await asyncio.shield(_start_catalog_initialization())
     tools = _catalog_or_error()
-    families = _requested_native_catalog_families()
-    if families:
-        existing_names = {tool.name for tool in tools}
-        tools.extend(
-            tool
-            for tool in await _materialize_requested_native_catalog(families)
-            if tool.name not in existing_names
+    families = set(_requested_native_catalog_families())
+    tools = [
+        tool for tool in tools
+        if not any(
+            tool.name.startswith(prefix) and family not in families
+            for family, prefix in _NATIVE_PREFIXES.items()
         )
+    ]
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         raise RuntimeError("federated_duplicate_tool_name:" + ",".join(sorted({

@@ -2633,6 +2633,7 @@ export function NativeGraphProjectionSurface({
 
   useEffect(() => {
     if (inspectorOpen || controlsOpen) {
+      if (inspectorOpen && panelBodyRef.current) panelBodyRef.current.scrollTop = 0;
       panelBodyRef.current?.querySelector<HTMLElement>('[tabindex="-1"], select')?.focus();
     }
   }, [controlsOpen, inspectorOpen, selectedAuthority, selectedEdgeId, selectedId, selectedMemberKey]);
@@ -3042,8 +3043,8 @@ export function NativeGraphProjectionSurface({
               : undefined}
           />)}
         </section> : null}
-        {earlierKnowItems.length ? <details className="graph-know-history">
-          <summary>Earlier Knows ({earlierKnowItems.length})</summary>
+        {earlierKnowItems.length ? <section className="graph-know-history">
+          <h4>Earlier Knows ({earlierKnowItems.length})</h4>
           <div>{earlierKnowItems.map((record, index) => <KnowGraphKnow
             key={record.nativeId}
             record={record}
@@ -3054,7 +3055,7 @@ export function NativeGraphProjectionSurface({
               ? () => { void deleteKnow(record.nativeId); }
               : undefined}
           />)}</div>
-        </details> : null}
+        </section> : null}
         {inspectedAuthority === 'knowgraph' && selected && !selectedEdge
           ? <KnowSourceList records={directKnowItems} id={knowSourceListId} />
           : null}

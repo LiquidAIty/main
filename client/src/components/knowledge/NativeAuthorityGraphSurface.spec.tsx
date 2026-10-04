@@ -1785,8 +1785,7 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText(paragraph)).toBeTruthy();
     expect(screen.getByText('Second complete current Know.')).toBeTruthy();
     expect(screen.getAllByText('Research package · 2 sources').length).toBeGreaterThan(0);
-    const earlier = screen.getByText('Earlier Knows (1)').parentElement as HTMLDetailsElement;
-    expect(earlier.open).toBe(false);
+    const earlier = screen.getByText('Earlier Knows (1)').parentElement!;
     expect(earlier.textContent).toContain('Earlier complete Know.');
     const sourceList = screen.getByRole('heading', { name: 'Sources' }).parentElement!;
     const sourceHrefs = Array.from(sourceList.querySelectorAll('a')).map(link => link.getAttribute('href'));
