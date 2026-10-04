@@ -453,7 +453,7 @@ def _mark_catalog_family_unavailable(
     failure_code: str,
     failure_summary: str,
 ) -> None:
-    """Record one optional provider family as unavailable without failing the catalog."""
+    """Record one provider family as unavailable for readiness diagnostics."""
 
     global _CATALOG_UNAVAILABLE_FAMILIES, _CATALOG_INITIALIZING_FAMILY
     with _CATALOG_DIAGNOSTIC_LOCK:
@@ -800,6 +800,15 @@ def _internal_mcp_principal() -> dict[str, Any] | None:
     return dict(principal) if isinstance(principal, dict) else None
 
 
+def _published_mcp_tool_names() -> frozenset[str]:
+    """Read the exact frozen external publication surface without rebuilding it."""
+
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        if _CATALOG_STATE != "ready" or _CATALOG_TOOLS is None:
+            return frozenset()
+        return frozenset(tool.name for tool in _CATALOG_TOOLS)
+
+
 def _request_tool_is_allowed(name: str) -> bool:
     if not _tool_is_allowed(name):
         return False
@@ -811,7 +820,13 @@ def _request_tool_is_allowed(name: str) -> bool:
     if access is None:
         return principal is None
     if principal is None:
-        return True
+        if not OAUTH_ENFORCED:
+            return True
+        # Preserve the canonical unknown-tool result for names the registry has
+        # never owned, but do not let a stale external client invoke a known
+        # internal-only operation that is absent from this process's frozen
+        # MCP publication catalog.
+        return access is None or name in _published_mcp_tool_names()
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
         return False

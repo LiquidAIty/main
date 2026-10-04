@@ -874,7 +874,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
     import jwt
     import mcp_host
 
-    mcp_host._register_native_cbm_catalog(mcp_host._namespace_native_tools("cbm", [
+    native_cbm_catalog = mcp_host._namespace_native_tools("cbm", [
         mcp_host.Tool(
             name="get_code_snippet",
             description="Read current source.",
@@ -893,7 +893,8 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
             inputSchema={"type": "object"},
             annotations={"readOnlyHint": False},
         ),
-    ]))
+    ])
+    mcp_host._register_native_cbm_catalog(native_cbm_catalog)
 
     secret = "0123456789abcdef0123456789abcdef"
     now = int(time.time())
@@ -936,30 +937,18 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", (
         mcp_host.Tool(name="canvas.inspect", description="base", inputSchema={"type": "object"}),
+        *native_cbm_catalog,
     ))
     monkeypatch.setattr(
         mcp_host,
+        "_CATALOG_COMPLETED_FAMILIES",
+        ("liquidaity", "cbm", "graphiti"),
+    )
+    monkeypatch.setattr(mcp_host, "_CATALOG_UNAVAILABLE_FAMILIES", ())
+    monkeypatch.setattr(
+        mcp_host,
         "_native_cbm_tools",
-        lambda: asyncio.sleep(0, result=[
-            mcp_host.Tool(
-                name="get_code_snippet",
-                description="read",
-                inputSchema={"type": "object"},
-                annotations={"readOnlyHint": True},
-            ),
-            mcp_host.Tool(
-                name="search_graph",
-                description="ungranted read",
-                inputSchema={"type": "object"},
-                annotations={"readOnlyHint": True},
-            ),
-            mcp_host.Tool(
-                name="index_repository",
-                description="write",
-                inputSchema={"type": "object"},
-                annotations={"readOnlyHint": False},
-            ),
-        ]),
+        lambda: pytest.fail("frozen catalog attempted CBM rediscovery"),
     )
     monkeypatch.setattr(
         mcp_host,
@@ -2197,6 +2186,37 @@ def test_only_externally_permitted_operations_are_in_the_mcp_catalog(monkeypatch
     assert len(tools) == len(names)
 
 
+def test_stale_external_catalog_cannot_invoke_known_internal_only_operation(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+
+    published = mcp_host.Tool(
+        name="main.context",
+        description="Published external operation.",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", (published,))
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
+    monkeypatch.setattr(
+        mcp_host,
+        "_CATALOG_COMPLETED_FAMILIES",
+        ("liquidaity", "cbm", "graphiti"),
+    )
+    monkeypatch.setattr(mcp_host, "_CATALOG_UNAVAILABLE_FAMILIES", ())
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+
+    assert mcp_host._request_tool_is_allowed("main.context") is True
+    assert mcp_host._request_tool_is_allowed("calculator") is False
+    assert mcp_host._request_tool_is_allowed("not_a_real_tool") is True
+
+    stale = asyncio.run(mcp_host.call_tool("calculator", {"expression": "1+1"}))
+    assert stale.isError is True
+    assert json.loads(stale.content[0].text)["error"] == "tool_not_granted"
+
+
 def test_complete_catalog_is_frozen_before_listing_and_preserves_native_metadata(
     monkeypatch, clear_live_cbm_operations,
 ):
@@ -2684,6 +2704,8 @@ def test_http_tools_list_waits_for_the_one_frozen_catalog(monkeypatch):
 
     async def complete_catalog():
         await release.wait()
+        for family in ("liquidaity", "cbm", "graphiti"):
+            mcp_host._complete_catalog_family(family)
         return [Tool(
             name="ready.tool",
             description="Ready only after the full catalog freezes.",
@@ -2695,7 +2717,6 @@ def test_http_tools_list_waits_for_the_one_frozen_catalog(monkeypatch):
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZATION_TASK", None)
-
     async def check():
         pending = asyncio.create_task(mcp_host.list_tools())
         await asyncio.sleep(0)
@@ -2721,6 +2742,8 @@ def test_catalog_initialization_is_process_wide_once(monkeypatch):
         nonlocal calls
         calls += 1
         await asyncio.sleep(0)
+        for family in ("liquidaity", "cbm", "graphiti"):
+            mcp_host._complete_catalog_family(family)
         return [
             Tool(
                 name=name,
@@ -2735,7 +2758,6 @@ def test_catalog_initialization_is_process_wide_once(monkeypatch):
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZATION_TASK", None)
-
     async def check():
         first = mcp_host._start_catalog_initialization()
         second = mcp_host._start_catalog_initialization()
@@ -2900,6 +2922,8 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
         calls += 1
         entered.set()
         await release.wait()
+        for family in ("liquidaity", "cbm", "graphiti"):
+            mcp_host._complete_catalog_family(family)
         return [
             Tool(
                 name=name,
@@ -3321,8 +3345,8 @@ def test_repository_has_one_application_owned_host_cbm_boundary():
         ),
         encoding="utf-8",
     ).read()
-    assert "vendor/codebase-memory-ui/src/components/GraphTab" in codegraph_surface
-    assert "attentionData={attentionData}" in codegraph_surface
+    assert "vendor/codebase-memory-ui/src/components/GraphTab" not in codegraph_surface
+    assert "attentionData={attentionData}" not in codegraph_surface
 
 
 def test_codegraph_host_root_derives_the_canonical_project_identity():
