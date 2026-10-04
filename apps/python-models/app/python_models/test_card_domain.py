@@ -6969,3 +6969,92 @@ def test_atomic_research_write_event_read_is_exact_run_and_card_scoped(
         "cardId": "knowgraph",
     }
     assert seen[0][2] == "event agtype"
+
+
+def _atomic_know_claim_payload() -> dict:
+    return {
+        "projectId": "project-one", "deckId": "deck-one",
+        "runId": "atomic_research:child", "cardId": "knowgraph",
+        "callId": "know-call:11111111-1111-5111-8111-111111111111",
+        "outputSlot": "know:0", "semanticSha256": "a" * 64,
+        "timestamp": "2026-10-04T12:00:00Z",
+    }
+
+
+def test_atomic_know_write_claim_is_advisory_locked_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sql = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, statement, params=None): sql.append((statement, params))
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    calls = 0
+
+    def age_rows(_cursor, query, params, _columns):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return []
+        return [{"event": {
+            "eventId": params["callId"], "callId": params["callId"],
+            "outputSlot": params["outputSlot"],
+            "semanticSha256": params["semanticSha256"], "phase": "pending",
+        }}]
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda _cursor, _project: {
+        "id": "project-canonical",
+    })
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+
+    result = card_domain.claim_atomic_know_write(_atomic_know_claim_payload())
+
+    assert result["status"] == "claimed"
+    assert "pg_advisory_xact_lock" in sql[0][0]
+    assert sql[0][1] == (
+        "know-call:11111111-1111-5111-8111-111111111111",
+    )
+
+
+def test_atomic_know_write_claim_reuses_identical_and_rejects_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def execute(self, *_args, **_kwargs): return None
+
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def cursor(self, **_kwargs): return Cursor()
+
+    payload = _atomic_know_claim_payload()
+    event = {
+        "callId": payload["callId"],
+        "outputSlot": payload["outputSlot"],
+        "semanticSha256": payload["semanticSha256"],
+        "phase": "pending",
+    }
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda _cursor, _project: {
+        "id": "project-canonical",
+    })
+    monkeypatch.setattr(
+        card_domain, "_age_rows", lambda *_args, **_kwargs: [{"event": dict(event)}],
+    )
+
+    assert card_domain.claim_atomic_know_write(payload) == {
+        "status": "existing", "event": event,
+    }
+    event["semanticSha256"] = "b" * 64
+    with pytest.raises(card_domain.CardDomainError, match="payload_conflict"):
+        card_domain.claim_atomic_know_write(payload)

@@ -22,8 +22,8 @@ def _know(name: str = "Rocket Lab evidence", count: int = 1) -> dict:
                 "interpretation": f"Bounded interpretation {index}.",
                 "citations": [{
                     "url": f"https://primary.example/report/{index}",
-                    "title": f"Primary report {index}",
-                    "publishedAt": "2026-10-01",
+                    "title": None,
+                    "publishedAt": None,
                     "sourceNote": f"This source establishes datum {index}.",
                 }],
                 "relevantEntities": ["Rocket Lab", "Revenue attribution"],
@@ -91,13 +91,13 @@ def _payload(*, call_id: str | None = CALL_ONE) -> dict:
         "thinkMemoryIds": ["think-one"],
         "output": {
             "schemaVersion": "atomic-research-response.v2",
+            "callId": call_id,
             "results": [{
                 "status": "supported" if call_id else "source-unavailable",
                 "summary": (
                     "The primary evidence supports the bounded Think."
                     if call_id else "No usable primary-source evidence was available."
                 ),
-                "callId": call_id,
             }],
         },
     }
@@ -160,41 +160,37 @@ def test_settlement_ignores_entity_and_fact_ids_as_episode_candidates() -> None:
     assert observed_ids == ["episode-one"]
 
 
-def test_out_of_order_events_settle_by_call_identity_not_order_name_or_url() -> None:
+def test_two_results_settle_through_one_call_and_one_episode_not_name_or_url() -> None:
     payload = _payload()
     payload["thinkMemoryIds"] = ["think-one", "think-two"]
     payload["output"]["results"].append({
         "status": "contradicted",
         "summary": "A second exact Know contradicts the second Think.",
-        "callId": CALL_TWO,
     })
     first = _know(name="Same name")
-    second = _know(name="Same name")
-    second["observations"][0]["datum"] = "Distinct second datum."
-    # Same URL is deliberate; URL cannot settle either write.
-    second["observations"][0]["citations"][0]["url"] = (
-        first["observations"][0]["citations"][0]["url"]
-    )
+    first["observations"].append({
+        **first["observations"][0],
+        "datum": "Distinct second datum.",
+        "interpretation": "Distinct second interpretation.",
+        "citations": [{
+            **first["observations"][0]["citations"][0],
+            "sourceNote": "The same link establishes a distinct second datum.",
+        }],
+    })
 
     result = validate_atomic_research_result(
         payload,
-        attention_reader=lambda *_args: [
-            _event(CALL_TWO, "episode-two"),
-            _event(CALL_ONE, "episode-one"),
-        ],
+        attention_reader=lambda *_args: [_event(CALL_ONE, "episode-one")],
         episode_reader=lambda _project, _ids: [
-            _episode("episode-two", CALL_TWO, know=second),
             _episode("episode-one", CALL_ONE, know=first),
         ],
     )
 
     assert [item["episodeUuid"] for item in result["result"]["results"]] == [
-        "episode-one", "episode-two",
+        "episode-one", "episode-one",
     ]
-    assert [item["know"]["observations"][0]["datum"]
-            for item in result["result"]["results"]] == [
-        "Complete qualified datum 0.", "Distinct second datum.",
-    ]
+    assert all(len(item["know"]["observations"]) == 2
+               for item in result["result"]["results"])
 
 
 def test_result_contract_rejects_model_episode_or_flat_citation_fields() -> None:
@@ -317,13 +313,9 @@ def test_source_unavailable_without_call_does_not_infer_an_episode() -> None:
     assert result["episodeCount"] == result["citationCount"] == 0
 
 
-def test_duplicate_call_identity_cannot_settle_two_results() -> None:
+def test_result_item_cannot_override_the_one_top_level_call_identity() -> None:
     payload = _payload()
     payload["thinkMemoryIds"] = ["think-one", "think-two"]
-    payload["output"]["results"].append({
-        "status": "supported",
-        "summary": "Second result.",
-        "callId": CALL_ONE,
-    })
-    with pytest.raises(AtomicResearchError, match="call_identity_reused"):
+    payload["output"]["results"][0]["callId"] = CALL_TWO
+    with pytest.raises(AtomicResearchError, match="result_contract_invalid"):
         validate_atomic_research_result(payload)

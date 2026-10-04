@@ -1654,7 +1654,7 @@ function ThinkGraphThink({
   const origin = metadata.thinkgraph_origin && typeof metadata.thinkgraph_origin === 'object'
     ? metadata.thinkgraph_origin as Record<string, unknown>
     : {};
-  const entryTime = nativeEntryTime(origin.source_message_at || item.validFrom || item.ingestedAt);
+  const entryTime = nativeEntryTime(origin.completed_at || item.validFrom || item.ingestedAt);
   const summary = typeof think.summary === 'string' && think.summary.trim()
     ? think.summary
     : typeof item.summary === 'string' && item.summary.trim()
@@ -1663,7 +1663,6 @@ function ThinkGraphThink({
         ? item.content
         : null;
   const keywords = thinkStrings(metadata.keywords);
-  const concepts = thinkStrings(think.concepts);
   const semanticSections = ([
     ['Propositions', thinkStrings(think.propositions)],
     ['Questions', thinkStrings(think.questions)],
@@ -1672,23 +1671,18 @@ function ThinkGraphThink({
     ['Preferences', thinkStrings(think.preferences)],
     ['Corrections', thinkStrings(think.corrections)],
     ['Uncertainty', thinkStrings(think.uncertainty)],
-    ['Relationship observations', thinkStrings(think.relationship_observations)],
   ] as const).filter(([, values]) => values.length > 0);
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
       <h4>{String(item.title || heading)}</h4>
-      {typeof think.kind === 'string' && think.kind ? <span>{think.kind}</span> : null}
     </div>
-    {entryTime ? <p className="graph-record-time"><span>Thought time</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
+    {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
     {summary ? <p>{summary}</p> : null}
     {semanticSections.map(([label, values]) => <section className="graph-think-section" key={label}>
       <h5>{label}</h5><ul>{values.map(value => <li key={value}>{value}</li>)}</ul>
     </section>)}
     {keywords.length ? <section className="graph-think-section">
       <h5>Keywords</h5><p>{keywords.join(' · ')}</p>
-    </section> : null}
-    {concepts.length ? <section className="graph-think-section">
-      <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
     </section> : null}
     {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
@@ -2661,8 +2655,6 @@ export function NativeGraphProjectionSurface({
         || String(left.item.id).localeCompare(String(right.item.id));
     })
     .map(({ item }) => item);
-  const visibleThinks = thinks.slice(0, INSPECTOR_RECORD_LIMIT);
-  const earlierThinks = thinks.slice(INSPECTOR_RECORD_LIMIT);
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => inspectedProjection?.nodes.find(node => node.id === id)?.label || id;
   const provenanceById = new Map<string, Record<string, any>>(
@@ -2967,28 +2959,18 @@ export function NativeGraphProjectionSurface({
           data-testid={`${inspectedAuthority}-node-inspector`} data-native-id={selected.id}>
           {selected.label}
         </span> : null}
-        {visibleThinks.length ? <section className="graph-inspector-records" data-testid="native-think-records">
-          <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
-          {visibleThinks.map((item, index) => <ThinkGraphThink
+        {thinks.length ? <section className="graph-inspector-records" data-testid="native-think-records">
+          <h4>{thinks.length > 1 ? 'Thinks' : 'Think'}</h4>
+          {thinks.map((item, index) => <ThinkGraphThink
             key={item.id}
             item={item}
-            heading={visibleThinks.length > 1 ? `Think ${index + 1}` : 'Think'}
+            heading={thinks.length > 1 ? `Think ${index + 1}` : 'Think'}
             removing={removingId === item.id}
             onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
               ? () => { void deleteThink(item.id); }
               : undefined}
           />)}
         </section> : null}
-        {earlierThinks.length ? <details className="graph-think-history">
-          <summary>Earlier Thinks ({earlierThinks.length})</summary>
-          <div>{earlierThinks.map((item, index) => <ThinkGraphThink
-            key={item.id}
-            item={item}
-            heading={`Earlier Think ${index + 1}`}
-            removing={removingId === item.id}
-            onRemove={onRemoveEvidence ? () => { void deleteThink(item.id); } : undefined}
-          />)}</div>
-        </details> : null}
         {visibleKnowItems.length ? <section className="graph-inspector-records" data-testid="native-know-records">
           <h4>{visibleKnowItems.length > 1 ? 'Current Knows' : 'Current Know'}</h4>
           {visibleKnowItems.map((record, index) => <KnowGraphKnow

@@ -2046,8 +2046,8 @@ def _source_observation_payload(*, observation_count=1):
             "interpretation": f"Bounded interpretation {index}.",
             "citations": [{
                 "url": f"https://primary.example/report/{index}",
-                "title": f"Primary report {index}",
-                "publishedAt": "2026-10-01",
+                "title": None,
+                "publishedAt": None,
                 "sourceNote": f"This link establishes datum {index}.",
             }],
             "relevantEntities": ["Rocket Lab", "Revenue attribution"],
@@ -2127,7 +2127,8 @@ def test_source_observation_v2_four_observations_map_to_one_native_episode():
     assert "sourceNote" not in native["episode_body"]
     assert "relevantEntities" not in native["episode_body"]
     assert native["source"] == "json"
-    assert native["uuid"] == authority["episode_uuid"]
+    assert "uuid" not in native
+    assert native["source_description"] == authority["source_marker"]
     assert authority["call_id"].startswith("know-call:")
 
 
@@ -2149,8 +2150,8 @@ def test_source_observation_v2_simple_observation_is_not_padded_or_split():
     second_native, second_authority = mcp_host._canonical_know_submission(
         payload, _source_observation_context(),
     )
-    assert second_native["uuid"] != native["uuid"]
-    assert second_authority["call_id"] != authority["call_id"]
+    assert second_native["uuid"] == native["uuid"]
+    assert second_authority["call_id"] == authority["call_id"]
     assert second_authority["observed_at"].endswith("Z")
 
 
@@ -2163,7 +2164,8 @@ def test_same_url_requires_distinct_source_notes_for_distinct_observations():
     native, authority = mcp_host._canonical_know_submission(
         payload, _source_observation_context(),
     )
-    assert native["uuid"] == authority["episode_uuid"]
+    assert "uuid" not in native
+    assert native["source_description"] == authority["source_marker"]
 
     payload["observations"][1]["citations"][0]["sourceNote"] = (
         payload["observations"][0]["citations"][0]["sourceNote"]
@@ -2259,6 +2261,127 @@ def test_source_observation_v2_dispatches_one_native_call_for_four_observations(
     assert calls[0][1]["group_id"] == mcp_host.graphiti_project_group_id("project-one")
     assert len(json.loads(calls[0][2]["canonical_know_json"])["observations"]) == 4
     assert result.structuredContent["result"]["callId"] == calls[0][2]["call_id"]
+
+
+def test_stable_know_identity_conflicting_payload_keeps_identity_but_changes_hash():
+    import mcp_host
+
+    first = _source_observation_payload()
+    second = _source_observation_payload()
+    second["observations"][0]["datum"] = "Conflicting datum for the same slot."
+    first_native, first_authority = mcp_host._canonical_know_submission(
+        first, _source_observation_context(),
+    )
+    second_native, second_authority = mcp_host._canonical_know_submission(
+        second, _source_observation_context(),
+    )
+
+    assert first_native["uuid"] == second_native["uuid"]
+    assert first_authority["call_id"] == second_authority["call_id"]
+    assert first_authority["semantic_sha256"] != second_authority["semantic_sha256"]
+
+
+def test_duplicate_delivery_with_pending_claim_does_not_issue_native_add(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+    from app.python_models import card_domain
+
+    native, authority = mcp_host._canonical_know_submission(
+        _source_observation_payload(), _source_observation_context(),
+    )
+    monkeypatch.setattr(card_domain, "claim_atomic_know_write", lambda _payload: {
+        "status": "existing", "event": {"phase": "pending"},
+    })
+
+    class Driver:
+        async def execute_query(self, *_args, **_kwargs):
+            return SimpleNamespace(records=[])
+
+    client = SimpleNamespace(driver=Driver())
+
+    class Service:
+        async def get_client(self): return client
+
+    monkeypatch.setattr(
+        mcp_host, "_NATIVE_GRAPHITI_MODULE",
+        SimpleNamespace(graphiti_service=Service()),
+    )
+    result = asyncio.run(mcp_host._claim_or_reconcile_canonical_know(
+        _source_observation_context(), authority,
+    ))
+
+    assert result.structuredContent["result"]["state"] == "pending"
+    assert result.structuredContent["result"]["callId"] == authority["call_id"]
+
+
+def test_timeout_after_native_persist_reconciles_exact_episode_without_retry(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+    from app.python_models import card_domain
+
+    _native, authority = mcp_host._canonical_know_submission(
+        _source_observation_payload(), _source_observation_context(),
+    )
+    monkeypatch.setattr(card_domain, "claim_atomic_know_write", lambda _payload: {
+        "status": "existing", "event": {"phase": "pending"},
+    })
+
+    class Driver:
+        async def execute_query(self, *_args, **_kwargs):
+            return SimpleNamespace(records=[{
+                "episode_uuid": "episode-one",
+                "group_id": "liquidaity-project-one",
+                "record_kind": "canonical_know",
+                "schema_version": "knowgraph.source-observation.v2",
+                "call_id": authority["call_id"],
+                "semantic_sha256": authority["semantic_sha256"],
+                "source_description": authority["source_marker"],
+                "content": native["episode_body"],
+            }])
+
+    client = SimpleNamespace(driver=Driver())
+
+    class Service:
+        async def get_client(self): return client
+
+    persisted = []
+
+    async def persist(event, _context):
+        persisted.append(dict(event))
+        return True
+
+    monkeypatch.setattr(
+        mcp_host, "_NATIVE_GRAPHITI_MODULE",
+        SimpleNamespace(graphiti_service=Service()),
+    )
+    monkeypatch.setattr(mcp_host, "_persist_native_attention", persist)
+    result = asyncio.run(mcp_host._claim_or_reconcile_canonical_know(
+        _source_observation_context(), authority,
+    ))
+
+    assert result.structuredContent["result"]["state"] == "completed"
+    assert result.structuredContent["result"]["callId"] == authority["call_id"]
+    assert persisted[0]["eventId"] == authority["call_id"]
+    assert persisted[0]["nativeEpisodeIds"] == ["episode-one"]
+
+
+def test_non_null_citation_metadata_fails_without_trusted_run_capture():
+    import mcp_host
+
+    for field, value in (
+        ("title", "Primary report"),
+        ("publishedAt", "2026-10-04T12:00:00Z"),
+    ):
+        payload = _source_observation_payload()
+        payload["observations"][0]["citations"][0][field] = value
+        with pytest.raises(ValueError, match="trusted_source_metadata_capture_unavailable"):
+            mcp_host._canonical_know_submission(
+                payload, _source_observation_context(),
+            )
 
 
 def test_application_catalog_preserves_saved_card_schemas_without_native_discovery(monkeypatch):

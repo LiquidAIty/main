@@ -3610,10 +3610,10 @@ def _atomic_research_assignment(
 ) -> str:
     result_schema = {
         "schemaVersion": "atomic-research-response.v2",
+        "callId": "exact server-returned know-call ID or null",
         "results": [{
             "status": "supported|contradicted|source-unavailable",
             "summary": "concise sourced result",
-            "callId": "exact server-returned know-call ID or null",
         }],
     }
     return "\n".join((
@@ -3635,12 +3635,15 @@ def _atomic_research_assignment(
         "titles as provenance/source material, not peer subject entities. Do not concatenate a named",
         "company with a metric, event, role, or thesis to manufacture another entity name.",
         "Write useful source material through your existing Graphiti tools and saved grants only.",
-        "For each result, make exactly one graphiti.add_memory call using schemaVersion",
-        "knowgraph.source-observation.v2, one specific scan-friendly name, and observations[].",
+        "Make exactly one graphiti.add_memory call for this entire bounded assignment using",
+        "schemaVersion knowgraph.source-observation.v2, one specific scan-friendly name, and",
+        "observations[] that preserve each independently readable result and its entity context.",
         "Each observation contains one complete independently readable datum, one bounded",
         "interpretation, one-or-more citations[], and relevantEntities[]. Every citation contains",
         "exactly url, title, publishedAt, and a nonempty sourceNote explaining precisely what that",
         "link establishes for its observation. Keep every citation attached to its observation.",
+        "Set title and publishedAt to null unless the authenticated run supplies exact trusted",
+        "source metadata for that URL; never infer either value from observation or Run time.",
         "Never send a flat citation array, naked link, combined report summary, bibliography, or",
         "research-package narrative. Reuse exact canonicalName values in relevantEntities and list",
         "each logical entity once per observation even when both native authorities supplied it.",
@@ -3659,7 +3662,8 @@ def _atomic_research_assignment(
         "Return only one JSON object matching RESULT_SCHEMA, with one result per supplied Think",
         "in exact supplied order. Do not echo any supplied Think, assessment, source Run, child",
         "Run, Card, conversation, message, or session identifier in the JSON response.",
-        "A supported or contradicted result requires a non-null callId from its canonical Know write.",
+        "Any supported or contradicted result requires the one top-level non-null callId from the",
+        "canonical Know write. All results in this assignment settle through that same episode.",
         "Use source-unavailable only for a semantic/source/tool failure,",
         "not merely because the exactly-once Graphiti write is still processing.",
         f"EXPECTED_RESULT_COUNT: {len(memory_ids)}",
@@ -3869,6 +3873,99 @@ def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(rows[0].get("outcome"), dict) else None
         ),
     }
+
+
+def claim_atomic_know_write(payload: dict[str, Any]) -> dict[str, Any]:
+    """Atomically claim the one stable Know output slot on an existing child Run."""
+
+    expected = {
+        "projectId", "deckId", "runId", "cardId", "callId",
+        "outputSlot", "semanticSha256", "timestamp",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected:
+        raise CardDomainError("atomic_know_write_claim_invalid")
+    values = {
+        key: _required_text(payload.get(key), key)
+        for key in expected
+    }
+    if (
+        values["outputSlot"] != "know:0"
+        or not re.fullmatch(r"[a-f0-9]{64}", values["semanticSha256"])
+    ):
+        raise CardDomainError("atomic_know_write_claim_invalid")
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            project = _resolve_project(cursor, values["projectId"])
+            params = {
+                **values,
+                "projectId": str(project["id"]),
+            }
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (values["callId"],),
+            )
+            rows = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })-[:EXECUTED_BY]->(card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
+                MATCH (run)-[used:USED_TOOL {eventId: $callId}]->(tool:Tool {
+                  toolId: 'graphiti.add_memory'
+                })
+                RETURN properties(used) AS event
+                LIMIT 2
+                """,
+                params,
+                "event agtype",
+            )
+            if rows:
+                if len(rows) != 1 or not isinstance(rows[0].get("event"), dict):
+                    raise CardDomainError("atomic_know_write_claim_ambiguous")
+                event = dict(rows[0]["event"])
+                if (
+                    event.get("callId") != values["callId"]
+                    or event.get("outputSlot") != values["outputSlot"]
+                    or event.get("semanticSha256") != values["semanticSha256"]
+                ):
+                    raise CardDomainError("atomic_know_write_payload_conflict")
+                return {"status": "existing", "event": event}
+            created = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })-[:EXECUTED_BY]->(card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
+                MERGE (tool:Tool {toolId: 'graphiti.add_memory'})
+                MERGE (run)-[used:USED_TOOL {eventId: $callId}]->(tool)
+                SET used.timestamp=$timestamp,
+                    used.projectId=$projectId,
+                    used.deckId=$deckId,
+                    used.cardId=$cardId,
+                    used.authority='knowgraph',
+                    used.operation='write',
+                    used.toolName='graphiti.add_memory',
+                    used.phase='pending',
+                    used.change='create',
+                    used.callId=$callId,
+                    used.outputSlot=$outputSlot,
+                    used.semanticSha256=$semanticSha256,
+                    used.nativeEpisodeIds=[],
+                    used.nativeNodeIds=[],
+                    used.nativeEdgeIds=[],
+                    used.nativeEdges=[]
+                RETURN properties(used) AS event
+                """,
+                params,
+                "event agtype",
+            )
+            if len(created) != 1 or not isinstance(created[0].get("event"), dict):
+                raise CardDomainError("atomic_know_write_run_scope_unavailable")
+            return {"status": "claimed", "event": dict(created[0]["event"])}
 
 
 def read_atomic_research_write_events(

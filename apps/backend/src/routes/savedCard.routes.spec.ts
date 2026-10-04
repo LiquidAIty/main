@@ -1037,13 +1037,13 @@ function settledAtomicResearchResult(
     assessmentId: 'atomic-assessment-one',
     sourceRunId: 'main-source-run',
     childRunId,
+    callId: 'know-call:11111111-1111-4111-8111-111111111111',
     results: [{
       thinkMemoryId: 'think-one',
       status,
       summary: status === 'supported'
         ? 'The exact primary source supports this Think.'
         : 'The sources were stored, but no candidate could be ranked semantically.',
-      callId: 'know-call:11111111-1111-4111-8111-111111111111',
       episodeUuid: 'episode-settled-one',
     }],
   };
@@ -5307,10 +5307,10 @@ describe('saved Card routes', () => {
       });
       const provisional = JSON.stringify({
         schemaVersion: 'atomic-research-response.v2',
+        callId: 'know-call:11111111-1111-4111-8111-111111111111',
         results: [{
           status: 'source-unavailable',
           summary: 'Sources were found but the native write is still persistence-pending.',
-          callId: 'know-call:11111111-1111-4111-8111-111111111111',
         }],
       });
       agentTerminalMocks.manager.submit.mockClear();
@@ -5519,10 +5519,10 @@ describe('saved Card routes', () => {
       });
       const provisional = JSON.stringify({
         schemaVersion: 'atomic-research-response.v2',
+        callId: 'know-call:11111111-1111-4111-8111-111111111111',
         results: [{
           status: 'supported',
           summary: 'The write is still pending.',
-          callId: 'know-call:11111111-1111-4111-8111-111111111111',
         }],
       });
       agentTerminalMocks.manager.submit.mockClear();
