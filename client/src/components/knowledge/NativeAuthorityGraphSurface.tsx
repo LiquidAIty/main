@@ -1622,8 +1622,6 @@ function compactProbability(value: unknown): string | null {
 function thinkMetadata(item: Record<string, any>): Record<string, any> {
   const metadata = item.metadata;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
-  const facet = metadata.thinkgraph_facet;
-  if (facet && typeof facet === 'object' && !Array.isArray(facet)) return facet;
   const structured = metadata.structured_extraction;
   if (!structured || typeof structured !== 'object' || Array.isArray(structured)) return {};
   const think = structured.think;
@@ -1651,10 +1649,7 @@ function ThinkGraphThink({
   const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
     ? item.metadata as Record<string, unknown>
     : {};
-  const origin = metadata.thinkgraph_origin && typeof metadata.thinkgraph_origin === 'object'
-    ? metadata.thinkgraph_origin as Record<string, unknown>
-    : {};
-  const entryTime = nativeEntryTime(origin.completed_at || item.validFrom || item.ingestedAt);
+  const entryTime = nativeEntryTime(item.ingestedAt);
   const summary = typeof think.summary === 'string' && think.summary.trim()
     ? think.summary
     : typeof item.summary === 'string' && item.summary.trim()
@@ -1663,6 +1658,7 @@ function ThinkGraphThink({
         ? item.content
         : null;
   const keywords = thinkStrings(metadata.keywords);
+  const concepts = thinkStrings(think.concepts);
   const semanticSections = ([
     ['Propositions', thinkStrings(think.propositions)],
     ['Questions', thinkStrings(think.questions)],
@@ -1671,18 +1667,43 @@ function ThinkGraphThink({
     ['Preferences', thinkStrings(think.preferences)],
     ['Corrections', thinkStrings(think.corrections)],
     ['Uncertainty', thinkStrings(think.uncertainty)],
+    ['Relationship observations', thinkStrings(think.relationship_observations)],
   ] as const).filter(([, values]) => values.length > 0);
+  const properties = Array.isArray(think.properties)
+    ? think.properties.filter((property: unknown): property is { name: string; value: unknown } => {
+      if (!property || typeof property !== 'object' || Array.isArray(property)) return false;
+      const candidate = property as Record<string, unknown>;
+      return typeof candidate.name === 'string' && candidate.name.trim().length > 0
+        && candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim().length > 0;
+    })
+    : [];
+  const importance = typeof think.importance === 'number' && Number.isFinite(think.importance)
+    ? think.importance
+    : null;
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
-      <h4>{String(item.title || heading)}</h4>
+      <h4>{heading}</h4>
+      {typeof think.kind === 'string' && think.kind ? <span>{think.kind}</span> : null}
     </div>
-    {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
+    {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
     {summary ? <p>{summary}</p> : null}
+    {importance !== null ? <dl className="graph-think-fields">
+      <div><dt>Importance</dt><dd>{String(importance)}</dd></div>
+    </dl> : null}
     {semanticSections.map(([label, values]) => <section className="graph-think-section" key={label}>
       <h5>{label}</h5><ul>{values.map(value => <li key={value}>{value}</li>)}</ul>
     </section>)}
     {keywords.length ? <section className="graph-think-section">
       <h5>Keywords</h5><p>{keywords.join(' · ')}</p>
+    </section> : null}
+    {concepts.length ? <section className="graph-think-section">
+      <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
+    </section> : null}
+    {properties.length ? <section className="graph-think-section">
+      <h5>Properties</h5>
+      <dl>{properties.map(property => <div key={`${property.name}:${String(property.value)}`}>
+        <dt>{property.name}</dt><dd>{String(property.value)}</dd>
+      </div>)}</dl>
     </section> : null}
     {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
@@ -2634,27 +2655,20 @@ export function NativeGraphProjectionSurface({
   const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
     ? evidenceRecords.filter(item => item.metadata !== null
       && typeof item.metadata === 'object'
-      && (
-        (item.metadata.thinkgraph_facet !== null
-          && typeof item.metadata.thinkgraph_facet === 'object')
-        || (item.metadata.structured_extraction !== null
-          && typeof item.metadata.structured_extraction === 'object'
-          && item.metadata.structured_extraction.think !== null
-          && typeof item.metadata.structured_extraction.think === 'object')
-      ))
+      && item.metadata.structured_extraction !== null
+      && typeof item.metadata.structured_extraction === 'object'
+      && item.metadata.structured_extraction.think !== null
+      && typeof item.metadata.structured_extraction.think === 'object')
     : [];
   const thinks = directThinks.map((item, index) => ({ item, index }))
     .sort((left, right) => {
-      const leftOrigin = left.item.metadata?.thinkgraph_origin;
-      const rightOrigin = right.item.metadata?.thinkgraph_origin;
-      const leftTime = nativeEntryTime(leftOrigin?.source_message_at
-        || left.item.validFrom || left.item.ingestedAt)?.dateTime || '';
-      const rightTime = nativeEntryTime(rightOrigin?.source_message_at
-        || right.item.validFrom || right.item.ingestedAt)?.dateTime || '';
-      return rightTime.localeCompare(leftTime)
-        || String(left.item.id).localeCompare(String(right.item.id));
+      const leftTime = nativeEntryTime(left.item.ingestedAt)?.dateTime || '';
+      const rightTime = nativeEntryTime(right.item.ingestedAt)?.dateTime || '';
+      return rightTime.localeCompare(leftTime) || left.index - right.index;
     })
     .map(({ item }) => item);
+  const visibleThinks = thinks.slice(0, INSPECTOR_RECORD_LIMIT);
+  const earlierThinks = thinks.slice(INSPECTOR_RECORD_LIMIT);
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => inspectedProjection?.nodes.find(node => node.id === id)?.label || id;
   const provenanceById = new Map<string, Record<string, any>>(
@@ -2959,18 +2973,28 @@ export function NativeGraphProjectionSurface({
           data-testid={`${inspectedAuthority}-node-inspector`} data-native-id={selected.id}>
           {selected.label}
         </span> : null}
-        {thinks.length ? <section className="graph-inspector-records" data-testid="native-think-records">
-          <h4>{thinks.length > 1 ? 'Thinks' : 'Think'}</h4>
-          {thinks.map((item, index) => <ThinkGraphThink
+        {visibleThinks.length ? <section className="graph-inspector-records" data-testid="native-think-records">
+          <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
+          {visibleThinks.map((item, index) => <ThinkGraphThink
             key={item.id}
             item={item}
-            heading={thinks.length > 1 ? `Think ${index + 1}` : 'Think'}
+            heading={visibleThinks.length > 1 ? `Think ${index + 1}` : 'Think'}
             removing={removingId === item.id}
             onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
               ? () => { void deleteThink(item.id); }
               : undefined}
           />)}
         </section> : null}
+        {earlierThinks.length ? <details className="graph-think-history">
+          <summary>Earlier Thinks ({earlierThinks.length})</summary>
+          <div>{earlierThinks.map((item, index) => <ThinkGraphThink
+            key={item.id}
+            item={item}
+            heading={`Earlier Think ${index + 1}`}
+            removing={removingId === item.id}
+            onRemove={onRemoveEvidence ? () => { void deleteThink(item.id); } : undefined}
+          />)}</div>
+        </details> : null}
         {visibleKnowItems.length ? <section className="graph-inspector-records" data-testid="native-know-records">
           <h4>{visibleKnowItems.length > 1 ? 'Current Knows' : 'Current Know'}</h4>
           {visibleKnowItems.map((record, index) => <KnowGraphKnow

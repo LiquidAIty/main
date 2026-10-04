@@ -38,8 +38,6 @@ export type SharedChatMessageWrite = {
   content: string;
   speaker: SharedChatParticipant;
   target?: SharedChatParticipant;
-  createdAt?: string;
-  completedAt?: string;
   providerContinuationRef?: string | null;
   providerMessageId?: string | null;
 };
@@ -228,14 +226,10 @@ export async function appendSharedConversationTurn(input: {
       const result = await client.query(
         `INSERT INTO ${MESSAGES_TABLE} (
            project_id, conversation_id, message_id, role, content, status, seq,
-           created_at, completed_at, provider_continuation_ref, provider_message_id,
+           completed_at, provider_continuation_ref, provider_message_id,
            visible_activities
          )
-         VALUES (
-           $1::uuid, $2, $3, $4, $5, 'complete', $6,
-           COALESCE($7::timestamptz, NOW()), COALESCE($8::timestamptz, NOW()),
-           $9, $10, $11::jsonb
-         )
+         VALUES ($1::uuid, $2, $3, $4, $5, 'complete', $6, NOW(), $7, $8, $9::jsonb)
          RETURNING *`,
         [
           canonicalProjectId,
@@ -244,8 +238,6 @@ export async function appendSharedConversationTurn(input: {
           write.role,
           write.content,
           firstSequence + index,
-          write.createdAt ?? null,
-          write.completedAt ?? null,
           write.providerContinuationRef ?? null,
           write.providerMessageId ?? null,
           JSON.stringify(activities),
@@ -312,16 +304,12 @@ export async function appendSharedConversationReplyOnce(input: {
         : []),
     ];
     const result = await client.query(
-       `INSERT INTO ${MESSAGES_TABLE} (
-           project_id, conversation_id, message_id, role, content, status, seq,
-           created_at, completed_at, provider_continuation_ref, provider_message_id,
-           visible_activities
-         )
-       VALUES (
-         $1::uuid, $2, $3, 'assistant', $4, 'complete', $5,
-         COALESCE($6::timestamptz, NOW()), COALESCE($7::timestamptz, NOW()),
-         $8, $9, $10::jsonb
+      `INSERT INTO ${MESSAGES_TABLE} (
+         project_id, conversation_id, message_id, role, content, status, seq,
+         completed_at, provider_continuation_ref, provider_message_id,
+         visible_activities
        )
+       VALUES ($1::uuid, $2, $3, 'assistant', $4, 'complete', $5, NOW(), $6, $7, $8::jsonb)
        RETURNING *`,
       [
         canonicalProjectId,
@@ -329,8 +317,6 @@ export async function appendSharedConversationReplyOnce(input: {
         `msg_${randomUUID()}`,
         input.message.content,
         Number(sequence.rows[0].next_seq),
-        input.message.createdAt ?? null,
-        input.message.completedAt ?? null,
         input.message.providerContinuationRef ?? null,
         providerMessageId,
         JSON.stringify(activities),
