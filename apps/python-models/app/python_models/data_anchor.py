@@ -7,7 +7,6 @@ copies a graph, or turns a reference into synthetic data.
 
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -601,7 +600,6 @@ def read_knowgraph_episodes_exact(
         raise DataAnchorError("data_anchor_knowgraph_episode_limit_invalid")
     driver, database = _knowgraph_driver(driver_factory)
     scope_ids = [project_id, f"liquidaity-{project_id}"]
-    relationship_rows: list[dict[str, Any]] = []
     try:
         with driver.session(database=database) as session:
             rows = _neo4j_rows(session.run(
@@ -619,33 +617,6 @@ def read_knowgraph_episodes_exact(
                 scopeIds=scope_ids,
                 projectId=project_id,
             ))
-            relationship_rows = _neo4j_rows(session.run(
-                """
-                MATCH (source:Entity)-[relationship]->(target:Entity)
-                WHERE toString(relationship.group_id) IN $scopeIds
-                  AND (
-                    any(value IN coalesce(relationship.episodes, [])
-                        WHERE toString(value) IN $episodeIds)
-                    OR any(value IN coalesce(relationship.episode_uuids, [])
-                           WHERE toString(value) IN $episodeIds)
-                    OR any(value IN coalesce(relationship.source_episode_uuids, [])
-                           WHERE toString(value) IN $episodeIds)
-                  )
-                RETURN coalesce(toString(relationship.uuid), elementId(relationship))
-                         AS nativeId,
-                       type(relationship) AS relationshipType,
-                       properties(relationship) AS properties,
-                       coalesce(toString(source.uuid), elementId(source))
-                         AS sourceNativeId,
-                       coalesce(toString(source.name), '') AS sourceName,
-                       coalesce(toString(target.uuid), elementId(target))
-                         AS targetNativeId,
-                       coalesce(toString(target.name), '') AS targetName
-                ORDER BY nativeId
-                """,
-                episodeIds=requested,
-                scopeIds=scope_ids,
-            ))
     except Exception as error:
         if isinstance(error, DataAnchorError):
             raise
@@ -654,53 +625,6 @@ def read_knowgraph_episodes_exact(
         close = getattr(driver, "close", None)
         if callable(close):
             close()
-
-    relationships_by_episode: dict[str, list[dict[str, Any]]] = {
-        episode_id: [] for episode_id in requested
-    }
-    for row in relationship_rows:
-        native_id = str(row.get("nativeId") or "").strip()
-        source_id = str(row.get("sourceNativeId") or "").strip()
-        target_id = str(row.get("targetNativeId") or "").strip()
-        if not native_id or not source_id or not target_id:
-            continue
-        properties = _without_native_embedding_vectors(_json_safe(
-            row.get("properties")
-            if isinstance(row.get("properties"), dict) else {}
-        ))
-        owned_episode_ids = [
-            episode_id for episode_id in _episode_ids(properties)
-            if episode_id in relationships_by_episode
-        ]
-        if not owned_episode_ids:
-            continue
-        relationship = {
-            "nativeId": native_id,
-            "relationshipType": str(row.get("relationshipType") or ""),
-            "name": str(
-                properties.get("name") or row.get("relationshipType") or ""
-            ),
-            "source": {
-                "nativeId": source_id,
-                "canonicalName": str(row.get("sourceName") or ""),
-            },
-            "target": {
-                "nativeId": target_id,
-                "canonicalName": str(row.get("targetName") or ""),
-            },
-            "direction": "source_to_target",
-            "fact": str(properties.get("fact") or ""),
-            "properties": properties,
-            "provenance": {
-                "episodeUuids": owned_episode_ids,
-                **({"groupId": properties["group_id"]}
-                   if properties.get("group_id") is not None else {}),
-            },
-        }
-        for episode_id in owned_episode_ids:
-            relationships_by_episode[episode_id].append(deepcopy(relationship))
-    for relationships in relationships_by_episode.values():
-        relationships.sort(key=lambda item: item["nativeId"])
 
     hydrated: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -711,25 +635,6 @@ def read_knowgraph_episodes_exact(
             _json_safe(row.get("properties") if isinstance(row.get("properties"), dict) else {})
         )
         content = str(properties.get("content") or "")
-        canonical_know = (
-            properties.get("liquidaity_record_kind") == "canonical_know"
-            and properties.get("liquidaity_schema_version")
-            == "knowgraph.source-observation.v2"
-        )
-        canonical_payload: dict[str, Any] | None = None
-        serialized_payload = properties.get("canonical_know_json")
-        if canonical_know and isinstance(serialized_payload, str):
-            try:
-                decoded_payload = json.loads(serialized_payload)
-            except json.JSONDecodeError:
-                decoded_payload = None
-            if (
-                isinstance(decoded_payload, dict)
-                and decoded_payload.get("schemaVersion")
-                == "knowgraph.source-observation.v2"
-                and isinstance(decoded_payload.get("observations"), list)
-            ):
-                canonical_payload = decoded_payload
         source = {
             "uuid": native_id,
             **{
@@ -738,24 +643,13 @@ def read_knowgraph_episodes_exact(
                     "name", "source", "source_description", "source_name", "source_url",
                     "source_path", "source_type", "document_id", "created_at", "valid_at",
                     "reference_time", "fetched_at", "snippet", "content_fingerprint",
-                    "graphiti_version", "liquidaity_record_kind",
-                    "liquidaity_schema_version", "observed_at", "source_date",
-                    "source_fingerprint", "semantic_sha256", "origin_run_id",
-                    "origin_card_id", "conversation_id", "deck_id",
-                    "liquidaity_call_id", "objective_episode_body_sha256",
+                    "graphiti_version",
                 )
                 if properties.get(key) is not None
             },
-            **({"canonicalKnow": canonical_payload} if canonical_payload is not None else {}),
-            "relationships": relationships_by_episode.get(native_id, []),
             "content_chars": len(content),
-            **(
-                {"content": content, "content_truncated": False}
-                if canonical_know else {
-                    "content_preview": content[:_KNOWGRAPH_EPISODE_PREVIEW_CHARS],
-                    "content_truncated": len(content) > _KNOWGRAPH_EPISODE_PREVIEW_CHARS,
-                }
-            ),
+            "content_preview": content[:_KNOWGRAPH_EPISODE_PREVIEW_CHARS],
+            "content_truncated": len(content) > _KNOWGRAPH_EPISODE_PREVIEW_CHARS,
         }
         hydrated[native_id] = source
     return [hydrated[native_id] for native_id in requested if native_id in hydrated]
@@ -796,84 +690,6 @@ def _portable_know(
             "relationship_strength": jev["label_confidence"],
             "jev": jev,
         } if jev is not None else {}),
-    }
-
-
-def _portable_episode_know(
-    episode: dict[str, Any],
-) -> dict[str, Any] | None:
-    if (
-        episode.get("liquidaity_record_kind") != "canonical_know"
-        or episode.get("liquidaity_schema_version")
-        != "knowgraph.source-observation.v2"
-    ):
-        return None
-    native_id = str(episode.get("uuid") or "").strip()
-    canonical = episode.get("canonicalKnow")
-    if not isinstance(canonical, dict):
-        serialized = episode.get("canonical_know_json")
-        if isinstance(serialized, str):
-            try:
-                canonical = json.loads(serialized)
-            except json.JSONDecodeError:
-                canonical = None
-    if (
-        not native_id
-        or not isinstance(canonical, dict)
-        or canonical.get("schemaVersion") != "knowgraph.source-observation.v2"
-        or not isinstance(canonical.get("name"), str)
-        or not isinstance(canonical.get("observations"), list)
-        or not canonical["observations"]
-    ):
-        return None
-    observations = deepcopy(canonical["observations"])
-    if any(
-        not isinstance(observation, dict)
-        or not isinstance(observation.get("datum"), str)
-        or not observation["datum"].strip()
-        or not isinstance(observation.get("interpretation"), str)
-        or not observation["interpretation"].strip()
-        or not isinstance(observation.get("citations"), list)
-        or not observation["citations"]
-        or not isinstance(observation.get("relevantEntities"), list)
-        or not observation["relevantEntities"]
-        for observation in observations
-    ):
-        return None
-    content = "\n\n".join(
-        f"{observation['datum']}\nInterpretation: {observation['interpretation']}"
-        for observation in observations
-    )
-    relevant_entities = list(dict.fromkeys(
-        str(entity)
-        for observation in observations
-        for entity in observation["relevantEntities"]
-        if str(entity)
-    ))
-    citation_count = sum(
-        len(observation["citations"]) for observation in observations
-    )
-    relationships = deepcopy(
-        episode.get("relationships")
-        if isinstance(episode.get("relationships"), list) else []
-    )
-    return {
-        "portableKind": "know",
-        "nativeEpisodeUuid": native_id,
-        "nativeId": native_id,
-        "title": canonical["name"],
-        "content": content,
-        "observations": observations,
-        "citationCount": citation_count,
-        "relevantEntities": relevant_entities,
-        "observedAt": episode.get("observed_at") or episode.get("created_at"),
-        "sourceFingerprint": episode.get("source_fingerprint"),
-        "relationships": relationships,
-        "supportingEpisodeUuids": [native_id],
-        "supportingEpisodes": [episode],
-        "dates": {
-            "observedAt": episode.get("observed_at") or episode.get("created_at"),
-        },
     }
 
 
@@ -973,13 +789,45 @@ def list_contextual_know_candidates(
         ) from error
 
     candidates: list[dict[str, Any]] = []
-    for episode_id in episode_ids:
-        episode = episodes_by_id.get(episode_id)
-        if episode is None:
-            continue
-        portable = _portable_episode_know(episode)
-        if portable is not None:
-            candidates.append(portable)
+    for row in normalized_rows:
+        properties = row["properties"]
+        supporting = [
+            episodes_by_id[episode_id]
+            for episode_id in _episode_ids(properties)
+            if episode_id in episodes_by_id
+        ]
+        portable = _portable_know(
+            row["nativeId"],
+            properties,
+            source_id=row["sourceNativeId"],
+            target_id=row["targetNativeId"],
+            source_name=row["sourceName"],
+            target_name=row["targetName"],
+            episodes=supporting,
+        )
+        candidates.append({
+            "nativeId": row["nativeId"],
+            "title": str(
+                properties.get("name")
+                or properties.get("edge_type")
+                or row["relationshipType"]
+                or row["nativeId"]
+            ),
+            "fact": str(properties.get("fact") or ""),
+            "sourceEntity": portable["sourceEntity"],
+            "targetEntity": portable["targetEntity"],
+            "nativeRelation": portable["nativeRelation"],
+            "supportingEpisodeUuids": portable["supportingEpisodeUuids"],
+            "supportingEpisodes": portable["supportingEpisodes"],
+            "dates": {
+                "createdAt": portable["createdAt"],
+                "referenceTime": portable["referenceTime"],
+                "validAt": portable["validAt"],
+                "invalidAt": portable["invalidAt"],
+                "expiredAt": portable["expiredAt"],
+                "temporalStatus": portable["temporalStatus"],
+            },
+        })
     return candidates
 
 
@@ -1162,30 +1010,28 @@ def read_knowgraph_exact(
     target_properties = target_endpoint.get("properties") \
         if isinstance(target_endpoint.get("properties"), dict) else {}
     native_id = str(center.get("nativeId") or native_id)
-    episode_center = not relationship_center and "Episodic" in {
-        str(label) for label in labels
-    }
-    exact_episode = (
-        (episode_reader or read_knowgraph_episodes_exact)(project_id, [native_id])
-        if episode_center else []
-    )
-    portable_know = _portable_episode_know(exact_episode[0]) \
-        if exact_episode else None
+    portable_know = _portable_know(
+        native_id,
+        properties,
+        source_id=str(center.get("sourceNativeId") or ""),
+        target_id=str(center.get("targetNativeId") or ""),
+        source_name=str(source_properties.get("name") or ""),
+        target_name=str(target_properties.get("name") or ""),
+        episodes=episodes,
+    ) if relationship_center else None
     return {
         "authority": "KnowGraph",
         "nativeId": native_id,
         "nativeKind": "edge" if relationship_center else "node",
-        **({"portableKind": "know"} if portable_know is not None else {}),
+        **({"portableKind": "know"} if relationship_center else {}),
         "type": str(labels[0] if labels else "Neo4jObject"),
         "title": str(properties.get("name") or properties.get("title") or native_id),
-        "content": (
-            portable_know["content"] if portable_know is not None else json.dumps(
-                {"properties": properties, "neighborhood": neighborhood},
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            )[:_ANCHOR_BODY_LIMIT]
-        ),
+        "content": json.dumps(
+            {"properties": properties, "neighborhood": neighborhood},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )[:_ANCHOR_BODY_LIMIT],
         "properties": properties,
         "endpointNodes": endpoint_nodes,
         "sourceNativeId": str(center.get("sourceNativeId") or ""),

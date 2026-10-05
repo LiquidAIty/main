@@ -1513,7 +1513,16 @@ function sourcePathLabel(url: URL): string {
 export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[] {
   const rawUrls: unknown[] = [candidate.source_url, candidate.url];
   const described = candidate.source_description ?? candidate.sourceDescription;
-  if (typeof described === 'string' && described.trim()) rawUrls.push(described);
+  if (Array.isArray(described)) rawUrls.push(...described);
+  else if (typeof described === 'string' && described.trim()) {
+    try {
+      const parsed = JSON.parse(described);
+      if (Array.isArray(parsed)) rawUrls.push(...parsed);
+      else rawUrls.push(described);
+    } catch {
+      rawUrls.push(described);
+    }
+  }
   const validUrls = new Map<string, URL>();
   for (const rawUrl of rawUrls) {
     if (typeof rawUrl !== 'string') continue;
@@ -1628,10 +1637,22 @@ function thinkMetadata(item: Record<string, any>): Record<string, any> {
   return think && typeof think === 'object' && !Array.isArray(think) ? think : {};
 }
 
-function thinkStrings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : [];
+function nativeThinkRelationships(item: Record<string, any>): string[] {
+  const metadata = item.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
+  const structured = metadata.structured_extraction;
+  const raw = structured && typeof structured === 'object' && !Array.isArray(structured)
+    ? structured.relations
+    : metadata.relations;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((value): string[] => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const relation = value as Record<string, unknown>;
+    const source = typeof relation.source === 'string' ? relation.source.trim() : '';
+    const predicate = typeof relation.relation === 'string' ? relation.relation.trim() : '';
+    const target = typeof relation.target === 'string' ? relation.target.trim() : '';
+    return source && predicate && target ? [`${source} ${predicate} ${target}`] : [];
+  });
 }
 
 function ThinkGraphThink({
@@ -1646,64 +1667,26 @@ function ThinkGraphThink({
   onRemove?: () => void;
 }) {
   const think = thinkMetadata(item);
-  const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
-    ? item.metadata as Record<string, unknown>
-    : {};
   const entryTime = nativeEntryTime(item.ingestedAt);
-  const summary = typeof think.summary === 'string' && think.summary.trim()
-    ? think.summary
-    : typeof item.summary === 'string' && item.summary.trim()
-      ? item.summary
-      : typeof item.content === 'string' && item.content.trim()
-        ? item.content
+  const summary = typeof item.summary === 'string' && item.summary.trim()
+    ? item.summary
+    : typeof item.content === 'string' && item.content.trim()
+      ? item.content
+      : typeof think.summary === 'string' && think.summary.trim()
+        ? think.summary
         : null;
-  const keywords = thinkStrings(metadata.keywords);
-  const concepts = thinkStrings(think.concepts);
-  const semanticSections = ([
-    ['Propositions', thinkStrings(think.propositions)],
-    ['Questions', thinkStrings(think.questions)],
-    ['Predictions', thinkStrings(think.predictions)],
-    ['Assumptions', thinkStrings(think.assumptions)],
-    ['Preferences', thinkStrings(think.preferences)],
-    ['Corrections', thinkStrings(think.corrections)],
-    ['Uncertainty', thinkStrings(think.uncertainty)],
-    ['Relationship observations', thinkStrings(think.relationship_observations)],
-  ] as const).filter(([, values]) => values.length > 0);
-  const properties = Array.isArray(think.properties)
-    ? think.properties.filter((property: unknown): property is { name: string; value: unknown } => {
-      if (!property || typeof property !== 'object' || Array.isArray(property)) return false;
-      const candidate = property as Record<string, unknown>;
-      return typeof candidate.name === 'string' && candidate.name.trim().length > 0
-        && candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim().length > 0;
-    })
-    : [];
-  const importance = typeof think.importance === 'number' && Number.isFinite(think.importance)
-    ? think.importance
-    : null;
+  const relationships = nativeThinkRelationships(item);
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
-      <h4>{heading}</h4>
-      {typeof think.kind === 'string' && think.kind ? <span>{think.kind}</span> : null}
+      <h4>{String(item.title || heading)}</h4>
     </div>
-    {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
+    {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>
+      {entryTime.label}
+    </time></p> : null}
     {summary ? <p>{summary}</p> : null}
-    {importance !== null ? <dl className="graph-think-fields">
-      <div><dt>Importance</dt><dd>{String(importance)}</dd></div>
-    </dl> : null}
-    {semanticSections.map(([label, values]) => <section className="graph-think-section" key={label}>
-      <h5>{label}</h5><ul>{values.map(value => <li key={value}>{value}</li>)}</ul>
-    </section>)}
-    {keywords.length ? <section className="graph-think-section">
-      <h5>Keywords</h5><p>{keywords.join(' · ')}</p>
-    </section> : null}
-    {concepts.length ? <section className="graph-think-section">
-      <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
-    </section> : null}
-    {properties.length ? <section className="graph-think-section">
-      <h5>Properties</h5>
-      <dl>{properties.map(property => <div key={`${property.name}:${String(property.value)}`}>
-        <dt>{property.name}</dt><dd>{String(property.value)}</dd>
-      </div>)}</dl>
+    {relationships.length ? <section className="graph-think-section">
+      <h5>Relationships</h5>
+      <ul>{relationships.map(value => <li key={value}>{value}</li>)}</ul>
     </section> : null}
     {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
@@ -2678,40 +2661,72 @@ export function NativeGraphProjectionSurface({
       ...(node.properties || {}),
     }]),
   );
-  const directKnowItems = inspectedAuthority === 'knowgraph' && selected && !selectedEdge
-    ? (selected.provenanceEpisodeIds || []).flatMap(episodeId => {
-        const episode = provenanceById.get(String(episodeId));
-        if (!episode
-          || episode.liquidaity_record_kind !== 'canonical_know'
-          || episode.liquidaity_schema_version !== 'knowgraph.episode.v1') return [];
-        const citation = sourceLinks(episode);
-        const body = typeof episode.content === 'string' ? episode.content.trim() : '';
-        if (!body || citation.length !== 1) return [];
-        const supporting = (inspectedProjection?.edges || []).filter(edge => {
-          if (edge.source !== selected.id && edge.target !== selected.id) return false;
-          const ids = edge.properties?.supportingEpisodeUuids
-            ?? edge.properties?.episodes;
-          return (Array.isArray(ids) ? ids : typeof ids === 'string' ? [ids] : [])
-            .map(String).includes(String(episodeId));
-        }).sort((left, right) => left.id.localeCompare(right.id));
-        const relationship = supporting[0];
-        const know = {
-          portableKind: 'know',
-          title: String(episode.name || episodeId),
-          fact: body,
-          source_url: citation[0].url,
-          source_fingerprint: episode.source_fingerprint,
-          observedAt: episode.observed_at || episode.created_at,
-          sourceDate: episode.source_date || episode.reference_time,
-          nativeRelation: relationship?.predicate || null,
-        };
-        return [{ nativeId: String(episodeId), know, episodes: [episode] }];
-      })
-        .sort((left, right) => {
+  const directKnowItems: KnowInspectorRecord[] = inspectedAuthority === 'knowgraph' && selected && !selectedEdge
+    ? (() => {
+        const incidentEdges = (inspectedProjection?.edges || [])
+          .filter(edge => edge.source === selected.id || edge.target === selected.id);
+        const episodeIds = new Set<string>(
+          (selected.provenanceEpisodeIds || []).map(String),
+        );
+        for (const edge of incidentEdges) {
+          const ids = edge.properties?.supportingEpisodeUuids ?? edge.properties?.episodes;
+          for (const id of Array.isArray(ids) ? ids : typeof ids === 'string' ? [ids] : []) {
+            episodeIds.add(String(id));
+          }
+        }
+        const episodesWithContent = new Set<string>();
+        const episodeRecords = [...episodeIds].flatMap((episodeId): KnowInspectorRecord[] => {
+          const episode = provenanceById.get(episodeId);
+          if (!episode) return [];
+          const body = typeof episode.content === 'string' ? episode.content.trim() : '';
+          if (!body) return [];
+          episodesWithContent.add(episodeId);
+          return [{
+            nativeId: episodeId,
+            know: {
+              portableKind: 'know',
+              title: String(episode.name || episode.source_name || episodeId),
+              fact: body,
+              observedAt: episode.created_at,
+              sourceDate: episode.reference_time,
+            },
+            episodes: [episode],
+          }];
+        });
+        const factRecords = incidentEdges.flatMap((edge): KnowInspectorRecord[] => {
+          const nativeFactId = nativeKnowFactIdentity(edge);
+          const fact = typeof edge.properties?.fact === 'string'
+            ? edge.properties.fact.trim()
+            : '';
+          if (!nativeFactId || !fact) return [];
+          const ids = edge.properties?.supportingEpisodeUuids ?? edge.properties?.episodes;
+          const supportingIds = (
+            Array.isArray(ids) ? ids : typeof ids === 'string' ? [ids] : []
+          ).map(String);
+          if (supportingIds.some(id => episodesWithContent.has(id))) return [];
+          return [{
+            nativeId: nativeFactId,
+            know: {
+              ...(edge.properties || {}),
+              portableKind: 'know',
+              title: String(edge.properties?.title || edge.predicate || nativeFactId),
+              fact,
+              observedAt: edge.properties?.createdAt ?? edge.properties?.created_at,
+              sourceDate: edge.properties?.referenceTime ?? edge.properties?.validAt,
+              nativeRelation: edge.properties?.nativeRelation || edge.predicate,
+            },
+            episodes: supportingIds.flatMap(id => {
+              const episode = provenanceById.get(id);
+              return episode ? [episode] : [];
+            }),
+          }];
+        });
+        return [...episodeRecords, ...factRecords].sort((left, right) => {
           const leftTime = nativeEntryTime(left.know.observedAt)?.dateTime || '';
           const rightTime = nativeEntryTime(right.know.observedAt)?.dateTime || '';
           return rightTime.localeCompare(leftTime) || left.nativeId.localeCompare(right.nativeId);
-        })
+        });
+      })()
     : [];
   const visibleKnowItems = directKnowItems.slice(0, INSPECTOR_RECORD_LIMIT);
   const earlierKnowItems = directKnowItems.slice(INSPECTOR_RECORD_LIMIT);
@@ -2975,10 +2990,10 @@ export function NativeGraphProjectionSurface({
         </span> : null}
         {visibleThinks.length ? <section className="graph-inspector-records" data-testid="native-think-records">
           <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
-          {visibleThinks.map((item, index) => <ThinkGraphThink
+          {visibleThinks.map(item => <ThinkGraphThink
             key={item.id}
             item={item}
-            heading={visibleThinks.length > 1 ? `Think ${index + 1}` : 'Think'}
+            heading="Think"
             removing={removingId === item.id}
             onRemove={inspectedAuthority === 'thinkgraph' && onRemoveEvidence
               ? () => { void deleteThink(item.id); }
@@ -2987,10 +3002,10 @@ export function NativeGraphProjectionSurface({
         </section> : null}
         {earlierThinks.length ? <details className="graph-think-history">
           <summary>Earlier Thinks ({earlierThinks.length})</summary>
-          <div>{earlierThinks.map((item, index) => <ThinkGraphThink
+          <div>{earlierThinks.map(item => <ThinkGraphThink
             key={item.id}
             item={item}
-            heading={`Earlier Think ${index + 1}`}
+            heading="Think"
             removing={removingId === item.id}
             onRemove={onRemoveEvidence ? () => { void deleteThink(item.id); } : undefined}
           />)}</div>

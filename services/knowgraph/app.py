@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -14,19 +15,19 @@ from typing import Any
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from graphiti_core.errors import NodeNotFoundError
+from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
 
 from runtime_config import load_runtime_environment
 
 load_runtime_environment()
 
 from ingest import (
-    delete_canonical_know,
     graphiti_runtime_versions,
     ingest_pdf,
     ingest_web_documents,
     reconcile_jev_annotations,
 )
+from graphiti_identity import graphiti_project_group_id
 
 app = FastAPI(title="KnowGraph")
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
@@ -65,7 +66,7 @@ class JevReconciliationRequest(BaseModel):
 class NativeKnowDeleteRequest(BaseModel):
     project_id: str
     native_id: str
-    kind: str = "episode"
+    kind: str = "fact"
 
 
 def _model_dump(model: BaseModel) -> dict[str, Any]:
@@ -82,9 +83,31 @@ def _sanitize_filename(name: str) -> str:
 async def _delete_native_know(
     payload: NativeKnowDeleteRequest,
 ) -> dict[str, str]:
-    if payload.kind != "episode":
+    from graphiti_core.driver.neo4j_driver import Neo4jDriver
+    from graphiti_core.edges import EntityEdge
+
+    if payload.kind != "fact":
         raise ValueError("knowgraph_delete_kind_invalid")
-    return await delete_canonical_know(payload.project_id, payload.native_id)
+    expected_group = graphiti_project_group_id(payload.project_id)
+    uri = str(os.environ.get("NEO4J_URI") or "").strip()
+    user = str(os.environ.get("NEO4J_USER") or "").strip()
+    password = str(os.environ.get("NEO4J_PASSWORD") or "").strip()
+    if not uri or not user or not password:
+        raise RuntimeError("KnowGraph database is not configured.")
+    driver = Neo4jDriver(
+        uri,
+        user,
+        password,
+        database=str(os.environ.get("NEO4J_DATABASE") or "neo4j").strip() or "neo4j",
+    )
+    try:
+        record = await EntityEdge.get_by_uuid(driver, payload.native_id)
+        if record.group_id != expected_group:
+            raise LookupError("knowgraph_native_record_not_found")
+        await record.delete(driver)
+        return {"kind": payload.kind, "native_id": payload.native_id}
+    finally:
+        await driver.close()
 
 
 @app.post("/delete_native")
@@ -92,7 +115,7 @@ async def delete_native(request: Request, payload: NativeKnowDeleteRequest) -> J
     try:
         result = await _delete_native_know(payload)
         return JSONResponse(status_code=200, content={"ok": True, **result})
-    except (LookupError, NodeNotFoundError):
+    except (LookupError, EdgeNotFoundError, NodeNotFoundError):
         return JSONResponse(
             status_code=404,
             content={"ok": False, "error": {"message": "KnowGraph item not found."}},

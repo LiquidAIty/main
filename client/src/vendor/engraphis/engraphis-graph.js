@@ -6888,6 +6888,10 @@
       || theme.blue || theme.accent || identity || '#37adaa');
     const orange = rgbString(node.material_orange || theme.material_orange
       || theme.orange || '#f2a64a');
+    const thinkSecondary = rgbString('#63c79a');
+    const knowSecondary = rgbString('#f2d16b');
+    const neutralEmphasis = rgbString('#dffaff');
+    const activityEmphasis = rgbString('#b8a6ff');
     const surface = rgbString(node.material_surface || theme.material_surface
       || theme.surface || theme.canvas || '#0b0e12');
     const thinkActive = node.material_think_active === true;
@@ -6913,11 +6917,16 @@
         ? 'split-bicolor-gloss' : 'unified-gloss',
       splitSurface: modality === 'paired', dualBloom: modality === 'paired',
       materialBlue: blue, materialOrange: orange, materialSurface: surface,
+      thinkSecondary, knowSecondary, neutralEmphasis, activityEmphasis,
+      secondaryAccent: modality === 'think' ? thinkSecondary
+        : modality === 'know' ? knowSecondary : surface,
       blueKey: colourKey(blue), orangeKey: colourKey(orange), surfaceKey: colourKey(surface),
       thinkActive, knowActive, turnHeatActive, turnHeat, activeExposure, activeKey,
       substrate, substrateKey: colourKey(substrate), face,
       identity: identityColour, identityKey: colourKey(identityColour),
-      dominant, innerLight: blue, solarRim: orange,
+      dominant,
+      innerLight: modality === 'paired' ? blue : neutralEmphasis,
+      solarRim: modality === 'paired' ? orange : activityEmphasis,
       outer: mixColours(substrate, '#010305', 0.80),
       bezel: mixColours(substrate, surface, 0.34),
       edge: modality === 'think' ? blue : orange,
@@ -7162,18 +7171,27 @@
     const blue = recipe.materialBlue, orange = recipe.materialOrange;
     const paired = recipe.modality === 'paired';
     const primary = recipe.modality === 'know' ? orange : blue;
-    const secondary = recipe.modality === 'know' ? blue : orange;
+    const secondary = recipe.secondaryAccent;
+    const emphasis = recipe.turnHeatActive
+      ? recipe.activityEmphasis : recipe.neutralEmphasis;
     const exposure = recipe.activeExposure || 0;
     /* Every modality uses the same circular geometry and top-left light direction. Paired
        material keeps the two native authorities visibly separate instead of blending them. */
-    materialHalo(ctx, x, y, r, tier, blue,
-      (paired ? 0.17 : recipe.modality === 'think' ? 0.20 : 0.065)
-        + (recipe.thinkActive ? 0.07 : 0) + exposure * 0.035,
-      -0.14, -0.12);
-    materialHalo(ctx, x, y, r, tier, orange,
-      (paired ? 0.16 : recipe.modality === 'know' ? 0.20 : 0.055)
-        + (recipe.knowActive ? 0.07 : 0) + exposure * 0.035,
-      -0.08, -0.10);
+    if (paired) {
+      materialHalo(ctx, x, y, r, tier, blue,
+        0.17 + (recipe.thinkActive ? 0.07 : 0) + exposure * 0.035,
+        -0.14, -0.12);
+      materialHalo(ctx, x, y, r, tier, orange,
+        0.16 + (recipe.knowActive ? 0.07 : 0) + exposure * 0.035,
+        -0.08, -0.10);
+    } else {
+      materialHalo(ctx, x, y, r, tier, primary,
+        0.20 + exposure * 0.035, -0.14, -0.12);
+      materialHalo(ctx, x, y, r, tier, emphasis,
+        (recipe.turnHeatActive ? 0.14 : recipe.thinkActive || recipe.knowActive ? 0.10 : 0.025)
+          + exposure * 0.045,
+        -0.08, -0.10);
+    }
     fillCircle(ctx, x, y, r, recipe.outer);
     fillCircle(ctx, x, y, r * 0.94, recipe.bezel);
     if (tier === 'signature') {
@@ -7230,6 +7248,10 @@
     } else {
       strokeCircle(ctx, x, y, r * 0.88, alpha(primary, 0.88), Math.max(0.38, r * 0.048));
       strokeCircle(ctx, x, y, r * 0.83, alpha(secondary, 0.24), Math.max(0.26, r * 0.025));
+      if (recipe.turnHeatActive || recipe.thinkActive || recipe.knowActive) {
+        strokeCircle(ctx, x, y, r * 0.93, alpha(emphasis,
+          recipe.turnHeatActive ? 0.68 : 0.48), Math.max(0.30, r * 0.032));
+      }
     }
     ctx.lineWidth = Math.max(0.34, r * 0.026);
     ctx.strokeStyle = alpha('#f5fbff', 0.34 + exposure * 0.24);

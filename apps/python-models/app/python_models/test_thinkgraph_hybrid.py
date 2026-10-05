@@ -454,7 +454,9 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
 
 def test_native_llm_structured_relation_uses_dynamic_predicate_guidance():
     schema, prompt = adapter._llm_structured_contract("pair", {})
-    relation = schema["$defs"]["ThinkGraphStructuredRelation"]["properties"]["relation"]
+    relation_schema = schema["$defs"]["ThinkGraphStructuredRelation"]
+    relation = relation_schema["properties"]["relation"]
+    assert relation_schema["required"] == ["source", "relation", "target"]
     assert relation["type"] == "string"
     assert "enum" not in relation
     assert "current_project_relationship_vocabulary" in relation["description"]
@@ -462,11 +464,24 @@ def test_native_llm_structured_relation_uses_dynamic_predicate_guidance():
     assert "nearest concrete reusable subject" in prompt
     assert "Never create a generic wrapper entity" in prompt
     assert "that framing belongs in the Think body" in prompt
+    assert "Every item in `relations` must contain exactly one nonempty `source`" in prompt
+    assert "Never duplicate a JSON key" in prompt
+    assert "Do not emit a thought category, importance score" in prompt
     assert adapter.ThinkGraphStructuredRelation(
         source="Jev",
         relation=FREEFORM_RELATION,
         target="ThinkGraph",
     ).relation == FREEFORM_RELATION
+    with pytest.raises(Exception):
+        adapter.ThinkGraphStructuredRelation.model_validate({
+            "source": "SUPPORTS",
+            "target": "Execution quality",
+        })
+    natural = adapter.ThinkGraphThink(summary="One natural reusable Think.")
+    assert natural.kind == "OBSERVATION"
+    assert natural.importance == 0.0
+    assert natural.propositions == []
+    assert natural.properties == []
 
 
 @pytest.mark.parametrize(

@@ -226,8 +226,9 @@ export function portableKnowGraphFact(
   const jev = persistedKnowGraphJev(properties);
   return {
     ...properties,
-    authority: 'knowgraph-topology',
+    authority: 'know',
     nativeStore: 'graphiti/neo4j',
+    portableKind: 'know',
     nativeFactUuid: factUuid,
     nativeRelationshipType,
     nativeRelation: String(properties.name || nativeRelationshipType || 'Fact'),
@@ -971,7 +972,7 @@ router.post('/delete-native', async (req, res) => {
     }
     const requestedProjectId = String(req.body?.project_id || '').trim();
     const nativeId = String(req.body?.native_id || '').trim();
-    const kind = req.body?.kind === 'episode' ? 'episode' : '';
+    const kind = req.body?.kind === 'fact' ? 'fact' : '';
     if (!requestedProjectId || !nativeId || !kind) {
       return res.status(400).json({
         ok: false,

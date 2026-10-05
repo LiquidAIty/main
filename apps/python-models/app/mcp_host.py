@@ -53,8 +53,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
-from ipaddress import ip_address
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import uuid4
 
 # Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
 # SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
@@ -107,77 +106,6 @@ from mcp.types import CallToolResult, TextContent, Tool
 ensure_env_loaded()
 
 _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
-_CANONICAL_KNOW_SCHEMA_VERSION = "knowgraph.source-observation.v2"
-_CANONICAL_KNOW_URL_LIMIT = 2_048
-
-
-def _canonical_know_input_schema() -> dict[str, Any]:
-    """Model-visible product Know contract; native Graphiti arguments stay private."""
-
-    return {
-        "type": "object",
-        "properties": {
-            "schemaVersion": {
-                "type": "string",
-                "const": _CANONICAL_KNOW_SCHEMA_VERSION,
-            },
-            "name": {"type": "string", "minLength": 1},
-            "observations": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "datum": {"type": "string", "minLength": 1},
-                        "interpretation": {"type": "string", "minLength": 1},
-                        "citations": {
-                            "type": "array",
-                            "minItems": 1,
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "url": {
-                                        "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": _CANONICAL_KNOW_URL_LIMIT,
-                                    },
-                                    "title": {
-                                        "anyOf": [
-                                            {"type": "string", "minLength": 1},
-                                            {"type": "null"},
-                                        ],
-                                    },
-                                    "publishedAt": {
-                                        "anyOf": [
-                                            {"type": "string", "minLength": 1},
-                                            {"type": "null"},
-                                        ],
-                                    },
-                                    "sourceNote": {"type": "string", "minLength": 1},
-                                },
-                                "required": [
-                                    "url", "title", "publishedAt", "sourceNote",
-                                ],
-                                "additionalProperties": False,
-                            },
-                        },
-                        "relevantEntities": {
-                            "type": "array",
-                            "minItems": 1,
-                            "uniqueItems": True,
-                            "items": {"type": "string", "minLength": 1},
-                        },
-                    },
-                    "required": [
-                        "datum", "interpretation", "citations", "relevantEntities",
-                    ],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        "required": ["schemaVersion", "name", "observations"],
-        "additionalProperties": False,
-    }
 
 
 def graphiti_project_group_id(project_id: str) -> str:
@@ -968,15 +896,7 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             "connectionKind": "external-mcp",
         }
         payload["_meta"] = meta
-        if provider == "graphiti" and native_name == "add_memory":
-            payload["description"] = (
-                "Store one bounded research run as one product Know and one native Graphiti "
-                "episode. The Know contains separately readable observations, each with its "
-                "own explained citations and relevant canonical entities. Scope, stable call "
-                "identity, native episode identity, and observation time are server-owned."
-            )
-            payload["inputSchema"] = _canonical_know_input_schema()
-        elif provider == "graphiti" and native_name == "get_episodes":
+        if provider == "graphiti" and native_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
             properties.update({
@@ -1307,466 +1227,7 @@ async def _native_graphiti_tools() -> list[Tool]:
     return list(_NATIVE_GRAPHITI_TOOLS or ())
 
 
-def _canonical_know_text(value: Any, field: str, *, allow_empty: bool = False) -> str:
-    if not isinstance(value, str) or (not value.strip() and not allow_empty):
-        raise ValueError(f"knowgraph_source_observation_{field}_invalid")
-    return value
-
-
-def _canonical_know_url(value: Any) -> str:
-    """Validate exactly one bounded absolute HTTP(S) URL without normalizing it."""
-
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError("knowgraph_single_citation_url_required")
-    if len(value) > _CANONICAL_KNOW_URL_LIMIT or any(character.isspace() for character in value):
-        raise ValueError("knowgraph_single_citation_url_required")
-    if value.lower().count("://") != 1 or "\\" in value:
-        raise ValueError("knowgraph_single_citation_url_required")
-    try:
-        parsed = urlsplit(value)
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError as error:
-        raise ValueError("knowgraph_single_citation_url_required") from error
-    if (
-        parsed.scheme.lower() not in {"http", "https"}
-        or not parsed.netloc
-        or not hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or "@" in parsed.netloc
-        or parsed.netloc.endswith(":") and port is None
-    ):
-        raise ValueError("knowgraph_single_citation_url_required")
-    try:
-        ip_address(hostname)
-    except ValueError:
-        try:
-            ascii_hostname = hostname.encode("idna").decode("ascii").rstrip(".")
-        except UnicodeError as error:
-            raise ValueError("knowgraph_single_citation_url_required") from error
-        labels = ascii_hostname.split(".")
-        if (
-            len(ascii_hostname) > 253
-            or any(
-                not label
-                or len(label) > 63
-                or label.startswith("-")
-                or label.endswith("-")
-                or re.fullmatch(r"[A-Za-z0-9-]+", label) is None
-                for label in labels
-            )
-        ):
-            raise ValueError("knowgraph_single_citation_url_required")
-    return value
-
-
-def _canonical_know_submission(
-    arguments: dict[str, Any],
-    context: dict[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Validate one product Know and project it to exactly one native episode."""
-
-    if context is None:
-        raise PermissionError("authenticated_card_context_required")
-    supplied = dict(arguments or {})
-    if set(supplied) != {"schemaVersion", "name", "observations"}:
-        raise ValueError("knowgraph_source_observation_contract_invalid")
-    if supplied.get("schemaVersion") != _CANONICAL_KNOW_SCHEMA_VERSION:
-        raise ValueError("knowgraph_source_observation_contract_invalid")
-    name = _canonical_know_text(supplied.get("name"), "name")
-    raw_observations = supplied.get("observations")
-    if not isinstance(raw_observations, list) or not raw_observations:
-        raise ValueError("knowgraph_source_observation_contract_invalid")
-    project_id = str(context.get("projectId") or "").strip()
-    deck_id = str(context.get("deckId") or "").strip()
-    conversation_id = str(context.get("conversationId") or "").strip()
-    run_id = str(context.get("parentRunId") or "").strip()
-    card_id = str(context.get("mainCardId") or "").strip()
-    if not all((project_id, deck_id, conversation_id, run_id, card_id)):
-        raise PermissionError("authenticated_card_context_required")
-    server_identities = {
-        str(context.get(key) or "").strip()
-        for key in (
-            "projectId", "deckId", "conversationId", "parentRunId", "mainCardId",
-            "nativeChildId", "nativeRunId",
-        )
-        if str(context.get(key) or "").strip()
-    }
-    normalized: list[dict[str, Any]] = []
-    all_entity_names: list[str] = []
-    all_source_urls: list[str] = []
-    source_notes_by_url: dict[str, set[str]] = {}
-    for raw in raw_observations:
-        if not isinstance(raw, dict) or set(raw) != {
-            "datum", "interpretation", "citations", "relevantEntities",
-        }:
-            raise ValueError("knowgraph_source_observation_contract_invalid")
-        datum = _canonical_know_text(raw.get("datum"), "datum")
-        interpretation = _canonical_know_text(
-            raw.get("interpretation"), "interpretation",
-        )
-        raw_citations = raw.get("citations")
-        if not isinstance(raw_citations, list) or not raw_citations:
-            raise ValueError("knowgraph_source_observation_citation_invalid")
-        citations: list[dict[str, Any]] = []
-        for raw_citation in raw_citations:
-            if not isinstance(raw_citation, dict) or set(raw_citation) != {
-                "url", "title", "publishedAt", "sourceNote",
-            }:
-                raise ValueError("knowgraph_source_observation_citation_invalid")
-            citation_url = _canonical_know_url(raw_citation.get("url"))
-            citation_title = raw_citation.get("title")
-            if citation_title is not None:
-                citation_title = _canonical_know_text(
-                    citation_title, "citation_title",
-                )
-                if citation_title != citation_title.strip():
-                    raise ValueError(
-                        "knowgraph_source_observation_citation_title_invalid"
-                    )
-            source_note = _canonical_know_text(
-                raw_citation.get("sourceNote"), "citation_source_note",
-            )
-            existing_source_notes = source_notes_by_url.setdefault(
-                citation_url, set(),
-            )
-            if source_note in existing_source_notes:
-                raise ValueError(
-                    "knowgraph_source_observation_citation_contribution_duplicate"
-                )
-            existing_source_notes.add(source_note)
-            published_at = raw_citation.get("publishedAt")
-            if published_at is not None:
-                published_at = _canonical_know_text(published_at, "published_at")
-                if (
-                    published_at != published_at.strip()
-                    or re.fullmatch(
-                        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
-                        published_at,
-                    ) is None
-                ):
-                    raise ValueError(
-                        "knowgraph_source_observation_published_at_invalid"
-                    )
-            if citation_title is not None or published_at is not None:
-                raise ValueError(
-                    "knowgraph_trusted_source_metadata_capture_unavailable"
-                )
-            citations.append({
-                "url": citation_url,
-                "title": citation_title,
-                "publishedAt": published_at,
-                "sourceNote": source_note,
-            })
-            all_source_urls.append(citation_url)
-        raw_entities = raw.get("relevantEntities")
-        if not isinstance(raw_entities, list) or not raw_entities:
-            raise ValueError("knowgraph_source_observation_entities_invalid")
-        relevant_entities = [
-            _canonical_know_text(value, "entity") for value in raw_entities
-        ]
-        if len(set(relevant_entities)) != len(relevant_entities):
-            raise ValueError("knowgraph_source_observation_entities_invalid")
-        for entity_name in relevant_entities:
-            if entity_name not in all_entity_names:
-                all_entity_names.append(entity_name)
-        semantic_fields = json.dumps(
-            {
-                "name": name,
-                "datum": datum,
-                "interpretation": interpretation,
-                "citations": citations,
-                "relevantEntities": relevant_entities,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        if _CANONICAL_KNOW_SCHEMA_VERSION in semantic_fields or any(
-            identity in semantic_fields for identity in server_identities
-        ):
-            raise ValueError("knowgraph_transport_identifier_in_semantic_content")
-        normalized.append({
-            "datum": datum,
-            "interpretation": interpretation,
-            "citations": citations,
-            "relevantEntities": relevant_entities,
-        })
-    canonical_know = {
-        "schemaVersion": _CANONICAL_KNOW_SCHEMA_VERSION,
-        "name": name,
-        "observations": normalized,
-    }
-    canonical_know_json = json.dumps(
-        canonical_know, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-    )
-    objective_episode_body = json.dumps(
-        {
-            "observations": [
-                {"datum": observation["datum"]}
-                for observation in normalized
-            ],
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    output_slot = "know:0"
-    stable_identity = "\0".join((
-        _CANONICAL_KNOW_SCHEMA_VERSION,
-        project_id,
-        deck_id,
-        run_id,
-        card_id,
-        output_slot,
-    ))
-    call_uuid = uuid5(NAMESPACE_URL, "call\0" + stable_identity)
-    call_id = f"know-call:{call_uuid}"
-    source_marker = f"liquidaity-know-call:{call_uuid}"
-    native_arguments = {
-        "name": name,
-        # The extraction model sees datum fields only. Interpretation and source
-        # notes remain durable episode provenance, never objective Graphiti facts.
-        "episode_body": objective_episode_body,
-        "source": "json",
-        # Graphiti 0.30.x owns new episode UUID creation.  A server-owned source
-        # provenance marker lets an uncertain completion reconcile the native
-        # episode before any retry without leaking the call identity into facts.
-        "source_description": source_marker,
-        "custom_extraction_instructions": (
-            "Extract objective facts only from each datum field. Associate those "
-            "facts with every applicable entity in this exact canonical-name list. "
-            "Reuse these names exactly and do not infer facts from interpretation, "
-            "citation metadata, source notes, titles, URLs, or provenance: "
-            + json.dumps(all_entity_names, ensure_ascii=False, separators=(",", ":"))
-        ),
-    }
-    authority = {
-        "record_kind": "canonical_know",
-        "schema_version": _CANONICAL_KNOW_SCHEMA_VERSION,
-        "call_id": call_id,
-        "source_marker": source_marker,
-        "output_slot": output_slot,
-        "project_id": project_id,
-        "deck_id": deck_id,
-        "conversation_id": conversation_id,
-        "run_id": run_id,
-        "card_id": card_id,
-        "observed_at": observed_at,
-        "canonical_know_json": canonical_know_json,
-        "objective_episode_body_sha256": hashlib.sha256(
-            objective_episode_body.encode("utf-8")
-        ).hexdigest(),
-        "source_fingerprint": hashlib.sha256(json.dumps(
-            all_source_urls,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")).hexdigest(),
-        "semantic_sha256": hashlib.sha256(
-            canonical_know_json.encode("utf-8")
-        ).hexdigest(),
-    }
-    return native_arguments, authority
-
-
-async def _record_native_know_authority(
-    client: Any,
-    episode_uuid: str,
-    authority: dict[str, Any],
-) -> None:
-    if not episode_uuid:
-        raise RuntimeError("knowgraph_episode_identity_missing")
-    await client.driver.execute_query(
-        """
-        MATCH (episode:Episodic {uuid: $episode_uuid})
-        SET episode.liquidaity_record_kind = $record_kind,
-            episode.liquidaity_schema_version = $schema_version,
-            episode.liquidaity_call_id = $call_id,
-            episode.project_id = $project_id,
-            episode.deck_id = $deck_id,
-            episode.conversation_id = $conversation_id,
-            episode.origin_run_id = $run_id,
-            episode.origin_card_id = $card_id,
-            episode.observed_at = $observed_at,
-            episode.canonical_know_json = $canonical_know_json,
-            episode.objective_episode_body_sha256 = $objective_episode_body_sha256,
-            episode.source_fingerprint = $source_fingerprint,
-            episode.semantic_sha256 = $semantic_sha256
-        """,
-        **authority,
-    )
-
-
-async def _read_native_know_identity(
-    client: Any,
-    authority: dict[str, Any],
-) -> dict[str, Any] | None:
-    result = await client.driver.execute_query(
-        """
-        MATCH (episode:Episodic)
-        WHERE episode.liquidaity_call_id = $call_id
-           OR (
-             episode.liquidaity_call_id IS NULL
-             AND episode.source_description = $source_marker
-           )
-        RETURN episode.uuid AS episode_uuid,
-               episode.group_id AS group_id,
-               episode.liquidaity_record_kind AS record_kind,
-               episode.liquidaity_schema_version AS schema_version,
-               episode.liquidaity_call_id AS call_id,
-               episode.semantic_sha256 AS semantic_sha256,
-               episode.source_description AS source_description,
-               episode.content AS content
-        LIMIT 2
-        """,
-        call_id=authority["call_id"],
-        source_marker=authority["source_marker"],
-        routing_="r",
-    )
-    records = getattr(result, "records", None)
-    rows = (
-        list(records)
-        if records is not None
-        else result[0]
-        if isinstance(result, tuple) and result and isinstance(result[0], list)
-        else []
-    )
-    if not rows:
-        return None
-    if len(rows) != 1:
-        raise RuntimeError("knowgraph_stable_episode_identity_ambiguous")
-    return dict(rows[0])
-
-
-def _validate_native_know_identity(
-    native: dict[str, Any],
-    authority: dict[str, Any],
-    context: dict[str, Any],
-) -> str:
-    episode_uuid = str(native.get("episode_uuid") or "").strip()
-    content = str(native.get("content") or "")
-    objective_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    if (
-        not episode_uuid
-        or native.get("group_id")
-        != graphiti_project_group_id(str(context["projectId"]))
-        or native.get("source_description") != authority["source_marker"]
-        or objective_sha256 != authority["objective_episode_body_sha256"]
-    ):
-        raise RuntimeError("knowgraph_stable_episode_payload_conflict")
-    recorded_call_id = native.get("call_id")
-    if recorded_call_id is not None and (
-        native.get("record_kind") != "canonical_know"
-        or native.get("schema_version") != _CANONICAL_KNOW_SCHEMA_VERSION
-        or recorded_call_id != authority["call_id"]
-        or native.get("semantic_sha256") != authority["semantic_sha256"]
-    ):
-        raise RuntimeError("knowgraph_stable_episode_payload_conflict")
-    return episode_uuid
-
-
-def _canonical_know_acknowledgement(
-    authority: dict[str, Any],
-    *,
-    state: str,
-    message: str,
-    event: dict[str, Any] | None = None,
-) -> CallToolResult:
-    acknowledgement = {
-        "ok": True,
-        "state": state,
-        "callId": authority["call_id"],
-        "message": message,
-    }
-    episode_ids = list((event or {}).get("nativeEpisodeIds") or [])
-    if len(episode_ids) == 1:
-        acknowledgement["episodeUuid"] = str(episode_ids[0])
-    return CallToolResult(
-        content=[TextContent(
-            type="text", text=json.dumps(acknowledgement, ensure_ascii=False),
-        )],
-        structuredContent={"result": acknowledgement},
-        isError=False,
-        meta={"nativeAttention": event} if event is not None else None,
-    )
-
-
-async def _claim_or_reconcile_canonical_know(
-    context: dict[str, Any],
-    authority: dict[str, Any],
-) -> CallToolResult | None:
-    from app.python_models.card_domain import claim_atomic_know_write
-
-    claim = await asyncio.to_thread(claim_atomic_know_write, {
-        "projectId": str(context["projectId"]),
-        "deckId": str(context["deckId"]),
-        "runId": str(context["parentRunId"]),
-        "cardId": str(context["mainCardId"]),
-        "callId": authority["call_id"],
-        "outputSlot": authority["output_slot"],
-        "semanticSha256": authority["semantic_sha256"],
-        "timestamp": authority["observed_at"],
-    })
-    service = getattr(_NATIVE_GRAPHITI_MODULE, "graphiti_service", None)
-    if service is None:
-        raise RuntimeError("native_graphiti_service_unavailable")
-    client = await service.get_client()
-    native = await _read_native_know_identity(client, authority)
-    if native is not None:
-        episode_uuid = _validate_native_know_identity(native, authority, context)
-        if native.get("call_id") is None:
-            await _record_native_know_authority(client, episode_uuid, authority)
-        from app.python_models.native_attention import build_native_attention_event
-
-        event = build_native_attention_event(
-            "graphiti.add_memory",
-            {"phase": "completed", "episodes": [{"uuid": episode_uuid}]},
-            context,
-        )
-        if event is None:
-            raise RuntimeError("knowgraph_reconciled_event_invalid")
-        event["eventId"] = authority["call_id"]
-        event["callId"] = authority["call_id"]
-        event["nativeEpisodeIds"] = [episode_uuid]
-        event["nativeNodeIds"] = []
-        event["resultHash"] = hashlib.sha256(json.dumps(
-            {
-                "nativeEpisodeIds": event["nativeEpisodeIds"],
-                "nativeNodeIds": [],
-                "nativeEdgeIds": [],
-                "nativeEdges": [],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")).hexdigest()
-        await _persist_native_attention(event, context)
-        return _canonical_know_acknowledgement(
-            authority,
-            state="completed",
-            message="Existing exact native Graphiti episode reconciled.",
-            event=event,
-        )
-    if claim.get("status") == "existing":
-        phase = str((claim.get("event") or {}).get("phase") or "pending")
-        if phase == "failed":
-            raise RuntimeError("knowgraph_write_reconciliation_required")
-        return _canonical_know_acknowledgement(
-            authority,
-            state="pending",
-            message="Existing stable Know write is pending exact native readback.",
-        )
-    if claim.get("status") != "claimed":
-        raise RuntimeError("knowgraph_write_claim_invalid")
-    return None
-
-
-async def _call_native_graphiti(
-    name: str,
-    arguments: dict[str, Any],
-    *,
-    know_authority: dict[str, Any] | None = None,
-):
+async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
     arguments = dict(arguments)
     context = _authenticated_main_context()
     try:
@@ -1778,16 +1239,8 @@ async def _call_native_graphiti(
         raise RuntimeError("native_graphiti_initialization_timeout") from error
     if _NATIVE_GRAPHITI_MODULE is None:
         raise RuntimeError("native_graphiti_not_initialized")
-    if know_authority is not None:
-        if context is None:
-            raise PermissionError("authenticated_card_context_required")
-        reconciled = await _claim_or_reconcile_canonical_know(
-            context, know_authority,
-        )
-        if reconciled is not None:
-            return reconciled
     observation: dict[str, Any] | None = (
-        {"context": context, "event": None, "know_authority": know_authority}
+        {"context": context, "event": None}
         if name == "add_memory" else None
     )
     token = _ACTIVE_GRAPHITI_ATTENTION.set(observation)
@@ -1802,23 +1255,6 @@ async def _call_native_graphiti(
         result = _normalize_graphiti_result(result)
         if observation and observation.get("event") and isinstance(result, CallToolResult):
             result.meta = {**(result.meta or {}), "nativeAttention": observation["event"]}
-        if know_authority is not None and isinstance(result, CallToolResult) and not result.isError:
-            native_message = next(
-                (
-                    str(block.text)
-                    for block in result.content
-                    if isinstance(block, TextContent) and str(block.text or "")
-                ),
-                "Native Graphiti episode queued.",
-            )
-            queued = _canonical_know_acknowledgement(
-                know_authority,
-                state="queued",
-                message=native_message,
-                event=observation.get("event") if observation else None,
-            )
-            result.content = queued.content
-            result.structuredContent = queued.structuredContent
         return result
     finally:
         _ACTIVE_GRAPHITI_ATTENTION.reset(token)
@@ -1874,37 +1310,7 @@ def _instrument_graphiti_attention(client: Any, queue: Any) -> None:
             }
             event = build_native_attention_event("graphiti.add_memory", payload, observation["context"])
             if event is not None:
-                know_authority = observation.get("know_authority")
-                episode_uuid = str(
-                    getattr(getattr(result, "episode", None), "uuid", None) or ""
-                )
-                if isinstance(know_authority, dict):
-                    event["eventId"] = know_authority["call_id"]
-                    event["callId"] = know_authority["call_id"]
-                    event["nativeEpisodeIds"] = [episode_uuid] if episode_uuid else []
-                    event["nativeNodeIds"] = [
-                        str(getattr(node, "uuid", None) or "")
-                        for node in (getattr(result, "nodes", None) or [])
-                        if str(getattr(node, "uuid", None) or "")
-                    ]
-                    event["resultHash"] = hashlib.sha256(json.dumps(
-                        {
-                            "nativeEpisodeIds": event["nativeEpisodeIds"],
-                            "nativeNodeIds": event["nativeNodeIds"],
-                            "nativeEdgeIds": event.get("nativeEdgeIds") or [],
-                            "nativeEdges": event.get("nativeEdges") or [],
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")).hexdigest()
-                    await _record_native_know_authority(
-                        client,
-                        episode_uuid,
-                        know_authority,
-                    )
-                else:
-                    event["eventId"] = observation["event"]["eventId"]
+                event["eventId"] = observation["event"]["eventId"]
                 observation["event"] = event
                 await _persist_native_attention(event, observation["context"])
         return result
@@ -1916,11 +1322,6 @@ def _instrument_graphiti_attention(client: Any, queue: Any) -> None:
         from app.python_models.native_attention import build_native_attention_event
 
         event = build_native_attention_event("graphiti.add_memory", {"phase": "pending"}, observation["context"])
-        know_authority = observation.get("know_authority")
-        if event is not None and isinstance(know_authority, dict):
-            event["eventId"] = know_authority["call_id"]
-            event["callId"] = know_authority["call_id"]
-            event["nativeEpisodeIds"] = []
         observation["event"] = event
         if event:
             await _persist_native_attention(event, observation["context"])
@@ -2598,17 +1999,16 @@ _BACKEND_ROUTES = {
     "external_main_chat": "/api/main/chat",
     "describe_connected_agents": "/api/cards/connected",
     "run_configured_card": "/api/cards/run",
-    "atomic_research": "/api/main/research/atomic",
     "worldview_action": "/api/worldview/internal/actions",
 }
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
     headers = {"Content-Type": "application/json"}
-    if path in {"run_configured_card", "atomic_research", "worldview_action"} and len(INTERNAL_MCP_SECRET) < 32:
+    if path in {"run_configured_card", "worldview_action"} and len(INTERNAL_MCP_SECRET) < 32:
         raise RuntimeError("internal_mcp_secret_missing")
     if path in {
-        "external_main_context", "external_main_chat", "run_configured_card", "atomic_research",
+        "external_main_context", "external_main_chat", "run_configured_card",
         "worldview_action",
     } and INTERNAL_MCP_SECRET:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
@@ -2808,48 +2208,6 @@ class Auth0TokenVerifier:
 async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
     text = await asyncio.to_thread(_bridge_sync, path, payload)
     return [TextContent(type="text", text=text)]
-
-
-def _model_visible_atomic_research_result(text: str) -> str:
-    """Keep code-owned launch receipts out of Main's model-visible tool result."""
-
-    try:
-        payload = json.loads(text)
-    except (TypeError, ValueError):
-        payload = None
-    state = str(payload.get("state") or "").strip() if isinstance(payload, dict) else ""
-    rejoined = payload.get("rejoined") if isinstance(payload, dict) else None
-    run_id = payload.get("runId") if isinstance(payload, dict) else None
-    valid_launch = (
-        isinstance(payload, dict)
-        and payload.get("ok") is True
-        and isinstance(run_id, str)
-        and bool(run_id.strip())
-        and isinstance(rejoined, bool)
-        and state in {"running", "completed"}
-        and (state != "completed" or rejoined is True)
-    )
-    if valid_launch:
-        already_complete = state == "completed"
-        return json.dumps({
-            "ok": True,
-            "status": "already_complete" if already_complete else "started",
-            "message": (
-                "The bounded research is already complete; its cited result is delivered "
-                "separately after native persistence."
-                if already_complete
-                else "Bounded research started. Continue naturally or wait for the cited "
-                "result, which is delivered separately after native persistence."
-            ),
-        })
-    return json.dumps({
-        "ok": False,
-        "status": "unavailable",
-        "message": (
-            "Bounded research could not be started. Technical failure details are available "
-            "only in Runtime."
-        ),
-    })
 
 
 def _grounded_data_anchors_schema() -> dict[str, Any]:
@@ -3064,29 +2422,6 @@ def _application_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="research_atomic_thinks",
-            description=(
-                "Main only: start one bounded saved KnowGraph research Run for one or two "
-                "exact atomic Think memory IDs offered by the current Jev assessment. "
-                "Accepts no query, topic, source list, Card identity, or runtime override. "
-                "The model receives only a natural launch or availability status; technical "
-                "Run, claim, session, and receipt identities remain in the Runtime ledger."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "thinkMemoryIds": {
-                        "type": "array", "minItems": 1, "maxItems": 2,
-                        "uniqueItems": True,
-                        "items": {"type": "string", "minLength": 1, "maxLength": 1024},
-                    },
-                    "reason": {"type": "string", "maxLength": 500},
-                },
-                "required": ["thinkMemoryIds"],
-                "additionalProperties": False,
-            },
-        ),
-        Tool(
             name="write_mag_one_instructions",
             description=(
                 "Optional review only: place one exact mission and its resolved native graph projection "
@@ -3193,7 +2528,6 @@ _APPLICATION_OPERATION_ACCESS = {
     "agentgraph.inspect": "read",
     "mag_one.describe_connected_agents": "read",
     "run_mag_one": "write",
-    "research_atomic_thinks": "write",
     "write_mag_one_instructions": "write",
     "card.load_graph_references": "write",
     "canvas.inspect": "read",
@@ -3223,7 +2557,7 @@ def application_operation_definitions() -> list[OperationDefinition]:
             available=True,
             publishers=(
                 frozenset({"internal-plugin"})
-                if tool.name in {"worldview.action", "research_atomic_thinks"}
+                if tool.name == "worldview.action"
                 else frozenset({"internal-plugin", "external-mcp"})
             ),
             access=access,
@@ -3231,7 +2565,7 @@ def application_operation_definitions() -> list[OperationDefinition]:
             external_source_id="main_mcp",
             required_caller_runtime=(
                 ("hermes", "main")
-                if tool.name in {"run_mag_one", "worldview.set_capability", "research_atomic_thinks"}
+                if tool.name in {"run_mag_one", "worldview.set_capability"}
                 else ("hermes", "delegate") if tool.name == "worldview.action"
                 else None
             ),
@@ -3683,11 +3017,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "run_mag_one": {
         "projectId", "deckId", "input", "conversationId", "dataAnchors",
     },
-    "research_atomic_thinks": {
-        "projectId", "deckId", "conversationId", "parentRunId",
-        "thinkMemoryIds", "reason", "_callerCardId", "_callerRuntimeKind",
-        "_callerRuntimeMode",
-    },
     "write_mag_one_instructions": {
         "projectId", "deckId", "conversationId", "targetCardId", "mission",
         "dataAnchors", "_sourceCardId",
@@ -3768,21 +3097,9 @@ async def _dispatch_tool(
         native_name = name.removeprefix(_NATIVE_PREFIXES["graphiti"])
         if native_name in _NATIVE_GRAPHITI_NAMES:
             native_args = dict(arguments or {})
-            include_body = False
-            preview_chars = 400
-            response_budget = 20_000
-            if native_name == "get_episodes":
-                include_body = bool(native_args.pop("include_body", False))
-                preview_chars = max(0, min(2000, int(
-                    native_args.pop("body_preview_chars", 400)
-                )))
-                response_budget = max(2000, min(100000, int(
-                    native_args.pop("max_response_chars", 20000)
-                )))
-            canonical_submission = (
-                _canonical_know_submission(native_args, context)
-                if native_name == "add_memory" else None
-            )
+            include_body = bool(native_args.pop("include_body", False))
+            preview_chars = max(0, min(2000, int(native_args.pop("body_preview_chars", 400))))
+            response_budget = max(2000, min(100000, int(native_args.pop("max_response_chars", 20000))))
             if context is not None:
                 if "group_id" in native_args or "group_ids" in native_args:
                     return [
@@ -3812,23 +3129,10 @@ async def _dispatch_tool(
                     else {}
                 )
                 if "group_id" in native_properties:
-                    if canonical_submission is not None:
-                        canonical_submission[0]["group_id"] = group_id
-                    else:
-                        native_args["group_id"] = group_id
+                    native_args["group_id"] = group_id
                 if "group_ids" in native_properties:
                     native_args["group_ids"] = [group_id]
-            if canonical_submission is not None:
-                submission, authority = canonical_submission
-                return await _call_native_graphiti(
-                    native_name,
-                    submission,
-                    know_authority=authority,
-                )
-            result = await _call_native_graphiti(
-                native_name,
-                native_args,
-            )
+            result = await _call_native_graphiti(native_name, native_args)
             if native_name == "get_episodes" and isinstance(result, CallToolResult):
                 return _bounded_graphiti_episodes(
                     result,
@@ -3862,8 +3166,6 @@ async def _dispatch_tool(
                         continue
                     args[field] = str(context[field])
             if name == "worldview.action":
-                args["parentRunId"] = str(context.get("parentRunId") or "")
-            if name == "research_atomic_thinks":
                 args["parentRunId"] = str(context.get("parentRunId") or "")
             if name in {"write_mag_one_instructions", "card.load_graph_references", "worldsignals.package"}:
                 args["_sourceCardId"] = str(context["mainCardId"])
@@ -3979,30 +3281,6 @@ async def _dispatch_tool(
                 ),
             },
         )
-    if name == "research_atomic_thinks":
-        try:
-            receipt_text = await asyncio.to_thread(
-                _bridge_sync,
-                "atomic_research",
-                {
-                    "projectId": str(args.get("projectId") or ""),
-                    "deckId": str(args.get("deckId") or ""),
-                    "conversationId": str(args.get("conversationId") or ""),
-                    "sourceRunId": str(args.get("parentRunId") or ""),
-                    "mainCardId": caller_card_id,
-                    "thinkMemoryIds": args.get("thinkMemoryIds"),
-                    "reason": str(args.get("reason") or ""),
-                },
-            )
-        except Exception as error:
-            active_receipt = _ACTIVE_EXECUTION_RECEIPT.get()
-            if isinstance(active_receipt, dict):
-                active_receipt["controlPlaneFailureCode"] = _sanitize_failure_detail(error)
-            receipt_text = ""
-        return [TextContent(
-            type="text",
-            text=_model_visible_atomic_research_result(receipt_text),
-        )]
     if name == "main.context":
         if context is None:
             return [

@@ -36,7 +36,6 @@ _RUNTIME_RECEIPT_REFERENCE_KEYS = frozenset({
     "attemptEvents", "requestFulfillment", "observationGap", "timingMs",
     "inputTokens", "outputTokens", "cachedTokens", "reasoningTokens",
     "costUsd", "totalCostUsd", "toolReceipt", "executionReceipt",
-    "atomicResearchAssessment", "atomicResearchOutcome",
 })
 
 

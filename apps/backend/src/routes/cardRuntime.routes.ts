@@ -13,7 +13,6 @@ import {
 import { agentTerminalExecution } from '../hermes/agentTerminalExecution';
 import { buildCardTerminal } from '../hermes/cardTerminal';
 import {
-  appendSharedConversationReplyOnce,
   appendSharedConversationTurn,
   getConversationMessages,
   listConversations,
@@ -155,45 +154,6 @@ function isRoundedDecisionDistribution(values: number[]): boolean {
   return lower <= 1 + arithmeticTolerance && upper >= 1 - arithmeticTolerance;
 }
 
-function isSemanticChoiceReceipt(value: unknown, choices: readonly string[]): boolean {
-  if (!isRecord(value)) return false;
-  const classification = String(value.classification || '');
-  const distribution = value.distribution;
-  if (!choices.includes(classification)
-    || typeof value.confidence !== 'number' || !Number.isFinite(value.confidence)
-    || value.confidence < 0 || value.confidence > 1
-    || typeof value.winnerProbability !== 'number'
-    || !Number.isFinite(value.winnerProbability)
-    || value.winnerProbability < 0 || value.winnerProbability > 1
-    || !isRecord(distribution)
-    || Object.keys(distribution).length !== choices.length
-    || Object.keys(distribution).some((key) => !choices.includes(key))) return false;
-  const probabilities = choices.map((choice) => distribution[choice]);
-  return probabilities.every((probability) => (
-    typeof probability === 'number' && Number.isFinite(probability)
-    && probability >= 0 && probability <= 1
-  )) && isRoundedDecisionDistribution(probabilities as number[])
-    && Math.abs(Number(distribution[classification]) - value.winnerProbability) < 1e-9;
-}
-
-function isResearchProgressReceipt(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return value.schemaVersion === 'research-progress.v1'
-    && typeof value.active === 'boolean'
-    && ['inactive', 'continued', 'changed_thesis'].includes(String(value.lineageAction || ''))
-    && Number.isInteger(value.priorRepeatedOnlyCount)
-    && Number(value.priorRepeatedOnlyCount) >= 0
-    && Number.isInteger(value.repeatedOnlyCount)
-    && Number(value.repeatedOnlyCount) >= 0
-    && typeof value.automaticContinuationAllowed === 'boolean'
-    && (value.lineageId === null || typeof value.lineageId === 'string')
-    && (value.parentRunId === null || value.parentRunId === undefined
-      || typeof value.parentRunId === 'string')
-    && (value.evidenceGapId === null || value.evidenceGapId === undefined
-      || typeof value.evidenceGapId === 'string')
-    && (value.stopReason === null || value.stopReason === undefined
-      || typeof value.stopReason === 'string');
-}
 
 function isSha256(value: unknown): boolean {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -211,8 +171,7 @@ function preparedRequestFulfillmentAssessment(
     'actualProvider', 'actualModel', 'requestedModel', 'scale', 'evaluatedAt',
     'failureReason', 'requestCount', 'questionCount', 'timingMs', 'rawScore',
     'normalizedScore100', 'probabilities', 'confidence', 'provider',
-    'resolvedModel', 'decisionId', 'usage', 'novelty', 'citationCoverage',
-    'followUp', 'researchProgress',
+    'resolvedModel', 'decisionId', 'usage',
   ]);
   if (Object.keys(value).some((key) => !allowed.has(key))
     || value.schemaVersion !== 'request-fulfillment-assessment.v1'
@@ -246,28 +205,12 @@ function preparedRequestFulfillmentAssessment(
     const probabilityValues = isRecord(probabilities)
       ? keys.map((key) => probabilities[key])
       : [];
-    const legacySemanticReceipt = value.questionCount === 1
-      && value.novelty === undefined
-      && value.citationCoverage === undefined
-      && value.followUp === undefined
-      && value.researchProgress === undefined;
-    const extendedSemanticReceipt = value.questionCount === 4
-      && isSemanticChoiceReceipt(value.novelty, [
-        'new_evidence', 'contradiction', 'changed_thesis', 'repeated_only',
-      ])
-      && isSemanticChoiceReceipt(value.citationCoverage, [
-        'complete', 'gap', 'not_applicable',
-      ])
-      && isSemanticChoiceReceipt(value.followUp, [
-        'accept', 'ask_one_clarification', 'send_one_bounded_follow_up', 'stop',
-      ])
-      && isResearchProgressReceipt(value.researchProgress);
     if (requiredText.some((field) => typeof value[field] !== 'string' || !String(value[field]).trim())
       || value.executionEvidenceComplete !== true
       || value.executionEvidenceError !== null
       || value.failureReason !== undefined
       || value.requestCount !== 1
-      || (!legacySemanticReceipt && !extendedSemanticReceipt)
+      || value.questionCount !== 1
       || !isRecord(probabilities)
       || Object.keys(probabilities).length !== keys.length
       || Object.keys(probabilities).some((key) => !keys.includes(key))
@@ -288,8 +231,7 @@ function preparedRequestFulfillmentAssessment(
       throw new Error('request_fulfillment_receipt_invalid');
     }
   } else if (typeof value.failureReason !== 'string' || !value.failureReason.trim()
-    || ['rawScore', 'normalizedScore100', 'probabilities', 'confidence',
-      'novelty', 'citationCoverage', 'followUp']
+    || ['rawScore', 'normalizedScore100', 'probabilities', 'confidence']
       .some((field) => value[field] !== undefined)) {
     throw new Error('request_fulfillment_receipt_invalid');
   }
@@ -443,18 +385,6 @@ type CompletedPairThinkGraphLifecycleArgs = {
   authority: SharedChatAuthority;
   originatingRunId: string;
   completedPair: Record<string, unknown>;
-  postTurnCompaction?: {
-    owner: AgentTerminalOwner;
-    identity: {
-      sessionId: string;
-      nativeSessionId: string;
-      storedSessionId: string;
-      profile: string;
-      completedTurnGeneration: number;
-      completedNativeRunId: string | null;
-    };
-    nativeTurnId: string;
-  };
 };
 
 // A saved ThinkGraph Card/profile has one native terminal session. Keep completed
@@ -1117,40 +1047,6 @@ internalMainMcpRoutes.post('/context', authorizeInternalMainMcp, async (req, res
   }
 });
 
-internalMainMcpRoutes.post('/research/atomic', authorizeInternalMainMcp, async (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const deckId = String(req.body?.deckId || '').trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  const sourceRunId = String(req.body?.sourceRunId || '').trim();
-  const mainCardId = String(req.body?.mainCardId || '').trim();
-  const thinkMemoryIds = Array.isArray(req.body?.thinkMemoryIds)
-    ? req.body.thinkMemoryIds.map(String)
-    : [];
-  const reason = String(req.body?.reason || '').trim();
-  if (!projectId || !deckId || !conversationId || !sourceRunId || !mainCardId
-    || thinkMemoryIds.length < 1 || thinkMemoryIds.length > 2) {
-    return res.status(400).json({ ok: false, error: 'atomic_research_command_invalid' });
-  }
-  try {
-    const launched = await launchAtomicResearch({
-      req,
-      projectId,
-      deckId,
-      conversationId,
-      sourceRunId,
-      mainCardId,
-      thinkMemoryIds,
-      mode: 'main',
-      reason,
-    });
-    return res.status(202).json({ ok: true, ...launched });
-  } catch (error) {
-    return res.status(409).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'atomic_research_command_failed',
-    });
-  }
-});
 
 internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) => {
   const acceptedAt = new Date().toISOString();
@@ -1208,19 +1104,18 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       savedDeck: run.savedDeck,
       savedCard: run.savedCard,
     });
-    const postTurnCompaction = postTurnCompactionRequest(run, result);
     let requestFulfillmentDeferred = false;
     try {
       const authority = await resolveSharedChatAuthority(projectId, deckId);
       requestFulfillmentDeferred = true;
-      void enqueueAssessedCompletedPairThinkGraphLifecycle({
+      void enqueueRequestFulfillmentAssessment(run.runId, result.nativeCompletion);
+      void enqueueCompletedPairThinkGraphLifecycle({
         req,
         projectId,
         deckId,
         conversationId,
         authority,
         originatingRunId: run.runId,
-        postTurnCompaction,
         completedPair: {
           projectId,
           deckId,
@@ -1232,7 +1127,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
           userMessage: message,
           mainResponse: result.text,
         },
-      }, result.nativeCompletion, run);
+      });
     } catch (error) {
       logHarnessTrace(
         `[thinkgraph] external Main intake unavailable: ${error instanceof Error ? error.message : String(error)}`,
@@ -2391,6 +2286,10 @@ function thinkGraphCardAssignment(preparation: any): string {
     'Run one Engraphis llm_structured extraction pass using the native prompt and schema below.',
     'Use your saved ThinkGraph Card instructions and configured model. Do not call tools.',
     'Return only one JSON object that validates against OUTPUT_SCHEMA. Do not wrap it in prose.',
+    'Every relations[] item must contain exactly the three nonempty string fields source, relation,',
+    'and target. source and target are endpoint names; relation is the predicate. Never duplicate',
+    'a JSON key, substitute source for relation, or omit a field. Valid example:',
+    '{"source":"Launch cadence","relation":"SUPPORTS","target":"Execution quality"}.',
     'Create the current temporal ThinkGraph Think from this completed User/Main exchange.',
     'The exchange is observable input; Main does not author or initiate this automatic Think.',
     'Interpret the current completed User/Main pair with the complete compact cross-graph subject',
@@ -2432,6 +2331,9 @@ function thinkGraphCardAssignment(preparation: any): string {
     'accepts a structured relationship involving it after this Card returns.',
     'The Think preserves the full explanatory meaning; Jev alone classifies any durable graph edge',
     'by making the proposed predicate compete with the entire current project vocabulary.',
+    'Put the complete reusable combined meaning in think.summary. Do not emit a thought category,',
+    'importance score, analytical taxonomy, or property packet; optional compatibility fields are',
+    'application-owned defaults and are not user-facing knowledge.',
     'The one episodic Think must be self-contained. Apart from each required relation.source, do not',
     'emit timestamps, external source references, citations, origin/provenance fields, or final edge labels.',
     '',
@@ -2456,398 +2358,11 @@ function completedPairExtractorPayload(
     .map((field) => [field, completedPair[field]]));
 }
 
-type AtomicResearchLaunchMode = 'automatic' | 'main';
-
-type AtomicResearchSettlementArgs = {
-  authorization: any;
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  sourceRunId: string;
-  runId: string;
-  knowGraph: AddressableAgent;
-  mainAuthority: AddressableAgent;
-  providerMessageId: string;
-  output?: string;
-  continuationRef?: string | null;
-  failureReason?: string;
-};
-
-const atomicResearchSettlements = new Map<string, Promise<void>>();
-
-function atomicResearchSettlementPending(error: unknown): boolean {
-  const reason = error instanceof Error ? error.message : String(error || '');
-  return reason.endsWith('atomic_research_episode_settlement_pending');
-}
-
-async function settleAtomicResearchPublication(
-  args: AtomicResearchSettlementArgs,
-): Promise<void> {
-  let outcome: Record<string, unknown>;
-  let sharedChatText: string;
-  try {
-    if (args.failureReason) throw new Error(args.failureReason);
-    const validated: any = await requestPythonRailsJson(
-      '/thinkgraph/research/result/validate',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: args.projectId,
-          deckId: args.deckId,
-          knowGraphCardId: args.knowGraph.cardId,
-          assessmentId: args.authorization.assessmentId,
-          sourceRunId: args.sourceRunId,
-          childRunId: args.runId,
-          thinkMemoryIds: args.authorization.thinkMemoryIds,
-          output: args.output,
-        }),
-      },
-      { timeoutMs: 200_000 },
-    );
-    if (!validated?.ok || !validated.result || !validated.sharedChatText) {
-      throw new Error('atomic_research_result_validation_failed');
-    }
-    outcome = {
-      schemaVersion: 'atomic-research-outcome.v1',
-      status: 'completed',
-      assessmentId: args.authorization.assessmentId,
-      sourceRunId: args.sourceRunId,
-      childRunId: args.runId,
-      result: validated.result,
-      citationCount: validated.citationCount,
-      episodeCount: validated.episodeCount,
-      settlement: validated.settlement ?? null,
-    };
-    sharedChatText = String(validated.sharedChatText);
-  } catch (error) {
-    if (atomicResearchSettlementPending(error)) {
-      logHarnessTrace(
-        `[atomic-research] settlement pending run=${args.runId}`,
-      );
-      return;
-    }
-    const reason = error instanceof Error ? error.message : 'atomic_research_failed';
-    outcome = {
-      schemaVersion: 'atomic-research-outcome.v1',
-      status: 'failed',
-      assessmentId: args.authorization.assessmentId,
-      sourceRunId: args.sourceRunId,
-      childRunId: args.runId,
-      error: reason,
-    };
-    sharedChatText = [
-      'Research result',
-      '',
-      'Source unavailable: KnowGraph could not validate sourced evidence for this question.',
-    ].join('\n');
-  }
-  try {
-    await appendSharedConversationReplyOnce({
-      projectId: args.projectId,
-      conversationId: args.conversationId,
-      message: {
-        role: 'assistant',
-        content: sharedChatText,
-        speaker: cardParticipant(args.knowGraph),
-        target: cardParticipant(args.mainAuthority),
-        providerContinuationRef: args.continuationRef || null,
-        providerMessageId: args.providerMessageId,
-      },
-    });
-  } catch (error) {
-    logHarnessTrace(
-      `[atomic-research] completion append failed reason=${redactTrace(
-        error instanceof Error ? error.message : String(error),
-      )}`,
-    );
-    return;
-  }
-  await requestPythonRailsJson('/domain/research/atomic/outcome', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: args.projectId,
-      deckId: args.deckId,
-      originatingRunId: args.authorization.originatingRunId,
-      childRunId: args.runId,
-      outcome,
-    }),
-  }).catch((error) => {
-    logHarnessTrace(
-      `[atomic-research] outcome persistence failed reason=${redactTrace(
-        error instanceof Error ? error.message : String(error),
-      )}`,
-    );
-  });
-}
-
-function enqueueAtomicResearchSettlement(
-  args: AtomicResearchSettlementArgs,
-): Promise<void> {
-  const existing = atomicResearchSettlements.get(args.runId);
-  if (existing) return existing;
-  const settlement = settleAtomicResearchPublication(args);
-  atomicResearchSettlements.set(args.runId, settlement);
-  void settlement.finally(() => {
-    if (atomicResearchSettlements.get(args.runId) === settlement) {
-      atomicResearchSettlements.delete(args.runId);
-    }
-  });
-  return settlement;
-}
-
-async function launchAtomicResearch(args: {
-  req: Request;
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  sourceRunId: string;
-  mainCardId: string;
-  thinkMemoryIds: string[];
-  mode: AtomicResearchLaunchMode;
-  reason?: string;
-}): Promise<{ runId: string; state: string; rejoined: boolean }> {
-  const authorization: any = await requestPythonRailsJson('/domain/research/atomic/authorize', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: args.projectId,
-      deckId: args.deckId,
-      conversationId: args.conversationId,
-      sourceRunId: args.sourceRunId,
-      mainCardId: args.mainCardId,
-      thinkMemoryIds: args.thinkMemoryIds,
-      mode: args.mode,
-      reason: args.reason || '',
-    }),
-  });
-  if (!authorization?.ok || !String(authorization.correlationId || '').trim()) {
-    throw new Error('atomic_research_authorization_invalid');
-  }
-  const runId = String(authorization.correlationId);
-  const savedPreparation = await prepareSavedCardRun({
-    projectId: args.projectId,
-    deckId: args.deckId,
-    cardId: String(authorization.knowGraphCardId),
-    cardRevisionId: String(authorization.knowGraphCardRevisionId),
-    assignment: String(authorization.assignment || ''),
-    senderCardId: args.mainCardId,
-    originatingRunId: args.sourceRunId,
-    conversationId: args.conversationId,
-    correlationId: runId,
-    acceptedAt: new Date().toISOString(),
-    dataAnchors: authorization.dataAnchors,
-  });
-  const prepared = savedPreparation.prepared;
-  const exactIdentity = prepared.runtimeOwner === 'hermes'
-    && String(prepared.runId || '') === runId
-    && String(prepared.cardRevisionId || '') === String(authorization.knowGraphCardRevisionId)
-    && String(prepared.hermesTransport?.cardIdentity?.cardId || '')
-      === String(authorization.knowGraphCardId)
-    && String(prepared.hermesTransport?.request?.runtime?.profile || '')
-      === String(authorization.knowGraphProfile)
-    && Boolean(prepared.hermesTransport?.request);
-  if (!exactIdentity) throw new Error('atomic_research_saved_card_runtime_identity_mismatch');
-
-  const knowGraph: AddressableAgent = {
-    cardId: String(authorization.knowGraphCardId),
-    cardRevisionId: String(authorization.knowGraphCardRevisionId),
-    profile: String(authorization.knowGraphProfile),
-    title: String(authorization.knowGraphTitle || 'KnowGraph'),
-    address: String(authorization.knowGraphTitle || 'KnowGraph'),
-    aliases: [String(authorization.knowGraphTitle || 'KnowGraph').toLowerCase()],
-  };
-  const mainAuthority = await resolveSharedChatAuthority(
-    args.projectId, args.deckId,
-  );
-  const providerMessageId = `atomic-research:${runId}`;
-  if (authorization.rejoined === true || prepared.rejoined === true) {
-    const existing = await readConfiguredCardRunStatus({
-      projectId: args.projectId,
-      deckId: args.deckId,
-      runId,
-    });
-    if (authorization.settledOutcome && typeof authorization.settledOutcome === 'object') {
-      return { runId, state: existing?.state || 'completed', rejoined: true };
-    }
-    if (existing?.state === 'completed' && existing.output) {
-      setImmediate(() => {
-        void enqueueAtomicResearchSettlement({
-          authorization,
-          projectId: args.projectId,
-          deckId: args.deckId,
-          conversationId: args.conversationId,
-          sourceRunId: args.sourceRunId,
-          runId,
-          knowGraph,
-          mainAuthority: mainAuthority.main,
-          providerMessageId,
-          output: existing.output || undefined,
-          continuationRef: existing.hermesSessionId,
-        });
-      });
-    } else if (existing && ['failed', 'cancelled', 'blocked'].includes(existing.state)) {
-      setImmediate(() => {
-        void enqueueAtomicResearchSettlement({
-          authorization,
-          projectId: args.projectId,
-          deckId: args.deckId,
-          conversationId: args.conversationId,
-          sourceRunId: args.sourceRunId,
-          runId,
-          knowGraph,
-          mainAuthority: mainAuthority.main,
-          providerMessageId,
-          continuationRef: existing.hermesSessionId,
-          failureReason: existing.errorSummary || existing.errorCode || 'atomic_research_failed',
-        });
-      });
-    }
-    return { runId, state: existing?.state || 'running', rejoined: true };
-  }
-  setImmediate(() => {
-    void (async () => {
-      let continuationRef: string | null = null;
-      try {
-        const owner = await resolveCardRuntimeOwner(
-          args.req,
-          args.projectId,
-          args.deckId,
-          knowGraph.cardId,
-          args.conversationId,
-        );
-        const execution = await executePreparedGatewayCardRun({
-          owner,
-          conversationId: args.conversationId,
-          runId,
-          prepared,
-          savedDeck: savedPreparation.savedDeck,
-          savedCard: savedPreparation.savedCard,
-          attachTui: false,
-        });
-        continuationRef = execution.nativeSessionId;
-        await assessGatewayRunCompletion(runId, execution.nativeCompletion);
-        await enqueueAtomicResearchSettlement({
-          authorization,
-          projectId: args.projectId,
-          deckId: args.deckId,
-          conversationId: args.conversationId,
-          sourceRunId: args.sourceRunId,
-          runId,
-          knowGraph,
-          mainAuthority: mainAuthority.main,
-          providerMessageId,
-          output: execution.text,
-          continuationRef,
-        });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : 'atomic_research_failed';
-        await enqueueAtomicResearchSettlement({
-          authorization,
-          projectId: args.projectId,
-          deckId: args.deckId,
-          conversationId: args.conversationId,
-          sourceRunId: args.sourceRunId,
-          runId,
-          knowGraph,
-          mainAuthority: mainAuthority.main,
-          providerMessageId,
-          continuationRef,
-          failureReason: reason,
-        });
-      }
-    })();
-  });
-  return { runId, state: 'running', rejoined: false };
-}
-
-
-function scheduleAutomaticAtomicResearch(
-  req: Request,
-  run: PreparedMainCliRun,
-  requestFulfillment?: Record<string, unknown>,
-): void {
-  const progress = requestFulfillment?.researchProgress;
-  if (isRecord(progress)
-    && progress.active === true
-    && progress.automaticContinuationAllowed === false
-    && progress.stopReason === 'repeated_only_limit') return;
-  const assessment = run.prepared?.atomicResearchAssessment;
-  const thinkMemoryIds = Array.isArray(assessment?.automaticMemoryIds)
-    ? assessment.automaticMemoryIds.map(String).slice(0, 2)
-    : [];
-  if (!thinkMemoryIds.length) return;
-  setImmediate(() => {
-    void launchAtomicResearch({
-      req,
-      projectId: run.projectId,
-      deckId: run.deckId,
-      conversationId: run.conversationId,
-      sourceRunId: run.runId,
-      mainCardId: run.cardId,
-      thinkMemoryIds,
-      mode: 'automatic',
-    }).catch((error) => {
-      logHarnessTrace(
-        `[atomic-research] automatic launch failed reason=${redactTrace(
-          error instanceof Error ? error.message : String(error),
-        )}`,
-      );
-    });
-  });
-}
-
-function postTurnCompactionRequest(
-  run: PreparedMainCliRun,
-  execution: GatewayCardExecution,
-): CompletedPairThinkGraphLifecycleArgs['postTurnCompaction'] | undefined {
-  const assessment = run.prepared?.atomicResearchAssessment;
-  const receipt = assessment?.subjectBoundaryReceipt;
-  if (
-    assessment?.subjectBoundary !== 'shifted'
-    || run.prepared?.jevAttention?.winner !== MAIN_GRAPH_ATTENTION_NEW_SUBJECT
-    || typeof receipt?.confidence !== 'number'
-    || receipt.confidence < 0.8
-    || typeof receipt?.winnerProbability !== 'number'
-    || receipt.winnerProbability < 0.8
-    || !Number.isSafeInteger(execution.completedTurnGeneration)
-    || Number(execution.completedTurnGeneration) < 1
-  ) return undefined;
-  return {
-    owner: execution.owner,
-    identity: {
-      sessionId: execution.terminalSessionId,
-      nativeSessionId: execution.nativeSessionId,
-      storedSessionId: execution.storedSessionId,
-      profile: execution.profile,
-      completedTurnGeneration: Number(execution.completedTurnGeneration),
-      completedNativeRunId: execution.completedNativeRunId,
-    },
-    nativeTurnId: String(execution.nativeCompletion.nativeRunId || ''),
-  };
-}
-
-function queuePostTurnCompactionReceipt(
-  args: CompletedPairThinkGraphLifecycleArgs,
-): void {
-  const request = args.postTurnCompaction;
-  if (!request) return;
-  queuePassiveContextCompaction({
-    owner: request.owner,
-    identity: request.identity,
-    projectId: args.projectId,
-    deckId: args.deckId,
-    cardId: args.authority.main.cardId,
-    runId: args.originatingRunId,
-    nativeTurnId: request.nativeTurnId,
-  });
-}
 
 async function runCompletedPairThinkGraphLifecycle(
   args: CompletedPairThinkGraphLifecycleArgs,
 ): Promise<void> {
-  let stage: 'prepare' | 'thinkgraph_card' | 'settle' | 'research_register' = 'prepare';
+  let stage: 'prepare' | 'thinkgraph_card' | 'settle' = 'prepare';
   try {
     const extractorPair = completedPairExtractorPayload(args.completedPair);
     const preparation: any = await requestPythonRailsJson('/thinkgraph/completed-pair/prepare', {
@@ -2979,57 +2494,6 @@ async function runCompletedPairThinkGraphLifecycle(
           ? settled.topActiveNodes : [],
       });
     }
-    // Compaction authorization belongs to the settled completed pair. Queue it
-    // before optional research registration so a registration outage cannot
-    // suppress already-authorized session maintenance.
-    queuePostTurnCompactionReceipt(args);
-
-    stage = 'research_register';
-    const currentAuthority = await resolveProjectSharedChatAuthority(
-      args.projectId, args.deckId,
-    );
-    if (
-      currentAuthority.main.cardId !== args.authority.main.cardId
-      || currentAuthority.main.cardRevisionId !== args.authority.main.cardRevisionId
-    ) throw new Error('atomic_research_main_revision_changed');
-    const currentMainNode = currentAuthority.deck.nodes.find(
-      (card) => card.id === currentAuthority.main.cardId,
-    );
-    const dataControl = currentMainNode?.runtimeOptions?.configuration?.dataControl;
-    const settledThinkMemoryId = String(settled?.thinkMemoryId || '').trim();
-    if (dataControl && typeof dataControl === 'object'
-      && (dataControl as Record<string, unknown>).automaticResearch === true
-      && settledThinkMemoryId) {
-      const currentThink = currentAuthority.cards.filter(
-        (agent) => agent.title === 'ThinkGraph',
-      );
-      const currentKnow = currentAuthority.cards.filter(
-        (agent) => agent.title === 'KnowGraph',
-      );
-      if (currentThink.length !== 1 || currentKnow.length !== 1
-        || currentThink[0].cardId !== thinkGraphCard.cardId
-        || currentThink[0].cardRevisionId !== thinkGraphCard.cardRevisionId) {
-        throw new Error('atomic_research_flow_authority_unavailable');
-      }
-      await requestPythonRailsJson('/domain/research/atomic/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: args.projectId,
-          deckId: args.deckId,
-          conversationId: args.conversationId,
-          originatingRunId: args.originatingRunId,
-          thinkMemoryIds: [settledThinkMemoryId],
-          mainCardId: args.authority.main.cardId,
-          mainCardRevisionId: args.authority.main.cardRevisionId,
-          thinkGraphCardId: currentThink[0].cardId,
-          thinkGraphCardRevisionId: currentThink[0].cardRevisionId,
-          knowGraphCardId: currentKnow[0].cardId,
-          knowGraphCardRevisionId: currentKnow[0].cardRevisionId,
-          evidenceCutoff: String(args.completedPair.completedAt || new Date().toISOString()),
-        }),
-      });
-    }
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'thinkgraph_lifecycle_failed';
     logHarnessTrace(
@@ -3069,39 +2533,6 @@ function enqueueCompletedPairThinkGraphLifecycle(
   return current;
 }
 
-function enqueueAssessedCompletedPairThinkGraphLifecycle(
-  args: CompletedPairThinkGraphLifecycleArgs,
-  completion: GatewayCardExecution['nativeCompletion'],
-  automaticResearchRun?: PreparedMainCliRun,
-): Promise<void> {
-  const scope = `${args.projectId}\u0000${args.deckId}`;
-  const prior = completedPairThinkGraphLifecycleTails.get(scope) || Promise.resolve();
-  const current = prior
-    .catch(() => undefined)
-    .then(async () => {
-      const sourceResponseFit = await assessGatewayRunCompletion(
-        args.originatingRunId,
-        completion,
-      );
-      if (automaticResearchRun) {
-        scheduleAutomaticAtomicResearch(args.req, automaticResearchRun, sourceResponseFit);
-      }
-      await runCompletedPairThinkGraphLifecycle({
-        ...args,
-        completedPair: {
-          ...args.completedPair,
-          sourceResponseFit,
-        },
-      });
-    });
-  completedPairThinkGraphLifecycleTails.set(scope, current);
-  void current.then(() => {
-    if (completedPairThinkGraphLifecycleTails.get(scope) === current) {
-      completedPairThinkGraphLifecycleTails.delete(scope);
-    }
-  });
-  return current;
-}
 
 // Tests and controlled shutdown callers may drain already-authorized background
 // work. The chat route never waits here before ending Main's SSE response.
@@ -4358,13 +3789,11 @@ mainRoutes.post('/session/chat', async (req, res) => {
   let completedPairLifecycle: {
     completedPair: Record<string, unknown>;
     originatingRunId: string;
-    postTurnCompaction?: CompletedPairThinkGraphLifecycleArgs['postTurnCompaction'];
   } | null = null;
   try {
     let resultText = '';
     let continuationRef = '';
     let gatewayCompletion: GatewayCardExecution['nativeCompletion'] | null = null;
-    let mainGatewayExecution: GatewayCardExecution | null = null;
     let usage = {
       providerInputTokens: null as number | null,
       providerOutputTokens: null as number | null,
@@ -4453,7 +3882,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
       resultText = result.text;
       continuationRef = result.nativeSessionId;
       gatewayCompletion = result.nativeCompletion;
-      if (!directAddressed) mainGatewayExecution = result;
       usage = {
         providerInputTokens: result.nativeCompletion.inputTokens,
         providerOutputTokens: result.nativeCompletion.outputTokens,
@@ -4514,18 +3942,12 @@ mainRoutes.post('/session/chat', async (req, res) => {
         requestCount: 0,
         questionCount: 0,
       };
-    if (!directAddressed) {
-      scheduleAutomaticAtomicResearch(req, run, requestFulfillment);
-    }
     writeSse('request_fulfillment', {
       kind: 'request_fulfillment',
       assessment: requestFulfillment,
     });
     if (!directAddressed) completedPairLifecycle = {
       originatingRunId: run.runId,
-      ...(mainGatewayExecution
-        ? { postTurnCompaction: postTurnCompactionRequest(run, mainGatewayExecution) }
-        : {}),
       completedPair: {
         projectId,
         deckId,
@@ -4536,7 +3958,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
         completedAt: new Date().toISOString(),
         userMessage: message,
         mainResponse: resultText,
-        sourceResponseFit: requestFulfillment,
       },
     };
   } catch (error) {
@@ -4604,7 +4025,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
           conversationId,
           authority,
           originatingRunId: lifecycle.originatingRunId,
-          postTurnCompaction: lifecycle.postTurnCompaction,
           completedPair: lifecycle.completedPair,
         });
       });

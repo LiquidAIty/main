@@ -81,7 +81,6 @@ class CardConfiguration(BaseModel):
     maxTurns: int | None = Field(default=None, ge=1)
     tools: list[str] = Field(default_factory=list)
     autoTools: bool = False
-    automaticResearch: bool = False
     jevAutoToolsContext: CardJevContextMode = "inherited"
     jevModelChoiceContext: CardJevContextMode = "inherited"
     subagentModel: CardSubagentModel | None = None

@@ -108,11 +108,13 @@ describe('requested initial Card topology', () => {
   it('seeds KnowGraph to ingest verified research without requiring an existing graph target', () => {
     const knowGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_knowgraph');
     expect(knowGraph?.prompt).toContain(
-      'persist the source material with graphiti.add_memory before answering',
+      'persist each focused finding through graphiti.add_memory before answering',
     );
     expect(knowGraph?.prompt).toContain(
-      'does not require a preexisting node, edge, native ID, target Card, or selected graph reference',
+      'does not require a preexisting node, edge, target Card, or selected graph reference',
     );
+    expect(knowGraph?.prompt).toContain('Do not write one large report and slice it afterward');
+    expect(knowGraph?.prompt).toContain('explain exactly what that citation supports');
     expect(knowGraph?.prompt).toContain(
       'Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake',
     );

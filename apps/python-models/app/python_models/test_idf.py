@@ -114,7 +114,6 @@ def _runtime_receipt_ledger() -> dict:
         "totalCostUsd": "LEDGER_COST",
         "toolReceipt": {"marker": "LEDGER_TOOL_RECEIPT"},
         "executionReceipt": {"marker": "LEDGER_EXECUTION_RECEIPT"},
-        "atomicResearchOutcome": {"marker": "LEDGER_ATOMIC_RESEARCH_OUTCOME"},
     }
 
 
@@ -376,7 +375,6 @@ def test_runtime_receipt_ledger_is_not_materialized_or_projected() -> None:
         "LEDGER_COST",
         "LEDGER_TOOL_RECEIPT",
         "LEDGER_EXECUTION_RECEIPT",
-        "LEDGER_ATOMIC_RESEARCH_OUTCOME",
     ):
         assert marker not in encoded
         assert marker not in projected_json

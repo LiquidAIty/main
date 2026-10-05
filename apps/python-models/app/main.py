@@ -31,9 +31,6 @@ from app.python_models.card_domain import (
     read_run,
     read_run_history,
     read_run_input_files,
-    authorize_atomic_research_launch,
-    record_atomic_research_outcome,
-    register_atomic_research_candidate,
     observe_run_attempt,
     record_explicit_artifact,
     save_deck,
@@ -285,29 +282,6 @@ async def thinkgraph_completed_pair_settle(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
     except (JevRelationshipError, ThinkGraphIntakeError, RuntimeError) as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
-
-
-@app.post("/thinkgraph/research/result/validate")
-async def thinkgraph_research_result_validate(payload: dict[str, Any]):
-    """Validate exact atomic research statuses and Graphiti source references."""
-    from app.python_models.engraphis import (
-        AtomicResearchError,
-        validate_atomic_research_result,
-    )
-    import asyncio
-    try:
-        return await asyncio.to_thread(validate_atomic_research_result, payload)
-    except (AtomicResearchError, ValueError, KeyError) as err:
-        raise HTTPException(
-            status_code=(
-                409
-                if str(err) == "atomic_research_episode_settlement_pending"
-                else 400
-            ),
-            detail=str(err),
-        ) from err
-
-
 
 
 @app.on_event("startup")
@@ -734,30 +708,6 @@ def domain_magentic_mission_readiness(payload: dict[str, Any]):
 def domain_run_progress(payload: dict[str, Any]):
     try:
         return update_run_progress(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/research/atomic/register")
-def domain_atomic_research_register(payload: dict[str, Any]):
-    try:
-        return register_atomic_research_candidate(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/research/atomic/authorize")
-def domain_atomic_research_authorize(payload: dict[str, Any]):
-    try:
-        return authorize_atomic_research_launch(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/research/atomic/outcome")
-def domain_atomic_research_outcome(payload: dict[str, Any]):
-    try:
-        return record_atomic_research_outcome(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

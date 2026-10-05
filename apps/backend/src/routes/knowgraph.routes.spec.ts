@@ -68,7 +68,7 @@ describe('KnowGraph PDF upload project authority', () => {
     });
   });
 
-  it('projects one native Graphiti fact only as KnowGraph topology', () => {
+  it('projects one native Graphiti fact as a portable sourced temporal Know', () => {
     expect(portableKnowGraphFact(
       'fact-1',
       'RELATES_TO',
@@ -83,8 +83,9 @@ describe('KnowGraph PDF upload project authority', () => {
       { uuid: 'entity-a', name: 'Alpha' },
       { uuid: 'entity-b', name: 'Beta' },
     )).toMatchObject({
-      authority: 'knowgraph-topology',
+      authority: 'know',
       nativeStore: 'graphiti/neo4j',
+      portableKind: 'know',
       nativeFactUuid: 'fact-1',
       nativeRelationshipType: 'RELATES_TO',
       nativeRelation: 'partners with',
@@ -224,14 +225,14 @@ describe('KnowGraph PDF upload project authority', () => {
     }
   });
 
-  it('proxies one authenticated project-scoped native Know episode deletion', async () => {
+  it('proxies one authenticated project-scoped native Know deletion', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
     const realFetch = globalThis.fetch.bind(globalThis);
     const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       if (String(input) === 'http://knowgraph.test/delete_native') {
         return Promise.resolve(new Response(JSON.stringify({
-          ok: true, kind: 'episode', native_id: 'episode-1',
+          ok: true, kind: 'fact', native_id: 'fact-1',
         }), { status: 200, headers: { 'content-type': 'application/json' } }));
       }
       return realFetch(input, init);
@@ -242,18 +243,16 @@ describe('KnowGraph PDF upload project authority', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          project_id: 'project-alias', native_id: 'episode-1', kind: 'episode',
+          project_id: 'project-alias', native_id: 'fact-1', kind: 'fact',
         }),
       });
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({
-        ok: true, kind: 'episode', native_id: 'episode-1',
-      });
+      expect(await response.json()).toEqual({ ok: true, kind: 'fact', native_id: 'fact-1' });
       const forwarded = upstreamFetch.mock.calls.find(([input]) => (
         String(input) === 'http://knowgraph.test/delete_native'
       ));
       expect(JSON.parse(String(forwarded?.[1]?.body))).toEqual({
-        project_id: 'project-canonical', native_id: 'episode-1', kind: 'episode',
+        project_id: 'project-canonical', native_id: 'fact-1', kind: 'fact',
       });
     } finally {
       await closeServer(server);

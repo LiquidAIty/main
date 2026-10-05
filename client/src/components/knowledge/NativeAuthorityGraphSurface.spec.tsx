@@ -146,13 +146,13 @@ describe('native authority graph surfaces', () => {
     );
   };
 
-  it('derives a clamped runtime repel force from width without changing the saved baseline', () => {
+  it('keeps the saved repel force independent of viewport width', () => {
     const baseline = 120;
-    expect(responsiveRepelForce(baseline, 440)).toBe(74);
-    expect(responsiveRepelForce(baseline, 820)).toBe(114);
-    expect(responsiveRepelForce(baseline, 1_200)).toBe(154);
-    expect(responsiveRepelForce(baseline, 200)).toBe(74);
-    expect(responsiveRepelForce(baseline, 2_000)).toBe(154);
+    expect(responsiveRepelForce(baseline, 440)).toBe(120);
+    expect(responsiveRepelForce(baseline, 820)).toBe(120);
+    expect(responsiveRepelForce(baseline, 1_200)).toBe(120);
+    expect(responsiveRepelForce(baseline, 200)).toBe(120);
+    expect(responsiveRepelForce(baseline, 2_000)).toBe(120);
     expect(baseline).toBe(120);
   });
 
@@ -416,9 +416,10 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
 
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([realTab]);
-    expect(screen.getByRole('tab', { name: realTab }).getAttribute('aria-selected')).toBe('true');
-    expect((screen.getByRole('tab', { name: realTab }) as HTMLButtonElement).style.border).toContain('solid');
+    expect(screen.queryAllByRole('tab')).toEqual([]);
+    expect(screen.getByRole('complementary').getAttribute('aria-label')).toBe('Open graph settings');
+    expect(screen.getByRole('complementary').textContent).not.toContain(absentTab);
+    expect(realTab).toBe(authority === 'thinkgraph' ? 'Think' : 'Know');
     expect(screen.queryByRole('tab', { name: absentTab })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Load$/ })).toBeNull();
   });
@@ -761,7 +762,9 @@ describe('native authority graph surfaces', () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
-        { id: 'think-center', canonicalId: 'shared-center', label: 'Shared center', properties: { summary: 'Think center.' } },
+        { id: 'think-center', canonicalId: 'shared-center', label: 'Shared center', properties: {
+          evidence: [{ id: 'memory-center', content: 'Think center.' }],
+        } },
         { id: 'think-neighbor', label: 'Think neighbor', properties: { summary: 'Think neighbor.' } },
       ],
       edges: [{
@@ -777,11 +780,14 @@ describe('native authority graph surfaces', () => {
       ],
       edges: [{
         id: 'know-edge', source: 'know-center', target: 'know-neighbor',
-        predicate: 'KNOWS_WITH', relationship_strength: 0.54, properties: {},
+        predicate: 'KNOWS_WITH', relationship_strength: 0.54, properties: {
+          portableKind: 'know', nativeFactUuid: 'know-edge', fact: 'Know center.',
+        },
       }],
     };
+    const focusProjections = currentProjections(think, know);
     const onReadNativeFocusNeighborhood = vi.fn(async (authority: string) => (
-      authority === 'thinkgraph' ? think : know
+      authority === 'thinkgraph' ? focusProjections.thinkgraph : focusProjections.knowgraph
     ));
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as any;
@@ -898,7 +904,9 @@ describe('native authority graph surfaces', () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
-        { id: 'center', label: 'Center', properties: {} },
+        { id: 'center', label: 'Center', properties: {
+          evidence: [{ id: 'memory-center', content: 'Center.' }],
+        } },
         { id: 'neighbor', label: 'Neighbor', properties: {} },
       ],
       edges: [{ id: 'edge', source: 'center', target: 'neighbor', predicate: 'RELATES_TO', properties: {} }],
@@ -920,7 +928,7 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.links.map((edge: any) => edge.id)).toEqual(edgeIds);
     expect(graph.focus).not.toHaveBeenCalled();
     expect(graph.setPreset).not.toHaveBeenCalledWith('galaxy');
-    expect(screen.getByRole('button', { name: 'Focus' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Focus' })).toBeNull();
   });
 
   it('keeps a healthy authority visible while truthfully reporting the other authority failure', () => {
@@ -1033,6 +1041,7 @@ describe('native authority graph surfaces', () => {
 
   it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
     window.localStorage.setItem('liquidaity.graph.knowgraph.presentation.v1', JSON.stringify({
+      schemaVersion: 6,
       style: 'cyber',
     }));
     const scene = {
@@ -1137,7 +1146,7 @@ describe('native authority graph surfaces', () => {
     const survivingNode = graph.data.nodes[0];
     expect(survivingNode.properties.attentionActorColor).toBe('#37ADAA');
     act(() => graph.nodeClick(survivingNode));
-    expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-native-id')).toBe('mem-one');
+    expect(graph.setHighlight).toHaveBeenLastCalledWith('mem-one');
     expect(survivingNode.properties.attentionActorCardId).toBe('card_main_chat');
 
     rerender(
@@ -1153,7 +1162,7 @@ describe('native authority graph surfaces', () => {
     await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
     expect(graph.data.nodes[0].id).toBe(survivingNode.id);
     expect(graph.data.nodes[0].currentState).toBe('settled');
-    expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-native-id')).toBe('mem-one');
+    expect(graph.setHighlight).toHaveBeenLastCalledWith('mem-one');
 
     rerender(
       <NativeGraphProjectionSurface
@@ -1183,13 +1192,13 @@ describe('native authority graph surfaces', () => {
     );
     await waitFor(() => expect(graph.data.nodes).toHaveLength(2));
     expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['mem-one', 'mem-two']);
-    expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-native-id')).toBe('mem-one');
+    expect(graph.setHighlight).toHaveBeenLastCalledWith('mem-one');
     expect(graph.data.links[0].properties.attentionActorColor).toBe('#37ADAA');
     expect(graph.data.links.map((link: any) => [link.id, link.source, link.target, link.relation]))
       .toEqual([['memory-edge', 'mem-one', 'mem-two', 'related']]);
   });
 
-  it('attaches only the exact selected native node to Main', async () => {
+  it('does not expose the removed copy-into-chat action', async () => {
     const onUseAsContext = vi.fn();
     const projection = {
       ...empty('knowgraph'),
@@ -1209,10 +1218,8 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    screen.getByRole('button', { name: 'Use in chat' }).click();
-    expect(onUseAsContext).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'mem-one', canonicalId: 'mem-one',
-    }));
+    expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
+    expect(onUseAsContext).not.toHaveBeenCalled();
   });
 
   it('keeps the relationship word and probability hover-only on a ThinkGraph edge', () => {
@@ -1372,11 +1379,11 @@ describe('native authority graph surfaces', () => {
       native: edge.properties.native,
     }))).toEqual([
       {
-        id: 'thinkgraph:think-edge', source: 'node-name:Shared', target: 'node-name:Think%20only',
+        id: 'thinkgraph:think-edge', source: 'node-name:Shared', target: 'thinkgraph:think-only',
         predicate: 'REASONS_ABOUT', authority: 'thinkgraph', color: '#4FA2AD', native: 'think',
       },
       {
-        id: 'knowgraph:know-edge', source: 'node-name:Shared', target: 'node-name:Know%20only',
+        id: 'knowgraph:know-edge', source: 'node-name:Shared', target: 'knowgraph:know-only',
         predicate: 'SOURCED_BY', authority: 'knowgraph', color: '#F2A64A', native: 'know',
       },
     ]);
@@ -1456,7 +1463,7 @@ describe('native authority graph surfaces', () => {
     expect((screen.getByLabelText('Know edges') as HTMLInputElement).value).toBe('#f2a64a');
   });
 
-  it('keeps exact-name joining while displaying the full union on one canvas', async () => {
+  it('displays the full union without inventing a join when no subject directory is supplied', async () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -1484,7 +1491,7 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     expect(forceGraphMocks.instances).toHaveLength(1);
     expect(graph.data.nodes.map((node: any) => node.label))
-      .toEqual(['Shared', 'Think name', 'Think only', 'Know name', 'Know only']);
+      .toEqual(['Shared', 'Think name', 'Think only', 'Shared', 'Know name', 'Know only']);
     expect(graph.data.links.map((edge: any) => edge.layer)).toEqual(['thinkgraph', 'knowgraph']);
     expect(screen.queryByRole('button', { name: 'Think relationships' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Know relationships' })).toBeNull();
@@ -1496,14 +1503,16 @@ describe('native authority graph surfaces', () => {
 
   it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: {
-      evidence: [{ id: 'memory-one', ingestedAt: 100, metadata: { structured_extraction: { think: {
+      evidence: [{ id: 'memory-one', title: 'Existing saved Think', ingestedAt: 100,
+        metadata: { structured_extraction: { think: {
         kind: 'OBSERVATION', summary: 'Saved Think.', propositions: [], relationship_observations: [],
-      } } } }],
+      }, relations: [] } } }],
     } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved Think.');
+    expect(screen.getByText('Existing saved Think')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Expand$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
@@ -1521,7 +1530,7 @@ describe('native authority graph surfaces', () => {
       + 'four-quarter test; missing disclosure leaves the thesis unproven rather than contradicted.';
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
       properties: { evidence: [
-        { id: 'memory-new', summary: paragraph, ingestedAt: 300,
+        { id: 'memory-new', title: 'Neutron as discounted option value', summary: paragraph, ingestedAt: 300,
           metadata: { keywords: ['latest', 'decision'], structured_extraction: { think: {
             kind: 'DECISION', summary: paragraph, importance: 0.91,
             concepts: ['Current thesis'],
@@ -1534,17 +1543,21 @@ describe('native authority graph surfaces', () => {
             corrections: ['Do not collapse this into one ranking.'],
             uncertainty: ['Launch timing remains uncertain.'],
             relationship_observations: ['Rocket Lab DEPENDS_ON Neutron'],
-          } } } },
-        { id: 'memory-second', summary: 'Second recent saved Think.', ingestedAt: 200,
+          }, relations: [
+            { source: 'Electron', relation: 'SUPPORTS', target: 'Execution quality' },
+            { source: 'Neutron', relation: 'DEPENDS_ON', target: 'Launch cadence' },
+            { source: 'Dilution', relation: 'AFFECTS', target: 'Neutron' },
+          ] } } },
+        { id: 'memory-second', title: 'Second retained Think', summary: 'Second recent saved Think.', ingestedAt: 200,
           metadata: { structured_extraction: { think: {
             kind: 'QUESTION', summary: 'Second recent saved Think.', propositions: [],
             relationship_observations: [],
-          } } } },
-        { id: 'memory-old', summary: 'Earlier saved Think.', ingestedAt: 100,
+          }, relations: [] } } },
+        { id: 'memory-old', title: 'Earlier retained Think', summary: 'Earlier saved Think.', ingestedAt: 100,
           metadata: { structured_extraction: { think: {
             kind: 'OBSERVATION', summary: 'Earlier saved Think.', propositions: [],
             relationship_observations: [],
-          } } } },
+          }, relations: [] } } },
       ] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
       status="ready" error={null} onRemoveEvidence={remove} />);
@@ -1554,21 +1567,22 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText(paragraph)).toBeTruthy();
     expect(paragraph.length).toBeGreaterThan(140);
     expect(screen.getByText('Second recent saved Think.')).toBeTruthy();
-    expect(screen.getByText('DECISION')).toBeTruthy();
-    expect(screen.getByText('The current thesis depends on execution.')).toBeTruthy();
-    expect(screen.getByText('Rocket Lab DEPENDS_ON Neutron')).toBeTruthy();
-    expect(screen.getByText('Will the launch remain on schedule?')).toBeTruthy();
-    expect(screen.getByText('A successful launch would improve the thesis.')).toBeTruthy();
-    expect(screen.getByText('The published schedule remains current.')).toBeTruthy();
-    expect(screen.getByText('Keep the theses separate.')).toBeTruthy();
-    expect(screen.getByText('Do not collapse this into one ranking.')).toBeTruthy();
-    expect(screen.getByText('Launch timing remains uncertain.')).toBeTruthy();
-    const properties = screen.getByText('Properties').parentElement!;
-    expect(properties.textContent).toContain('time_horizon');
-    expect(properties.textContent).not.toContain('The current thesis depends on execution.');
+    expect(screen.getByText('Neutron as discounted option value')).toBeTruthy();
+    expect(screen.getByText('Second retained Think')).toBeTruthy();
+    expect(screen.getByText('Relationships')).toBeTruthy();
+    expect(screen.getByText('Electron SUPPORTS Execution quality')).toBeTruthy();
+    expect(screen.getByText('Neutron DEPENDS_ON Launch cadence')).toBeTruthy();
+    expect(screen.getByText('Dilution AFFECTS Neutron')).toBeTruthy();
+    for (const rejected of [
+      'DECISION', 'Importance', 'Propositions', 'Questions', 'Assumptions',
+      'Preferences', 'Corrections', 'Uncertainty', 'Concepts', 'Properties',
+      'The current thesis depends on execution.', 'Will the launch remain on schedule?',
+      'Rocket Lab DEPENDS_ON Neutron',
+    ]) expect(screen.queryByText(rejected)).toBeNull();
     const earlier = screen.getByText('Earlier Thinks (1)').parentElement as HTMLDetailsElement;
     expect(earlier.open).toBe(false);
     expect(earlier.textContent).toContain('Earlier saved Think.');
+    expect(earlier.textContent).toContain('Earlier retained Think');
     fireEvent.click(screen.getByText('Earlier Thinks (1)'));
     expect(earlier.open).toBe(true);
     expect(screen.getByText('Earlier saved Think.')).toBeTruthy();
@@ -1594,8 +1608,6 @@ describe('native authority graph surfaces', () => {
     };
     render(<NativeKnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
-    act(() => graph.nodeClick(graph.data.nodes[0]));
-    expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The recorded source summary.');
     act(() => graph.linkClick(graph.data.links[0]));
     const inspector = screen.getByTestId('knowgraph-edge-inspector');
     expect(inspector.getAttribute('data-native-id')).toBe('evidence');
@@ -1689,15 +1701,12 @@ describe('native authority graph surfaces', () => {
     act(() => graph.linkClick(graph.data.links[0]));
     fireEvent.click(screen.getByText('NASA launch report'));
     expect(screen.getByRole('link', { name: 'Mission' }).getAttribute('href')).toBe('https://www.nasa.gov/mission');
-    expect(screen.getByText('NASA')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
     expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Rocket Lab launched CAPSTONE.');
-    expect(screen.getByTestId('portable-know').textContent).toContain('Current Know');
-    expect(screen.getByTestId('portable-know').textContent).toContain('2022-06-28');
-    expect(screen.getByTestId('portable-know').textContent).toContain('provided launch services for');
-    expect(screen.getByTestId('portable-know').textContent).toContain('PROVIDES');
+    expect(screen.queryByTestId('portable-know')).toBeNull();
+    expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('PROVIDES');
     expect(screen.getByText('Jev relationship probabilities')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'NASA' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Mission' })).toBeTruthy();
   });
 
   it('shows native episode citations as direct clickable sources on a selected Know', () => {
@@ -1711,6 +1720,7 @@ describe('native authority graph surfaces', () => {
         {
           id: 'article', label: 'Rocket Lab Form 10-K', type: 'Episodic',
           properties: {
+            content: 'Rocket Lab participates in the launch market.',
             source_url: 'https://www.sec.gov/Archives/rocket-lab-10-k',
             source_title: 'SEC filing',
           },
@@ -1741,7 +1751,7 @@ describe('native authority graph surfaces', () => {
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
   });
 
-  it('keeps paragraph Knows intact, limits the calm landing to two, and labels package sources honestly', () => {
+  it('keeps paragraph Knows intact, limits the calm landing to two, and lists each supporting source', () => {
     const paragraph = 'Across the latest four reported quarters, Rocket Lab disclosed completed launch '
       + 'activity and total revenue growth, but the official releases did not provide mission-level '
       + 'launch-services revenue attribution sufficient to prove the proposed cadence thesis.';
@@ -1784,7 +1794,7 @@ describe('native authority graph surfaces', () => {
     expect(paragraph.length).toBeGreaterThan(140);
     expect(screen.getByText(paragraph)).toBeTruthy();
     expect(screen.getByText('Second complete current Know.')).toBeTruthy();
-    expect(screen.getAllByText('Research package · 2 sources').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Research package/)).toBeNull();
     const earlier = screen.getByText('Earlier Knows (1)').parentElement!;
     expect(earlier.textContent).toContain('Earlier complete Know.');
     const sourceList = screen.getByRole('heading', { name: 'Sources' }).parentElement!;
@@ -1802,15 +1812,25 @@ describe('native authority graph surfaces', () => {
     const panelStyles = vi.spyOn(graphVisualTokens, 'graphInspectorPanelStyle');
     const key = `liquidaity.drawer.${authority}.width`;
     window.localStorage.setItem(key, '390');
-    const projection = { ...empty(authority), nodes: [{ id: 'native-1', label: 'Recorded subject',
-      runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
-      properties: authority === 'thinkgraph' ? { evidence: [{
-        id: 'memory-one', ingestedAt: 100, metadata: { structured_extraction: { think: {
-          kind: 'OBSERVATION', summary: 'The complete Think summary.',
-          propositions: [], relationship_observations: [],
-        } } },
-      }] } : { statement: 'The complete original statement.', certainty: 0.4, supersedes: 'native-0' },
-      provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] };
+    const projection = authority === 'thinkgraph'
+      ? { ...empty(authority), nodes: [{ id: 'native-1', label: 'Recorded subject',
+        runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
+        properties: { evidence: [{
+          id: 'memory-one', ingestedAt: 100, metadata: { structured_extraction: { think: {
+            kind: 'OBSERVATION', summary: 'The complete Think summary.',
+            propositions: [], relationship_observations: [],
+          } } },
+        }] },
+        provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] }
+      : { ...empty(authority), nodes: [
+        { id: 'native-1', label: 'Recorded subject', runId: 'run-1', conversationId: 'chat-1' },
+        { id: 'native-target', label: 'Recorded target' },
+      ], provenanceNodes: [{ id: 'episode-one', label: 'Recorded source', type: 'Episodic',
+        properties: { content: 'The complete original statement.' } }], edges: [{
+        id: 'fact-one', source: 'native-1', target: 'native-target', predicate: 'SUPPORTS',
+        properties: { portableKind: 'know', nativeFactUuid: 'fact-one',
+          fact: 'The complete original statement.', supportingEpisodeUuids: ['episode-one'] },
+      }] };
     const { container } = render(<NativeGraphProjectionSurface authority={authority} projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
@@ -1818,7 +1838,8 @@ describe('native authority graph surfaces', () => {
     act(() => graph.nodeClick(graph.data.nodes[0]));
     const panel = screen.getByRole('complementary');
     expect(panel.style.width).toBe('340px');
-    expect(screen.getByRole('heading', { name: 'Recorded subject' })).toBe(document.activeElement);
+    expect(screen.getByLabelText('Move panel').textContent).toContain('Recorded subject');
+    expect(container.querySelector('[data-testid$="-node-inspector"]')).toBe(document.activeElement);
     expect(panel.textContent).toContain(authority === 'thinkgraph'
       ? 'The complete Think summary.'
       : 'The complete original statement.');
@@ -1852,7 +1873,7 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByRole('complementary', { hidden: true }).getAttribute('data-open')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     expect(screen.getByRole('complementary').style.width).toBe('340px');
-    expect(screen.getByRole('heading', { name: 'Recorded subject' })).toBeTruthy();
+    expect(screen.getByLabelText('Move panel').textContent).toContain('Recorded subject');
     expect(screen.queryByRole('slider', { name: 'Node size' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
     act(() => graph.backgroundClick());
@@ -1874,7 +1895,9 @@ describe('native authority graph surfaces', () => {
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
     expect(graph.setStyle).toHaveBeenCalledWith('cyber');
     expect(graph.fit).not.toHaveBeenCalled();
-    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['native-1']);
+    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(
+      authority === 'thinkgraph' ? ['native-1'] : ['native-1', 'native-target'],
+    );
     act(() => graph.nodeClick(graph.data.nodes[0]));
     act(() => graph.backgroundClick());
     expect(screen.getByRole('complementary', { hidden: true }).getAttribute('data-open')).toBe('false');

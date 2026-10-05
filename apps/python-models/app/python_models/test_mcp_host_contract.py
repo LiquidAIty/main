@@ -874,7 +874,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
     import jwt
     import mcp_host
 
-    native_cbm_catalog = mcp_host._namespace_native_tools("cbm", [
+    mcp_host._register_native_cbm_catalog(mcp_host._namespace_native_tools("cbm", [
         mcp_host.Tool(
             name="get_code_snippet",
             description="Read current source.",
@@ -893,8 +893,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
             inputSchema={"type": "object"},
             annotations={"readOnlyHint": False},
         ),
-    ])
-    mcp_host._register_native_cbm_catalog(native_cbm_catalog)
+    ]))
 
     secret = "0123456789abcdef0123456789abcdef"
     now = int(time.time())
@@ -937,24 +936,15 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", (
         mcp_host.Tool(name="canvas.inspect", description="base", inputSchema={"type": "object"}),
-        *native_cbm_catalog,
+        mcp_host.Tool(name="cbm.get_code_snippet", description="read",
+                      inputSchema={"type": "object"}, annotations={"readOnlyHint": True}),
+        mcp_host.Tool(name="cbm.search_graph", description="ungranted read",
+                      inputSchema={"type": "object"}, annotations={"readOnlyHint": True}),
+        mcp_host.Tool(name="cbm.index_repository", description="write",
+                      inputSchema={"type": "object"}, annotations={"readOnlyHint": False}),
+        mcp_host.Tool(name="graphiti.search_nodes", description="graph read",
+                      inputSchema={"type": "object"}, annotations={"readOnlyHint": True}),
     ))
-    monkeypatch.setattr(
-        mcp_host,
-        "_CATALOG_COMPLETED_FAMILIES",
-        ("liquidaity", "cbm", "graphiti"),
-    )
-    monkeypatch.setattr(mcp_host, "_CATALOG_UNAVAILABLE_FAMILIES", ())
-    monkeypatch.setattr(
-        mcp_host,
-        "_native_cbm_tools",
-        lambda: pytest.fail("frozen catalog attempted CBM rediscovery"),
-    )
-    monkeypatch.setattr(
-        mcp_host,
-        "_native_graphiti_tools",
-        lambda: asyncio.sleep(0, result=[]),
-    )
     assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
         "canvas.inspect", "cbm.get_code_snippet", "cbm.search_graph",
         "cbm.index_repository",
@@ -2037,353 +2027,6 @@ def test_graphiti_add_memory_dispatch_preserves_native_arguments(monkeypatch):
     }
 
 
-def _source_observation_payload(*, observation_count=1):
-    return {
-        "schemaVersion": "knowgraph.source-observation.v2",
-        "name": "Rocket Lab evidence",
-        "observations": [{
-            "datum": f"Complete qualified datum {index}.",
-            "interpretation": f"Bounded interpretation {index}.",
-            "citations": [{
-                "url": f"https://primary.example/report/{index}",
-                "title": None,
-                "publishedAt": None,
-                "sourceNote": f"This link establishes datum {index}.",
-            }],
-            "relevantEntities": ["Rocket Lab", "Revenue attribution"],
-        } for index in range(observation_count)],
-    }
-
-
-def _source_observation_context():
-    return {
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "conversationId": "conversation-one",
-        "parentRunId": "run-one",
-        "mainCardId": "card_knowgraph",
-    }
-
-
-def test_graphiti_add_memory_advertises_only_source_observation_v2():
-    import mcp_host
-
-    native = mcp_host.Tool(
-        name="add_memory",
-        description="Native add",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "episode_body": {"type": "string"},
-                "group_id": {"type": "string"},
-            },
-        },
-    )
-    advertised = mcp_host._namespace_native_tools("graphiti", [native])[0]
-    schema = advertised.inputSchema
-
-    assert set(schema["properties"]) == {"schemaVersion", "name", "observations"}
-    assert schema["properties"]["schemaVersion"]["const"] == (
-        "knowgraph.source-observation.v2"
-    )
-    observation = schema["properties"]["observations"]["items"]
-    assert set(observation["properties"]) == {
-        "datum", "interpretation", "citations", "relevantEntities",
-    }
-    citation = observation["properties"]["citations"]["items"]
-    assert set(citation["properties"]) == {
-        "url", "title", "publishedAt", "sourceNote",
-    }
-    assert "maxLength" not in schema["properties"]["name"]
-    assert "maxItems" not in schema["properties"]["observations"]
-
-
-def test_source_observation_v2_four_observations_map_to_one_native_episode():
-    import mcp_host
-
-    payload = _source_observation_payload(observation_count=4)
-    qualified = "Qualification remains attached. " * 500
-    payload["observations"][3]["interpretation"] = qualified
-    native, authority = mcp_host._canonical_know_submission(
-        payload, _source_observation_context(),
-    )
-    canonical = json.loads(authority["canonical_know_json"])
-    objective = json.loads(native["episode_body"])
-
-    assert canonical == payload
-    assert canonical["observations"][3]["interpretation"] == qualified
-    assert len(canonical["observations"]) == 4
-    assert len({citation["url"] for observation in canonical["observations"]
-                for citation in observation["citations"]}) == 4
-    assert all(observation["citations"][0]["sourceNote"]
-               for observation in canonical["observations"])
-    assert objective == {
-        "observations": [{
-            "datum": observation["datum"],
-        } for observation in payload["observations"]],
-    }
-    assert "interpretation" not in native["episode_body"]
-    assert "sourceNote" not in native["episode_body"]
-    assert "relevantEntities" not in native["episode_body"]
-    assert native["source"] == "json"
-    assert "uuid" not in native
-    assert native["source_description"] == authority["source_marker"]
-    assert authority["call_id"].startswith("know-call:")
-
-
-def test_source_observation_v2_simple_observation_is_not_padded_or_split():
-    import mcp_host
-
-    payload = _source_observation_payload()
-    payload["observations"][0]["datum"] = "Simple datum."
-    payload["observations"][0]["interpretation"] = "Simple interpretation."
-    native, authority = mcp_host._canonical_know_submission(
-        payload, _source_observation_context(),
-    )
-    canonical = json.loads(authority["canonical_know_json"])
-
-    assert canonical["observations"] == payload["observations"]
-    assert json.loads(native["episode_body"])["observations"] == [{
-        "datum": "Simple datum.",
-    }]
-    second_native, second_authority = mcp_host._canonical_know_submission(
-        payload, _source_observation_context(),
-    )
-    assert second_native["uuid"] == native["uuid"]
-    assert second_authority["call_id"] == authority["call_id"]
-    assert second_authority["observed_at"].endswith("Z")
-
-
-def test_same_url_requires_distinct_source_notes_for_distinct_observations():
-    import mcp_host
-
-    payload = _source_observation_payload(observation_count=2)
-    shared_url = payload["observations"][0]["citations"][0]["url"]
-    payload["observations"][1]["citations"][0]["url"] = shared_url
-    native, authority = mcp_host._canonical_know_submission(
-        payload, _source_observation_context(),
-    )
-    assert "uuid" not in native
-    assert native["source_description"] == authority["source_marker"]
-
-    payload["observations"][1]["citations"][0]["sourceNote"] = (
-        payload["observations"][0]["citations"][0]["sourceNote"]
-    )
-    with pytest.raises(ValueError, match="citation_contribution_duplicate"):
-        mcp_host._canonical_know_submission(payload, _source_observation_context())
-
-
-@pytest.mark.parametrize("url", [
-    " https://primary.example/report",
-    "https://primary.example/report ",
-    "ftp://primary.example/report",
-    "https://user:pass@primary.example/report",
-    "https://primary.example/report https://other.example/report",
-    "https://primary.example/reporthttps://other.example/report",
-    "https://bad_host.example/report",
-    "https:///missing-host",
-    ["https://primary.example/report", "https://other.example/report"],
-])
-def test_source_observation_v2_rejects_noncanonical_citation_urls(url):
-    import mcp_host
-
-    payload = _source_observation_payload()
-    payload["observations"][0]["citations"][0]["url"] = url
-    with pytest.raises(ValueError, match="single_citation_url_required"):
-        mcp_host._canonical_know_submission(payload, _source_observation_context())
-
-
-@pytest.mark.parametrize("mutate", [
-    lambda payload: payload.update(summary="Detached report summary"),
-    lambda payload: payload.update(citations=[{"url": "https://primary.example/report"}]),
-    lambda payload: payload["observations"][0].update(
-        citation={"url": "https://primary.example/report"}
-    ),
-    lambda payload: payload["observations"][0]["citations"][0].pop("sourceNote"),
-    lambda payload: payload["observations"][0].update(citations=[
-        "https://primary.example/report"
-    ]),
-])
-def test_source_observation_v2_rejects_detached_report_and_unexplained_links(mutate):
-    import mcp_host
-
-    payload = _source_observation_payload()
-    mutate(payload)
-    with pytest.raises(ValueError, match="source_observation"):
-        mcp_host._canonical_know_submission(payload, _source_observation_context())
-
-
-def test_source_observation_v2_dispatches_one_native_call_for_four_observations(
-    monkeypatch,
-):
-    import asyncio
-    import mcp_host
-
-    calls = []
-    native_tool = mcp_host.Tool(
-        name="add_memory",
-        description="Native add",
-        inputSchema={
-            "type": "object",
-            "properties": {"group_id": {"type": "string"}},
-        },
-    )
-
-    async def initialize():
-        return None
-
-    async def native_tools():
-        return [native_tool]
-
-    async def call_native(name, arguments, *, know_authority=None):
-        calls.append((name, arguments, know_authority))
-        acknowledgement = {
-            "ok": True, "state": "queued", "callId": know_authority["call_id"],
-        }
-        return mcp_host.CallToolResult(
-            content=[mcp_host.TextContent(type="text", text=json.dumps(acknowledgement))],
-            structuredContent={"result": acknowledgement},
-        )
-
-    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialize)
-    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", native_tools)
-    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_NAMES", frozenset({"add_memory"}))
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", _source_observation_context)
-    monkeypatch.setattr(mcp_host, "_call_native_graphiti", call_native)
-
-    result = asyncio.run(mcp_host._dispatch_tool(
-        "graphiti.add_memory", _source_observation_payload(observation_count=4),
-    ))
-
-    assert len(calls) == 1
-    assert calls[0][0] == "add_memory"
-    assert calls[0][1]["group_id"] == mcp_host.graphiti_project_group_id("project-one")
-    assert len(json.loads(calls[0][2]["canonical_know_json"])["observations"]) == 4
-    assert result.structuredContent["result"]["callId"] == calls[0][2]["call_id"]
-
-
-def test_stable_know_identity_conflicting_payload_keeps_identity_but_changes_hash():
-    import mcp_host
-
-    first = _source_observation_payload()
-    second = _source_observation_payload()
-    second["observations"][0]["datum"] = "Conflicting datum for the same slot."
-    first_native, first_authority = mcp_host._canonical_know_submission(
-        first, _source_observation_context(),
-    )
-    second_native, second_authority = mcp_host._canonical_know_submission(
-        second, _source_observation_context(),
-    )
-
-    assert first_native["uuid"] == second_native["uuid"]
-    assert first_authority["call_id"] == second_authority["call_id"]
-    assert first_authority["semantic_sha256"] != second_authority["semantic_sha256"]
-
-
-def test_duplicate_delivery_with_pending_claim_does_not_issue_native_add(
-    monkeypatch,
-):
-    import asyncio
-    import mcp_host
-    from app.python_models import card_domain
-
-    native, authority = mcp_host._canonical_know_submission(
-        _source_observation_payload(), _source_observation_context(),
-    )
-    monkeypatch.setattr(card_domain, "claim_atomic_know_write", lambda _payload: {
-        "status": "existing", "event": {"phase": "pending"},
-    })
-
-    class Driver:
-        async def execute_query(self, *_args, **_kwargs):
-            return SimpleNamespace(records=[])
-
-    client = SimpleNamespace(driver=Driver())
-
-    class Service:
-        async def get_client(self): return client
-
-    monkeypatch.setattr(
-        mcp_host, "_NATIVE_GRAPHITI_MODULE",
-        SimpleNamespace(graphiti_service=Service()),
-    )
-    result = asyncio.run(mcp_host._claim_or_reconcile_canonical_know(
-        _source_observation_context(), authority,
-    ))
-
-    assert result.structuredContent["result"]["state"] == "pending"
-    assert result.structuredContent["result"]["callId"] == authority["call_id"]
-
-
-def test_timeout_after_native_persist_reconciles_exact_episode_without_retry(
-    monkeypatch,
-):
-    import asyncio
-    import mcp_host
-    from app.python_models import card_domain
-
-    _native, authority = mcp_host._canonical_know_submission(
-        _source_observation_payload(), _source_observation_context(),
-    )
-    monkeypatch.setattr(card_domain, "claim_atomic_know_write", lambda _payload: {
-        "status": "existing", "event": {"phase": "pending"},
-    })
-
-    class Driver:
-        async def execute_query(self, *_args, **_kwargs):
-            return SimpleNamespace(records=[{
-                "episode_uuid": "episode-one",
-                "group_id": "liquidaity-project-one",
-                "record_kind": "canonical_know",
-                "schema_version": "knowgraph.source-observation.v2",
-                "call_id": authority["call_id"],
-                "semantic_sha256": authority["semantic_sha256"],
-                "source_description": authority["source_marker"],
-                "content": native["episode_body"],
-            }])
-
-    client = SimpleNamespace(driver=Driver())
-
-    class Service:
-        async def get_client(self): return client
-
-    persisted = []
-
-    async def persist(event, _context):
-        persisted.append(dict(event))
-        return True
-
-    monkeypatch.setattr(
-        mcp_host, "_NATIVE_GRAPHITI_MODULE",
-        SimpleNamespace(graphiti_service=Service()),
-    )
-    monkeypatch.setattr(mcp_host, "_persist_native_attention", persist)
-    result = asyncio.run(mcp_host._claim_or_reconcile_canonical_know(
-        _source_observation_context(), authority,
-    ))
-
-    assert result.structuredContent["result"]["state"] == "completed"
-    assert result.structuredContent["result"]["callId"] == authority["call_id"]
-    assert persisted[0]["eventId"] == authority["call_id"]
-    assert persisted[0]["nativeEpisodeIds"] == ["episode-one"]
-
-
-def test_non_null_citation_metadata_fails_without_trusted_run_capture():
-    import mcp_host
-
-    for field, value in (
-        ("title", "Primary report"),
-        ("publishedAt", "2026-10-04T12:00:00Z"),
-    ):
-        payload = _source_observation_payload()
-        payload["observations"][0]["citations"][0][field] = value
-        with pytest.raises(ValueError, match="trusted_source_metadata_capture_unavailable"):
-            mcp_host._canonical_know_submission(
-                payload, _source_observation_context(),
-            )
-
-
 def test_application_catalog_preserves_saved_card_schemas_without_native_discovery(monkeypatch):
     import asyncio
     import jsonschema
@@ -2563,7 +2206,6 @@ def test_stale_external_catalog_cannot_invoke_known_internal_only_operation(
     assert stale.isError is True
     assert json.loads(stale.content[0].text)["error"] == "tool_not_granted"
 
-
 def test_complete_catalog_is_frozen_before_listing_and_preserves_native_metadata(
     monkeypatch, clear_live_cbm_operations,
 ):
@@ -2703,19 +2345,11 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_native_metadata
         for fixture in fixtures:
             tool = canonical_by_name[f"{namespace}.{fixture.name}"]
             assert tool.title == fixture.title
-            if tool.name == "graphiti.add_memory":
-                assert "one product Know" in str(tool.description)
-            else:
-                assert tool.description == fixture.description
+            assert tool.description == fixture.description
             assert tool.outputSchema == fixture.outputSchema
             assert tool.annotations == fixture.annotations
             assert tool.meta["canonicalFixture"] == fixture.meta["canonicalFixture"]
-            if tool.name == "graphiti.add_memory":
-                assert set(tool.inputSchema["properties"]) == {
-                    "schemaVersion", "name", "observations",
-                }
-            else:
-                assert tool.inputSchema["properties"]["probe"] == {"type": "string"}
+            assert tool.inputSchema["properties"]["probe"] == {"type": "string"}
     assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
     assert canonical_by_name["cbm.search_graph"].meta["liquidaityAccess"] == "read"
     assert canonical_by_name["cbm.unfamiliar_current_tool"].meta[
@@ -2786,200 +2420,6 @@ def test_mag_one_tools_use_direct_transient_input_contract():
     }
 
 
-@pytest.mark.parametrize(
-    ("backend_result", "expected_status", "expected_ok"),
-    [
-        (
-            {
-                "ok": True,
-                "runId": "atomic-research:started-secret",
-                "state": "running",
-                "rejoined": False,
-                "correlationId": "correlation-secret",
-                "conversationId": "conversation-secret",
-                "messageId": "message-secret",
-                "claimId": "claim-secret",
-                "idempotencyKey": "idempotency-secret",
-                "sessionId": "session-secret",
-                "executionReceipt": {"failureCode": "backend-secret"},
-            },
-            "started",
-            True,
-        ),
-        (
-            {
-                "ok": True,
-                "runId": "atomic-research:rejoined-secret",
-                "state": "running",
-                "rejoined": True,
-                "receipt": {"correlationId": "rejoined-correlation-secret"},
-            },
-            "started",
-            True,
-        ),
-        (
-            {
-                "ok": True,
-                "runId": "atomic-research:complete-secret",
-                "state": "completed",
-                "rejoined": True,
-                "providerMessageId": "provider-message-secret",
-                "hermesSessionId": "hermes-session-secret",
-            },
-            "already_complete",
-            True,
-        ),
-        (
-            {
-                "ok": False,
-                "error": "backend_http_409",
-                "runId": "failed-run-secret",
-                "receipt": {"correlationId": "failed-correlation-secret"},
-            },
-            "unavailable",
-            False,
-        ),
-        (
-            {
-                "ok": True,
-                "runId": "terminal-run-secret",
-                "state": "failed",
-                "rejoined": True,
-                "errorCode": "atomic_research_failed",
-            },
-            "unavailable",
-            False,
-        ),
-        ({"ok": True, "state": "running", "rejoined": False}, "unavailable", False),
-        ([{"ok": True}], "unavailable", False),
-        ("not-json", "unavailable", False),
-    ],
-)
-def test_atomic_research_model_result_is_only_a_natural_status(
-    backend_result, expected_status, expected_ok,
-):
-    import mcp_host
-
-    text = backend_result if isinstance(backend_result, str) else json.dumps(backend_result)
-    visible = mcp_host._model_visible_atomic_research_result(text)
-    parsed = json.loads(visible)
-
-    assert parsed == {
-        "ok": expected_ok,
-        "status": expected_status,
-        "message": parsed["message"],
-    }
-    assert "cited result" in parsed["message"].lower() or expected_status == "unavailable"
-    lowered = visible.lower()
-    for forbidden in (
-        "runid", "correlationid", "conversationid", "messageid", "claimid",
-        "idempotency", "sessionid", "receipt", "backend_http_409",
-        "atomic_research_failed", "-secret",
-    ):
-        assert forbidden not in lowered
-
-
-def test_atomic_research_dispatch_returns_only_the_model_result(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    captured = {}
-
-    def bridge(path, payload):
-        captured.update({"path": path, "payload": payload})
-        return json.dumps({
-            "ok": True,
-            "runId": "atomic-research:runtime-only",
-            "state": "running",
-            "rejoined": False,
-            "correlationId": "control-plane-correlation",
-            "conversationId": "control-plane-conversation",
-            "messageId": "control-plane-message",
-            "claimId": "control-plane-claim",
-            "idempotencyKey": "control-plane-idempotency",
-            "sessionId": "control-plane-session",
-            "receipt": {"failureCode": None},
-        })
-
-    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
-    context = {
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-1",
-        "parentRunId": "main-run-1",
-        "mainCardId": "card_main_chat",
-        "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "main",
-    }
-    result = asyncio.run(mcp_host._execute_tool_request(
-        "research_atomic_thinks",
-        {"thinkMemoryIds": ["think-one"], "reason": "Resolve one factual gap."},
-        authenticated_context=context,
-        granted_tools={"research_atomic_thinks"},
-        transport="hermes-plugin",
-    ))
-
-    assert captured == {
-        "path": "atomic_research",
-        "payload": {
-            "projectId": "project-1",
-            "deckId": "deck_builder",
-            "conversationId": "conversation-1",
-            "sourceRunId": "main-run-1",
-            "mainCardId": "card_main_chat",
-            "thinkMemoryIds": ["think-one"],
-            "reason": "Resolve one factual gap.",
-        },
-    }
-    assert isinstance(result, list)
-    assert json.loads(result[0].text)["status"] == "started"
-    assert len(result) == 1
-    visible = mcp_host._card_tool_output(result)
-    assert json.loads(visible)["status"] == "started"
-    assert "executionReceipt" not in visible
-    assert "control-plane" not in visible
-    assert "executionReceipt" not in _tool_result_wire_text(result)
-
-
-def test_atomic_research_bridge_failure_is_natural_and_runtime_diagnostic_only(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    def bridge(_path, _payload):
-        raise RuntimeError("backend_http_503:session-secret")
-
-    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
-    context = {
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-1",
-        "parentRunId": "main-run-1",
-        "mainCardId": "card_main_chat",
-        "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "main",
-    }
-    result = asyncio.run(mcp_host._execute_tool_request(
-        "research_atomic_thinks",
-        {"thinkMemoryIds": ["think-one"]},
-        authenticated_context=context,
-        granted_tools={"research_atomic_thinks"},
-        transport="hermes-plugin",
-    ))
-
-    visible = mcp_host._card_tool_output(result)
-    assert json.loads(visible) == {
-        "ok": False,
-        "status": "unavailable",
-        "message": (
-            "Bounded research could not be started. Technical failure details are available "
-            "only in Runtime."
-        ),
-    }
-    assert "backend_http_503" not in visible
-    assert "session-secret" not in visible
-    assert result.isError is True
-    assert result.meta is None
-    assert "backend_http_503" not in _tool_result_wire_text(result)
 
 
 

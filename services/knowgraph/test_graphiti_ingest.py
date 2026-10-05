@@ -9,7 +9,7 @@ import os
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import ingest
 
@@ -226,69 +226,6 @@ def _run(
 
 
 class GraphitiIngestTests(unittest.TestCase):
-    def test_delete_canonical_know_removes_only_exact_marked_project_episode(self) -> None:
-        driver = SimpleNamespace(
-            execute_query=AsyncMock(return_value=SimpleNamespace(records=[{
-                "record_kind": "canonical_know",
-                "schema_version": "knowgraph.source-observation.v2",
-            }])),
-            close=AsyncMock(),
-        )
-        graphiti = SimpleNamespace(driver=driver, remove_episode=AsyncMock())
-        runtime = SimpleNamespace(provider="openai")
-        episode = SimpleNamespace(group_id="liquidaity-project-1")
-        with (
-            patch.object(ingest, "_create_graphiti_runtime", return_value=(
-                runtime, graphiti, "neo4j",
-            )),
-            patch(
-                "graphiti_core.nodes.EpisodicNode.get_by_uuid",
-                new=AsyncMock(return_value=episode),
-            ),
-        ):
-            result = asyncio.run(ingest.delete_canonical_know(
-                "project-1", "episode-one",
-            ))
-
-        self.assertEqual(result, {
-            "kind": "episode", "native_id": "episode-one", "provider": "openai",
-        })
-        graphiti.remove_episode.assert_awaited_once_with("episode-one")
-        driver.close.assert_awaited_once()
-
-    def test_delete_canonical_know_preserves_cross_project_and_unmarked_episodes(self) -> None:
-        for episode, marker in (
-            (SimpleNamespace(group_id="liquidaity-other-project"), [{
-                "record_kind": "canonical_know",
-                "schema_version": "knowgraph.source-observation.v2",
-            }]),
-            (SimpleNamespace(group_id="liquidaity-project-1"), [{
-                "record_kind": None, "schema_version": None,
-            }]),
-        ):
-            driver = SimpleNamespace(
-                execute_query=AsyncMock(return_value=SimpleNamespace(records=marker)),
-                close=AsyncMock(),
-            )
-            graphiti = SimpleNamespace(driver=driver, remove_episode=AsyncMock())
-            with (
-                patch.object(ingest, "_create_graphiti_runtime", return_value=(
-                    SimpleNamespace(provider="openai"), graphiti, "neo4j",
-                )),
-                patch(
-                    "graphiti_core.nodes.EpisodicNode.get_by_uuid",
-                    new=AsyncMock(return_value=episode),
-                ),
-            ):
-                with self.assertRaisesRegex(
-                    LookupError, "knowgraph_native_record_not_found",
-                ):
-                    asyncio.run(ingest.delete_canonical_know(
-                        "project-1", "episode-one",
-                    ))
-            graphiti.remove_episode.assert_not_awaited()
-            driver.close.assert_awaited_once()
-
     def test_loaded_graphiti_api_exposes_required_temporal_fact_contract(self) -> None:
         from graphiti_core import Graphiti
         from graphiti_core.edges import EntityEdge

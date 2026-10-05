@@ -57,15 +57,12 @@ from app.python_models.data_anchor import (
     search_knowgraph_attention_candidates,
 )
 from app.python_models.engraphis import (
-    ATOMIC_RESEARCH_MAX_SELECTED,
     JEV_ENDPOINT,
     JEV_MODEL,
     MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
     JevAttentionError,
     _attention_choice_id,
     decide_main_graph_attention,
-    inspect as inspect_thinkgraph,
-    prepare_atomic_research_frame,
     recall_thinkgraph_attention_candidates,
 )
 from app.python_models.jev_validation import (
@@ -151,20 +148,9 @@ _REQUEST_FULFILLMENT_LEVELS = (
     "The requested outcome and material requirements are delivered, with only a minor omission or correction remaining.",
     "The applicable requested outcome and material constraints are fully delivered, with no material omission, contradiction, or unsupported completion claim visible in the supplied input and execution evidence.",
 )
-_REQUEST_NOVELTY_CHOICES = (
-    "new_evidence", "contradiction", "changed_thesis", "repeated_only",
-)
-_REQUEST_CITATION_COVERAGE_CHOICES = (
-    "complete", "gap", "not_applicable",
-)
-_REQUEST_FOLLOW_UP_CHOICES = (
-    "accept", "ask_one_clarification", "send_one_bounded_follow_up", "stop",
-)
 _MISSION_READINESS_CHOICES = (
     "ready", "missing_evidence", "contradictory", "source_blocked",
 )
-_RESEARCH_PROGRESS_TOPIC_SHIFT_THRESHOLD = 0.80
-_RESEARCH_PROGRESS_REPEAT_LIMIT = 2
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -1358,15 +1344,6 @@ def _validate_new_card_revision(card: dict[str, Any]) -> None:
         if data_control is not None:
             if not isinstance(data_control, dict):
                 raise CardDomainError("card_data_control_invalid")
-            automatic_research = data_control.get("automaticResearch")
-            if automatic_research is not None and not isinstance(
-                automatic_research, bool
-            ):
-                raise CardDomainError("card_automatic_research_invalid")
-            if automatic_research is True and (
-                not is_hermes or runtime.get("mode") != "main"
-            ):
-                raise CardDomainError("card_automatic_research_requires_main")
 
 
 def _insert_revision(
@@ -1566,10 +1543,6 @@ def observe_native_attention(
         str(value).strip() for value in event.get("nativeNodeIds") or []
         if str(value).strip()
     ][:128]
-    episode_ids = [
-        str(value).strip() for value in event.get("nativeEpisodeIds") or []
-        if str(value).strip()
-    ][:128]
     edge_ids = [
         str(value).strip() for value in event.get("nativeEdgeIds") or []
         if str(value).strip()
@@ -1595,18 +1568,9 @@ def observe_native_attention(
     if not all((project_id, deck_id, run_id, card_id, event_id, tool_name, authority,
                 operation, timestamp, result_hash)):
         return False
-    call_id = str(event.get("callId") or "").strip()
-    if tool_name == "graphiti.add_memory" and (
-        call_id != event_id
-        or phase == "completed" and len(episode_ids) != 1
-        or phase in {"pending", "failed"} and episode_ids
-    ):
-        return False
     references = [
         {"nativeId": native_id, "nativeKind": native_kind}
-        for native_kind, native_ids in (
-            ("episode", episode_ids), ("node", node_ids), ("edge", edge_ids),
-        )
+        for native_kind, native_ids in (("node", node_ids), ("edge", edge_ids))
         for native_id in native_ids
     ]
     if not references and not (operation == "write" and (
@@ -1681,8 +1645,6 @@ def observe_native_attention(
                     used.phase=$phase, used.change=$change,
                     used.nativeChildId=$nativeChildId, used.nativeRunId=$nativeRunId,
                     used.scopeGroupIds=$scopeGroupIds,
-                    used.callId=$callId,
-                    used.nativeEpisodeIds=$nativeEpisodeIds,
                     used.nativeNodeIds=$nativeNodeIds,
                     used.nativeEdgeIds=$nativeEdgeIds,
                     used.nativeEdges=$nativeEdges,
@@ -1705,8 +1667,6 @@ def observe_native_attention(
                     "nativeChildId": event.get("nativeChildId"),
                     "nativeRunId": event.get("nativeRunId"),
                     "scopeGroupIds": event.get("scopeGroupIds") or [],
-                    "callId": call_id or None,
-                    "nativeEpisodeIds": episode_ids,
                     "nativeNodeIds": node_ids,
                     "nativeEdgeIds": edge_ids,
                     "nativeEdges": native_edges,
@@ -2217,12 +2177,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                                 "authority": str(event.get("authority") or ""),
                                 "operation": str(event.get("operation") or ""),
                                 "toolName": str(event.get("toolName") or tool_id),
-                                **({
-                                    "nativeEpisodeIds": [
-                                        str(value)
-                                        for value in event.get("nativeEpisodeIds") or []
-                                    ],
-                                } if "nativeEpisodeIds" in event else {}),
                                 "nativeNodeIds": [str(value) for value in event.get("nativeNodeIds") or []],
                                 "nativeEdgeIds": [str(value) for value in event.get("nativeEdgeIds") or []],
                                 "nativeEdges": [
@@ -2233,7 +2187,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                                 "truncated": event.get("truncated") is True,
                                 **{key: event[key] for key in (
                                     "phase", "change", "nativeChildId", "nativeRunId", "scopeGroupIds",
-                                    "callId",
                                 ) if event.get(key) is not None},
                             })
                 for row in telemetry["tool_totals"]:
@@ -2753,20 +2706,6 @@ def _card_has_orchestrator_authority(card: dict[str, Any]) -> bool:
     )
 
 
-def _card_automatic_research_enabled(card: dict[str, Any]) -> bool:
-    """Read the one explicit saved Main data-control flag; absence is false."""
-
-    options = card.get("runtimeOptions")
-    if not isinstance(options, dict):
-        return False
-    configuration = options.get("configuration")
-    if not isinstance(configuration, dict):
-        return False
-    data_control = configuration.get("dataControl")
-    return (
-        isinstance(data_control, dict)
-        and data_control.get("automaticResearch") is True
-    )
 
 
 def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
@@ -3192,877 +3131,6 @@ def _attention_retrieval(
         }
 
 
-def register_atomic_research_candidate(payload: dict[str, Any]) -> dict[str, Any]:
-    """Attach the ordered settled Think facets to the originating Main Run receipt."""
-
-    project_ref = _required_text(payload.get("projectId"), "project_id")
-    deck_id = _required_text(payload.get("deckId"), "deck_id")
-    conversation_id = _required_text(payload.get("conversationId"), "conversation_id")
-    originating_run_id = _required_text(
-        payload.get("originatingRunId"), "originating_run_id"
-    )
-    raw_think_ids = payload.get("thinkMemoryIds")
-    if (
-        not isinstance(raw_think_ids, list)
-        or not 1 <= len(raw_think_ids) <= 2
-        or any(not isinstance(value, str) or not value.strip() for value in raw_think_ids)
-    ):
-        raise CardDomainError("atomic_research_think_ids_invalid")
-    think_memory_ids = [value.strip() for value in raw_think_ids]
-    if len(set(think_memory_ids)) != len(think_memory_ids):
-        raise CardDomainError("atomic_research_think_ids_invalid")
-    main_card_id = _required_text(payload.get("mainCardId"), "main_card_id")
-    main_revision_id = _required_text(
-        payload.get("mainCardRevisionId"), "main_card_revision_id"
-    )
-    think_card_id = _required_text(payload.get("thinkGraphCardId"), "thinkgraph_card_id")
-    think_revision_id = _required_text(
-        payload.get("thinkGraphCardRevisionId"), "thinkgraph_card_revision_id"
-    )
-    know_card_id = _required_text(payload.get("knowGraphCardId"), "knowgraph_card_id")
-    know_revision_id = _required_text(
-        payload.get("knowGraphCardRevisionId"), "knowgraph_card_revision_id"
-    )
-    evidence_cutoff = _required_text(payload.get("evidenceCutoff"), "evidence_cutoff")
-    loaded = _load_deck_internal(project_ref, deck_id)
-    cards = {str(card.get("id") or ""): card for card in loaded["deck"]["nodes"]}
-    main = cards.get(main_card_id)
-    think = cards.get(think_card_id)
-    know = cards.get(know_card_id)
-    if any(card is None for card in (main, think, know)):
-        raise CardDomainError("atomic_research_card_authority_unavailable")
-    if (
-        str(main.get("_cardRevisionId") or "") != main_revision_id
-        or str(think.get("_cardRevisionId") or "") != think_revision_id
-        or str(know.get("_cardRevisionId") or "") != know_revision_id
-    ):
-        raise CardDomainError("atomic_research_card_revision_changed")
-    if _card_runtime(main).get("mode") != "main":
-        raise CardDomainError("atomic_research_main_authority_invalid")
-    if not _card_automatic_research_enabled(main):
-        return {
-            "ok": True,
-            "enabled": False,
-            "registered": False,
-            "projectId": loaded["projectId"],
-            "originatingRunId": originating_run_id,
-        }
-    direct = {
-        target["cardId"]
-        for target in _direct_card_targets(
-            main_card_id, cards, loaded["deck"]["edges"]
-        )
-    }
-    if know_card_id not in direct or think_card_id not in direct:
-        raise CardDomainError("atomic_research_flow_authority_required")
-    candidate = {
-        "schemaVersion": "atomic-research-candidate.v1",
-        "projectId": str(loaded["projectId"]),
-        "deckId": deck_id,
-        "conversationId": conversation_id,
-        "originatingRunId": originating_run_id,
-        "thinkMemoryIds": think_memory_ids,
-        "mainCardId": main_card_id,
-        "mainCardRevisionId": main_revision_id,
-        "thinkGraphCardId": think_card_id,
-        "thinkGraphCardRevisionId": think_revision_id,
-        "knowGraphCardId": know_card_id,
-        "knowGraphCardRevisionId": know_revision_id,
-        "evidenceCutoff": evidence_cutoff,
-    }
-    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        rows = _age_rows(
-            cursor,
-            """
-            MATCH (run:Run {
-              projectId: $projectId, deckId: $deckId, runId: $runId
-            })-[:EXECUTED_BY]->(main:Card {
-              projectId: $projectId, deckId: $deckId, cardId: $mainCardId
-            })
-            WHERE run.conversationId=$conversationId
-            SET run.atomicResearchCandidate=$candidate
-            RETURN run.runId AS runId
-            """,
-            {
-                "projectId": str(loaded["projectId"]),
-                "deckId": deck_id,
-                "runId": originating_run_id,
-                "mainCardId": main_card_id,
-                "conversationId": conversation_id,
-                "candidate": candidate,
-            },
-            "run_id agtype",
-        )
-    if len(rows) != 1:
-        raise CardDomainError("atomic_research_originating_run_unavailable")
-    return {
-        "ok": True,
-        "enabled": True,
-        "registered": True,
-        **candidate,
-    }
-
-
-def _current_atomic_think_exists(project_id: str, memory_id: str) -> bool:
-    """Confirm one project-scoped native ID still names a structured atomic Think."""
-
-    try:
-        native = inspect_thinkgraph(project_id, memory_id)
-    except Exception:
-        return False
-    memory = native.get("memory") if isinstance(native, dict) else None
-    metadata = memory.get("metadata") if isinstance(memory, dict) else None
-    structured = (
-        metadata.get("structured_extraction")
-        if isinstance(metadata, dict) else None
-    )
-    return isinstance(structured, dict) and isinstance(
-        structured.get("think"), dict
-    )
-
-
-def _pending_atomic_research_seed(
-    project_id: str,
-    deck_id: str,
-    conversation_id: str,
-    main_card_id: str,
-) -> dict[str, Any] | None:
-    loaded = _load_deck_internal(project_id, deck_id)
-    cards = {str(card.get("id") or ""): card for card in loaded["deck"]["nodes"]}
-    main = cards.get(main_card_id)
-    if main is None or not _card_automatic_research_enabled(main):
-        return None
-    after_cutoff = ""
-    after_run_id = ""
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("SET TRANSACTION READ ONLY")
-            while True:
-                rows = _age_rows(
-                    cursor,
-                    """
-                    MATCH (run:Run {
-                      projectId: $projectId, deckId: $deckId
-                    })-[:EXECUTED_BY]->(main:Card {
-                      projectId: $projectId, deckId: $deckId, cardId: $mainCardId
-                    })
-                    WHERE run.conversationId=$conversationId
-                      AND run.atomicResearchCandidate IS NOT NULL
-                      AND run.atomicResearchAssessment IS NULL
-                      AND (
-                        $afterCutoff=''
-                        OR run.atomicResearchCandidate.evidenceCutoff > $afterCutoff
-                        OR (
-                          run.atomicResearchCandidate.evidenceCutoff=$afterCutoff
-                          AND run.runId > $afterRunId
-                        )
-                      )
-                    RETURN run.atomicResearchCandidate AS candidate,
-                           run.runId AS runId
-                    ORDER BY run.atomicResearchCandidate.evidenceCutoff ASC,
-                             run.runId ASC
-                    LIMIT 32
-                    """,
-                    {
-                        "projectId": str(loaded["projectId"]),
-                        "deckId": deck_id,
-                        "conversationId": conversation_id,
-                        "mainCardId": main_card_id,
-                        "afterCutoff": after_cutoff,
-                        "afterRunId": after_run_id,
-                    },
-                    "candidate agtype, run_id agtype",
-                )
-                if not rows:
-                    return None
-                for row in rows:
-                    if not isinstance(row.get("candidate"), dict):
-                        continue
-                    candidate = dict(row["candidate"])
-                    current = {
-                        "mainCardRevisionId": str(main.get("_cardRevisionId") or ""),
-                    }
-                    for key in ("thinkGraph", "knowGraph"):
-                        card_id = str(candidate.get(f"{key}CardId") or "")
-                        card = cards.get(card_id)
-                        current[f"{key}CardRevisionId"] = str(
-                            card.get("_cardRevisionId") or ""
-                        ) if card is not None else ""
-                    if any(
-                        str(candidate.get(key) or "") != value
-                        for key, value in current.items()
-                    ):
-                        continue
-                    raw_think_ids = candidate.get("thinkMemoryIds")
-                    if (
-                        not isinstance(raw_think_ids, list)
-                        or not 1 <= len(raw_think_ids) <= 2
-                    ):
-                        continue
-                    think_memory_ids = [
-                        str(value or "").strip() for value in raw_think_ids
-                    ]
-                    if all(think_memory_ids) and all(
-                        _current_atomic_think_exists(
-                            str(loaded["projectId"]), memory_id
-                        )
-                        for memory_id in think_memory_ids
-                    ):
-                        return candidate
-                if len(rows) < 32:
-                    return None
-                last = rows[-1]
-                last_candidate = (
-                    last.get("candidate")
-                    if isinstance(last.get("candidate"), dict) else {}
-                )
-                after_cutoff = str(last_candidate.get("evidenceCutoff") or "")
-                after_run_id = str(
-                    last.get("run_id") or last.get("runId") or ""
-                )
-                if not after_cutoff or not after_run_id:
-                    return None
-
-
-def _persisted_atomic_research_assessment(
-    project_id: str,
-    deck_id: str,
-    run_id: str,
-    main_card_id: str,
-) -> dict[str, Any] | None:
-    """Read the assessment already delivered to this exact Main Run, if any."""
-
-    if not run_id:
-        return None
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("SET TRANSACTION READ ONLY")
-            rows = _age_rows(
-                cursor,
-                """
-                MATCH (origin:Run {
-                  projectId: $projectId, deckId: $deckId
-                })
-                MATCH (current:Run {
-                  projectId: $projectId, deckId: $deckId, runId: $runId
-                })-[:EXECUTED_BY]->(main:Card {
-                  projectId: $projectId, deckId: $deckId, cardId: $mainCardId
-                })
-                WHERE origin.atomicResearchDeliveredToRunId=$runId
-                  AND origin.atomicResearchAssessment IS NOT NULL
-                RETURN origin.atomicResearchAssessment AS assessment
-                LIMIT 1
-                """,
-                {
-                    "projectId": project_id,
-                    "deckId": deck_id,
-                    "runId": run_id,
-                    "mainCardId": main_card_id,
-                },
-                "assessment agtype",
-            )
-    if len(rows) != 1 or not isinstance(rows[0].get("assessment"), dict):
-        return None
-    return dict(rows[0]["assessment"])
-
-
-def _atomic_research_offer(value: Any) -> dict[str, Any] | None:
-    """Validate exact Jev-offered IDs without widening saved authority."""
-
-    if (
-        not isinstance(value, dict)
-        or value.get("schemaVersion") != "atomic-research-assessment.v1"
-        or value.get("status") != "success"
-    ):
-        return None
-    recommended = value.get("recommendedMemoryIds")
-    automatic = value.get("automaticMemoryIds")
-    if (
-        not isinstance(recommended, list)
-        or not 1 <= len(recommended) <= ATOMIC_RESEARCH_MAX_SELECTED
-        or any(
-            not isinstance(item, str) or not item.strip() or len(item) > 1_024
-            for item in recommended
-        )
-        or len(set(recommended)) != len(recommended)
-        or not isinstance(automatic, list)
-        or any(
-            not isinstance(item, str) or not item.strip() or len(item) > 1_024
-            for item in automatic
-        )
-        or len(set(automatic)) != len(automatic)
-        or not set(automatic) <= set(recommended)
-    ):
-        return None
-    manual = [item for item in recommended if item not in set(automatic)]
-    return {
-        "assessmentId": str(value.get("assessmentId") or "") or None,
-        "recommendedMemoryIds": list(recommended),
-        "automaticMemoryIds": list(automatic),
-        "manualMemoryIds": manual,
-    }
-
-
-def _atomic_research_offer_section(
-    offer: dict[str, Any],
-    *,
-    tool_available: bool,
-) -> str:
-    manual = offer["manualMemoryIds"]
-    automatic = offer["automaticMemoryIds"]
-    lines = [
-        "## Current atomic research offer",
-        "Exact Jev-offered Think memory IDs only; do not invent a query or another ID.",
-        "Manual-eligible Think IDs: "
-        + json.dumps(manual, ensure_ascii=False, separators=(",", ":")),
-        "Already auto-launched Think IDs: "
-        + json.dumps(automatic, ensure_ascii=False, separators=(",", ":")),
-    ]
-    if tool_available and manual:
-        lines.append(
-            "You may call research_atomic_thinks only with one or two exact IDs from "
-            "Manual-eligible Think IDs. Never manually invoke an already auto-launched ID."
-        )
-    elif automatic:
-        lines.append(
-            "Do not call research_atomic_thinks for this offer; every recommended ID is "
-            "already auto-launched."
-        )
-    else:
-        lines.append(
-            "The saved research command is unavailable in this Run; do not attempt a "
-            "receiptless research call."
-        )
-    return "\n".join(lines)
-
-
-def record_atomic_research_assessment(
-    assessment: dict[str, Any],
-    *,
-    delivered_to_run_id: str,
-) -> dict[str, Any]:
-    """Persist the one shared-Jev assessment on existing AGE Run receipts."""
-
-    if (
-        not isinstance(assessment, dict)
-        or assessment.get("schemaVersion") != "atomic-research-assessment.v1"
-    ):
-        raise CardDomainError("atomic_research_assessment_invalid")
-    project_id = _required_text(assessment.get("projectId"), "project_id")
-    deck_id = _required_text(assessment.get("deckId"), "deck_id")
-    originating_run_id = _required_text(
-        assessment.get("originatingRunId"), "originating_run_id"
-    )
-    assessment_id = _required_text(
-        assessment.get("assessmentId"), "assessment_id"
-    )
-    delivered_to_run_id = _required_text(delivered_to_run_id, "delivered_to_run_id")
-    if len(json.dumps(assessment, ensure_ascii=False, default=str).encode()) > 100_000:
-        raise CardDomainError("atomic_research_assessment_too_large")
-    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        rows = _age_rows(
-            cursor,
-            """
-            MATCH (origin:Run {
-              projectId: $projectId, deckId: $deckId, runId: $originatingRunId
-            })
-            MATCH (current:Run {
-              projectId: $projectId, deckId: $deckId, runId: $currentRunId
-            })
-            WHERE origin.atomicResearchCandidate IS NOT NULL
-              AND (
-                origin.atomicResearchAssessment IS NULL
-                OR origin.atomicResearchAssessment.assessmentId=$assessmentId
-              )
-            SET origin.atomicResearchAssessment=$assessment,
-                origin.atomicResearchDeliveredToRunId=$currentRunId,
-                current.atomicResearchAssessmentId=$assessmentId,
-                current.atomicResearchOriginatingRunId=$originatingRunId
-            RETURN origin.runId AS runId
-            """,
-            {
-                "projectId": project_id,
-                "deckId": deck_id,
-                "originatingRunId": originating_run_id,
-                "currentRunId": delivered_to_run_id,
-                "assessmentId": assessment_id,
-                "assessment": assessment,
-            },
-            "run_id agtype",
-        )
-    if len(rows) != 1:
-        raise CardDomainError("atomic_research_assessment_receipt_conflict")
-    return {
-        "ok": True,
-        "assessmentId": assessment_id,
-        "originatingRunId": originating_run_id,
-        "deliveredToRunId": delivered_to_run_id,
-        "automaticMemoryIds": list(assessment.get("automaticMemoryIds") or []),
-    }
-
-
-def _atomic_research_assignment(
-    *,
-    assessment_id: str,
-    source_run_id: str,
-    memory_ids: list[str],
-    reason: str,
-) -> str:
-    result_schema = {
-        "schemaVersion": "atomic-research-response.v2",
-        "callId": "exact server-returned know-call ID or null",
-        "results": [{
-            "status": "supported|contradicted|source-unavailable",
-            "summary": "concise sourced result",
-        }],
-    }
-    return "\n".join((
-        "Run one bounded atomic research assignment using your saved KnowGraph Card authority.",
-        "The supplied ThinkGraph Data Anchors are question framing, not factual evidence.",
-        "Each exact Think body is already hydrated in actualGraphData. Do not call",
-        "engraphis_get_memory for it again unless the supplied data explicitly reports a freshness mismatch.",
-        "For each supplied hydrated Think body, inspect existing current project-scoped Knows and their",
-        "source dates first. Use at most four distinct current primary sources across this assignment.",
-        "A Think memory ID is runtime correlation metadata only. Never place a Think",
-        "memory ID, assessment ID, Run ID, Card ID, conversation/message/session ID, or schema",
-        "label in graphiti.add_memory name, episode body, source_description, extraction instructions,",
-        "entity names, or relationship facts. Research and write only the named real-world subjects",
-        "and concepts from the hydrated Think and canonical subject directory.",
-        "actualGraphData includes the complete canonical_subject_directory. Before writing, select",
-        "the exact existing canonicalName values relevant to this research and reuse those spellings.",
-        "Pass those relevant exact names only in each observation's relevantEntities so",
-        "Graphiti can reuse them as entity names. Treat article, filing, contract, report, and episode",
-        "titles as provenance/source material, not peer subject entities. Do not concatenate a named",
-        "company with a metric, event, role, or thesis to manufacture another entity name.",
-        "Write useful source material through your existing Graphiti tools and saved grants only.",
-        "Make exactly one graphiti.add_memory call for this entire bounded assignment using",
-        "schemaVersion knowgraph.source-observation.v2, one specific scan-friendly name, and",
-        "observations[] that preserve each independently readable result and its entity context.",
-        "Each observation contains one complete independently readable datum, one bounded",
-        "interpretation, one-or-more citations[], and relevantEntities[]. Every citation contains",
-        "exactly url, title, publishedAt, and a nonempty sourceNote explaining precisely what that",
-        "link establishes for its observation. Keep every citation attached to its observation.",
-        "Set title and publishedAt to null unless the authenticated run supplies exact trusted",
-        "source metadata for that URL; never infer either value from observation or Run time.",
-        "Never send a flat citation array, naked link, combined report summary, bibliography, or",
-        "research-package narrative. Reuse exact canonicalName values in relevantEntities and list",
-        "each logical entity once per observation even when both native authorities supplied it.",
-        "Do not split inseparable meaning, merge independent observations merely to reduce count,",
-        "pad simple observations, or truncate qualifications. Concision comes only from removing",
-        "repetition, process narration, irrelevant background, and report padding.",
-        "The one canonical call persists the complete Know as exactly one native Graphiti episode",
-        "regardless of its observation or citation count. Do not retry after its queued",
-        "acknowledgement. Copy the exact server-returned callId into RESULT_SCHEMA; never invent",
-        "or return an episode UUID. Python settlement binds that call/event identity to the one",
-        "persisted episode and exact structured readback before the finding can be published.",
-        "A source-unavailable semantic result may still contain useful cited research and use the",
-        "same pending settlement path. Keep each summary strictly about evidence and the semantic",
-        "finding; never put queue, readback, persistence-pending, or settlement status in summary.",
-        "Do not exceed the saved Card's model, maxTokens, maxTurns, tools, profile, or grants.",
-        "Return only one JSON object matching RESULT_SCHEMA, with one result per supplied Think",
-        "in exact supplied order. Do not echo any supplied Think, assessment, source Run, child",
-        "Run, Card, conversation, message, or session identifier in the JSON response.",
-        "Any supported or contradicted result requires the one top-level non-null callId from the",
-        "canonical Know write. All results in this assignment settle through that same episode.",
-        "Use source-unavailable only for a semantic/source/tool failure,",
-        "not merely because the exactly-once Graphiti write is still processing.",
-        f"EXPECTED_RESULT_COUNT: {len(memory_ids)}",
-        "MAIN_REASON: " + (reason or "No additional reason supplied."),
-        "RESULT_SCHEMA: " + json.dumps(result_schema, separators=(",", ":")),
-    ))
-
-
-def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate and claim the one auto/manual KnowGraph launch for a pair receipt."""
-
-    if not isinstance(payload, dict):
-        raise CardDomainError("atomic_research_command_invalid")
-    project_ref = _required_text(payload.get("projectId"), "project_id")
-    deck_id = _required_text(payload.get("deckId"), "deck_id")
-    conversation_id = _required_text(payload.get("conversationId"), "conversation_id")
-    source_run_id = _required_text(payload.get("sourceRunId"), "source_run_id")
-    main_card_id = _required_text(payload.get("mainCardId"), "main_card_id")
-    mode = str(payload.get("mode") or "").strip()
-    if mode not in {"automatic", "main"}:
-        raise CardDomainError("atomic_research_command_mode_invalid")
-    reason = str(payload.get("reason") or "").strip()
-    if len(reason) > 500:
-        raise CardDomainError("atomic_research_reason_too_large")
-    raw_ids = payload.get("thinkMemoryIds")
-    if (
-        not isinstance(raw_ids, list)
-        or not 1 <= len(raw_ids) <= 2
-        or any(not isinstance(value, str) or not value.strip() or len(value) > 1024
-               for value in raw_ids)
-    ):
-        raise CardDomainError("atomic_research_think_ids_invalid")
-    memory_ids = sorted(value.strip() for value in raw_ids)
-    if len(set(memory_ids)) != len(memory_ids):
-        raise CardDomainError("atomic_research_think_ids_invalid")
-
-    loaded = _load_deck_internal(project_ref, deck_id)
-    cards = {str(card.get("id") or ""): card for card in loaded["deck"]["nodes"]}
-    main = cards.get(main_card_id)
-    if (
-        main is None
-        or _card_runtime(main).get("mode") != "main"
-        or not _card_automatic_research_enabled(main)
-    ):
-        raise CardDomainError("atomic_research_policy_disabled")
-
-    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        cursor.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            (f"atomic-research:{loaded['projectId']}:{deck_id}:{source_run_id}",),
-        )
-        rows = _age_rows(
-            cursor,
-            """
-            MATCH (origin:Run {
-              projectId: $projectId, deckId: $deckId
-            })
-            MATCH (source:Run {
-              projectId: $projectId, deckId: $deckId, runId: $sourceRunId
-            })-[:EXECUTED_BY]->(main:Card {
-              projectId: $projectId, deckId: $deckId, cardId: $mainCardId
-            })
-            WHERE origin.atomicResearchDeliveredToRunId=$sourceRunId
-              AND origin.atomicResearchAssessment IS NOT NULL
-            RETURN origin.runId AS originatingRunId,
-                   origin.atomicResearchAssessment AS assessment,
-                   origin.atomicResearchLaunch AS launch,
-                   origin.atomicResearchOutcome AS outcome
-            LIMIT 1
-            """,
-            {
-                "projectId": str(loaded["projectId"]),
-                "deckId": deck_id,
-                "sourceRunId": source_run_id,
-                "mainCardId": main_card_id,
-            },
-            "originating_run_id agtype, assessment agtype, launch agtype, outcome agtype",
-        )
-        if len(rows) != 1 or not isinstance(rows[0].get("assessment"), dict):
-            raise CardDomainError("atomic_research_candidate_receipt_unavailable")
-        originating_run_id = _required_text(
-            rows[0].get("originating_run_id"), "originating_run_id"
-        )
-        assessment = dict(rows[0]["assessment"])
-        assessment_id = _required_text(
-            assessment.get("assessmentId"), "assessment_id"
-        )
-        if assessment.get("status") != "success":
-            raise CardDomainError("atomic_research_candidate_receipt_unavailable")
-        if assessment.get("conversationId") != conversation_id:
-            raise CardDomainError("atomic_research_conversation_mismatch")
-        know_card_id = _required_text(
-            assessment.get("knowGraphCardId"), "knowgraph_card_id"
-        )
-        know = cards.get(know_card_id)
-        revisions = {
-            "mainCardRevisionId": str(main.get("_cardRevisionId") or ""),
-            "thinkGraphCardRevisionId": str(
-                cards.get(str(assessment.get("thinkGraphCardId") or ""), {}).get(
-                    "_cardRevisionId"
-                ) or ""
-            ),
-            "knowGraphCardRevisionId": str(
-                know.get("_cardRevisionId") or ""
-            ) if know is not None else "",
-        }
-        if any(str(assessment.get(key) or "") != value
-               for key, value in revisions.items()):
-            raise CardDomainError("atomic_research_card_revision_changed")
-        direct = {
-            target["cardId"] for target in _direct_card_targets(
-                main_card_id, cards, loaded["deck"]["edges"]
-            )
-        }
-        if know is None or know_card_id not in direct:
-            raise CardDomainError("atomic_research_flow_authority_required")
-        offered = set(assessment.get("recommendedMemoryIds") or [])
-        automatic = set(assessment.get("automaticMemoryIds") or [])
-        allowed = automatic if mode == "automatic" else offered
-        if not set(memory_ids) <= allowed:
-            raise CardDomainError("atomic_research_candidate_not_offered")
-        correlation_material = {
-            "projectId": str(loaded["projectId"]),
-            "revisions": revisions,
-            "thinkMemoryIds": memory_ids,
-            "researchFrameSha256": assessment.get("researchFrameSha256"),
-            "evidenceCutoff": assessment.get("evidenceCutoff"),
-        }
-        correlation_id = "atomic_research:" + sha256(
-            json.dumps(correlation_material, sort_keys=True,
-                       separators=(",", ":")).encode()
-        ).hexdigest()
-        existing_launch = rows[0].get("launch")
-        if isinstance(existing_launch, dict):
-            if str(existing_launch.get("correlationId") or "") != correlation_id:
-                raise CardDomainError("atomic_research_pair_already_launched")
-            claimed = False
-        else:
-            launch = {
-                "schemaVersion": "atomic-research-launch.v1",
-                "assessmentId": assessment_id,
-                "sourceRunId": source_run_id,
-                "originatingRunId": originating_run_id,
-                "correlationId": correlation_id,
-                "thinkMemoryIds": memory_ids,
-                "mode": mode,
-                "claimedAt": _now().isoformat(),
-            }
-            claimed_rows = _age_rows(
-                cursor,
-                """
-                MATCH (origin:Run {
-                  projectId: $projectId, deckId: $deckId,
-                  runId: $originatingRunId
-                })
-                WHERE origin.atomicResearchLaunch IS NULL
-                SET origin.atomicResearchLaunch=$launch
-                RETURN origin.runId AS runId
-                """,
-                {
-                    "projectId": str(loaded["projectId"]),
-                    "deckId": deck_id,
-                    "originatingRunId": originating_run_id,
-                    "launch": launch,
-                },
-                "run_id agtype",
-            )
-            if len(claimed_rows) != 1:
-                raise CardDomainError("atomic_research_launch_claim_conflict")
-            claimed = True
-    anchors = [{
-        "authority": "ThinkGraph",
-        "nativeId": memory_id,
-        "reason": "Exact Jev-offered atomic Think framing for bounded KnowGraph research.",
-        "priority": len(memory_ids) - index,
-        "boundedExpansion": 0,
-        "resultLimit": 1,
-        "required": True,
-    } for index, memory_id in enumerate(memory_ids)]
-    return {
-        "ok": True,
-        "claimed": claimed,
-        "rejoined": not claimed,
-        "projectId": str(loaded["projectId"]),
-        "deckId": deck_id,
-        "conversationId": conversation_id,
-        "sourceRunId": source_run_id,
-        "originatingRunId": originating_run_id,
-        "assessmentId": assessment_id,
-        "correlationId": correlation_id,
-        "mainCardId": main_card_id,
-        "mainCardRevisionId": revisions["mainCardRevisionId"],
-        "knowGraphCardId": know_card_id,
-        "knowGraphCardRevisionId": revisions["knowGraphCardRevisionId"],
-        "knowGraphProfile": _card_runtime(know)["profile"],
-        "knowGraphTitle": str(know.get("title") or "KnowGraph"),
-        "thinkMemoryIds": memory_ids,
-        "assignment": _atomic_research_assignment(
-            assessment_id=assessment_id,
-            source_run_id=source_run_id,
-            memory_ids=memory_ids,
-            reason=reason,
-        ),
-        "dataAnchors": anchors,
-        "settledOutcome": (
-            dict(rows[0]["outcome"])
-            if isinstance(rows[0].get("outcome"), dict) else None
-        ),
-    }
-
-
-def claim_atomic_know_write(payload: dict[str, Any]) -> dict[str, Any]:
-    """Atomically claim the one stable Know output slot on an existing child Run."""
-
-    expected = {
-        "projectId", "deckId", "runId", "cardId", "callId",
-        "outputSlot", "semanticSha256", "timestamp",
-    }
-    if not isinstance(payload, dict) or set(payload) != expected:
-        raise CardDomainError("atomic_know_write_claim_invalid")
-    values = {
-        key: _required_text(payload.get(key), key)
-        for key in expected
-    }
-    if (
-        values["outputSlot"] != "know:0"
-        or not re.fullmatch(r"[a-f0-9]{64}", values["semanticSha256"])
-    ):
-        raise CardDomainError("atomic_know_write_claim_invalid")
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            project = _resolve_project(cursor, values["projectId"])
-            params = {
-                **values,
-                "projectId": str(project["id"]),
-            }
-            cursor.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                (values["callId"],),
-            )
-            rows = _age_rows(
-                cursor,
-                """
-                MATCH (run:Run {
-                  projectId: $projectId, deckId: $deckId, runId: $runId
-                })-[:EXECUTED_BY]->(card:Card {
-                  projectId: $projectId, deckId: $deckId, cardId: $cardId
-                })
-                MATCH (run)-[used:USED_TOOL {eventId: $callId}]->(tool:Tool {
-                  toolId: 'graphiti.add_memory'
-                })
-                RETURN properties(used) AS event
-                LIMIT 2
-                """,
-                params,
-                "event agtype",
-            )
-            if rows:
-                if len(rows) != 1 or not isinstance(rows[0].get("event"), dict):
-                    raise CardDomainError("atomic_know_write_claim_ambiguous")
-                event = dict(rows[0]["event"])
-                if (
-                    event.get("callId") != values["callId"]
-                    or event.get("outputSlot") != values["outputSlot"]
-                    or event.get("semanticSha256") != values["semanticSha256"]
-                ):
-                    raise CardDomainError("atomic_know_write_payload_conflict")
-                return {"status": "existing", "event": event}
-            created = _age_rows(
-                cursor,
-                """
-                MATCH (run:Run {
-                  projectId: $projectId, deckId: $deckId, runId: $runId
-                })-[:EXECUTED_BY]->(card:Card {
-                  projectId: $projectId, deckId: $deckId, cardId: $cardId
-                })
-                MERGE (tool:Tool {toolId: 'graphiti.add_memory'})
-                MERGE (run)-[used:USED_TOOL {eventId: $callId}]->(tool)
-                SET used.timestamp=$timestamp,
-                    used.projectId=$projectId,
-                    used.deckId=$deckId,
-                    used.cardId=$cardId,
-                    used.authority='knowgraph',
-                    used.operation='write',
-                    used.toolName='graphiti.add_memory',
-                    used.phase='pending',
-                    used.change='create',
-                    used.callId=$callId,
-                    used.outputSlot=$outputSlot,
-                    used.semanticSha256=$semanticSha256,
-                    used.nativeEpisodeIds=[],
-                    used.nativeNodeIds=[],
-                    used.nativeEdgeIds=[],
-                    used.nativeEdges=[]
-                RETURN properties(used) AS event
-                """,
-                params,
-                "event agtype",
-            )
-            if len(created) != 1 or not isinstance(created[0].get("event"), dict):
-                raise CardDomainError("atomic_know_write_run_scope_unavailable")
-            return {"status": "claimed", "event": dict(created[0]["event"])}
-
-
-def read_atomic_research_write_events(
-    project_ref: str,
-    deck_id: str,
-    child_run_id: str,
-    knowgraph_card_id: str,
-) -> list[dict[str, Any]]:
-    """Read every observed canonical Know write for one atomic child Run."""
-
-    project_ref = _required_text(project_ref, "project_id")
-    deck_id = _required_text(deck_id, "deck_id")
-    child_run_id = _required_text(child_run_id, "child_run_id")
-    knowgraph_card_id = _required_text(knowgraph_card_id, "knowgraph_card_id")
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("SET TRANSACTION READ ONLY")
-            project = _resolve_project(cursor, project_ref)
-            rows = _age_rows(
-                cursor,
-                """
-                MATCH (run:Run {
-                  projectId: $projectId, deckId: $deckId, runId: $runId
-                })-[:EXECUTED_BY]->(card:Card {
-                  projectId: $projectId, deckId: $deckId, cardId: $cardId
-                })
-                MATCH (run)-[used:USED_TOOL]->(tool:Tool {
-                  toolId: 'graphiti.add_memory'
-                })
-                WHERE used.eventId IS NOT NULL AND used.eventId <> ''
-                  AND used.authority='knowgraph'
-                  AND used.operation='write'
-                RETURN properties(used) AS event
-                ORDER BY used.timestamp ASC, used.eventId ASC
-                LIMIT 16
-                """,
-                {
-                    "projectId": str(project["id"]),
-                    "deckId": deck_id,
-                    "runId": child_run_id,
-                    "cardId": knowgraph_card_id,
-                },
-                "event agtype",
-            )
-    if not rows:
-        return []
-    if any(not isinstance(row.get("event"), dict) for row in rows):
-        raise CardDomainError("atomic_research_write_event_invalid")
-    return [{
-        **dict(row["event"]),
-        "projectId": str(project["id"]),
-        "deckId": deck_id,
-        "runId": child_run_id,
-        "cardId": knowgraph_card_id,
-    } for row in rows]
-
-
-def record_atomic_research_outcome(payload: dict[str, Any]) -> dict[str, Any]:
-    """Attach validated child/citation outcome to existing Run/AgentGraph receipts."""
-
-    project_id = _required_text(payload.get("projectId"), "project_id")
-    deck_id = _required_text(payload.get("deckId"), "deck_id")
-    originating_run_id = _required_text(
-        payload.get("originatingRunId"), "originating_run_id"
-    )
-    child_run_id = _required_text(payload.get("childRunId"), "child_run_id")
-    outcome = payload.get("outcome")
-    if not isinstance(outcome, dict):
-        raise CardDomainError("atomic_research_outcome_invalid")
-    if len(json.dumps(outcome, ensure_ascii=False).encode()) > 100_000:
-        raise CardDomainError("atomic_research_outcome_too_large")
-    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        rows = _age_rows(
-            cursor,
-            """
-            MATCH (origin:Run {
-              projectId: $projectId, deckId: $deckId, runId: $originatingRunId
-            })
-            MATCH (child:Run {
-              projectId: $projectId, deckId: $deckId, runId: $childRunId
-            })
-            SET origin.atomicResearchOutcome=$outcome,
-                child.atomicResearchOutcome=$outcome
-            RETURN child.runId AS runId
-            """,
-            {
-                "projectId": project_id,
-                "deckId": deck_id,
-                "originatingRunId": originating_run_id,
-                "childRunId": child_run_id,
-                "outcome": outcome,
-            },
-            "run_id agtype",
-        )
-    if len(rows) != 1:
-        raise CardDomainError("atomic_research_outcome_receipt_unavailable")
-    return {"ok": True, "childRunId": child_run_id}
 
 
 def _prepare_main_graph_attention(
@@ -4073,7 +3141,6 @@ def _prepare_main_graph_attention(
     query: str,
     excluded_identities: set[tuple[str, str]],
     effective_assignment: str | None = None,
-    atomic_research_seed: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
     """Retrieve twin-graph candidates and make exactly one bounded Jev Choice."""
 
@@ -4123,39 +3190,6 @@ def _prepare_main_graph_attention(
                 break
         if len(candidates) >= 16:
             break
-    atomic_research_frame: dict[str, Any] | None = None
-    atomic_research_failure: dict[str, Any] | None = None
-    if atomic_research_seed is not None:
-        try:
-            atomic_research_frame = prepare_atomic_research_frame(
-                atomic_research_seed
-            )
-        except Exception as error:
-            status, error_code = _attention_error_status(error)
-            atomic_research_failure = {
-                "schemaVersion": "atomic-research-assessment.v1",
-                "status": status,
-                "failureReason": error_code,
-                **atomic_research_seed,
-                "recommendedMemoryIds": [],
-                "automaticMemoryIds": [],
-                "subjectBoundary": "uncertain",
-                "activeSubject": None,
-            }
-    if not candidates and atomic_research_frame is not None:
-        required = next(iter(
-            atomic_research_frame["opaqueThinkChoices"].values()
-        ))
-        candidates.append({
-            "authority": "ThinkGraph",
-            "nativeId": required["memoryId"],
-            "title": required["title"],
-            "nodeType": "Think",
-            "choiceId": _attention_choice_id(
-                "ThinkGraph", required["memoryId"]
-            ),
-            "recallEvidence": [],
-        })
     public_candidates = [{
         "choiceId": candidate["choiceId"],
         "authority": candidate["authority"],
@@ -4203,12 +3237,11 @@ def _prepare_main_graph_attention(
 
     jev_started = time.perf_counter()
     try:
-        decision_kwargs: dict[str, Any] = {
-            "effective_request": effective_assignment or query,
-        }
-        if atomic_research_frame is not None:
-            decision_kwargs["atomic_research_frame"] = atomic_research_frame
-        decision = decide_main_graph_attention(query, candidates, **decision_kwargs)
+        decision = decide_main_graph_attention(
+            query,
+            candidates,
+            effective_request=effective_assignment or query,
+        )
     except Exception as error:
         attention["timingMs"]["jev"] = round(
             (time.perf_counter() - jev_started) * 1000, 3
@@ -4271,10 +3304,6 @@ def _prepare_main_graph_attention(
         "resolvedModel": str(decision.get("resolvedModel") or ""),
         "usage": decision.get("usage") if isinstance(decision.get("usage"), dict) else {},
     })
-    if isinstance(decision.get("atomicResearch"), dict):
-        attention["atomicResearch"] = decision["atomicResearch"]
-    elif atomic_research_failure is not None:
-        attention["atomicResearch"] = atomic_research_failure
     attention["policy"]["selectedMass"] = selected_mass
     for candidate in attention["candidates"]:
         candidate["probability"] = float(distribution[candidate["choiceId"]])
@@ -5354,12 +4383,6 @@ def _resolve_invocation_components(
         attention_query
         and is_main_run
     ):
-        atomic_research_seed = _pending_atomic_research_seed(
-            prepared["projectId"],
-            prepared["deckId"],
-            str(payload.get("conversationId") or ""),
-            prepared["cardIdentity"]["cardId"],
-        )
         attention, attention_anchors, attention_started = _prepare_main_graph_attention(
             project_id=prepared["projectId"],
             deck_id=prepared["deckId"],
@@ -5367,95 +4390,7 @@ def _resolve_invocation_components(
             query=attention_query,
             effective_assignment=assignment,
             excluded_identities=set(anchor_identities),
-            atomic_research_seed=atomic_research_seed,
         )
-        atomic_assessment = attention.get("atomicResearch")
-        if isinstance(atomic_assessment, dict):
-            prepared["atomicResearchAssessment"] = atomic_assessment
-            if (
-                atomic_assessment.get("subjectBoundary") == "shifted"
-                and attention.get("winner") == MAIN_GRAPH_ATTENTION_NEW_SUBJECT
-                and float((atomic_assessment.get("subjectBoundaryReceipt") or {}).get(
-                    "confidence", 0.0
-                )) >= 0.80
-                and float((atomic_assessment.get("subjectBoundaryReceipt") or {}).get(
-                    "winnerProbability", 0.0
-                )) >= 0.80
-            ):
-                assignment = "\n\n".join((
-                    "## Dynamic new-subject opening guidance\n"
-                    "Treat this turn as a new-subject opening. Give one brief interesting or "
-                    "falsifiable angle sentence, then ask 2-4 concise high-information "
-                    "questions before any long answer. Distinguish assumptions and current "
-                    "KnowGraph gaps. Do not assert unsourced current facts, give a long thesis "
-                    "or data dump, or make a recommendation on this opening turn. This is "
-                    "transient guidance for this turn only.",
-                    assignment,
-                ))
-    atomic_offer: dict[str, Any] | None = None
-    atomic_tool_definition: dict[str, Any] | None = None
-    if is_main_run:
-        atomic_assessment = prepared.get("atomicResearchAssessment")
-        if not isinstance(atomic_assessment, dict):
-            try:
-                atomic_assessment = _persisted_atomic_research_assessment(
-                    prepared["projectId"],
-                    prepared["deckId"],
-                    str(payload.get("runId") or ""),
-                    prepared["cardIdentity"]["cardId"],
-                )
-            except Exception:
-                atomic_assessment = None
-            if isinstance(atomic_assessment, dict):
-                prepared["atomicResearchAssessment"] = atomic_assessment
-        atomic_offer = _atomic_research_offer(atomic_assessment)
-        if atomic_offer is not None and not all(
-            _current_atomic_think_exists(prepared["projectId"], memory_id)
-            for memory_id in atomic_offer["recommendedMemoryIds"]
-        ):
-            atomic_offer = None
-        atomic_tool_definition = next((
-            definition for definition in effective_tool_definitions
-            if str(definition.get("canonicalId") or "")
-            == "research_atomic_thinks"
-        ), None)
-        saved_and_available = (
-            "research_atomic_thinks" in call_config.get("enabledTools", [])
-            and atomic_tool_definition is not None
-        )
-        tool_available = bool(
-            atomic_offer
-            and atomic_offer["manualMemoryIds"]
-            and saved_and_available
-        )
-        if not tool_available:
-            call_config["enabledTools"] = [
-                name for name in call_config.get("enabledTools", [])
-                if name != "research_atomic_thinks"
-            ]
-            call_config["presentedTools"] = [
-                name for name in call_config.get("presentedTools", [])
-                if name != "research_atomic_thinks"
-            ]
-            effective_tool_definitions = [
-                definition for definition in effective_tool_definitions
-                if str(definition.get("canonicalId") or "")
-                != "research_atomic_thinks"
-            ]
-            tool_definitions = [
-                definition for definition in tool_definitions
-                if str(definition.get("canonicalId") or "")
-                != "research_atomic_thinks"
-            ]
-        if atomic_offer is not None:
-            prepared["atomicResearchOffer"] = atomic_offer
-            assignment = "\n\n".join((
-                _atomic_research_offer_section(
-                    atomic_offer,
-                    tool_available=tool_available,
-                ),
-                assignment,
-            ))
     for anchor in anchors:
         anchor.pop("_inputOrder", None)
         anchor.pop("priority", None)
@@ -5558,35 +4493,6 @@ def _resolve_invocation_components(
             references=references,
             images=images,
         )
-    if (
-        atomic_offer is not None
-        and atomic_offer["manualMemoryIds"]
-        and atomic_tool_definition is not None
-    ):
-        call_config["enabledTools"] = list(dict.fromkeys([
-            *call_config.get("enabledTools", []),
-            "research_atomic_thinks",
-        ]))
-        call_config["presentedTools"] = list(dict.fromkeys([
-            *call_config.get("presentedTools", []),
-            "research_atomic_thinks",
-        ]))
-        if not any(
-            str(definition.get("canonicalId") or "")
-            == "research_atomic_thinks"
-            for definition in tool_definitions
-        ):
-            tool_definitions.append(atomic_tool_definition)
-        # Auto-tools is resolved before the validated per-Run atomic offer is
-        # projected. Keep the Run's durable authorization receipt identical to
-        # the exact post-Jev tool surface; otherwise the model can see this tool
-        # while AgentTerminal correctly rejects it as unauthorized.
-        auto_tools_receipt = prepared.get("jevAutoTools")
-        if isinstance(auto_tools_receipt, dict):
-            for field in ("normalAuthorizedTools", "selectedTools"):
-                names = auto_tools_receipt.get(field)
-                if isinstance(names, list) and "research_atomic_thinks" not in names:
-                    names.append("research_atomic_thinks")
     return {
         "prepared": prepared,
         "outputRequirements": output_requirements,
@@ -6602,12 +5508,6 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         created=created,
     )
     prepared.update(public)
-    atomic_research_receipt = None
-    if isinstance(prepared.get("atomicResearchAssessment"), dict):
-        atomic_research_receipt = record_atomic_research_assessment(
-            prepared["atomicResearchAssessment"],
-            delivered_to_run_id=resolved_run_id,
-        )
     magentic_execution = None
     if owner == "mag_one":
         options = _json_object(
@@ -6657,8 +5557,6 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         "requestFingerprint": request_fingerprint,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
-        "atomicResearchReceipt": atomic_research_receipt,
-        "atomicResearchAssessment": prepared.get("atomicResearchAssessment"),
         "inputFile": input_files,
         "magenticExecution": magentic_execution,
         "hermesTransport": {
@@ -7457,254 +6355,6 @@ def _validated_request_semantic_answer(
     }
 
 
-def _trusted_research_progress_context(
-    *,
-    run_id: str,
-    project_id: str,
-    deck_id: str,
-    runtime_mode: str,
-) -> dict[str, Any]:
-    """Read the exact AGE parent/gap boundary; callers cannot supply lineage state."""
-
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("SET TRANSACTION READ ONLY")
-            params = {
-                "projectId": project_id,
-                "deckId": deck_id,
-                "runId": run_id,
-            }
-            rows: list[dict[str, Any]] = []
-            tracks_current_result = False
-            if runtime_mode == "main":
-                rows = _age_rows(
-                    cursor,
-                    """
-                    MATCH (current:Run {
-                      projectId: $projectId, deckId: $deckId, runId: $runId
-                    })
-                    MATCH (owner:Run {
-                      projectId: $projectId, deckId: $deckId
-                    })
-                    WHERE current.atomicResearchOriginatingRunId=owner.runId
-                      AND current.atomicResearchAssessmentId IS NOT NULL
-                      AND owner.atomicResearchAssessment IS NOT NULL
-                      AND owner.atomicResearchAssessment.assessmentId=
-                          current.atomicResearchAssessmentId
-                      AND owner.conversationId=current.conversationId
-                    RETURN owner.runId AS progressOwnerRunId,
-                           owner.atomicResearchAssessment AS assessment,
-                           owner.researchProgressLineageId AS priorLineageId,
-                           owner.researchRepeatedOnlyCount AS priorRepeatedOnlyCount
-                    LIMIT 1
-                    """,
-                    params,
-                    (
-                        "progress_owner_run_id agtype, assessment agtype, "
-                        "prior_lineage_id agtype, prior_repeated_only_count agtype"
-                    ),
-                )
-            else:
-                rows = _age_rows(
-                    cursor,
-                    """
-                    MATCH (main:Run {
-                      projectId: $projectId, deckId: $deckId
-                    })-[:CHILD_RUN]->(current:Run {
-                      projectId: $projectId, deckId: $deckId, runId: $runId
-                    })
-                    MATCH (owner:Run {
-                      projectId: $projectId, deckId: $deckId
-                    })
-                    WHERE main.atomicResearchOriginatingRunId=owner.runId
-                      AND main.atomicResearchAssessmentId IS NOT NULL
-                      AND owner.atomicResearchAssessment IS NOT NULL
-                      AND owner.atomicResearchAssessment.assessmentId=
-                          main.atomicResearchAssessmentId
-                      AND owner.conversationId=main.conversationId
-                      AND current.conversationId=main.conversationId
-                    RETURN owner.runId AS progressOwnerRunId,
-                           owner.atomicResearchAssessment AS assessment,
-                           owner.researchProgressLineageId AS priorLineageId,
-                           owner.researchRepeatedOnlyCount AS priorRepeatedOnlyCount
-                    LIMIT 1
-                    """,
-                    params,
-                    (
-                        "progress_owner_run_id agtype, assessment agtype, "
-                        "prior_lineage_id agtype, prior_repeated_only_count agtype"
-                    ),
-                )
-                tracks_current_result = len(rows) == 1
-    if len(rows) != 1 or not isinstance(rows[0].get("assessment"), dict):
-        return {
-            "active": False,
-            "automaticContinuationAllowed": False,
-            "stopReason": (
-                "trusted_research_lineage_unavailable"
-                if runtime_mode == "main" else "recursive_research_forbidden"
-            ),
-            "tracksCurrentResult": False,
-        }
-    row = rows[0]
-    assessment = dict(row["assessment"])
-    automatic_ids = assessment.get("automaticMemoryIds")
-    evidence_gap_id = str(assessment.get("thinkMemoryId") or "").strip()
-    progress_owner_run_id = str(
-        row.get("progress_owner_run_id") or row.get("progressOwnerRunId") or ""
-    ).strip()
-    if (
-        assessment.get("schemaVersion") != "atomic-research-assessment.v1"
-        or assessment.get("status") != "success"
-        or not isinstance(automatic_ids, list)
-        or any(not isinstance(value, str) or not value.strip() for value in automatic_ids)
-        or not evidence_gap_id
-        or not progress_owner_run_id
-    ):
-        return {
-            "active": False,
-            "automaticContinuationAllowed": False,
-            "stopReason": "trusted_research_lineage_invalid",
-            "tracksCurrentResult": False,
-        }
-    prior_lineage_id = str(
-        row.get("prior_lineage_id") or row.get("priorLineageId") or ""
-    ).strip()
-    raw_count = row.get(
-        "prior_repeated_only_count",
-        row.get("priorRepeatedOnlyCount"),
-    )
-    prior_count = raw_count if isinstance(raw_count, int) and not isinstance(raw_count, bool) else 0
-    prior_count = max(0, prior_count)
-    if not prior_lineage_id:
-        prior_lineage_id = "research-lineage:" + _sha(_canonical_json({
-            "projectId": project_id,
-            "deckId": deck_id,
-            "progressOwnerRunId": progress_owner_run_id,
-            "assessmentId": str(assessment.get("assessmentId") or ""),
-            "evidenceGapId": evidence_gap_id,
-        }))[:32]
-        prior_count = 0
-    return {
-        "active": bool(automatic_ids),
-        "progressOwnerRunId": progress_owner_run_id,
-        "evidenceGapId": evidence_gap_id,
-        "lineageId": prior_lineage_id,
-        "priorRepeatedOnlyCount": prior_count,
-        "tracksCurrentResult": tracks_current_result,
-        "automaticContinuationAllowed": (
-            bool(automatic_ids) and prior_count < _RESEARCH_PROGRESS_REPEAT_LIMIT
-        ),
-        "stopReason": (
-            "repeated_only_limit"
-            if bool(automatic_ids) and prior_count >= _RESEARCH_PROGRESS_REPEAT_LIMIT
-            else None
-        ),
-    }
-
-
-def _settled_research_progress(
-    *,
-    context: dict[str, Any],
-    novelty: dict[str, Any] | None,
-    run_id: str,
-    output_sha256: str,
-) -> dict[str, Any]:
-    """Advance the trusted counter from the current classification only."""
-
-    active = context.get("active") is True
-    tracks_current_result = context.get("tracksCurrentResult") is True
-    lineage_id = str(context.get("lineageId") or "").strip() or None
-    prior_count = context.get("priorRepeatedOnlyCount")
-    prior_count = prior_count if isinstance(prior_count, int) else 0
-    classification = str((novelty or {}).get("classification") or "")
-    confidence = (novelty or {}).get("confidence")
-    winner_probability = (novelty or {}).get("winnerProbability")
-    changed_thesis = (
-        classification == "changed_thesis"
-        and isinstance(confidence, (int, float))
-        and not isinstance(confidence, bool)
-        and float(confidence) >= _RESEARCH_PROGRESS_TOPIC_SHIFT_THRESHOLD
-        and isinstance(winner_probability, (int, float))
-        and not isinstance(winner_probability, bool)
-        and float(winner_probability) >= _RESEARCH_PROGRESS_TOPIC_SHIFT_THRESHOLD
-    )
-    if active and tracks_current_result and changed_thesis:
-        lineage_id = "research-lineage:" + _sha(_canonical_json({
-            "runId": run_id,
-            "outputSha256": output_sha256,
-            "reason": "changed_thesis",
-        }))[:32]
-        repeated_count = 0
-        lineage_action = "changed_thesis"
-    elif active and tracks_current_result and classification == "repeated_only":
-        repeated_count = prior_count + 1
-        lineage_action = "continued"
-    elif active and tracks_current_result:
-        repeated_count = 0 if novelty is not None else prior_count
-        lineage_action = "continued"
-    elif active:
-        repeated_count = prior_count
-        lineage_action = "continued"
-    else:
-        repeated_count = 0
-        lineage_action = "inactive"
-    allowed = bool(active and repeated_count < _RESEARCH_PROGRESS_REPEAT_LIMIT)
-    stop_reason = (
-        "repeated_only_limit"
-        if active and repeated_count >= _RESEARCH_PROGRESS_REPEAT_LIMIT
-        else context.get("stopReason") if not active else None
-    )
-    return {
-        "schemaVersion": "research-progress.v1",
-        "active": active,
-        "lineageId": lineage_id,
-        "progressOwnerRunId": context.get("progressOwnerRunId"),
-        "parentRunId": context.get("progressOwnerRunId"),
-        "evidenceGapId": context.get("evidenceGapId"),
-        "tracksCurrentResult": tracks_current_result,
-        "lineageAction": lineage_action,
-        "priorRepeatedOnlyCount": prior_count,
-        "repeatedOnlyCount": repeated_count,
-        "automaticContinuationAllowed": allowed,
-        "stopReason": stop_reason,
-    }
-
-
-def _persist_research_progress_guard(
-    cursor: Any,
-    run_id: str,
-    progress: dict[str, Any],
-) -> None:
-    """Persist derived lineage/counter properties on the existing AGE Run."""
-
-    rows = _age_rows(
-        cursor,
-        """
-        MATCH (run:Run {runId: $progressOwnerRunId})
-        SET run.researchProgressLineageId=$lineageId,
-            run.researchRepeatedOnlyCount=$repeatedOnlyCount,
-            run.researchAutomaticContinuationAllowed=$automaticContinuationAllowed,
-            run.researchProgressLastResultRunId=$assessedRunId,
-            run.researchProgressEvidenceGapId=$evidenceGapId,
-            run.researchProgressStopReason=$stopReason
-        RETURN run.runId AS runId
-        """,
-        {
-            "progressOwnerRunId": progress.get("progressOwnerRunId"),
-            "lineageId": progress.get("lineageId"),
-            "repeatedOnlyCount": progress.get("repeatedOnlyCount", 0),
-            "automaticContinuationAllowed": progress.get(
-                "automaticContinuationAllowed", False
-            ),
-            "assessedRunId": run_id,
-            "evidenceGapId": progress.get("evidenceGapId"),
-            "stopReason": progress.get("stopReason"),
-        },
-        "run_id agtype",
-    )
-    if len(rows) != 1:
-        raise CardDomainError("research_progress_persistence_failed")
 
 
 def _validated_request_fulfillment_answer(answer: Any) -> dict[str, Any]:
@@ -7812,13 +6462,6 @@ def _persist_request_fulfillment(
         )
         stored = cursor.fetchone()
         if stored is not None:
-            progress = assessment.get("researchProgress")
-            if (
-                isinstance(progress, dict)
-                and progress.get("progressOwnerRunId")
-                and progress.get("tracksCurrentResult") is True
-            ):
-                _persist_research_progress_guard(cursor, run_id, progress)
             return dict(stored["request_fulfillment"])
         cursor.execute(
             "SELECT request_fulfillment FROM ag_catalog.agent_runs WHERE run_id=%s",
@@ -7838,13 +6481,6 @@ def _persist_request_fulfillment(
         )
         if any(existing.get(field) != assessment.get(field) for field in binding_fields):
             raise CardDomainError("request_fulfillment_binding_conflict")
-        progress = existing.get("researchProgress")
-        if (
-            isinstance(progress, dict)
-            and progress.get("progressOwnerRunId")
-            and progress.get("tracksCurrentResult") is True
-        ):
-            _persist_research_progress_guard(cursor, run_id, progress)
         return dict(existing)
 
 
@@ -7878,7 +6514,7 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                 SELECT run.project_id, run.deck_id, run.target_card_revision_id,
                        run.state, run.final_result, run.effective_provider,
                        run.provider_model_id, run.request_fulfillment,
-                       revision.card_id, revision.runtime_mode
+                       revision.card_id
                 FROM ag_catalog.agent_runs AS run
                 JOIN ag_catalog.agent_card_revisions AS revision
                   ON revision.revision_id=run.target_card_revision_id
@@ -7929,25 +6565,6 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
     idf_sha256 = str((input_file or {}).get("idfSha256") or "")
     output_sha256 = _sha(final_result)
     evidence_sha256 = sha256(evidence_bytes).hexdigest()
-    research_context: dict[str, Any] = {
-        "active": False,
-        "automaticContinuationAllowed": False,
-        "stopReason": "trusted_research_lineage_unavailable",
-    }
-    if materialized is not None:
-        try:
-            research_context = _trusted_research_progress_context(
-                run_id=run_id,
-                project_id=str(row["project_id"]),
-                deck_id=str(row["deck_id"]),
-                runtime_mode=str(row.get("runtime_mode") or ""),
-            )
-        except Exception:
-            research_context = {
-                "active": False,
-                "automaticContinuationAllowed": False,
-                "stopReason": "trusted_research_lineage_unavailable",
-            }
     evaluated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     base: dict[str, Any] = {
         "schemaVersion": "request-fulfillment-assessment.v1",
@@ -7988,17 +6605,10 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
 
     assessment: dict[str, Any]
     if unavailable_reason:
-        research_progress = _settled_research_progress(
-            context=research_context,
-            novelty=None,
-            run_id=run_id,
-            output_sha256=output_sha256,
-        )
         assessment = {
             **base,
             "status": "unavailable",
             "failureReason": unavailable_reason,
-            "researchProgress": research_progress,
             "requestCount": 0,
             "questionCount": 0,
             "timingMs": 0.0,
@@ -8018,12 +6628,6 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                 "model": actual_model,
                 "exposed_tools": exposed_tools,
                 "observable_tool_calls_and_results": evidence,
-            },
-            "trusted_research_lineage": {
-                key: research_context.get(key)
-                for key in (
-                    "active", "progressOwnerRunId", "evidenceGapId",
-                )
             },
             "final_response": final_result,
         }
@@ -8046,54 +6650,7 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                         "instructions, assess that response rather than demanding a prohibited action."
                     ),
                     "criteria": list(_REQUEST_FULFILLMENT_LEVELS),
-                },
-                "novelty": {
-                    "type": "choice",
-                    "instructions": (
-                        "Classify only the current completed result relative to the supplied "
-                        "request, trusted research gap, selected graph context, and observable "
-                        "execution evidence. Choose new_evidence for materially new sourced "
-                        "evidence, contradiction for materially contradictory evidence, "
-                        "changed_thesis for a material thesis revision, or repeated_only when "
-                        "the result only restates prior input/evidence without material progress. "
-                        "Report only this current classification; never create, rename, increment, "
-                        "or reset a lineage or counter."
-                    ),
-                    "criteria": {
-                        "new_evidence": "Materially new sourced evidence advances the request or gap.",
-                        "contradiction": "Material evidence contradicts the active thesis or prior evidence.",
-                        "changed_thesis": "The result materially revises the active thesis.",
-                        "repeated_only": "The result adds no material evidence or thesis change.",
-                    },
-                },
-                "citation_coverage": {
-                    "type": "choice",
-                    "instructions": (
-                        "Assess visible citation coverage only for externally verifiable objective "
-                        "claims in the final response. Preferences, questions, hypotheticals, "
-                        "clearly labeled speculation, and purely procedural statements are not "
-                        "citation gaps. Choose not_applicable when no objective claim needs a citation."
-                    ),
-                    "criteria": {
-                        "complete": "Every material objective claim needing support has visible support.",
-                        "gap": "At least one material objective claim needing support lacks visible support.",
-                        "not_applicable": "No objective claim in this response requires citation support.",
-                    },
-                },
-                "follow_up": {
-                    "type": "choice",
-                    "instructions": (
-                        "Advise the smallest next conversational action. This answer is advisory "
-                        "only and never asks a question, launches a Run, grants a tool, or controls "
-                        "automatic research."
-                    ),
-                    "criteria": {
-                        "accept": "Accept the result without another action.",
-                        "ask_one_clarification": "One user clarification would resolve the key ambiguity.",
-                        "send_one_bounded_follow_up": "One bounded follow-up could materially advance the same request.",
-                        "stop": "Stop because further continuation is unsupported or unproductive.",
-                    },
-                },
+                }
             },
         }
         started = time.perf_counter()
@@ -8110,64 +6667,36 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
                     "invalid", "request_fulfillment_response_invalid"
                 )
             answers = response.get("answers")
-            if not isinstance(answers, dict) or set(answers) != {
-                "response_fit", "novelty", "citation_coverage", "follow_up",
-            }:
+            if not isinstance(answers, dict) or set(answers) != {"response_fit"}:
                 raise _CardJevError(
                     "invalid", "request_fulfillment_response_invalid"
                 )
             score = _validated_request_fulfillment_answer(
                 answers["response_fit"]
             )
-            novelty = _validated_request_semantic_answer(
-                answers["novelty"], _REQUEST_NOVELTY_CHOICES,
-            )
-            citation_coverage = _validated_request_semantic_answer(
-                answers["citation_coverage"], _REQUEST_CITATION_COVERAGE_CHOICES,
-            )
-            follow_up = _validated_request_semantic_answer(
-                answers["follow_up"], _REQUEST_FOLLOW_UP_CHOICES,
-            )
-            research_progress = _settled_research_progress(
-                context=research_context,
-                novelty=novelty,
-                run_id=run_id,
-                output_sha256=output_sha256,
-            )
             assessment = {
                 **base,
                 "status": "scored",
                 **score,
-                "novelty": novelty,
-                "citationCoverage": citation_coverage,
-                "followUp": follow_up,
-                "researchProgress": research_progress,
                 **response_identity,
                 "usage": (
                     response.get("usage")
                     if isinstance(response.get("usage"), dict) else {}
                 ),
                 "requestCount": 1,
-                "questionCount": 4,
+                "questionCount": 1,
                 "timingMs": round((time.perf_counter() - started) * 1000, 3),
             }
         except _CardJevError as error:
-            research_progress = _settled_research_progress(
-                context=research_context,
-                novelty=None,
-                run_id=run_id,
-                output_sha256=output_sha256,
-            )
             assessment = {
                 **base,
                 "status": "unavailable",
                 "failureReason": error.code,
-                "researchProgress": research_progress,
                 "requestCount": (
                     0 if error.status == "limit"
                     or error.code.endswith("_openrouter_key_unavailable") else 1
                 ),
-                "questionCount": 4,
+                "questionCount": 1,
                 "timingMs": round((time.perf_counter() - started) * 1000, 3),
                 **{
                     key: value for key, value in response_identity.items() if value

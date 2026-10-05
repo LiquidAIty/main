@@ -68,13 +68,14 @@ describe('ThinkGraph Jev semantic physics', () => {
   });
 
   it.each([
-    ['THINK_MATERIAL', 'think', 'rgb(110,95,174)', false],
-    ['KNOW_MATERIAL', 'know', 'rgb(242,166,74)', false],
-    ['PAIRED_SOLARPUNK_MATERIAL', 'paired', 'rgb(11,14,18)', true],
+    ['THINK_MATERIAL', 'think', 'rgb(110,95,174)', 'rgb(99,199,154)', false],
+    ['KNOW_MATERIAL', 'know', 'rgb(242,166,74)', 'rgb(242,209,107)', false],
+    ['PAIRED_SOLARPUNK_MATERIAL', 'paired', 'rgb(11,14,18)', 'rgb(11,14,18)', true],
   ])('builds the %s renderer recipe from canonical node colors', (
     materialRole,
     modality,
     dominant,
+    secondaryAccent,
     splitSurface,
   ) => {
     const internals = (window as any).EngraphisGraph._internals;
@@ -94,7 +95,49 @@ describe('ThinkGraph Jev semantic physics', () => {
       materialOrange: 'rgb(242,166,74)',
       materialSurface: 'rgb(11,14,18)',
       dominant,
+      secondaryAccent,
       splitSurface,
+    });
+  });
+
+  it('keeps authority color, secondary material accent, and recent activity distinct', () => {
+    const internals = (window as any).EngraphisGraph._internals;
+    const base = {
+      material_kind: 'solarpunk',
+      material_blue: '#4FA2AD',
+      material_orange: '#F2A64A',
+      material_surface: '#0B0E12',
+      turn_heat_active: true,
+      turn_heat: 3,
+    };
+    const think = internals.solarpunkMaterialRecipe({
+      ...base, material_role: 'THINK_MATERIAL', material_think_active: true,
+    }, {}, '#ffffff');
+    const know = internals.solarpunkMaterialRecipe({
+      ...base, material_role: 'KNOW_MATERIAL', material_know_active: true,
+    }, {}, '#ffffff');
+    const paired = internals.solarpunkMaterialRecipe({
+      ...base, material_role: 'PAIRED_SOLARPUNK_MATERIAL',
+      material_think_active: true, material_know_active: true,
+    }, {}, '#ffffff');
+
+    expect(think).toMatchObject({
+      modality: 'think', dominant: 'rgb(79,162,173)',
+      secondaryAccent: 'rgb(99,199,154)',
+      activityEmphasis: 'rgb(184,166,255)',
+      solarRim: 'rgb(184,166,255)',
+    });
+    expect(think.secondaryAccent).not.toBe(think.materialOrange);
+    expect(know).toMatchObject({
+      modality: 'know', dominant: 'rgb(242,166,74)',
+      secondaryAccent: 'rgb(242,209,107)',
+      activityEmphasis: 'rgb(184,166,255)',
+      solarRim: 'rgb(184,166,255)',
+    });
+    expect(know.secondaryAccent).not.toBe(know.materialBlue);
+    expect(paired).toMatchObject({
+      modality: 'paired', materialBlue: 'rgb(79,162,173)',
+      materialOrange: 'rgb(242,166,74)', splitSurface: true,
     });
   });
 

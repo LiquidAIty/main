@@ -84,6 +84,63 @@ describe('BuilderChat', () => {
     expect(CANONICAL_SUBJECT_LINK_STYLE.color).not.toBe(colors.primary);
   });
 
+  it('renders Markdown around canonical subject links without exposing markers', async () => {
+    const onSubjectFocus = vi.fn();
+    const targets = new Map(['Electron', 'Neutron', 'Rocket Lab'].map(name => [name, {
+      canonicalName: name,
+      members: [{ authority: 'thinkgraph', nativeId: `native-${name}` }],
+    }]));
+    const subjectMatcher = {
+      revisionKey: 'markdown-link-proof',
+      segmentMessage: (role: string, text: string) => {
+        if (role !== 'assistant') return [{ text }];
+        const matches = [...targets.keys()].flatMap(name => {
+          const start = text.indexOf(name);
+          return start < 0 ? [] : [{ start, end: start + name.length, name }];
+        }).sort((left, right) => left.start - right.start);
+        if (!matches.length) return [{ text }];
+        const segments: Array<{ text: string; target?: unknown }> = [];
+        let cursor = 0;
+        for (const match of matches) {
+          if (match.start > cursor) segments.push({ text: text.slice(cursor, match.start) });
+          segments.push({ text: match.name, target: targets.get(match.name) });
+          cursor = match.end;
+        }
+        if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+        return segments;
+      },
+    } as any;
+    render(
+      <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
+        <BuilderChat
+          messages={[{
+            role: 'assistant',
+            text: '**Electron** and *Neutron* refine the Rocket Lab, thesis.',
+            speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
+            status: 'complete',
+          }]}
+          mainCardId="card_main_chat"
+          onSend={vi.fn()}
+          knowledgeProjectId="project-1"
+          colors={colors}
+          subjectMatcher={subjectMatcher}
+          onSubjectFocus={onSubjectFocus}
+        />
+      </VirtuosoMockContext.Provider>,
+    );
+    scrollVirtualViewportToBottom(1, 96, 300);
+
+    const electron = await screen.findByRole('button', { name: 'Open Electron in graph' });
+    const neutron = screen.getByRole('button', { name: 'Open Neutron in graph' });
+    const rocket = screen.getByRole('button', { name: 'Open Rocket Lab in graph' });
+    expect(electron.closest('strong')).not.toBeNull();
+    expect(neutron.closest('em')).not.toBeNull();
+    expect(rocket.parentElement?.textContent).toContain('Rocket Lab, thesis.');
+    expect(screen.getByTestId('builder-chat-message-frame').textContent).not.toContain('*');
+    fireEvent.click(rocket);
+    expect(onSubjectFocus).toHaveBeenCalledWith(targets.get('Rocket Lab'));
+  });
+
   it('shows a quiet activity indicator while the native turn is connecting', () => {
     render(
       <BuilderChat
@@ -387,7 +444,9 @@ describe('BuilderChat', () => {
     expect(screen.getByTestId('builder-chat-speaker').textContent).toBe('@Builder');
     expect(screen.queryByText('Main Chat')).toBeNull();
     expect(screen.getByText('Main answer')).not.toBeNull();
-    expect(screen.getByText('BUILDER_DIRECT_OK')).not.toBeNull();
+    expect(screen.getAllByTestId('builder-chat-message-frame').some(
+      frame => frame.textContent?.endsWith('BUILDER_DIRECT_OK'),
+    )).toBe(true);
   });
 
   it('mounts only a bounded Virtuoso window for the 114-message Trading history', async () => {

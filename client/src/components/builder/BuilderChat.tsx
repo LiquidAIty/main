@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 import type { DirectChatTarget } from "../../features/agentbuilder/console/mainSessionClient";
@@ -39,46 +48,9 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
-/** Render the result summary in chat; citations stay on native KnowGraph evidence. */
+/** Render ordinary Card output without a research-specific response protocol. */
 export function chatDisplayText(value: unknown): string {
-  const text = safeText(value);
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return text;
-  try {
-    const parsed = JSON.parse(trimmed) as {
-      schemaVersion?: unknown;
-      results?: unknown;
-    };
-    if (
-      !['atomic-research-result.v1', 'atomic-research-response.v1']
-        .includes(String(parsed.schemaVersion || ''))
-      || !Array.isArray(parsed.results)
-    ) return text;
-    const lines = ['Research result'];
-    for (const raw of parsed.results) {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return text;
-      const item = raw as Record<string, unknown>;
-      const summary = typeof item.summary === 'string' ? item.summary.trim() : '';
-      const status = typeof item.status === 'string' ? item.status : '';
-      if (!summary || !['supported', 'contradicted', 'source-unavailable'].includes(status)) {
-        return text;
-      }
-      const label = status === 'supported'
-        ? 'Supported'
-        : status === 'contradicted'
-          ? 'Contradicted'
-          : 'Source unavailable';
-      lines.push('', `${label}: ${summary}`);
-    }
-    if (parsed.results.some((raw) => (
-      raw && typeof raw === 'object' && !Array.isArray(raw)
-      && Array.isArray((raw as Record<string, unknown>).citations)
-      && ((raw as Record<string, unknown>).citations as unknown[]).length > 0
-    ))) lines.push('', 'Evidence and sources are retained in KnowGraph.');
-    return lines.join('\n');
-  } catch {
-    return text;
-  }
+  return safeText(value);
 }
 
 type BuilderChatMessage = {
@@ -148,6 +120,152 @@ export function followLatestOutput(atBottom: boolean): "auto" | false {
   return atBottom ? "auto" : false;
 }
 
+function linkedChatText(
+  text: string,
+  role: BuilderChatMessage["role"],
+  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
+  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  keyPrefix: string,
+): ReactNode[] {
+  const segments = subjectMatcher?.segmentMessage(role, text) || [{ text }];
+  return segments.map((segment, index) => segment.target && onSubjectFocus ? (
+    <button
+      key={`${keyPrefix}:subject:${index}`}
+      type="button"
+      aria-label={`Open ${segment.text} in graph`}
+      onClick={() => onSubjectFocus(segment.target!)}
+      style={CANONICAL_SUBJECT_LINK_STYLE}
+    >
+      {segment.text}
+    </button>
+  ) : <Fragment key={`${keyPrefix}:text:${index}`}>{segment.text}</Fragment>);
+}
+
+function safeMarkdownUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function inlineChatMarkdown(
+  text: string,
+  role: BuilderChatMessage["role"],
+  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
+  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  keyPrefix: string,
+): ReactNode[] {
+  const output: ReactNode[] = [];
+  let cursor = 0;
+  let token = 0;
+  const pushText = (value: string) => {
+    if (!value) return;
+    output.push(...linkedChatText(
+      value, role, subjectMatcher, onSubjectFocus, `${keyPrefix}:${token++}`,
+    ));
+  };
+  while (cursor < text.length) {
+    if (text[cursor] === '\\' && cursor + 1 < text.length
+      && ['*', '_', '`', '\\'].includes(text[cursor + 1])) {
+      pushText(text[cursor + 1]);
+      cursor += 2;
+      continue;
+    }
+    if (text.startsWith('**', cursor)) {
+      const close = text.indexOf('**', cursor + 2);
+      if (close > cursor + 2) {
+        const current = token++;
+        output.push(<strong key={`${keyPrefix}:strong:${current}`}>
+          {inlineChatMarkdown(
+            text.slice(cursor + 2, close), role, subjectMatcher, onSubjectFocus,
+            `${keyPrefix}:strong:${current}`,
+          )}
+        </strong>);
+        cursor = close + 2;
+        continue;
+      }
+    }
+    if (text[cursor] === '*' || text[cursor] === '_') {
+      const marker = text[cursor];
+      const close = text.indexOf(marker, cursor + 1);
+      if (close > cursor + 1) {
+        const current = token++;
+        output.push(<em key={`${keyPrefix}:em:${current}`}>
+          {inlineChatMarkdown(
+            text.slice(cursor + 1, close), role, subjectMatcher, onSubjectFocus,
+            `${keyPrefix}:em:${current}`,
+          )}
+        </em>);
+        cursor = close + 1;
+        continue;
+      }
+    }
+    if (text[cursor] === '`') {
+      const close = text.indexOf('`', cursor + 1);
+      if (close > cursor + 1) {
+        output.push(<code key={`${keyPrefix}:code:${token++}`}>
+          {text.slice(cursor + 1, close)}
+        </code>);
+        cursor = close + 1;
+        continue;
+      }
+    }
+    if (text[cursor] === '[') {
+      const labelEnd = text.indexOf('](', cursor + 1);
+      const urlEnd = labelEnd >= 0 ? text.indexOf(')', labelEnd + 2) : -1;
+      if (labelEnd > cursor + 1 && urlEnd > labelEnd + 2) {
+        const url = safeMarkdownUrl(text.slice(labelEnd + 2, urlEnd));
+        if (url) {
+          output.push(<a key={`${keyPrefix}:link:${token++}`} href={url}
+            target="_blank" rel="noreferrer">
+            {inlineChatMarkdown(
+              text.slice(cursor + 1, labelEnd), role, subjectMatcher,
+              onSubjectFocus, `${keyPrefix}:link-label`,
+            )}
+          </a>);
+          cursor = urlEnd + 1;
+          continue;
+        }
+      }
+    }
+    const next = [
+      text.indexOf('\\', cursor + 1),
+      text.indexOf('*', cursor + 1),
+      text.indexOf('_', cursor + 1),
+      text.indexOf('`', cursor + 1),
+      text.indexOf('[', cursor + 1),
+    ].filter(index => index >= 0).sort((left, right) => left - right)[0] ?? text.length;
+    pushText(text.slice(cursor, next));
+    cursor = next;
+  }
+  return output;
+}
+
+function renderChatMarkdown(
+  text: string,
+  role: BuilderChatMessage["role"],
+  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
+  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+): ReactNode[] {
+  const lines = text.split('\n');
+  return lines.flatMap((rawLine, index) => {
+    const heading = /^(#{1,6})\s+(.+)$/.exec(rawLine);
+    const bullet = /^\s*[-*]\s+(.+)$/.exec(rawLine);
+    const content = heading?.[2] ?? bullet?.[1] ?? rawLine;
+    const inline = inlineChatMarkdown(
+      content, role, subjectMatcher, onSubjectFocus, `line:${index}`,
+    );
+    const line = heading
+      ? <strong key={`line:${index}:heading`}>{inline}</strong>
+      : bullet
+        ? <span key={`line:${index}:bullet`}><span aria-hidden="true">• </span>{inline}</span>
+        : <Fragment key={`line:${index}:plain`}>{inline}</Fragment>;
+    return index < lines.length - 1 ? [line, <br key={`line:${index}:break`} />] : [line];
+  });
+}
+
 function BuilderChatMessageBubble({
   colors,
   laneWidth,
@@ -165,10 +283,6 @@ function BuilderChatMessageBubble({
 }) {
   const text = chatDisplayText(message.text);
   const isUser = message.role !== "assistant";
-  const textSegments = useMemo(
-    () => subjectMatcher?.segmentMessage(message.role, text) || [{ text }],
-    [message.role, subjectMatcher, text],
-  );
   const horizontalPadding = isUser ? 30 : 32;
   const maximumBubbleWidth = laneWidth == null
     ? null
@@ -254,17 +368,9 @@ function BuilderChatMessageBubble({
               : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
           }}
         >
-          {textSegments.map((segment, index) => segment.target && onSubjectFocus ? (
-              <button
-                key={index}
-                type="button"
-                aria-label={`Open ${segment.text} in graph`}
-                onClick={() => onSubjectFocus(segment.target!)}
-                style={CANONICAL_SUBJECT_LINK_STYLE}
-              >
-                {segment.text}
-              </button>
-          ) : segment.text)}
+          {isUser
+            ? text
+            : renderChatMarkdown(text, message.role, subjectMatcher, onSubjectFocus)}
         </div>
       </div>
     </div>
