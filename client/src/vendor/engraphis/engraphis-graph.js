@@ -8795,14 +8795,15 @@
       );
       if (currentTurnHeat > 0) {
         /* Current-turn heat is a transient UI overlay from the authoritative graph revision.
-           It does not alter node mass, radius, or the saved graph. */
+           It does not alter node mass, radius, or the saved graph. One shared purple cue keeps
+           activity distinct from both Think teal and Know orange. */
         ctx.save();
         ctx.globalAlpha *= currentTurnHeat;
         ctx.lineWidth = 1.7 / scale;
-        ctx.strokeStyle = alpha('#fff1a8', 0.98);
+        ctx.strokeStyle = alpha(nodeMaterial.activityEmphasis, 0.92);
         ctx.beginPath(); ctx.arc(node.x, node.y, r + 3.4 / scale, 0, 6.2832); ctx.stroke();
         ctx.lineWidth = 0.75 / scale;
-        ctx.strokeStyle = alpha('#ff9f43', 0.9);
+        ctx.strokeStyle = alpha(nodeMaterial.activityEmphasis, 0.48);
         ctx.beginPath(); ctx.arc(node.x, node.y, r + 5.8 / scale, 0, 6.2832); ctx.stroke();
         ctx.restore();
       }
