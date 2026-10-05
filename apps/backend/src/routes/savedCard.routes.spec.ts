@@ -518,7 +518,8 @@ const orchestratorMocks = vi.hoisted(() => {
     if (endpoint === '/thinkgraph/completed-pair/prepare') {
       return {
         ok: true,
-        pairMemoryId: 'mem_pair_one',
+        pairReference: 'pair_reference_one',
+        thinkMemoryIds: ['mem_pair_one'],
         intakeOperation: 'noop',
         structuredExtractionRequired: false,
         revision: 3,
@@ -4930,7 +4931,6 @@ describe('saved Card routes', () => {
         }
         if (endpoint === '/thinkgraph/completed-pair/prepare') return {
           ok: true,
-          pairMemoryId: 'pair_reference_one',
           pairReference: 'pair_reference_one',
           intakeOperation: 'pending',
           structuredExtractionRequired: true,
@@ -5034,42 +5034,17 @@ describe('saved Card routes', () => {
           correlationId: expect.stringMatching(/^req_/),
         });
         expect(cardBeginBody.assignment).toContain('current_project_relationship_vocabulary');
-        expect(cardBeginBody.assignment).toContain('shared normalization language');
-        expect(cardBeginBody.assignment).toContain('not a restrictive ontology');
         expect(cardBeginBody.assignment).toContain(
-          'Jev alone normalizes any durable graph edge',
+          'Each returned Engraphis fact is one LiquidAIty Think',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Every relations[] item must contain exactly the three nonempty string fields',
+          'Preserve each fact\'s native title, content, memory',
         );
-        expect(cardBeginBody.assignment).toContain(
-          '{"source":"Rocket Lab","relation":"operates Electron as its current orbital launch vehicle","target":"Electron"}',
-        );
-        expect(cardBeginBody.assignment).toContain(
-          'Do not emit a category',
-        );
-        expect(cardBeginBody.assignment).toContain('Loose entity metadata is invalid');
-        expect(cardBeginBody.assignment).toContain(
-          'Create the current temporal ThinkGraph Think from this completed User/Main exchange',
-        );
-        expect(cardBeginBody.assignment).toContain(
-          'Main does not author or initiate this automatic Think',
-        );
+        expect(cardBeginBody.assignment).not.toContain('think.summary');
+        expect(cardBeginBody.assignment).not.toContain('mandatory relationship');
         expect(cardBeginBody.assignment).toContain('canonical_subject_directory');
-        expect(cardBeginBody.assignment).toContain('nearest concrete reusable subject');
-        expect(cardBeginBody.assignment).toContain('generic wrapper entity');
-        expect(cardBeginBody.assignment).toContain('belongs in the Think body');
         expect(cardBeginBody.assignment).toContain(
-          'with the complete compact cross-graph subject',
-        );
-        expect(cardBeginBody.assignment).toContain(
-          'Do not read historical Think bodies',
-        );
-        expect(cardBeginBody.assignment).toContain(
-          'Never derive Think content or agreement from the directory',
-        );
-        expect(cardBeginBody.assignment).toContain(
-          'Do not compare, merge, rewrite, or suppress the current Think against earlier Thinks',
+          'without repeating conversational setup or turning every reasoning clause into a relationship',
         );
         expect(cardBeginBody.assignment).not.toContain('RegexGraphExtractor');
         expect(cardBeginBody.assignment).toContain(exactMessage);
@@ -5090,7 +5065,7 @@ describe('saved Card routes', () => {
         );
         expect(JSON.parse(String(settleCall?.[1]?.body))).toEqual({
           ...completedPair,
-          pairMemoryId: 'pair_reference_one',
+          pairReference: 'pair_reference_one',
           structuredOutput: 'Real assistant reply.',
           cardRun: {
             runId: cardBeginBody.runId,
@@ -5116,7 +5091,7 @@ describe('saved Card routes', () => {
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
         if (endpoint === '/thinkgraph/completed-pair/prepare') return {
           ok: true,
-          pairMemoryId: 'pair_cross_conversation',
+          pairReference: 'pair_cross_conversation',
           intakeOperation: 'pending',
           structuredExtractionRequired: true,
           revision: 4,

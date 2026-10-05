@@ -458,10 +458,9 @@ def read_thinkgraph_exact(
         thinks = [
             item for item in evidence
             if isinstance(item.get("metadata"), dict)
-            and isinstance(item["metadata"].get("structured_extraction"), dict)
-            and isinstance(
-                item["metadata"]["structured_extraction"].get("think"), dict
-            )
+            and isinstance(item["metadata"].get("thinkgraph_fact"), dict)
+            and isinstance(item["metadata"].get("thinkgraph_origin"), dict)
+            and item["metadata"]["thinkgraph_origin"].get("authority") == "thinkgraph"
         ]
         think_memory_ids = {
             str(item.get("memory_id") or "").strip()

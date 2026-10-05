@@ -624,9 +624,8 @@ describe('native authority graph surfaces', () => {
           evidence: [{
             id: 'memory-1',
             ingestedAt: '2026-10-03T12:00:00Z',
-            metadata: { structured_extraction: { think: {
-              summary: 'Direct Think summary.',
-            } } },
+            summary: 'Direct Think summary.',
+            metadata: { thinkgraph_fact: { entities: ['Shared'], relations: [] } },
           }],
         },
       }],
@@ -692,9 +691,8 @@ describe('native authority graph surfaces', () => {
     const thinkRecord = (id: string, summary: string) => ({
       id,
       ingestedAt: '2026-10-03T12:00:00Z',
-      metadata: { structured_extraction: { think: {
-        summary,
-      } } },
+      summary,
+      metadata: { thinkgraph_fact: { entities: ['Joined subject'], relations: [] } },
     });
     const think = {
       ...empty('thinkgraph'),
@@ -1501,9 +1499,8 @@ describe('native authority graph surfaces', () => {
   it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: {
       evidence: [{ id: 'memory-one', title: 'Existing saved Think', ingestedAt: 100,
-        metadata: { structured_extraction: { think: {
         summary: 'Saved Think.',
-      }, relations: [] } } }],
+        metadata: { thinkgraph_fact: { entities: ['Existing entry'], relations: [] } } }],
     } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
@@ -1528,21 +1525,17 @@ describe('native authority graph surfaces', () => {
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
       properties: { evidence: [
         { id: 'memory-new', title: 'Neutron as discounted option value', summary: paragraph, ingestedAt: 300,
-          metadata: { keywords: ['latest', 'decision'], structured_extraction: { think: {
-            summary: paragraph,
-          }, relations: [
+          metadata: { keywords: ['latest', 'decision'], thinkgraph_fact: { entities: [
+            'Electron', 'Neutron', 'Execution quality', 'Launch cadence', 'Dilution',
+          ], relations: [
             { source: 'Electron', relation: 'SUPPORTS', target: 'Execution quality' },
             { source: 'Neutron', relation: 'DEPENDS_ON', target: 'Launch cadence' },
             { source: 'Dilution', relation: 'AFFECTS', target: 'Neutron' },
           ] } } },
         { id: 'memory-second', title: 'Second retained Think', summary: 'Second recent saved Think.', ingestedAt: 200,
-          metadata: { structured_extraction: { think: {
-            summary: 'Second recent saved Think.',
-          }, relations: [] } } },
+          metadata: { thinkgraph_fact: { entities: ['Existing entry'], relations: [] } } },
         { id: 'memory-old', title: 'Earlier retained Think', summary: 'Earlier saved Think.', ingestedAt: 100,
-          metadata: { structured_extraction: { think: {
-            summary: 'Earlier saved Think.',
-          }, relations: [] } } },
+          metadata: { thinkgraph_fact: { entities: ['Existing entry'], relations: [] } } },
       ] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
       status="ready" error={null} onRemoveEvidence={remove} />);
@@ -1798,9 +1791,8 @@ describe('native authority graph surfaces', () => {
       ? { ...empty(authority), nodes: [{ id: 'native-1', label: 'Recorded subject',
         runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
         properties: { evidence: [{
-          id: 'memory-one', ingestedAt: 100, metadata: { structured_extraction: { think: {
-            summary: 'The complete Think summary.',
-          } } },
+          id: 'memory-one', ingestedAt: 100, summary: 'The complete Think summary.',
+          metadata: { thinkgraph_fact: { entities: ['Recorded subject'], relations: [] } },
         }] },
         provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] }
       : { ...empty(authority), nodes: [

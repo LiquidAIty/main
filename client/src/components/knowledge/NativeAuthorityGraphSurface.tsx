@@ -639,8 +639,7 @@ function boundedNativeDescription(node: GraphProjectionNode): string | null {
   const evidenceText = evidence.flatMap((item): unknown[] => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
     const record = item as Record<string, any>;
-    const think = record.metadata?.structured_extraction?.think;
-    return [think?.summary, think?.observation, record.summary, record.content];
+    return [record.summary, record.content];
   });
   for (const value of [
     properties.description,
@@ -1628,22 +1627,13 @@ function compactProbability(value: unknown): string | null {
   return Math.max(0, Math.min(1, numeric)).toFixed(2).replace(/^0/, '');
 }
 
-function thinkMetadata(item: Record<string, any>): Record<string, any> {
-  const metadata = item.metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
-  const structured = metadata.structured_extraction;
-  if (!structured || typeof structured !== 'object' || Array.isArray(structured)) return {};
-  const think = structured.think;
-  return think && typeof think === 'object' && !Array.isArray(think) ? think : {};
-}
-
 function nativeThinkRelationships(item: Record<string, any>): string[] {
   const metadata = item.metadata;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
-  const structured = metadata.structured_extraction;
-  const raw = structured && typeof structured === 'object' && !Array.isArray(structured)
-    ? structured.relations
-    : metadata.relations;
+  const fact = metadata.thinkgraph_fact;
+  const raw = fact && typeof fact === 'object' && !Array.isArray(fact)
+    ? fact.relations
+    : [];
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((value): string[] => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
@@ -1666,15 +1656,12 @@ function ThinkGraphThink({
   removing?: boolean;
   onRemove?: () => void;
 }) {
-  const think = thinkMetadata(item);
   const entryTime = nativeEntryTime(item.ingestedAt);
   const summary = typeof item.summary === 'string' && item.summary.trim()
     ? item.summary
     : typeof item.content === 'string' && item.content.trim()
       ? item.content
-      : typeof think.summary === 'string' && think.summary.trim()
-        ? think.summary
-        : null;
+      : null;
   const relationships = nativeThinkRelationships(item);
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
@@ -1972,8 +1959,8 @@ export function NativeGraphProjectionSurface({
     && variant.node.properties.evidence.some((item: unknown) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
       const metadata = (item as Record<string, any>).metadata;
-      return metadata?.structured_extraction?.think
-        && typeof metadata.structured_extraction.think === 'object';
+      return metadata?.thinkgraph_fact
+        && typeof metadata.thinkgraph_fact === 'object';
     })
   ));
   const nativeKnowEdges = authority === 'joined'
@@ -2638,10 +2625,8 @@ export function NativeGraphProjectionSurface({
   const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
     ? evidenceRecords.filter(item => item.metadata !== null
       && typeof item.metadata === 'object'
-      && item.metadata.structured_extraction !== null
-      && typeof item.metadata.structured_extraction === 'object'
-      && item.metadata.structured_extraction.think !== null
-      && typeof item.metadata.structured_extraction.think === 'object')
+      && item.metadata.thinkgraph_fact !== null
+      && typeof item.metadata.thinkgraph_fact === 'object')
     : [];
   const thinks = directThinks.map((item, index) => ({ item, index }))
     .sort((left, right) => {

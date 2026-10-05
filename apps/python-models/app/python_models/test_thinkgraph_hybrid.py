@@ -173,9 +173,8 @@ def payload(run_id: str = "run-one") -> dict[str, Any]:
 
 def test_retired_evidence_judgment_is_not_exposed_from_native_think_metadata():
     stored = {
-        "structured_extraction": {
-            "think": {"summary": "Retained Think."},
-        },
+        "thinkgraph_fact": {"entities": ["Jev"], "relations": []},
+        "thinkgraph_origin": {"authority": "thinkgraph"},
         "needs_evidence": {
             "winner": "NO",
             "distribution": {"YES": 0.07, "NO": 0.93},
@@ -184,7 +183,10 @@ def test_retired_evidence_judgment_is_not_exposed_from_native_think_metadata():
 
     exposed = adapter._public_think_metadata(stored)
 
-    assert exposed == {"structured_extraction": stored["structured_extraction"]}
+    assert exposed == {
+        "thinkgraph_fact": stored["thinkgraph_fact"],
+        "thinkgraph_origin": stored["thinkgraph_origin"],
+    }
     assert "needs_evidence" in stored
 
 
@@ -208,6 +210,7 @@ def structured_output(*, content: str = "Jev normalizes expressive graph relatio
             "content": content,
             "title": "Expressive relation normalization",
             "mtype": "episodic",
+            "importance": 0.63,
             "keywords": ["probability", "graph semantics"],
             "entities": ["Jev", "ThinkGraph"],
             "relations": [{
@@ -215,10 +218,59 @@ def structured_output(*, content: str = "Jev normalizes expressive graph relatio
                 "relation": FREEFORM_RELATION,
                 "target": "ThinkGraph",
             }],
-            "think": {
-                "summary": content,
-            },
         }],
+    }
+
+
+def four_fact_output() -> dict[str, Any]:
+    rows = [
+        (
+            "Electron demonstrates present execution",
+            "Rocket Lab's Electron cadence is evidence of present launch execution, not by itself evidence of shareholder value.",
+            0.86,
+            ["execution", "Electron"],
+            "Electron",
+            "operates Electron as its current orbital launch vehicle",
+        ),
+        (
+            "Cadence needs attributable economics",
+            "Rocket Lab's launch cadence strengthens the investment case only when completed missions produce attributable launch economics.",
+            0.93,
+            ["cadence", "economics"],
+            "Launch cadence",
+            "must convert launch cadence into attributable launch economics",
+        ),
+        (
+            "Cash conversion remains decisive",
+            "Rocket Lab needs launch gross profit to convert into durable cash generation before operating progress becomes investment-thesis progress.",
+            0.89,
+            ["cash generation", "gross profit"],
+            "Cash generation",
+            "must convert launch economics into cash generation",
+        ),
+        (
+            "Neutron remains future option value",
+            "Rocket Lab's Neutron program remains future option value until milestones reduce schedule, spending, and dilution uncertainty.",
+            0.78,
+            ["Neutron", "option value"],
+            "Neutron",
+            "develops Neutron as future option value",
+        ),
+    ]
+    return {
+        "facts": [{
+            "content": content,
+            "title": title,
+            "mtype": "episodic",
+            "importance": importance,
+            "keywords": keywords,
+            "entities": ["Rocket Lab", target],
+            "relations": [{
+                "source": "Rocket Lab",
+                "relation": relation,
+                "target": target,
+            }],
+        } for title, content, importance, keywords, target, relation in rows],
     }
 
 
@@ -230,10 +282,15 @@ def settle_payload(
 ) -> dict:
     return {
         **(completed or payload()),
-        "pairMemoryId": preparation["pairMemoryId"],
+        "pairReference": preparation["pairReference"],
         "structuredOutput": output or structured_output(),
         "cardRun": card_run(),
-    }
+}
+
+
+def only_think_id(settled: dict[str, Any]) -> str:
+    assert len(settled["thinkMemoryIds"]) == 1
+    return str(settled["thinkMemoryIds"][0])
 
 
 def entities_and_edges(hybrid) -> tuple[list[Any], list[Any]]:
@@ -259,24 +316,25 @@ def persist_direct_think(
         "userMessage": f"User contribution for {run_id}.",
         "mainResponse": summary,
     })
-    output = hybrid._ProjectedStructuredOutput(
-        pair_summary=summary,
+    output = hybrid._ProjectedStructuredFact(
+        content=summary,
         title=title,
+        mtype="episodic",
+        importance=0.5,
         keywords=[],
-        think=hybrid.ThinkGraphThink(summary=summary),
         entities=entity_names,
         relations=[],
         pairings=[],
     )
-    saved = hybrid._save_think_memory(
+    saved = hybrid._save_think_memories(
         service,
         workspace_id=workspace_id,
         completed=completed,
-        output=output,
+        outputs=[output],
         card_run=card_run(run_id),
         pair_reference=hybrid._pair_reference(completed),
     )
-    memory_id = str(saved["id"])
+    memory_id = str(saved[0]["id"])
     memory = service.store.get_memory(memory_id)
     assert memory is not None
     with service.store._write_operation("test_structured_incidence", commit=True):
@@ -412,53 +470,159 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
 
 
 def test_native_llm_structured_relation_preserves_custom_meaning_for_jev_normalization():
+    from engraphis.backends.extractor import MAX_FACTS
+
+    extractor = adapter._native_structured_extractor(
+        adapter._SavedCardStructuredResult({}, "schema-only")
+    )
+    assert extractor.max_facts == MAX_FACTS
     schema, prompt = adapter._llm_structured_contract("pair", {})
-    relation_schema = schema["$defs"]["ThinkGraphStructuredRelation"]
+    relation_schema = schema["$defs"]["_RelationSchema"]
     relation = relation_schema["properties"]["relation"]
-    assert relation_schema["required"] == ["source", "relation", "target"]
     assert relation["type"] == "string"
     assert "enum" not in relation
-    assert "specific relationship phrase" in relation["description"]
-    assert "Jev to normalize" in relation["description"]
-    assert "nearest concrete reusable subject" in prompt
-    assert "Never create a generic wrapper entity" in prompt
-    assert "that framing belongs in the Think body" in prompt
-    assert "Every item in `relations` must contain exactly one nonempty `source`" in prompt
-    assert "Never duplicate a JSON key" in prompt
-    assert "operates Electron as its current orbital launch vehicle" in prompt
-    assert "The `think` object contains only `summary`" in prompt
-    assert "Loose entity metadata is invalid" in prompt
-    fact_schema = schema["$defs"]["ThinkGraphStructuredFact"]
-    think_schema = schema["$defs"]["ThinkGraphThink"]
-    assert "title" in fact_schema["required"]
-    assert "importance" not in fact_schema["properties"]
-    assert set(think_schema["properties"]) == {"summary"}
-    assert adapter.ThinkGraphStructuredRelation(
-        source="Jev",
-        relation=FREEFORM_RELATION,
-        target="ThinkGraph",
-    ).relation == FREEFORM_RELATION
-    with pytest.raises(Exception):
-        adapter.ThinkGraphStructuredRelation.model_validate({
-            "source": "SUPPORTS",
-            "target": "Execution quality",
-        })
-    natural = adapter.ThinkGraphThink(summary="One natural reusable Think.")
-    assert natural.model_dump() == {"summary": "One natural reusable Think."}
-    loose_subject_body = "Cadence matters only when it produces revenue."
-    with pytest.raises(Exception, match="entities_must_be_relationship_endpoints"):
-        adapter.ThinkGraphStructuredFact.model_validate({
-            "content": loose_subject_body,
-            "title": "Cadence must become revenue",
-            "mtype": "episodic",
-            "entities": ["Rocket Lab", "Launch cadence", "Attributable revenue"],
-            "relations": [{
-                "source": "Launch cadence",
-                "relation": "SUPPORTS",
-                "target": "Attributable revenue",
-            }],
-            "think": {"summary": loose_subject_body},
-        })
+    fact_schema = schema["$defs"]["_ExtractedFactSchema"]
+    assert set(fact_schema["properties"]) == {
+        "content", "title", "mtype", "importance", "keywords", "entities", "relations",
+    }
+    assert "think" not in fact_schema["properties"]
+    assert "Use native Engraphis structured extraction" in prompt
+    assert "Each returned Engraphis fact is one LiquidAIty Think" in prompt
+    assert "Preserve each fact's native title, content, memory type, importance" in prompt
+    assert "mandatory relationship" not in prompt
+
+
+def test_empty_provider_result_matches_installed_engraphis_behavior_exactly():
+    pair_text = "USER:\nRetain only reusable meaning.\n\nMAIN:\nNo durable change."
+    empty = {"facts": []}
+    model = "openai/saved-thinkgraph-model-test"
+    direct = adapter._native_structured_extractor(
+        adapter._SavedCardStructuredResult(empty, model)
+    ).extract(pair_text, context="{}")
+    through_adapter = adapter._extract_saved_card_facts(
+        empty,
+        pair_text=pair_text,
+        context={},
+        card_run=card_run(),
+    )
+
+    def comparable(fact):
+        return {
+            "content": fact.content,
+            "title": fact.title,
+            "mtype": fact.mtype,
+            "importance": fact.importance,
+            "keywords": fact.keywords,
+            "metadata": fact.metadata,
+        }
+
+    assert [comparable(fact) for fact in through_adapter] == [
+        comparable(fact) for fact in direct
+    ]
+
+
+def test_four_native_facts_persist_as_four_distinct_thinks_and_replay_exactly_once(
+    hybrid,
+):
+    completed = payload("four-facts")
+    prepared = hybrid.prepare_completed_pair(completed)
+    output = four_fact_output()
+    settled = hybrid.settle_completed_pair(
+        settle_payload(prepared, output=output, completed=completed),
+        classifier=lambda *_args, **_kwargs: decision("QUALIFIES"),
+    )
+
+    memory_ids = settled["thinkMemoryIds"]
+    assert settled["factCount"] == 4
+    assert len(memory_ids) == len(set(memory_ids)) == 4
+    service = hybrid.get_service()
+    memories = service.store.get_memories(memory_ids)
+    assert list(memories) == memory_ids
+    entity_names = {
+        entity.id: entity.name for entity in service.store.list_entities()
+    }
+    expected = output["facts"]
+    for index, memory_id in enumerate(memory_ids):
+        memory = memories[memory_id]
+        fact = expected[index]
+        assert memory.content == fact["content"]
+        assert memory.title == fact["title"]
+        assert memory.mtype == hybrid.MemoryType.EPISODIC
+        assert memory.importance == pytest.approx(fact["importance"])
+        assert memory.keywords == fact["keywords"]
+        assert memory.metadata["thinkgraph_fact"] == {
+            "entities": fact["entities"],
+            "relations": fact["relations"],
+        }
+        assert memory.metadata["thinkgraph_origin"]["fact_index"] == index
+        assert memory.metadata["thinkgraph_origin"]["fact_count"] == 4
+        incidence = service.store.list_memory_entities(memory_ids=[memory_id])
+        assert {
+            entity_names[str(row["entity_id"])]
+            for row in incidence
+            if row.get("source_kind") == "structured_extractor"
+        } == set(fact["entities"])
+        target_id = next(
+            entity_id for entity_id, name in entity_names.items()
+            if name == fact["entities"][1]
+        )
+        edge = next(
+            edge for edge in service.store.neighbors([target_id])
+            if edge.src != edge.dst and edge.provenance.get("jev")
+        )
+        assert set(hybrid._edge_memory_ids(edge)) == {memory_id}
+
+    recalled = service.recall(
+        workspace="project-one",
+        query="Rocket Lab Electron launch cadence cash generation Neutron option value",
+        k=12,
+        token_budget=4_000,
+        response_mode="compact",
+        record_receipt=False,
+        reinforce=False,
+    )
+    assert set(memory_ids) <= {
+        str(item["id"]) for item in recalled.get("memories", [])
+    }
+
+    replay = hybrid.settle_completed_pair(
+        settle_payload(prepared, output=output, completed=completed),
+        classifier=lambda *_args, **_kwargs: pytest.fail(
+            "replay must not rerun relationship normalization"
+        ),
+    )
+    assert replay["status"] == "duplicate_noop"
+    assert replay["thinkMemoryIds"] == memory_ids
+    assert service.store.count_memories() == 4
+
+
+def test_failure_after_native_batch_rolls_back_every_think_and_relationship(
+    hybrid, monkeypatch: pytest.MonkeyPatch,
+):
+    completed = payload("four-fact-rollback")
+    prepared = hybrid.prepare_completed_pair(completed)
+    service = hybrid.get_service()
+
+    def fail_after_batch(*_args, **_kwargs):
+        assert service.store.count_memories() == 4
+        return {"failures": [{"error": "forced_relationship_failure"}]}
+
+    monkeypatch.setattr(hybrid, "_persist_opportunity_decisions", fail_after_batch)
+    with pytest.raises(
+        hybrid.ThinkGraphIntakeError,
+        match="thinkgraph_relationship_settlement_failed",
+    ):
+        hybrid.settle_completed_pair(
+            settle_payload(
+                prepared,
+                output=four_fact_output(),
+                completed=completed,
+            ),
+            classifier=lambda *_args, **_kwargs: decision("QUALIFIES"),
+        )
+
+    assert service.store.count_memories() == 0
+    assert entities_and_edges(hybrid) == ([], [])
 
 
 @pytest.mark.parametrize(
@@ -495,8 +659,7 @@ def test_non_seed_labels_require_a_real_dynamic_choice_option(legacy_label):
 
 def test_prepare_is_nonpersistent_without_regex_jev_or_graph_mutation(hybrid):
     prepared = hybrid.prepare_completed_pair(payload())
-    assert prepared["pairMemoryId"].startswith("pair_")
-    assert prepared["pairReference"] == prepared["pairMemoryId"]
+    assert prepared["pairReference"].startswith("pair_")
     assert prepared["intakeOperation"] == "pending"
     assert prepared["structuredExtractionRequired"] is True
     assert prepared["revisionChanged"] is False
@@ -574,7 +737,7 @@ def test_completed_pair_extractor_and_saved_semantics_exclude_runtime_sentinels(
     assert visible_main in exact_extractor_input
     assert "canonical_subject_directory" in exact_extractor_input
     assert "know-jev" in exact_extractor_input
-    assert "THINKGRAPH TEMPORAL THINK" in exact_extractor_input
+    assert "THINKGRAPH" in exact_extractor_input
     assert not any(
         sentinel in exact_extractor_input
         for sentinel in excluded_runtime_sentinels
@@ -591,9 +754,7 @@ def test_completed_pair_extractor_and_saved_semantics_exclude_runtime_sentinels(
             "relation": FREEFORM_RELATION,
             "target": "ThinkGraph",
         }],
-        "think": {
-            "summary": combined_visible,
-        },
+        "importance": 0.81,
     })
     authorized_card_run = {
         "runId": "AUTHORIZED_RUN_ID_SENTINEL",
@@ -605,22 +766,23 @@ def test_completed_pair_extractor_and_saved_semantics_exclude_runtime_sentinels(
     }
     settled = hybrid.settle_completed_pair({
         **completed,
-        "pairMemoryId": prepared["pairMemoryId"],
+        "pairReference": prepared["pairReference"],
         "structuredOutput": output,
         "cardRun": authorized_card_run,
     }, classifier=lambda *_args, **_kwargs: decision("QUALIFIES"))
-    memory = hybrid.get_service().store.get_memory(settled["thinkMemoryId"])
+    memory = hybrid.get_service().store.get_memory(only_think_id(settled))
     assert memory is not None
     saved_semantics = json.dumps({
         "summary": memory.content,
         "title": memory.title,
         "keywords": memory.keywords,
-        "structured_extraction": memory.metadata["structured_extraction"],
+        "thinkgraph_fact": memory.metadata["thinkgraph_fact"],
     }, ensure_ascii=False, sort_keys=True)
 
     assert visible_user in saved_semantics
     assert visible_main in saved_semantics
     assert "source_response_fit" not in memory.metadata
+    assert memory.importance == pytest.approx(0.81)
     assert not any(
         sentinel in saved_semantics
         for sentinel in excluded_runtime_sentinels
@@ -639,6 +801,9 @@ def test_completed_pair_extractor_and_saved_semantics_exclude_runtime_sentinels(
         "native_session_ref": authorized_card_run["nativeSessionRef"],
         "resolved_model": authorized_card_run["resolvedModel"],
         "completed_pair_reference": prepared["pairReference"],
+        "fact_index": 0,
+        "fact_count": 1,
+        "fact_key": memory.metadata["thinkgraph_origin"]["fact_key"],
         "source_pair": hybrid._source_pair(completed),
     }
 
@@ -1015,7 +1180,7 @@ def test_native_engraphis_noop_skips_repeat_after_authoritative_think_exists(hyb
     assert first["structuredExtractionRequired"] is True
     assert repeated["ok"] is True
     assert repeated["projectId"] == "project-one"
-    assert repeated["pairMemoryId"] == settled["thinkMemoryId"]
+    assert repeated["thinkMemoryIds"] == settled["thinkMemoryIds"]
     assert repeated["pairReference"] == first["pairReference"]
     assert repeated["intakeOperation"] == "noop"
     assert repeated["structuredExtractionRequired"] is False
@@ -1231,7 +1396,7 @@ def test_structured_proposal_reuses_canonical_node_and_freezes_prior_think(
         "target": "Beta",
     }]
     original_latest = hybrid._latest_endpoint_think
-    original_save = hybrid._save_think_memory
+    original_save = hybrid._save_think_memories
     current_think_written = False
 
     def latest_before_write(*args, **kwargs):
@@ -1244,7 +1409,7 @@ def test_structured_proposal_reuses_canonical_node_and_freezes_prior_think(
         return original_save(*args, **kwargs)
 
     monkeypatch.setattr(hybrid, "_latest_endpoint_think", latest_before_write)
-    monkeypatch.setattr(hybrid, "_save_think_memory", mark_current_write)
+    monkeypatch.setattr(hybrid, "_save_think_memories", mark_current_write)
     settled = hybrid.settle_completed_pair(
         settle_payload(prepared, output=output, completed=completed),
         classifier=classify,
@@ -1339,16 +1504,17 @@ def test_saved_card_freeform_proposal_becomes_think_context_and_jev_edge(hybrid)
         adapter.PROJECT_RELATIONSHIP_VOCABULARY_VERSION
     )
 
-    think = service.store.get_memory(settled["thinkMemoryId"])
+    think_memory_id = only_think_id(settled)
+    think = service.store.get_memory(think_memory_id)
     assert think is not None
     assert think.mtype == hybrid.MemoryType.EPISODIC
-    assert think.metadata["structured_extraction"]["relations"][0]["relation"] == (
+    assert think.metadata["thinkgraph_fact"]["relations"][0]["relation"] == (
         FREEFORM_RELATION
     )
-    structured_think = think.metadata["structured_extraction"]["think"]
-    assert structured_think == {
-        "summary": "Jev normalizes expressive graph relations.",
-    }
+    assert think.content == "Jev normalizes expressive graph relations."
+    assert think.title == "Expressive relation normalization"
+    assert think.importance == pytest.approx(0.63)
+    assert think.keywords == ["probability", "graph semantics"]
     assert think.metadata["thinkgraph_origin"] == {
         "authority": "thinkgraph",
         "writer": "saved_thinkgraph_card",
@@ -1359,17 +1525,19 @@ def test_saved_card_freeform_proposal_becomes_think_context_and_jev_edge(hybrid)
         "native_session_ref": "thinkgraph-session-one",
         "resolved_model": "openai/saved-thinkgraph-model-test",
         "completed_pair_reference": prepared["pairReference"],
+        "fact_index": 0,
+        "fact_count": 1,
+        "fact_key": think.metadata["thinkgraph_origin"]["fact_key"],
         "source_pair": hybrid._source_pair(payload()),
     }
     assert "source_reference" not in think.metadata
-    assert "timestamp" not in structured_think
     native_read = hybrid.inspect("project-one", jev.id)["entity"]
     direct_think = next(
         item for item in native_read["evidence"]
-        if item["memory_id"] == settled["thinkMemoryId"]
+        if item["memory_id"] == think_memory_id
     )
     assert direct_think["excerpt"] == "Jev normalizes expressive graph relations."
-    assert direct_think["metadata"]["structured_extraction"]["relations"][0][
+    assert direct_think["metadata"]["thinkgraph_fact"]["relations"][0][
         "relation"
     ] == FREEFORM_RELATION
 
@@ -1418,7 +1586,7 @@ def test_thinks_use_native_time_and_are_newest_first(hybrid):
     service = hybrid.get_service()
     jev = next(node for node in service.store.list_entities() if node.name == "Jev")
     workspace_id = service.store.get_or_create_workspace("project-one")
-    direct_think_ids = [first["thinkMemoryId"], second["thinkMemoryId"]]
+    direct_think_ids = [only_think_id(first), only_think_id(second)]
     for sequence, memory_id in enumerate(direct_think_ids, start=1):
         service.store.conn.execute(
             "UPDATE memories SET ingested_at=? WHERE id=?",
@@ -1496,49 +1664,49 @@ def test_same_structured_think_body_appends_on_a_later_completed_pair(hybrid):
     second_payload["cardRun"] = card_run("thinkgraph-run-two")
     second = hybrid.settle_completed_pair(second_payload, classifier=classify)
 
-    assert first["thinkMemoryId"]
-    assert second["thinkMemoryId"]
-    assert first["thinkMemoryId"] != second["thinkMemoryId"]
+    first_memory_id = only_think_id(first)
+    second_memory_id = only_think_id(second)
+    assert first_memory_id != second_memory_id
     service = hybrid.get_service()
     memories = service.store.get_memories([
-        first["thinkMemoryId"], second["thinkMemoryId"],
+        first_memory_id, second_memory_id,
     ])
     assert len(memories) == 2
     assert all(memory.mtype == hybrid.MemoryType.EPISODIC for memory in memories.values())
     assert {
-        memory.metadata["structured_extraction"]["think"]["summary"]
+        memory.content
         for memory in memories.values()
     } == {"Jev normalizes expressive graph relations."}
     assert all(
-        "note_hash" not in memory.metadata["structured_extraction"]["think"]
+        "note_hash" not in memory.metadata["thinkgraph_fact"]
         for memory in memories.values()
     )
 
 
-def test_structured_only_concept_can_become_durable_after_jev_accepts(hybrid):
+def test_loose_abstract_subject_does_not_create_a_node_without_a_relationship(hybrid):
     completed = payload("structured-discovery")
-    assert "Execution Risk" not in completed["userMessage"]
-    assert "Execution Risk" not in completed["mainResponse"]
     prepared = hybrid.prepare_completed_pair(completed)
     output = structured_output(
-        content="Neutron schedule uncertainty creates execution risk for the thesis."
+        content="Rocket Lab's Electron execution must convert cadence into durable economics."
     )
-    output["facts"][0]["entities"] = ["Neutron", "Execution Risk"]
+    output["facts"][0]["entities"] = [
+        "Rocket Lab", "Electron", "Launch cadence",
+    ]
     output["facts"][0]["relations"] = [{
-        "source": "Neutron",
-        "relation": "creates schedule-sensitive uncertainty represented by",
-        "target": "Execution Risk",
+        "source": "Rocket Lab",
+        "relation": "operates Electron as its current orbital launch vehicle",
+        "target": "Electron",
     }]
     settled = hybrid.settle_completed_pair(
         settle_payload(prepared, output=output, completed=completed),
-        classifier=lambda *_args, **_kwargs: decision("CAUSES"),
+        classifier=lambda *_args, **_kwargs: decision("USES"),
     )
 
     assert not settled["failures"]
     entities, edges = entities_and_edges(hybrid)
-    assert {entity.name for entity in entities} == {"Neutron", "Execution Risk"}
+    assert {entity.name for entity in entities} == {"Rocket Lab", "Electron"}
     assert [edge.relation for edge in edges if edge.provenance.get("jev")] == [
-        "CAUSES",
+        "USES",
     ]
 
 
@@ -1554,37 +1722,36 @@ def test_central_subject_is_a_relationship_endpoint_and_one_think_anchors_every_
     output = structured_output(content=summary)
     output["facts"][0].update({
         "title": "Launch cadence must become attributable revenue",
-        "entities": ["Rocket Lab", "Electron", "Launch cadence"],
+        "entities": ["Rocket Lab", "Electron", "HASTE", "Launch cadence"],
         "relations": [{
             "source": "Rocket Lab",
             "relation": "operates Electron as its current orbital launch vehicle",
             "target": "Electron",
         }, {
-            "source": "Electron",
-            "relation": "supports repeatable launch cadence",
-            "target": "Launch cadence",
+            "source": "Rocket Lab",
+            "relation": "operates HASTE for responsive launch missions",
+            "target": "HASTE",
         }],
-        "think": {"summary": summary},
     })
 
     settled = hybrid.settle_completed_pair(
         settle_payload(prepared, output=output, completed=completed),
         classifier=lambda source, *_args, **_kwargs: decision(
-            "USES" if source == "Rocket Lab" else "SUPPORTS"
+            "USES"
         ),
     )
 
     service = hybrid.get_service()
     entities, edges = entities_and_edges(hybrid)
     assert {entity.name for entity in entities} == {
-        "Rocket Lab", "Electron", "Launch cadence",
+        "Rocket Lab", "Electron", "HASTE",
     }
     assert len([edge for edge in edges if edge.provenance.get("jev")]) == 2
     assert all(any(
         edge.src == entity.id or edge.dst == entity.id
         for edge in edges if edge.provenance.get("jev")
     ) for entity in entities)
-    memory_id = settled["thinkMemoryId"]
+    memory_id = only_think_id(settled)
     direct = [
         row for row in service.store.list_memory_entities(memory_ids=[memory_id])
         if row.get("source_kind") == "structured_extractor"
@@ -1593,12 +1760,15 @@ def test_central_subject_is_a_relationship_endpoint_and_one_think_anchors_every_
     memory = service.store.get_memory(memory_id)
     assert memory is not None
     assert memory.title == "Launch cadence must become attributable revenue"
-    assert memory.metadata["structured_extraction"]["think"] == {"summary": summary}
+    assert memory.content == summary
+    assert memory.metadata["thinkgraph_fact"]["entities"] == [
+        "Rocket Lab", "Electron", "HASTE", "Launch cadence",
+    ]
     assert {
         edge.provenance["jev"]["natural_relationship"] for edge in edges
     } == {
         "operates Electron as its current orbital launch vehicle",
-        "supports repeatable launch cadence",
+        "operates HASTE for responsive launch missions",
     }
 
 
@@ -1616,7 +1786,7 @@ def test_structurally_valid_relationship_is_normalized_and_persisted(hybrid):
         settle_payload(prepared, output=output),
         classifier=lambda *_args, **_kwargs: low_probability,
     )
-    assert settled["thinkMemoryId"]
+    assert only_think_id(settled)
     entities, edges = entities_and_edges(hybrid)
     assert {entity.name for entity in entities} == {"Jev", "ThinkGraph"}
     assert len(edges) == 1
@@ -1644,9 +1814,9 @@ def test_think_store_failure_prevents_partial_node_and_edge_birth(
     def fail_think(*_args, **_kwargs):
         raise RuntimeError("think_store_unavailable")
 
-    monkeypatch.setattr(hybrid, "_save_think_memory", fail_think)
+    monkeypatch.setattr(hybrid, "_save_think_memories", fail_think)
     with pytest.raises(
-        hybrid.ThinkGraphIntakeError, match="thinkgraph_think_store_failed",
+        hybrid.ThinkGraphIntakeError, match="thinkgraph_think_batch_store_failed",
     ):
         hybrid.settle_completed_pair(
             settle_payload(prepared),
