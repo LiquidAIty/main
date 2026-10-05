@@ -55,20 +55,14 @@ def decision(
     choice_options = choices or adapter.THINKGRAPH_JEV_CHOICES
     distribution = {name: 0.0 for name in choice_options}
     distribution[winner] = 0.76
-    distribution["NONE"] = 0.14 if winner != "NONE" else 0.76
-    distribution["INSUFFICIENT_CONTEXT"] = 0.10
-    if winner == "NONE":
-        distribution["QUALIFIES"] = 0.14
+    alternate = next(name for name in choice_options if name != winner)
+    distribution[alternate] = 0.24
     return {
         "winner": winner,
         "distribution": distribution,
         "confidence": 0.64,
         "label_confidence": distribution[winner],
-        "relationship_strength": max(
-            0.0, 1.0 - distribution["NONE"]
-            - distribution["INSUFFICIENT_CONTEXT"]
-            - distribution["INVALID_NODE_PAIR"]
-        ),
+        "relationship_strength": distribution[winner],
         "provider": "TypeSafe",
         "requested_model": adapter.JEV_MODEL,
         "resolved_model": "typesafe/jev-1.13-test",
@@ -180,7 +174,7 @@ def payload(run_id: str = "run-one") -> dict[str, Any]:
 def test_retired_evidence_judgment_is_not_exposed_from_native_think_metadata():
     stored = {
         "structured_extraction": {
-            "think": {"kind": "OBSERVATION", "summary": "Retained Think."},
+            "think": {"summary": "Retained Think."},
         },
         "needs_evidence": {
             "winner": "NO",
@@ -214,7 +208,6 @@ def structured_output(*, content: str = "Jev normalizes expressive graph relatio
             "content": content,
             "title": "Expressive relation normalization",
             "mtype": "episodic",
-            "importance": 0.8,
             "keywords": ["probability", "graph semantics"],
             "entities": ["Jev", "ThinkGraph"],
             "relations": [{
@@ -223,24 +216,7 @@ def structured_output(*, content: str = "Jev normalizes expressive graph relatio
                 "target": "ThinkGraph",
             }],
             "think": {
-                "kind": "DECISION",
                 "summary": content,
-                "propositions": [content],
-                "questions": [],
-                "predictions": [],
-                "assumptions": [],
-                "preferences": [],
-                "corrections": [],
-                "uncertainty": [],
-                "properties": [{
-                    "name": "edge_owner",
-                    "value": "Jev",
-                }],
-                "concepts": ["probabilistic semantic edges"],
-                "relationship_observations": [
-                    f"Jev {FREEFORM_RELATION} ThinkGraph."
-                ],
-                "importance": 0.8,
             },
         }],
     }
@@ -275,7 +251,7 @@ def persist_direct_think(
     entity_names: list[str],
     summary: str,
     run_id: str,
-    kind: str = "OBSERVATION",
+    title: str = "Reusable Think",
 ) -> str:
     service = hybrid.get_service()
     completed = payload(run_id)
@@ -285,13 +261,9 @@ def persist_direct_think(
     })
     output = hybrid._ProjectedStructuredOutput(
         pair_summary=summary,
-        title=f"{kind} Think",
+        title=title,
         keywords=[],
-        think=hybrid.ThinkGraphThink(
-            kind=kind,
-            summary=summary,
-            propositions=[summary],
-        ),
+        think=hybrid.ThinkGraphThink(summary=summary),
         entities=entity_names,
         relations=[],
         pairings=[],
@@ -396,15 +368,10 @@ def test_contextual_think_candidates_are_complete_direct_native_incidence(
 
 def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
     assert len(SHARED_JEV_RELATIONSHIPS) == 20
-    assert adapter.THINKGRAPH_JEV_CHOICES[:20] == SHARED_JEV_RELATIONSHIPS
+    assert adapter.THINKGRAPH_JEV_CHOICES == SHARED_JEV_RELATIONSHIPS
+    assert adapter.THINKGRAPH_CONTROL_OUTCOMES == ()
     probabilities = {name: 0.0 for name in adapter.THINKGRAPH_JEV_CHOICES}
-    probabilities.update(
-        CONTRADICTS=0.52,
-        QUALIFIES=0.12,
-        NONE=0.18,
-        INSUFFICIENT_CONTEXT=0.10,
-        INVALID_NODE_PAIR=0.08,
-    )
+    probabilities.update(CONTRADICTS=0.52, QUALIFIES=0.48)
     parsed = adapter._validate_jev_response({
         "answers": {"relationship": {
             "type": "choice",
@@ -418,28 +385,20 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
     assert parsed["winner"] == "CONTRADICTS"
     assert parsed["label_confidence"] == pytest.approx(0.52)
     assert parsed["relationship_strength"] == pytest.approx(0.52)
-    # Admission still sees 0.64 total semantic support, while visual physics
-    # uses only the 0.52 probability of the winning edge type.
-    assert adapter._decision_is_accepted(parsed) is True
     assert tuple(parsed["distribution"]) == adapter.THINKGRAPH_JEV_CHOICES
 
-    invalid_mass = {name: 0.0 for name in adapter.THINKGRAPH_JEV_CHOICES}
-    invalid_mass.update(
-        QUALIFIES=0.55,
-        NONE=0.05,
-        INSUFFICIENT_CONTEXT=0.05,
-        INVALID_NODE_PAIR=0.35,
-    )
-    rejected = adapter._validate_jev_response({
+    low_winner = {name: 0.05 for name in adapter.THINKGRAPH_JEV_CHOICES}
+    low_winner["QUALIFIES"] = 0.06
+    low_winner["IS_A"] = 0.04
+    normalized = adapter._validate_jev_response({
         "answers": {"relationship": {
             "type": "choice",
             "choice": "QUALIFIES",
             "confidence": 0.41,
-            "probabilities": invalid_mass,
+            "probabilities": low_winner,
         }}
     })
-    assert rejected["relationship_strength"] == pytest.approx(0.55)
-    assert adapter._decision_is_accepted(rejected) is False
+    assert normalized["relationship_strength"] == pytest.approx(0.06)
 
     probabilities.pop("ENABLES")
     with pytest.raises(adapter.JevRelationshipError, match="response_invalid"):
@@ -452,21 +411,28 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
         })
 
 
-def test_native_llm_structured_relation_uses_dynamic_predicate_guidance():
+def test_native_llm_structured_relation_preserves_custom_meaning_for_jev_normalization():
     schema, prompt = adapter._llm_structured_contract("pair", {})
     relation_schema = schema["$defs"]["ThinkGraphStructuredRelation"]
     relation = relation_schema["properties"]["relation"]
     assert relation_schema["required"] == ["source", "relation", "target"]
     assert relation["type"] == "string"
     assert "enum" not in relation
-    assert "current_project_relationship_vocabulary" in relation["description"]
-    assert "never exceed three words" in relation["description"]
+    assert "specific relationship phrase" in relation["description"]
+    assert "Jev to normalize" in relation["description"]
     assert "nearest concrete reusable subject" in prompt
     assert "Never create a generic wrapper entity" in prompt
     assert "that framing belongs in the Think body" in prompt
     assert "Every item in `relations` must contain exactly one nonempty `source`" in prompt
     assert "Never duplicate a JSON key" in prompt
-    assert "Do not emit a thought category, importance score" in prompt
+    assert "operates Electron as its current orbital launch vehicle" in prompt
+    assert "The `think` object contains only `summary`" in prompt
+    assert "Loose entity metadata is invalid" in prompt
+    fact_schema = schema["$defs"]["ThinkGraphStructuredFact"]
+    think_schema = schema["$defs"]["ThinkGraphThink"]
+    assert "title" in fact_schema["required"]
+    assert "importance" not in fact_schema["properties"]
+    assert set(think_schema["properties"]) == {"summary"}
     assert adapter.ThinkGraphStructuredRelation(
         source="Jev",
         relation=FREEFORM_RELATION,
@@ -478,10 +444,21 @@ def test_native_llm_structured_relation_uses_dynamic_predicate_guidance():
             "target": "Execution quality",
         })
     natural = adapter.ThinkGraphThink(summary="One natural reusable Think.")
-    assert natural.kind == "OBSERVATION"
-    assert natural.importance == 0.0
-    assert natural.propositions == []
-    assert natural.properties == []
+    assert natural.model_dump() == {"summary": "One natural reusable Think."}
+    loose_subject_body = "Cadence matters only when it produces revenue."
+    with pytest.raises(Exception, match="entities_must_be_relationship_endpoints"):
+        adapter.ThinkGraphStructuredFact.model_validate({
+            "content": loose_subject_body,
+            "title": "Cadence must become revenue",
+            "mtype": "episodic",
+            "entities": ["Rocket Lab", "Launch cadence", "Attributable revenue"],
+            "relations": [{
+                "source": "Launch cadence",
+                "relation": "SUPPORTS",
+                "target": "Attributable revenue",
+            }],
+            "think": {"summary": loose_subject_body},
+        })
 
 
 @pytest.mark.parametrize(
@@ -502,19 +479,18 @@ def test_non_seed_labels_require_a_real_dynamic_choice_option(legacy_label):
                 "probabilities": probabilities,
             }},
         })
-    assert adapter._decision_is_accepted({
-        "winner": legacy_label,
-        "distribution": {legacy_label: 1.0},
-    }) is False
-
     choices = (*SHARED_JEV_RELATIONSHIPS, legacy_label, *adapter.THINKGRAPH_CONTROL_OUTCOMES)
-    dynamic = decision(
-        legacy_label,
-        choices=choices,
-        novel_candidate=legacy_label,
-        proposal_status="novel_candidate",
-    )
-    assert adapter._decision_is_accepted(dynamic) is True
+    dynamic_probabilities = {name: 0.0 for name in choices}
+    dynamic_probabilities[legacy_label] = 1.0
+    dynamic = adapter._validate_jev_response({
+        "answers": {"relationship": {
+            "type": "choice",
+            "choice": legacy_label,
+            "confidence": 1.0,
+            "probabilities": dynamic_probabilities,
+        }},
+    }, choices)
+    assert dynamic["winner"] == legacy_label
 
 
 def test_prepare_is_nonpersistent_without_regex_jev_or_graph_mutation(hybrid):
@@ -604,26 +580,19 @@ def test_completed_pair_extractor_and_saved_semantics_exclude_runtime_sentinels(
         for sentinel in excluded_runtime_sentinels
     )
 
-    output = structured_output(content=visible_main)
+    combined_visible = f"{visible_user}\n\n{visible_main}"
+    output = structured_output(content=combined_visible)
     output["facts"][0].update({
         "title": "Current pair only",
         "keywords": ["Jev"],
-        "entities": ["Jev"],
-        "relations": [],
+        "entities": ["Jev", "ThinkGraph"],
+        "relations": [{
+            "source": "Jev",
+            "relation": FREEFORM_RELATION,
+            "target": "ThinkGraph",
+        }],
         "think": {
-            "kind": "OBSERVATION",
-            "summary": visible_main,
-            "propositions": [visible_main],
-            "questions": [visible_user],
-            "predictions": [],
-            "assumptions": [],
-            "preferences": [],
-            "corrections": [],
-            "uncertainty": [],
-            "properties": [{"name": "pair_scope", "value": "current"}],
-            "concepts": ["Jev"],
-            "relationship_observations": [],
-            "importance": 0.6,
+            "summary": combined_visible,
         },
     })
     authorized_card_run = {
@@ -639,7 +608,7 @@ def test_completed_pair_extractor_and_saved_semantics_exclude_runtime_sentinels(
         "pairMemoryId": prepared["pairMemoryId"],
         "structuredOutput": output,
         "cardRun": authorized_card_run,
-    })
+    }, classifier=lambda *_args, **_kwargs: decision("QUALIFIES"))
     memory = hybrid.get_service().store.get_memory(settled["thinkMemoryId"])
     assert memory is not None
     saved_semantics = json.dumps({
@@ -693,10 +662,9 @@ def test_relationship_choice_plan_offers_at_most_one_short_novel_candidate(
     assert plan["proposal_status"] == status
     assert plan["novel_candidate"] == candidate
     assert plan["choices"][:20] == SHARED_JEV_RELATIONSHIPS
-    assert plan["choices"][-3:] == adapter.THINKGRAPH_CONTROL_OUTCOMES
     if candidate:
         assert plan["choices"].count(candidate) == 1
-        assert plan["choices"][-4] == candidate
+        assert plan["choices"][-1] == candidate
 
 
 def test_jev_winning_novel_relation_is_promoted_once_and_survives_restart(
@@ -791,16 +759,15 @@ def test_jev_winning_novel_relation_is_promoted_once_and_survives_restart(
     ][-1] == "AMPLIFIES"
 
 
-@pytest.mark.parametrize("winner", ["QUALIFIES", "NONE"])
 def test_novel_proposal_does_not_expand_vocabulary_unless_it_wins(
-    hybrid, winner,
+    hybrid,
 ):
-    completed = payload(f"novel-loses-{winner.lower()}")
+    completed = payload("novel-normalizes-to-existing")
     prepared = hybrid.prepare_completed_pair(completed)
     output = structured_output(content="A proposed relationship may lose Jev Choice.")
     output["facts"][0]["relations"][0]["relation"] = "amplifies"
 
-    def choose_existing_or_control(
+    def choose_existing(
         *_args,
         relationship_vocabulary,
         novel_relationship_candidate,
@@ -812,7 +779,7 @@ def test_novel_proposal_does_not_expand_vocabulary_unless_it_wins(
             *adapter.THINKGRAPH_CONTROL_OUTCOMES,
         )
         return decision(
-            winner,
+            "QUALIFIES",
             choices=choices,
             novel_candidate=novel_relationship_candidate,
             proposal_status=relationship_proposal_status,
@@ -820,7 +787,7 @@ def test_novel_proposal_does_not_expand_vocabulary_unless_it_wins(
 
     settled = hybrid.settle_completed_pair(
         settle_payload(prepared, output=output, completed=completed),
-        classifier=choose_existing_or_control,
+        classifier=choose_existing,
     )
 
     assert settled["relationshipVocabulary"]["added"] == []
@@ -832,7 +799,7 @@ def test_novel_proposal_does_not_expand_vocabulary_unless_it_wins(
     )["labels"]
 
 
-def test_project_relationship_vocabulary_reserves_control_choice_capacity(hybrid):
+def test_project_relationship_vocabulary_preserves_shared_capacity(hybrid):
     service = hybrid.get_service()
     workspace_id = service.store.get_or_create_workspace("project-one")
     with service.store._write_operation(
@@ -853,7 +820,7 @@ def test_project_relationship_vocabulary_reserves_control_choice_capacity(hybrid
     assert plan["proposal_status"] == "novel_blocked_at_ceiling"
     assert plan["novel_candidate"] == ""
     assert "OVER_PERFORMS" not in plan["choices"]
-    assert len(plan["choices"]) == 255
+    assert len(plan["choices"]) == 252
     reused, promoted = hybrid._promote_project_relationship_label(
         service.store,
         workspace_id=workspace_id,
@@ -878,16 +845,16 @@ def test_relationship_choice_capacity_supports_251_plus_novel_and_252_reuse():
     novel = adapter.relationship_choice_plan("amplifies", vocabulary_251)
     assert len(vocabulary_251) == 251
     assert novel["novel_candidate"] == "AMPLIFIES"
-    assert len(novel["choices"]) == 255
+    assert len(novel["choices"]) == 252
 
     vocabulary_252 = (*vocabulary_251, "AMPLIFIES")
     reused = adapter.relationship_choice_plan("amplifies", vocabulary_252)
     assert reused["proposal_status"] == "reused_canonical"
     assert reused["novel_candidate"] == ""
-    assert len(reused["choices"]) == 255
+    assert len(reused["choices"]) == 252
 
 
-def test_oversized_legacy_vocabulary_is_readable_but_not_classified(hybrid):
+def test_oversized_legacy_vocabulary_is_normalized_by_thinkgraph_but_not_knowgraph(hybrid):
     from app.python_models import knowgraph_jev
 
     service = hybrid.get_service()
@@ -931,9 +898,9 @@ def test_oversized_legacy_vocabulary_is_readable_but_not_classified(hybrid):
         classifier=classifier,
         relationship_vocabulary=vocabulary,
     )
-    assert called is False
-    assert think_results[0]["status"] == "jev_failed"
-    assert think_results[0]["error"] == "thinkgraph_relationship_choice_capacity_exceeded"
+    assert called is True
+    assert think_results[0]["status"] == "decided"
+    assert think_results[0]["decision"]["winner"] == "QUALIFIES"
 
     know_results = knowgraph_jev.classify_knowgraph_facts(
         [{
@@ -1151,7 +1118,7 @@ def test_jev_context_contains_only_latest_endpoint_think_and_direct_edges(hybrid
         entity_names=["Alpha"],
         summary="Alpha latest prior Think.",
         run_id="prior-two",
-        kind="DECISION",
+        title="Latest Alpha constraint",
     )
     service.store.conn.execute(
         "UPDATE memories SET ingested_at=? WHERE id=?", (100.0, older),
@@ -1182,7 +1149,7 @@ def test_jev_context_contains_only_latest_endpoint_think_and_direct_edges(hybrid
         newer,
     ]
     assert snapshot["latest_prior_thinks"][0]["endpoint"] == "A"
-    assert snapshot["latest_prior_thinks"][0]["kind"] == "DECISION"
+    assert snapshot["latest_prior_thinks"][0]["title"] == "Latest Alpha constraint"
     assert snapshot["latest_prior_thinks"][0]["content"] == (
         "Alpha latest prior Think."
     )
@@ -1332,7 +1299,7 @@ def test_saved_card_freeform_proposal_becomes_think_context_and_jev_edge(hybrid)
             "graph_context": graph_context,
             "relationship_proposal": relationship_proposal,
         })
-        return decision("QUALIFIES" if relationship_proposal else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES")
 
     prepared = hybrid.prepare_completed_pair(payload())
     settled = hybrid.settle_completed_pair(
@@ -1379,8 +1346,9 @@ def test_saved_card_freeform_proposal_becomes_think_context_and_jev_edge(hybrid)
         FREEFORM_RELATION
     )
     structured_think = think.metadata["structured_extraction"]["think"]
-    assert structured_think["kind"] == "DECISION"
-    assert structured_think["relationship_observations"]
+    assert structured_think == {
+        "summary": "Jev normalizes expressive graph relations.",
+    }
     assert think.metadata["thinkgraph_origin"] == {
         "authority": "thinkgraph",
         "writer": "saved_thinkgraph_card",
@@ -1429,7 +1397,7 @@ def test_saved_card_freeform_proposal_becomes_think_context_and_jev_edge(hybrid)
 
 def test_thinks_use_native_time_and_are_newest_first(hybrid):
     def classify(*args, **_kwargs):
-        return decision("QUALIFIES" if args[5] else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES")
 
     first_prepared = hybrid.prepare_completed_pair(payload())
     first = hybrid.settle_completed_pair(
@@ -1510,7 +1478,7 @@ def test_thinks_use_native_time_and_are_newest_first(hybrid):
 
 def test_same_structured_think_body_appends_on_a_later_completed_pair(hybrid):
     def classify(*args, **_kwargs):
-        return decision("QUALIFIES" if args[5] else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES")
 
     first_preparation = hybrid.prepare_completed_pair(payload())
     first = hybrid.settle_completed_pair(
@@ -1574,37 +1542,87 @@ def test_structured_only_concept_can_become_durable_after_jev_accepts(hybrid):
     ]
 
 
-@pytest.mark.parametrize(
-    "winner", ["NONE", "INSUFFICIENT_CONTEXT", "INVALID_NODE_PAIR"],
-)
-def test_unaccepted_saved_card_pair_keeps_one_think_but_creates_no_nodes_or_edges(
-    hybrid, winner,
+def test_central_subject_is_a_relationship_endpoint_and_one_think_anchors_every_node(
+    hybrid,
 ):
+    completed = payload("rocket-lab-anchor")
+    prepared = hybrid.prepare_completed_pair(completed)
+    summary = (
+        "Rocket Lab's launch cadence strengthens the investment case only when Electron "
+        "execution produces attributable launch revenue."
+    )
+    output = structured_output(content=summary)
+    output["facts"][0].update({
+        "title": "Launch cadence must become attributable revenue",
+        "entities": ["Rocket Lab", "Electron", "Launch cadence"],
+        "relations": [{
+            "source": "Rocket Lab",
+            "relation": "operates Electron as its current orbital launch vehicle",
+            "target": "Electron",
+        }, {
+            "source": "Electron",
+            "relation": "supports repeatable launch cadence",
+            "target": "Launch cadence",
+        }],
+        "think": {"summary": summary},
+    })
+
+    settled = hybrid.settle_completed_pair(
+        settle_payload(prepared, output=output, completed=completed),
+        classifier=lambda source, *_args, **_kwargs: decision(
+            "USES" if source == "Rocket Lab" else "SUPPORTS"
+        ),
+    )
+
+    service = hybrid.get_service()
+    entities, edges = entities_and_edges(hybrid)
+    assert {entity.name for entity in entities} == {
+        "Rocket Lab", "Electron", "Launch cadence",
+    }
+    assert len([edge for edge in edges if edge.provenance.get("jev")]) == 2
+    assert all(any(
+        edge.src == entity.id or edge.dst == entity.id
+        for edge in edges if edge.provenance.get("jev")
+    ) for entity in entities)
+    memory_id = settled["thinkMemoryId"]
+    direct = [
+        row for row in service.store.list_memory_entities(memory_ids=[memory_id])
+        if row.get("source_kind") == "structured_extractor"
+    ]
+    assert {row["entity_id"] for row in direct} == {entity.id for entity in entities}
+    memory = service.store.get_memory(memory_id)
+    assert memory is not None
+    assert memory.title == "Launch cadence must become attributable revenue"
+    assert memory.metadata["structured_extraction"]["think"] == {"summary": summary}
+    assert {
+        edge.provenance["jev"]["natural_relationship"] for edge in edges
+    } == {
+        "operates Electron as its current orbital launch vehicle",
+        "supports repeatable launch cadence",
+    }
+
+
+def test_structurally_valid_relationship_is_normalized_and_persisted(hybrid):
     prepared = hybrid.prepare_completed_pair(payload())
-    output = structured_output(content="Discard this weak structured proposal.")
-    output["facts"][0]["entities"] = ["Jev", "Transient Sentence Fragment"]
-    output["facts"][0]["relations"] = [{
-        "source": "Jev",
-        "relation": "appears beside",
-        "target": "Transient Sentence Fragment",
-    }]
+    output = structured_output(content="Jev supplies normalized graph mathematics.")
+    low_probability = decision("QUALIFIES")
+    low_probability["distribution"] = {
+        name: (0.06 if name == "QUALIFIES" else 0.04 if name == "RELATED_TO" else 0.05)
+        for name in adapter.THINKGRAPH_JEV_CHOICES
+    }
+    low_probability["label_confidence"] = 0.06
+    low_probability["relationship_strength"] = 0.06
     settled = hybrid.settle_completed_pair(
         settle_payload(prepared, output=output),
-        classifier=lambda *_args, **_kwargs: decision(winner),
+        classifier=lambda *_args, **_kwargs: low_probability,
     )
-    assert settled["relationships"]
-    assert all(item["status"] == "no_edge" for item in settled["relationships"])
-    assert all(item["winner"] == winner for item in settled["relationships"])
     assert settled["thinkMemoryId"]
-    think = hybrid.get_service().store.get_memory(settled["thinkMemoryId"])
-    assert think is not None
-    assert think.mtype == hybrid.MemoryType.EPISODIC
-    assert hybrid._think_metadata(think) is not None
     entities, edges = entities_and_edges(hybrid)
-    assert entities == []
-    assert edges == []
-    assert all(entity.name != "Transient Sentence Fragment" for entity in entities)
-    assert all(edge.relation != "INVALID_NODE_PAIR" for edge in edges)
+    assert {entity.name for entity in entities} == {"Jev", "ThinkGraph"}
+    assert len(edges) == 1
+    assert edges[0].relation == "QUALIFIES"
+    assert edges[0].weight == pytest.approx(0.06)
+    assert edges[0].provenance["jev"]["natural_relationship"] == FREEFORM_RELATION
 
 
 def test_think_store_failure_prevents_partial_node_and_edge_birth(
@@ -1619,7 +1637,7 @@ def test_think_store_failure_prevents_partial_node_and_edge_birth(
         relationship_proposal: str,
         **_kwargs,
     ) -> dict:
-        return decision("QUALIFIES" if relationship_proposal else "NONE")
+        return decision("QUALIFIES")
 
     prepared = hybrid.prepare_completed_pair(payload())
 
@@ -1713,26 +1731,19 @@ def test_jev_edge_update_supersession_and_closure_use_native_temporal_history(hy
         (changed["edge_id"], "CONTRADICTS")
     ]
 
-    closed = hybrid._invalidate_current_jev_pair(
+    assert [(edge.id, edge.relation) for edge in hybrid._current_jev_pair_edges(
         service.store,
         workspace_id=workspace_id,
         source_id=first["source"],
         target_id=first["target"],
-    )
-    assert closed == [changed["edge_id"]]
-    assert hybrid._current_jev_pair_edges(
-        service.store,
-        workspace_id=workspace_id,
-        source_id=first["source"],
-        target_id=first["target"],
-    ) == []
+    )] == [(changed["edge_id"], "CONTRADICTS")]
 
 
 def test_structured_writer_gets_complete_subject_directory_not_prior_think_bodies(
     hybrid,
 ):
     def seed_classifier(*args, **_kwargs):
-        return decision("QUALIFIES" if args[5] else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES")
 
     seed_preparation = hybrid.prepare_completed_pair(payload())
     seed_settled = hybrid.settle_completed_pair(
@@ -1744,11 +1755,6 @@ def test_structured_writer_gets_complete_subject_directory_not_prior_think_bodie
     thinkgraph = next(
         node for node in service.store.list_entities() if node.name == "ThinkGraph"
     )
-
-    output = structured_output(content="Jev has a genuinely new operating constraint.")
-    output["facts"][0]["entities"] = ["Jev", "ThinkGraph"]
-    output["facts"][0]["relations"] = []
-    output["facts"][0]["think"]["relationship_observations"] = []
 
     completed = payload("run-two")
     completed.update({
@@ -1771,39 +1777,9 @@ def test_structured_writer_gets_complete_subject_directory_not_prior_think_bodie
     }
     assert "canonical_subject_directory" in prepared["enrichmentPrompt"]
     assert "existingNotes" not in prepared["enrichmentPrompt"]
-    live_before = {
-        edge.id: (edge.relation, edge.weight, edge.provenance)
-        for edge in service.store.neighbors([jev.id])
-        if edge.provenance.get("jev")
-    }
-    assert live_before
-
-    calls = 0
-
-    def fail(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        raise adapter.JevRelationshipError("jev_relationship_unavailable")
-
-    settled = hybrid.settle_completed_pair(
-        settle_payload(prepared, output=output, completed=completed),
-        classifier=fail,
-    )
-
-    assert calls == 0
-    assert settled["failures"] == []
-    assert settled["changedEdgeIds"] == []
-    assert "reopenedNodeIds" not in settled
-    assert "reclassifiedRelationships" not in settled
-    live_after = {
-        edge.id: (edge.relation, edge.weight, edge.provenance)
-        for edge in service.store.neighbors([jev.id])
-        if edge.provenance.get("jev")
-    }
-    assert live_after == live_before
 
 
-def test_only_explicit_rejected_structured_pair_closes_its_live_edge(
+def test_structured_pair_normalization_never_closes_existing_edges(
     hybrid,
 ):
     service = hybrid.get_service()
@@ -1831,22 +1807,21 @@ def test_only_explicit_rejected_structured_pair_closes_its_live_edge(
         decision=decision("DEPENDS_ON"),
         stage="test",
     )
-    completed = payload("explicit-close-run")
+    completed = payload("normalization-update-run")
     prepared = hybrid.prepare_completed_pair(completed)
-    output = structured_output(content="The current pair no longer supports this edge.")
+    output = structured_output(content="Jev and ThinkGraph remain directly related.")
     settled = hybrid.settle_completed_pair(
         settle_payload(prepared, output=output, completed=completed),
-        classifier=lambda *_args, **_kwargs: decision("NONE"),
+        classifier=lambda *_args, **_kwargs: decision("QUALIFIES"),
     )
 
-    assert settled["relationships"][0]["status"] == "closed"
-    assert settled["relationships"][0]["closed_edge_ids"] == [target["edge_id"]]
-    assert hybrid._current_jev_pair_edges(
+    assert settled["relationships"][0]["status"] == "updated"
+    assert [(edge.id, edge.relation) for edge in hybrid._current_jev_pair_edges(
         service.store,
         workspace_id=workspace_id,
         source_id=target["source"],
         target_id=target["target"],
-    ) == []
+    )] == [(target["edge_id"], "QUALIFIES")]
     assert [edge.id for edge in hybrid._current_jev_pair_edges(
         service.store,
         workspace_id=workspace_id,
@@ -1860,12 +1835,13 @@ def test_jev_failure_is_visible_and_does_not_mutate_graph(hybrid):
         raise adapter.JevRelationshipError("jev_relationship_unavailable")
 
     prepared = hybrid.prepare_completed_pair(payload())
-    settled = hybrid.settle_completed_pair(
-        settle_payload(prepared), classifier=fail,
-    )
-    assert settled["status"] == "completed_with_failures"
-    assert settled["failures"]
+    with pytest.raises(
+        adapter.JevRelationshipError, match="jev_relationship_unavailable",
+    ):
+        hybrid.settle_completed_pair(
+            settle_payload(prepared), classifier=fail,
+        )
     entities, edges = entities_and_edges(hybrid)
     assert entities == []
     assert edges == []
-    assert hybrid.inspect("project-one", settled["thinkMemoryId"])["memory"]["content"]
+    assert hybrid.get_service().store.count_memories() == 0

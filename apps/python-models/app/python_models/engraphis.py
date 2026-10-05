@@ -59,24 +59,16 @@ CONTEXTUAL_NODE_MAX_REAL_OPTIONS = 254
 CONTEXTUAL_NODE_STATE_TOKEN_LIMIT = 26_000
 CONTEXTUAL_NODE_NONE_RELEVANT = "NONE_RELEVANT"
 CONTEXTUAL_NODE_VISIBLE_PER_SIDE = 2
-SEMANTIC_ADMISSION_MINIMUM = 0.60
-THINKGRAPH_CONTROL_OUTCOMES = (
-    "INVALID_NODE_PAIR", "NONE", "INSUFFICIENT_CONTEXT",
-)
+THINKGRAPH_CONTROL_OUTCOMES: tuple[str, ...] = ()
 THINKGRAPH_JEV_CHOICES = SHARED_JEV_RELATIONSHIPS + THINKGRAPH_CONTROL_OUTCOMES
 _THINK_INCIDENCE_KIND = "structured_extractor"
 _TRUSTED_STRUCTURED_GRAPH_KEYS = frozenset(
     ("entities", "relations", "structured_extraction")
 )
-# TypeSafe Choice accepts at most 255 options.  ThinkGraph must always retain
-# its three control outcomes, and a vocabulary that is not yet full may add one
-# novel proposal to the same Choice.  A 252-label durable ceiling therefore
-# uses all 255 slots at the ceiling, while 251 labels plus one proposal and the
-# three controls also uses exactly 255.  No live label or control is truncated.
+# Preserve the existing shared project-vocabulary ceiling used by both graph
+# writers. ThinkGraph no longer spends any of those labels on admission outcomes.
 JEV_CHOICE_OPTION_MAXIMUM = 255
-PROJECT_RELATIONSHIP_VOCABULARY_MAXIMUM = (
-    JEV_CHOICE_OPTION_MAXIMUM - len(THINKGRAPH_CONTROL_OUTCOMES)
-)
+PROJECT_RELATIONSHIP_VOCABULARY_MAXIMUM = 252
 PROJECT_RELATIONSHIP_VOCABULARY_VERSION = (
     "project.relationship-vocabulary.v1"
 )
@@ -87,16 +79,7 @@ _RELATIONSHIP_LABEL_PATTERN = re.compile(
     r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){0,2}$"
 )
 
-_THINKGRAPH_RELATIONSHIP_CRITERIA = {
-    **SHARED_JEV_RELATIONSHIP_CRITERIA,
-    "INVALID_NODE_PAIR": (
-        "In the meaning of the completed pair, at least one proposed endpoint does not denote "
-        "a durable reusable ThinkGraph concept; it is instead discourse/request framing, "
-        "sentence residue, generic filler, or another non-conceptual span."
-    ),
-    "NONE": "A and B are both present but no useful semantic relationship is supported.",
-    "INSUFFICIENT_CONTEXT": "The supplied completed pair does not support deciding how A relates to B.",
-}
+_THINKGRAPH_RELATIONSHIP_CRITERIA = dict(SHARED_JEV_RELATIONSHIP_CRITERIA)
 
 
 class JevRelationshipError(RuntimeError):
@@ -664,26 +647,24 @@ def _bounded_graph_snapshot(
             think_meta = _think_metadata(memory)
             if think_meta is None or row.get("source_kind") != _THINK_INCIDENCE_KIND:
                 continue
+            structured = (
+                memory.metadata.get("structured_extraction")
+                if isinstance(memory.metadata, dict) else {}
+            )
+            relations = (
+                structured.get("relations")
+                if isinstance(structured, dict) else []
+            )
             thinks.append({
                 "entity_id": canonical_by_member.get(
                     str(row["entity_id"]), str(row["entity_id"])
                 ),
                 "memory_id": memory.id,
                 "title": memory.title,
-                "content": memory.content[:1_200],
+                "content": memory.content,
+                "summary": think_meta["summary"],
                 "keywords": list(memory.keywords)[:16],
-                "kind": think_meta.get("kind"),
-                "properties": list(think_meta.get("properties") or [])[:16],
-                "concepts": list(think_meta.get("concepts") or [])[:16],
-                "propositions": list(think_meta.get("propositions") or [])[:16],
-                "questions": list(think_meta.get("questions") or [])[:16],
-                "predictions": list(think_meta.get("predictions") or [])[:16],
-                "assumptions": list(think_meta.get("assumptions") or [])[:16],
-                "preferences": list(think_meta.get("preferences") or [])[:16],
-                "corrections": list(think_meta.get("corrections") or [])[:16],
-                "relationship_observations": list(
-                    think_meta.get("relationship_observations") or []
-                )[:16],
+                "relations": deepcopy(relations) if isinstance(relations, list) else [],
                 "valid_from": memory.valid_from,
                 "valid_to": memory.valid_to,
                 "valid_to_recorded_at": memory.valid_to_recorded_at,
@@ -836,24 +817,23 @@ def _endpoint_thinks(
         think = _think_metadata(memory)
         if think is None:
             continue
+        structured = (
+            memory.metadata.get("structured_extraction")
+            if isinstance(memory.metadata, dict) else {}
+        )
+        relations = (
+            structured.get("relations")
+            if isinstance(structured, dict) else []
+        )
         result.append({
             "native_id": canonical_id,
             "canonical_name": str(entity.get("name") or ""),
             "memory_id": memory.id,
-            "kind": think.get("kind"),
-            "content": memory.content[:1_200],
+            "title": memory.title,
+            "content": memory.content,
+            "summary": think["summary"],
             "keywords": list(memory.keywords)[:16],
-            "properties": list(think.get("properties") or [])[:16],
-            "concepts": list(think.get("concepts") or [])[:16],
-            "propositions": list(think.get("propositions") or [])[:16],
-            "questions": list(think.get("questions") or [])[:16],
-            "predictions": list(think.get("predictions") or [])[:16],
-            "assumptions": list(think.get("assumptions") or [])[:16],
-            "preferences": list(think.get("preferences") or [])[:16],
-            "corrections": list(think.get("corrections") or [])[:16],
-            "relationship_observations": list(
-                think.get("relationship_observations") or []
-            )[:16],
+            "relations": deepcopy(relations) if isinstance(relations, list) else [],
             "ingested_at": memory.ingested_at,
             "valid_from": memory.valid_from,
             "valid_to": memory.valid_to,
@@ -1831,7 +1811,6 @@ def _recall_thinkgraph_attention_candidates_locked(
             "relativeScore": finite_score("relative_score"),
             "absoluteSupport": finite_score("absolute_support"),
             "memoryTitle": str(getattr(memory, "title", "") or "")[:256],
-            "thinkKind": str(think.get("kind") or "")[:64],
             "thinkSummary": str(think.get("summary") or "")[:500],
         })
     return list(candidates_by_id.values())[:limit]
@@ -2226,8 +2205,9 @@ def classify_relationship(
         "description": (
             f"One {event_kind}, one directed ThinkGraph entity pair, and a bounded "
             "one-hop topology snapshot from the existing graph, plus at most the newest "
-            "prior Think directly attached to each existing endpoint. Jointly judge "
-            "whether both endpoints are durable concepts and, only then, how A relates to B."
+            "prior Think directly attached to each existing endpoint. The graph-writing "
+            "model already supplied the endpoints, direction, and custom relationship. "
+            "Choose only the closest normalized relationship label for A -> B."
         ),
         "source_node_a": source,
         "target_node_b": target,
@@ -2266,10 +2246,6 @@ def classify_relationship(
             f"The proposed directed relationship is best represented by the canonical predicate {name}.",
         )
         for name in choices
-        if name not in THINKGRAPH_CONTROL_OUTCOMES
-    } | {
-        name: _THINKGRAPH_RELATIONSHIP_CRITERIA[name]
-        for name in THINKGRAPH_CONTROL_OUTCOMES
     }
     body = {
         "model": JEV_MODEL,
@@ -2278,26 +2254,14 @@ def classify_relationship(
             "relationship": {
                 "type": "choice",
                 "instructions": (
-                    "Make one joint endpoint-validity and directed-relationship decision for "
-                    "source_node_a -> target_node_b using the current event and bounded local "
-                    "graph context. latest_prior_thinks contains zero or one prior temporal "
-                    "Think per existing endpoint; use it only to understand current endpoint "
-                    "meaning, never to infer more pairs or rewrite history. Both endpoints must "
-                    "be durable, reusable ThinkGraph concepts "
-                    "worth preserving in continuing project cognition. If either endpoint is "
-                    "semantically discourse/request framing, sentence residue, generic filler, or "
-                    "otherwise does not denote a reusable concept in this context, choose "
-                    "INVALID_NODE_PAIR. Judge this from the pair's meaning and graph context, not "
-                    "capitalization, keywords, stopwords, or another surface string rule. Do not "
-                    "silently rename a rejected proposal into a different endpoint. Distinguish a "
-                    "literal textual relationship or mere co-occurrence from a durable reusable "
-                    "ThinkGraph relationship. If both endpoints are valid but no meaningful durable "
-                    "directed relationship is supported, choose NONE. If context is inadequate, "
-                    "choose INSUFFICIENT_CONTEXT. Otherwise choose the current project semantic relationship "
-                    "that best describes this directed A -> B relationship. The Think kind and "
-                    "subjective stance belong in the temporal Think, not in the edge label. "
+                    "Choose the current project normalized relationship label that most closely "
+                    "represents the model-generated custom relationship for source_node_a -> "
+                    "target_node_b. Endpoint existence, direction, and custom relationship meaning "
+                    "are already model-owned and structurally validated; do not admit, reject, "
+                    "rename, remove, or reinterpret them. latest_prior_thinks and bounded local "
+                    "graph context help maintain normalization continuity only. "
                     "A saved ThinkGraph Card free-form relationship proposal, when present, is "
-                    "semantic evidence rather than a preselected answer. Prefer an existing canonical "
+                    "the custom relationship to normalize, not a preselected answer. Prefer an existing canonical "
                     "predicate when it accurately expresses the meaning. An optional novel predicate "
                     "is only another Choice option; select it only when every existing predicate is "
                     "less accurate. Do not infer unrelated graph regions."
@@ -2395,30 +2359,6 @@ def _jev_provenance(
     }
 
 
-def _decision_is_accepted(decision: dict[str, Any]) -> bool:
-    # Preserve the existing noisy-intake admission gate independently from the
-    # visual edge weight. Only P(winner) is stored as relationship physics.
-    distribution = decision.get("distribution")
-    if isinstance(distribution, dict):
-        semantic_support = max(0.0, min(1.0,
-            1.0
-            - float(distribution.get("NONE") or 0.0)
-            - float(distribution.get("INSUFFICIENT_CONTEXT") or 0.0)
-            - float(distribution.get("INVALID_NODE_PAIR") or 0.0)
-        ))
-    else:
-        semantic_support = float(decision.get("relationship_strength") or 0.0)
-    allowed = decision.get("choice_options")
-    allowed = set(allowed) if isinstance(allowed, (list, tuple)) else set(
-        THINKGRAPH_JEV_CHOICES
-    )
-    return (
-        decision.get("winner") in allowed
-        and decision.get("winner") not in THINKGRAPH_CONTROL_OUTCOMES
-        and semantic_support >= SEMANTIC_ADMISSION_MINIMUM
-    )
-
-
 def _current_jev_pair_edges(
     store: Any,
     *,
@@ -2491,13 +2431,6 @@ def _apply_accepted_decision(
     natural_relationship: str = "",
     commit: bool = True,
 ) -> dict[str, Any]:
-    if not _decision_is_accepted(decision):
-        return {
-            "status": "no_edge",
-            "source": source_id,
-            "target": target_id,
-            **decision,
-        }
     with store._write_operation("thinkgraph_jev_edge", commit=commit):
         source_id = source_id or _upsert_canonical_endpoint(
             store,
@@ -2893,15 +2826,6 @@ def _persist_opportunity_decisions(
             })
             continue
         decision = classified["decision"]
-        if not _decision_is_accepted(decision):
-            relationships.append({
-                "opportunity_index": index,
-                "status": "no_edge",
-                "source_name": source["name"],
-                "target_name": target["name"],
-                **decision,
-            })
-            continue
         provenance = opportunity.get("provenance") or {}
         memory_ids = list(provenance.get("memory_ids") or [])
         if provenance.get("memory_id"):
@@ -3045,19 +2969,6 @@ def close_engine():
 atexit.register(close_engine)
 
 
-class ThinkGraphKind(str, Enum):
-    CLAIM = "CLAIM"
-    DECISION = "DECISION"
-    QUESTION = "QUESTION"
-    PREDICTION = "PREDICTION"
-    CONSTRAINT = "CONSTRAINT"
-    CORRECTION = "CORRECTION"
-    PROPOSAL = "PROPOSAL"
-    PREFERENCE = "PREFERENCE"
-    PROCEDURE = "PROCEDURE"
-    OBSERVATION = "OBSERVATION"
-
-
 class _StructuredModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -3066,25 +2977,8 @@ class _StructuredModel(BaseModel):
     )
 
 
-class ThinkGraphThinkProperty(_StructuredModel):
-    name: str = Field(min_length=1, max_length=128)
-    value: str = Field(min_length=1, max_length=1_000)
-
-
 class ThinkGraphThink(_StructuredModel):
-    kind: ThinkGraphKind = ThinkGraphKind.OBSERVATION
-    summary: str = Field(min_length=1, max_length=4_000)
-    propositions: list[str] = Field(default_factory=list, max_length=24)
-    questions: list[str] = Field(default_factory=list, max_length=16)
-    predictions: list[str] = Field(default_factory=list, max_length=16)
-    assumptions: list[str] = Field(default_factory=list, max_length=16)
-    preferences: list[str] = Field(default_factory=list, max_length=16)
-    corrections: list[str] = Field(default_factory=list, max_length=16)
-    uncertainty: list[str] = Field(default_factory=list, max_length=16)
-    properties: list[ThinkGraphThinkProperty] = Field(default_factory=list, max_length=24)
-    concepts: list[str] = Field(default_factory=list, max_length=24)
-    relationship_observations: list[str] = Field(default_factory=list, max_length=24)
-    importance: float = Field(default=0.0, ge=0.0, le=1.0)
+    summary: str = Field(min_length=1, max_length=100_000)
 
 
 class ThinkGraphStructuredRelation(_StructuredModel):
@@ -3093,11 +2987,10 @@ class ThinkGraphStructuredRelation(_StructuredModel):
         min_length=1,
         max_length=512,
         description=(
-            "A concise directional relationship predicate grounded in this fact. Prefer an "
-            "exact label from current_project_relationship_vocabulary when it accurately "
-            "fits. If none fits, propose one new UPPER_SNAKE_CASE label: prefer one word, "
-            "use two only when needed, and never exceed three words. Do not invent a synonym "
-            "for an existing label, write a sentence, or use generic filler."
+            "The model-authored directed relationship meaning grounded in this exchange. "
+            "Use an existing normalized label only when it preserves the full meaning; "
+            "otherwise write a concise, specific relationship phrase for Jev to normalize. "
+            "Do not use generic filler or omit material relationship meaning."
         ),
     )
     target: str = Field(min_length=1, max_length=256)
@@ -3107,13 +3000,30 @@ class ThinkGraphStructuredFact(_StructuredModel):
     """Native llm_structured fact fields plus its supported custom-schema depth."""
 
     content: str = Field(min_length=1, max_length=100_000)
-    title: str = Field(default="", max_length=1_000)
+    title: str = Field(min_length=1, max_length=256)
     mtype: Literal["episodic"] = "episodic"
-    importance: float = Field(default=0.0, ge=0.0, le=1.0)
     keywords: list[str] = Field(default_factory=list, max_length=16)
-    entities: list[str] = Field(default_factory=list, max_length=20)
-    relations: list[ThinkGraphStructuredRelation] = Field(default_factory=list, max_length=10)
+    entities: list[str] = Field(min_length=2, max_length=20)
+    relations: list[ThinkGraphStructuredRelation] = Field(min_length=1, max_length=10)
     think: ThinkGraphThink
+
+    @model_validator(mode="after")
+    def relationship_led_subjects(self) -> "ThinkGraphStructuredFact":
+        if self.content != self.think.summary:
+            raise ValueError("thinkgraph_card_content_summary_mismatch")
+        entity_keys = [value.casefold() for value in self.entities]
+        if len(entity_keys) != len(set(entity_keys)):
+            raise ValueError("thinkgraph_card_entity_duplicate")
+        endpoint_keys: list[str] = []
+        for relation in self.relations:
+            source_key = relation.source.casefold()
+            target_key = relation.target.casefold()
+            if source_key == target_key:
+                raise ValueError("thinkgraph_card_pair_self_reference")
+            endpoint_keys.extend((source_key, target_key))
+        if set(entity_keys) != set(endpoint_keys):
+            raise ValueError("thinkgraph_card_entities_must_be_relationship_endpoints")
+        return self
 
 
 class _ProjectedPairEndpoint(_StructuredModel):
@@ -3131,13 +3041,13 @@ class _ProjectedPairing(_StructuredModel):
     source: _ProjectedPairEndpoint
     target: _ProjectedPairEndpoint
     direction: Literal["source_to_target"]
-    supporting_proposition: str = Field(min_length=1, max_length=4_000)
+    supporting_proposition: str = Field(min_length=1, max_length=100_000)
     relationship_proposal: str = Field(min_length=1, max_length=512)
 
 
 class _ProjectedStructuredOutput(_StructuredModel):
-    pair_summary: str = Field(default="", max_length=4_000)
-    title: str = Field(default="", max_length=1_000)
+    pair_summary: str = Field(min_length=1, max_length=100_000)
+    title: str = Field(min_length=1, max_length=256)
     keywords: list[str] = Field(default_factory=list, max_length=16)
     think: ThinkGraphThink
     entities: list[str] = Field(default_factory=list, max_length=20)
@@ -3215,27 +3125,32 @@ def _llm_structured_contract(
         "\nTHINKGRAPH TEMPORAL THINK:\n"
         "Represent what this completed User/Main exchange thought. Return exactly one "
         "object in the facts array with mtype='episodic' and one first-class `think` "
-        "payload. Put the complete reusable combined meaning in `think.summary`. Do not "
-        "emit a thought category, importance score, analytical taxonomy, or property packet; "
-        "the application owns compatibility defaults for optional fields. Preserve material "
-        "questions, decisions, preferences, corrections, assumptions, and uncertainty naturally "
-        "inside the summary when they change its meaning. Extract canonical entities/concepts and "
+        "payload. Write one meaningful plain-language `title` for the reusable idea. Put the "
+        "same complete combined meaning in `content` and `think.summary`. The `think` object "
+        "contains only `summary`; do not emit a category, importance, confidence, probability, "
+        "analytical taxonomy, property packet, or report sections. Preserve material questions, "
+        "decisions, preferences, corrections, assumptions, and uncertainty inside the summary "
+        "when they change its meaning. Extract canonical entities/concepts and "
         "natural directed relationships that actually occur in this pair. Do not browse, "
         "research, continue the thesis, read historical Think bodies, or split the pair "
         "into multiple memories.\n"
         "RELATIONSHIP OBJECT CONTRACT:\n"
         "Every item in `relations` must contain exactly one nonempty `source`, one nonempty "
         "`relation`, and one nonempty `target`. `source` and `target` are endpoint names; "
-        "`relation` is the predicate. Never duplicate a JSON key, substitute `source` for "
+        "`relation` is the exact model-authored relationship meaning. Never duplicate a JSON key, substitute `source` for "
         "`relation`, or omit one of the three fields. A valid example is "
-        "{\"source\":\"Launch cadence\",\"relation\":\"SUPPORTS\","
-        "\"target\":\"Execution quality\"}.\n"
+        "{\"source\":\"Rocket Lab\",\"relation\":\"operates Electron as its current orbital launch vehicle\","
+        "\"target\":\"Electron\"}. Every value in `entities` must occur as a "
+        "source or target in `relations`, and every relationship endpoint must occur in "
+        "`entities`. Loose entity metadata is invalid.\n"
         "NAMED ENTITY BOUNDARY:\n"
         "Keep each central organization, person, product, or asset as a standalone proper-name "
         "entity. Never concatenate a named entity with its metric, action, attribute, thesis, "
         "or relationship to form a node name. Represent `Rocket Lab` and `Launch cadence` as "
         "separate concepts rather than `Rocket Lab launch cadence`; express their meaning with "
-        "a directed relationship. Apply the same rule to explicitly discussed companies such "
+        "a directed relationship. The central named subject must be an endpoint of at least one "
+        "relationship; in a Rocket Lab exchange, Rocket Lab cannot remain loose metadata. Apply "
+        "the same rule to explicitly discussed companies such "
         "as `Redwire`, `RTX`, and `Parsons`. If a named company is only an unverified candidate "
         "in the pair, retain it as a standalone endpoint linked with ASSOCIATED_WITH to the "
         "nearest concrete reusable subject in the proposal, such as `Recurring revenue` or "
@@ -3303,7 +3218,6 @@ def _project_structured_facts(facts: list[Any]) -> _ProjectedStructuredOutput:
         raise ThinkGraphIntakeError(
             "thinkgraph_card_think_payload_invalid"
         ) from error
-    relation_observations = list(think.relationship_observations)
     pairings: list[_ProjectedPairing] = []
     seen_pairs: set[tuple[str, str, str]] = set()
     for raw_source, raw_label, raw_target in native_graph.relations:
@@ -3311,7 +3225,6 @@ def _project_structured_facts(facts: list[Any]) -> _ProjectedStructuredOutput:
         label = _clean_concept(raw_label)
         target = _clean_concept(raw_target)
         if source and label and target:
-            relation_observations.append(f"{source} {label} {target}")
             identity = (source.casefold(), target.casefold(), fact.content.casefold())
             if identity not in seen_pairs:
                 seen_pairs.add(identity)
@@ -3319,17 +3232,12 @@ def _project_structured_facts(facts: list[Any]) -> _ProjectedStructuredOutput:
                     source=_ProjectedPairEndpoint(canonical_name=source),
                     target=_ProjectedPairEndpoint(canonical_name=target),
                     direction="source_to_target",
-                    supporting_proposition=str(fact.content)[:4_000],
+                    supporting_proposition=think.summary,
                     relationship_proposal=label,
                 ))
-    think = think.model_copy(update={
-        "relationship_observations": list(dict.fromkeys(
-            relation_observations
-        ))[:24],
-    })
     return _ProjectedStructuredOutput(
-        pair_summary=str(fact.content)[:4_000],
-        title=str(fact.title or "")[:1_000],
+        pair_summary=think.summary,
+        title=str(fact.title),
         keywords=list(fact.keywords)[:16],
         think=think,
         entities=entities,
@@ -3386,11 +3294,6 @@ def _save_think_memory(
     pair_reference: str,
 ) -> dict[str, Any]:
     logical = output.think.model_dump(mode="json")
-    kind_value = (
-        output.think.kind.value
-        if isinstance(output.think.kind, Enum)
-        else str(output.think.kind)
-    )
     relations = [item.model_dump(mode="json") for item in output.relations]
     source_pair = _source_pair(completed)
     metadata = {
@@ -3447,8 +3350,8 @@ def _save_think_memory(
             workspace_id=workspace_id,
             mtype=MemoryType.EPISODIC,
             scope=Scope.WORKSPACE,
-            title=output.title or f"{kind_value} Think",
-            importance=output.think.importance,
+            title=output.title,
+            importance=0.0,
             keywords=list(output.keywords),
             metadata=metadata,
             resolve_conflicts=False,
@@ -3459,26 +3362,6 @@ def _save_think_memory(
         )
     finally:
         _intake_local.context = previous
-
-
-def _invalidate_current_jev_pair(
-    store: Any,
-    *,
-    workspace_id: str,
-    source_id: str,
-    target_id: str,
-) -> list[str]:
-    closed: list[str] = []
-    with store._write_operation("thinkgraph_jev_edge_close", commit=True):
-        for edge in _current_jev_pair_edges(
-            store,
-            workspace_id=workspace_id,
-            source_id=source_id,
-            target_id=target_id,
-        ):
-            store.invalidate_edge(edge.id, commit=False)
-            closed.append(edge.id)
-    return closed
 
 
 def _top_turn_heat(heat: dict[str, float]) -> list[dict[str, Any]]:
@@ -3732,6 +3615,15 @@ def settle_completed_pair(
             prior_think_snapshot=prior_think_snapshot,
             relationship_vocabulary=relationship_vocabulary_before,
         )
+        normalization_failures = [
+            classified for classified in decisions
+            if classified.get("status") != "decided"
+        ]
+        if normalization_failures:
+            raise JevRelationshipError(str(
+                normalization_failures[0].get("error")
+                or "jev_relationship_unavailable"
+            ))
 
         try:
             saved_think = _save_think_memory(
@@ -3771,10 +3663,9 @@ def settle_completed_pair(
         for native_id, value in card_persisted["turnHeat"].items():
             heat[native_id] = heat.get(native_id, 0.0) + float(value)
 
-        # Direct incidence is extraction evidence, not edge admission. Link the
-        # current Think to every explicitly extracted entity that already exists
-        # or was just born through an accepted Jev edge; do not create rejected
-        # standalone nodes merely because the Card named them.
+        # Direct incidence is extraction evidence. Link the current Think to every
+        # structurally declared endpoint after the custom relationship has received
+        # its Jev-normalized edge label.
         with store._write_operation("thinkgraph_structured_incidence", commit=True):
             for entity_name in output.entities:
                 row = _existing_entity_for_name(
@@ -3803,47 +3694,6 @@ def settle_completed_pair(
                 )
                 changed_node_ids.append(native_id)
                 heat[native_id] = heat.get(native_id, 0.0) + 1.0
-
-        # Thinks never trigger broad edge maintenance. Only an explicit structured
-        # A -> B proposal can update, supersede, or close that exact live pair.
-        relation_by_index = {
-            int(item["opportunity_index"]): item
-            for item in card_persisted["relationships"]
-        }
-        for index, classified in enumerate(decisions):
-            opportunity = opportunities[index]
-            source_row = _existing_entity_for_name(
-                store,
-                workspace_id=workspace_id,
-                name=opportunity["source"]["name"],
-            )
-            target_row = _existing_entity_for_name(
-                store,
-                workspace_id=workspace_id,
-                name=opportunity["target"]["name"],
-            )
-            if source_row is None or target_row is None:
-                continue
-            source_id = str(source_row["id"])
-            target_id = str(target_row["id"])
-            if classified["status"] != "decided":
-                continue
-            decision = classified["decision"]
-            if _decision_is_accepted(decision):
-                continue
-            closed = _invalidate_current_jev_pair(
-                store,
-                workspace_id=workspace_id,
-                source_id=source_id,
-                target_id=target_id,
-            )
-            if closed:
-                changed_edge_ids.extend(closed)
-                changed_node_ids.extend((source_id, target_id))
-                current = relation_by_index.get(index)
-                if current is not None:
-                    current["status"] = "closed"
-                    current["closed_edge_ids"] = closed
 
         revision = _graph_revision(store, workspace_id)
         relationship_vocabulary_after = _project_relationship_vocabulary(
@@ -4206,21 +4056,15 @@ def _bounded_entity_projection(
         thinks = think_by_entity.get(entity_id, [])
         evidence = []
         for think in thinks:
-            think_metadata = {
-                key: deepcopy(think.get(key))
-                for key in (
-                    "kind", "properties", "concepts", "propositions", "questions",
-                    "predictions", "assumptions", "preferences", "corrections",
-                    "relationship_observations",
-                )
-                if think.get(key) not in (None, [], {})
-            }
             evidence.append({
                 "id": think["memory_id"],
-                "title": title,
+                "title": think["title"],
                 "summary": think["content"],
                 "content": think["content"],
-                "metadata": {"structured_extraction": {"think": think_metadata}},
+                "metadata": {"structured_extraction": {
+                    "think": {"summary": think["summary"]},
+                    "relations": deepcopy(think["relations"]),
+                }},
                 "validFrom": think.get("valid_from"),
                 "validTo": think.get("valid_to"),
                 "ingestedAt": think.get("ingested_at"),

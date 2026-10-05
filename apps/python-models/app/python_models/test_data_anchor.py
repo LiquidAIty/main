@@ -787,7 +787,6 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
                     "memory_id": "mem_think",
                     "excerpt": "Self-contained structured Think.",
                     "metadata": {"structured_extraction": {"think": {
-                        "kind": "DECISION",
                         "summary": "Self-contained structured Think.",
                     }}},
                 },
@@ -827,7 +826,6 @@ def test_jev_attention_hydrates_rocket_lab_twin_anchors_with_explicit_record_bou
         "memory_id": f"mem_rocket_{index}",
         "excerpt": f"Rocket Lab Think {index}",
         "metadata": {"structured_extraction": {"think": {
-            "kind": "DECISION",
             "summary": f"Rocket Lab Think {index}",
             "native_payload": "x" * 7_000,
         }}},

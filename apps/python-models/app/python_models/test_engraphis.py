@@ -182,7 +182,7 @@ def test_attention_fast_recall_maps_direct_think_incidence_to_canonical_entity()
             metadata={
                 "thinkgraph_origin": {"authority": "thinkgraph"},
                 "structured_extraction": {
-                    "think": {"kind": "DECISION", "summary": f"{title} summary"},
+                    "think": {"summary": f"{title} summary"},
                 },
             },
         )
@@ -279,7 +279,6 @@ def test_attention_fast_recall_maps_direct_think_incidence_to_canonical_entity()
                 "relativeScore": 0.9,
                 "absoluteSupport": 0.8,
                 "memoryTitle": "First",
-                "thinkKind": "DECISION",
                 "thinkSummary": "First summary",
             },
             {
@@ -288,7 +287,6 @@ def test_attention_fast_recall_maps_direct_think_incidence_to_canonical_entity()
                 "relativeScore": 0.7,
                 "absoluteSupport": 0.6,
                 "memoryTitle": "Second",
-                "thinkKind": "DECISION",
                 "thinkSummary": "Second summary",
             },
         ],
@@ -730,9 +728,10 @@ def test_native_id_projection_uses_only_bounded_direct_neighborhood(
         return {
             "native_id": canonical_id,
             "memory_id": f"memory-{canonical_id}",
-            "kind": "CONCEPT",
+            "title": f"Stored Think {canonical_id}",
             "content": f"Stored Think for {canonical_id}",
-            "concepts": [canonical_id],
+            "summary": f"Stored Think for {canonical_id}",
+            "relations": [],
             "ingested_at": 1.0,
             "valid_from": 1.0,
             "valid_to": None,

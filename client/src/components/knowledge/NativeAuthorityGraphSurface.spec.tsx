@@ -625,10 +625,7 @@ describe('native authority graph surfaces', () => {
             id: 'memory-1',
             ingestedAt: '2026-10-03T12:00:00Z',
             metadata: { structured_extraction: { think: {
-              kind: 'OBSERVATION',
               summary: 'Direct Think summary.',
-              propositions: ['One proposition.'],
-              relationship_observations: [],
             } } },
           }],
         },
@@ -696,7 +693,7 @@ describe('native authority graph surfaces', () => {
       id,
       ingestedAt: '2026-10-03T12:00:00Z',
       metadata: { structured_extraction: { think: {
-        kind: 'DECISION', summary, propositions: [], relationship_observations: [],
+        summary,
       } } },
     });
     const think = {
@@ -1505,7 +1502,7 @@ describe('native authority graph surfaces', () => {
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: {
       evidence: [{ id: 'memory-one', title: 'Existing saved Think', ingestedAt: 100,
         metadata: { structured_extraction: { think: {
-        kind: 'OBSERVATION', summary: 'Saved Think.', propositions: [], relationship_observations: [],
+        summary: 'Saved Think.',
       }, relations: [] } } }],
     } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
@@ -1532,17 +1529,7 @@ describe('native authority graph surfaces', () => {
       properties: { evidence: [
         { id: 'memory-new', title: 'Neutron as discounted option value', summary: paragraph, ingestedAt: 300,
           metadata: { keywords: ['latest', 'decision'], structured_extraction: { think: {
-            kind: 'DECISION', summary: paragraph, importance: 0.91,
-            concepts: ['Current thesis'],
-            properties: [{ name: 'time_horizon', value: 'one year' }],
-            propositions: ['The current thesis depends on execution.'],
-            questions: ['Will the launch remain on schedule?'],
-            predictions: ['A successful launch would improve the thesis.'],
-            assumptions: ['The published schedule remains current.'],
-            preferences: ['Keep the theses separate.'],
-            corrections: ['Do not collapse this into one ranking.'],
-            uncertainty: ['Launch timing remains uncertain.'],
-            relationship_observations: ['Rocket Lab DEPENDS_ON Neutron'],
+            summary: paragraph,
           }, relations: [
             { source: 'Electron', relation: 'SUPPORTS', target: 'Execution quality' },
             { source: 'Neutron', relation: 'DEPENDS_ON', target: 'Launch cadence' },
@@ -1550,13 +1537,11 @@ describe('native authority graph surfaces', () => {
           ] } } },
         { id: 'memory-second', title: 'Second retained Think', summary: 'Second recent saved Think.', ingestedAt: 200,
           metadata: { structured_extraction: { think: {
-            kind: 'QUESTION', summary: 'Second recent saved Think.', propositions: [],
-            relationship_observations: [],
+            summary: 'Second recent saved Think.',
           }, relations: [] } } },
         { id: 'memory-old', title: 'Earlier retained Think', summary: 'Earlier saved Think.', ingestedAt: 100,
           metadata: { structured_extraction: { think: {
-            kind: 'OBSERVATION', summary: 'Earlier saved Think.', propositions: [],
-            relationship_observations: [],
+            summary: 'Earlier saved Think.',
           }, relations: [] } } },
       ] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
@@ -1573,12 +1558,9 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText('Electron SUPPORTS Execution quality')).toBeTruthy();
     expect(screen.getByText('Neutron DEPENDS_ON Launch cadence')).toBeTruthy();
     expect(screen.getByText('Dilution AFFECTS Neutron')).toBeTruthy();
-    for (const rejected of [
-      'DECISION', 'Importance', 'Propositions', 'Questions', 'Assumptions',
-      'Preferences', 'Corrections', 'Uncertainty', 'Concepts', 'Properties',
-      'The current thesis depends on execution.', 'Will the launch remain on schedule?',
-      'Rocket Lab DEPENDS_ON Neutron',
-    ]) expect(screen.queryByText(rejected)).toBeNull();
+    for (const rejected of ['Importance', 'Confidence', 'Probability', 'Technical details']) {
+      expect(screen.queryByText(rejected)).toBeNull();
+    }
     const earlier = screen.getByText('Earlier Thinks (1)').parentElement as HTMLDetailsElement;
     expect(earlier.open).toBe(false);
     expect(earlier.textContent).toContain('Earlier saved Think.');
@@ -1625,8 +1607,8 @@ describe('native authority graph surfaces', () => {
     authority => {
     const distribution = {
       QUALIFIES: 0.76,
-      NONE: 0.14,
-      INSUFFICIENT_CONTEXT: 0.10,
+      SUPPORTS: 0.14,
+      ASSOCIATED_WITH: 0.10,
     };
     const projection = {
       ...empty(authority),
@@ -1667,8 +1649,8 @@ describe('native authority graph surfaces', () => {
       probabilityDetails.querySelectorAll('dt'),
     ).find(item => item.textContent === choice)?.nextElementSibling?.textContent;
     expect(probability('QUALIFIES')).toBe('76.0%');
-    expect(probability('NONE')).toBe('14.0%');
-    expect(probability('INSUFFICIENT_CONTEXT')).toBe('10.0%');
+    expect(probability('SUPPORTS')).toBe('14.0%');
+    expect(probability('ASSOCIATED_WITH')).toBe('10.0%');
     const winner = Array.from(probabilityDetails.querySelectorAll('div'))
       .find(item => item.querySelector('dt')?.textContent === 'QUALIFIES')!;
     expect(winner.getAttribute('data-winner')).toBe('true');
@@ -1817,8 +1799,7 @@ describe('native authority graph surfaces', () => {
         runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
         properties: { evidence: [{
           id: 'memory-one', ingestedAt: 100, metadata: { structured_extraction: { think: {
-            kind: 'OBSERVATION', summary: 'The complete Think summary.',
-            propositions: [], relationship_observations: [],
+            summary: 'The complete Think summary.',
           } } },
         }] },
         provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] }

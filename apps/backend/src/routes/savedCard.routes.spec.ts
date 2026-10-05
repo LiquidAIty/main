@@ -5034,20 +5034,21 @@ describe('saved Card routes', () => {
           correlationId: expect.stringMatching(/^req_/),
         });
         expect(cardBeginBody.assignment).toContain('current_project_relationship_vocabulary');
-        expect(cardBeginBody.assignment).toContain('Prefer one exact existing');
-        expect(cardBeginBody.assignment).toContain('never exceed three words');
+        expect(cardBeginBody.assignment).toContain('shared normalization language');
+        expect(cardBeginBody.assignment).toContain('not a restrictive ontology');
         expect(cardBeginBody.assignment).toContain(
-          'Jev alone classifies any durable graph edge',
+          'Jev alone normalizes any durable graph edge',
         );
         expect(cardBeginBody.assignment).toContain(
           'Every relations[] item must contain exactly the three nonempty string fields',
         );
         expect(cardBeginBody.assignment).toContain(
-          '{"source":"Launch cadence","relation":"SUPPORTS","target":"Execution quality"}',
+          '{"source":"Rocket Lab","relation":"operates Electron as its current orbital launch vehicle","target":"Electron"}',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Do not emit a thought category',
+          'Do not emit a category',
         );
+        expect(cardBeginBody.assignment).toContain('Loose entity metadata is invalid');
         expect(cardBeginBody.assignment).toContain(
           'Create the current temporal ThinkGraph Think from this completed User/Main exchange',
         );
