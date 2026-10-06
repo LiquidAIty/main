@@ -820,8 +820,7 @@ describe('AgentManager active builder config', () => {
       maxTokens: 800,
       maxTurns: 12,
       promptTemplate: 'test prompt',
-      toolsText: 'web',
-      nativeToolsText: 'memory\nterminal',
+      toolsText: 'web\nhermes:tool:memory\nhermes:tool:terminal',
       skillsText: 'research\nplanning',
       toolsetsText: 'browser',
       mcpConnectionIdsText: 'github\nproject-research',
@@ -837,8 +836,7 @@ describe('AgentManager active builder config', () => {
       max_tokens: 800,
       max_turns: 12,
       prompt_template: 'test prompt',
-      tools: ['web'],
-      native_tools: ['memory', 'terminal'],
+      tools: ['web', 'hermes:tool:memory', 'hermes:tool:terminal'],
       skills: ['research', 'planning'],
       toolsets: ['browser'],
       mcp_connection_ids: ['github', 'project-research'],
@@ -859,7 +857,6 @@ describe('AgentManager active builder config', () => {
       maxTurns: '',
       promptTemplate: '',
       toolsText: '',
-      nativeToolsText: '',
       skillsText: '',
       toolsetsText: '',
       mcpConnectionIdsText: '',
@@ -876,16 +873,14 @@ describe('AgentManager active builder config', () => {
       maxTokens: '',
       maxTurns: '',
       promptTemplate: '',
-      toolsText: 'card.update_configuration',
-      nativeToolsText: 'memory',
+      toolsText: 'card.update_configuration\nhermes:tool:memory',
       skillsText: '',
       toolsetsText: 'file\nterminal',
       mcpConnectionIdsText: '',
     });
     expect(delegate.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'delegate' });
     expect(delegate.access_mode).toBe('chatgpt-account');
-    expect(delegate.tools).toEqual(['card.update_configuration']);
-    expect(delegate.native_tools).toEqual(['memory']);
+    expect(delegate.tools).toEqual(['card.update_configuration', 'hermes:tool:memory']);
     expect(delegate.toolsets).toEqual(['file', 'terminal']);
   });
 

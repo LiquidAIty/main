@@ -10,7 +10,6 @@ import {
   applyJevGraphPhysics,
   JEV_GRAPH_PHYSICS_PROFILE_LABELS,
   JEV_GRAPH_PHYSICS_PROFILES,
-  mapJevAttentionProminence,
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
 import {
@@ -67,8 +66,6 @@ export type GraphProjectionNode = {
   system_anchor_id?: string;
   community_id?: string;
   scene_rank?: number;
-  turn_heat_active?: boolean;
-  turn_heat?: number;
   cardId?: string;
   correlationId?: string;
   codeGraphRef?: string;
@@ -85,6 +82,8 @@ export type GraphProjectionNode = {
   material_think_active?: boolean;
   material_know_active?: boolean;
   material_focus_active?: boolean;
+  turn_heat_active?: boolean;
+  turn_heat?: number;
 };
 
 export type CanonicalSubjectHeader = {
@@ -167,25 +166,6 @@ export type JoinedGraphPresentation = {
   nodeVariants: Map<string, JoinedGraphNodeVariant[]>;
   edgeVariants: Map<string, JoinedGraphEdgeVariant>;
   visualNodeIdByNativeMember: Map<string, string>;
-};
-
-export type JevAttentionVisualSubjectView = {
-  choiceId: string;
-  authority: 'ThinkGraph' | 'KnowGraph';
-  nativeId: string;
-  title: string;
-  probability: number;
-  hydrated: boolean;
-  resolution: 'resolving' | 'resolved' | 'unavailable';
-};
-
-export type JevAttentionVisualDescriptorView = {
-  decisionId: string;
-  runId: string;
-  phase: 'attention_space' | 'local_relational';
-  active: boolean;
-  distribution: Record<string, number>;
-  selectedSubjects: JevAttentionVisualSubjectView[];
 };
 
 export type JevFocusIncidentRelationshipView = {
@@ -404,54 +384,19 @@ function canonicalSubjectHeader(
   return header;
 }
 
-function isAttentionActive(node: GraphProjectionNode): boolean {
-  const renderNode = node as GraphProjectionNode & {
-    turn_heat_active?: boolean;
-    turn_heat?: number;
-  };
-  return renderNode.turn_heat_active === true
-    || node.properties?.turnHeatActive === true
-    || node.properties?.attentionActive === true;
-}
-
-function attentionHeat(node: GraphProjectionNode): number {
-  const renderNode = node as GraphProjectionNode & { turn_heat?: number };
-  for (const value of [renderNode.turn_heat, node.properties?.turnHeat]) {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric) && numeric > 0) return numeric;
-  }
-  return isAttentionActive(node) ? 1 : 0;
-}
-
 function presentationNode(
   visualId: string,
   variants: JoinedGraphNodeVariant[],
 ): GraphProjectionNode {
   const primary = variants.find(variant => variant.authority === 'thinkgraph') || variants[0];
-  const active = variants.filter(variant => isAttentionActive(variant.node));
   const sourceKind = visualSourceKind(variants);
-  const thinkActive = active.some(variant => variant.authority === 'thinkgraph');
-  const knowActive = active.some(variant => variant.authority === 'knowgraph');
-  const activeProperties = active[0]?.node.properties || {};
-  const heat = active.reduce(
-    (maximum, variant) => Math.max(maximum, attentionHeat(variant.node)),
-    0,
-  );
   return {
     ...primary.node,
     id: visualId,
     canonicalId: undefined,
     authority: 'joined',
-    ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
-    properties: {
-      ...(primary.node.properties || {}),
-      attentionActive: active.length > 0,
-      ...(typeof activeProperties.attentionActorColor === 'string'
-        ? { attentionActorColor: activeProperties.attentionActorColor }
-        : {}),
-    },
-    turn_heat_active: active.length > 0,
-    turn_heat: heat,
+    ...solarpunkMaterialFields(sourceKind, false, false),
+    properties: { ...(primary.node.properties || {}) },
   } as GraphProjectionNode;
 }
 
@@ -1038,130 +983,6 @@ function composeFocusReleasePresentation(
   };
 }
 
-/**
- * Derives one bounded turn-local renderer projection from the joined native
- * view. It never mutates native graph records, invents relationship edges, or
- * persists this turn's JevAttention probability.
- */
-export function composeJevAttentionPresentation(
-  presentation: JoinedGraphPresentation,
-  visual: JevAttentionVisualDescriptorView | null | undefined,
-): GraphProjectionV1 {
-  if (!visual?.selectedSubjects.length) return presentation.projection;
-
-  const subjectsByVisualId = new Map<string, JevAttentionVisualSubjectView[]>();
-  for (const subject of visual.selectedSubjects) {
-    const authority: GraphAuthority = subject.authority === 'ThinkGraph'
-      ? 'thinkgraph' : 'knowgraph';
-    const visualId = presentation.visualNodeIdByNativeMember.get(
-      nativeMemberKey(authority, subject.nativeId),
-    );
-    if (!visualId) continue;
-    const subjects = subjectsByVisualId.get(visualId) || [];
-    subjects.push(subject);
-    subjectsByVisualId.set(visualId, subjects);
-  }
-  if (!subjectsByVisualId.size) {
-    return {
-      ...presentation.projection,
-      schemaVersion: `${presentation.projection.schemaVersion}.turn-local`,
-      counts: { nodes: 0, edges: 0 },
-      nodes: [],
-      edges: [],
-    };
-  }
-
-  const selectedVisualIds = new Set(subjectsByVisualId.keys());
-  const localNodeIds = new Set(selectedVisualIds);
-  for (const edge of presentation.projection.edges) {
-    if (localNodeIds.size >= MAX_TURN_LOCAL_VISUAL_NODES) break;
-    if (selectedVisualIds.has(edge.source)) localNodeIds.add(edge.target);
-    if (localNodeIds.size >= MAX_TURN_LOCAL_VISUAL_NODES) break;
-    if (selectedVisualIds.has(edge.target)) localNodeIds.add(edge.source);
-  }
-  const localEdges = presentation.projection.edges.filter(
-    edge => localNodeIds.has(edge.source) && localNodeIds.has(edge.target),
-  );
-  const rankedSubjects = [...subjectsByVisualId.entries()].sort((left, right) => {
-    const leftProbability = Math.max(...left[1].map(subject => subject.probability));
-    const rightProbability = Math.max(...right[1].map(subject => subject.probability));
-    return rightProbability - leftProbability || left[0].localeCompare(right[0]);
-  });
-  const centerVisualId = rankedSubjects[0]?.[0] || null;
-  const rankByVisualId = new Map(rankedSubjects.map(([visualId], index) => [visualId, index]));
-
-  const nodes = presentation.projection.nodes
-    .filter(node => localNodeIds.has(node.id))
-    .map((node) => {
-      const variants = presentation.nodeVariants.get(node.id) || [];
-      const sourceKind = visualSourceKind(variants);
-      const subjects = subjectsByVisualId.get(node.id) || [];
-      const selected = subjects.length > 0;
-      const probability = selected
-        ? Math.max(...subjects.map(subject => subject.probability)) : 0;
-      const activated = subjects.some(subject => subject.hydrated
-        && subject.resolution === 'resolved');
-      const hydrated = subjects.some(subject => subject.hydrated);
-      const thinkActive = selected
-        ? subjects.some(subject => subject.authority === 'ThinkGraph'
-          && subject.hydrated && subject.resolution === 'resolved')
-        : variants.some(variant => variant.authority === 'thinkgraph'
-          && isAttentionActive(variant.node));
-      const knowActive = selected
-        ? subjects.some(subject => subject.authority === 'KnowGraph'
-          && subject.hydrated && subject.resolution === 'resolved')
-        : variants.some(variant => variant.authority === 'knowgraph'
-          && isAttentionActive(variant.node));
-      const sourceFields = {
-        ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
-        community_id: `jev-source-${sourceKind}`,
-        properties: {
-          ...(node.properties || {}),
-          jevAttentionSource: sourceKind,
-          ...(selected ? {
-            jevAttentionProbability: probability,
-            jevAttentionSelected: true,
-            jevAttentionHydrated: hydrated,
-            jevAttentionNativeMembers: subjects.map(subject => ({
-              authority: subject.authority,
-              nativeId: subject.nativeId,
-              hydrated: subject.hydrated,
-              resolution: subject.resolution,
-            })),
-          } : {}),
-        },
-      };
-      if (visual.phase !== 'attention_space') return { ...node, ...sourceFields };
-      const prominence = mapJevAttentionProminence(probability);
-      return {
-        ...node,
-        ...sourceFields,
-        anchor_role: node.id === centerVisualId
-          ? 'global' as const
-          : selected ? 'community' as const : null,
-        system_anchor_id: centerVisualId || undefined,
-        scene_rank: selected ? 100 - (rankByVisualId.get(node.id) || 0) : 0,
-        gravity_mass: selected ? prominence.gravityMass : 1,
-        visual_radius: selected ? prominence.visualRadius : 4.2,
-        turn_heat_active: activated,
-        turn_heat: activated ? Math.max(probability, Number(node.turn_heat) || 0) : 0,
-        properties: {
-          ...sourceFields.properties,
-          attentionActive: activated,
-          jevAttentionPresentation: 'attention_space',
-        },
-      };
-    });
-
-  return {
-    ...presentation.projection,
-    schemaVersion: `${presentation.projection.schemaVersion}.turn-local`,
-    counts: { nodes: nodes.length, edges: localEdges.length },
-    nodes,
-    edges: localEdges,
-  };
-}
-
 export function NativeKnowGraphSurface({
   projection,
   canonicalSubjectDirectory,
@@ -1232,7 +1053,6 @@ export function NativeJoinedGraphSurface({
   projections,
   statuses,
   errors,
-  jevAttentionVisual,
   onReadNativeFocusNeighborhood,
   onExpand,
   onRemoveThinkGraphEvidence,
@@ -1242,7 +1062,6 @@ export function NativeJoinedGraphSurface({
   projections: Record<GraphAuthority, GraphProjectionV1>;
   statuses?: Partial<Record<GraphAuthority, 'idle' | 'loading' | 'ready' | 'error'>>;
   errors?: Partial<Record<GraphAuthority, string>>;
-  jevAttentionVisual?: JevAttentionVisualDescriptorView | null;
   onReadNativeFocusNeighborhood?: ReadNativeFocusNeighborhood;
   onExpand: (authority: GraphAuthority, node: GraphProjectionNode) => Promise<void>;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
@@ -1255,10 +1074,6 @@ export function NativeJoinedGraphSurface({
       projections.knowgraph,
     ),
     [projections.knowgraph, projections.thinkgraph],
-  );
-  const turnLocalProjection = useMemo(
-    () => composeJevAttentionPresentation(presentation, jevAttentionVisual),
-    [jevAttentionVisual, presentation],
   );
   const visibleAuthorities = ['thinkgraph', 'knowgraph'] as const;
   const visibleStatuses = visibleAuthorities.map(authority => (
@@ -1287,9 +1102,8 @@ export function NativeJoinedGraphSurface({
         projections.thinkgraph.canonicalSubjectDirectory
       }
       subjectFocusRequest={subjectFocusRequest}
-      projection={turnLocalProjection}
+      projection={presentation.projection}
       joinedPresentation={presentation}
-      attentionVisualPhase={jevAttentionVisual?.phase || null}
       onReadNativeFocusNeighborhood={onReadNativeFocusNeighborhood}
       status={status}
       error={error}
@@ -1784,7 +1598,6 @@ export function NativeGraphProjectionSurface({
   warning,
   authority = 'knowgraph',
   joinedPresentation,
-  attentionVisualPhase,
   onReadNativeFocusNeighborhood,
   onExpand,
   onUseAsContext,
@@ -1801,7 +1614,6 @@ export function NativeGraphProjectionSurface({
   warning?: string | null;
   authority?: GraphSurfaceAuthority;
   joinedPresentation?: JoinedGraphPresentation;
-  attentionVisualPhase?: JevAttentionVisualDescriptorView['phase'] | null;
   onReadNativeFocusNeighborhood?: ReadNativeFocusNeighborhood;
   onExpand?: (node: GraphProjectionNode) => Promise<void>;
   onUseAsContext?: (node: GraphProjectionNode) => void;
@@ -1924,8 +1736,7 @@ export function NativeGraphProjectionSurface({
   }, [authority, joinedPresentation]);
   focusProjectionKeyRef.current = focusProjectionKey;
   const manualNavigationActive = focusedEntry !== null || expandedFocusResult !== null;
-  const blackholePresentationActive = successfulFocusedEntry !== null
-    || (!manualNavigationActive && attentionVisualPhase === 'attention_space');
+  const blackholePresentationActive = successfulFocusedEntry !== null;
   const manualFocusPresentation = useMemo(
     () => manualProjectionSource && successfulFocusedEntry
       ? composeManualFocusPresentation(manualProjectionSource, successfulFocusedEntry)
@@ -2443,12 +2254,10 @@ export function NativeGraphProjectionSurface({
           : authority === 'knowgraph' ? 'know' : 'think';
         const thinkActive = typeof node.material_think_active === 'boolean'
           ? node.material_think_active
-          : variants.some(variant => variant.authority === 'thinkgraph'
-            && isAttentionActive(variant.node));
+          : false;
         const knowActive = typeof node.material_know_active === 'boolean'
           ? node.material_know_active
-          : variants.some(variant => variant.authority === 'knowgraph'
-            && isAttentionActive(variant.node));
+          : false;
         return {
           ...node,
           ...(combinedCyber
@@ -2736,7 +2545,7 @@ export function NativeGraphProjectionSurface({
     ) || nativeId
     : nativeId;
   return (
-    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-physics-profile={physicsProfile} data-attention-visual-phase={attentionVisualPhase || 'ordinary'} data-focus-phase={successfulFocusedEntry ? 'manual_blackhole_focus' : focusRequestPending ? 'focus_preparing' : focusRelease ? 'focus_release' : 'local_relational'} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
+    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-physics-profile={physicsProfile} data-focus-phase={successfulFocusedEntry ? 'manual_blackhole_focus' : focusRequestPending ? 'focus_preparing' : focusRelease ? 'focus_release' : 'local_relational'} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
       onKeyDown={event => {
         if (event.key !== 'Escape') return;
         if (focusedEntry) {

@@ -1,5 +1,7 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import express from 'express';
 import type { RequestHandler } from 'express';
 import cookieParser from 'cookie-parser';
@@ -11,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(),
   requireAgentTerminalCard: vi.fn((card: { id: string; runtime: { kind: string; profile: string } }) => {
     if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
+    if (!['delegate', 'magentic_one'].includes((card.runtime as { mode?: string }).mode || '')) {
+      throw new Error('agent_terminal_runtime_mode_unsupported');
+    }
     if (!card.runtime.profile) throw new Error('agent_terminal_profile_missing');
     return card.runtime.profile;
   }),
@@ -24,20 +29,15 @@ vi.mock('../hermes/agentTerminal', () => ({
   requireAgentTerminalCard: mocks.requireAgentTerminalCard,
   agentTerminalPresentationOptions: (selected: {
     id: string;
-    runtime: { mode: string };
-  }, attachTui: boolean) => (
-    selected.runtime.mode === 'main'
-      ? { workingDirectory: 'neutral-workspace', attachTui: false }
-      : selected.id === 'builder'
-        ? { workingDirectory: 'repo-workspace', attachTui }
-        : { attachTui }
-  ),
+  }, attachTui: boolean) => selected.id === 'builder'
+    ? { workingDirectory: 'repo-workspace', attachTui }
+    : { attachTui },
 }));
 
 import { createAgentTerminalRouter } from './agentTerminal.routes';
 
 const card = {
-  id: 'card_signal_analyst', runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal-analyst' },
+  id: 'builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
   runtimeOptions: {}, tools: [], prompt: 'Saved prompt',
 };
 const deck = { id: 'deck_builder', workspaceRoot: process.cwd(), nodes: [card] };
@@ -83,10 +83,36 @@ const json = (body: unknown, sid = 'owner-session'): RequestInit => ({
 
 afterEach(() => vi.clearAllMocks());
 
-describe('native Card terminal routes', () => {
+it('keeps the owned terminal boundary free of retired product terminology', () => {
+  const ownedPaths = [
+    'apps/backend/src/hermes/agentTerminal.ts',
+    'apps/backend/src/hermes/runtime/cardTurn.ts',
+    'apps/backend/src/routes/agentTerminal.routes.ts',
+    'apps/backend/src/hermes/agentTerminal.spec.ts',
+    'apps/backend/src/hermes/runtime/cardTurn.spec.ts',
+    'apps/backend/src/hermes/agentTerminalLaunch.spec.ts',
+    'apps/backend/src/routes/agentTerminal.routes.spec.ts',
+    'client/src/features/agentbuilder/console/AgentTerminalPanel.tsx',
+    'client/src/features/agentbuilder/console/agentTerminalClient.ts',
+    'client/src/features/agentbuilder/console/HarnessChatPanel.tsx',
+    'client/src/features/agentbuilder/console/AgentTerminalPanel.spec.tsx',
+    'client/src/features/agentbuilder/console/agentTerminalClient.spec.ts',
+    'client/src/features/agentbuilder/console/HarnessChatPanel.spec.tsx',
+  ];
+  const prohibited = [
+    ['na', 'tive'].join(''),
+    ['liquid', 'aity'].join(''),
+  ];
+  for (const file of ownedPaths) {
+    const source = readFileSync(resolve(process.cwd(), file), 'utf8');
+    for (const token of prohibited) expect(source.toLowerCase()).not.toContain(token);
+  }
+});
+
+describe('saved Card terminal routes', () => {
   it('requires an existing session before any project, deck, or PTY access', async () => {
     const deps = dependencies();
-    const response = await request(deps, '/project-1/deck_builder/card_signal_analyst/open', {
+    const response = await request(deps, '/project-1/deck_builder/builder/open', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cols: 120, rows: 30 }),
     });
     expect(response).toEqual({ status: 401, body: { error: 'agent_terminal_existing_session_required' } });
@@ -99,7 +125,7 @@ describe('native Card terminal routes', () => {
   it('denies a foreign project before loading its deck or opening a terminal', async () => {
     const deps = dependencies();
     deps.getProject.mockResolvedValue(null);
-    const response = await request(deps, '/foreign/deck_builder/card_signal_analyst/open', json({ cols: 120, rows: 30 }));
+    const response = await request(deps, '/foreign/deck_builder/builder/open', json({ cols: 120, rows: 30 }));
     expect(response).toEqual({
       status: 403,
       body: { error: 'agent_terminal_project_access_denied' },
@@ -115,16 +141,16 @@ describe('native Card terminal routes', () => {
 
   it('uses the exact URL Card and ignores body-supplied identity', async () => {
     const deps = dependencies();
-    const response = await request(deps, '/project-1/deck_builder/card_signal_analyst/open', json({
-      cols: 120, rows: 30, cardId: 'builder', projectId: 'foreign', deckId: 'other', userId: 'other-user',
+    const response = await request(deps, '/project-1/deck_builder/builder/open', json({
+      cols: 120, rows: 30, cardId: 'untrusted-card', projectId: 'foreign', deckId: 'other', userId: 'other-user',
     }));
     expect(response.status).toBe(200);
     expect(deps.getUser).toHaveBeenCalledWith('owner-session');
     expect(deps.getProject).toHaveBeenCalledWith('project-1');
     expect(deps.getDeck).toHaveBeenCalledWith('project-1', 'deck_builder');
     expect(deps.manager.open).toHaveBeenCalledWith(
-      { userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_signal_analyst' },
-      card, deck, 120, 30, { attachTui: true },
+      { userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
+      card, deck, 120, 30, { workingDirectory: 'repo-workspace', attachTui: true },
     );
   });
 
@@ -133,30 +159,21 @@ describe('native Card terminal routes', () => {
     deps.getUser.mockResolvedValue({ id: 'foreign-user' });
     const response = await request(
       deps,
-      '/project-1/deck_builder/card_signal_analyst/open',
+      '/project-1/deck_builder/builder/open',
       json({ cols: 120, rows: 30 }),
     );
     expect(response.status).toBe(200);
     expect(deps.getProject).toHaveBeenCalledWith('project-1');
     expect(deps.manager.open).toHaveBeenCalledWith(
-      { userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_signal_analyst' },
-      card, deck, 120, 30, { attachTui: true },
+      { userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
+      card, deck, 120, 30, { workingDirectory: 'repo-workspace', attachTui: true },
     );
   });
 
-  it.each([
-    {
-      cardId: 'card_main_chat',
-      selected: { ...card, id: 'card_main_chat', runtime: { kind: 'hermes', mode: 'main', profile: 'main' } },
-      options: { workingDirectory: 'neutral-workspace', attachTui: false },
-    },
-    {
-      cardId: 'builder',
-      selected: { ...card, id: 'builder', templateId: 'template_assist' },
-      options: { workingDirectory: 'repo-workspace', attachTui: true },
-    },
-  ])('accepts $cardId through the common Card runtime with its structural presentation', async ({ cardId, selected, options }) => {
+  it('opens the exact saved Builder Card and profile', async () => {
     const deps = dependencies();
+    const cardId = 'builder';
+    const selected = { ...card, templateId: 'template_assist' };
     const selectedDeck = { ...deck, nodes: [selected] };
     deps.getDeck.mockResolvedValue({ deck: selectedDeck });
     const response = await request(deps, `/project-1/deck_builder/${cardId}/open`, json({ cols: 120, rows: 30 }));
@@ -167,14 +184,55 @@ describe('native Card terminal routes', () => {
       selectedDeck,
       120,
       30,
-      options,
+      { workingDirectory: 'repo-workspace', attachTui: true },
     );
+  });
+
+  it('preserves an ordinary saved Card terminal', async () => {
+    const deps = dependencies();
+    const selected = {
+      ...card,
+      id: 'card_signal',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal' },
+    };
+    const selectedDeck = { ...deck, nodes: [selected] };
+    deps.getDeck.mockResolvedValue({ deck: selectedDeck });
+    const response = await request(
+      deps,
+      '/project-1/deck_builder/card_signal/open',
+      json({ cols: 120, rows: 30 }),
+    );
+    expect(response.status).toBe(200);
+    expect(deps.manager.open).toHaveBeenCalledWith(
+      { userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_signal' },
+      selected,
+      selectedDeck,
+      120,
+      30,
+      { attachTui: true },
+    );
+  });
+
+  it.each(['single', 'unsupported'])('rejects unsupported runtime mode %s before manager dispatch', async (mode) => {
+    const deps = dependencies();
+    const selected = { ...card, runtime: { ...card.runtime, mode } };
+    deps.getDeck.mockResolvedValue({ deck: { ...deck, nodes: [selected] } });
+    const response = await request(
+      deps,
+      '/project-1/deck_builder/builder/open',
+      json({ cols: 120, rows: 30 }),
+    );
+    expect(response).toEqual({
+      status: 400,
+      body: { error: 'agent_terminal_runtime_mode_unsupported' },
+    });
+    expect(deps.manager.open).not.toHaveBeenCalled();
   });
 
   it.each([{ cols: 1, rows: 30 }, { cols: 501, rows: 30 }, { cols: 120, rows: 0 }])(
     'rejects out-of-bounds resize payload %#', async (body) => {
       const deps = dependencies();
-      const response = await request(deps, '/project-1/deck_builder/card_signal_analyst/terminal-1/resize', json(body));
+      const response = await request(deps, '/project-1/deck_builder/builder/terminal-1/resize', json(body));
       expect(response).toEqual({ status: 400, body: { error: 'agent_terminal_dimensions_invalid' } });
       expect(deps.manager.resize).not.toHaveBeenCalled();
     },
@@ -183,12 +241,12 @@ describe('native Card terminal routes', () => {
   it('returns an unexpected dependency failure without rewriting it', async () => {
     const deps = dependencies();
     deps.getDeck.mockRejectedValue(new Error('deck_backend_unavailable'));
-    const response = await request(deps, '/project-1/deck_builder/card_signal_analyst/open', json({ cols: 120, rows: 30 }));
+    const response = await request(deps, '/project-1/deck_builder/builder/open', json({ cols: 120, rows: 30 }));
     expect(response).toEqual({ status: 400, body: { error: 'deck_backend_unavailable' } });
     expect(deps.manager.open).not.toHaveBeenCalled();
   });
 
-  it('ends an exited native session stream instead of holding server shutdown open', async () => {
+  it('ends an exited hermes session stream instead of holding server shutdown open', async () => {
     const deps = dependencies();
     const unsubscribe = vi.fn();
     deps.manager.subscribe.mockImplementation((_owner, _id, _after, listener) => {
@@ -203,7 +261,7 @@ describe('native Card terminal routes', () => {
     });
     try {
       const port = (server.address() as AddressInfo).port;
-      const response = await fetch(`http://127.0.0.1:${port}/agent-terminals/project-1/deck_builder/card_signal_analyst/terminal-1/events`, {
+      const response = await fetch(`http://127.0.0.1:${port}/agent-terminals/project-1/deck_builder/builder/terminal-1/events`, {
         headers: { Cookie: 'sid=owner-session' }, signal: AbortSignal.timeout(2000),
       });
       expect(await response.text()).toContain('"status":"exited"');

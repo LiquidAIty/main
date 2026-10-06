@@ -1,14 +1,16 @@
 import { Router, type Response } from 'express';
 import {
   agentTerminalManager,
+  resolveHermesBotRosterProjections,
+  type HermesBotRosterProjection,
+} from '../hermes/agentTerminal';
+import {
   cardToolAuthenticationFailureStage,
   PROJECT_ROSTER_AUTHORITY_TOOL,
   RUNTIME_OBSERVATION_AUTHORITY_TOOL,
-  resolveHermesBotRosterProjections,
   type AuthenticatedCardToolRequest,
-  type HermesBotRosterProjection,
-} from '../hermes/agentTerminal';
-import { agentTerminalExecution } from '../hermes/agentTerminalExecution';
+} from '../hermes/cardToolsPlugin';
+import { cardTurnBridge } from '../hermes/runtime/cardTurn';
 import { isLoopbackSocketRequest } from '../security/requestAccess';
 import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
@@ -169,7 +171,7 @@ function sendError(res: Response, error: unknown): void {
 export function createHermesCardToolsRouter(
   dependencies: Dependencies = {
     agentTerminalManager,
-    activeContext: (sessionId) => agentTerminalExecution.activeContext(sessionId),
+    activeContext: (sessionId) => cardTurnBridge.activeContext(sessionId),
     execute: executeInternalCardTool,
     observe: (request) => requestPythonRailsJson('/domain/runs/attempt', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -12,12 +12,11 @@ const NativeJoinedGraphSurface = lazy(async () => {
 type Props = {
   minHeight?: number;
   surfaceRole?: 'large' | 'companion';
-  attentionProjections: Record<KnowledgeGraphKind, import('./NativeAuthorityGraphSurface').GraphProjectionV1>;
-  attentionErrors: Partial<Record<KnowledgeGraphKind, string>>;
-  attentionStatuses?: Partial<Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>>;
-  jevAttentionVisual?: import('./NativeAuthorityGraphSurface').JevAttentionVisualDescriptorView | null;
-  onReadNativeFocusNeighborhood?: import('./NativeAuthorityGraphSurface').ReadNativeFocusNeighborhood;
-  onExpandAttentionNode: (
+  projections: Record<KnowledgeGraphKind, import('./NativeAuthorityGraphSurface').GraphProjectionV1>;
+  errors: Partial<Record<KnowledgeGraphKind, string>>;
+  statuses?: Partial<Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>>;
+  onReadFocusNeighborhood?: import('./NativeAuthorityGraphSurface').ReadNativeFocusNeighborhood;
+  onExpandNode: (
     authority: KnowledgeGraphKind,
     node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
   ) => Promise<void>;
@@ -29,12 +28,11 @@ type Props = {
 export default function KnowledgeGraphFramework({
   minHeight = 280,
   surfaceRole = minHeight > 320 ? 'large' : 'companion',
-  attentionProjections,
-  attentionErrors,
-  attentionStatuses,
-  jevAttentionVisual,
-  onReadNativeFocusNeighborhood,
-  onExpandAttentionNode,
+  projections,
+  errors,
+  statuses,
+  onReadFocusNeighborhood,
+  onExpandNode,
   onRemoveThinkGraphEvidence,
   onRemoveKnowGraphEvidence,
   subjectFocusRequest,
@@ -61,22 +59,21 @@ export default function KnowledgeGraphFramework({
       >
         <NativeJoinedGraphSurface
             projections={{
-              thinkgraph: attentionProjections.thinkgraph,
-              knowgraph: attentionProjections.knowgraph,
+              thinkgraph: projections.thinkgraph,
+              knowgraph: projections.knowgraph,
             }}
             statuses={{
-              thinkgraph: attentionStatuses?.thinkgraph
-                || (attentionErrors.thinkgraph ? 'error' : 'ready'),
-              knowgraph: attentionStatuses?.knowgraph
-                || (attentionErrors.knowgraph ? 'error' : 'ready'),
+              thinkgraph: statuses?.thinkgraph
+                || (errors.thinkgraph ? 'error' : 'ready'),
+              knowgraph: statuses?.knowgraph
+                || (errors.knowgraph ? 'error' : 'ready'),
             }}
             errors={{
-              ...(attentionErrors.thinkgraph ? { thinkgraph: attentionErrors.thinkgraph } : {}),
-              ...(attentionErrors.knowgraph ? { knowgraph: attentionErrors.knowgraph } : {}),
+              ...(errors.thinkgraph ? { thinkgraph: errors.thinkgraph } : {}),
+              ...(errors.knowgraph ? { knowgraph: errors.knowgraph } : {}),
             }}
-            jevAttentionVisual={jevAttentionVisual}
-            onReadNativeFocusNeighborhood={onReadNativeFocusNeighborhood}
-            onExpand={onExpandAttentionNode}
+            onReadNativeFocusNeighborhood={onReadFocusNeighborhood}
+            onExpand={onExpandNode}
             onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
             onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
             subjectFocusRequest={subjectFocusRequest}

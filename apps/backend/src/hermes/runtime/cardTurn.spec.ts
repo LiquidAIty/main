@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AgentTerminalExecution } from './agentTerminalExecution';
+import { CardTurnBridge } from './cardTurn';
 
 const owner = {
   userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'signal',
@@ -36,7 +36,7 @@ function prepared(overrides: Record<string, unknown> = {}) {
 
 function fixture() {
   const request = vi.fn(async (_path: string, _init: RequestInit) => ({ ok: true }));
-  return { request, execution: new AgentTerminalExecution(request as never) };
+  return { request, execution: new CardTurnBridge(request as never) };
 }
 
 describe('Gateway Card Run receipt binding', () => {
@@ -84,6 +84,15 @@ describe('Gateway Card Run receipt binding', () => {
       [owner, prepared({
         hermesTransport: {
           ...prepared().hermesTransport,
+          request: {
+            ...prepared().hermesTransport.request,
+            runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+          },
+        },
+      }), 'agent_terminal_staged_run_invalid'],
+      [owner, prepared({
+        hermesTransport: {
+          ...prepared().hermesTransport,
           request: { ...prepared().hermesTransport.request, builderOperation: 'invented' },
         },
       }), 'prepared_hermes_fields_retired:builderOperation'],
@@ -117,18 +126,18 @@ describe('Gateway Card Run receipt binding', () => {
     const { execution, request } = fixture();
     execution.stage(owner, 'terminal-signal', 'signal', prepared());
 
-    await expect(execution.completeStaged('terminal-signal', 'native-session', {
+    await expect(execution.completeStaged('terminal-signal', 'hermes-session', {
       text: 'Exact Gateway answer',
       status: 'complete',
       event: {
         type: 'message.complete',
-        session_id: 'native-session',
+        session_id: 'hermes-session',
         payload: {
-          native_root_id: 'native-root',
-          native_run_id: 'native-turn',
+          provider_thread_id: 'hermes-root',
+          provider_turn_id: 'hermes-turn',
           actualProvider: 'openai-codex',
           actualModel: 'saved-model',
-          exposedTools: ['native-session-tool'],
+          exposedTools: ['hermes-session-tool'],
           executionEvidence: [{ kind: 'tool_result', content: 'done' }],
           executionEvidenceComplete: true,
           usage: {
@@ -139,12 +148,12 @@ describe('Gateway Card Run receipt binding', () => {
         },
       },
     })).resolves.toEqual({
-      hermesSessionId: 'native-session',
-      nativeRootId: 'native-root',
-      nativeRunId: 'native-turn',
+      hermesSessionId: 'hermes-session',
+      providerThreadId: 'hermes-root',
+      providerTurnId: 'hermes-turn',
       effectiveProvider: 'openai-codex',
       actualModel: 'saved-model',
-      exposedTools: ['native-session-tool'],
+      exposedTools: ['hermes-session-tool'],
       executionEvidence: [{ kind: 'tool_result', content: 'done' }],
       executionEvidenceComplete: true,
       executionEvidenceError: null,
@@ -161,9 +170,9 @@ describe('Gateway Card Run receipt binding', () => {
       runId: 'prepared-run',
       state: 'completed',
       finalResult: 'Exact Gateway answer',
-      hermesSessionRef: 'native-session',
-      providerThreadRef: 'native-root',
-      providerTurnRef: 'native-turn',
+      hermesSessionRef: 'hermes-session',
+      providerThreadRef: 'hermes-root',
+      providerTurnRef: 'hermes-turn',
       effectiveProvider: 'openai-codex',
       providerApiMode: 'codex_app_server',
       providerInputTokens: 17,
@@ -243,29 +252,29 @@ describe('Gateway Card Run receipt binding', () => {
 
   it('retains staged ownership until a failed completion receipt is settled', async () => {
     const request = vi.fn()
-      .mockRejectedValueOnce(new Error('run_native_transport_evidence_incomplete'))
+      .mockRejectedValueOnce(new Error('run_hermes_transport_evidence_incomplete'))
       .mockResolvedValueOnce({ ok: true });
-    const execution = new AgentTerminalExecution(request as never);
+    const execution = new CardTurnBridge(request as never);
     execution.stage(owner, 'terminal-signal', 'signal', prepared());
 
-    await expect(execution.completeStaged('terminal-signal', 'native-session', {
+    await expect(execution.completeStaged('terminal-signal', 'hermes-session', {
       text: 'Provider completed before receipt persistence failed',
       status: 'complete',
       event: { type: 'message.complete', payload: {
         actualProvider: 'openai-codex', actualModel: 'saved-model', exposedTools: [],
       } },
-    })).rejects.toThrow('run_native_transport_evidence_incomplete');
+    })).rejects.toThrow('run_hermes_transport_evidence_incomplete');
     expect(execution.activeRunId('terminal-signal')).toBe('prepared-run');
 
     await expect(execution.cancelStaged(
       'terminal-signal',
-      'run_native_transport_evidence_incomplete',
+      'run_hermes_transport_evidence_incomplete',
     )).resolves.toBe(true);
     expect(execution.activeRunId('terminal-signal')).toBeNull();
     expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body))).toEqual({
       runId: 'prepared-run',
       state: 'failed',
-      errorSummary: 'run_native_transport_evidence_incomplete',
+      errorSummary: 'run_hermes_transport_evidence_incomplete',
     });
   });
 
@@ -274,7 +283,7 @@ describe('Gateway Card Run receipt binding', () => {
     execution.stage(owner, 'terminal-signal', 'signal', prepared());
     execution.requestCancellation('terminal-signal', 'prepared-run');
 
-    await expect(execution.completeStaged('terminal-signal', 'native-session', {
+    await expect(execution.completeStaged('terminal-signal', 'hermes-session', {
       text: 'Late answer',
       status: 'complete',
       event: { type: 'message.complete', payload: {

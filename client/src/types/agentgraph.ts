@@ -109,7 +109,6 @@ export type AgentCardRuntimeOptions = {
   maxTurns?: number | null;
   tools?: string[] | null;
   /** Runtime-specific native grants remain distinct from ordinary tool grants. */
-  nativeTools?: string[] | null;
   /** Saved skill identities. Runtime homes materialize/cache them separately. */
   skills?: string[] | null;
   /** Named capability bundles; resolution belongs to the owning runtime. */
@@ -175,4 +174,4 @@ export type DeckDocument = {
   version: number;
 };
 
-export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph' | 'codegraph';
+export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph';

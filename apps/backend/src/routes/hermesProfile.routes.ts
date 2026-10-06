@@ -86,9 +86,9 @@ function parseNativeOperation(value: unknown): HermesNativeCardOperation {
   }
   if (method === 'tools.configure') {
     exactFields(params, ['action', 'names', 'session_id']);
-    const action = requiredText(params.action, 'hermes_native_tools_action_required');
-    if (!['enable', 'disable'].includes(action)) throw new Error('hermes_native_tools_action_unsupported');
-    stringList(params.names, 'hermes_native_tool_names_must_be_string_list');
+    const action = requiredText(params.action, 'hermes_hermes_tools_action_required');
+    if (!['enable', 'disable'].includes(action)) throw new Error('hermes_hermes_tools_action_unsupported');
+    stringList(params.names, 'hermes_hermes_tool_names_must_be_string_list');
     return { method, params };
   }
   if (method === 'toolsets.list' || method === 'mcp.servers.list') {

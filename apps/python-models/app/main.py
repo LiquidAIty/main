@@ -191,7 +191,7 @@ async def graph_relationship_vocabulary_read(payload: dict[str, Any]):
 @app.post("/graph/jev-focus")
 async def graph_jev_focus(payload: dict[str, Any]):
     """Rerank one bounded client-supplied native-subject neighborhood."""
-    from app.python_models.engraphis import JevAttentionError, decide_graph_focus
+    from app.python_models.engraphis import JevGraphError, decide_graph_focus
     import asyncio
 
     source_revision = (
@@ -201,7 +201,7 @@ async def graph_jev_focus(payload: dict[str, Any]):
     )
     try:
         return await asyncio.to_thread(decide_graph_focus, payload)
-    except JevAttentionError as err:
+    except JevGraphError as err:
         return {
             "schemaVersion": "jev-focus.v1",
             "sourceRevision": source_revision,
@@ -211,20 +211,6 @@ async def graph_jev_focus(payload: dict[str, Any]):
             "distribution": {},
             "candidates": [],
         }
-
-
-@app.post("/graph/contextual-node-read")
-async def graph_contextual_node_read(payload: dict[str, Any]):
-    """Select and hydrate winner-only native contents for one node opening."""
-    from app.python_models.data_anchor import DataAnchorError, contextual_node_read
-    import asyncio
-
-    try:
-        return await asyncio.to_thread(contextual_node_read, payload)
-    except DataAnchorError as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
-    except (RuntimeError, ValueError, KeyError) as err:
-        raise HTTPException(status_code=502, detail=str(err)) from err
 
 
 @app.post("/codegraph/read")
@@ -407,7 +393,7 @@ def idd_card_editor_materialize(payload: dict[str, Any]):
     """Materialize current model choices through the one literal IDD."""
     try:
         return materialize_card_editor(
-            payload.get("models"), native_options=payload.get("nativeOptions"),
+            payload.get("models"), catalog_options=payload.get("catalogOptions"),
             selected_ids=payload.get("selectedIds"),
         )
     except IddValidationError as err:
@@ -745,7 +731,7 @@ def magentic_execution_stop(payload: dict[str, Any]):
 
 @app.post("/domain/agentgraph/inspect")
 def domain_agentgraph_inspect(payload: dict[str, Any]):
-    """Private rails readback for existing AGE attention/run telemetry."""
+    """Private rails readback for existing AGE Run telemetry."""
     try:
         return inspect_agentgraph(payload)
     except CardDomainError as err:

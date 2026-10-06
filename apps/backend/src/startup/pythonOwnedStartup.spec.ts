@@ -134,7 +134,7 @@ describe('Python-owned backend startup', () => {
         botEnabled: false, roster: [] },
     ];
     expect([...deriveAutomaticHermesCardIds(deck, botProfiles)]).toEqual([
-      'main-card', 'builder', 'mag-one', 'mag-worker-a', 'mag-worker-b',
+      'builder', 'mag-one', 'mag-worker-a', 'mag-worker-b',
     ]);
     const disabledBusDeck = {
       ...deck,
@@ -191,8 +191,8 @@ describe('Python-owned backend startup', () => {
       .filter((entry) => entry.openAtReconcile !== false)
       .map((entry, index) => ({
       sessionId: `session-${index}`, cardId: entry.card.id, profile: entry.card.runtime.profile,
-      pid: 1, gatewayPid: 1, tuiPid: null, ptyId: null, nativeSessionId: `native-${index}`,
-      storedSessionId: `native-${index}`, hermesHome: '', unavailableToolReasons: {},
+      pid: 1, gatewayPid: 1, tuiPid: null, ptyId: null, hermesSessionId: `hermes-${index}`,
+      storedSessionId: `hermes-${index}`, hermesHome: '', unavailableToolReasons: {},
       status: 'running', cols: 120, rows: 36,
       })));
 
@@ -218,41 +218,36 @@ describe('Python-owned backend startup', () => {
           revisionSha256: '',
         })),
       reconcile: reconcile as any,
-      mainWorkingDirectory: () => 'C:\\neutral-main',
       builderWorkingDirectory: () => 'C:\\repository',
     });
 
-    expect(states.map((state) => state.cardId)).toEqual([
-      'main-card', 'worker', 'builder', 'mag-one',
-    ]);
+    expect(states.map((state) => state.cardId)).toEqual(['worker', 'builder', 'mag-one']);
     const desired = reconcile.mock.calls[0][0];
     expect(desired.map((entry: any) => entry.owner)).toEqual([
-      { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'main-card', conversationId: 'main' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'worker' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'builder' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'mag-one' },
     ]);
-    expect(desired[0]).toMatchObject({ workingDirectory: 'C:\\neutral-main', attachTui: false });
-    expect(desired[1]).toMatchObject({ attachTui: true });
-    expect(desired[1]).not.toHaveProperty('workingDirectory');
-    expect(desired[2]).toMatchObject({ workingDirectory: 'C:\\repository', attachTui: true });
-    expect(desired[3]).toMatchObject({ attachTui: false });
-    expect(desired[3]).not.toHaveProperty('workingDirectory');
+    expect(desired[0]).toMatchObject({ attachTui: true });
+    expect(desired[0]).not.toHaveProperty('workingDirectory');
+    expect(desired[1]).toMatchObject({ workingDirectory: 'C:\\repository', attachTui: true });
+    expect(desired[2]).toMatchObject({ attachTui: false });
+    expect(desired[2]).not.toHaveProperty('workingDirectory');
     const canonicalBindings = reconcile.mock.calls[0][2] as Array<{
       card: { id: string };
       owner: Record<string, unknown>;
     }>;
     expect(canonicalBindings).toHaveLength(4);
     expect(canonicalBindings.find((entry) => entry.card.id === 'main-card')?.owner)
-      .toEqual(desired[0].owner);
+      .toMatchObject({ cardId: 'main-card', conversationId: 'main' });
     expect(canonicalBindings.find((entry) => entry.card.id === 'builder')?.owner)
       .not.toHaveProperty('conversationId');
   });
 
-  it('keeps every Project binding authoritative but eagerly opens one session per stable profile', async () => {
+  it('keeps Main bot projection authoritative without terminal reconciliation', async () => {
     const shared = {
       id: 'card_main_chat', templateId: 'template_main_chat', title: 'Main', kind: 'agent',
-      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
       runtimeOptions: {}, position: { x: 0, y: 0 },
       _cardRevisionId: 'revision-main', _cardRevisionSha256: 'a'.repeat(64),
     } as any;
@@ -291,20 +286,12 @@ describe('Python-owned backend startup', () => {
         revisionSha256: shared._cardRevisionSha256,
       }],
       reconcile: reconcile as any,
-      mainWorkingDirectory: () => 'C:\\neutral-main',
     });
 
     const reconcileCall = reconcile.mock.calls[0];
     expect(reconcileCall).toBeDefined();
     const desired = reconcileCall![0];
-    expect(desired).toHaveLength(2);
-    expect(desired.map((entry: any) => ({
-      projectId: entry.owner.projectId,
-      openAtReconcile: entry.openAtReconcile,
-    }))).toEqual([
-      { projectId: 'project-a', openAtReconcile: true },
-      { projectId: 'project-b', openAtReconcile: false },
-    ]);
+    expect(desired).toEqual([]);
     const botProfiles = reconcileCall![2];
     expect(botProfiles).toHaveLength(1);
     expect(botProfiles![0].owner.projectId).toBe('project-a');

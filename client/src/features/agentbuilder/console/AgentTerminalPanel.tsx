@@ -129,7 +129,7 @@ export default function AgentTerminalPanel({
   useEffect(() => {
     const needsOpen = !session || (isRunning(session) && !session.ptyId);
     if (!terminalReady || !needsOpen || error) return;
-    const key = `${identityKey}:${session?.sessionId || 'new'}:native-tui`;
+    const key = `${identityKey}:${session?.sessionId || 'new'}:hermes-tui`;
     let pending = pendingOpenRef.current;
     if (!pending || pending.key !== key) {
       pending = { key, promise: client.open(stableIdentity, sizeRef.current) };
@@ -187,7 +187,7 @@ export default function AgentTerminalPanel({
       data-pid={session?.pid ?? ''}
       data-pty-id={session?.ptyId || ''}
       data-status={runtimeStatus}
-      aria-label="Agent CLI"
+      aria-label="Card terminal"
       style={{
         display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
         overflow: 'hidden', background: '#0b0f14', color: '#d7e0ea',

@@ -20,7 +20,7 @@ function reference(index: number, access: 'read' | 'write' = 'read'): ToolCatalo
     access,
     contracts: [{
       sourceId: 'cbm',
-      nativeName: `tool_${String(index).padStart(5, '0')}`,
+      providerName: `tool_${String(index).padStart(5, '0')}`,
       connectionKind: 'external-mcp',
       available: true,
       description: `Native tool ${index}`,

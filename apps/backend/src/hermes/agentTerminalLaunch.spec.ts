@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const nativeFs = vi.hoisted(() => ({
+const hermesFs = vi.hoisted(() => ({
   existsSync: vi.fn<(target: string) => boolean>(),
   realpathSync: vi.fn<(target: string) => string>(),
   statSync: vi.fn<(target: string) => { isDirectory(): boolean }>(),
@@ -9,7 +9,7 @@ const workspaceRoot = vi.hoisted(() => ({
   resolveRepoRoot: vi.fn(() => 'C:\\repo'),
   resolveProductChatWorkingDirectory: vi.fn((scope: string) => `C:\\neutral\\${JSON.parse(scope).join('-')}`),
 }));
-vi.mock('node:fs', () => nativeFs);
+vi.mock('node:fs', () => hermesFs);
 vi.mock('../services/workspaceRoot', () => workspaceRoot);
 
 import { prepareAgentTerminal, type AgentTerminalOwner } from './agentTerminal';
@@ -31,8 +31,9 @@ function savedCard(overrides: Partial<AgentCardInstance> = {}): AgentCardInstanc
     runtimeOptions: {
       provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'saved-model-key',
       providerModelId: 'gpt-5.6-sol', reasoningEffort: 'high', maxTurns: 7,
-      skills: ['saved-skill-a', 'saved-skill-b'], tools: ['read_repo', 'web_search', 'disabled_tool'],
-      nativeTools: ['native_saved_tool'], toolsets: ['saved-toolset'],
+      skills: ['saved-skill-a', 'saved-skill-b'],
+      tools: ['read_repo', 'web_search', 'disabled_tool', 'hermes:tool:hermes_saved_tool'],
+      toolsets: ['saved-toolset'],
       mcpConnectionIds: ['saved-remote-id'],
     } as unknown as AgentCardInstance['runtimeOptions'],
     ...overrides,
@@ -52,9 +53,9 @@ const inheritedBefore = new Map<string, string | undefined>();
 let ephemeralPromptBefore: string | undefined;
 
 beforeEach(() => {
-  nativeFs.existsSync.mockImplementation(() => true);
-  nativeFs.realpathSync.mockReturnValue('C:\\saved-workspace-real');
-  nativeFs.statSync.mockReturnValue({ isDirectory: () => true });
+  hermesFs.existsSync.mockImplementation(() => true);
+  hermesFs.realpathSync.mockReturnValue('C:\\saved-workspace-real');
+  hermesFs.statSync.mockReturnValue({ isDirectory: () => true });
   for (const name of inheritedNames) {
     inheritedBefore.set(name, process.env[name]);
     process.env[name] = `must-not-inherit-${name}`;
@@ -117,10 +118,10 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
   });
 
   it.each([
-    ['native executable', (target: string) => !target.endsWith('python.exe'), 'agent_terminal_native_executable_missing'],
+    ['hermes executable', (target: string) => !target.endsWith('python.exe'), 'agent_terminal_hermes_executable_missing'],
     ['profile', (target: string) => !target.endsWith('config.yaml'), 'agent_terminal_profile_missing'],
   ])('fails truthfully when the saved %s is unavailable', (_name, availability, error) => {
-    nativeFs.existsSync.mockImplementation(availability);
+    hermesFs.existsSync.mockImplementation(availability);
     const card = savedCard();
     expect(() => prepareAgentTerminal(owner, card, savedDeck(card), 'session-1')).toThrow(error);
   });
@@ -150,7 +151,7 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       .toContain('saved-model-key');
   });
 
-  it('forwards only an explicitly saved native subagent type to profile materialization', () => {
+  it('forwards only an explicitly saved hermes subagent type to profile materialization', () => {
     const legacy = savedCard();
     expect(prepareAgentTerminal(owner, legacy, savedDeck(legacy), 'session-legacy').profileSelection)
       .not.toHaveProperty('subagentType');

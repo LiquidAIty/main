@@ -48,7 +48,7 @@ function buildPromptTemplate(parts: {
   ioSchema: string;
   memoryPolicy: string;
 }): string {
-  return `# LIQUIDAITY_PROMPT_V1
+  return `# CARD_PROMPT_V1
 [ROLE]
 ${parts.role}
 
@@ -74,13 +74,13 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Receive the one mission that Main and the user decided to run after upstream context engineering by Main, ThinkGraph, KnowGraph, and Builder.',
-        'Execute that mission through the native Hermes task ledger with the exact blue-connected worker roster and return real worker evidence.',
+        'Execute that mission through the Hermes task ledger with the exact blue-connected worker roster and return real worker evidence.',
       ].join('\n'),
       constraints: [
         'Treat the received mission as the approved execution boundary; do not invent a different mission or another approval step.',
         'Use only workers actually connected to the blue Magnetic bus. The runtime supplies that roster; never discover, infer, or ask the user to select another team.',
         'Blue members are saved profile Agent Cards, not delegate_task subagents. Do not replace them with leaf, recursive-orchestrator, or auto-team delegation.',
-        'Decompose and synthesize through the native task ledger without built-in Triage auto-decomposition or automatic team creation.',
+        'Decompose and synthesize through the Hermes task ledger without built-in Triage auto-decomposition or automatic team creation.',
         'Launch useful worker Card tasks independently. Never make one worker wait for another; only this Magnetic root may wait for worker results before it continues.',
         'Do not invent graph agents, hidden workers, tools, or graph writes.',
         'Do not change Main, KnowGraph, or user approval authority.',
@@ -124,7 +124,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       role: 'You are Builder. Build prompts, saved Cards, agent applications, UI pages, webpages, and supporting code.',
       goal: 'Complete one bounded construction mission with current source and saved authority, then prove the affected result.',
       constraints: [
-        'Use native file, terminal, code, selected web/browser/vision capabilities, and CBM only when the authorized repository task needs them.',
+        'Use file, terminal, code, selected web/browser/vision capabilities, and CBM only when the authorized repository task needs them.',
         'For Card work, inspect current state and use card.create or card.update_configuration with explicit arguments, exact targets, grants, and revisions; read back the result.',
         'Saving a Card and running a Card are separate actions. Do not inherit Graphiti or Magnetic orchestration authority.',
         'Preserve unrelated Cards, Runs, sessions, graph data, authentication, and working-tree changes. Never invent execution.',
@@ -295,8 +295,8 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Output: one typed decision object with action (WAIT|ENTER|HOLD|REDUCE|EXIT|PAUSE|FAIL_SAFE), tradeJobId, rationale, confidence, evidence references, observedAt, and missingTerms. Keep executionRequested=false until the separately approved broker boundary exists.',
       ].join('\n'),
       memoryPolicy: [
-        'Use native profile memory and session continuity for preferences, post-trade lessons, and bounded strategy context. Durable Trade Job/decision truth stays in the deterministic trading store.',
-        'Native skill learning is isolated to this profile. Keep generated skills inspectable and never promote a trading result into a skill without repeated evidence.',
+        'Use Hermes profile memory and session continuity for preferences, post-trade lessons, and bounded strategy context. Durable Trade Job/decision truth stays in the deterministic trading store.',
+        'Hermes skill learning is isolated to this profile. Keep generated skills inspectable and never promote a trading result into a skill without repeated evidence.',
       ].join('\n'),
     }),
   },
@@ -409,7 +409,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_main_chat',
         )?.content || '',
-      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
       // Main's tools are role-filtered before the Python MCP host exposes them.
       // No ordinary web search is granted.
       runtimeOptions: {
@@ -420,8 +420,7 @@ export const INITIAL_DECK: DeckDocument = {
         providerModelId: MAIN_CHAT_MODEL_KEY,
         openaiRuntime: 'codex_app_server',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
-        nativeTools: ['memory'],
+        tools: [...MAIN_CHAT_CONTROLLER_TOOLS, 'hermes:tool:memory'],
       },
       parentGraphId: null,
       title: 'Main',
@@ -446,8 +445,7 @@ export const INITIAL_DECK: DeckDocument = {
         providerModelId: AGENT_BUILDER_MODEL_KEY,
         openaiRuntime: 'codex_app_server',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...AGENT_BUILDER_CONTROLLER_TOOLS],
-        nativeTools: ['memory'],
+        tools: [...AGENT_BUILDER_CONTROLLER_TOOLS, 'hermes:tool:memory'],
         skills: ['agent-builder-inspection'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       },
@@ -521,8 +519,7 @@ export const INITIAL_DECK: DeckDocument = {
         providerModelId: TEAM_CARD_MODEL_KEY,
         openaiRuntime: 'codex_app_server',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...TEAM_CARD_TOOLS],
-        nativeTools: ['memory'],
+        tools: [...TEAM_CARD_TOOLS, 'hermes:tool:memory'],
         skills: ['grounded-citations'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       },
@@ -544,8 +541,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         subagentType: 'none',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...HERMES_CARD_TOOLS],
-        nativeTools: ['memory'],
+        tools: [...HERMES_CARD_TOOLS, 'hermes:tool:memory'],
         skills: ['grounded-citations'],
         toolsets: ['web'],
         modelKey: DEFAULT_CARD_MODEL_KEY,
@@ -578,8 +574,8 @@ export const INITIAL_DECK: DeckDocument = {
           'trading.get_state',
           'trading.accept_assignment',
           'trading.record_decision',
+          'hermes:tool:memory',
         ],
-        nativeTools: ['memory'],
         skills: ['grounded-citations'],
         configuration: {
           schemaVersion: 'trading.card.v1',
@@ -672,10 +668,7 @@ export const INITIAL_DECK: DeckDocument = {
   //   flow             ORANGE  Main bot-team authority
   //   magentic_option  BLUE    Magnetic task-ledger worker availability
   edges: [
-    { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_knowgraph', edgeType: 'flow' },
     { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
-    { id: 'edge_main_chat_thinkgraph', source: 'card_main_chat', target: 'card_thinkgraph', edgeType: 'flow' },
-    { id: 'edge_main_chat_magnetic', source: 'card_main_chat', sourceHandle: 'card-control', target: 'card_magentic', targetHandle: 'card-control', edgeType: 'flow' },
     { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
     { id: 'edge_trading_magentic_bus', source: 'card_magentic', sourceHandle: 'bus-out-4', target: 'card_trading_workbench', edgeType: 'magentic_option' },
     { id: 'edge_team_magentic_bus', source: 'card_team', target: 'card_magentic', targetHandle: 'bus-in-5', edgeType: 'magentic_option' },

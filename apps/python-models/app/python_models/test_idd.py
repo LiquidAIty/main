@@ -53,7 +53,7 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
     assert dictionary["dictionary"]["ordinaryText"] == "markdown"
     assert {"types", "objects", "templates", "relationships", "operations"}.issubset(dictionary)
     assert {"records", "catalogs", "models", "editorFields", "islands", "toolGroups"}.isdisjoint(dictionary)
-    assert dictionary["types"]["GraphReference"]["source"].endswith(".NativeReference")
+    assert dictionary["types"]["GraphReference"]["source"].endswith(".GraphReference")
     assert dictionary["cardEditor"]["tabs"] == ["Results", "Prompt", "Runtime", "Memory", "Tools"]
     assert set(dictionary["templates"]) == {
         "template_assist",
@@ -407,7 +407,7 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
         "kind": "tool",
         "namespace": "cbm",
         "sourceId": "cbm",
-        "nativeName": "search_graph",
+        "providerToolName": "search_graph",
         "connectionKind": "external-mcp",
         "description": "Native search description.",
         "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
@@ -425,7 +425,7 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
     assert live["access"] == "read"
     assert live["contracts"] == [{
         "sourceId": "cbm",
-        "nativeName": "search_graph",
+        "providerToolName": "search_graph",
         "connectionKind": "external-mcp",
         "available": True,
         "description": "Native search description.",
@@ -441,7 +441,7 @@ def test_native_side_effect_annotations_do_not_redefine_idd_read_availability():
 
     references = materialize_tool_catalog([{
         "name": "graphiti.search_nodes", "namespace": "graphiti", "sourceId": "graphiti",
-        "nativeName": "search_nodes", "connectionKind": "external-mcp",
+        "providerToolName": "search_nodes", "connectionKind": "external-mcp",
         "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": False},
     }])
     search = next(item for item in references if item["canonicalId"] == "graphiti.search_nodes")
@@ -499,11 +499,14 @@ def test_materialized_catalog_errors_do_not_echo_secret_values() -> None:
 
 
 
-def test_new_native_option_and_stale_selection_need_no_static_declaration():
-    native = {"id": "external.search", "kind": "tool", "owner": "Example MCP",
+def test_new_catalog_option_and_stale_selection_need_no_static_declaration():
+    option = {"id": "external.search", "kind": "tool", "owner": "Example MCP",
               "source": "connection:example", "schema": {"type": "object", "properties": {
                   "query": {"type": "string"}}, "required": ["query"]}}
-    palette = materialize_card_editor([], native_options=[native], selected_ids=["external.search", "removed.tool"])
+    palette = materialize_card_editor(
+        [], catalog_options=[option],
+        selected_ids=["external.search", "removed.tool"],
+    )
     by_id = {item["id"]: item for item in palette["options"]}
     assert by_id["external.search"]["availability"] == "available"
     assert by_id["external.search"]["selected"] is True
@@ -511,10 +514,10 @@ def test_new_native_option_and_stale_selection_need_no_static_declaration():
     assert by_id["removed.tool"]["availability"] == "unavailable"
     assert by_id["removed.tool"]["diagnostics"] == ["saved_selection_stale"]
     assert palette["fingerprint"] != materialize_card_editor([])["fingerprint"]
-    unknown_host = {**native, "owner": "LiquidAIty"}
-    host_palette = materialize_card_editor([], native_options=[unknown_host])
+    unknown_host = {**option, "owner": "LiquidAIty"}
+    host_palette = materialize_card_editor([], catalog_options=[unknown_host])
     assert next(item for item in host_palette["options"] if item["id"] == "external.search")["availability"] == "unavailable"
-    assert by_id["external.search"]["schema"] == native["schema"]
+    assert by_id["external.search"]["schema"] == option["schema"]
 
 
 def test_labels_do_not_change_object_identity_and_templates_select_objects():

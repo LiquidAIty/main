@@ -3,7 +3,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
-import HarnessChatPanel, { type MainDriverSource } from './HarnessChatPanel';
+import HarnessChatPanel from './HarnessChatPanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,14 +14,13 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-async function render(activeDriver: MainDriverSource | null = null) {
+async function render() {
   container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
     root.render(
       <HarnessChatPanel
-        activeDriver={activeDriver === 'native_cli' ? null : activeDriver}
         chat={<div data-testid="main-chat">Main Chat</div>}
         terminal={<div data-testid="agent-builder-instance">Agent Builder</div>}
       />,
@@ -30,8 +29,8 @@ async function render(activeDriver: MainDriverSource | null = null) {
   return container;
 }
 
-describe('shared chat and Card work surface', () => {
-  it('opens with Main fully visible while keeping the genuine Card surface mounted', async () => {
+describe('shared chat and Builder work surface', () => {
+  it('opens with shared chat fully visible while keeping Builder mounted', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
@@ -44,7 +43,7 @@ describe('shared chat and Card work surface', () => {
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 
-  it('expands the Card work surface and restores the split without remounting it', async () => {
+  it('expands Builder and restores the split without remounting it', async () => {
     const host = await render();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
     const terminal = host.querySelector('[data-testid="agent-builder-instance"]');
@@ -78,7 +77,6 @@ describe('shared chat and Card work surface', () => {
       window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, buttons: 1, clientY: 0 }));
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
-    expect(panel.getAttribute('data-main-driver')).toBe('internal_chat');
     expect(panel.getAttribute('data-terminal-mode')).toBe('expanded');
     expect((host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement).style.height)
       .toBe('auto');
@@ -90,21 +88,10 @@ describe('shared chat and Card work surface', () => {
       window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, buttons: 1, clientY: 595 }));
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
-    expect(panel.getAttribute('data-main-driver')).toBe('internal_chat');
     expect(panel.getAttribute('data-terminal-mode')).toBe('collapsed');
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     expect((host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement).style.height)
       .toBe('0px');
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
-  });
-
-  it('keeps Main visible for an external driver and shows truthful provenance', async () => {
-    const host = await render('external_plugin');
-    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="main-work-surface"]')?.getAttribute('data-main-driver'))
-      .toBe('external_plugin');
-    expect(host.querySelector('[data-testid="main-driver-indicator"]')?.textContent)
-      .toBe('External Chat driving Main');
-    expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 });

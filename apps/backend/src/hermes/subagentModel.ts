@@ -3,7 +3,7 @@ import { resolveSavedHermesSubagent } from './providerSelection';
 
 export type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
 
-export type NativeSubagentModel = {
+export type HermesSubagentModel = {
   provider: string;
   model: string;
 };
@@ -37,7 +37,7 @@ export function readSavedSubagentModel(value: unknown): SavedSubagentModel | nul
   return saved;
 }
 
-export function toNativeSubagentModel(saved: SavedSubagentModel): NativeSubagentModel {
+export function toHermesSubagentModel(saved: SavedSubagentModel): HermesSubagentModel {
   const resolved = resolveSavedHermesSubagent(saved);
   return {
     provider: resolved.provider,
@@ -45,9 +45,9 @@ export function toNativeSubagentModel(saved: SavedSubagentModel): NativeSubagent
   };
 }
 
-export function sameNativeSubagentModel(
+export function sameHermesSubagentModel(
   value: unknown,
-  expected: NativeSubagentModel,
+  expected: HermesSubagentModel,
 ): boolean {
   const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return String(item.provider || '').trim() === expected.provider

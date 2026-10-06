@@ -3,12 +3,9 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 const HANDLE_HEIGHT = 12;
 const DEFAULT_SPLIT_HEIGHT = 320;
 
-export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
-
 type HarnessChatPanelProps = {
   chat: ReactNode;
   terminal: ReactNode;
-  activeDriver?: Exclude<MainDriverSource, 'native_cli'> | null;
   storageKey?: string;
   workSurfaceLabel?: string;
 };
@@ -17,9 +14,8 @@ type HarnessChatPanelProps = {
 export default function HarnessChatPanel({
   chat,
   terminal,
-  activeDriver = null,
-  storageKey = 'liquidaity.main.surface.split.v1',
-  workSurfaceLabel = 'Card',
+  storageKey = 'builder.surface.split.v1',
+  workSurfaceLabel = 'Builder',
 }: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
@@ -37,8 +33,8 @@ export default function HarnessChatPanel({
       return DEFAULT_SPLIT_HEIGHT;
     }
   })();
-  // Main is the ambient surface and opens fully. A previously chosen split is
-  // remembered only for the user's next explicit work-surface interaction.
+  // Shared chat is the ambient surface and opens fully. A previously chosen
+  // split is remembered only for the user's next Builder interaction.
   const heightRef = useRef(0);
   const lastOpenHeightRef = useRef(
     preferredSplitHeight > HANDLE_HEIGHT ? preferredSplitHeight : DEFAULT_SPLIT_HEIGHT,
@@ -112,7 +108,7 @@ export default function HarnessChatPanel({
       removeDragListeners();
       setDragging(false);
       window.requestAnimationFrame(() => {
-        window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
+        window.dispatchEvent(new Event('builder:terminal-layout-settled'));
       });
     };
     listenersRef.current = { move, up };
@@ -135,31 +131,23 @@ export default function HarnessChatPanel({
       setHeight(Math.max(0, total - HANDLE_HEIGHT));
     }
     window.requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
+      window.dispatchEvent(new Event('builder:terminal-layout-settled'));
     });
   }, [clampHeight, manualFullCli, setHeight]);
 
   const fullCli = manualFullCli;
-  const driverSource: MainDriverSource = activeDriver || 'internal_chat';
   const terminalMode = fullCli ? 'expanded' : height === 0 ? 'collapsed' : 'split';
 
   return (
     <div
       ref={containerRef}
       data-testid="main-work-surface"
-      data-main-driver={driverSource}
       data-terminal-mode={terminalMode}
       style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
       {!fullCli ? (
         <div data-testid="main-chat-region" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           {chat}
-        </div>
-      ) : null}
-
-      {activeDriver === 'external_plugin' ? (
-        <div data-testid="main-driver-indicator" role="status" style={{ padding: '4px 8px' }}>
-          External Chat driving Main
         </div>
       ) : null}
 

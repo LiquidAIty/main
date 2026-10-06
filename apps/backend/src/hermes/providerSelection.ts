@@ -6,7 +6,7 @@ export type SavedHermesProviderSelection = {
   openaiRuntime?: unknown;
 };
 
-export type NativeHermesProviderSelection = {
+export type HermesProviderSelection = {
   savedProvider: 'openai' | 'openrouter' | 'local_openai_compatible';
   accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
   provider: string;
@@ -16,16 +16,16 @@ export type NativeHermesProviderSelection = {
   profileOpenaiRuntime: 'codex_app_server' | 'auto';
 };
 
-export type NativeHermesSubagentSelection = {
-  savedProvider: NativeHermesProviderSelection['savedProvider'];
-  accessMode: NativeHermesProviderSelection['accessMode'];
+export type HermesSubagentSelection = {
+  savedProvider: HermesProviderSelection['savedProvider'];
+  accessMode: HermesProviderSelection['accessMode'];
   provider: string;
   model: string;
 };
 
 function resolveProviderPair(provider: unknown, access: unknown): {
-  savedProvider: NativeHermesProviderSelection['savedProvider'];
-  accessMode: NativeHermesProviderSelection['accessMode'];
+  savedProvider: HermesProviderSelection['savedProvider'];
+  accessMode: HermesProviderSelection['accessMode'];
   provider: string;
 } {
   const savedProvider = String(provider ?? '').trim().toLowerCase();
@@ -39,8 +39,8 @@ function resolveProviderPair(provider: unknown, access: unknown): {
     throw new Error(`hermes_saved_provider_access_mode_mismatch:${savedProvider}:${accessMode}`);
   }
   return {
-    savedProvider: savedProvider as NativeHermesProviderSelection['savedProvider'],
-    accessMode: accessMode as NativeHermesProviderSelection['accessMode'],
+    savedProvider: savedProvider as HermesProviderSelection['savedProvider'],
+    accessMode: accessMode as HermesProviderSelection['accessMode'],
     provider: savedProvider === 'openai' && accessMode === 'chatgpt-account'
       ? 'openai-codex'
       : savedProvider,
@@ -53,7 +53,7 @@ function resolveProviderPair(provider: unknown, access: unknown): {
  */
 export function resolveSavedHermesProvider(
   value: SavedHermesProviderSelection,
-): NativeHermesProviderSelection {
+): HermesProviderSelection {
   const model = String(value.providerModelId ?? value.modelKey ?? '').trim();
   const openaiRuntime = String(value.openaiRuntime ?? '').trim().toLowerCase();
   if (!model) {
@@ -86,10 +86,10 @@ export function resolveSavedHermesProvider(
   };
 }
 
-/** Validate a delegated child's independently saved native provider/model selector. */
+/** Validate a delegated child's independently saved Hermes provider/model selector. */
 export function resolveSavedHermesSubagent(
   value: Omit<SavedHermesProviderSelection, 'openaiRuntime'>,
-): NativeHermesSubagentSelection {
+): HermesSubagentSelection {
   const model = String(value.providerModelId ?? value.modelKey ?? '').trim();
   if (!model) {
     throw new Error('hermes_saved_subagent_selection_incomplete');

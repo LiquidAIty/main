@@ -7,7 +7,7 @@ describe('saved Hermes provider selection', () => {
     ['openai', 'openai-api', 'openai'],
     ['openrouter', 'openrouter-api', 'openrouter'],
     ['local_openai_compatible', 'openai-api', 'local_openai_compatible'],
-  ])('leaves %s/%s native API-mode selection to Hermes', (provider, accessMode, nativeProvider) => {
+  ])('leaves %s/%s API-mode selection to Hermes', (provider, accessMode, hermesProvider) => {
     expect(resolveSavedHermesProvider({
       provider,
       accessMode,
@@ -15,7 +15,7 @@ describe('saved Hermes provider selection', () => {
     })).toEqual({
       savedProvider: provider,
       accessMode,
-      provider: nativeProvider,
+      provider: hermesProvider,
       model: 'saved-model',
       apiMode: null,
       openaiRuntime: null,

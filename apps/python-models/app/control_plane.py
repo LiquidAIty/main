@@ -47,7 +47,6 @@ _CARD_CREATE_KEYS = {
     "subagentType",
     "subagentModel",
     "tools",
-    "nativeTools",
     "skills",
     "toolsets",
     "mcpConnectionIds",
@@ -61,8 +60,8 @@ _CARD_CREATE_MODEL_KEYS = {
     "providerModelId",
     "reasoningEffort",
 }
-# Exact allowlist of Card fields Agent Builder may edit. Native selections stay
-# saved as selections; current native availability is checked by the runtime.
+# Exact allowlist of Card fields Agent Builder may edit. Tool selections stay
+# saved as selections; current supplier availability is checked by the runtime.
 _UPDATABLE_TOP_FIELDS = {"prompt", "title"}
 _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "script",
@@ -77,16 +76,13 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "temperature",
     "maxTokens",
     "tools",
-    "nativeTools",
     "skills",
     "toolsets",
     "mcpConnectionIds",
     "configuration",
     "subsystems",
 }
-_CAPABILITY_LIST_FIELDS = {
-    "tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds",
-}
+_CAPABILITY_LIST_FIELDS = {"tools", "skills", "toolsets", "mcpConnectionIds"}
 _REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 _ACCESS_MODES = {"chatgpt-account", "openai-api", "openrouter-api"}
 _SUBAGENT_TYPES = {"none", "leaf", "recursive"}
@@ -100,6 +96,15 @@ _DEFAULT_HERMES_SUBAGENT_MODEL = {
     "providerModelId": "gpt-5.6-luna",
 }
 _AGENT_BUILDER_PROFILE = "builder"
+_HERMES_TOOL_ID = re.compile(r"^hermes:tool:[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+
+
+def _tool_selection_available(name: str) -> bool:
+    from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
+
+    return name in (readable_tool_ids() | writable_tool_ids()) or bool(
+        _HERMES_TOOL_ID.fullmatch(name)
+    )
 
 
 class ControlPlaneError(Exception):
@@ -598,9 +603,10 @@ async def card_create(
         normalized_selections[field] = list(dict.fromkeys(name.strip() for name in values))
     normalized_tools = normalized_selections["tools"]
     if normalized_tools:
-        from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
-
-        invalid_tools = [name for name in normalized_tools if name not in (readable_tool_ids() | writable_tool_ids())]
+        invalid_tools = [
+            name for name in normalized_tools
+            if not _tool_selection_available(name)
+        ]
         if invalid_tools:
             raise ControlPlaneError(
                 f"card_create_tool_unavailable:{invalid_tools[0]}"
@@ -747,10 +753,9 @@ async def card_update_configuration(
             field: list(dict.fromkeys(item.strip() for item in values)),
         }
     if "tools" in updates:
-        from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
-
         invalid_tools = [
-            name for name in updates["tools"] if name not in (readable_tool_ids() | writable_tool_ids())
+            name for name in updates["tools"]
+            if not _tool_selection_available(name)
         ]
         if invalid_tools:
             raise ControlPlaneError(

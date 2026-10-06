@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  isJevAttentionEvent,
-  loadMainDriverStatus,
   loadSessionHistory,
   projectCardChatTargets,
   selectedConversationId,
@@ -44,7 +42,7 @@ describe('projectCardChatTargets', () => {
     expect(projectCardChatTargets([
       {
         id: 'card_main_chat', _cardRevisionId: 'revision-main', title: 'Main',
-        runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+        runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
       },
       {
         id: 'card_worldsignals_agent', _cardRevisionId: 'revision-worldsignals', title: 'WorldSignals',
@@ -66,7 +64,7 @@ describe('projectCardChatTargets', () => {
     ])).toEqual([
       {
         cardId: 'card_main_chat', cardRevisionId: 'revision-main',
-        profile: 'liquidaity-main', title: 'Main',
+        profile: 'main', title: 'Main',
         address: 'Main', aliases: ['main'],
       },
       {
@@ -79,38 +77,6 @@ describe('projectCardChatTargets', () => {
         profile: 'two-words', title: 'Two Words', aliases: [],
       },
     ]);
-  });
-});
-
-describe('loadMainDriverStatus', () => {
-  it('accepts only the three explicit Main input drivers', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        ok: true, ready: true, activeDriver: 'external_plugin',
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        ok: true, ready: true, activeDriver: 'invented_driver',
-      }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(loadMainDriverStatus('project-one', 'deck-one', 'conversation-a')).resolves.toEqual({
-      ready: true,
-      activeDriver: 'external_plugin',
-    });
-    await expect(loadMainDriverStatus('project-one', 'deck-one', 'conversation-b')).resolves.toEqual({
-      ready: true,
-      activeDriver: null,
-    });
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      '/api/main/session/driver?projectId=project-one&deckId=deck-one&conversationId=conversation-a',
-      '/api/main/session/driver?projectId=project-one&deckId=deck-one&conversationId=conversation-b',
-    ]);
-  });
-
-  it('fails closed when Main driver status is unavailable', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
-    await expect(loadMainDriverStatus('project-one', 'deck-one', 'conversation-a'))
-      .rejects.toThrow('main_driver_status_unavailable');
   });
 });
 
@@ -154,81 +120,9 @@ describe('streamSession', () => {
     });
   });
 
-  it('forwards one complete Jev attention result with its distribution and identity', async () => {
-    const attention = {
-      schemaVersion: 'jev-attention.v1', status: 'success',
-      decisionId: 'decision-one', resultIdentity: 'result-one',
-      projectId: 'p', deckId: 'd', conversationId: 'main', cardId: 'card_main_chat', runId: 'r',
-      directAddressed: false,
-      candidates: [{ choiceId: 'think-one', authority: 'ThinkGraph', nativeId: 'native-think',
-        title: 'Think result', probability: 0.6, selected: true, hydrated: true },
-      { choiceId: 'know-one', authority: 'KnowGraph', nativeId: 'native-know',
-        title: 'Know result', probability: 0.3, selected: false, hydrated: true }],
-      distribution: { 'think-one': 0.6, 'know-one': 0.3, ATTENTION_NEW_SUBJECT: 0.1 },
-      selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'native-think' }],
-      policy: { limit: 8 }, model: { name: 'jev-test' }, timing: { elapsedMs: 5 }, error: null,
-    };
-    const frame = `event: jev_attention\ndata: ${JSON.stringify(attention)}\n\n`;
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      'event: run\ndata: {"projectId":"p","deckId":"d","conversationId":"main","cardId":"card_main_chat","runId":"r","directAddressed":false}\n\n',
-      frame, frame,
-      'event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n',
-    ])));
-    const onEvent = vi.fn();
-
-    await streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent });
-
-    const delivered = onEvent.mock.calls.map(([event]) => event)
-      .filter((event) => event.kind === 'jev_attention');
-    expect(delivered).toEqual([{ kind: 'jev_attention', ...attention }]);
-    expect(delivered[0].distribution).toEqual({
-      'think-one': 0.6, 'know-one': 0.3, ATTENTION_NEW_SUBJECT: 0.1,
-    });
-  });
-
-  it('refuses malformed Jev attention identity, status, and distribution shapes', async () => {
-    const valid = {
-      kind: 'jev_attention', schemaVersion: 'jev-attention.v1', status: 'success',
-      decisionId: 'decision-one', projectId: 'p', deckId: 'd', conversationId: 'main',
-      cardId: 'card_main_chat', runId: 'r', directAddressed: false,
-      candidates: [{ choiceId: 'choice-one', authority: 'ThinkGraph', nativeId: 'native-one',
-        title: 'Candidate one', probability: 0.7, selected: true, hydrated: true }],
-      distribution: { 'choice-one': 0.7, ATTENTION_NEW_SUBJECT: 0.3 },
-      selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'native-one' }],
-    };
-    expect(isJevAttentionEvent(valid)).toBe(true);
-    expect(isJevAttentionEvent({ ...valid, decisionId: '' })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid, status: 'complete' })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid,
-      candidates: [{ ...valid.candidates[0], choiceId: 'ATTENTION_NEW_SUBJECT' }],
-      distribution: { ATTENTION_NEW_SUBJECT: 1 },
-    })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid, distribution: { choice: '0.9' } })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid, distribution: { 'choice-one': 0.7 } })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid,
-      distribution: { 'choice-one': 0.7, ATTENTION_NEW_SUBJECT: 0.2 },
-    })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid,
-      distribution: { 'choice-one': 0.6, ATTENTION_NEW_SUBJECT: 0.4 },
-    })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid,
-      distribution: { 'choice-one': 0.7, ATTENTION_NEW_SUBJECT: 0.3, extra: 0 },
-    })).toBe(false);
-    expect(isJevAttentionEvent({ ...valid,
-      selectedReferences: [{ authority: 'KnowGraph', nativeId: 'native-one' }],
-    })).toBe(false);
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      `event: jev_attention\ndata: ${JSON.stringify({ ...valid, kind: undefined, distribution: { choice: '0.9' } })}\n\n`,
-      'event: end\ndata: {}\n\n',
-    ])));
-    await expect(streamSession({
-      projectId: 'p', conversationId: 'main', message: 'input', onEvent: vi.fn(),
-    })).rejects.toMatchObject({ code: 'jev_attention_event_invalid' });
-  });
-
-  it('delivers a stable native event ID exactly once without comparing its content', async () => {
+  it('delivers a stable hermes event ID exactly once without comparing its content', async () => {
     const frame = (output: string) => `event: tool_progress\ndata: ${JSON.stringify({ output,
-      projectId: 'p', deckId: 'd', runId: 'r', terminalEvent: { id: 'r:tool:t:partial', detail: output } })}\n\n`;
+      projectId: 'p', deckId: 'd', runId: 'r', runtimeEvent: { id: 'r:tool:t:partial', detail: output } })}\n\n`;
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([frame('first'), frame('first'), frame('second'),
       'event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n'])));
     const onEvent = vi.fn();
@@ -237,7 +131,7 @@ describe('streamSession', () => {
       .toEqual(['first']);
   });
   it('reconciles replayed event IDs without dropping distinct equal text chunks', async () => {
-    const event = (id: string) => `event: text\ndata: ${JSON.stringify({ text: 'ha', projectId: 'p', deckId: 'd', runId: 'r', terminalEvent: { id } })}\n\n`;
+    const event = (id: string) => `event: text\ndata: ${JSON.stringify({ text: 'ha', projectId: 'p', deckId: 'd', runId: 'r', runtimeEvent: { id } })}\n\n`;
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
       event('r:1'), event('r:1'), event('r:2'),
       'event: done\ndata: {"fullText":"haha"}\n\nevent: end\ndata: {}\n\n',
@@ -250,11 +144,11 @@ describe('streamSession', () => {
   it('routes repeated typed projection IDs once while preserving distinct equal deltas', async () => {
     const frame = (id: string, category: string, text: string) => `event: projection\ndata: ${JSON.stringify({
       projectId: 'p', deckId: 'd', runId: 'r', projection: {
-        schemaVersion: 'liquidaity.main.projection.v1', id, category,
+        schemaVersion: 'builder.main.projection.v1', id, category,
         sequence: Number(id.replace(/\D/g, '')) || 1,
         timestamp: '2026-08-31T12:00:00.000Z', text,
         projectId: 'p', deckId: 'd', cardId: 'card_main_chat', cardName: 'Main Chat',
-        runId: 'r', parentRunId: null, nativeChildId: null, nativeTurnId: 'turn-1',
+        runId: 'r', parentRunId: null, hermesChildId: null, hermesTurnId: 'turn-1',
         kind: category === 'conversation.input' ? 'mission' : 'model',
       },
     })}\n\n`;
@@ -270,7 +164,7 @@ describe('streamSession', () => {
     expect(onEvent.mock.calls.filter(([event]) => event.kind === 'projection'))
       .toHaveLength(3);
   });
-  it('surfaces a rejected native start as typed status instead of model text', async () => {
+  it('surfaces a rejected hermes start as typed status instead of model text', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({ error: 'main_domain_preparation_failed', correlationId: 'req_start' }),
       { status: 503, headers: { 'Content-Type': 'application/json' } },
@@ -306,8 +200,7 @@ describe('streamSession', () => {
       expect(JSON.parse(String(init?.body))).toMatchObject({
         message: text,
         dataAnchors: [{
-          authority: 'CodeGraph',
-          nativeId: 'pkg.materialize_idf',
+          cbmQualifiedName: 'pkg.materialize_idf',
           reason: 'Current production definition',
         }],
       });
@@ -320,7 +213,7 @@ describe('streamSession', () => {
       conversationId: 'main',
       message: text,
       dataAnchors: [{
-        authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+        cbmQualifiedName: 'pkg.materialize_idf',
         reason: 'Current production definition', priority: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }],
@@ -404,12 +297,12 @@ describe('Hermes voice transport', () => {
     const ready = {
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       cardId: 'card_worldview', runtimeSessionId: 'runtime-worldview',
-      nativeSessionId: 'native-worldview', state: { enabled: true, tts: true },
+      hermesSessionId: 'hermes-worldview', state: { enabled: true, tts: true },
     };
     const transcript = {
       ...ready,
       event: {
-        type: 'voice.transcript', session_id: 'native-worldview', seq: 9,
+        type: 'voice.transcript', session_id: 'hermes-worldview', seq: 9,
         payload: { text: 'What city is this?' },
       },
     };
@@ -453,7 +346,7 @@ describe('Hermes voice transport', () => {
 });
 
 describe('subscribeSessionEvents', () => {
-  it('delivers only an exact native Gateway event and closes the one EventSource', () => {
+  it('delivers only an exact hermes Gateway event and closes the one EventSource', () => {
     const listeners = new Map<string, (event: Event) => void>();
     const close = vi.fn();
     const eventSource = {
@@ -473,22 +366,22 @@ describe('subscribeSessionEvents', () => {
       deckId: 'deck_builder',
       conversationId: 'main',
       runtimeSessionId: 'runtime-main',
-      nativeSessionId: 'native-main',
+      hermesSessionId: 'hermes-main',
       onEvent,
       onError,
     });
 
     expect(EventSourceMock).toHaveBeenCalledWith(
       '/api/main/session/events?projectId=project-1&deckId=deck_builder'
-        + '&conversationId=main&runtimeSessionId=runtime-main&nativeSessionId=native-main',
+        + '&conversationId=main&runtimeSessionId=runtime-main&hermesSessionId=hermes-main',
       { withCredentials: true },
     );
     listeners.get('gateway')?.({
       data: JSON.stringify({
         projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-        cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+        cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
         event: {
-          type: 'message.complete', session_id: 'native-main', seq: 11,
+          type: 'message.complete', session_id: 'hermes-main', seq: 11,
           payload: { text: 'Builder finished.' },
         },
       }),
@@ -498,18 +391,18 @@ describe('subscribeSessionEvents', () => {
 
     listeners.get('gateway')?.({ data: JSON.stringify({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'other',
-      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
-      event: { type: 'message.complete', session_id: 'native-main', payload: { text: 'wrong' } },
+      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
+      event: { type: 'message.complete', session_id: 'hermes-main', payload: { text: 'wrong' } },
     }) } as MessageEvent<string>);
-    expect(onError).toHaveBeenCalledWith('main_native_event_identity_mismatch');
+    expect(onError).toHaveBeenCalledWith('main_hermes_event_identity_mismatch');
     expect(onEvent).toHaveBeenCalledOnce();
 
     listeners.get('gateway')?.({ data: JSON.stringify({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
-      event: { type: 'message.complete', session_id: 'native-main', payload: { text: 'unsequenced' } },
+      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
+      event: { type: 'message.complete', session_id: 'hermes-main', payload: { text: 'unsequenced' } },
     }) } as MessageEvent<string>);
-    expect(onError).toHaveBeenLastCalledWith('main_native_event_identity_mismatch');
+    expect(onError).toHaveBeenLastCalledWith('main_hermes_event_identity_mismatch');
     expect(onEvent).toHaveBeenCalledOnce();
 
     detach();
@@ -523,7 +416,7 @@ describe('loadSessionHistory', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({
         ok: true,
-        sessionId: 'native-main',
+        sessionId: 'hermes-main',
         runtimeSessionId: 'runtime-main',
         mainCardId: 'card_main_chat',
         addressableAgents: [{
@@ -538,10 +431,10 @@ describe('loadSessionHistory', () => {
           { role: 'assistant', text: 'Exact model text',
             speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
         ],
-        terminalEvents: [{ id: 'answer', category: 'conversation.answer' }, {
+        runtimeEvents: [{ id: 'answer', category: 'conversation.answer' }, {
           id: 'tool', category: 'execution.tool', projectId: 'project-1', deckId: 'deck_builder',
           cardId: 'card_main_chat', cardName: 'Main', runId: 'run-1', parentRunId: null,
-          nativeChildId: null, kind: 'tool_result', status: 'completed', sequence: 2, timestamp: null,
+          hermesChildId: null, kind: 'tool_result', status: 'completed', sequence: 2, timestamp: null,
           toolName: 'lookup',
         }],
       }),
@@ -552,7 +445,7 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'conversation-history-roles',
     })).resolves.toEqual({
-      nativeSessionId: 'native-main',
+      hermesSessionId: 'hermes-main',
       runtimeSessionId: 'runtime-main',
       mainCardId: 'card_main_chat',
       addressableAgents: [{
@@ -565,14 +458,14 @@ describe('loadSessionHistory', () => {
         { role: 'assistant', text: 'Exact model text',
           speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
       ],
-      terminalEvents: [expect.objectContaining({ id: 'tool', category: 'execution.tool' })],
+      runtimeEvents: [expect.objectContaining({ id: 'tool', category: 'execution.tool' })],
     });
   });
 
   it('keeps a valid fresh conversation as an empty transcript', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({
-        ok: true, sessionId: 'native-main', runtimeSessionId: 'runtime-main',
+        ok: true, sessionId: 'hermes-main', runtimeSessionId: 'runtime-main',
         mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -582,8 +475,8 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'main',
     })).resolves.toEqual({
-      nativeSessionId: 'native-main', runtimeSessionId: 'runtime-main', mainCardId: 'card_main_chat',
-      addressableAgents: [], messages: [], terminalEvents: [],
+      hermesSessionId: 'hermes-main', runtimeSessionId: 'runtime-main', mainCardId: 'card_main_chat',
+      addressableAgents: [], messages: [], runtimeEvents: [],
     });
   });
 
@@ -600,7 +493,7 @@ describe('loadSessionHistory', () => {
           text: 'Persisted answer',
           speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
         }],
-        terminalEvents: [],
+        runtimeEvents: [],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )));
@@ -609,7 +502,7 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'main',
     })).resolves.toEqual({
-      nativeSessionId: '',
+      hermesSessionId: '',
       runtimeSessionId: '',
       mainCardId: 'card_main_chat',
       addressableAgents: [],
@@ -618,7 +511,7 @@ describe('loadSessionHistory', () => {
         text: 'Persisted answer',
         speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
       }],
-      terminalEvents: [],
+      runtimeEvents: [],
     });
   });
 

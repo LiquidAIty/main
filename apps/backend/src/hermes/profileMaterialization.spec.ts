@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   materializeHermesProfileSelections,
-  toNativeSubagentTypeConfig,
+  toHermesSubagentTypeConfig,
   type HermesProfileSelection,
 } from './profileMaterialization';
 
@@ -27,7 +27,7 @@ function selection(overrides: Partial<HermesProfileSelection> = {}): HermesProfi
   };
 }
 
-function nativeProfile(overrides: Record<string, unknown> = {}) {
+function hermesProfile(overrides: Record<string, unknown> = {}) {
   return {
     name: 'builder',
     model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
@@ -56,12 +56,12 @@ describe('materializeHermesProfileSelections', () => {
     ['none', { maxSpawnDepth: 1, orchestratorEnabled: false, delegationDisabled: true }],
     ['leaf', { maxSpawnDepth: 1, orchestratorEnabled: false, delegationDisabled: false }],
     ['recursive', { maxSpawnDepth: 2, orchestratorEnabled: true, delegationDisabled: false }],
-  ] as const)('maps %s to the exact native delegation gate', (subagentType, expected) => {
-    expect(toNativeSubagentTypeConfig(subagentType)).toEqual(expected);
+  ] as const)('maps %s to the exact Hermes delegation gate', (subagentType, expected) => {
+    expect(toHermesSubagentTypeConfig(subagentType)).toEqual(expected);
   });
 
-  it('preserves native background review while applying the saved subagent selection', async () => {
-    const profile = nativeProfile({
+  it('preserves Hermes background review while applying the saved subagent selection', async () => {
+    const profile = hermesProfile({
       subagent_model: { provider: '', model: '' },
       background_review: { enabled: true, provider: 'openai', model: 'gpt-5.6-sol' },
     });
@@ -83,7 +83,7 @@ describe('materializeHermesProfileSelections', () => {
     });
     expect(configureParent).not.toHaveBeenCalled();
     expect(configureSkills).not.toHaveBeenCalled();
-    expect(result.native.background_review).toEqual(profile.background_review);
+    expect(result.hermesProfile.background_review).toEqual(profile.background_review);
     expect(result.effectiveSubagentModel).toEqual({
       desired: savedSubagent,
       provider: 'openai-codex',
@@ -94,14 +94,14 @@ describe('materializeHermesProfileSelections', () => {
   });
 
   it('applies and rereads a mismatched saved parent model before returning', async () => {
-    const readNative = vi.fn()
-      .mockResolvedValueOnce(nativeProfile({ model: { provider: '', default: '' } }))
-      .mockResolvedValueOnce(nativeProfile());
+    const readHermes = vi.fn()
+      .mockResolvedValueOnce(hermesProfile({ model: { provider: '', default: '' } }))
+      .mockResolvedValueOnce(hermesProfile());
     const configureParent = vi.fn(async () => ({ ok: true, applied: { model: true } }));
 
     await materializeHermesProfileSelections(
       selection(),
-      readNative,
+      readHermes,
       vi.fn(),
       configureParent,
       vi.fn(),
@@ -113,19 +113,19 @@ describe('materializeHermesProfileSelections', () => {
       apiMode: 'codex_app_server',
       openaiRuntime: 'codex_app_server',
     });
-    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(readHermes).toHaveBeenCalledTimes(2);
   });
 
-  it('enables only selected installed skills plus the native essential skill', async () => {
-    const readNative = vi.fn()
-      .mockResolvedValueOnce(nativeProfile({
+  it('enables only selected installed skills plus the Hermes essential skill', async () => {
+    const readHermes = vi.fn()
+      .mockResolvedValueOnce(hermesProfile({
         skills: [
           { name: 'hermes-agent', enabled: true },
           { name: 'grounded-citations', enabled: true },
           { name: 'browser', enabled: true },
         ],
       }))
-      .mockResolvedValueOnce(nativeProfile({
+      .mockResolvedValueOnce(hermesProfile({
         skills: [
           { name: 'hermes-agent', enabled: true },
           { name: 'grounded-citations', enabled: true },
@@ -136,50 +136,50 @@ describe('materializeHermesProfileSelections', () => {
 
     await materializeHermesProfileSelections(
       selection({ skills: ['grounded-citations'] }),
-      readNative,
+      readHermes,
       vi.fn(),
       vi.fn(),
       configureSkills,
     );
 
     expect(configureSkills).toHaveBeenCalledExactlyOnceWith('builder', ['browser']);
-    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(readHermes).toHaveBeenCalledTimes(2);
   });
 
-  it('fails closed when the saved native profile is missing', async () => {
-    const readNative = vi.fn(async () => {
-      throw new Error("native profile 'builder' not found");
+  it('fails closed when the saved Hermes profile is missing', async () => {
+    const readHermes = vi.fn(async () => {
+      throw new Error("Hermes profile 'builder' not found");
     });
 
     await expect(materializeHermesProfileSelections(
       selection(),
-      readNative,
+      readHermes,
       vi.fn(),
       vi.fn(),
       vi.fn(),
-    )).rejects.toThrow('hermes_native_profile_missing:builder');
+    )).rejects.toThrow('hermes_profile_missing:builder');
   });
 
-  it('fails closed when a selected saved skill is absent from the native profile', async () => {
+  it('fails closed when a selected saved skill is absent from the Hermes profile', async () => {
     await expect(materializeHermesProfileSelections(
       selection({ skills: ['grounded-citations'] }),
-      vi.fn(async () => nativeProfile()),
+      vi.fn(async () => hermesProfile()),
       vi.fn(),
       vi.fn(),
       vi.fn(),
-    )).rejects.toThrow('hermes_native_skill_missing:builder:grounded-citations');
+    )).rejects.toThrow('hermes_skill_missing:builder:grounded-citations');
   });
 
-  it('pins saved native toolsets plus the Card plugin toolset and reads them back', async () => {
+  it('pins saved Hermes toolsets plus the Card plugin toolset and reads them back', async () => {
     const available = [
       { name: 'memory', enabled: true },
       { name: 'file', enabled: true },
       { name: 'terminal', enabled: true },
       { name: 'card-tools', enabled: false },
     ];
-    const readNative = vi.fn()
-      .mockResolvedValueOnce(nativeProfile({ toolsets: available }))
-      .mockResolvedValueOnce(nativeProfile({
+    const readHermes = vi.fn()
+      .mockResolvedValueOnce(hermesProfile({ toolsets: available }))
+      .mockResolvedValueOnce(hermesProfile({
         toolsets: available.map((toolset) => ({
           ...toolset,
           enabled: ['card-tools', 'file', 'memory'].includes(toolset.name),
@@ -189,11 +189,11 @@ describe('materializeHermesProfileSelections', () => {
 
     await materializeHermesProfileSelections(
       selection({
-        nativeTools: ['memory'],
+        hermesSuppliedTools: [{ canonicalName: 'hermes:tool:memory', hermesName: 'memory' }],
         toolsets: ['file'],
         requiredToolsets: ['card-tools'],
       }),
-      readNative,
+      readHermes,
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -204,29 +204,29 @@ describe('materializeHermesProfileSelections', () => {
       'builder',
       ['card-tools', 'file', 'memory'],
     );
-    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(readHermes).toHaveBeenCalledTimes(2);
   });
 
-  it('fails before inference when a saved native toolset is not installed', async () => {
+  it('fails before inference when a saved Hermes toolset is not installed', async () => {
     await expect(materializeHermesProfileSelections(
       selection({ toolsets: ['missing-toolset'] }),
-      vi.fn(async () => nativeProfile({ toolsets: [{ name: 'file', enabled: true }] })),
+      vi.fn(async () => hermesProfile({ toolsets: [{ name: 'file', enabled: true }] })),
       vi.fn(),
       vi.fn(),
       vi.fn(),
       vi.fn(),
-    )).rejects.toThrow('hermes_native_toolset_missing:builder:missing-toolset');
+    )).rejects.toThrow('hermes_toolset_missing:builder:missing-toolset');
   });
 
   it('enables exactly the saved MCP servers through the public profile contract', async () => {
-    const readNative = vi.fn()
-      .mockResolvedValueOnce(nativeProfile({
+    const readHermes = vi.fn()
+      .mockResolvedValueOnce(hermesProfile({
         mcp_servers: [
           { name: 'graphiti', enabled: false },
           { name: 'cbm', enabled: true },
         ],
       }))
-      .mockResolvedValueOnce(nativeProfile({
+      .mockResolvedValueOnce(hermesProfile({
         mcp_servers: [
           { name: 'graphiti', enabled: true },
           { name: 'cbm', enabled: false },
@@ -239,7 +239,7 @@ describe('materializeHermesProfileSelections', () => {
 
     const result = await materializeHermesProfileSelections(
       selection({ mcpConnectionIds: ['graphiti'] }),
-      readNative,
+      readHermes,
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -248,14 +248,14 @@ describe('materializeHermesProfileSelections', () => {
     );
 
     expect(configureMcpServers).toHaveBeenCalledExactlyOnceWith('builder', ['graphiti']);
-    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(readHermes).toHaveBeenCalledTimes(2);
     expect(result.unavailableMcpServerReasons).toEqual({});
   });
 
   it('reports a required MCP server that stock Hermes could not find without broadening the profile', async () => {
-    const readNative = vi.fn()
-      .mockResolvedValueOnce(nativeProfile({ mcp_servers: [] }))
-      .mockResolvedValueOnce(nativeProfile({ mcp_servers: [] }));
+    const readHermes = vi.fn()
+      .mockResolvedValueOnce(hermesProfile({ mcp_servers: [] }))
+      .mockResolvedValueOnce(hermesProfile({ mcp_servers: [] }));
     const configureMcpServers = vi.fn(async () => ({
       ok: true,
       applied: { mcp_servers: true },
@@ -263,7 +263,7 @@ describe('materializeHermesProfileSelections', () => {
 
     const result = await materializeHermesProfileSelections(
       selection({ mcpConnectionIds: ['graphiti'] }),
-      readNative,
+      readHermes,
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -277,18 +277,18 @@ describe('materializeHermesProfileSelections', () => {
   });
 
   it('pins an explicitly empty Card toolset selection and reads it back', async () => {
-    const readNative = vi.fn()
-      .mockResolvedValueOnce(nativeProfile({
+    const readHermes = vi.fn()
+      .mockResolvedValueOnce(hermesProfile({
         toolsets: [{ name: 'web', enabled: true }],
       }))
-      .mockResolvedValueOnce(nativeProfile({
+      .mockResolvedValueOnce(hermesProfile({
         toolsets: [{ name: 'web', enabled: false }],
       }));
     const configureToolsets = vi.fn(async () => ({ ok: true, applied: { toolsets: true } }));
 
     await materializeHermesProfileSelections(
       selection(),
-      readNative,
+      readHermes,
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -296,7 +296,7 @@ describe('materializeHermesProfileSelections', () => {
     );
 
     expect(configureToolsets).toHaveBeenCalledExactlyOnceWith('builder', []);
-    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(readHermes).toHaveBeenCalledTimes(2);
   });
 
   it('leaves delegation config untouched when the saved subagent type is absent', async () => {
@@ -304,7 +304,7 @@ describe('materializeHermesProfileSelections', () => {
 
     await materializeHermesProfileSelections(
       selection(),
-      vi.fn(async () => nativeProfile()),
+      vi.fn(async () => hermesProfile()),
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -321,7 +321,7 @@ describe('materializeHermesProfileSelections', () => {
 
     await materializeHermesProfileSelections(
       selection({ taskMode: 'team' }),
-      vi.fn(async () => nativeProfile()),
+      vi.fn(async () => hermesProfile()),
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -339,7 +339,7 @@ describe('materializeHermesProfileSelections', () => {
 
     await materializeHermesProfileSelections(
       selection({ taskMode: null }),
-      vi.fn(async () => nativeProfile()),
+      vi.fn(async () => hermesProfile()),
       vi.fn(),
       vi.fn(),
       vi.fn(),
@@ -360,9 +360,9 @@ describe('materializeHermesProfileSelections', () => {
         { name: 'memory', enabled: true },
         { name: 'delegation', enabled: false },
       ];
-      const readNative = vi.fn()
-        .mockResolvedValueOnce(nativeProfile({ toolsets: available }))
-        .mockResolvedValueOnce(nativeProfile({
+      const readHermes = vi.fn()
+        .mockResolvedValueOnce(hermesProfile({ toolsets: available }))
+        .mockResolvedValueOnce(hermesProfile({
           toolsets: available.map((toolset) => ({ ...toolset, enabled: true })),
         }));
       const configureToolsets = vi.fn(async () => {
@@ -375,7 +375,7 @@ describe('materializeHermesProfileSelections', () => {
 
       await materializeHermesProfileSelections(
         selection({ subagentType, toolsets: ['memory'] }),
-        readNative,
+        readHermes,
         vi.fn(),
         vi.fn(),
         vi.fn(),
@@ -399,9 +399,9 @@ describe('materializeHermesProfileSelections', () => {
       { name: 'memory', enabled: true },
       { name: 'delegation', enabled: true },
     ];
-    const readNative = vi.fn()
-      .mockResolvedValueOnce(nativeProfile({ toolsets: available }))
-      .mockResolvedValueOnce(nativeProfile({
+    const readHermes = vi.fn()
+      .mockResolvedValueOnce(hermesProfile({ toolsets: available }))
+      .mockResolvedValueOnce(hermesProfile({
         toolsets: available.map((toolset) => ({
           ...toolset,
           enabled: toolset.name === 'memory',
@@ -417,7 +417,7 @@ describe('materializeHermesProfileSelections', () => {
 
     await materializeHermesProfileSelections(
       selection({ subagentType: 'none', toolsets: ['memory'] }),
-      readNative,
+      readHermes,
       vi.fn(),
       vi.fn(),
       vi.fn(),

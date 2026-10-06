@@ -27,9 +27,7 @@ def _idf(
     reference_extra: dict | None = None, projection_extra: dict | None = None,
 ):
     reference = {
-        "authority": "CodeGraph",
-        "nativeId": "project.module.materialize_idf",
-        "nativeKind": "node",
+        "cbmQualifiedName": "project.module.materialize_idf",
         "reason": "Bound the coding task.",
         "asOf": "2026-08-23T12:00:00Z",
         "required": True,
@@ -49,10 +47,10 @@ def _idf(
     }
     references = [reference] if graph_context else []
     projection = {
-        "authority": "CodeGraph" if graph_context else "",
+        "graphSystems": ["cbm"] if graph_context else [],
         "nodes": ([{
             "id": "project.module.materialize_idf",
-            "authority": "CodeGraph",
+            "graphSystem": "cbm",
             "type": "Function",
             "label": "materialize_idf",
             "labels": ["Function"],
@@ -90,14 +88,13 @@ def _idf(
         capabilities={
             "enabledTools": ["codegraph.search_graph"],
             "toolDefinitions": [],
-            "nativeTools": [],
             "skills": [],
             "toolsets": [],
             "mcpConnectionIds": ["liquidaity"],
             **(capabilities or {}),
         },
         graph_context=graph_context,
-        native_references=references,
+        graph_records=references,
         graph_projection=projection,
         materialized_at="2026-08-23T12:00:00Z",
     )
@@ -139,7 +136,7 @@ def test_empty_graph_section_is_valid_and_idf_is_graph_first() -> None:
         "selection": 0,
         "total": 0,
     }
-    assert materialized.idf.actualGraphData.authorities == []
+    assert materialized.idf.actualGraphData.graphSystems == []
     assert materialized.idf.actualGraphData.records == []
     assert list(json.loads(materialized.idf_bytes)) == [
         "actualGraphData",
@@ -219,13 +216,13 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     graph = "### CodeGraph\nVerified native content."
     materialized = _idf(graph_context=graph)
     records = {record.kind: record for record in materialized.idf.actualGraphData.records}
-    assert records["selection"].nativeId == "project.module.materialize_idf"
+    assert records["selection"].cbmQualifiedName == "project.module.materialize_idf"
     assert records["selection"].content["selectionScope"] == {
         "boundedExpansion": 1, "resultLimit": 4,
     }
     assert records["selection"].sourcePath == "apps/example.py"
     assert records["node"].provenance["repository"] == "C-Projects-LiquidAIty-main"
-    assert materialized.idf.actualGraphData.selectedNativeReferences[0]["nativeId"] == (
+    assert materialized.idf.actualGraphData.selectedGraphRecords[0]["cbmQualifiedName"] == (
         "project.module.materialize_idf"
     )
     task = model_task(materialized.idf)
@@ -259,11 +256,10 @@ def test_selected_native_record_is_not_serialized_again_in_structured_section() 
         if record.kind == "node"
     )
 
-    assert node.nativeId == "project.module.materialize_idf"
+    assert node.cbmQualifiedName == "project.module.materialize_idf"
     assert node.provenance == {"repository": "C-Projects-LiquidAIty-main"}
     assert node.content["materializedRecord"] == {
-        "authority": "CodeGraph",
-        "nativeId": "project.module.materialize_idf",
+        "cbmQualifiedName": "project.module.materialize_idf",
         "sha256": "a" * 64,
     }
     assert "properties" not in node.content
@@ -415,7 +411,7 @@ def test_retained_idf_rejects_root_or_reference_receipt_ledger_fields() -> None:
         ).encode())
 
     reference_value = json.loads(materialized.idf_bytes)
-    reference_value["actualGraphData"]["selectedNativeReferences"][0].update(
+    reference_value["actualGraphData"]["selectedGraphRecords"][0].update(
         ledger
     )
     with pytest.raises(InputMaterializationError, match="input_file_invalid"):
@@ -426,7 +422,7 @@ def test_retained_idf_rejects_root_or_reference_receipt_ledger_fields() -> None:
         ).encode())
 
     nested_reference_value = json.loads(materialized.idf_bytes)
-    nested_reference_value["actualGraphData"]["selectedNativeReferences"][0][
+    nested_reference_value["actualGraphData"]["selectedGraphRecords"][0][
         "provenance"
     ]["attemptEvents"] = ledger["attemptEvents"]
     with pytest.raises(InputMaterializationError, match="input_file_invalid"):

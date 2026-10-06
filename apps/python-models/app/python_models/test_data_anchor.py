@@ -39,633 +39,16 @@ def test_codegraph_ui_reads_saved_scope_and_rejects_effects(monkeypatch):
 from app.python_models.data_anchor import (
     append_canonical_subject_directory,
     assemble_canonical_subject_directory,
-    contextual_node_read,
     DataAnchorError,
     empty_graph_projection,
-    list_contextual_know_candidates,
     read_codegraph_exact,
     read_knowgraph_episodes_exact,
     read_knowgraph_exact,
     read_thinkgraph_exact,
     resolve_data_anchors,
-    search_knowgraph_attention_candidates,
     search_knowgraph_hybrid,
 )
 from app.python_models import engraphis, data_anchor
-
-
-def _contextual_candidate(native_id: str, text: str) -> dict:
-    return {"nativeId": native_id, "title": native_id, "content": text}
-
-
-def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed = []
-    think_a = engraphis._contextual_node_choice_id("think", "mem-a")
-    think_b = engraphis._contextual_node_choice_id("think", "mem-b")
-    think_c = engraphis._contextual_node_choice_id("think", "mem-c")
-    know_a = engraphis._contextual_node_choice_id("know", "fact-a")
-    know_b = engraphis._contextual_node_choice_id("know", "fact-b")
-    know_c = engraphis._contextual_node_choice_id("know", "fact-c")
-
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "id": "decision-one",
-                "provider": "TypeSafe",
-                "model": engraphis.JEV_MODEL,
-                "usage": {"prompt_tokens": 321},
-                "answers": {
-                        "think": {
-                            "type": "choice",
-                            "choice": think_a,
-                            "confidence": 0.74,
-                        "probabilities": {
-                            think_a: 0.45,
-                            think_b: 0.30,
-                            think_c: 0.15,
-                            "NONE_RELEVANT": 0.10,
-                        },
-                    },
-                        "know": {
-                            "type": "choice",
-                            "choice": "NONE_RELEVANT",
-                            "confidence": 0.68,
-                        "probabilities": {
-                            know_a: 0.25,
-                            know_b: 0.10,
-                            know_c: 0.05,
-                            "NONE_RELEVANT": 0.60,
-                        },
-                    },
-                },
-            }
-
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def post(self, url, **kwargs):
-            observed.append((url, kwargs))
-            return Response()
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
-    monkeypatch.setattr(engraphis.httpx, "Client", Client)
-    result = engraphis.decide_contextual_node_items(
-        {
-            "status": "ready",
-            "activeRequest": "Which implementation constraint matters now?",
-            "messages": [{
-                "role": "user", "speaker": "You", "target": "Main",
-                "content": "Which implementation constraint matters now?",
-            }],
-        },
-        [
-            _contextual_candidate("mem-b", "Newer but off-topic."),
-            _contextual_candidate("mem-a", "Older applicable constraint."),
-            _contextual_candidate("mem-c", "A qualifying constraint."),
-        ],
-        [
-            _contextual_candidate("fact-a", "Unrelated sourced fact."),
-            _contextual_candidate("fact-b", "Another sourced fact."),
-            _contextual_candidate("fact-c", "A third sourced fact."),
-        ],
-    )
-
-    assert len(observed) == 1
-    assert set(observed[0][1]["json"]["questions"]) == {"think", "know"}
-    assert result["requestCount"] == 1
-    assert result["questionCount"] == 2
-    assert result["sides"]["think"]["nativeIds"] == ["mem-a", "mem-b"]
-    assert result["sides"]["know"]["status"] == "none_relevant"
-    assert set(result["sides"]["think"]["distribution"]) == {
-        think_a, think_b, think_c, "NONE_RELEVANT",
-    }
-
-
-def test_contextual_node_jev_only_questions_the_overflowing_side(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed = []
-    choice_a = engraphis._contextual_node_choice_id("think", "mem-a")
-    choice_b = engraphis._contextual_node_choice_id("think", "mem-b")
-    choice_c = engraphis._contextual_node_choice_id("think", "mem-c")
-
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "id": "decision-mixed",
-                "provider": "TypeSafe",
-                "model": engraphis.JEV_MODEL,
-                "usage": {},
-                "answers": {
-                        "think": {
-                            "type": "choice",
-                            "choice": choice_a,
-                            "confidence": 0.72,
-                        "probabilities": {
-                            choice_a: 0.55,
-                            choice_b: 0.25,
-                            choice_c: 0.15,
-                            "NONE_RELEVANT": 0.05,
-                        },
-                    },
-                },
-            }
-
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def post(self, url, **kwargs):
-            observed.append((url, kwargs))
-            return Response()
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
-    monkeypatch.setattr(engraphis.httpx, "Client", Client)
-    result = engraphis.decide_contextual_node_items(
-        {
-            "status": "ready",
-            "activeRequest": "Which context matters?",
-            "messages": [{"role": "user", "content": "Which context matters?"}],
-        },
-        [
-            _contextual_candidate("mem-a", "first think"),
-            _contextual_candidate("mem-b", "second think"),
-            _contextual_candidate("mem-c", "third think"),
-        ],
-        [
-            _contextual_candidate("fact-a", "first know"),
-            _contextual_candidate("fact-b", "second know"),
-        ],
-    )
-
-    assert len(observed) == 1
-    request = observed[0][1]["json"]
-    assert set(request["questions"]) == {"think"}
-    assert [item["native_id"] for item in request["state"]["think_options"]] == [
-        "mem-a", "mem-b", "mem-c",
-    ]
-    assert "know_options" not in request["state"]
-    assert result["requestCount"] == 1
-    assert result["questionCount"] == 1
-    assert result["sides"]["think"]["nativeIds"] == ["mem-a", "mem-b"]
-    assert result["sides"]["know"] == {
-        "status": "selected",
-        "candidateCount": 2,
-        "nativeIds": ["fact-a", "fact-b"],
-    }
-
-
-def test_contextual_node_jev_keeps_only_real_items_above_none_relevant(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed = []
-    think_a = engraphis._contextual_node_choice_id("think", "mem-a")
-    think_b = engraphis._contextual_node_choice_id("think", "mem-b")
-    think_c = engraphis._contextual_node_choice_id("think", "mem-c")
-
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "id": "decision-two",
-                "provider": "TypeSafe",
-                "model": engraphis.JEV_MODEL,
-                "usage": {},
-                "answers": {
-                        "think": {
-                            "type": "choice",
-                            "choice": think_a,
-                            "confidence": 0.70,
-                        "probabilities": {
-                            think_a: 0.50,
-                            think_b: 0.20,
-                            think_c: 0.10,
-                            "NONE_RELEVANT": 0.20,
-                        },
-                    },
-                },
-            }
-
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def post(self, url, **kwargs):
-            observed.append((url, kwargs))
-            return Response()
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
-    monkeypatch.setattr(engraphis.httpx, "Client", Client)
-    result = engraphis.decide_contextual_node_items(
-        {
-            "status": "ready",
-            "activeRequest": "Which constraint applies?",
-            "messages": [{"role": "user", "content": "Which constraint applies?"}],
-        },
-        [
-            _contextual_candidate("mem-a", "first"),
-            _contextual_candidate("mem-b", "ties abstention"),
-            _contextual_candidate("mem-c", "below abstention"),
-        ],
-        [],
-    )
-
-    assert len(observed) == 1
-    assert result["sides"]["think"]["nativeIds"] == ["mem-a"]
-
-
-def test_contextual_node_jev_empty_context_and_option_overflow_make_no_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
-    monkeypatch.setattr(
-        engraphis.httpx,
-        "Client",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not call")),
-    )
-    no_context = engraphis.decide_contextual_node_items({}, [], [])
-    assert no_context["requestCount"] == 0
-    assert no_context["sides"]["think"]["status"] == "context_unavailable"
-
-    overflow = engraphis.decide_contextual_node_items(
-        {
-            "status": "ready",
-            "activeRequest": "Choose the applicable item.",
-            "messages": [{"role": "user", "content": "Choose it."}],
-        },
-        [_contextual_candidate(f"mem-{index:03d}", "content")
-         for index in range(255)],
-        [],
-    )
-    assert overflow["requestCount"] == 0
-    assert overflow["sides"]["think"]["status"] == "limit"
-    assert overflow["sides"]["know"]["status"] == "empty"
-
-
-def test_contextual_node_public_result_contains_only_hydrated_winners(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    records = {
-        ("ThinkGraph", "mem-win"): {
-            "authority": "ThinkGraph", "nativeId": "mem-win", "nativeKind": "node",
-            "type": "episodic", "title": "Winning Think", "content": "winner think body",
-            "properties": {"ingestedAt": "2026-09-01T00:00:00Z"},
-            "metadata": {"thinkgraph_origin": {"authority": "thinkgraph"}},
-            "provenance": {"run_id": "run-one"}, "asOf": "current",
-            "readOperation": "engraphis_get_memory", "relationshipEvidence": [],
-            "resultLimit": 1, "truncated": False,
-        },
-        ("ThinkGraph", "mem-second"): {
-            "authority": "ThinkGraph", "nativeId": "mem-second", "nativeKind": "node",
-            "type": "episodic", "title": "Second Think", "content": "second think body",
-            "properties": {"ingestedAt": "2026-08-31T00:00:00Z"},
-            "metadata": {"thinkgraph_origin": {"authority": "thinkgraph"}},
-            "provenance": {"run_id": "run-two"}, "asOf": "current",
-            "readOperation": "engraphis_get_memory", "relationshipEvidence": [],
-            "resultLimit": 1, "truncated": False,
-        },
-        ("KnowGraph", "fact-win"): {
-            "authority": "KnowGraph", "nativeId": "fact-win", "nativeKind": "edge",
-            "type": "SUPPORTS", "title": "Supported fact", "content": "winner know body",
-            "properties": {"fact": "winner know body"},
-            "know": {"portableKind": "know", "nativeFactUuid": "fact-win",
-                     "fact": "winner know body", "supportingEpisodeUuids": ["episode-1"]},
-            "provenance": {"episodes": [{"uuid": "episode-1", "source_url": "https://example.test"}]},
-            "asOf": "2026-09-25T00:00:00Z", "readOperation": "neo4j.project_scoped_exact",
-            "relationshipEvidence": [], "resultLimit": 1, "truncated": False,
-        },
-        ("KnowGraph", "fact-second"): {
-            "authority": "KnowGraph", "nativeId": "fact-second", "nativeKind": "edge",
-            "type": "QUALIFIES", "title": "Qualifying fact", "content": "second know body",
-            "properties": {"fact": "second know body"},
-            "know": {"portableKind": "know", "nativeFactUuid": "fact-second",
-                     "fact": "second know body", "supportingEpisodeUuids": ["episode-2"]},
-            "provenance": {"episodes": [{"uuid": "episode-2", "source_url": "https://second.test"}]},
-            "asOf": "2026-09-24T00:00:00Z", "readOperation": "neo4j.project_scoped_exact",
-            "relationshipEvidence": [], "resultLimit": 1, "truncated": False,
-        },
-    }
-    monkeypatch.setattr(
-        data_anchor,
-        "_read_exact_anchor_record",
-        lambda _p, _d, _c, anchor, **_kwargs: records.get(
-            (anchor["authority"], anchor["nativeId"])
-        ),
-    )
-
-    result = contextual_node_read(
-        {
-            "projectId": "project-1", "deckId": "deck-1", "cardId": "main",
-            "sourceRevision": "graphs-at-read", "clientContextRevision": "context-at-read",
-            "readerContext": {
-                "status": "ready", "activeRequest": "What matters?",
-                "messages": [{"role": "user", "content": "What matters?"}],
-            },
-            "nativeMembers": [
-                {"authority": "ThinkGraph", "nativeId": "entity-t"},
-                {"authority": "KnowGraph", "nativeId": "entity-k"},
-            ],
-        },
-        think_candidate_reader=lambda *_args: [
-            _contextual_candidate("mem-win", "winner think body"),
-            _contextual_candidate("mem-second", "second think body"),
-            _contextual_candidate("mem-runner", "runner think body"),
-        ],
-        know_candidate_reader=lambda *_args: [
-            _contextual_candidate("fact-win", "winner know body"),
-            _contextual_candidate("fact-second", "second know body"),
-            _contextual_candidate("fact-runner", "runner know body"),
-        ],
-        decision_reader=lambda *_args: {
-            "requestCount": 1, "questionCount": 2, "decisionId": "decision-one",
-            "provider": "TypeSafe", "requestedModel": engraphis.JEV_MODEL,
-            "resolvedModel": engraphis.JEV_MODEL, "usage": {},
-            "sides": {
-                "think": {"status": "selected", "nativeIds": ["mem-win", "mem-second"],
-                          "candidateCount": 3, "distribution": {"winner": 0.6, "second": 0.3, "runner": 0.1}},
-                "know": {"status": "selected", "nativeIds": ["fact-win", "fact-second"],
-                         "candidateCount": 3, "distribution": {"winner": 0.55, "second": 0.35, "runner": 0.1}},
-            },
-        },
-    )
-
-    serialized = json.dumps(result)
-    assert result["status"] == "success"
-    assert len(result["dataAnchors"]) == 4
-    assert [anchor["nativeId"] for anchor in result["dataAnchors"]] == [
-        "mem-win", "mem-second", "fact-win", "fact-second",
-    ]
-    assert "mem-win" in result["modelContext"]
-    assert "mem-second" in result["modelContext"]
-    assert "fact-win" in result["modelContext"]
-    assert "fact-second" in result["modelContext"]
-    assert "mem-runner" not in serialized
-    assert "fact-runner" not in serialized
-    assert result["sides"]["think"]["distribution"] == {
-        "winner": 0.6, "second": 0.3, "runner": 0.1,
-    }
-    assert result["sides"]["know"]["distribution"] == {
-        "winner": 0.55, "second": 0.35, "runner": 0.1,
-    }
-    assert len(result["sides"]["think"]["items"]) == 2
-    assert len(result["sides"]["know"]["items"]) == 2
-    assert result["sides"]["know"]["items"][0]["block"]["provenance"]["episodes"][0][
-        "source_url"
-    ] == "https://example.test"
-
-
-def test_contextual_node_read_bypasses_jev_for_two_or_fewer_per_side(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    records = {}
-    for authority, native_ids in (
-        ("ThinkGraph", ("mem-one", "mem-two")),
-        ("KnowGraph", ("fact-one",)),
-    ):
-        for native_id in native_ids:
-            records[(authority, native_id)] = {
-                "authority": authority,
-                "nativeId": native_id,
-                "nativeKind": "node" if authority == "ThinkGraph" else "edge",
-                "type": "episodic" if authority == "ThinkGraph" else "SUPPORTS",
-                "title": native_id,
-                "content": f"content for {native_id}",
-                "properties": {},
-                "metadata": {},
-                "provenance": {},
-                "asOf": "current",
-                "readOperation": "test_exact_read",
-                "relationshipEvidence": [],
-                "resultLimit": 1,
-                "truncated": False,
-            }
-    monkeypatch.setattr(
-        data_anchor,
-        "_read_exact_anchor_record",
-        lambda _p, _d, _c, anchor, **_kwargs: records.get(
-            (anchor["authority"], anchor["nativeId"])
-        ),
-    )
-
-    result = contextual_node_read(
-        {
-            "projectId": "p", "deckId": "d", "cardId": "main",
-            "sourceRevision": "graphs-r1", "clientContextRevision": "context-r1",
-            "readerContext": {},
-            "nativeMembers": [
-                {"authority": "ThinkGraph", "nativeId": "entity-t"},
-                {"authority": "KnowGraph", "nativeId": "entity-k"},
-            ],
-        },
-        think_candidate_reader=lambda *_args: [
-            _contextual_candidate("mem-one", "first"),
-            _contextual_candidate("mem-two", "second"),
-        ],
-        know_candidate_reader=lambda *_args: [
-            _contextual_candidate("fact-one", "fact"),
-        ],
-        decision_reader=lambda *_args: (_ for _ in ()).throw(
-            AssertionError("Jev must not run for a fitting source side")
-        ),
-    )
-
-    assert result["status"] == "success"
-    assert result["requestCount"] == 0
-    assert result["questionCount"] == 0
-    assert result["operationId"] is None
-    assert result["provider"] == ""
-    assert result["sides"]["think"]["selectedNativeIds"] == [
-        "mem-one", "mem-two",
-    ]
-    assert result["sides"]["know"]["selectedNativeIds"] == ["fact-one"]
-    assert [anchor["nativeId"] for anchor in result["dataAnchors"]] == [
-        "mem-one", "mem-two", "fact-one",
-    ]
-    assert "distribution" not in json.dumps(result)
-
-
-def test_contextual_node_hydration_failure_has_no_runner_up_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(data_anchor, "_read_exact_anchor_record", lambda *_args, **_kwargs: None)
-    result = contextual_node_read(
-        {
-            "projectId": "p", "deckId": "d", "cardId": "main",
-            "sourceRevision": "r", "readerContext": {
-                "status": "ready", "activeRequest": "Use this node",
-                "messages": [{"role": "user", "content": "Use this node"}],
-            },
-            "nativeMembers": [{"authority": "ThinkGraph", "nativeId": "entity"}],
-        },
-        think_candidate_reader=lambda *_args: [
-            _contextual_candidate("mem-win", "winner"),
-            _contextual_candidate("mem-runner", "runner"),
-            _contextual_candidate("mem-third", "third"),
-        ],
-        decision_reader=lambda *_args: {
-            "requestCount": 1, "questionCount": 1, "decisionId": "d",
-            "provider": "TypeSafe", "requestedModel": engraphis.JEV_MODEL,
-            "resolvedModel": engraphis.JEV_MODEL, "usage": {},
-            "sides": {
-                "think": {"status": "selected", "nativeIds": ["mem-win"], "candidateCount": 3},
-                "know": {"status": "empty", "candidateCount": 0},
-            },
-        },
-    )
-    assert result["sides"]["think"] == {
-        "status": "hydration_failed", "candidateCount": 3,
-        "selectedNativeIds": ["mem-win"],
-        "hydrationFailedNativeIds": ["mem-win"],
-        "errorCode": "contextual_node_hydration_failed",
-    }
-    assert result["dataAnchors"] == []
-    assert "mem-runner" not in json.dumps(result)
-
-
-def test_knowgraph_attention_search_maps_nodes_and_fact_endpoints_without_hydration():
-    calls = []
-
-    def read(**kwargs):
-        calls.append(kwargs)
-        return [
-            {
-                "ok": True,
-                "nodes": [
-                    {
-                        "uuid": "entity-a",
-                        "name": "Alpha",
-                        "labels": ["Company"],
-                        "score": 0.91,
-                        "episode_uuids": ["must-not-be-hydrated"],
-                    },
-                    {
-                        "uuid": "entity-a",
-                        "name": "Duplicate Alpha",
-                        "labels": ["Company"],
-                    },
-                ],
-            },
-            {
-                "ok": True,
-                "facts": [
-                    {
-                        "uuid": "fact-one",
-                        "source_node_uuid": "entity-a",
-                        "target_node_uuid": "entity-b",
-                        "name": "SUPPORTS",
-                        "fact": "Alpha supports Beta.",
-                        "episode_uuids": ["also-not-hydrated"],
-                    },
-                    {
-                        "uuid": "fact-two",
-                        "sourceNodeUuid": "entity-b",
-                        "targetNodeUuid": "entity-c",
-                        "edge_type": "DEPENDS_ON",
-                        "fact": "Beta depends on Gamma.",
-                    },
-                ],
-            },
-        ]
-
-    candidates = search_knowgraph_attention_candidates(
-        "project-one",
-        "deck-one",
-        "main",
-        "What knowledge matters?",
-        mcp_reader=read,
-    )
-
-    assert len(calls) == 1
-    assert calls[0] == {
-        "project_id": "project-one",
-        "deck_id": "deck-one",
-        "card_id": "main",
-        "calls": [
-            (
-                "graphiti.search_nodes",
-                {"query": "What knowledge matters?", "max_nodes": 8},
-            ),
-            (
-                "graphiti.search_memory_facts",
-                {"query": "What knowledge matters?", "max_facts": 8},
-            ),
-        ],
-        "concurrent": True,
-        "deadline_seconds": data_anchor._MAIN_KNOWGRAPH_ATTENTION_DEADLINE_SECONDS,
-    }
-    assert [candidate["nativeId"] for candidate in candidates] == [
-        "entity-a", "entity-b", "entity-c",
-    ]
-    assert all(candidate["authority"] == "KnowGraph" for candidate in candidates)
-    assert "fact-one" not in {candidate["nativeId"] for candidate in candidates}
-    assert candidates[0]["title"] == "Alpha"
-    assert candidates[0]["nativeSearch"] == {"score": 0.91}
-    assert candidates[0]["factEvidence"] == [{
-        "nativeFactUuid": "fact-one",
-        "relation": "SUPPORTS",
-        "fact": "Alpha supports Beta.",
-    }]
-    assert [item["nativeFactUuid"] for item in candidates[1]["factEvidence"]] == [
-        "fact-one", "fact-two",
-    ]
-    assert all(
-        "episode" not in json.dumps(candidate).casefold()
-        for candidate in candidates
-    )
-
-
-def test_knowgraph_attention_proven_empty_skips_semantic_search():
-    calls = []
-
-    def read(**kwargs):
-        calls.append(kwargs)
-        raise AssertionError("an authoritatively empty KnowGraph must not be searched")
-
-    candidates = search_knowgraph_attention_candidates(
-        "project-one",
-        "deck-one",
-        "main",
-        "What knowledge matters?",
-        mcp_reader=read,
-        subject_reader=lambda project_id: {
-            "complete": True,
-            "count": 0,
-            "revision": "empty-revision",
-            "subjects": [],
-        } if project_id == "project-one" else {},
-    )
-
-    assert candidates == []
-    assert calls == []
 
 
 def test_codegraph_projection_preserves_returned_ids_direction_and_type(monkeypatch):
@@ -748,21 +131,23 @@ def native_graph(tmp_path, monkeypatch):
 def test_exact_thinkgraph_read_is_project_scoped_and_read_only(native_graph) -> None:
     service, first, _ = native_graph
     before = service.store.conn.total_changes
-    record = read_thinkgraph_exact("project-1", first)
+    record = read_thinkgraph_exact("project-1", "engraphisMemoryId", first)
 
     assert record is not None
-    assert record["nativeId"] == first
+    assert record["engraphisMemoryId"] == first
     assert record["content"] == "Current native graph content"
-    assert read_thinkgraph_exact("other-project", first) is None
+    assert read_thinkgraph_exact(
+        "other-project", "engraphisMemoryId", first,
+    ) is None
     assert service.store.conn.total_changes == before
 
 
 def test_exact_thinkgraph_read_accepts_project_scoped_native_engraphis_id(native_graph) -> None:
     _, _, second = native_graph
-    record = read_thinkgraph_exact("project-1", second)
+    record = read_thinkgraph_exact("project-1", "engraphisMemoryId", second)
 
     assert record is not None
-    assert record["nativeId"] == second
+    assert record["engraphisMemoryId"] == second
     assert record["recordId"] == second
     assert record["content"] == "Project-scoped native engine content"
 
@@ -802,7 +187,9 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
         lambda *_args, **_kwargs: io.BytesIO(json.dumps(native).encode()),
     )
 
-    record = read_thinkgraph_exact("project-1", "entity-one")
+    record = read_thinkgraph_exact(
+        "project-1", "engraphisEntityId", "entity-one",
+    )
 
     assert record["portableKind"] == "think"
     assert record["content"] == "Self-contained structured Think."
@@ -814,95 +201,12 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
     ]
 
 
-def test_jev_attention_hydrates_rocket_lab_twin_anchors_with_explicit_record_bound(
-    monkeypatch,
-) -> None:
-    import io
-    import json
-
-    evidence = [{
-        "memory_id": f"mem_rocket_{index}",
-        "excerpt": f"Rocket Lab Think {index}",
-        "metadata": {"thinkgraph_origin": {
-            "authority": "thinkgraph", "native_payload": "x" * 7_000,
-        }},
-    } for index in range(5)]
-    native = {"entity": {
-        "canonical_id": "think-rocket-lab",
-        "type": "person_or_concept",
-        "label": "Rocket Lab",
-        "member_ids": ["think-rocket-lab"],
-        "relations": [],
-        "truncation": {"relations": False, "evidence": False, "history": False},
-        "evidence": evidence,
-    }}
-    monkeypatch.setattr(
-        data_anchor,
-        "urlopen",
-        lambda *_args, **_kwargs: io.BytesIO(json.dumps(native).encode()),
-    )
-    know_properties = {"name": "Rocket Lab", "native_evidence": "y" * 8_000}
-    monkeypatch.setattr(
-        data_anchor,
-        "read_knowgraph_exact",
-        lambda *_args, **_kwargs: {
-            "authority": "KnowGraph",
-            "nativeId": "know-rocket-lab",
-            "nativeKind": "node",
-            "type": "Entity",
-            "title": "Rocket Lab",
-            "content": json.dumps(know_properties, separators=(",", ":")),
-            "properties": know_properties,
-            "relationshipEvidence": [],
-            "provenance": {"engine": "graphiti"},
-            "asOf": "current",
-            "readOperation": "neo4j.project_scoped_exact",
-            "resultLimit": 1,
-            "truncated": False,
-        },
-    )
-    # This is the live failure shape: five structured Think records duplicated
-    # under both metadata keys exceeded the whole seed cap before KnowGraph was
-    # added, even though Jev requested one record from each selected anchor.
-    assert len(json.dumps({
-        "thinks": evidence, "evidence": evidence,
-    }, separators=(",", ":")).encode()) > data_anchor._GRAPH_SEED_LIMIT
-
-    seed, references = resolve_data_anchors("project-1", [{
-        "authority": "ThinkGraph",
-        "nativeId": "think-rocket-lab",
-        "reason": "JevAttention selected this canonical native entity.",
-        "boundedExpansion": 0,
-        "resultLimit": 1,
-        "required": False,
-    }, {
-        "authority": "KnowGraph",
-        "nativeId": "know-rocket-lab",
-        "reason": "JevAttention selected this canonical native entity.",
-        "boundedExpansion": 0,
-        "resultLimit": 1,
-        "required": False,
-    }])
-
-    assert len(seed.encode()) < data_anchor._GRAPH_SEED_LIMIT
-    assert "Rocket Lab Think 0" in seed
-    assert "Rocket Lab Think 1" not in seed
-    assert seed.count("mem_rocket_0") == 1
-    assert [reference["nativeId"] for reference in references] == [
-        "think-rocket-lab", "know-rocket-lab",
-    ]
-    assert references[0]["selectionScope"]["resultLimit"] == 1
-    assert references[0]["truncated"] is True
-    assert references[1]["truncated"] is False
-
-
 def test_required_anchor_materializes_real_data_and_stable_reference(native_graph) -> None:
     _, first, _ = native_graph
     seed, references = resolve_data_anchors(
         "project-1",
         [{
-            "authority": "ThinkGraph",
-            "nativeId": first,
+            "engraphisMemoryId": first,
             "reason": "start from the current fact",
             "boundedExpansion": 0,
             "required": True,
@@ -911,9 +215,8 @@ def test_required_anchor_materializes_real_data_and_stable_reference(native_grap
 
     assert "Current native graph content" in seed
     assert "Selection reason (guidance, not verified fact)" in seed
-    assert "Verified native content" in seed
-    assert references[0]["nativeId"] == first
-    assert references[0]["authority"] == "ThinkGraph"
+    assert "Verified provider content" in seed
+    assert references[0]["engraphisMemoryId"] == first
     assert references[0]["label"] == "Current fact"
     assert references[0]["selectionScope"] == {"boundedExpansion": 0}
     assert references[0]["materializedContentBytes"] == len(
@@ -929,11 +232,11 @@ def test_exact_repeated_native_payload_is_rendered_once_without_losing_distinct_
     }}
 
     def read(_project_id, _deck_id, _card_id, anchor, **_kwargs):
-        native_id = anchor["nativeId"]
-        distinct = native_id == "entity-three"
+        entity_id = anchor["engraphisEntityId"]
+        distinct = entity_id == "entity-three"
         return {
-            "authority": "ThinkGraph", "nativeId": native_id, "nativeKind": "node",
-            "type": "person_or_concept", "title": native_id,
+            "graphSystem": "engraphis", "engraphisEntityId": entity_id,
+            "recordKind": "entity", "type": "person_or_concept", "title": entity_id,
             "content": "different content" if distinct else "same exact content " * 40,
             "metadata": (
                 {"thinkgraph_origin": {
@@ -941,25 +244,25 @@ def test_exact_repeated_native_payload_is_rendered_once_without_losing_distinct_
                 }}
                 if distinct else shared_metadata
             ),
-            "provenance": {"engine": "engraphis", "memberIds": [native_id]},
+            "provenance": {"engine": "engraphis", "memberIds": [entity_id]},
             "asOf": "current", "readOperation": "graph_entity",
             "relationshipEvidence": [], "resultLimit": 1, "truncated": False,
         }
 
     monkeypatch.setattr(data_anchor, "_read_exact_anchor_record", read)
     anchors = [{
-        "authority": "ThinkGraph", "nativeId": native_id,
-        "reason": f"select {native_id}", "boundedExpansion": 0,
+        "engraphisEntityId": entity_id,
+        "reason": f"select {entity_id}", "boundedExpansion": 0,
         "required": True,
-    } for native_id in ("entity-one", "entity-two", "entity-three")]
+    } for entity_id in ("entity-one", "entity-two", "entity-three")]
     seed, references = resolve_data_anchors("project-1", anchors)
 
-    assert [reference["nativeId"] for reference in references] == [
+    assert [reference["engraphisEntityId"] for reference in references] == [
         "entity-one", "entity-two", "entity-three",
     ]
     assert seed.count("\"body\":\"" + "x" * 2_000 + "\"") == 1
     assert seed.count(("same exact content " * 40).strip()) == 1
-    assert '"nativeId":"entity-one"' in seed
+    assert '"engraphisEntityId":"entity-one"' in seed
     assert "different content" in seed and '"body":"different"' in seed
     assert len({reference["materializedRecordSha256"] for reference in references}) == 3
 
@@ -972,23 +275,23 @@ class _FakeNeo4jResult:
         return self._rows
 
 
-def test_thinkgraph_handoff_preserves_native_entities_relationships_and_bounds(native_graph):
+def test_thinkgraph_memory_reference_does_not_materialize_memory_nodes(native_graph):
     service, first, second = native_graph
     before = service.store.conn.total_changes
     projection = empty_graph_projection("project-1")
     text, refs = resolve_data_anchors("project-1", [{
-        "authority": "ThinkGraph", "nativeId": first, "reason": "Use related evidence",
+        "engraphisMemoryId": first, "reason": "Use related evidence",
         "boundedExpansion": 1, "resultLimit": 2, "required": True,
     }], graph_projection=projection)
-    assert {node["id"] for node in projection["nodes"]} == {first, second}
-    assert len(projection["edges"]) == 1
-    edge = projection["edges"][0]
-    assert (edge["source"], edge["target"], edge["predicate"]) == (first, second, "supports")
-    assert edge["properties"]["reason"] == "Retained native evidence"
+    assert projection["nodes"] == []
+    assert projection["edges"] == []
     assert first in text and second in text and "supports" in text
-    assert refs[0]["nativeId"] == first
+    assert refs[0]["engraphisMemoryId"] == first
     assert service.store.conn.total_changes == before
-    bounded = read_thinkgraph_exact("project-1", first, bounded_expansion=1, result_limit=1)
+    bounded = read_thinkgraph_exact(
+        "project-1", "engraphisMemoryId", first,
+        bounded_expansion=1, result_limit=1,
+    )
     assert bounded["relationshipEvidence"] == [] and bounded["truncated"] is True
 
 
@@ -1021,12 +324,14 @@ class _FakeNeo4jDriver:
         self.closed = True
 
 
-def _subject(authority: str, index: int) -> dict[str, str]:
+def _subject(graph_system: str, index: int) -> dict[str, str]:
+    id_field = (
+        "engraphisEntityId" if graph_system == "ThinkGraph" else "graphitiEntityId"
+    )
     return {
-        "authority": authority,
-        "nativeId": f"{authority.lower()}-{index:03d}",
-        "canonicalName": f"Subject {authority} {index:03d}",
-        "entityKind": "person_or_concept" if authority == "ThinkGraph" else "Entity",
+        id_field: f"{graph_system.lower()}-{index:03d}",
+        "canonicalName": f"Subject {graph_system} {index:03d}",
+        "entityKind": "person_or_concept" if graph_system == "ThinkGraph" else "Entity",
     }
 
 
@@ -1041,7 +346,7 @@ def test_complete_subject_directory_keeps_all_37_plus_11_headers_without_truncat
     )
 
     assert directory["complete"] is True
-    assert directory["counts"] == {"ThinkGraph": 37, "KnowGraph": 11, "total": 48}
+    assert directory["counts"] == {"engraphis": 37, "graphiti": 11, "total": 48}
     assert len(directory["subjects"]) == 48
     assert directory["bytes"] > 0
     assert directory["estimatedTokens"] == (directory["bytes"] + 3) // 4
@@ -1112,7 +417,7 @@ def test_subject_directory_preserves_writer_canonical_name_bytes() -> None:
     )
 
     assert [item["canonicalName"] for item in directory["subjects"]] == [
-        "Writer-preserved subject", "  Writer-preserved subject  ",
+        "  Writer-preserved subject  ", "Writer-preserved subject",
     ]
 
 
@@ -1124,51 +429,6 @@ def test_subject_directory_rejects_combined_context_over_existing_limit() -> Non
     )
     with pytest.raises(DataAnchorError, match="data_anchor_seed_limit_exceeded"):
         append_canonical_subject_directory("x" * data_anchor._GRAPH_SEED_LIMIT, directory)
-
-
-def test_contextual_know_candidates_read_complete_direct_facts_and_sources() -> None:
-    driver = _FakeNeo4jDriver([[
-        {
-            "nativeId": "fact-2", "relationshipType": "QUALIFIES",
-            "properties": {"fact": "Older qualifying fact.", "episodes": ["episode-2"],
-                           "valid_at": "2024-01-01T00:00:00Z"},
-            "sourceNativeId": "entity-a", "targetNativeId": "entity-b",
-            "sourceName": "Alpha", "targetName": "Beta",
-        },
-        {
-            "nativeId": "fact-1", "relationshipType": "SUPPORTS",
-            "properties": {"fact": "Current supporting fact.", "episodes": ["episode-1"]},
-            "sourceNativeId": "entity-c", "targetNativeId": "entity-a",
-            "sourceName": "Gamma", "targetName": "Alpha",
-        },
-        # Exact UUID deduplication, not fact-text merging.
-        {
-            "nativeId": "fact-1", "relationshipType": "SUPPORTS",
-            "properties": {"fact": "duplicate row"},
-            "sourceNativeId": "entity-c", "targetNativeId": "entity-a",
-            "sourceName": "Gamma", "targetName": "Alpha",
-        },
-    ]])
-    episodes = {
-        "episode-1": {"uuid": "episode-1", "source_url": "https://one.test"},
-        "episode-2": {"uuid": "episode-2", "source_url": "https://two.test"},
-    }
-    candidates = list_contextual_know_candidates(
-        "project-1",
-        ["entity-a"],
-        driver_factory=lambda: driver,
-        episode_reader=lambda _project, ids: [episodes[item] for item in ids],
-    )
-
-    assert [candidate["nativeId"] for candidate in candidates] == ["fact-2", "fact-1"]
-    assert candidates[0]["fact"] == "Older qualifying fact."
-    assert candidates[0]["dates"]["validAt"] == "2024-01-01T00:00:00Z"
-    assert candidates[1]["supportingEpisodes"] == [episodes["episode-1"]]
-    query, params = driver.calls[0]
-    assert "MATCH (a)-[r]->(b)" in query
-    assert "LIMIT" not in query.upper()
-    assert params["nativeIds"] == ["entity-a"]
-    assert driver.closed is True
 
 
 def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance() -> None:
@@ -1190,13 +450,14 @@ def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance()
 
     record = read_knowgraph_exact(
         "project-1",
+        "graphitiEntityId",
         "entity-1",
         bounded_expansion=1,
         driver_factory=lambda: driver,
     )
 
     assert record is not None
-    assert record["nativeId"] == "entity-1"
+    assert record["graphitiEntityId"] == "entity-1"
     assert record["provenance"]["group_id"] == "liquidaity-project-1"
     assert record["relationshipEvidence"][0]["nodes"][0]["nativeId"] == "entity-1"
     assert "name_embedding" not in record["properties"]
@@ -1269,14 +530,15 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
     }
 
     record = read_knowgraph_exact(
-        "project-1", "fact-1", driver_factory=lambda: driver,
+        "project-1", "graphitiRelationshipId", "fact-1",
+        driver_factory=lambda: driver,
         episode_reader=lambda project_id, ids: [episode]
         if project_id == "project-1" and ids == ["episode-1"] else [],
     )
 
     assert record is not None
     assert record["portableKind"] == "know"
-    assert record["nativeId"] == "fact-1"
+    assert record["graphitiRelationshipId"] == "fact-1"
     assert record["know"] == {
         "portableKind": "know",
         "nativeFactUuid": "fact-1",
@@ -1338,6 +600,7 @@ def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malform
 
     record = read_knowgraph_exact(
         "project-1",
+        "graphitiRelationshipId",
         "fact-malformed",
         driver_factory=lambda: driver,
         episode_reader=lambda project_id, ids: [episode]
@@ -1345,7 +608,7 @@ def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malform
     )
 
     assert record is not None
-    assert record["nativeId"] == "fact-malformed"
+    assert record["graphitiRelationshipId"] == "fact-malformed"
     assert record["know"]["nativeFactUuid"] == "fact-malformed"
     assert record["know"]["nativeRelation"] == "supports"
     assert record["know"]["fact"] == "Alpha supports Beta."
@@ -1362,9 +625,9 @@ def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record = {
-        "authority": "KnowGraph",
-        "nativeId": "entity-1",
-        "nativeKind": "node",
+        "graphSystem": "graphiti",
+        "graphitiEntityId": "entity-1",
+        "recordKind": "entity",
         "type": "Entity",
         "title": "Alpha",
         "content": "current sourced Alpha record",
@@ -1395,9 +658,8 @@ def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
     projection = empty_graph_projection("project-1")
     seed, references = resolve_data_anchors(
         "project-1",
-        [{
-            "authority": "KnowGraph",
-            "nativeId": "entity-1",
+            [{
+                "graphitiEntityId": "entity-1",
             "reason": "start from sourced evidence",
             "boundedExpansion": 1,
             "resultLimit": 8,
@@ -1411,7 +673,7 @@ def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
         ("fact-1", "entity-1", "entity-2"),
     ]
     assert all(native_id in seed for native_id in ("entity-1", "entity-2", "fact-1"))
-    assert references[0]["nativeId"] == "entity-1"
+    assert references[0]["graphitiEntityId"] == "entity-1"
 
 
 def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> None:
@@ -1445,7 +707,7 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
     )
 
     assert record is not None
-    assert record["nativeId"] == "project.module.materialize_idf"
+    assert record["cbmQualifiedName"] == "project.module.materialize_idf"
     assert record["properties"]["file"] == "apps/python-models/app/python_models/idf.py"
     assert record["relationshipEvidence"]["callers"][0]["qualified_name"].endswith("caller")
     assert [name for name, _args in observed["calls"]] == [
@@ -1529,7 +791,8 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
     result = search_knowgraph_hybrid(
         "project-1", "deck_builder", "card-helper", "Alpha",
         exact_records=[{
-            "authority": "KnowGraph", "nativeId": "explicit-1", "type": "Entity",
+            "graphSystem": "graphiti", "graphitiEntityId": "explicit-1",
+            "recordKind": "entity", "type": "Entity",
             "title": "Explicit", "content": "{}", "properties": {},
             "relationshipEvidence": [], "provenance": {}, "asOf": "current",
             "readOperation": "neo4j.project_scoped_exact",
@@ -1545,7 +808,10 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
         }] if project_id == "project-1" and ids == ["episode-1"] else [],
     )
 
-    assert [record["nativeId"] for record in result["records"]] == [
+    assert [
+        record.get("graphitiEntityId") or record.get("graphitiRelationshipId")
+        for record in result["records"]
+    ] == [
         "explicit-1", "entity-1", "fact-1", "fact-2", "entity-2",
     ]
     assert result["records"][2]["provenance"]["episodes"][0]["uuid"] == "episode-1"
@@ -1563,7 +829,7 @@ def test_optional_hybrid_search_returns_honest_empty_context(monkeypatch) -> Non
         },
     )
     anchor = {
-        "authority": "KnowGraph", "reason": "look for current context",
+        "reason": "look for current context",
         "boundedExpansion": 1, "required": False, "searchDynamicInput": True,
         "maxNodes": 3, "maxFacts": 3,
     }
@@ -1589,11 +855,11 @@ def test_missing_required_anchor_fails_before_provider(native_graph, monkeypatch
     )
     with pytest.raises(DataAnchorError, match="data_anchor_required_not_found"):
         resolve_data_anchors("project-1", [{
-            "authority": "KnowGraph", "nativeId": "episode:one", "reason": "required",
+            "graphitiEpisodeId": "episode:one", "reason": "required",
             "boundedExpansion": 0, "required": True,
         }])
     with pytest.raises(DataAnchorError, match="data_anchor_required_not_found"):
         resolve_data_anchors("project-1", [{
-            "authority": "ThinkGraph", "nativeId": "missing", "reason": "required",
+            "engraphisMemoryId": "missing", "reason": "required",
             "boundedExpansion": 0, "required": True,
         }])

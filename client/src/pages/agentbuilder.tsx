@@ -48,7 +48,7 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
-import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
+import useAgentBuilderKnowledgeGraphs from '../features/agentbuilder/state/useAgentBuilderKnowledgeGraphs';
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
 import TradingUI from './tradingui';
 import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
@@ -450,7 +450,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [conversationId] = useState(() => (
     selectedConversationId(window.location.search)
   ));
-  const graphAttention = useAgentBuilderGraphAttention({
+  const knowledgeGraphs = useAgentBuilderKnowledgeGraphs({
     projectId: activeProject,
     deckId: BUILDER_DECK_ID,
     conversationId,
@@ -458,10 +458,10 @@ export default function AgentBuilder(): React.ReactElement {
   });
   const canonicalSubjectMatcher = useMemo(
     () => createCanonicalSubjectMatcher({
-      thinkgraph: graphAttention.projections.thinkgraph,
-      knowgraph: graphAttention.projections.knowgraph,
+      thinkgraph: knowledgeGraphs.projections.thinkgraph,
+      knowgraph: knowledgeGraphs.projections.knowgraph,
     }),
-    [graphAttention.projections.knowgraph, graphAttention.projections.thinkgraph],
+    [knowledgeGraphs.projections.knowgraph, knowledgeGraphs.projections.thinkgraph],
   );
   const subjectFocusRequestIdentityRef = useRef(0);
   const [subjectFocusRequest, setSubjectFocusRequest] =
@@ -483,26 +483,6 @@ export default function AgentBuilder(): React.ReactElement {
     const params = new URLSearchParams({
       projectId: activeProject,
       deckId: BUILDER_DECK_ID,
-      stream: 'true',
-      ...(selectedCardId ? { cardId: selectedCardId } : {}),
-    });
-    const stream = new EventSource(`/api/main/session/attention?${params.toString()}`, { withCredentials: true });
-    stream.addEventListener('session', (event) => {
-      graphAttention.observeAttentionSession(JSON.parse((event as MessageEvent).data));
-    });
-    stream.addEventListener('native_attention', (event) => {
-      graphAttention.observeAttentionEvent(JSON.parse((event as MessageEvent).data));
-    });
-    stream.onerror = (error) => {
-      console.warn('[NATIVE_GRAPH_ATTENTION_READBACK]', error);
-    };
-    return () => stream.close();
-  }, [activeProject, selectedCardId, graphAttention.observeAttentionEvent, graphAttention.observeAttentionSession]);
-  useEffect(() => {
-    if (!activeProject) return undefined;
-    const params = new URLSearchParams({
-      projectId: activeProject,
-      deckId: BUILDER_DECK_ID,
       conversationId,
     });
     const stream = new EventSource(
@@ -510,10 +490,10 @@ export default function AgentBuilder(): React.ReactElement {
       { withCredentials: true },
     );
     stream.addEventListener('thinkgraph_revision', (event) => {
-      graphAttention.observeThinkGraphRevision(JSON.parse((event as MessageEvent).data));
+      knowledgeGraphs.observeThinkGraphRevision(JSON.parse((event as MessageEvent).data));
     });
     stream.addEventListener('thinkgraph_error', (event) => {
-      graphAttention.observeThinkGraphFailure(JSON.parse((event as MessageEvent).data));
+      knowledgeGraphs.observeThinkGraphFailure(JSON.parse((event as MessageEvent).data));
     });
     stream.onerror = (error) => {
       console.warn('[THINKGRAPH_REVISION_STREAM]', error);
@@ -522,8 +502,8 @@ export default function AgentBuilder(): React.ReactElement {
   }, [
     activeProject,
     conversationId,
-    graphAttention.observeThinkGraphFailure,
-    graphAttention.observeThinkGraphRevision,
+    knowledgeGraphs.observeThinkGraphFailure,
+    knowledgeGraphs.observeThinkGraphRevision,
   ]);
   const prepareRunImages = useCallback(async (targetCardId: string | null) => {
     if (!targetCardId || targetCardId !== worldViewCard?.id || workspaceView !== 'worldview') {
@@ -533,13 +513,12 @@ export default function AgentBuilder(): React.ReactElement {
     return worldViewBridge.prepareRunImages();
   }, [workspaceView, worldViewBridge, worldViewCard?.id]);
   const {
-    handleNativeSend,
+    handleSend,
     messages,
     setCurrentResponderCardId,
-    nativeSessionActive,
-    nativeSessionConnecting,
+    sessionActive,
+    sessionConnecting,
     queuedInputCount,
-    mainDriverSource,
     sessionHistoryLoading,
     startVoiceSession,
     stopMainTurn,
@@ -553,9 +532,6 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId,
     directChatTargets,
     prepareRunImages,
-    onUserTurnStarted: graphAttention.startAttentionScope,
-    onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
-    onTurnFinished: graphAttention.finishAttentionScope,
   });
   useEffect(() => {
     const companion = workspaceView === 'worldsignal'
@@ -1375,7 +1351,7 @@ export default function AgentBuilder(): React.ReactElement {
           messages={messages}
           mainCardId={mainCardId || undefined}
           directChatTargets={directChatTargets}
-          onSend={handleNativeSend}
+          onSend={handleSend}
           draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
           onDraftChange={(value) => {
             if (!mainCardId) return;
@@ -1392,8 +1368,8 @@ export default function AgentBuilder(): React.ReactElement {
           subjectMatcher={canonicalSubjectMatcher}
           onSubjectFocus={handleCanonicalSubjectFocus}
           colors={C}
-          busy={nativeSessionActive}
-          connecting={nativeSessionConnecting}
+          busy={sessionActive}
+          connecting={sessionConnecting}
           queuedCount={queuedInputCount}
           historyLoading={sessionHistoryLoading}
           error={technicalError}
@@ -1438,11 +1414,6 @@ export default function AgentBuilder(): React.ReactElement {
           <div style={{ height: '100%' }}>{chat}</div>
         ) : (
           <HarnessChatPanel
-            activeDriver={mainDriverSource === 'external_plugin'
-              ? 'external_plugin'
-              : nativeSessionActive || nativeSessionConnecting
-                ? 'internal_chat'
-                : null}
             storageKey={`liquidaity.main.agent-builder.split.v1:${projectId}`}
             chat={chat}
             terminal={cardWorkSurface()}
@@ -1520,19 +1491,15 @@ export default function AgentBuilder(): React.ReactElement {
           <KnowledgeGraphFramework
             minHeight={minHeight}
             surfaceRole={surfaceRole}
-            attentionProjections={graphAttention.projections}
-            onRemoveThinkGraphEvidence={graphAttention.removeThinkGraphEvidence}
-            onRemoveKnowGraphEvidence={graphAttention.removeKnowGraphEvidence}
-            attentionErrors={graphAttention.errors}
-            attentionStatuses={graphAttention.statuses}
-            jevAttentionVisual={graphAttention.jevAttentionVisual}
-            onReadNativeFocusNeighborhood={graphAttention.readNativeNeighborhood}
-            onExpandAttentionNode={(authority, node) => graphAttention.expandNode({
-              authority,
+            projections={knowledgeGraphs.projections}
+            onRemoveThinkGraphEvidence={knowledgeGraphs.removeThinkGraphEvidence}
+            onRemoveKnowGraphEvidence={knowledgeGraphs.removeKnowGraphEvidence}
+            errors={knowledgeGraphs.errors}
+            statuses={knowledgeGraphs.statuses}
+            onReadFocusNeighborhood={knowledgeGraphs.readProviderNeighborhood}
+            onExpandNode={(graph, node) => knowledgeGraphs.expandNode({
+              graph,
               node,
-              projectId: activeProject,
-              codeGraphProject: null,
-              readerCardId: mainCardId,
             })}
             subjectFocusRequest={subjectFocusRequest}
           />

@@ -56,13 +56,12 @@ export function deriveAutomaticHermesCardIds(
   const profiles = new Map(botProfiles.map((projection) => [projection.profile, projection] as const));
   const required = new Set<string>();
 
-  for (const card of deck.nodes) {
-    if (card.runtime.kind === 'hermes' && card.runtime.mode === 'main') required.add(card.id);
-  }
-
   for (const projection of botProfiles) {
     if (!projection.botEnabled || !projection.roster.length) continue;
-    required.add(projection.cardId);
+    const source = cards.get(projection.cardId);
+    if (source?.runtime.kind === 'hermes' && source.runtime.mode !== 'main') {
+      required.add(projection.cardId);
+    }
     for (const profile of projection.roster) {
       const target = profiles.get(profile);
       if (target?.botEnabled) required.add(target.cardId);
@@ -101,7 +100,6 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
   reconcile?: typeof agentTerminalManager.reconcile;
   resolveBotProfiles?: typeof resolveHermesBotRosterProjections;
   listCanonicalBindings?: typeof listCanonicalSavedCardBindings;
-  mainWorkingDirectory?: () => string;
   builderWorkingDirectory?: () => string;
 } = {}): Promise<AgentTerminalState[]> {
   const projects = await (dependencies.listProjects ?? listOwnedAgentProjects)();
@@ -173,7 +171,7 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
       for (const card of deck.nodes) {
         if (card.runtime.kind !== 'hermes') continue;
         if (!isCanonicalCard(card)) continue;
-        const isMainPresentation = card.runtime.mode === 'main';
+        if (card.runtime.mode === 'main') continue;
         if (!requiredCardIds.has(card.id)) continue;
         const isBuilderPresentation = card.id === BUILDER_CARD_ID;
         const profileKey = card.runtime.profile.toLowerCase();
@@ -185,14 +183,11 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
             projectId: project.id,
             deckId,
             cardId: card.id,
-            ...(isMainPresentation ? { conversationId: 'main' } : {}),
           },
           card,
           deck,
           openAtReconcile,
-          ...(dependencies.mainWorkingDirectory && isMainPresentation
-            ? { workingDirectory: dependencies.mainWorkingDirectory(), attachTui: false }
-            : dependencies.builderWorkingDirectory && isBuilderPresentation
+          ...(dependencies.builderWorkingDirectory && isBuilderPresentation
               ? { workingDirectory: dependencies.builderWorkingDirectory(), attachTui: true }
               : agentTerminalPresentationOptions(card, card.runtime.mode !== 'magentic_one')),
         });

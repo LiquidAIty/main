@@ -29,7 +29,7 @@ def test_service_keeps_native_engraphis_with_automatic_llm_extraction_disabled(n
     service = native.get_service()
     assert type(service) is MemoryService
     assert service.engine.extractor is None
-    assert service.engine.graph_extractor is not None
+    assert service.engine.graph_extractor is None
     assert native.get_service() is service
 
 
@@ -42,15 +42,19 @@ def test_private_workspace_deletion_requires_confirmation_and_preserves_other_wo
         native.private_operation("project-one", "delete_workspace", {})
     with pytest.raises(ValueError):
         native.private_operation("project-one", "delete_workspace", {"confirmed": True, "workspace": "project-two"})
-    assert native.inspect("project-one", mid)["memory"]["content"]
+    assert native.inspect(
+        "project-one", "engraphisMemoryId", mid,
+    )["memory"]["content"]
     result = native.private_operation("project-one", "delete_workspace", {"confirmed": True})
     assert result["deleted"] is True
     assert result["workspace"] == "project-one"
     with pytest.raises(ValueError):
-        native.inspect("project-one", mid)
+        native.inspect("project-one", "engraphisMemoryId", mid)
     scene = native.projection("project-one")
     assert scene["counts"] == {"nodes": 0, "edges": 0}
-    assert native.inspect("project-two", other["id"])["memory"]["content"]
+    assert native.inspect(
+        "project-two", "engraphisMemoryId", other["id"],
+    )["memory"]["content"]
     assert "delete_workspace" not in native.WRITE_TOOLS
 
 
@@ -122,8 +126,8 @@ def test_stats_result_is_engine_output(native):
 def test_inspector_removal_retires_only_selected_memory(native):
     saved = call(native, "engraphis_remember", content="Disposable erasure fixture.")
     with pytest.raises(ValueError):
-        native.private_operation("project-two", "retire", {"nativeId": saved["id"]})
-    result = native.private_operation("project-one", "retire", {"nativeId": saved["id"]})
+        native.private_operation("project-two", "retire", {"memoryId": saved["id"]})
+    result = native.private_operation("project-one", "retire", {"memoryId": saved["id"]})
     assert result["status"] == "retired"
     recalled = call(native, "engraphis_recall_context", query="Disposable erasure fixture", k=20)
     assert saved["id"] not in [item["id"] for item in recalled["sources"]]
@@ -141,295 +145,6 @@ def test_discovered_read_uses_engine_schema_and_project_binding(native):
     assert actual["result"] == expected
     with pytest.raises(ValueError, match="scope_is_owned_by_project"):
         call(native, "engraphis_execute_read", **{**arguments, "arguments": {"workspace": "project-two"}})
-
-
-def test_attention_fast_recall_maps_direct_think_incidence_to_canonical_entity():
-    class Result:
-        def __init__(self, row):
-            self.row = row
-
-        def fetchone(self):
-            return self.row
-
-    entity_rows = {
-        "entity-member": {
-            "id": "entity-member",
-            "name": "Member name",
-            "etype": "person_or_concept",
-            "canonical_id": "entity-canonical",
-        },
-        "entity-canonical": {
-            "id": "entity-canonical",
-            "name": "Canonical decision",
-            "etype": "person_or_concept",
-            "canonical_id": None,
-        },
-    }
-
-    class Connection:
-        def execute(self, statement, parameters):
-            if statement.startswith("SELECT id FROM workspaces"):
-                assert parameters == ("project-one",)
-                return Result({"id": "workspace-one"})
-            if statement.startswith("SELECT id, name, etype, canonical_id FROM entities"):
-                return Result(entity_rows.get(parameters[0]))
-            pytest.fail(f"unexpected attention SQL: {statement}")
-
-    def memory(title):
-        return SimpleNamespace(
-            title=title,
-            mtype=adapter.MemoryType.EPISODIC,
-            metadata={
-                "thinkgraph_origin": {"authority": "thinkgraph"},
-                "structured_extraction": {
-                    "think": {"summary": f"{title} summary"},
-                },
-            },
-        )
-
-    class Store:
-        conn = Connection()
-
-        def list_memory_entities(self, scoped_filter, *, memory_ids):
-            assert scoped_filter.workspace_id == "workspace-one"
-            assert memory_ids == ["mem-one", "mem-two"]
-            return [
-                {
-                    "memory_id": "mem-one",
-                    "entity_id": "entity-member",
-                    "source_kind": "structured_extractor",
-                },
-                {
-                    "memory_id": "mem-one",
-                    "entity_id": "entity-canonical",
-                    "source_kind": "text_mention",
-                },
-                {
-                    "memory_id": "mem-two",
-                    "entity_id": "entity-canonical",
-                    "source_kind": "structured_extractor",
-                },
-            ]
-
-        def get_memories(self, memory_ids):
-            assert memory_ids == ["mem-one", "mem-two"]
-            return {
-                "mem-one": memory("First"),
-                "mem-two": memory("Second"),
-            }
-
-    class Service:
-        store = Store()
-
-        def __init__(self):
-            self.recall_arguments = None
-
-        def recall(self, **arguments):
-            self.recall_arguments = arguments
-            return {
-                "semantic_support": True,
-                "degraded_mode": False,
-                "memories": [
-                    {
-                        "id": "mem-one",
-                        "title": "First",
-                        "relative_score": 0.9,
-                        "absolute_support": 0.8,
-                    },
-                    {
-                        "id": "mem-two",
-                        "title": "Second",
-                        "relative_score": 0.7,
-                        "absolute_support": 0.6,
-                    },
-                ],
-            }
-
-    service = Service()
-    candidates = adapter.recall_thinkgraph_attention_candidates(
-        "project-one", "What did we decide?", service=service,
-    )
-
-    assert service.recall_arguments == {
-        "query": "What did we decide?",
-        "workspace": "project-one",
-        "mtypes": ["episodic"],
-        "k": 8,
-        "token_budget": 0,
-        "retrieval_profile": "fast",
-        "candidate_depth": "fixed",
-        "response_mode": "compact",
-        "include_untrusted": False,
-        "planning": "off",
-        "reinforce": False,
-        "record_receipt": False,
-    }
-    assert candidates == [{
-        "choiceId": adapter._attention_choice_id(
-            "ThinkGraph", "entity-canonical"
-        ),
-        "authority": "ThinkGraph",
-        "nativeId": "entity-canonical",
-        "title": "Canonical decision",
-        "nodeType": "person_or_concept",
-        "recallEvidence": [
-            {
-                "memoryId": "mem-one",
-                "recallRank": 1,
-                "relativeScore": 0.9,
-                "absoluteSupport": 0.8,
-                "memoryTitle": "First",
-                "thinkSummary": "First summary",
-            },
-            {
-                "memoryId": "mem-two",
-                "recallRank": 2,
-                "relativeScore": 0.7,
-                "absoluteSupport": 0.6,
-                "memoryTitle": "Second",
-                "thinkSummary": "Second summary",
-            },
-        ],
-    }]
-
-
-def test_attention_jev_makes_one_choice_call_and_preserves_rounded_distribution(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    candidates = [
-        {
-            "choiceId": adapter._attention_choice_id(
-                "ThinkGraph" if index < 8 else "KnowGraph", f"entity-{index}"
-            ),
-            "authority": "ThinkGraph" if index < 8 else "KnowGraph",
-            "nativeId": f"entity-{index}",
-            "title": f"Entity {index}",
-            "nodeType": "Concept",
-        }
-        for index in range(16)
-    ]
-    choice_ids = [candidate["choiceId"] for candidate in candidates]
-    calls = []
-
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "id": "decision-one",
-                "provider": "OpenRouter",
-                "model": adapter.JEV_MODEL,
-                "usage": {"prompt_tokens": 17},
-                "answers": {
-                    "attention": {
-                        "type": "choice",
-                        "choice": choice_ids[0],
-                        "confidence": 0.73,
-                        "probabilities": {
-                            **{
-                                choice_id: 0.4 if index == 0 else 0.04
-                                for index, choice_id in enumerate(choice_ids)
-                            },
-                            adapter.MAIN_GRAPH_ATTENTION_NEW_SUBJECT: 0.0,
-                        },
-                    },
-                },
-            }
-
-    class Client:
-        def __init__(self, **options):
-            assert options == {
-                "timeout": adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS,
-                "follow_redirects": False,
-            }
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def post(self, endpoint, **kwargs):
-            calls.append((endpoint, kwargs))
-            return Response()
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
-
-    decision = adapter.decide_main_graph_attention("Current message", candidates)
-
-    assert len(calls) == 1
-    assert calls[0][0] == adapter.JEV_ENDPOINT
-    body = calls[0][1]["json"]
-    assert body["model"] == "typesafe/jev-1.13"
-    assert list(body["questions"]) == ["attention"]
-    expected_choices = {*choice_ids, adapter.MAIN_GRAPH_ATTENTION_NEW_SUBJECT}
-    assert set(body["questions"]["attention"]["criteria"]) == expected_choices
-    assert len(body["state"]["canonical_entity_options"]) == 16
-    assert {option["choice_id"] for option in body["state"]["canonical_entity_options"]} == set(choice_ids)
-    assert decision["decisionId"] == "decision-one"
-    assert decision["confidence"] == pytest.approx(0.73)
-    assert set(decision["distribution"]) == expected_choices
-    assert sum(decision["distribution"].values()) == pytest.approx(1.0)
-    assert adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS == pytest.approx(15.0)
-    assert adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS < 45.0
-    assert (
-        adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS
-        < adapter.PYTHON_RAILS_DEFAULT_REQUEST_BUDGET_SECONDS
-    )
-
-    with pytest.raises(
-        adapter.JevAttentionError, match="jev_attention_response_invalid"
-    ) as invalid:
-        adapter._validate_jev_attention_response(
-            {
-                "answers": {
-                    "attention": {
-                        "type": "choice",
-                        "choice": choice_ids[0],
-                        "confidence": 0.5,
-                        "probabilities": {choice_ids[0]: 1.0},
-                    },
-                },
-            },
-            tuple(choice_ids),
-        )
-    assert invalid.value.status == "invalid"
-
-
-def test_attention_jev_reports_httpx_timeout_separately(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    candidate = {
-        "choiceId": adapter._attention_choice_id("ThinkGraph", "entity-one"),
-        "authority": "ThinkGraph",
-        "nativeId": "entity-one",
-        "title": "Entity one",
-    }
-
-    class Client:
-        def __init__(self, **_options):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def post(self, *_args, **_kwargs):
-            raise adapter.httpx.ReadTimeout("slow decision")
-
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
-
-    with pytest.raises(adapter.JevAttentionError) as failure:
-        adapter.decide_main_graph_attention("Current message", [candidate])
-    assert failure.value.status == "timeout"
-    assert failure.value.error_code == "jev_attention_timeout"
-
-
 
 
 def _focus_request(candidate_count: int = 10) -> dict:
@@ -572,7 +287,7 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
         {"focus-one": 1.0},
         {"focus-one": 0.8, "focus-two": 0.3},
     ):
-        with pytest.raises(adapter.JevAttentionError) as failure:
+        with pytest.raises(adapter.JevGraphError) as failure:
             adapter._validate_jev_focus_response(
                 {
                     "id": "focus-decision",
@@ -590,7 +305,7 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
         assert failure.value.status == "invalid"
         assert failure.value.error_code == "jev_focus_response_invalid"
 
-    with pytest.raises(adapter.JevAttentionError) as missing_id:
+    with pytest.raises(adapter.JevGraphError) as missing_id:
         adapter._validate_jev_focus_response(
             {
                 "answers": {
@@ -606,7 +321,7 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
         )
     assert missing_id.value.error_code == "jev_focus_response_invalid"
 
-    with pytest.raises(adapter.JevAttentionError) as null_id:
+    with pytest.raises(adapter.JevGraphError) as null_id:
         adapter._validate_jev_focus_response(
             {
                 "id": None,
@@ -629,7 +344,7 @@ def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
 ):
     payload = _focus_request(1)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(adapter.JevAttentionError) as unavailable:
+    with pytest.raises(adapter.JevGraphError) as unavailable:
         adapter.decide_graph_focus(payload)
     assert unavailable.value.status == "unavailable"
     assert unavailable.value.error_code == "jev_focus_openrouter_key_unavailable"
@@ -649,7 +364,7 @@ def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr(adapter.httpx, "Client", Client)
-    with pytest.raises(adapter.JevAttentionError) as timeout:
+    with pytest.raises(adapter.JevGraphError) as timeout:
         adapter.decide_graph_focus(payload)
     assert timeout.value.status == "timeout"
     assert timeout.value.error_code == "jev_focus_timeout"
@@ -658,12 +373,12 @@ def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
 def test_focus_request_rejects_center_candidates_and_nonincident_records():
     payload = _focus_request(1)
     payload["candidates"][0]["nativeId"] = "center-think"
-    with pytest.raises(adapter.JevAttentionError, match="jev_focus_request_invalid"):
+    with pytest.raises(adapter.JevGraphError, match="jev_focus_request_invalid"):
         adapter._validated_focus_request(payload)
 
     payload = _focus_request(1)
     payload["candidates"][0]["incidentRelationships"][0]["sourceVisualId"] = "other"
-    with pytest.raises(adapter.JevAttentionError, match="jev_focus_request_invalid"):
+    with pytest.raises(adapter.JevGraphError, match="jev_focus_request_invalid"):
         adapter._validated_focus_request(payload)
 
 

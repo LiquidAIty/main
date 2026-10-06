@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -86,10 +93,73 @@ class CardConfiguration(BaseModel):
     subagentModel: CardSubagentModel | None = None
 
 
-class DataAnchorReference(BaseModel):
+GraphRecordIdField = Literal[
+    "engraphisMemoryId",
+    "engraphisEntityId",
+    "engraphisRelationshipId",
+    "graphitiEpisodeId",
+    "graphitiEntityId",
+    "graphitiRelationshipId",
+    "cbmQualifiedName",
+]
+GRAPH_RECORD_ID_FIELDS: tuple[str, ...] = (
+    "engraphisMemoryId",
+    "engraphisEntityId",
+    "engraphisRelationshipId",
+    "graphitiEpisodeId",
+    "graphitiEntityId",
+    "graphitiRelationshipId",
+    "cbmQualifiedName",
+)
+
+
+def graph_record_identity(value: dict[str, Any]) -> tuple[str, str]:
+    populated = [
+        field for field in GRAPH_RECORD_ID_FIELDS
+        if str(value.get(field) or "").strip()
+    ]
+    if len(populated) != 1:
+        raise ValueError("graph_record_identity_invalid")
+    field = populated[0]
+    return field, str(value[field]).strip()
+
+
+def graph_record_fields(field: GraphRecordIdField, identifier: str) -> dict[str, str]:
+    value = str(identifier or "").strip()
+    if field not in GRAPH_RECORD_ID_FIELDS or not value:
+        raise ValueError("graph_record_identity_invalid")
+    return {field: value}
+
+
+def _validate_graph_record(model: BaseModel, *, allow_missing: bool) -> BaseModel:
+    populated = [
+        field for field in GRAPH_RECORD_ID_FIELDS
+        if str(getattr(model, field, None) or "").strip()
+    ]
+    if allow_missing and not populated:
+        return model
+    if len(populated) != 1:
+        raise ValueError("graph_record_identity_invalid")
+    return model
+
+
+class GraphRecordReference(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    authority: Literal["ThinkGraph", "KnowGraph", "CodeGraph"]
-    nativeId: str
+    engraphisMemoryId: RequiredRuntimeString | None = None
+    engraphisEntityId: RequiredRuntimeString | None = None
+    engraphisRelationshipId: RequiredRuntimeString | None = None
+    graphitiEpisodeId: RequiredRuntimeString | None = None
+    graphitiEntityId: RequiredRuntimeString | None = None
+    graphitiRelationshipId: RequiredRuntimeString | None = None
+    cbmQualifiedName: RequiredRuntimeString | None = None
+
+    @model_validator(mode="after")
+    def require_exact_provider_identity(self):
+        return _validate_graph_record(self, allow_missing=False)
+
+
+class DataAnchorReference(GraphRecordReference):
+    model_config = ConfigDict(extra="forbid", strict=True)
     reason: str
     priority: int
     boundedExpansion: int
@@ -97,10 +167,15 @@ class DataAnchorReference(BaseModel):
     required: bool
 
 
-class GraphHook(BaseModel):
+class GraphAnchor(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    authority: Literal["ThinkGraph", "KnowGraph", "CodeGraph"]
-    nativeId: str | None = None
+    engraphisMemoryId: RequiredRuntimeString | None = None
+    engraphisEntityId: RequiredRuntimeString | None = None
+    engraphisRelationshipId: RequiredRuntimeString | None = None
+    graphitiEpisodeId: RequiredRuntimeString | None = None
+    graphitiEntityId: RequiredRuntimeString | None = None
+    graphitiRelationshipId: RequiredRuntimeString | None = None
+    cbmQualifiedName: RequiredRuntimeString | None = None
     reason: str
     order: int
     boundedExpansion: int
@@ -116,10 +191,19 @@ class GraphHook(BaseModel):
     maxNodes: int = 8
     maxFacts: int = 8
 
+    @model_validator(mode="after")
+    def require_exact_record_or_search(self):
+        _validate_graph_record(self, allow_missing=True)
+        has_record = any(
+            str(getattr(self, field, None) or "").strip()
+            for field in GRAPH_RECORD_ID_FIELDS
+        )
+        if not has_record and not self.searchDynamicInput:
+            raise ValueError("graph_anchor_record_or_search_required")
+        return self
 
-class NativeReference(BaseModel):
-    authority: RequiredRuntimeString
-    nativeId: RequiredRuntimeString
+
+class GraphReference(GraphRecordReference):
     reason: RequiredRuntimeString
     asOf: RequiredRuntimeString
     required: bool = False

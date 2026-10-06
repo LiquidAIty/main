@@ -721,7 +721,7 @@ def test_no_script_preserves_saved_presentation_without_narrowing_effective_gran
     payload = _destination_payload("hermes")
     payload["discoveredTools"] = [{
         "name": name,
-        "nativeName": "search_nodes" if name == "graphiti.search_nodes" else name,
+        "providerToolName": "search_nodes" if name == "graphiti.search_nodes" else name,
         "kind": "tool",
         "sourceId": "graphiti" if name == "graphiti.search_nodes" else "main_mcp",
         "namespace": name.split(".")[0], "connectionKind": "external-mcp",
@@ -746,7 +746,7 @@ def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
     payload = _destination_payload("hermes")
     payload["discoveredTools"] = [{
         "name": name,
-        "nativeName": name,
+        "providerToolName": name,
         "kind": "tool",
         "sourceId": "main_mcp",
         "namespace": name.split(".")[0],
@@ -776,8 +776,7 @@ def test_hermes_card_tools_are_exact_saved_presentation_with_stable_wire_names(m
         _cardRevisionSha256="a" * 64,
     )
     card["runtimeOptions"].update(
-        tools=["card.create", "graphiti.search_nodes"],
-        nativeTools=["memory"],
+        tools=["card.create", "graphiti.search_nodes", "hermes:tool:memory"],
         toolsets=["file", "terminal"],
         mcpConnectionIds=[],
     )
@@ -789,7 +788,7 @@ def test_hermes_card_tools_are_exact_saved_presentation_with_stable_wire_names(m
     def discovered(name, native_name, source, *, read_only):
         return {
         "name": name,
-        "nativeName": native_name,
+        "providerToolName": native_name,
         "kind": "tool",
         "sourceId": source,
         "namespace": name.split(".")[0],
@@ -811,7 +810,10 @@ def test_hermes_card_tools_are_exact_saved_presentation_with_stable_wire_names(m
     })
 
     assert resolved["presentedTools"] == ["card.create", "graphiti.search_nodes"]
-    assert resolved["nativeTools"] == ["memory"]
+    assert resolved["hermesSuppliedTools"] == [{
+        "canonicalName": "hermes:tool:memory",
+        "hermesName": "memory",
+    }]
     assert resolved["toolsets"] == ["file", "terminal"]
     assert resolved["mcpConnectionIds"] == []
     assert [(tool["canonicalName"], tool["hermesName"]) for tool in resolved["pluginTools"]] == [
@@ -820,7 +822,7 @@ def test_hermes_card_tools_are_exact_saved_presentation_with_stable_wire_names(m
     assert resolved["externalMcpTools"] == [{
         "canonicalName": "graphiti.search_nodes",
         "connectionId": "graphiti",
-        "nativeName": "search_nodes",
+        "providerToolName": "search_nodes",
     }]
     assert len(resolved["configurationFingerprint"]) == 64
 
@@ -862,7 +864,7 @@ def test_individual_external_mcp_tool_grant_derives_its_backing_connection(
         "cardRevisionId": "revision-builder",
         "discoveredTools": [{
             "name": "graphiti.search_nodes",
-            "nativeName": "search_nodes",
+            "providerToolName": "search_nodes",
             "kind": "tool",
             "sourceId": "graphiti",
             "namespace": "graphiti",
@@ -877,7 +879,7 @@ def test_individual_external_mcp_tool_grant_derives_its_backing_connection(
     assert resolved["externalMcpTools"] == [{
         "canonicalName": "graphiti.search_nodes",
         "connectionId": "graphiti",
-        "nativeName": "search_nodes",
+        "providerToolName": "search_nodes",
     }]
     assert resolved["presentedTools"] == ["graphiti.search_nodes"]
     assert resolved["unavailableTools"] == []
@@ -907,7 +909,7 @@ def test_live_discovered_external_tool_is_not_dropped_by_local_runtime_registry(
     })
     discovered_tools = [{
         "name": name,
-        "nativeName": name,
+        "providerToolName": name,
         "kind": "tool",
         "sourceId": "cbm",
         "namespace": "cbm",
@@ -930,7 +932,7 @@ def test_live_discovered_external_tool_is_not_dropped_by_local_runtime_registry(
     assert resolved["externalMcpTools"] == [{
         "canonicalName": "cbm.search_graph",
         "connectionId": "cbm",
-        "nativeName": "cbm.search_graph",
+        "providerToolName": "cbm.search_graph",
     }]
     assert "cbm.index_repository" not in resolved["enabledTools"]
 
@@ -1095,7 +1097,7 @@ def test_saved_mcp_connection_grants_its_catalog_without_an_individual_tool_gran
         "cardRevisionId": "revision-builder",
         "discoveredTools": [{
             "name": "graphiti.search_nodes",
-            "nativeName": "search_nodes",
+            "providerToolName": "search_nodes",
             "kind": "tool",
             "sourceId": "graphiti",
             "namespace": "graphiti",
@@ -1111,7 +1113,7 @@ def test_saved_mcp_connection_grants_its_catalog_without_an_individual_tool_gran
     assert resolved["externalMcpTools"] == [{
         "canonicalName": "graphiti.search_nodes",
         "connectionId": "graphiti",
-        "nativeName": "search_nodes",
+        "providerToolName": "search_nodes",
     }]
 
 
@@ -1662,7 +1664,7 @@ def _delegation_invocation(
         runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"},
         runtimeOptions={
             **_agent("child")["runtimeOptions"],
-            "nativeTools": ["terminal"],
+            "tools": ["hermes:tool:terminal"],
             "skills": ["repository-helper"],
             "toolsets": ["terminal"],
         },
@@ -1691,8 +1693,8 @@ def _delegation_invocation(
 def test_main_without_selected_graph_data_keeps_the_idf_graph_context_empty(monkeypatch):
     result = _delegation_invocation(monkeypatch, edges=[])
     assert result["idf"]["actualGraphData"]["modelText"] == ""
-    assert result["idf"]["actualGraphData"]["selectedNativeReferences"] == []
-    assert result["resolvedNativeReads"] == []
+    assert result["idf"]["actualGraphData"]["selectedGraphRecords"] == []
+    assert result["resolvedGraphReads"] == []
     assert "preparedContextReads" not in result
 
 
@@ -1774,7 +1776,7 @@ def test_catalog_does_not_broaden_saved_card_grants(
     def discovered(name: str, namespace: str, *, read_only: bool) -> dict:
         return {
             "name": name,
-            "nativeName": name.split(".")[-1],
+            "providerToolName": name.split(".")[-1],
             "kind": "tool",
             "sourceId": "main_mcp",
             "namespace": namespace,
@@ -1809,7 +1811,7 @@ def test_catalog_does_not_broaden_saved_card_grants(
 
 def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
     reads = [{
-        "authority": "CodeGraph", "nativeId": "symbol-one",
+        "cbmQualifiedName": "symbol-one",
     }]
     materialized = card_domain.materialize_idf(
         stable={
@@ -1826,9 +1828,9 @@ def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
         variable={"task": "test task"},
         capabilities={"enabledTools": []},
         graph_context="symbol-one",
-        native_references=reads,
-        graph_projection={"authority": "CodeGraph", "nodes": [{
-            "id": "symbol-one", "authority": "CodeGraph", "type": "Function",
+        graph_records=reads,
+        graph_projection={"graphSystems": ["cbm"], "nodes": [{
+            "id": "symbol-one", "graphSystem": "cbm", "type": "Function",
         }], "edges": []},
     )
     return {
@@ -1838,7 +1840,7 @@ def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
         "cardIdentity": {"cardId": "card-one", "title": "Card"},
         "cardRevisionId": "revision-one",
         "idf": materialized.idf.model_dump(),
-        "resolvedNativeReads": reads,
+        "resolvedGraphReads": reads,
         "resolvedGraphProjection": {
             "nodes": [{"id": "symbol-one"}], "edges": [],
         },
@@ -1884,19 +1886,19 @@ def test_helper_and_mag_one_accept_empty_graph_and_reject_stale_selected_referen
     runtime: dict[str, str],
 ) -> None:
     prepared = _prepared_grounded_runtime(runtime)
-    prepared["resolvedNativeReads"] = []
+    prepared["resolvedGraphReads"] = []
     prepared["resolvedGraphProjection"] = {"nodes": [], "edges": []}
     monkeypatch.setattr(card_domain, "materialize_invocation", lambda _payload: prepared)
     assert card_domain.prepare_run_invocation({}) is prepared
 
     stale = [{
-        "authority": "CodeGraph", "nativeId": "missing-symbol",
+        "cbmQualifiedName": "missing-symbol",
         "reason": "Required production owner", "priority": 0,
         "boundedExpansion": 0, "resultLimit": 4, "required": True,
     }]
     with pytest.raises(
         card_domain.CardDomainError,
-        match="selected_graph_data_reference_stale:CodeGraph:missing-symbol",
+        match="selected_graph_data_reference_stale:cbmQualifiedName:missing-symbol",
     ):
         card_domain.prepare_run_invocation({"dataAnchors": stale})
 
@@ -1920,7 +1922,7 @@ def test_selected_helper_and_mag_one_graph_data_is_validated_without_creating_a_
         lambda *_args, **_kwargs: pytest.fail("graph-data validation created a Run"),
     )
     payload = {"dataAnchors": [{
-        "authority": "CodeGraph", "nativeId": "symbol-one",
+        "cbmQualifiedName": "symbol-one",
         "reason": "Required production owner", "priority": 0,
         "boundedExpansion": 0, "resultLimit": 4, "required": True,
     }]}
@@ -1934,7 +1936,7 @@ def test_ordinary_hermes_cards_keep_the_existing_unrestricted_preparation(
     prepared = _prepared_grounded_runtime({
         "kind": "hermes", "mode": "delegate", "profile": "card-one",
     })
-    prepared["resolvedNativeReads"] = []
+    prepared["resolvedGraphReads"] = []
     prepared["resolvedGraphProjection"] = {"nodes": [], "edges": []}
     monkeypatch.setattr(card_domain, "materialize_invocation", lambda _payload: prepared)
 
@@ -1954,7 +1956,7 @@ def test_optional_editor_review_never_materializes_an_idf(
             "runtimeOwner": "hermes",
             "cardIdentity": {"cardId": "card-one", "title": "One"},
         },
-        "resolvedNativeReads": [],
+        "resolvedGraphReads": [],
         "resolvedGraphProjection": {
             "schemaVersion": "native-card-context.v1",
             "authority": "",
@@ -2126,7 +2128,6 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
     monkeypatch.setattr(card_domain, "_insert_run", lambda *a, **kw: ("run-one", "correlation-one", True))
     monkeypatch.setattr(card_domain, "_retain_required_run_idf", _fake_retain_idf)
     monkeypatch.setattr(card_domain, "_observe_run_start", lambda *a, **kw: True)
-    monkeypatch.setattr(card_domain, "observe_materialized_anchor_reads", lambda *a, **kw: True)
     result = card_domain.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
     assert result["magenticExecution"]["workers"] == [
         {
@@ -2614,8 +2615,7 @@ def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity
         "modelKey": "gpt-5.6-luna",
         "providerModelId": "gpt-5.6-luna",
         "accessMode": "chatgpt-account",
-        "tools": ["card.create"],
-        "nativeTools": ["memory"],
+        "tools": ["card.create", "hermes:tool:memory"],
         "skills": ["codex"],
         "toolsets": ["computer_use"],
         "mcpConnectionIds": ["main-runtime"],
@@ -3287,7 +3287,7 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     assert hermes["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
     assert hermes["idf"]["dynamicContext"]["task"] == "Use every supplied declaration."
     assert hermes["idf"]["actualGraphData"]["recordCounts"]["total"] == 0
-    assert hermes["idf"]["actualGraphData"]["selectedNativeReferences"] == []
+    assert hermes["idf"]["actualGraphData"]["selectedGraphRecords"] == []
     assert "runId" not in hermes["idf"]["stableSavedCardContext"]
     assert "flow-hermes" not in str(hermes["idf"])
 
@@ -3344,8 +3344,7 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
     loaded = _destination_fixture(monkeypatch)
     target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
     target["runtimeOptions"]["graphHooks"] = [{
-        "authority": "ThinkGraph",
-        "nativeId": "hook:one",
+        "engraphisEntityId": "hook:one",
         "reason": "saved start point",
         "order": 1,
         "boundedExpansion": 0,
@@ -3358,7 +3357,7 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
         assert kwargs["search_text"] == "Use every supplied declaration."
         resolved.extend(anchors)
         return "actual current graph data", [{
-            "authority": "ThinkGraph", "nativeId": anchor["nativeId"],
+            "engraphisEntityId": anchor["engraphisEntityId"],
             "reason": anchor["reason"], "asOf": "current", "required": anchor["required"],
         } for anchor in anchors]
 
@@ -3366,8 +3365,7 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
     payload = {
         **_destination_payload("hermes"),
         "dataAnchors": [{
-            "authority": "ThinkGraph",
-            "nativeId": "handoff:one",
+            "engraphisEntityId": "handoff:one",
             "reason": "selected by sender",
             "priority": 10,
             "boundedExpansion": 0,
@@ -3376,9 +3374,9 @@ def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
     }
     invocation = card_domain.materialize_invocation(payload)
 
-    assert [anchor["nativeId"] for anchor in resolved] == ["hook:one", "handoff:one"]
+    assert [anchor["engraphisEntityId"] for anchor in resolved] == ["hook:one", "handoff:one"]
     assert invocation["idf"]["actualGraphData"]["modelText"] == "actual current graph data"
-    assert [reference["nativeId"] for reference in invocation["idf"]["actualGraphData"]["selectedNativeReferences"]] == [
+    assert [reference["engraphisEntityId"] for reference in invocation["idf"]["actualGraphData"]["selectedGraphRecords"]] == [
         "hook:one", "handoff:one",
     ]
 
@@ -3395,7 +3393,6 @@ def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
     loaded = _destination_fixture(monkeypatch)
     target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
     target["runtimeOptions"]["graphHooks"] = [{
-        "authority": "KnowGraph",
         "reason": "start from current sourced knowledge",
         "order": 1,
         "boundedExpansion": 1,
@@ -3411,7 +3408,7 @@ def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
     def resolve(_project_id, anchors, **kwargs):
         calls.append((anchors, kwargs))
         return "current KnowGraph result", [{
-            "authority": "KnowGraph", "nativeId": "entity-1",
+            "graphitiEntityId": "entity-1",
             "reason": anchors[0]["reason"], "asOf": "current",
             "required": False, "readOperation": "graphiti.search_nodes",
         }]
@@ -3427,7 +3424,7 @@ def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
     assert anchors[0]["edgeTypes"] == ["SUPPORTS"]
     assert kwargs["search_text"] == "Use every supplied declaration."
     assert invocation["idf"]["actualGraphData"]["modelText"] == "current KnowGraph result"
-    assert invocation["resolvedNativeReads"][0]["nativeId"] == "entity-1"
+    assert invocation["resolvedGraphReads"][0]["graphitiEntityId"] == "entity-1"
 
 
 def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
@@ -3443,11 +3440,11 @@ def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
     subjects = assemble_canonical_subject_directory(
         loaded["projectId"],
         {"complete": True, "count": 1, "revision": "think-r1", "subjects": [{
-            "authority": "ThinkGraph", "nativeId": "think-rocket",
+            "engraphisEntityId": "think-rocket",
             "canonicalName": "Rocket Lab", "entityKind": "person_or_concept",
         }]},
         {"complete": True, "count": 1, "revision": "know-r1", "subjects": [{
-            "authority": "KnowGraph", "nativeId": "know-rocket",
+            "graphitiEntityId": "know-rocket",
             "canonicalName": "Rocket Lab", "entityKind": "Entity",
         }]},
     )
@@ -3490,21 +3487,17 @@ def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
             or (
                 "# KnowGraph\nActual current sourced finding",
                 [{
-                    "authority": "KnowGraph", "nativeId": "episode:one",
-                    "nativeKind": "node", "reason": anchors[0]["reason"],
+                    "graphitiEpisodeId": "episode:one", "reason": anchors[0]["reason"],
                     "provenance": {"source": "Graphiti"}, "truncated": False,
                 }],
             )
         ),
     )
-    observed = []
-    monkeypatch.setattr(card_domain, "observe_native_attention", lambda event: observed.append(event) or True)
-
     result = card_domain.load_card_graph_reference({
         "projectId": "project-one", "deckId": "deck_builder",
         "conversationId": "conversation-one", "_sourceCardId": "helper",
         "_sourceRunId": "run-helper", "targetCardId": "mag-one",
-        "authority": "KnowGraph", "nativeId": "episode:one",
+        "graphitiEpisodeId": "episode:one",
         "reason": "Use the sourced evidence", "order": 2, "depth": 1,
         "resultLimit": 8, "required": True,
     })
@@ -3516,17 +3509,13 @@ def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
     assert result["cardRevision"] == 3
     assert result["cardRevisionSha256"] == "sha-mag-one"
     assert result["reference"] == {
-        "authority": "KnowGraph", "nativeId": "episode:one",
+        "graphitiEpisodeId": "episode:one",
         "reason": "Use the sourced evidence", "boundedExpansion": 1,
         "resultLimit": 8, "required": True, "order": 2,
     }
     assert resolved_calls[0][2]["deck_id"] == "deck_builder"
     assert resolved_calls[0][2]["card_id"] == "helper"
-    assert resolved_calls[0][2]["graph_projection"]["schemaVersion"] == "native-card-context.v1"
-    assert observed[0]["runId"] == "run-helper"
-    assert observed[0]["cardId"] == "helper"
-    assert observed[0]["targetCardId"] == "mag-one"
-    assert observed[0]["nativeNodeIds"] == ["episode:one"]
+    assert resolved_calls[0][2]["graph_projection"]["schemaVersion"] == "provider-card-context.v1"
 
 
 def test_main_can_load_its_own_bounded_knowledge_selection_without_handoff_grant(
@@ -3549,9 +3538,7 @@ def test_main_can_load_its_own_bounded_knowledge_selection_without_handoff_grant
             or (
                 "# ThinkGraph\nCurrent bounded decision",
                 [{
-                    "authority": "ThinkGraph",
-                    "nativeId": "mem-one",
-                    "nativeKind": "node",
+                    "engraphisMemoryId": "mem-one",
                     "reason": anchors[0]["reason"],
                 }],
             )
@@ -3565,8 +3552,7 @@ def test_main_can_load_its_own_bounded_knowledge_selection_without_handoff_grant
         "_sourceCardId": "main",
         "_sourceRunId": "run-main",
         "targetCardId": "main",
-        "authority": "ThinkGraph",
-        "nativeId": "mem-one",
+        "engraphisMemoryId": "mem-one",
         "reason": "Attach the approved decision",
         "order": 0,
         "depth": 0,
@@ -3577,8 +3563,7 @@ def test_main_can_load_its_own_bounded_knowledge_selection_without_handoff_grant
     assert result["ready"] is True
     assert result["sourceCardId"] == result["targetCardId"] == "main"
     assert result["reference"] == {
-        "authority": "ThinkGraph",
-        "nativeId": "mem-one",
+        "engraphisMemoryId": "mem-one",
         "reason": "Attach the approved decision",
         "boundedExpansion": 0,
         "resultLimit": 1,
@@ -3612,8 +3597,7 @@ def test_non_main_same_card_graph_load_remains_forbidden(
             "_sourceCardId": "helper",
             "_sourceRunId": "run-helper",
             "targetCardId": "helper",
-            "authority": "ThinkGraph",
-            "nativeId": "mem-one",
+            "engraphisMemoryId": "mem-one",
             "reason": "Invalid recursive handoff",
             "order": 0,
             "depth": 0,
@@ -3636,8 +3620,8 @@ def test_card_graph_handoff_fails_closed_for_ungranted_or_unresolved_required_re
     payload = {
         "projectId": "project-one", "deckId": "deck_builder",
         "_sourceCardId": "helper", "_sourceRunId": "run-helper",
-        "targetCardId": "mag-one", "authority": "KnowGraph",
-        "nativeId": "missing", "reason": "Required source", "order": 0,
+        "targetCardId": "mag-one", "graphitiEpisodeId": "missing",
+        "reason": "Required source", "order": 0,
         "depth": 0, "resultLimit": 4, "required": True,
     }
     with pytest.raises(card_domain.CardDomainError, match="graph_reference_handoff_not_granted"):
@@ -3657,8 +3641,7 @@ def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
     loaded = _destination_fixture(monkeypatch)
     target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
     target["runtimeOptions"]["graphHooks"] = [{
-        "authority": "ThinkGraph",
-        "nativeId": "same:one",
+        "engraphisEntityId": "same:one",
         "reason": "saved start point",
         "order": 1,
         "boundedExpansion": 0,
@@ -3667,8 +3650,7 @@ def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
     payload = {
         **_destination_payload("hermes"),
         "dataAnchors": [{
-            "authority": "ThinkGraph",
-            "nativeId": "same:one",
+            "engraphisEntityId": "same:one",
             "reason": "sender selected the same object",
             "priority": 1,
             "boundedExpansion": 0,
@@ -3748,441 +3730,6 @@ def test_only_main_mode_can_retask_one_connected_graph_card(
         invoke("helper", "An ordinary Card cannot orchestrate another Card.")
 
 
-def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    think = [
-        {
-            "authority": "ThinkGraph",
-            "nativeId": native_id,
-            "title": f"Think {native_id}",
-            "nodeType": "Concept",
-        }
-        for native_id in (
-            "explicit", "think-one", "think-one", "think-two",
-            "think-three", "think-four", "shared", "think-five",
-        )
-    ]
-    know = [
-        {
-            "authority": "KnowGraph",
-            "nativeId": native_id,
-            "title": f"Know {native_id}",
-            "nodeType": "Entity",
-        }
-        for native_id in (
-            "explicit", "know-one", "know-one", "know-two",
-            "know-three", "know-four", "shared", "know-five",
-        )
-    ]
-    monkeypatch.setattr(
-        card_domain,
-        "recall_thinkgraph_attention_candidates",
-        lambda *_args, **_kwargs: think,
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "search_knowgraph_attention_candidates",
-        lambda *_args, **_kwargs: know,
-    )
-    decision_calls = []
-
-    def decide(query, candidates, *, effective_request=None):
-        decision_calls.append((query, candidates, effective_request))
-        probabilities = [0.45, 0.25, 0.15]
-        tail = 0.15 / (len(candidates) - len(probabilities))
-        distribution = {
-            candidate["choiceId"]: (
-                probabilities[index] if index < 3 else tail
-            )
-            for index, candidate in enumerate(candidates)
-        }
-        distribution[card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT] = 0.0
-        return {
-            "decisionId": "decision-policy",
-            "winner": candidates[0]["choiceId"],
-            "distribution": distribution,
-            "confidence": 0.73,
-            "provider": "OpenRouter",
-            "requestedModel": "typesafe/jev-1.13",
-            "resolvedModel": "typesafe/jev-1.13",
-            "usage": {"prompt_tokens": 19},
-        }
-
-    monkeypatch.setattr(card_domain, "decide_main_graph_attention", decide)
-
-    attention, anchors, _started = card_domain._prepare_main_graph_attention(
-        project_id="project-one",
-        deck_id="deck-one",
-        card_id="main",
-        query="Current user message",
-        effective_assignment="Earlier shared context.\n\nCurrent user message",
-        excluded_identities={("ThinkGraph", "explicit")},
-    )
-
-    assert len(decision_calls) == 1
-    assert decision_calls[0][0] == "Current user message"
-    assert decision_calls[0][2] == "Earlier shared context.\n\nCurrent user message"
-    offered = decision_calls[0][1]
-    assert len(offered) <= 16
-    identities = [
-        (candidate["authority"], candidate["nativeId"])
-        for candidate in offered
-    ]
-    assert len(identities) == len(set(identities))
-    assert ("ThinkGraph", "explicit") not in identities
-    assert ("KnowGraph", "explicit") in identities
-    assert ("ThinkGraph", "shared") in identities
-    assert ("KnowGraph", "shared") in identities
-    assert attention["status"] == "success"
-    assert attention["decisionId"] == "decision-policy"
-    assert attention["questionSchemaVersion"] == (
-        "main.graph-attention-choice.v1"
-    )
-    assert set(attention["distribution"]) == {
-        *(candidate["choiceId"] for candidate in offered),
-        card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
-    }
-    assert attention["winner"] == offered[0]["choiceId"]
-    assert attention["policy"] == {
-        "cumulativeMass": 0.8,
-        "minimumSelected": 1,
-        "maximumSelected": 3,
-        "selectedMass": pytest.approx(0.85),
-    }
-    assert len(anchors) == 3
-    assert all(
-        anchor["boundedExpansion"] == 0
-        and anchor["resultLimit"] == 1
-        and anchor["required"] is False
-        for anchor in anchors
-    )
-    assert sum(
-        candidate["selected"] for candidate in attention["candidates"]
-    ) == 3
-    assert all(
-        set(candidate) == {
-            "choiceId", "authority", "nativeId", "title",
-            "probability", "selected", "hydrated",
-        }
-        for candidate in attention["candidates"]
-    )
-    assert "Current user message" not in json.dumps(attention)
-
-
-def _main_attention_materialization_payload(
-    monkeypatch: pytest.MonkeyPatch,
-) -> dict:
-    _destination_fixture(monkeypatch)
-    payload = _destination_payload("sender")
-    payload.pop("senderCardId")
-    payload.update({
-        "assignment": "Shared transcript supplied to Main.",
-        "_mainAttentionQuery": "Only this current message is the attention query.",
-        "_mainAttentionToken": card_domain._MAIN_ATTENTION_TOKEN,
-        "dataAnchors": [{
-            "authority": "ThinkGraph",
-            "nativeId": "explicit-one",
-            "reason": "User-selected context",
-            "priority": 10,
-            "boundedExpansion": 0,
-            "resultLimit": 1,
-            "required": False,
-        }],
-    })
-    return payload
-
-
-def _attention_decision(_query, candidates, *, effective_request=None):
-    assert effective_request == "Shared transcript supplied to Main."
-    assert len(candidates) == 2
-    return {
-        "decisionId": "decision-hydration",
-        "winner": candidates[0]["choiceId"],
-        "distribution": {
-            candidates[0]["choiceId"]: 0.8,
-            candidates[1]["choiceId"]: 0.2,
-            card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT: 0.0,
-        },
-        "confidence": 0.71,
-        "provider": "OpenRouter",
-        "resolvedModel": "typesafe/jev-1.13",
-        "usage": {"prompt_tokens": 13},
-    }
-
-
-def test_main_attention_hydrates_only_selected_and_stays_outside_idf(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = _main_attention_materialization_payload(monkeypatch)
-    monkeypatch.setattr(
-        card_domain,
-        "recall_thinkgraph_attention_candidates",
-        lambda *_args, **_kwargs: [
-            {
-                "authority": "ThinkGraph",
-                "nativeId": "explicit-one",
-                "title": "Explicit duplicate",
-            },
-            {
-                "authority": "ThinkGraph",
-                "nativeId": "selected-one",
-                "title": "Selected one",
-            },
-        ],
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "search_knowgraph_attention_candidates",
-        lambda *_args, **_kwargs: [{
-            "authority": "KnowGraph",
-            "nativeId": "unselected-one",
-            "title": "Unselected one",
-        }],
-    )
-    monkeypatch.setattr(
-        card_domain, "decide_main_graph_attention", _attention_decision
-    )
-    resolved_calls = []
-
-    def resolve(_project_id, anchors, **_kwargs):
-        resolved_calls.append([dict(anchor) for anchor in anchors])
-        return "actual selected native graph data", [
-            {
-                "authority": anchor["authority"],
-                "nativeId": anchor["nativeId"],
-                "reason": anchor["reason"],
-                "asOf": "current",
-                "required": anchor["required"],
-            }
-            for anchor in anchors
-        ]
-
-    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
-
-    invocation = card_domain.materialize_invocation(payload)
-
-    assert len(resolved_calls) == 1
-    assert [anchor["nativeId"] for anchor in resolved_calls[0]] == [
-        "explicit-one", "selected-one",
-    ]
-    assert resolved_calls[0][1] == {
-        "authority": "ThinkGraph",
-        "nativeId": "selected-one",
-        "reason": (
-            "JevAttention selected this canonical native entity for the current "
-            "Main message."
-        ),
-        "boundedExpansion": 0,
-        "resultLimit": 1,
-        "required": False,
-    }
-    attention = invocation["jevAttention"]
-    assert attention["status"] == "success"
-    assert [
-        reference["nativeId"] for reference in attention["selectedReferences"]
-    ] == ["selected-one"]
-    assert {
-        candidate["nativeId"]: (
-            candidate["selected"], candidate["hydrated"]
-        )
-        for candidate in attention["candidates"]
-    } == {
-        "selected-one": (True, True),
-        "unselected-one": (False, False),
-    }
-    serialized_idf = json.dumps(invocation["idf"], sort_keys=True)
-    assert "jevAttention" not in serialized_idf
-    assert "decision-hydration" not in serialized_idf
-    assert "unselected-one" not in serialized_idf
-    assert "selected-one" in serialized_idf
-
-
-def test_main_attention_failure_keeps_explicit_baseline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = _main_attention_materialization_payload(monkeypatch)
-    monkeypatch.setattr(
-        card_domain,
-        "recall_thinkgraph_attention_candidates",
-        lambda *_args, **_kwargs: [{
-            "authority": "ThinkGraph",
-            "nativeId": "candidate-one",
-            "title": "Candidate one",
-        }],
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "search_knowgraph_attention_candidates",
-        lambda *_args, **_kwargs: [],
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "decide_main_graph_attention",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            card_domain.JevAttentionError("timeout", "jev_attention_timeout")
-        ),
-    )
-    resolved_calls = []
-
-    def resolve(_project_id, anchors, **_kwargs):
-        resolved_calls.append([dict(anchor) for anchor in anchors])
-        return "explicit baseline", [{
-            "authority": anchors[0]["authority"],
-            "nativeId": anchors[0]["nativeId"],
-            "reason": anchors[0]["reason"],
-            "asOf": "current",
-            "required": anchors[0]["required"],
-        }]
-
-    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
-
-    invocation = card_domain.materialize_invocation(payload)
-
-    assert [[item["nativeId"] for item in call] for call in resolved_calls] == [
-        ["explicit-one"]
-    ]
-    attention = invocation["jevAttention"]
-    assert attention["status"] == "timeout"
-    assert attention["errorCode"] == "jev_attention_timeout"
-    assert attention["decisionId"].startswith("jev-attention:")
-    assert attention["distribution"] == {}
-    assert all("probability" not in item for item in attention["candidates"])
-    assert [
-        item["nativeId"]
-        for item in invocation["idf"]["actualGraphData"]["selectedNativeReferences"]
-    ] == ["explicit-one"]
-
-
-def test_main_attention_selects_one_when_only_one_candidate_exists(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        card_domain,
-        "recall_thinkgraph_attention_candidates",
-        lambda *_args, **_kwargs: [{
-            "authority": "ThinkGraph",
-            "nativeId": "only-think",
-            "title": "Only Think",
-        }],
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "search_knowgraph_attention_candidates",
-        lambda *_args, **_kwargs: [],
-    )
-
-    def choose_one(_query, candidates, *, effective_request=None):
-        assert effective_request == "Shared transcript supplied to Main."
-        return {
-            "decisionId": "decision-one",
-            "winner": candidates[0]["choiceId"],
-            "distribution": {
-                candidates[0]["choiceId"]: 1.0,
-                card_domain.MAIN_GRAPH_ATTENTION_NEW_SUBJECT: 0.0,
-            },
-            "confidence": 0.91,
-            "provider": "OpenRouter",
-            "requestedModel": "typesafe/jev-1.13",
-            "resolvedModel": "typesafe/jev-1.13",
-            "usage": {"prompt_tokens": 11},
-        }
-
-    monkeypatch.setattr(card_domain, "decide_main_graph_attention", choose_one)
-    attention, anchors, _started = card_domain._prepare_main_graph_attention(
-        project_id="project-one",
-        deck_id="deck-one",
-        card_id="main",
-        query="Current user message",
-        effective_assignment="Shared transcript supplied to Main.",
-        excluded_identities=set(),
-    )
-
-    assert attention["status"] == "success"
-    assert attention["winner"] == attention["candidates"][0]["choiceId"]
-    assert attention["policy"]["minimumSelected"] == 1
-    assert attention["policy"]["selectedMass"] == 1.0
-    assert attention["candidates"][0]["selected"] is True
-    assert [anchor["nativeId"] for anchor in anchors] == ["only-think"]
-
-
-def test_main_attention_hydration_failure_preserves_real_decision_evidence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = _main_attention_materialization_payload(monkeypatch)
-    monkeypatch.setattr(
-        card_domain,
-        "recall_thinkgraph_attention_candidates",
-        lambda *_args, **_kwargs: [
-            {
-                "authority": "ThinkGraph",
-                "nativeId": "selected-one",
-                "title": "Selected one",
-            },
-        ],
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "search_knowgraph_attention_candidates",
-        lambda *_args, **_kwargs: [{
-            "authority": "KnowGraph",
-            "nativeId": "unselected-one",
-            "title": "Unselected one",
-        }],
-    )
-    monkeypatch.setattr(
-        card_domain, "decide_main_graph_attention", _attention_decision
-    )
-    resolved_calls = []
-
-    def resolve(_project_id, anchors, **_kwargs):
-        resolved_calls.append([dict(anchor) for anchor in anchors])
-        if len(anchors) > 1:
-            raise card_domain.DataAnchorError("data_anchor_seed_limit_exceeded")
-        anchor = anchors[0]
-        return "explicit baseline", [{
-            "authority": anchor["authority"],
-            "nativeId": anchor["nativeId"],
-            "reason": anchor["reason"],
-            "asOf": "current",
-            "required": anchor["required"],
-        }]
-
-    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
-
-    invocation = card_domain.materialize_invocation(payload)
-
-    assert [[item["nativeId"] for item in call] for call in resolved_calls] == [
-        ["explicit-one", "selected-one"],
-        ["explicit-one"],
-    ]
-    attention = invocation["jevAttention"]
-    assert attention["status"] == "error"
-    assert attention["errorCode"] == (
-        "jev_attention_hydration_failed:data_anchor_seed_limit_exceeded"
-    )
-    assert attention["decisionId"] == "decision-hydration"
-    assert sorted(attention["distribution"].values()) == [0.0, 0.2, 0.8]
-    assert attention["policy"]["selectedMass"] == 0.8
-    assert attention["selectedReferences"] == []
-    assert {
-        candidate["nativeId"]: (
-            candidate["probability"],
-            candidate["selected"],
-            candidate["hydrated"],
-        )
-        for candidate in attention["candidates"]
-    } == {
-        "selected-one": (0.8, True, False),
-        "unselected-one": (0.2, False, False),
-    }
-    selected_ids = [
-        item["nativeId"]
-        for item in invocation["idf"]["actualGraphData"]["selectedNativeReferences"]
-    ]
-    assert selected_ids == ["explicit-one"]
-
-
 def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -4193,23 +3740,6 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
         engraphis,
         "get_service",
         lambda *_args, **_kwargs: pytest.fail("Main preparation opened Engraphis"),
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "recall_thinkgraph_attention_candidates",
-        lambda *_args, **_kwargs: [],
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "search_knowgraph_attention_candidates",
-        lambda *_args, **_kwargs: [],
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "decide_main_graph_attention",
-        lambda *_args, **_kwargs: pytest.fail(
-            "cold-start attention made a Jev call"
-        ),
     )
     main = _agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "default"}
@@ -4280,8 +3810,6 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert inserted["prepared"]["idf"]["dynamicContext"]["task"] == begun["idf"]["dynamicContext"]["task"]
     assert begun["inputFile"]["idfPath"].endswith("in.idf")
     assert materializations == ["Help me prepare work for another agent."]
-    assert begun["jevAttention"]["status"] == "unavailable"
-    assert begun["jevAttention"]["decisionId"].startswith("jev-attention:")
 
 
 def test_shared_conversation_task_names_the_selected_saved_card() -> None:
@@ -4333,11 +3861,6 @@ def test_begin_run_renders_shared_conversation_before_selected_card_idf(
     )
     monkeypatch.setattr(card_domain, "_retain_required_run_idf", _fake_retain_idf)
     monkeypatch.setattr(card_domain, "_observe_run_start", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        card_domain,
-        "observe_materialized_anchor_reads",
-        lambda *_args, **_kwargs: True,
-    )
 
     card_domain.begin_run({
         "projectId": "project-one",
@@ -4404,16 +3927,14 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     assert card_domain._observe_run_start(
         {
             **prepared,
-            "jevAttention": {"schemaVersion": "jev-attention.v1", "status": "success"},
             "jevAutoTools": {"schemaVersion": "card-auto-tools.v1", "status": "disabled"},
             "jevModelRouter": {"schemaVersion": "card-model-router.v1", "status": "disabled"},
         },
         {
             "driverSource": "internal_chat",
             "acceptedAt": "2026-10-01T20:00:00.000Z",
-            "nativeReferences": [{
-                "authority": "KnowGraph",
-                "nativeId": "episode:stale-request",
+            "graphRecords": [{
+                "graphitiEpisodeId": "episode:stale-request",
                 "reason": "must not drive telemetry",
                 "asOf": "2026-08-17T00:00:00Z",
                 "required": True,
@@ -4430,7 +3951,6 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     assert statements[0][1]["preparationElapsedMs"] is not None
     assert statements[0][1]["idfSha256"] == "a" * 64
     assert statements[0][1]["idfBytes"] == 321
-    assert statements[0][1]["jevAttention"]["status"] == "success"
     assert "run.driverSource=$driverSource" in statements[0][0]
     assert "run.contextAuthorityMode=$contextAuthorityMode" in statements[0][0]
     assert "run.preparationState='completed'" in statements[0][0]
@@ -4992,8 +4512,6 @@ def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatc
             assert params["cardId"] == "graph" and "LIMIT 1" in query
             return [{"run": {"runId": "root", "state": "running"}, "card_id": "graph"}]
         assert params["runIds"] == ["root", "team"]
-        if "-[:READ]->" in query:
-            return [{"run_id": "team", "authority": "CodeGraph", "native_id": "pkg.worker"}]
         if "USED_TOOL" in query and "count(edge)" not in query:
             assert "directOnly" not in query
             return [{"run_id": "team", "tool_id": "cbm.search_graph", "event": {
@@ -5008,10 +4526,8 @@ def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatc
     team = result["runs"][1]
     assert team["cardId"] == "graph" and team["rootRunId"] == "root"
     assert team["nativeChildId"] == "t_team"
-    assert team["materializedNativeReferences"] == [{"authority": "CodeGraph", "nativeId": "pkg.worker"}]
-    assert team["attentionEvents"][0]["runId"] == "team"
-    assert team["attentionEvents"][0]["nativeChildId"] == "t_worker"
-    assert team["attentionEvents"][0]["resultHash"] == "a" * 64
+    assert all("-[:READ]->" not in query for query, _ in queries)
+    assert team["usedTools"] == ["cbm.search_graph"]
 
 
 def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
@@ -5139,7 +4655,11 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
 
     assert sql[0] == "SET TRANSACTION READ ONLY"
     assert sql == ["SET TRANSACTION READ ONLY"]
-    assert result["telemetry"]["materializedNativeReferencesAvailable"] is True
+    assert result["telemetry"] == {
+        "runIdentity": True,
+        "artifacts": True,
+        "rawIdfStored": False,
+    }
     assert result["authority"] == "postgresql-age-agentgraph"
     assert result["projectId"] == "project-one"
     assert result["scope"] == {
@@ -5171,7 +4691,6 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "preparationError": None,
         "nativeRootId": None,
         "nativeRunId": None,
-        "lastAttentionAt": None,
         "cardId": "card-one",
         "assignedFromCardIds": ["card-main"],
         "parentRunIds": [],
@@ -5179,26 +4698,6 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
             "usedTools": ["cbm.search_graph"],
             "graphReads": 1,
             "graphWrites": 0,
-            "attentionEvents": [{
-            "eventId": "native-attention:event-one",
-            "timestamp": "2026-08-18T12:00:00Z",
-            "projectId": "project-one",
-            "deckId": "deck-one",
-            "conversationId": "conversation-one",
-            "runId": "run-one",
-            "cardId": "card-one",
-            "authority": "codegraph",
-            "operation": "read",
-            "toolName": "cbm.search_graph",
-            "nativeNodeIds": ["pkg._runtime_owner"],
-            "nativeEdgeIds": [],
-            "nativeEdges": [],
-            "resultHash": "a" * 64,
-            "truncated": False,
-        }],
-        "nativeReferences": [{"authority": "KnowGraph", "nativeId": "episode:one"}],
-        "viewedNativeReferences": [],
-        "materializedNativeReferences": [{"authority": "CodeGraph", "nativeId": "pkg.materialized"}],
         "artifacts": [{
             "artifactId": "artifact-one",
             "artifactKind": "report",
@@ -5224,103 +4723,6 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "ORDER BY coalesce(" in query and "run.acceptedAt" in query
         for query, _params in age_calls
     )
-
-
-def test_native_attention_observation_requires_existing_run_card_identity(monkeypatch):
-    statements: list[tuple[str, dict]] = []
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    def age_rows(_cursor, query, params, _columns):
-        statements.append((query, params))
-        if "EXECUTED_BY" in query:
-            return [{"run_id": "run-one"}]
-        return [{"observed": 3}]
-
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
-    event = {
-        "eventId": "native-attention:event-one",
-        "timestamp": "2026-08-18T12:00:00Z",
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "conversationId": "conversation-one",
-        "runId": "helper-run-one",
-        "cardId": "card_delegate",
-        "authority": "codegraph",
-        "operation": "read",
-        "toolName": "cbm.search_graph",
-        "nativeNodeIds": [
-            "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
-            "apps/python-models/app/python_models/idf.py",
-        ],
-        "nativeEdgeIds": ["edge-one"],
-        "nativeEdges": [{
-            "id": "edge-one",
-            "source": "node-a",
-            "target": "node-b",
-            "predicate": "USES",
-            "provenance": {"group_id": "group-one"},
-        }],
-        "resultHash": "a" * 64,
-        "truncated": False,
-    }
-
-    assert card_domain.observe_native_attention(event) is True
-    assert len(statements) == 2
-    assert "USED_TOOL" in statements[0][0]
-    assert "EXECUTED_BY" in statements[0][0]
-    assert "UNWIND $references" in statements[1][0]
-    assert "USED" in statements[1][0]
-    assert statements[0][1]["runId"] == "helper-run-one"
-    assert statements[0][1]["cardId"] == "card_delegate"
-    assert statements[0][1]["nativeNodeIds"] == [
-        "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
-        "apps/python-models/app/python_models/idf.py",
-    ]
-    assert statements[0][1]["nativeEdgeIds"] == ["edge-one"]
-    assert statements[0][1]["nativeEdges"] == [{
-        "id": "edge-one",
-        "source": "node-a",
-        "target": "node-b",
-        "predicate": "USES",
-        "provenance": {"group_id": "group-one"},
-    }]
-    assert statements[1][1]["references"] == [
-        {
-            "nativeId": "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
-            "nativeKind": "node",
-        },
-        {
-            "nativeId": "apps/python-models/app/python_models/idf.py",
-            "nativeKind": "node",
-        },
-        {"nativeId": "edge-one", "nativeKind": "edge"},
-    ]
-    assert not any(
-        key in params
-        for _query, params in statements
-        for key in ("prompt", "result", "content", "modelInput")
-    )
-
-    before = len(statements)
-    assert card_domain.observe_native_attention({**event, "cardId": None}) is False
-    assert len(statements) == before
 
 
 def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
@@ -5362,7 +4764,7 @@ def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
             stable={"instructions": config["systemPrompt"], "runtime": config["runtime"],
                     "provider": config["provider"]},
             variable={"task": prepared["assignment"]},
-            capabilities=config, graph_context="", native_references=[], graph_projection={},
+            capabilities=config, graph_context="", graph_records=[], graph_projection={},
             materialized_at="2026-09-10T00:00:00Z",
         )
 
@@ -5493,7 +4895,7 @@ def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
             "contracts": [{
                 "sourceId": "python_runtime",
                 "connectionKind": "private-runtime",
-                "nativeName": "native.read",
+                "providerToolName": "native.read",
                 "description": "Read one native record.",
                 "inputSchema": {"type": "object", "properties": {}},
                 "effects": ["read"],
@@ -5524,7 +4926,7 @@ def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
             "contracts": [{
                 "sourceId": "python_runtime",
                 "connectionKind": "private-runtime",
-                "nativeName": "native.read",
+                "providerToolName": "native.read",
                 "description": "Read one native record.",
                 "inputSchema": {"type": "object", "properties": {}},
                 "effects": ["read"],
@@ -5564,7 +4966,7 @@ def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
             "contracts": [{
                 "sourceId": "python_runtime",
                 "connectionKind": "private-runtime",
-                "nativeName": "native.read",
+                "providerToolName": "native.read",
                 "description": "Read one native record.",
                 "inputSchema": {"type": "object"},
                 "effects": ["read"],
@@ -5852,7 +5254,6 @@ def _card_jev_application_fixture(*, auto_tools: bool, auto_select: bool):
         "presentedTools": ["native.read", "native.write"],
         "scriptPresentation": {"mode": "ordinary", "fallbackReason": None},
         "skills": [],
-        "nativeTools": ["terminal"],
         "toolsets": ["file"],
         "mcpConnectionIds": [],
     }
@@ -5864,7 +5265,7 @@ def _card_jev_application_fixture(*, auto_tools: bool, auto_select: bool):
         "contracts": [{
             "sourceId": "python_runtime",
             "connectionKind": "private-runtime",
-            "nativeName": name,
+            "providerToolName": name,
             "description": f"Contract for {name}",
             "inputSchema": {"type": "object", "properties": {}},
             "effects": ["read" if name.endswith("read") else "write"],
@@ -6065,9 +5466,9 @@ def test_card_jev_context_policy_is_per_decision_bounded_and_receipted(monkeypat
         saved_script_value=None,
         graph_text="Selected native graph context.",
         references=[{
-            "authority": "ThinkGraph", "nativeId": "think-one",
+            "engraphisMemoryId": "think-one",
             "readOperation": "engraphis_get_memory", "contentSha256": "a" * 64,
-            "nativeKind": "node", "label": "Rocket Lab thesis",
+                "label": "Rocket Lab thesis",
             "reason": "Investigate this selected hypothesis", "required": True,
             "selectionScope": {"boundedExpansion": 0, "resultLimit": 1},
             "materializedContentBytes": 512,
@@ -6096,11 +5497,11 @@ def test_card_jev_context_policy_is_per_decision_bounded_and_receipted(monkeypat
     assert len(prepared["jevAutoTools"]["context"]["requestSha256"]) == 64
     assert prepared["jevAutoTools"]["context"]["savedCardRevisionId"] == "revision-one"
     assert prepared["jevAutoTools"]["context"]["conversationWindow"]["messageCount"] == 2
-    assert prepared["jevAutoTools"]["context"]["nativeReferences"] == []
-    assert prepared["jevModelRouter"]["context"]["nativeReferences"] == [{
-        "authority": "ThinkGraph", "nativeId": "think-one",
+    assert prepared["jevAutoTools"]["context"]["graphRecords"] == []
+    assert prepared["jevModelRouter"]["context"]["graphRecords"] == [{
+        "engraphisMemoryId": "think-one",
         "readOperation": "engraphis_get_memory", "contentSha256": "a" * 64,
-        "nativeKind": "node", "label": "Rocket Lab thesis",
+            "label": "Rocket Lab thesis",
         "reason": "Investigate this selected hypothesis", "required": True,
         "selectionScope": {"boundedExpansion": 0, "resultLimit": 1},
         "materializedContentBytes": 512,
@@ -6183,7 +5584,7 @@ def test_every_supported_card_jev_context_selector_has_an_exact_bounded_receipt(
         saved_script_value=None,
         graph_text="Selected graph context.",
         references=[{
-            "authority": "KnowGraph", "nativeId": "know-one",
+            "graphitiEpisodeId": "know-one",
             "readOperation": "graphiti.search_nodes", "sourceUrl": "https://source.test",
         }],
         images=[{
@@ -6198,7 +5599,7 @@ def test_every_supported_card_jev_context_selector_has_an_exact_bounded_receipt(
         assert receipt["policy"] == mode
         assert receipt["requiredSources"] == ["current_request", "saved_card"]
         assert receipt["effectiveSources"] == expected_sources
-        assert len(receipt["nativeReferences"]) == native_count
+        assert len(receipt["graphRecords"]) == native_count
         assert receipt["conversationWindow"]["messageCount"] == conversation_count
         assert receipt["attachmentReferences"] == [{
             "name": "evidence.png", "mediaType": "image/png",

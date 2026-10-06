@@ -196,9 +196,9 @@ def materialize_runtime_options(model_options: Any, *, document: dict[str, Any] 
 
 
 def materialize_card_editor(
-    model_options: Any, *, native_options: Any = None, selected_ids: Any = None,
+    model_options: Any, *, catalog_options: Any = None, selected_ids: Any = None,
 ) -> dict[str, Any]:
-    """One builder palette. Native source data enriches IDD without becoming IDD."""
+    """One builder palette. Supplier catalogs enrich IDD without becoming IDD."""
     document = load_input_data_dictionary()
     runtime_options = materialize_runtime_options(model_options, document=document)
     models = runtime_options["catalogs"]["configured-models"]
@@ -223,26 +223,26 @@ def materialize_card_editor(
     for model in models:
         add("model:" + model["provider"] + ":" + model["key"], "model",
             "configured-models", "configured-models", model)
-    if native_options is not None and not isinstance(native_options, list):
-        raise IddValidationError("builder_native_options_invalid")
-    for native in native_options or []:
-        if (not isinstance(native, dict)
-                or any(not isinstance(native.get(key), str) or not native[key]
+    if catalog_options is not None and not isinstance(catalog_options, list):
+        raise IddValidationError("builder_catalog_options_invalid")
+    for option in catalog_options or []:
+        if (not isinstance(option, dict)
+                or any(not isinstance(option.get(key), str) or not option[key]
                        for key in ("id", "kind", "owner", "source"))
-                or not isinstance(native.get("schema", {}), dict)):
-            raise IddValidationError("builder_native_option_invalid")
-        available = native.get("available", True) is True
+                or not isinstance(option.get("schema", {}), dict)):
+            raise IddValidationError("builder_catalog_option_invalid")
+        available = option.get("available", True) is True
         diagnostics = []
-        if native["kind"] == "tool" and native.get("schema", {}).get("type") != "object":
-            diagnostics.append("native_input_schema_unavailable")
+        if option["kind"] == "tool" and option.get("schema", {}).get("type") != "object":
+            diagnostics.append("provider_input_schema_unavailable")
         # Unclassified host effects remain visible but cannot become capabilities.
-        if native["owner"] == "LiquidAIty" and native["kind"] == "tool":
-            policy = next((item for item in document["operations"] if item["id"] == native["id"]), None)
+        if option["owner"] == "LiquidAIty" and option["kind"] == "tool":
+            policy = next((item for item in document["operations"] if item["id"] == option["id"]), None)
             if policy is None:
                 available = False
                 diagnostics.append("liquidaity_effect_unclassified")
-        add(native["id"], native["kind"], native["owner"], native["source"],
-            native.get("schema", {}), available, diagnostics)
+        add(option["id"], option["kind"], option["owner"], option["source"],
+            option.get("schema", {}), available, diagnostics)
     for identity in sorted(selected - options.keys()):
         add(identity, "unresolved", "unknown", "saved-card", {}, False, ["saved_selection_stale"])
     palette = {
@@ -254,6 +254,6 @@ def materialize_card_editor(
     }
     # Selection is not source freshness and never implies effective authorization.
     palette["fingerprint"] = builder_fingerprint({
-        "idd": document, "models": models, "native": native_options or [],
+        "idd": document, "models": models, "catalogOptions": catalog_options or [],
     })
     return {**palette, **runtime_options}

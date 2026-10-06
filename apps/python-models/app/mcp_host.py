@@ -20,7 +20,7 @@ to Python handlers (app/control_plane.py) which own validation/policy and use th
 existing backend deck routes. No semantics,
 no fallback lives in this host.
 
-Official Graphiti ingestion is an explicit Hermes-only grant. Native tools keep their upstream schemas,
+Official Graphiti ingestion is an explicit Hermes-only grant. Provider tools keep their upstream schemas,
 annotations, dispatch, and results; this host adds only provider namespaces and
 authentication. Graph authorities never appear as cards or conversational agents.
 """
@@ -159,19 +159,19 @@ _CATALOG_INITIALIZING_FAMILY: str | None = "liquidaity"
 _CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
-_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
+_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 # The installed CBM owns a bounded 30-second cold daemon-start window. Give
 # that one application-owned attempt time to return its own result, then let
 # the catalog-family fail-open path continue startup.
-_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS = 35.0
-_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
+_CBM_STARTUP_TIMEOUT_SECONDS = 35.0
+_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
     "ThinkGraph, KnowGraph, and supported agent runtimes. "
     "Start with main.context to resolve the authenticated Main conversation and project scope. "
-    "Use the currently published tool names and schemas; preserve returned native IDs and provenance. "
+    "Use the currently published tool names and schemas; preserve returned provider IDs and provenance. "
     "Saved Cards own their configuration and granted capabilities. "
     "An accepted operation is not proof of completion; use its returned status and evidence."
 )
@@ -180,9 +180,6 @@ _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 _ACTIVE_AUTHENTICATED_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "active_authenticated_mcp_context", default=None
-)
-_ACTIVE_GRAPHITI_ATTENTION: ContextVar[dict[str, Any] | None] = ContextVar(
-    "active_graphiti_attention", default=None
 )
 _GRAPHITI_PROVIDER_HEALTH_LOCK = threading.Lock()
 _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
@@ -317,7 +314,7 @@ def _catalog_diagnostics() -> dict[str, Any]:
             current_source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
     except OSError:
         current_source_sha256 = None
-    required_families = {"liquidaity", *_NATIVE_PREFIXES.keys()}
+    required_families = {"liquidaity", *_PROVIDER_PREFIXES.keys()}
     catalog_ready = bool(
         state == "ready"
         and identity
@@ -411,7 +408,7 @@ def _catalog_failure_details(error: Exception) -> tuple[str, str]:
     """Return a stable failure code and an HTTP-safe bounded summary."""
     detail = _sanitize_failure_detail(error)
     if "CBM daemon could not start within 30000 ms" in str(error):
-        code = "native_cbm_daemon_start_timeout"
+        code = "cbm_daemon_start_timeout"
     else:
         match = re.match(r"^([a-z][a-z0-9_]+)(?::|$)", detail)
         if match is not None:
@@ -860,43 +857,43 @@ server = AgentRuntimeServer(
     instructions=_PUBLIC_MCP_DESCRIPTION,
 )
 
-_NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
-_NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
-_NATIVE_CBM_NAMES: frozenset[str] = frozenset()
-_NATIVE_CBM_INIT_LOCK = threading.Lock()
-_NATIVE_CBM_INDEX_LOCK = threading.Lock()
-_NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
-_NATIVE_CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
-_NATIVE_CBM_PROJECT = "C-Projects-LiquidAIty-main"
-_NATIVE_GRAPHITI_MODULE: Any | None = None
-_NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
-_NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
-_NATIVE_GRAPHITI_UNAVAILABLE: dict[str, Any] | None = None
-_NATIVE_GRAPHITI_SERVICE_READY = False
-_NATIVE_GRAPHITI_SERVICE_INIT_LOCK = asyncio.Lock()
-_NATIVE_PREFIXES = {
+_CBM_CLIENT: "_CbmStdioMcpClient | None" = None
+_CBM_TOOLS: tuple[Tool, ...] | None = None
+_CBM_NAMES: frozenset[str] = frozenset()
+_CBM_INIT_LOCK = threading.Lock()
+_CBM_INDEX_LOCK = threading.Lock()
+_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
+_CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
+_CBM_PROJECT = "C-Projects-LiquidAIty-main"
+_GRAPHITI_MODULE: Any | None = None
+_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
+_GRAPHITI_NAMES: frozenset[str] = frozenset()
+_GRAPHITI_UNAVAILABLE: dict[str, Any] | None = None
+_GRAPHITI_SERVICE_READY = False
+_GRAPHITI_SERVICE_INIT_LOCK = asyncio.Lock()
+_PROVIDER_PREFIXES = {
     "cbm": "cbm.",
     "graphiti": "graphiti.",
 }
 
 
-def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
-    """Add the established public routing prefix while preserving native tools."""
-    prefix = _NATIVE_PREFIXES[provider]
+def _namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
+    """Add the established public routing prefix while preserving provider tools."""
+    prefix = _PROVIDER_PREFIXES[provider]
     result: list[Tool] = []
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
-        native_name = tool.name
-        payload["name"] = prefix + native_name
+        provider_tool_name = tool.name
+        payload["name"] = prefix + provider_tool_name
         meta = dict(payload.get("_meta") or {})
         meta["liquidaitySource"] = {
             "sourceId": provider,
             "namespace": provider,
-            "nativeName": tool.name,
+            "providerToolName": tool.name,
             "connectionKind": "external-mcp",
         }
         payload["_meta"] = meta
-        if provider == "graphiti" and native_name == "get_episodes":
+        if provider == "graphiti" and provider_tool_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
             properties.update({
@@ -927,10 +924,10 @@ def _external_mcp_operation_unavailable(**_arguments: Any) -> Any:
     raise RuntimeError("external_operation_requires_mcp_owner")
 
 
-def _register_native_cbm_catalog(tools: list[Tool]) -> None:
+def _register_cbm_catalog(tools: list[Tool]) -> None:
     """Project the current official CBM catalog into runtime authorization.
 
-    Access comes only from the standardized native MCP annotation. A positive
+    Access comes only from the standardized provider MCP annotation. A positive
     read-only hint maps to read; absent or non-read-only metadata stays
     conservatively write/restricted without guessing from a tool name.
     """
@@ -970,7 +967,7 @@ def _bind_repo_tool_source(tool: Tool) -> Tool:
     meta["liquidaitySource"] = {
         "sourceId": "main_mcp",
         "namespace": "main",
-        "nativeName": tool.name,
+        "providerToolName": tool.name,
         "connectionKind": "external-mcp",
     }
     payload["_meta"] = meta
@@ -978,7 +975,7 @@ def _bind_repo_tool_source(tool: Tool) -> Tool:
 
 
 def _bind_operation_access(tool: Tool) -> Tool:
-    """Attach access from the canonical operation or native-owner definition."""
+    """Attach access from the canonical operation or provider definition."""
     access = tool_access(tool.name)
     if access is None:
         raise RuntimeError(f"mcp_tool_missing_operation_access:{tool.name}")
@@ -1069,16 +1066,16 @@ def _graphiti_provider_settings(section: Any) -> Any:
     return settings
 
 
-async def _initialize_native_graphiti() -> None:
-    """Discover the native Graphiti catalog without opening provider connections."""
-    global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
-    global _NATIVE_GRAPHITI_UNAVAILABLE
-    if _NATIVE_GRAPHITI_TOOLS is not None:
+async def _initialize_graphiti() -> None:
+    """Discover the Graphiti catalog without opening provider connections."""
+    global _GRAPHITI_MODULE, _GRAPHITI_NAMES, _GRAPHITI_TOOLS
+    global _GRAPHITI_UNAVAILABLE
+    if _GRAPHITI_TOOLS is not None:
         return
     if not os.environ.get("OPENROUTER_API_KEY", "").strip():
-        _NATIVE_GRAPHITI_TOOLS = ()
-        _NATIVE_GRAPHITI_NAMES = frozenset()
-        _NATIVE_GRAPHITI_UNAVAILABLE = {
+        _GRAPHITI_TOOLS = ()
+        _GRAPHITI_NAMES = frozenset()
+        _GRAPHITI_UNAVAILABLE = {
             "ok": False,
             "failureCode": "optional_capability_unavailable",
             "errorCategory": "DEPENDENCY_UNAVAILABLE",
@@ -1088,31 +1085,34 @@ async def _initialize_native_graphiti() -> None:
         }
         return
 
-    native: Any | None = None
+    graphiti_module_ref: Any | None = None
     try:
-        import graphiti_mcp_server as native_module
+        import graphiti_mcp_server as graphiti_module
 
-        native = native_module
+        graphiti_module_ref = graphiti_module
         tools = tuple(
             await asyncio.to_thread(
                 asyncio.run,
-                native.mcp.list_tools(),
+                graphiti_module_ref.mcp.list_tools(),
             )
         )
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)):
-            raise RuntimeError("native_graphiti_duplicate_tool_name")
+            raise RuntimeError("graphiti_duplicate_tool_name")
     except Exception as error:
-        client = getattr(native, "graphiti_client", None) if native is not None else None
+        client = (
+            getattr(graphiti_module_ref, "graphiti_client", None)
+            if graphiti_module_ref is not None else None
+        )
         close = getattr(getattr(client, "driver", None), "close", None)
         if callable(close):
             close_result = close()
             if inspect.isawaitable(close_result):
                 await close_result
-        _NATIVE_GRAPHITI_MODULE = None
-        _NATIVE_GRAPHITI_TOOLS = ()
-        _NATIVE_GRAPHITI_NAMES = frozenset()
-        _NATIVE_GRAPHITI_UNAVAILABLE = {
+        _GRAPHITI_MODULE = None
+        _GRAPHITI_TOOLS = ()
+        _GRAPHITI_NAMES = frozenset()
+        _GRAPHITI_UNAVAILABLE = {
             "ok": False,
             "failureCode": "optional_capability_unavailable",
             "errorCategory": "DEPENDENCY_UNAVAILABLE",
@@ -1122,87 +1122,86 @@ async def _initialize_native_graphiti() -> None:
         }
         return
 
-    _NATIVE_GRAPHITI_MODULE = native
-    _NATIVE_GRAPHITI_TOOLS = tools
-    _NATIVE_GRAPHITI_NAMES = frozenset(names)
-    _NATIVE_GRAPHITI_UNAVAILABLE = None
+    _GRAPHITI_MODULE = graphiti_module_ref
+    _GRAPHITI_TOOLS = tools
+    _GRAPHITI_NAMES = frozenset(names)
+    _GRAPHITI_UNAVAILABLE = None
 
 
-async def _ensure_native_graphiti_service() -> None:
+async def _ensure_graphiti_service() -> None:
     """Open Graphiti providers lazily on the first Graphiti tool call."""
-    global _NATIVE_GRAPHITI_SERVICE_READY, _NATIVE_GRAPHITI_UNAVAILABLE
-    if _NATIVE_GRAPHITI_SERVICE_READY:
+    global _GRAPHITI_SERVICE_READY, _GRAPHITI_UNAVAILABLE
+    if _GRAPHITI_SERVICE_READY:
         return
-    await _initialize_native_graphiti()
-    native = _NATIVE_GRAPHITI_MODULE
-    if native is None:
-        detail = (_NATIVE_GRAPHITI_UNAVAILABLE or {}).get(
+    await _initialize_graphiti()
+    graphiti_module_ref = _GRAPHITI_MODULE
+    if graphiti_module_ref is None:
+        detail = (_GRAPHITI_UNAVAILABLE or {}).get(
             "detail", "Graphiti catalog is unavailable."
         )
-        raise RuntimeError(f"native_graphiti_unavailable:{detail}")
-    async with _NATIVE_GRAPHITI_SERVICE_INIT_LOCK:
-        if _NATIVE_GRAPHITI_SERVICE_READY:
+        raise RuntimeError(f"graphiti_unavailable:{detail}")
+    async with _GRAPHITI_SERVICE_INIT_LOCK:
+        if _GRAPHITI_SERVICE_READY:
             return
         try:
-            native.config = _graphiti_config()
-            native.graphiti_service = native.GraphitiService(
-                native.config, native.SEMAPHORE_LIMIT
+            graphiti_module_ref.config = _graphiti_config()
+            graphiti_module_ref.graphiti_service = graphiti_module_ref.GraphitiService(
+                graphiti_module_ref.config, graphiti_module_ref.SEMAPHORE_LIMIT
             )
-            native.queue_service = native.QueueService()
-            await native.graphiti_service.initialize()
-            native.graphiti_client = await native.graphiti_service.get_client()
-            native.semaphore = native.graphiti_service.semaphore
-            await native.queue_service.initialize(native.graphiti_client)
-            _instrument_graphiti_attention(native.graphiti_client, native.queue_service)
-            llm_provider = _graphiti_provider_settings(native.config.llm)
-            embedder_provider = _graphiti_provider_settings(native.config.embedder)
+            graphiti_module_ref.queue_service = graphiti_module_ref.QueueService()
+            await graphiti_module_ref.graphiti_service.initialize()
+            graphiti_module_ref.graphiti_client = await graphiti_module_ref.graphiti_service.get_client()
+            graphiti_module_ref.semaphore = graphiti_module_ref.graphiti_service.semaphore
+            await graphiti_module_ref.queue_service.initialize(graphiti_module_ref.graphiti_client)
+            llm_provider = _graphiti_provider_settings(graphiti_module_ref.config.llm)
+            embedder_provider = _graphiti_provider_settings(graphiti_module_ref.config.embedder)
             _instrument_graphiti_provider_client(
-                native.graphiti_client.llm_client,
+                graphiti_module_ref.graphiti_client.llm_client,
                 method_names=("generate_response",),
                 compute="api_llm",
                 dependency="graphiti_llm",
                 provider=_provider_identity(
-                    str(native.config.llm.provider), str(llm_provider.api_url or "")
+                    str(graphiti_module_ref.config.llm.provider), str(llm_provider.api_url or "")
                 ),
-                model=str(native.config.llm.model),
+                model=str(graphiti_module_ref.config.llm.model),
                 base_url=str(llm_provider.api_url or ""),
                 credential_configured=bool(llm_provider.api_key),
             )
             _instrument_graphiti_provider_client(
-                native.graphiti_client.embedder,
+                graphiti_module_ref.graphiti_client.embedder,
                 method_names=("create", "create_batch"),
                 compute="api_embedding",
                 dependency="graphiti_embedding",
                 provider=_provider_identity(
-                    str(native.config.embedder.provider),
+                    str(graphiti_module_ref.config.embedder.provider),
                     str(embedder_provider.api_url or ""),
                 ),
-                model=str(native.config.embedder.model),
+                model=str(graphiti_module_ref.config.embedder.model),
                 base_url=str(embedder_provider.api_url or ""),
                 credential_configured=bool(embedder_provider.api_key),
             )
             _instrument_graphiti_provider_client(
-                native.graphiti_client.cross_encoder,
+                graphiti_module_ref.graphiti_client.cross_encoder,
                 method_names=("rank",),
                 compute="api_llm",
                 dependency="graphiti_reranker",
                 provider=_provider_identity(
-                    str(native.config.llm.provider), str(llm_provider.api_url or "")
+                    str(graphiti_module_ref.config.llm.provider), str(llm_provider.api_url or "")
                 ),
-                model=str(native.config.llm.model),
+                model=str(graphiti_module_ref.config.llm.model),
                 base_url=str(llm_provider.api_url or ""),
                 credential_configured=bool(llm_provider.api_key),
             )
         except BaseException as error:
-            client = getattr(native, "graphiti_client", None)
+            client = getattr(graphiti_module_ref, "graphiti_client", None)
             close = getattr(getattr(client, "driver", None), "close", None)
             if callable(close):
                 close_result = close()
                 if inspect.isawaitable(close_result):
                     await close_result
-            native.graphiti_client = None
-            _NATIVE_GRAPHITI_SERVICE_READY = False
-            _NATIVE_GRAPHITI_UNAVAILABLE = {
+            graphiti_module_ref.graphiti_client = None
+            _GRAPHITI_SERVICE_READY = False
+            _GRAPHITI_UNAVAILABLE = {
                 "ok": False,
                 "failureCode": "optional_capability_unavailable",
                 "errorCategory": "DEPENDENCY_UNAVAILABLE",
@@ -1216,146 +1215,40 @@ async def _ensure_native_graphiti_service() -> None:
             if isinstance(error, asyncio.CancelledError):
                 raise
             raise RuntimeError(
-                f"native_graphiti_initialization_failed:{error.__class__.__name__}"
+                f"graphiti_initialization_failed:{error.__class__.__name__}"
             ) from error
-        _NATIVE_GRAPHITI_SERVICE_READY = True
-        _NATIVE_GRAPHITI_UNAVAILABLE = None
+        _GRAPHITI_SERVICE_READY = True
+        _GRAPHITI_UNAVAILABLE = None
 
 
-async def _native_graphiti_tools() -> list[Tool]:
-    await _initialize_native_graphiti()
-    return list(_NATIVE_GRAPHITI_TOOLS or ())
+async def _graphiti_tools() -> list[Tool]:
+    await _initialize_graphiti()
+    return list(_GRAPHITI_TOOLS or ())
 
 
-async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
+async def _call_graphiti(name: str, arguments: dict[str, Any]):
     arguments = dict(arguments)
-    context = _authenticated_main_context()
     try:
         await asyncio.wait_for(
-            _ensure_native_graphiti_service(),
+            _ensure_graphiti_service(),
             timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
         )
     except TimeoutError as error:
-        raise RuntimeError("native_graphiti_initialization_timeout") from error
-    if _NATIVE_GRAPHITI_MODULE is None:
-        raise RuntimeError("native_graphiti_not_initialized")
-    observation: dict[str, Any] | None = (
-        {"context": context, "event": None}
-        if name == "add_memory" else None
-    )
-    token = _ACTIVE_GRAPHITI_ATTENTION.set(observation)
+        raise RuntimeError("graphiti_initialization_timeout") from error
+    if _GRAPHITI_MODULE is None:
+        raise RuntimeError("graphiti_not_initialized")
     try:
-        try:
-            result = await asyncio.wait_for(
-                _NATIVE_GRAPHITI_MODULE.mcp.call_tool(name, arguments),
-                timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
-            )
-        except TimeoutError as error:
-            raise RuntimeError(f"native_graphiti_timeout:{name}") from error
-        result = _normalize_graphiti_result(result)
-        if observation and observation.get("event") and isinstance(result, CallToolResult):
-            result.meta = {**(result.meta or {}), "nativeAttention": observation["event"]}
-        return result
-    finally:
-        _ACTIVE_GRAPHITI_ATTENTION.reset(token)
-
-
-async def _persist_native_attention(event: dict[str, Any], context: dict[str, Any] | None) -> bool:
-    from app.python_models.card_domain import observe_native_attention
-
-    options = {}
-    if (context and not context.get("principalKind")
-            and str(context.get("parentRunId") or "").startswith("external-main:")):
-        options["external_context"] = context
-    try:
-        written = await asyncio.to_thread(observe_native_attention, event, **options)
-    except Exception:
-        # Observation cannot turn a completed native write into a retryable
-        # tool failure. Surface the missing AGE evidence separately.
-        written = False
-    event.pop("persisted", None)
-    if not written:
-        event["persisted"] = False
-    _trace("native_attention_observed", tool_name=event["toolName"],
-           result_category="age_observed" if written else "age_observation_failed", completed=True)
-    return written
-
-
-def _instrument_graphiti_attention(client: Any, queue: Any) -> None:
-    """Observe public native queue/SDK completion without owning their lifecycle.
-
-    The existing queue retains the request's observation alongside its own
-    process function. Native add_episode results, not inferred graph queries or
-    model prose, resolve the same pending AGE event with concrete IDs.
-    """
-    if getattr(queue, "_liquidaity_attention_bound", False):
-        return
-    enqueue = queue.add_episode_task
-    add_episode = client.add_episode
-
-    async def observed_add_episode(*args: Any, **kwargs: Any) -> Any:
-        result = await add_episode(*args, **kwargs)
-        observation = _ACTIVE_GRAPHITI_ATTENTION.get()
-        if observation and observation.get("event"):
-            from app.python_models.native_attention import build_native_attention_event
-
-            payload = {
-                "phase": "completed",
-                "episodes": [{"uuid": getattr(getattr(result, "episode", None), "uuid", None)}],
-                "nodes": [{"uuid": getattr(node, "uuid", None)} for node in (getattr(result, "nodes", None) or [])],
-                "edges": [{"uuid": getattr(edge, "uuid", None),
-                           "source_node_uuid": getattr(edge, "source_node_uuid", None),
-                           "target_node_uuid": getattr(edge, "target_node_uuid", None),
-                           "name": getattr(edge, "name", None)} for edge in (getattr(result, "edges", None) or [])],
-            }
-            event = build_native_attention_event("graphiti.add_memory", payload, observation["context"])
-            if event is not None:
-                event["eventId"] = observation["event"]["eventId"]
-                observation["event"] = event
-                await _persist_native_attention(event, observation["context"])
-        return result
-
-    async def observed_enqueue(group_id: str, process_func: Any) -> int:
-        observation = _ACTIVE_GRAPHITI_ATTENTION.get()
-        if not observation:
-            return await enqueue(group_id, process_func)
-        from app.python_models.native_attention import build_native_attention_event
-
-        event = build_native_attention_event("graphiti.add_memory", {"phase": "pending"}, observation["context"])
-        observation["event"] = event
-        if event:
-            await _persist_native_attention(event, observation["context"])
-
-        async def failed() -> None:
-            if observation.get("event"):
-                failure = {**observation["event"], "phase": "failed",
-                           "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
-                observation["event"] = failure
-                await _persist_native_attention(failure, observation["context"])
-
-        async def observed_process() -> None:
-            current = _ACTIVE_GRAPHITI_ATTENTION.set(observation)
-            try:
-                await process_func()
-            except BaseException:
-                await failed()
-                raise
-            finally:
-                _ACTIVE_GRAPHITI_ATTENTION.reset(current)
-
-        try:
-            return await enqueue(group_id, observed_process)
-        except BaseException:
-            await failed()
-            raise
-
-    client.add_episode = observed_add_episode
-    queue.add_episode_task = observed_enqueue
-    queue._liquidaity_attention_bound = True
+        result = await asyncio.wait_for(
+            _GRAPHITI_MODULE.mcp.call_tool(name, arguments),
+            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as error:
+        raise RuntimeError(f"graphiti_timeout:{name}") from error
+    return _normalize_graphiti_result(result)
 
 
 def _normalize_graphiti_result(result: Any) -> Any:
-    return _normalize_native_tool_result(result, dependency="graphiti")
+    return _normalize_provider_tool_result(result, dependency="graphiti")
 
 
 def _bounded_graphiti_episodes(
@@ -1365,24 +1258,24 @@ def _bounded_graphiti_episodes(
     preview_chars: int,
     response_budget: int,
 ) -> CallToolResult:
-    """Project native episodes into a stable, context-bounded public response."""
+    """Project Graphiti episodes into a stable, context-bounded public response."""
     if result.isError or not isinstance(result.structuredContent, dict):
         return result
-    native_payload = result.structuredContent.get("result")
-    if not isinstance(native_payload, dict) or not isinstance(native_payload.get("episodes"), list):
+    graphiti_payload = result.structuredContent.get("result")
+    if not isinstance(graphiti_payload, dict) or not isinstance(graphiti_payload.get("episodes"), list):
         return result
     projected: list[dict[str, Any]] = []
-    for native_episode in native_payload["episodes"]:
-        if not isinstance(native_episode, dict):
+    for graphiti_episode in graphiti_payload["episodes"]:
+        if not isinstance(graphiti_episode, dict):
             continue
-        content = str(native_episode.get("content") or "")
+        content = str(graphiti_episode.get("content") or "")
         episode = {
-            key: native_episode.get(key)
+            key: graphiti_episode.get(key)
             for key in (
                 "uuid", "name", "source", "source_description", "created_at", "valid_at",
                 "reference_time", "group_id", "saga_uuid",
             )
-            if native_episode.get(key) is not None
+            if graphiti_episode.get(key) is not None
         }
         episode["content_chars"] = len(content)
         if include_body:
@@ -1392,7 +1285,7 @@ def _bounded_graphiti_episodes(
             episode["content_truncated"] = len(content) > preview_chars
         projected.append(episode)
     payload: dict[str, Any] = {
-        "message": native_payload.get("message") or "Episodes retrieved successfully",
+        "message": graphiti_payload.get("message") or "Episodes retrieved successfully",
         "episodes": projected,
         "bodyIncluded": include_body,
         "responseBudgetChars": response_budget,
@@ -1420,7 +1313,7 @@ def _bounded_graphiti_episodes(
     )
 
 
-def _normalize_native_tool_result(result: Any, *, dependency: str) -> Any:
+def _normalize_provider_tool_result(result: Any, *, dependency: str) -> Any:
     structured: Any = None
     if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], list):
         blocks = result[0]
@@ -1466,17 +1359,20 @@ def _normalize_native_tool_result(result: Any, *, dependency: str) -> Any:
 
 
 
-async def _close_native_graphiti() -> None:
-    global _NATIVE_GRAPHITI_MODULE, _NATIVE_GRAPHITI_NAMES, _NATIVE_GRAPHITI_TOOLS
-    global _NATIVE_GRAPHITI_UNAVAILABLE
-    global _NATIVE_GRAPHITI_SERVICE_READY
-    native = _NATIVE_GRAPHITI_MODULE
-    _NATIVE_GRAPHITI_MODULE = None
-    _NATIVE_GRAPHITI_TOOLS = None
-    _NATIVE_GRAPHITI_NAMES = frozenset()
-    _NATIVE_GRAPHITI_UNAVAILABLE = None
-    _NATIVE_GRAPHITI_SERVICE_READY = False
-    client = getattr(native, "graphiti_client", None) if native is not None else None
+async def _close_graphiti() -> None:
+    global _GRAPHITI_MODULE, _GRAPHITI_NAMES, _GRAPHITI_TOOLS
+    global _GRAPHITI_UNAVAILABLE
+    global _GRAPHITI_SERVICE_READY
+    graphiti_module_ref = _GRAPHITI_MODULE
+    _GRAPHITI_MODULE = None
+    _GRAPHITI_TOOLS = None
+    _GRAPHITI_NAMES = frozenset()
+    _GRAPHITI_UNAVAILABLE = None
+    _GRAPHITI_SERVICE_READY = False
+    client = (
+        getattr(graphiti_module_ref, "graphiti_client", None)
+        if graphiti_module_ref is not None else None
+    )
     driver = getattr(client, "driver", None)
     close = getattr(driver, "close", None)
     if callable(close):
@@ -1485,8 +1381,8 @@ async def _close_native_graphiti() -> None:
             await result
 
 
-class _NativeStdioMcpClient:
-    """One serialized JSON-RPC session to the installed native CBM server."""
+class _CbmStdioMcpClient:
+    """One serialized JSON-RPC session to the installed CBM server."""
 
     def __init__(self, command: str, args: list[str], cwd: str):
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -1509,12 +1405,12 @@ class _NativeStdioMcpClient:
         self.server_info: dict[str, Any] = {}
         threading.Thread(
             target=self._read_stdout,
-            name="main-native-cbm-stdout",
+            name="main-cbm-stdout",
             daemon=True,
         ).start()
         threading.Thread(
             target=self._read_stderr,
-            name="main-native-cbm-stderr",
+            name="main-cbm-stderr",
             daemon=True,
         ).start()
         try:
@@ -1524,15 +1420,15 @@ class _NativeStdioMcpClient:
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "main-native-cbm",
+                        "name": "main-cbm",
                         "version": "1.0.0",
                     },
                 },
-                timeout_seconds=_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS,
+                timeout_seconds=_CBM_STARTUP_TIMEOUT_SECONDS,
             )
             server_info = initialized.get("serverInfo")
             if not isinstance(server_info, dict):
-                raise RuntimeError("native_cbm_initialize_invalid")
+                raise RuntimeError("cbm_initialize_invalid")
             self.server_info = dict(server_info)
             self._notify("notifications/initialized", {})
         except Exception:
@@ -1553,7 +1449,7 @@ class _NativeStdioMcpClient:
                     message = json.loads(text)
                 except json.JSONDecodeError:
                     self._responses.put(
-                        {"__protocol_error__": "native_cbm_invalid_json_response"}
+                        {"__protocol_error__": "cbm_invalid_json_response"}
                     )
                     continue
                 if isinstance(message, dict):
@@ -1573,7 +1469,7 @@ class _NativeStdioMcpClient:
     def _write(self, payload: dict[str, Any]) -> None:
         stream = self._process.stdin
         if stream is None or self._process.poll() is not None:
-            raise RuntimeError("native_cbm_process_not_running")
+            raise RuntimeError("cbm_process_not_running")
         stream.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
         stream.flush()
 
@@ -1585,7 +1481,7 @@ class _NativeStdioMcpClient:
         method: str,
         params: dict[str, Any],
         *,
-        timeout_seconds: float | None = _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS,
+        timeout_seconds: float | None = _CBM_REQUEST_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         with self._request_lock:
             self._next_id += 1
@@ -1606,15 +1502,15 @@ class _NativeStdioMcpClient:
             while True:
                 remaining = deadline - time.monotonic() if deadline is not None else None
                 if remaining is not None and remaining <= 0:
-                    raise RuntimeError(f"native_cbm_timeout:{method}")
+                    raise RuntimeError(f"cbm_timeout:{method}")
                 try:
                     message = self._responses.get(timeout=remaining)
                 except queue.Empty as exc:
-                    raise RuntimeError(f"native_cbm_timeout:{method}") from exc
+                    raise RuntimeError(f"cbm_timeout:{method}") from exc
                 if message.get("__eof__"):
                     tail = " | ".join(self._stderr)
                     raise RuntimeError(
-                        f"native_cbm_process_exited:{self._process.poll()}:{tail}"
+                        f"cbm_process_exited:{self._process.poll()}:{tail}"
                     )
                 if message.get("__protocol_error__"):
                     raise RuntimeError(str(message["__protocol_error__"]))
@@ -1623,12 +1519,12 @@ class _NativeStdioMcpClient:
                 error = message.get("error")
                 if isinstance(error, dict):
                     raise RuntimeError(
-                        "native_cbm_protocol_error:"
+                        "cbm_protocol_error:"
                         + json.dumps(error, ensure_ascii=False, sort_keys=True)
                     )
                 result = message.get("result")
                 if not isinstance(result, dict):
-                    raise RuntimeError(f"native_cbm_invalid_result:{method}")
+                    raise RuntimeError(f"cbm_invalid_result:{method}")
                 return result
 
     def list_tools(self) -> list[Tool]:
@@ -1640,17 +1536,17 @@ class _NativeStdioMcpClient:
             result = self._request(
                 "tools/list",
                 params,
-                timeout_seconds=_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS,
+                timeout_seconds=_CBM_STARTUP_TIMEOUT_SECONDS,
             )
             page = result.get("tools")
             if not isinstance(page, list):
-                raise RuntimeError("native_cbm_tools_list_invalid")
+                raise RuntimeError("cbm_tools_list_invalid")
             tools.extend(Tool.model_validate(tool) for tool in page)
             next_cursor = result.get("nextCursor")
             if not isinstance(next_cursor, str) or not next_cursor:
                 return tools
             if next_cursor in seen_cursors:
-                raise RuntimeError("native_cbm_tools_cursor_cycle")
+                raise RuntimeError("cbm_tools_cursor_cycle")
             seen_cursors.add(next_cursor)
             cursor = next_cursor
 
@@ -1659,7 +1555,7 @@ class _NativeStdioMcpClient:
         name: str,
         arguments: dict[str, Any],
         *,
-        timeout_seconds: float = _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS,
+        timeout_seconds: float = _CBM_REQUEST_TIMEOUT_SECONDS,
     ) -> CallToolResult:
         result = self._request(
             "tools/call",
@@ -1682,14 +1578,14 @@ class _NativeStdioMcpClient:
             self._process.wait(timeout=5)
 
 
-def _native_cbm_config() -> tuple[str, list[str], str]:
+def _cbm_config() -> tuple[str, list[str], str]:
     """Open the one current official user-installed CBM frontend owned by this host."""
     command = os.environ.get("MCP_CBM_BINARY", "").strip() or "codebase-memory-mcp"
     binary = shutil.which(command) or command
-    return (binary, [], _NATIVE_CBM_HOST_REPO_ROOT)
+    return (binary, [], _CBM_HOST_REPO_ROOT)
 
 
-def _normalize_native_cbm_index_arguments(
+def _normalize_cbm_index_arguments(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """Pin indexing to the one canonical host checkout and project identity."""
@@ -1700,26 +1596,26 @@ def _normalize_native_cbm_index_arguments(
 
     requested_path = repo_path.strip().rstrip("/\\")
     host_path = os.path.normcase(os.path.normpath(requested_path))
-    canonical_host_path = os.path.normcase(_NATIVE_CBM_HOST_REPO_ROOT)
+    canonical_host_path = os.path.normcase(_CBM_HOST_REPO_ROOT)
     if host_path == canonical_host_path:
-        normalized["repo_path"] = _NATIVE_CBM_HOST_REPO_ROOT
-        normalized["name"] = _NATIVE_CBM_PROJECT
+        normalized["repo_path"] = _CBM_HOST_REPO_ROOT
+        normalized["name"] = _CBM_PROJECT
     return normalized
 
 
-def _open_native_cbm_client(
+def _open_cbm_client(
     command: str,
     args: list[str],
     cwd: str,
-) -> tuple[_NativeStdioMcpClient, tuple[Tool, ...], list[str]]:
-    """Open exactly one native frontend; native startup failures stay terminal."""
-    client: _NativeStdioMcpClient | None = None
+) -> tuple[_CbmStdioMcpClient, tuple[Tool, ...], list[str]]:
+    """Open exactly one CBM frontend; CBM startup failures stay terminal."""
+    client: _CbmStdioMcpClient | None = None
     try:
-        client = _NativeStdioMcpClient(command, args, cwd)
+        client = _CbmStdioMcpClient(command, args, cwd)
         tools = tuple(client.list_tools())
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)):
-            raise RuntimeError("native_cbm_duplicate_tool_name")
+            raise RuntimeError("cbm_duplicate_tool_name")
         return client, tools, names
     except Exception:
         if client is not None:
@@ -1727,72 +1623,72 @@ def _open_native_cbm_client(
         raise
 
 
-def _initialize_native_cbm_sync() -> None:
-    global _NATIVE_CBM_CLIENT, _NATIVE_CBM_NAMES, _NATIVE_CBM_TOOLS
+def _initialize_cbm_sync() -> None:
+    global _CBM_CLIENT, _CBM_NAMES, _CBM_TOOLS
     if (
-        _NATIVE_CBM_TOOLS is not None
-        and _NATIVE_CBM_CLIENT is not None
-        and _NATIVE_CBM_CLIENT.is_running()
+        _CBM_TOOLS is not None
+        and _CBM_CLIENT is not None
+        and _CBM_CLIENT.is_running()
     ):
         return
-    with _NATIVE_CBM_INIT_LOCK:
+    with _CBM_INIT_LOCK:
         if (
-            _NATIVE_CBM_TOOLS is not None
-            and _NATIVE_CBM_CLIENT is not None
-            and _NATIVE_CBM_CLIENT.is_running()
+            _CBM_TOOLS is not None
+            and _CBM_CLIENT is not None
+            and _CBM_CLIENT.is_running()
         ):
             return
-        stale_client = _NATIVE_CBM_CLIENT
-        _NATIVE_CBM_CLIENT = None
-        _NATIVE_CBM_TOOLS = None
-        _NATIVE_CBM_NAMES = frozenset()
+        stale_client = _CBM_CLIENT
+        _CBM_CLIENT = None
+        _CBM_TOOLS = None
+        _CBM_NAMES = frozenset()
         if stale_client is not None:
             stale_client.close()
-        command, args, cwd = _native_cbm_config()
-        client, tools, names = _open_native_cbm_client(command, args, cwd)
-        _NATIVE_CBM_CLIENT = client
-        _NATIVE_CBM_TOOLS = tools
-        _NATIVE_CBM_NAMES = frozenset(names)
+        command, args, cwd = _cbm_config()
+        client, tools, names = _open_cbm_client(command, args, cwd)
+        _CBM_CLIENT = client
+        _CBM_TOOLS = tools
+        _CBM_NAMES = frozenset(names)
 
 
-async def _native_cbm_tools() -> list[Tool]:
-    await asyncio.to_thread(_initialize_native_cbm_sync)
-    return list(_NATIVE_CBM_TOOLS or ())
+async def _cbm_tools() -> list[Tool]:
+    await asyncio.to_thread(_initialize_cbm_sync)
+    return list(_CBM_TOOLS or ())
 
 
-def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
+def _call_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
     if name == "index_repository":
-        return _call_native_cbm_index(arguments)
-    _initialize_native_cbm_sync()
-    client = _NATIVE_CBM_CLIENT
+        return _call_cbm_index(arguments)
+    _initialize_cbm_sync()
+    client = _CBM_CLIENT
     if client is None:
-        raise RuntimeError("native_cbm_client_unavailable")
+        raise RuntimeError("cbm_client_unavailable")
     return client.call_tool(name, dict(arguments))
 
 
-def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
+def _call_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
     """Coalesce identical indexing requests without spawning another CBM process."""
-    global _NATIVE_CBM_INDEX_IN_FLIGHT
-    arguments = _normalize_native_cbm_index_arguments(arguments)
+    global _CBM_INDEX_IN_FLIGHT
+    arguments = _normalize_cbm_index_arguments(arguments)
     request_key = json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str)
     leader = False
-    with _NATIVE_CBM_INDEX_LOCK:
-        in_flight = _NATIVE_CBM_INDEX_IN_FLIGHT
+    with _CBM_INDEX_LOCK:
+        in_flight = _CBM_INDEX_IN_FLIGHT
         if in_flight is None:
             future: Future[CallToolResult] = Future()
-            _NATIVE_CBM_INDEX_IN_FLIGHT = (request_key, future)
+            _CBM_INDEX_IN_FLIGHT = (request_key, future)
             leader = True
         else:
             active_key, future = in_flight
             if active_key != request_key:
-                raise RuntimeError("native_cbm_index_already_in_progress")
+                raise RuntimeError("cbm_index_already_in_progress")
     if not leader:
         return future.result()
     try:
-        _initialize_native_cbm_sync()
-        client = _NATIVE_CBM_CLIENT
+        _initialize_cbm_sync()
+        client = _CBM_CLIENT
         if client is None:
-            raise RuntimeError("native_cbm_client_unavailable")
+            raise RuntimeError("cbm_client_unavailable")
         result = client.call_tool("index_repository", arguments)
         future.set_result(result)
         return result
@@ -1800,23 +1696,23 @@ def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
         future.set_exception(error)
         raise
     finally:
-        with _NATIVE_CBM_INDEX_LOCK:
-            if _NATIVE_CBM_INDEX_IN_FLIGHT == (request_key, future):
-                _NATIVE_CBM_INDEX_IN_FLIGHT = None
+        with _CBM_INDEX_LOCK:
+            if _CBM_INDEX_IN_FLIGHT == (request_key, future):
+                _CBM_INDEX_IN_FLIGHT = None
 
 
-def _close_native_cbm() -> None:
-    global _NATIVE_CBM_CLIENT, _NATIVE_CBM_NAMES, _NATIVE_CBM_TOOLS
-    with _NATIVE_CBM_INIT_LOCK:
-        client = _NATIVE_CBM_CLIENT
-        _NATIVE_CBM_CLIENT = None
-        _NATIVE_CBM_TOOLS = None
-        _NATIVE_CBM_NAMES = frozenset()
+def _close_cbm() -> None:
+    global _CBM_CLIENT, _CBM_NAMES, _CBM_TOOLS
+    with _CBM_INIT_LOCK:
+        client = _CBM_CLIENT
+        _CBM_CLIENT = None
+        _CBM_TOOLS = None
+        _CBM_NAMES = frozenset()
     if client is not None:
         client.close()
 
 
-def _native_result_payload(result: CallToolResult) -> dict[str, Any]:
+def _mcp_result_payload(result: CallToolResult) -> dict[str, Any]:
     if result.isError:
         detail = next(
             (
@@ -1824,7 +1720,7 @@ def _native_result_payload(result: CallToolResult) -> dict[str, Any]:
                 for block in result.content
                 if isinstance(block, TextContent) and block.text
             ),
-            "native_cbm_tool_error",
+            "cbm_tool_error",
         )
         raise RuntimeError(detail)
     structured = result.structuredContent
@@ -1841,11 +1737,11 @@ def _native_result_payload(result: CallToolResult) -> dict[str, Any]:
             continue
         if isinstance(payload, dict):
             return payload
-    raise RuntimeError("native_cbm_health_payload_invalid")
+    raise RuntimeError("cbm_health_payload_invalid")
 
 
 def _host_codegraph_runtime() -> dict[str, Any]:
-    binary_path, _, _ = _native_cbm_config()
+    binary_path, _, _ = _cbm_config()
     binary_exists = os.path.isfile(binary_path)
     binary_ready = binary_exists
     return {
@@ -1876,11 +1772,11 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         "binaryReady": False,
         "binaryState": "unavailable",
         "binaryVersion": "",
-        "binaryPath": _native_cbm_config()[0],
+        "binaryPath": _cbm_config()[0],
         "daemonAttached": False,
         "daemonState": "unattached",
-        "nativeFrontendAttached": False,
-        "nativeFrontendState": "unattached",
+        "cbmFrontendAttached": False,
+        "cbmFrontendState": "unattached",
         "canonicalProjectRegistered": False,
         "projectState": "missing",
         "indexReady": False,
@@ -1892,12 +1788,12 @@ def _codegraph_diagnostics() -> dict[str, Any]:
     except Exception as error:
         diagnostics["runtimeFailure"] = str(error)
 
-    client = _NATIVE_CBM_CLIENT
+    client = _CBM_CLIENT
     if client is None or not client.is_running():
         return diagnostics
 
-    diagnostics["nativeFrontendAttached"] = True
-    diagnostics["nativeFrontendState"] = "attached"
+    diagnostics["cbmFrontendAttached"] = True
+    diagnostics["cbmFrontendState"] = "attached"
     server_info = dict(getattr(client, "server_info", {}) or {})
     server_name = str(server_info.get("name") or "")
     binary_version = str(server_info.get("version") or "")
@@ -1908,11 +1804,11 @@ def _codegraph_diagnostics() -> dict[str, Any]:
     else:
         diagnostics["binaryState"] = "identity_mismatch"
     try:
-        projects = _native_result_payload(
+        projects = _mcp_result_payload(
             client.call_tool(
                 "list_projects",
                 {"format": "json", "detail": "stats"},
-                timeout_seconds=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
+                timeout_seconds=_CBM_HEALTH_TIMEOUT_SECONDS,
             )
         )
         diagnostics["daemonAttached"] = True
@@ -1922,7 +1818,7 @@ def _codegraph_diagnostics() -> dict[str, Any]:
             (
                 row
                 for row in rows
-                if isinstance(row, dict) and row.get("name") == _NATIVE_CBM_PROJECT
+                if isinstance(row, dict) and row.get("name") == _CBM_PROJECT
             ),
             None,
         ) if isinstance(rows, list) else None
@@ -1932,16 +1828,16 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         diagnostics["projectRoot"] = root_path
         diagnostics["canonicalProjectRegistered"] = (
             os.path.normcase(os.path.normpath(root_path))
-            == os.path.normcase(_NATIVE_CBM_HOST_REPO_ROOT)
+            == os.path.normcase(_CBM_HOST_REPO_ROOT)
         )
         diagnostics["projectState"] = (
             "registered" if diagnostics["canonicalProjectRegistered"] else "wrong_root"
         )
-        status = _native_result_payload(
+        status = _mcp_result_payload(
             client.call_tool(
                 "index_status",
-                {"project": _NATIVE_CBM_PROJECT, "format": "json"},
-                timeout_seconds=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
+                {"project": _CBM_PROJECT, "format": "json"},
+                timeout_seconds=_CBM_HEALTH_TIMEOUT_SECONDS,
             )
         )
         status_name = str(status.get("status") or "").strip().lower()
@@ -1967,7 +1863,7 @@ def _codegraph_diagnostics() -> dict[str, Any]:
             status_name or "not_ready"
         )
     except Exception as error:
-        diagnostics["nativeFailure"] = str(error)
+        diagnostics["cbmFailure"] = str(error)
 
     diagnostics["codeGraphReady"] = all(
         bool(diagnostics[key])
@@ -1975,7 +1871,7 @@ def _codegraph_diagnostics() -> dict[str, Any]:
             "runtimeReady",
             "binaryReady",
             "daemonAttached",
-            "nativeFrontendAttached",
+            "cbmFrontendAttached",
             "canonicalProjectRegistered",
             "indexReady",
         )
@@ -1983,12 +1879,12 @@ def _codegraph_diagnostics() -> dict[str, Any]:
     return diagnostics
 
 
-atexit.register(_close_native_cbm)
+atexit.register(_close_cbm)
 
 
 def _backend_bridge_timeout_seconds(path: str) -> float:
     if path in {"run_configured_card", "external_main_chat"}:
-        return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+        return _CBM_REQUEST_TIMEOUT_SECONDS
     if path == "worldview_action":
         return 40.0
     return _MCP_CALL_TIMEOUT_SECONDS
@@ -2211,7 +2107,17 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
 
 
 def _grounded_data_anchors_schema() -> dict[str, Any]:
-    """One optional public native-reference list shared by review and execution."""
+    """One optional exact provider-record list shared by review and execution."""
+
+    id_fields = {
+        "engraphisMemoryId": {"type": "string", "minLength": 1},
+        "engraphisEntityId": {"type": "string", "minLength": 1},
+        "engraphisRelationshipId": {"type": "string", "minLength": 1},
+        "graphitiEpisodeId": {"type": "string", "minLength": 1},
+        "graphitiEntityId": {"type": "string", "minLength": 1},
+        "graphitiRelationshipId": {"type": "string", "minLength": 1},
+        "cbmQualifiedName": {"type": "string", "minLength": 1},
+    }
 
     return {
         "type": "array",
@@ -2220,20 +2126,16 @@ def _grounded_data_anchors_schema() -> dict[str, Any]:
         "items": {
             "type": "object",
             "properties": {
-                "authority": {
-                    "type": "string",
-                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
-                },
-                "nativeId": {"type": "string", "minLength": 1},
+                **id_fields,
                 "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
                 "priority": {"type": "integer"},
                 "boundedExpansion": {"type": "integer", "minimum": 0, "maximum": 3},
                 "resultLimit": {"type": "integer", "minimum": 1, "maximum": 24},
             },
             "required": [
-                "authority", "nativeId", "reason", "priority",
-                "boundedExpansion", "resultLimit",
+                "reason", "priority", "boundedExpansion", "resultLimit",
             ],
+            "oneOf": [{"required": [field]} for field in id_fields],
             "additionalProperties": False,
         },
     }
@@ -2355,7 +2257,7 @@ def _application_tools() -> list[Tool]:
             name="agentgraph.inspect",
             description=(
                 "Read a bounded, authenticated Project-scoped view of current PostgreSQL/AGE "
-                "Card relationships plus available run, native-reference attention, lineage, "
+                "Card relationships plus available run, lineage, "
                 "tool, and artifact telemetry. runId selects one exact Run; otherwise the "
                 "authenticated conversation is selected. cardId filters its direct Runs. "
                 "projectWide reads across the authenticated Project, before limits. The retired "
@@ -2401,9 +2303,9 @@ def _application_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main only: submit one explicit mission and any deliberately selected native graph anchors "
+                "Main only: submit one explicit mission and any deliberately selected provider graph anchors "
                 "to the AGE-connected Mag One "
-                "Card and invoke its native Hermes task execution. Python materializes the saved "
+                "Card and invoke its Hermes task execution. Python materializes the saved "
                 "Card plus this input exactly once before execution. "
                 "The authenticated Card runtime supplies the saved project, deck, and conversation identity; "
                 "never include or guess those identifiers. "
@@ -2424,7 +2326,7 @@ def _application_tools() -> list[Tool]:
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Optional review only: place one exact mission and its resolved native graph projection "
+                "Optional review only: place one exact mission and its resolved provider graph projection "
                 "into the receiving saved Card's existing Invocation and Knowledge "
                 "editors for Main to review. This tool creates no proposal record, persists "
                 "nothing, and never starts either Card."
@@ -2452,11 +2354,13 @@ def _application_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "targetCardId": {"type": "string", "minLength": 1},
-                    "authority": {
-                        "type": "string",
-                        "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
-                    },
-                    "nativeId": {"type": "string", "minLength": 1},
+                    "engraphisMemoryId": {"type": "string", "minLength": 1},
+                    "engraphisEntityId": {"type": "string", "minLength": 1},
+                    "engraphisRelationshipId": {"type": "string", "minLength": 1},
+                    "graphitiEpisodeId": {"type": "string", "minLength": 1},
+                    "graphitiEntityId": {"type": "string", "minLength": 1},
+                    "graphitiRelationshipId": {"type": "string", "minLength": 1},
+                    "cbmQualifiedName": {"type": "string", "minLength": 1},
                     "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
                     "order": {"type": "integer", "minimum": 0, "maximum": 255},
                     "depth": {"type": "integer", "minimum": 0, "maximum": 3},
@@ -2464,9 +2368,14 @@ def _application_tools() -> list[Tool]:
                     "required": {"type": "boolean"},
                 },
                 "required": [
-                    "targetCardId", "authority", "nativeId", "reason",
+                    "targetCardId", "reason",
                     "order", "depth", "resultLimit", "required",
                 ],
+                "oneOf": [{"required": [field]} for field in (
+                    "engraphisMemoryId", "engraphisEntityId", "engraphisRelationshipId",
+                    "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
+                    "cbmQualifiedName",
+                )],
                 "additionalProperties": False,
             },
         ),
@@ -2477,7 +2386,7 @@ def _application_tools() -> list[Tool]:
         ),
         Tool(
             name="card.create",
-            description='Create one saved Card with explicit configuration and expected deck revision. Honor its requested native profile. Does not run the Card or create wires.',
+            description='Create one saved Card with explicit configuration and expected deck revision. Honor its requested Hermes profile. Does not run the Card or create wires.',
             inputSchema=card_tool_schema("card.create"),
         ),
         Tool(
@@ -2598,12 +2507,12 @@ async def _materialize_complete_catalog() -> list[Tool]:
             )
     _complete_catalog_family("liquidaity")
     tools = [_bind_operation_access(tool) for tool in tools]
-    native_tools = await _materialize_requested_native_catalog(
-        tuple(_NATIVE_PREFIXES)
+    provider_tools = await _materialize_requested_provider_catalog(
+        tuple(_PROVIDER_PREFIXES)
     )
     existing_names = {tool.name for tool in tools}
     tools.extend(
-        tool for tool in native_tools if tool.name not in existing_names
+        tool for tool in provider_tools if tool.name not in existing_names
     )
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
@@ -2638,7 +2547,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
     return catalog
 
 
-def _requested_native_catalog_families() -> tuple[str, ...]:
+def _requested_provider_catalog_families() -> tuple[str, ...]:
     """Resolve external families only from an authorized live MCP request."""
     principal = _internal_mcp_principal()
     if principal is None:
@@ -2659,28 +2568,28 @@ def _requested_native_catalog_families() -> tuple[str, ...]:
     } if kind == "materializer-read" and isinstance(connections, list) else set()
     return tuple(
         family
-        for family, prefix in _NATIVE_PREFIXES.items()
+        for family, prefix in _PROVIDER_PREFIXES.items()
         if family in granted_connections
         or any(name.startswith(prefix) for name in granted)
     )
 
 
-async def _materialize_requested_native_catalog(
+async def _materialize_requested_provider_catalog(
     families: tuple[str, ...],
 ) -> list[Tool]:
-    """Late-bind only the native families selected by the authorized request."""
+    """Late-bind only the provider families selected by the authorized request."""
     tools: list[Tool] = []
     for provider in families:
         _set_catalog_initializing_family(provider)
         try:
-            native_tools = (
-                await _native_cbm_tools()
+            provider_tools = (
+                await _cbm_tools()
                 if provider == "cbm"
-                else await _native_graphiti_tools()
+                else await _graphiti_tools()
             )
         except Exception as error:
             if provider == "cbm":
-                await asyncio.to_thread(_close_native_cbm)
+                await asyncio.to_thread(_close_cbm)
             failure_code, failure_summary = _catalog_failure_details(error)
             _mark_catalog_family_unavailable(
                 provider,
@@ -2689,9 +2598,9 @@ async def _materialize_requested_native_catalog(
             )
             continue
         _complete_catalog_family(provider)
-        namespaced = _namespace_native_tools(provider, native_tools)
+        namespaced = _namespace_provider_tools(provider, provider_tools)
         if provider == "cbm":
-            _register_native_cbm_catalog(namespaced)
+            _register_cbm_catalog(namespaced)
         tools.extend(namespaced)
 
     tools = [_bind_operation_access(tool) for tool in tools]
@@ -2857,7 +2766,7 @@ def _catalog_or_error() -> list[Tool]:
         )
     if state != "ready" or tools is None:
         raise RuntimeError("mcp_catalog_readiness_invalid")
-    required_families = {"liquidaity", *_NATIVE_PREFIXES.keys()}
+    required_families = {"liquidaity", *_PROVIDER_PREFIXES.keys()}
     missing_families = sorted(required_families - completed_families)
     if unavailable_families or missing_families:
         detail = unavailable_families or tuple(missing_families)
@@ -2873,19 +2782,19 @@ async def list_tools() -> list[Tool]:
     with _CATALOG_DIAGNOSTIC_LOCK:
         initializing = _CATALOG_STATE == "initializing"
     if initializing:
-        # HTTP binds before its native providers finish initializing so health
+        # HTTP binds before its providers finish initializing so health
         # can report truthful progress. A tools/list client, however, must not
         # observe an incomplete catalog or turn a transient startup state into
         # missing saved grants. Shield the one process-wide initializer from a
         # client cancellation, then return only its frozen terminal catalog.
         await asyncio.shield(_start_catalog_initialization())
     tools = _catalog_or_error()
-    families = set(_requested_native_catalog_families())
+    families = set(_requested_provider_catalog_families())
     tools = [
         tool for tool in tools
         if not any(
             tool.name.startswith(prefix) and family not in families
-            for family, prefix in _NATIVE_PREFIXES.items()
+            for family, prefix in _PROVIDER_PREFIXES.items()
         )
     ]
     names = [tool.name for tool in tools]
@@ -2955,12 +2864,12 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
         security_schemes = [
             {"type": "oauth2", "scopes": [AUTH0_REQUIRED_SCOPE]}
         ]
-        native_system = next(
-            (system for system, prefix in _NATIVE_PREFIXES.items() if tool.name.startswith(prefix)),
+        provider_system = next(
+            (system for system, prefix in _PROVIDER_PREFIXES.items() if tool.name.startswith(prefix)),
             None,
         )
-        is_native = native_system is not None
-        if not is_native:
+        is_provider_tool = provider_system is not None
+        if not is_provider_tool:
             schema = copy.deepcopy(tool.inputSchema)
             properties = schema.get("properties")
             if isinstance(properties, dict):
@@ -2972,7 +2881,7 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                     field for field in required if field not in _SERVER_OWNED_ARGUMENTS
                 ]
             payload["inputSchema"] = schema
-        elif native_system == "graphiti":
+        elif provider_system == "graphiti":
             schema = copy.deepcopy(tool.inputSchema)
             properties = schema.get("properties")
             server_owned_scope_fields = {"group_id", "group_ids"}
@@ -3022,8 +2931,10 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "dataAnchors", "_sourceCardId",
     },
     "card.load_graph_references": {
-        "projectId", "deckId", "conversationId", "targetCardId", "authority",
-        "nativeId", "reason", "order", "depth", "resultLimit", "required",
+        "projectId", "deckId", "conversationId", "targetCardId",
+        "engraphisMemoryId", "engraphisEntityId", "engraphisRelationshipId",
+        "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
+        "cbmQualifiedName", "reason", "order", "depth", "resultLimit", "required",
         "_sourceCardId", "_sourceRunId",
     },
     "canvas.inspect": set(card_tool_schema("canvas.inspect")["properties"]),
@@ -3075,33 +2986,33 @@ async def _dispatch_tool(
     principal = _internal_mcp_principal()
     if context is None and principal and principal.get("kind") == "materializer-read":
         # Pre-dispatch reads have real project/Card identity but no Run yet.
-        # Keep their native graph scope without fabricating runtime telemetry.
+        # Keep their provider graph scope without fabricating runtime telemetry.
         context = {
             "projectId": principal["projectId"], "deckId": principal["deckId"],
             "mainCardId": principal["callerCardId"],
             "conversationId": principal.get("conversationId", ""),
         }
-    if name.startswith(_NATIVE_PREFIXES["cbm"]):
-        await _native_cbm_tools()
-        native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
-        if native_name in _NATIVE_CBM_NAMES:
-            native_arguments = dict(arguments or {})
+    if name.startswith(_PROVIDER_PREFIXES["cbm"]):
+        await _cbm_tools()
+        provider_tool_name = name.removeprefix(_PROVIDER_PREFIXES["cbm"])
+        if provider_tool_name in _CBM_NAMES:
+            provider_arguments = dict(arguments or {})
             return await asyncio.to_thread(
-                _call_native_cbm,
-                native_name,
-                native_arguments,
+                _call_cbm,
+                provider_tool_name,
+                provider_arguments,
             )
-    if name.startswith(_NATIVE_PREFIXES["graphiti"]):
-        await _initialize_native_graphiti()
-        native_tools = await _native_graphiti_tools()
-        native_name = name.removeprefix(_NATIVE_PREFIXES["graphiti"])
-        if native_name in _NATIVE_GRAPHITI_NAMES:
-            native_args = dict(arguments or {})
-            include_body = bool(native_args.pop("include_body", False))
-            preview_chars = max(0, min(2000, int(native_args.pop("body_preview_chars", 400))))
-            response_budget = max(2000, min(100000, int(native_args.pop("max_response_chars", 20000))))
+    if name.startswith(_PROVIDER_PREFIXES["graphiti"]):
+        await _initialize_graphiti()
+        provider_tools = await _graphiti_tools()
+        provider_tool_name = name.removeprefix(_PROVIDER_PREFIXES["graphiti"])
+        if provider_tool_name in _GRAPHITI_NAMES:
+            provider_arguments = dict(arguments or {})
+            include_body = bool(provider_arguments.pop("include_body", False))
+            preview_chars = max(0, min(2000, int(provider_arguments.pop("body_preview_chars", 400))))
+            response_budget = max(2000, min(100000, int(provider_arguments.pop("max_response_chars", 20000))))
             if context is not None:
-                if "group_id" in native_args or "group_ids" in native_args:
+                if "group_id" in provider_arguments or "group_ids" in provider_arguments:
                     return [
                         TextContent(
                             type="text",
@@ -3114,26 +3025,26 @@ async def _dispatch_tool(
                         )
                     ]
                 group_id = graphiti_project_group_id(str(context["projectId"]))
-                native_tool = next(
+                provider_tool = next(
                     (
                         tool
-                        for tool in native_tools
-                        if tool.name == native_name
+                        for tool in provider_tools
+                        if tool.name == provider_tool_name
                     ),
                     None,
                 )
-                native_properties = (
-                    native_tool.inputSchema.get("properties", {})
-                    if native_tool is not None
-                    and isinstance(native_tool.inputSchema, dict)
+                graphiti_properties = (
+                    provider_tool.inputSchema.get("properties", {})
+                    if provider_tool is not None
+                    and isinstance(provider_tool.inputSchema, dict)
                     else {}
                 )
-                if "group_id" in native_properties:
-                    native_args["group_id"] = group_id
-                if "group_ids" in native_properties:
-                    native_args["group_ids"] = [group_id]
-            result = await _call_native_graphiti(native_name, native_args)
-            if native_name == "get_episodes" and isinstance(result, CallToolResult):
+                if "group_id" in graphiti_properties:
+                    provider_arguments["group_id"] = group_id
+                if "group_ids" in graphiti_properties:
+                    provider_arguments["group_ids"] = [group_id]
+            result = await _call_graphiti(provider_tool_name, provider_arguments)
+            if provider_tool_name == "get_episodes" and isinstance(result, CallToolResult):
                 return _bounded_graphiti_episodes(
                     result,
                     include_body=include_body,
@@ -3229,14 +3140,14 @@ async def _dispatch_tool(
                 args,
             )
         except RuntimeError as error:
-            # The native operation reports why it rejected the request. Keep
+            # The provider operation reports why it rejected the request. Keep
             # that actionable result; the outer handler otherwise replaces it
             # with internal_failure and the caller cannot correct its input.
             result = {"ok": False, "error": _sanitize_failure_detail(error)}
-        native_text = json.dumps(result, ensure_ascii=False)
+        result_text = json.dumps(result, ensure_ascii=False)
         return CallToolResult(
-            content=[TextContent(type="text", text=native_text)],
-            structuredContent={"result": native_text},
+            content=[TextContent(type="text", text=result_text)],
+            structuredContent={"result": result_text},
             isError=result.get("ok") is False or bool(result.get("error")),
         )
     if name == "run_mag_one":
@@ -3545,7 +3456,7 @@ def _without_model_visible_runtime_observation(result: Any) -> Any:
     remaining = {
         key: value
         for key, value in result.meta.items()
-        if key not in {"executionReceipt", "nativeAttention"}
+        if key != "executionReceipt"
     }
     if len(remaining) == len(result.meta):
         return result
@@ -3566,7 +3477,7 @@ def _mcp_tool_timeout_seconds(name: str) -> float:
         "cbm.index_repository",
         "run_mag_one",
     }:
-        return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+        return _CBM_REQUEST_TIMEOUT_SECONDS
     return _MCP_CALL_TIMEOUT_SECONDS
 
 
@@ -3602,32 +3513,6 @@ async def _execute_tool_request(
             timeout=_mcp_tool_timeout_seconds(tool_name),
         )
         result_category = _tool_result_category(result)
-        native_attention = None
-        if result_category == "success":
-            from app.python_models.native_attention import build_native_attention_event
-
-            attention_context = _authenticated_main_context()
-            native_attention = (
-                (result.meta or {}).get("nativeAttention")
-                if tool_name == "graphiti.add_memory" and isinstance(result, CallToolResult) else None
-            )
-            already_observed = native_attention is not None
-            native_arguments = dict(arguments or {})
-            if tool_name == "graphiti.clear_graph" and attention_context:
-                native_arguments["group_ids"] = [graphiti_project_group_id(str(attention_context["projectId"]))]
-            if native_attention is None:
-                native_attention = build_native_attention_event(
-                    tool_name, result, attention_context, arguments=native_arguments,
-                )
-            if native_attention is not None:
-                telemetry_written = (native_attention.get("persisted") is not False
-                                     if already_observed else
-                                     await _persist_native_attention(native_attention, attention_context))
-                if not telemetry_written:
-                    # The native operation already happened. Report observation
-                    # failure separately, never invite a duplicate write retry.
-                    native_attention["persisted"] = False
-                    receipt["attentionFailureCode"] = "native_attention_persistence_failed"
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed" if result_category == "tool_error" else "completed"
         receipt["failureCode"] = (
@@ -3769,7 +3654,7 @@ async def _run_stdio() -> None:
         # Nested FastMCP registries cannot be discovered from this outer
         # server's active tools/list request without deadlocking the stdio
         # request lifecycle. Complete the same canonical catalog once before
-        # accepting the outer stdio session; the native CBM frontend remains
+        # accepting the outer stdio session; the CBM frontend remains
         # process-owned and indexing is still an explicit cbm.index_repository
         # tool call.
         await _initialize_catalog_once()
@@ -3777,8 +3662,8 @@ async def _run_stdio() -> None:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
     finally:
-        await _close_native_graphiti()
-        await asyncio.to_thread(_close_native_cbm)
+        await _close_graphiti()
+        await asyncio.to_thread(_close_cbm)
 
 
 def _safe_request_header(scope: dict[str, Any], name: bytes) -> str:
@@ -3896,8 +3781,8 @@ async def _run_streamable_http() -> None:
                     await catalog_task
                 except asyncio.CancelledError:
                     pass
-            await _close_native_graphiti()
-            await asyncio.to_thread(_close_native_cbm)
+            await _close_graphiti()
+            await asyncio.to_thread(_close_cbm)
 
     async def health_endpoint(_request: Any) -> JSONResponse:
         diagnostics = _catalog_diagnostics()

@@ -12,6 +12,7 @@ import {
   createProject,
   listCanonicalSavedCardBindings,
   SYSTEM6_PROJECT_CARDS,
+  SYSTEM6_PROJECT_EDGES,
 } from './agentBuilderStore';
 
 describe('agentBuilderStore Project Card membership', () => {
@@ -69,6 +70,16 @@ describe('agentBuilderStore Project Card membership', () => {
     expect(profileLocks.every(({ index }) => index < firstSourceRead)).toBe(true);
     expect(statements.some(({ sql }) => /agent-[a-f0-9-]+/i.test(sql))).toBe(false);
     expect(client.query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('keeps Main and Builder identities separate with one Builder authorization flow', () => {
+    expect(SYSTEM6_PROJECT_CARDS.find((card) => card.cardId === 'card_main_chat')?.profile)
+      .toBe('main');
+    expect(SYSTEM6_PROJECT_CARDS.find((card) => card.cardId === 'builder')?.profile)
+      .toBe('builder');
+    expect(SYSTEM6_PROJECT_EDGES.filter((edge) => edge.edgeType === 'flow')).toEqual([
+      { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
+    ]);
   });
 
   it('attaches one saved Card by exact revision without creating a Card revision', async () => {

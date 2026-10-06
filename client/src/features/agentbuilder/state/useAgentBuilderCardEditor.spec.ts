@@ -54,8 +54,7 @@ describe('Card settings and saved Bot wires', () => {
     const card = deck.nodes.find(node => node.id === 'card_worldsignals_agent')!;
     card.runtimeOptions = {
       ...card.runtimeOptions,
-      tools: ['graphiti.search_nodes'],
-      nativeTools: ['memory', 'terminal'],
+      tools: ['graphiti.search_nodes', 'hermes:tool:memory', 'hermes:tool:terminal'],
       skills: ['research'],
       toolsets: ['browser'],
       mcpConnectionIds: ['project-research'],
@@ -74,8 +73,7 @@ describe('Card settings and saved Bot wires', () => {
     }));
 
     expect(result.current.selectedCardConfig).toMatchObject({
-      tools: ['graphiti.search_nodes'],
-      native_tools: ['memory', 'terminal'],
+      tools: ['graphiti.search_nodes', 'hermes:tool:memory', 'hermes:tool:terminal'],
       skills: ['research'],
       toolsets: ['browser'],
       mcp_connection_ids: ['project-research'],
@@ -87,8 +85,7 @@ describe('Card settings and saved Bot wires', () => {
 
     const after = saved.nodes.find(node => node.id === card.id)!;
     expect(after.runtimeOptions).toMatchObject({
-      tools: ['graphiti.search_nodes'],
-      nativeTools: ['memory', 'terminal'],
+      tools: ['graphiti.search_nodes', 'hermes:tool:memory', 'hermes:tool:terminal'],
       skills: ['research'],
       toolsets: ['browser'],
       mcpConnectionIds: ['project-research'],

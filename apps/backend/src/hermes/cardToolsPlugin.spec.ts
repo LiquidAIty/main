@@ -66,11 +66,11 @@ function configuration(overrides: Partial<HermesCardTools> = {}): HermesCardTool
     cardRevisionId: 'revision-one',
     cardRevisionSha256: 'a'.repeat(64),
     runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
-    enabledTools: ['card.create'],
+    enabledTools: ['card.create', 'hermes:tool:memory'],
     unavailableTools: [],
     unavailableToolReasons: {},
     presentedTools: ['card.create'],
-    nativeTools: ['memory'],
+    hermesSuppliedTools: [{ canonicalName: 'hermes:tool:memory', hermesName: 'memory' }],
     toolsets: [],
     mcpConnectionIds: [],
     pluginTools: [{
@@ -87,7 +87,7 @@ function configuration(overrides: Partial<HermesCardTools> = {}): HermesCardTool
 }
 
 describe('materializeHermesCardToolsPlugin retired profile residue', () => {
-  it.each(['liquidaity-main', 'builder', 'thinkgraph', 'knowgraph', 'signal-analyst'])(
+  it.each(['main', 'builder', 'thinkgraph', 'knowgraph', 'signal-analyst'])(
     'reconciles only after card-tools enable proof for saved profile %s',
     async (profile) => {
       const fixture = await materializationFixture(profile);
@@ -215,7 +215,7 @@ describe('materializeHermesCardToolsPlugin retired profile residue', () => {
       .resolves.toBeTruthy();
   });
 
-  it('uses native config ownership, preserves unrelated plugin data, and verifies exact residue absence', () => {
+  it('uses Hermes config ownership, preserves unrelated plugin data, and verifies exact residue absence', () => {
     expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain(
       'from hermes_cli.config import load_config, save_config',
     );
@@ -238,7 +238,7 @@ describe('materializeHermesCardToolsPlugin retired profile residue', () => {
   });
 
   it.skipIf(!hermesPython)(
-    'preserves unrelated native config values through the real Hermes load/save owner',
+    'preserves unrelated Hermes config values through the real Hermes load/save owner',
     async () => {
       const profileHome = await mkdtemp(join(tmpdir(), 'hermes-plugin-config-'));
       temporaryRoots.push(profileHome);
@@ -311,7 +311,7 @@ describe('materializeHermesCardToolsPlugin retired profile residue', () => {
       externalMcpTools: [{
         canonicalName: 'cbm.search_graph',
         connectionId: 'cbm',
-        nativeName: 'cbm.search_graph',
+        providerToolName: 'cbm.search_graph',
       }],
     });
     const before = structuredClone(selected);
@@ -333,14 +333,14 @@ describe('materializeHermesCardToolsPlugin retired profile residue', () => {
 });
 
 describe('requireHermesCardToolsReadback', () => {
-  it('accepts the exact plugin and native surface', () => {
+  it('accepts the exact plugin and Hermes surface', () => {
     expect(requireHermesCardToolsReadback({ sections: [
       { name: 'card-tools', tools: [{ name: 'card__card_create' }] },
       { name: 'memory', tools: [{ name: 'memory' }] },
     ] }, configuration())).toEqual({});
   });
 
-  it('fails closed when the native plugin exposes an ungranted tool', () => {
+  it('fails closed when the Hermes plugin exposes an ungranted tool', () => {
     expect(() => requireHermesCardToolsReadback({ sections: [{
       name: 'card-tools',
       tools: [{ name: 'card__card_create' }, { name: 'card__canvas_inspect' }],
@@ -362,13 +362,13 @@ describe('requireHermesCardToolsReadback', () => {
     const selected = configuration({
       enabledTools: ['graphiti.search_nodes'],
       presentedTools: ['graphiti.search_nodes'],
-      nativeTools: [],
+      hermesSuppliedTools: [],
       mcpConnectionIds: [],
       pluginTools: [],
       externalMcpTools: [{
         canonicalName: 'graphiti.search_nodes',
         connectionId: 'graphiti',
-        nativeName: 'search_nodes',
+        providerToolName: 'search_nodes',
       }],
     });
     expect(requireHermesCardToolsReadback({ sections: [{
@@ -384,13 +384,13 @@ describe('requireHermesCardToolsReadback', () => {
     const selected = configuration({
       enabledTools: ['graphiti.search_nodes'],
       presentedTools: ['graphiti.search_nodes'],
-      nativeTools: [],
+      hermesSuppliedTools: [],
       mcpConnectionIds: [],
       pluginTools: [],
       externalMcpTools: [{
         canonicalName: 'graphiti.search_nodes',
         connectionId: 'graphiti',
-        nativeName: 'search_nodes',
+        providerToolName: 'search_nodes',
       }],
     });
     expect(() => requireHermesCardToolsReadback({ sections: [{
@@ -404,7 +404,7 @@ describe('requireHermesCardToolsReadback', () => {
 });
 
 describe('materializeHermesExternalMcpTools', () => {
-  it('derives one exact native server/tool surface from an individual Card tool grant', async () => {
+  it('derives one exact Hermes server/tool surface from an individual Card tool grant', async () => {
     const selected = configuration({
       enabledTools: ['graphiti.search_nodes'],
       presentedTools: ['graphiti.search_nodes'],
@@ -412,7 +412,7 @@ describe('materializeHermesExternalMcpTools', () => {
       externalMcpTools: [{
         canonicalName: 'graphiti.search_nodes',
         connectionId: 'graphiti',
-        nativeName: 'search_nodes',
+        providerToolName: 'search_nodes',
       }],
     });
     const request = vi.fn(async (method: string) => {
@@ -448,7 +448,7 @@ describe('materializeHermesExternalMcpTools', () => {
       externalMcpTools: [{
         canonicalName: 'graphiti.search_nodes',
         connectionId: 'graphiti',
-        nativeName: 'search_nodes',
+        providerToolName: 'search_nodes',
       }],
     });
     const request = vi.fn(async (method: string) => {
@@ -481,12 +481,12 @@ describe('materializeHermesApplicationMcpServers', () => {
         {
           canonicalName: 'cbm.search_graph',
           connectionId: 'cbm',
-          nativeName: 'cbm.search_graph',
+          providerToolName: 'cbm.search_graph',
         },
         {
           canonicalName: 'graphiti.search_nodes',
           connectionId: 'graphiti',
-          nativeName: 'graphiti.search_nodes',
+          providerToolName: 'graphiti.search_nodes',
         },
       ],
     });
@@ -540,7 +540,7 @@ describe('materializeHermesApplicationMcpServers', () => {
       externalMcpTools: [{
         canonicalName: 'cbm.search_graph',
         connectionId: 'cbm',
-        nativeName: 'cbm.search_graph',
+        providerToolName: 'cbm.search_graph',
       }],
     });
     const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
@@ -591,7 +591,7 @@ describe('removeHermesApplicationMcpServers', () => {
       externalMcpTools: [{
         canonicalName: 'cbm.search_graph',
         connectionId: 'cbm',
-        nativeName: 'cbm.search_graph',
+        providerToolName: 'cbm.search_graph',
       }],
     });
     const request = vi.fn(async (method: string, params: Record<string, unknown>) => {

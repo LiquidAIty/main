@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { reconcileTerminalEvents, type CardTerminalEvent } from './runtimeEventProjection';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import {
   loadSessionHistory,
-  loadMainDriverStatus,
   type AddressableAgent,
   type DirectChatTarget,
-  type MainDriverSource,
-  type NativeSessionEvent,
+  type GraphRecordIdentity,
+  type HermesSessionEvent,
+  type MainHermesSessionEvent,
   SessionStreamError,
   type SharedChatMessage,
   type SharedChatParticipant,
@@ -25,8 +24,10 @@ export type AgentBuilderChatMessage = SharedChatMessage & { status?: 'pending' |
 export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
 
 export type MainChatRunInput = { images?: Array<Record<string, unknown>> };
-// Matches the native Hermes turn-image attachment count limit.
+// Matches the Hermes turn-image attachment count limit.
 export const MAX_MAIN_CHAT_IMAGES = 12;
+
+type MainChatRuntimeEvent = NonNullable<HermesSessionEvent['runtimeEvent']>;
 
 type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
@@ -35,34 +36,13 @@ type UseAgentBuilderMainChatArgs = {
   directChatTargets?: DirectChatTarget[];
   dataAnchors?: LoadedCardGraphReference['reference'][];
   prepareRunImages?: (targetCardId: string | null) => Promise<Array<Record<string, unknown>>>;
-  onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
-  onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
-  onTurnFinished?: (turn: MainChatTurnFinished) => void;
-};
-
-export type MainChatTurnStarted = {
-  projectId: string;
-  conversationId: string;
-  runId: string;
-  text: string;
-  observedAt: string;
-};
-
-export type MainChatTurnEvent = {
-  projectId: string;
-  conversationId: string;
-  runId: string;
-  event: NativeSessionEvent;
-  observedAt: string;
 };
 
 export type LoadedCardGraphReference = {
   targetCardId: string;
   sourceCardId?: string;
   sourceRunId?: string;
-  reference: {
-    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
-    nativeId: string;
+  reference: GraphRecordIdentity & {
     reason: string;
     order: number;
     boundedExpansion: number;
@@ -74,26 +54,9 @@ export type LoadedCardGraphReference = {
   graphProjection: GraphProjectionV1;
   resolved: boolean;
   ready: boolean;
-  attentionObserved?: boolean;
   observedAt?: string;
   error?: string;
 };
-
-export type MainChatTurnFinished = {
-  projectId: string;
-  conversationId: string;
-  runId: string;
-  status: 'completed' | 'failed' | 'cancelled' | 'disconnected';
-  observedAt: string;
-};
-
-function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T): void {
-  try {
-    observer?.(value);
-  } catch (error) {
-    console.warn('[NATIVE_GRAPH_ATTENTION_OBSERVER]', error);
-  }
-}
 
 const SHARED_CHAT_USER: SharedChatParticipant = { kind: 'user', label: 'You' };
 const NO_DIRECT_CHAT_TARGETS: DirectChatTarget[] = [];
@@ -212,12 +175,13 @@ export default function useAgentBuilderMainChat({
   directChatTargets = NO_DIRECT_CHAT_TARGETS,
   dataAnchors = [],
   prepareRunImages,
-  onUserTurnStarted,
-  onNativeTurnEvent,
-  onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
   const conversationKey = `${canvasProjectId}\u0000${conversationId}`;
-  const [technical, setTechnical] = useState<{ key: string; events: CardTerminalEvent[]; error: string | null }>({
+  const [technical, setTechnical] = useState<{
+    key: string;
+    events: MainChatRuntimeEvent[];
+    error: string | null;
+  }>({
     key: conversationKey, events: [], error: null,
   });
   const [transcript, setTranscript] = useState<{
@@ -238,10 +202,10 @@ export default function useAgentBuilderMainChat({
     runId: string | null;
     cardId: string | null;
   } | null>(null);
-  const nativeEventsRef = useRef<{
+  const sessionEventsRef = useRef<{
     key: string;
     runtimeSessionId: string;
-    nativeSessionId: string;
+    hermesSessionId: string;
     close: () => void;
   } | null>(null);
   const observedProjectionIdsRef = useRef<{ key: string; ids: Set<string> }>({
@@ -277,12 +241,11 @@ export default function useAgentBuilderMainChat({
   }>({ key: conversationKey, phase: 'idle', error: null });
 
   const messages = transcript.key === conversationKey ? transcript.messages : [];
-  const nativeSessionActive = turnState.key === conversationKey && turnState.phase === 'active';
-  const nativeSessionConnecting = turnState.key === conversationKey
+  const sessionActive = turnState.key === conversationKey && turnState.phase === 'active';
+  const sessionConnecting = turnState.key === conversationKey
     && turnState.phase === 'connecting';
-  const nativeSessionPending = nativeSessionActive || nativeSessionConnecting;
+  const sessionPending = sessionActive || sessionConnecting;
   const sessionHistoryLoading = historyState.key === conversationKey && historyState.loading;
-  const [mainDriverSource, setMainDriverSource] = useState<MainDriverSource | null>(null);
   const [sharedAuthority, setSharedAuthority] = useState<{
     key: string;
     mainCardId: string;
@@ -335,13 +298,13 @@ export default function useAgentBuilderMainChat({
     };
   }, [conversationKey, directChatTargets, mainCardId, setCurrentResponderCardId]);
 
-  const subscribeToNativeSession = useCallback((runtimeSessionId: string, nativeSessionId: string) => {
-    if (!canvasProjectId || !runtimeSessionId || !nativeSessionId) return;
-    const existing = nativeEventsRef.current;
+  const subscribeToHermesSession = useCallback((runtimeSessionId: string, hermesSessionId: string) => {
+    if (!canvasProjectId || !runtimeSessionId || !hermesSessionId) return;
+    const existing = sessionEventsRef.current;
     if (
       existing?.key === conversationKey
       && existing.runtimeSessionId === runtimeSessionId
-      && existing.nativeSessionId === nativeSessionId
+      && existing.hermesSessionId === hermesSessionId
     ) return;
     existing?.close();
     const close = subscribeSessionEvents({
@@ -349,23 +312,23 @@ export default function useAgentBuilderMainChat({
       deckId,
       conversationId,
       runtimeSessionId,
-      nativeSessionId,
-      onEvent: ({ event }) => {
+      hermesSessionId,
+      onEvent: ({ event }: MainHermesSessionEvent) => {
         if (event.type === 'message.complete') {
           const status = String(event.payload?.status || 'complete');
           const text = String(event.payload?.text || '');
           if (status === 'error' || status === 'failed') {
             setTechnical((current) => current.key === conversationKey
-              ? { ...current, error: String(event.payload?.error || text || 'main_native_turn_failed') }
+              ? { ...current, error: String(event.payload?.error || text || 'main_hermes_turn_failed') }
               : current);
           }
-          // A completion arriving outside the request-owned SSE is native Main
+          // A completion arriving outside the request-owned SSE is Main
           // session traffic (for example a Bot notification), not a shared-chat
           // speaker turn. Never make Main appear to speak for another Card.
           return;
         } else if (event.type === 'error') {
           setTechnical((current) => current.key === conversationKey
-            ? { ...current, error: String(event.payload?.message || 'main_native_turn_failed') }
+            ? { ...current, error: String(event.payload?.message || 'main_hermes_turn_failed') }
             : current);
         }
       },
@@ -375,7 +338,7 @@ export default function useAgentBuilderMainChat({
           : current);
       },
     });
-    nativeEventsRef.current = { key: conversationKey, runtimeSessionId, nativeSessionId, close };
+    sessionEventsRef.current = { key: conversationKey, runtimeSessionId, hermesSessionId, close };
   }, [canvasProjectId, conversationId, conversationKey, deckId]);
 
   useEffect(() => {
@@ -385,10 +348,10 @@ export default function useAgentBuilderMainChat({
       priorStream.controller.abort();
       activeStreamRef.current = null;
     }
-    const priorNativeEvents = nativeEventsRef.current;
-    if (priorNativeEvents && priorNativeEvents.key !== conversationKey) {
-      priorNativeEvents.close();
-      nativeEventsRef.current = null;
+    const priorSessionEvents = sessionEventsRef.current;
+    if (priorSessionEvents && priorSessionEvents.key !== conversationKey) {
+      priorSessionEvents.close();
+      sessionEventsRef.current = null;
     }
     setTranscript({ key: conversationKey, messages: [] });
     setSharedAuthority({ key: conversationKey, mainCardId: '', agents: [] });
@@ -399,7 +362,6 @@ export default function useAgentBuilderMainChat({
     responderRef.current = { key: conversationKey, cardId: null };
     setResponderState({ key: conversationKey, cardId: null });
     setTurnState({ key: conversationKey, phase: 'idle' });
-    setMainDriverSource(null);
 
     if (!projectId) {
       setHistoryState({ key: conversationKey, loading: false });
@@ -434,25 +396,17 @@ export default function useAgentBuilderMainChat({
           mainCardId: history.mainCardId,
           agents: history.addressableAgents,
         });
-        subscribeToNativeSession(history.runtimeSessionId, history.nativeSessionId);
+        subscribeToHermesSession(history.runtimeSessionId, history.hermesSessionId);
         setTechnical({
           key: conversationKey,
-          events: reconcileTerminalEvents(history.terminalEvents),
+          events: history.runtimeEvents,
           error: null,
         });
         observedProjectionIdsRef.current = {
           key: conversationKey,
-          ids: new Set(history.terminalEvents.map((event) => event.id)),
+          ids: new Set(history.runtimeEvents.map((event) => event.id)),
         };
         setHistoryState({ key: conversationKey, loading: false });
-        // Runtime observation is auxiliary to the Project conversation. It may
-        // connect after history renders, but it may never gate or replace that
-        // persisted shared-chat authority.
-        void loadMainDriverStatus(projectId, deckId, conversationId, controller.signal)
-          .then((status) => {
-            if (!cancelled) setMainDriverSource(status.activeDriver);
-          })
-          .catch(() => undefined);
       })
       .catch(() => {
         if (cancelled || controller.signal.aborted) return;
@@ -464,24 +418,23 @@ export default function useAgentBuilderMainChat({
     return () => {
       cancelled = true;
       controller.abort();
-      if (nativeEventsRef.current?.key === conversationKey) {
-        nativeEventsRef.current.close();
-        nativeEventsRef.current = null;
+      if (sessionEventsRef.current?.key === conversationKey) {
+        sessionEventsRef.current.close();
+        sessionEventsRef.current = null;
       }
     };
-  }, [canvasProjectId, conversationId, conversationKey, deckId, subscribeToNativeSession]);
+  }, [canvasProjectId, conversationId, conversationKey, deckId, subscribeToHermesSession]);
 
   const requestPreparedText = useCallback(
     async (submission: PreparedChatSubmission): Promise<string> => {
       const { text, targetCardId } = submission;
-      const observesMainAttention = !targetCardId;
       if (!text.trim()) throw new Error('main_prompt_empty');
       if (submission.key !== conversationKey) throw new Error('main_conversation_changed');
       if (!canvasProjectId) {
         setTurnState({ key: conversationKey, phase: 'idle' });
         throw new Error('main_project_required');
       }
-      if (nativeSessionPending) throw new Error('main_session_busy');
+      if (sessionPending) throw new Error('main_session_busy');
 
       let turnParticipant = submission.participant;
       setTranscript((current) => ({
@@ -529,18 +482,18 @@ export default function useAgentBuilderMainChat({
           return { key: conversationKey, messages: copy };
         });
       };
-      const finalizeModelText = (nativeFinalText: string) => {
+      const finalizeModelText = (finalText: string) => {
         setTranscript((current) => {
           if (current.key !== conversationKey) return current;
           const copy = [...current.messages];
           const last = copy[copy.length - 1];
           if (last?.role === 'assistant') {
             copy[copy.length - 1] = {
-              role: 'assistant', text: nativeFinalText, speaker: turnParticipant, status: 'complete',
+              role: 'assistant', text: finalText, speaker: turnParticipant, status: 'complete',
             };
           } else {
             copy.push({
-              role: 'assistant', text: nativeFinalText, speaker: turnParticipant, status: 'complete',
+              role: 'assistant', text: finalText, speaker: turnParticipant, status: 'complete',
             });
           }
           return { key: conversationKey, messages: copy };
@@ -565,26 +518,21 @@ export default function useAgentBuilderMainChat({
           message: text,
           ...(targetCardId ? { targetCardId } : {}),
           images,
-          dataAnchors: (targetCardId ? [] : dataAnchors).map((anchor) => ({
-            authority: anchor.authority,
-            nativeId: anchor.nativeId,
-            reason: anchor.reason,
-            priority: anchor.order === 0 ? 0 : -anchor.order,
-            boundedExpansion: anchor.boundedExpansion,
-            resultLimit: anchor.resultLimit,
-            required: anchor.required,
+          dataAnchors: (targetCardId ? [] : dataAnchors).map(({ order, ...anchor }) => ({
+            ...anchor,
+            priority: order === 0 ? 0 : -order,
           })),
           signal: streamController.signal,
           onEvent: (event) => {
             const projection = event.projection;
-            const publicEvent = event.terminalEvent as CardTerminalEvent | undefined;
-            const observedRunId = typeof event.runId === 'string' ? event.runId : publicEvent?.runId;
+            const runtimeEvent = event.runtimeEvent;
+            const observedRunId = typeof event.runId === 'string' ? event.runId : runtimeEvent?.runId;
             if ((event.projectId && event.projectId !== canvasProjectId)
               || (event.deckId && event.deckId !== deckId)
               || (event.conversationId && event.conversationId !== conversationId)
-              || (publicEvent && (publicEvent.projectId !== canvasProjectId || publicEvent.deckId !== deckId))
+              || (runtimeEvent && (runtimeEvent.projectId !== canvasProjectId || runtimeEvent.deckId !== deckId))
               || (observedRunId && runId && observedRunId !== runId)
-              || (publicEvent && observedRunId && publicEvent.runId !== observedRunId)) {
+              || (runtimeEvent && observedRunId && runtimeEvent.runId !== observedRunId)) {
               throw new SessionStreamError({ code: 'main_run_identity_mismatch', message: 'Main stream Run identity changed.' });
             }
             if (projection?.id) {
@@ -617,16 +565,15 @@ export default function useAgentBuilderMainChat({
               if (activeStreamRef.current?.controller === streamController) {
                 activeStreamRef.current.runId = runId;
               }
-              if (observesMainAttention) {
-                notifyObserver(onUserTurnStarted, { projectId: canvasProjectId, conversationId,
-                  runId, text, observedAt: new Date().toISOString() });
-              }
             }
-            if (publicEvent?.projectId === canvasProjectId && publicEvent.deckId === deckId
-              && publicEvent.cardId && publicEvent.runId && publicEvent.id
-              && publicEvent.category?.startsWith('execution.')) {
-              setTechnical((current) => current.key === conversationKey
-                ? { ...current, events: reconcileTerminalEvents([...current.events, publicEvent]) } : current);
+            if (runtimeEvent?.projectId === canvasProjectId && runtimeEvent.deckId === deckId
+              && runtimeEvent.cardId && runtimeEvent.runId && runtimeEvent.id
+              && runtimeEvent.category?.startsWith('execution.')) {
+              setTechnical((current) => {
+                if (current.key !== conversationKey
+                  || current.events.some((item) => item.id === runtimeEvent.id)) return current;
+                return { ...current, events: [...current.events, runtimeEvent] };
+              });
             }
             if (event.kind === 'session' || event.kind === 'text'
               || projection?.category === 'conversation.answer') {
@@ -636,9 +583,9 @@ export default function useAgentBuilderMainChat({
             }
             if (event.kind === 'session') {
               if (event.directAddressed !== true) {
-                subscribeToNativeSession(
+                subscribeToHermesSession(
                   String(event.runtimeSessionId || ''),
-                  String(event.sessionId || ''),
+                  String(event.hermesSessionId || ''),
                 );
               }
               const configuration = event.configuration && typeof event.configuration === 'object'
@@ -655,13 +602,6 @@ export default function useAgentBuilderMainChat({
                   : current);
               }
             }
-            if (runId && observesMainAttention) notifyObserver(onNativeTurnEvent, {
-              projectId: canvasProjectId,
-              conversationId,
-              runId,
-              event,
-              observedAt: new Date().toISOString(),
-            });
             if (projection?.category === 'conversation.answer' && projection.status === 'completed') {
               finalizeModelText(projection.text || '');
             } else if (projection?.category === 'conversation.answer') {
@@ -678,7 +618,7 @@ export default function useAgentBuilderMainChat({
           setTurnState({ key: conversationKey, phase: 'idle' });
           throw new Error('main_empty_response');
         }
-        // The native completion text is the exact persisted Hermes assistant
+        // The completion text is the exact persisted Hermes assistant
         // message. Replace the in-progress streamed bubble with those bytes so
         // the completed UI and a later history read are identical.
         finalizeModelText(completedText);
@@ -693,13 +633,6 @@ export default function useAgentBuilderMainChat({
             )),
           };
         });
-        if (runId && observesMainAttention) notifyObserver(onTurnFinished, {
-          projectId: canvasProjectId,
-          conversationId,
-          runId,
-          status: 'completed',
-          observedAt: new Date().toISOString(),
-        });
         return completedText;
       } catch (error: unknown) {
         setTranscript((current) => {
@@ -713,16 +646,6 @@ export default function useAgentBuilderMainChat({
         setTechnical((current) => current.key === conversationKey ? { ...current,
           error: error instanceof SessionStreamError ? error.code : 'main_turn_failed',
         } : current);
-        const disconnected = streamController.signal.aborted;
-        const cancelled = error instanceof SessionStreamError
-          && ['harness_turn_cancelled', 'main_cli_turn_cancelled'].includes(error.code);
-        if (runId && observesMainAttention) notifyObserver(onTurnFinished, {
-          projectId: canvasProjectId,
-          conversationId,
-          runId,
-          status: disconnected ? 'disconnected' : cancelled ? 'cancelled' : 'failed',
-          observedAt: new Date().toISOString(),
-        });
         throw error;
       } finally {
         if (activeStreamRef.current?.controller === streamController) {
@@ -740,12 +663,9 @@ export default function useAgentBuilderMainChat({
       dataAnchors,
       deckId,
       mainCardId,
-      nativeSessionPending,
-      onNativeTurnEvent,
-      onTurnFinished,
-      onUserTurnStarted,
+      sessionPending,
       prepareRunImages,
-      subscribeToNativeSession,
+      subscribeToHermesSession,
     ],
   );
 
@@ -754,20 +674,20 @@ export default function useAgentBuilderMainChat({
     [prepareSubmission, requestPreparedText],
   );
 
-  const handleNativeSend = useCallback(
+  const handleSend = useCallback(
     (text: string, runInput?: MainChatRunInput) => {
       if (!text.trim()) return;
       const submission = prepareSubmission(text, runInput);
-      if (nativeSessionPending || activeStreamRef.current?.key === conversationKey) {
+      if (sessionPending || activeStreamRef.current?.key === conversationKey) {
         queuedInputsRef.current.push(submission);
         setQueuedInputCount(queuedInputsRef.current.length);
         return;
       }
       void requestPreparedText(submission).catch(() => {
-        // Native failure remains transport telemetry and never transcript text.
+        // Runtime failure remains transport telemetry and never transcript text.
       });
     },
-    [conversationKey, nativeSessionPending, prepareSubmission, requestPreparedText],
+    [conversationKey, sessionPending, prepareSubmission, requestPreparedText],
   );
 
   const endVoiceSession = useCallback(async (
@@ -801,7 +721,7 @@ export default function useAgentBuilderMainChat({
       });
       return;
     }
-    if (nativeSessionPending) {
+    if (sessionPending) {
       setVoiceState({
         key: conversationKey,
         phase: 'error',
@@ -935,7 +855,7 @@ export default function useAgentBuilderMainChat({
     directChatTargets,
     endVoiceSession,
     mainCardId,
-    nativeSessionPending,
+    sessionPending,
     requestPreparedText,
     sessionHistoryLoading,
   ]);
@@ -997,7 +917,7 @@ export default function useAgentBuilderMainChat({
   }, [canvasProjectId, conversationId, conversationKey, deckId]);
 
   useEffect(() => {
-    if (nativeSessionPending || sessionHistoryLoading) return;
+    if (sessionPending || sessionHistoryLoading) return;
     const next = queuedInputsRef.current[0];
     if (!next || next.key !== conversationKey) return;
     queuedInputsRef.current.shift();
@@ -1006,10 +926,10 @@ export default function useAgentBuilderMainChat({
       // The queued turn retains its exact responder snapshot on the same shared-chat route.
       // Failures remain transport telemetry.
     });
-  }, [conversationKey, nativeSessionPending, queuedInputCount, requestPreparedText, sessionHistoryLoading]);
+  }, [conversationKey, sessionPending, queuedInputCount, requestPreparedText, sessionHistoryLoading]);
 
   const stopMainTurn = useCallback(async () => {
-    if (!nativeSessionPending || !canvasProjectId) return;
+    if (!sessionPending || !canvasProjectId) return;
     const active = activeStreamRef.current;
     const expectedRunId = active?.key === conversationKey ? active.runId : null;
     const expectedCardId = active?.key === conversationKey ? active.cardId : null;
@@ -1038,20 +958,19 @@ export default function useAgentBuilderMainChat({
       setTurnState({ key: conversationKey, phase: 'idle' });
       throw error;
     }
-  }, [canvasProjectId, conversationId, conversationKey, deckId, nativeSessionPending]);
+  }, [canvasProjectId, conversationId, conversationKey, deckId, sessionPending]);
 
   return {
-    technicalEvents: technical.key === conversationKey ? technical.events : [],
+    runtimeEvents: technical.key === conversationKey ? technical.events : [],
     technicalError: technical.key === conversationKey ? technical.error : null,
-    handleNativeSend,
+    handleSend,
     messages,
     addressableAgents,
     currentResponder,
     currentResponderCardId: selectedResponderTarget?.cardId || null,
     setCurrentResponderCardId,
-    mainDriverSource,
-    nativeSessionActive,
-    nativeSessionConnecting,
+    sessionActive,
+    sessionConnecting,
     queuedInputCount,
     sessionHistoryLoading,
     requestMainText,

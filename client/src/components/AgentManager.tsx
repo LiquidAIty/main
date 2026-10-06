@@ -236,7 +236,6 @@ export type AgentManagerLocalConfig = {
   max_turns?: number | null;
   prompt_template?: string | null;
   tools?: unknown[];
-  native_tools?: unknown[];
   skills?: unknown[];
   toolsets?: unknown[];
   mcp_connection_ids?: unknown[];
@@ -386,7 +385,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
   maxTurns: number | '';
   promptTemplate: string;
   toolsText: string;
-  nativeToolsText: string;
   skillsText: string;
   toolsetsText: string;
   mcpConnectionIdsText: string;
@@ -402,7 +400,6 @@ export function buildActiveAgentManagerLocalConfig(input: {
     max_turns: typeof input.maxTurns === 'number' ? input.maxTurns : null,
     prompt_template: input.promptTemplate,
     tools: parseListText(input.toolsText),
-    native_tools: parseListText(input.nativeToolsText),
     skills: parseListText(input.skillsText),
     toolsets: parseListText(input.toolsetsText),
     mcp_connection_ids: parseListText(input.mcpConnectionIdsText),
@@ -503,7 +500,6 @@ export function AgentManager({
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
   const [toolsText, setToolsText] = useState('');
-  const [nativeToolsText, setNativeToolsText] = useState('');
   const [skillsText, setSkillsText] = useState('');
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
@@ -642,13 +638,6 @@ export function AgentManager({
             .join('\n')
         : '',
     );
-    setNativeToolsText(
-      Array.isArray(localConfig.native_tools)
-        ? localConfig.native_tools
-            .filter((entry): entry is string => typeof entry === 'string')
-            .join('\n')
-        : '',
-    );
     setSkillsText(
       Array.isArray(localConfig.skills)
         ? localConfig.skills.filter((entry): entry is string => typeof entry === 'string').join('\n')
@@ -781,7 +770,6 @@ export function AgentManager({
       maxTurns,
       promptTemplate: serializedPrompt,
       toolsText,
-      nativeToolsText,
       skillsText,
       toolsetsText,
       mcpConnectionIdsText,
@@ -867,7 +855,6 @@ export function AgentManager({
     promptPartsTouched,
     promptText,
     toolsText,
-    nativeToolsText,
     skillsText,
     toolsetsText,
     mcpConnectionIdsText,
@@ -2007,23 +1994,10 @@ export function AgentManager({
             aria-label="Hermes capabilities"
             style={{ display: 'grid', gap: 8, marginTop: 8, padding: '10px 12px', border: '1px solid #3A4A4F', borderRadius: 8 }}
           >
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Hermes capabilities</div>
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Hermes</div>
             <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              Saved Card capability names are materialized through Hermes toolsets at Run start.
+              Select individual Hermes tools in the Tools catalog above. Toolsets remain optional bundles.
             </div>
-            <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-              Capability names
-              <textarea
-                aria-label="Hermes capabilities"
-                value={nativeToolsText}
-                onChange={(event) => {
-                  setNativeToolsText(event.target.value);
-                  markDraftDirty();
-                }}
-                placeholder="One Hermes capability name per line"
-                rows={4}
-              />
-            </label>
             <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
               Hermes toolsets
               <textarea

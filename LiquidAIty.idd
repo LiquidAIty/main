@@ -146,7 +146,7 @@ owner = "selected-image"
 fields = [{ id = "id", type = "Text", required = true }]
 [types.GraphReference]
 kind = "boundary"
-source = "app.python_models.orchestration_contracts.NativeReference"
+source = "app.python_models.orchestration_contracts.GraphReference"
 [types.AgentObject]
 kind = "boundary"
 source = "app.python_models.idf.StableSavedCardContext"

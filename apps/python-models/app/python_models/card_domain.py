@@ -12,7 +12,6 @@ import math
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -30,9 +29,12 @@ from app.python_models.tool_registry import (
 )
 from pydantic import TypeAdapter, ValidationError
 from app.python_models.orchestration_contracts import (
+    GRAPH_RECORD_ID_FIELDS,
     CardSubagentType,
     DataAnchorReference,
-    GraphHook,
+    GraphAnchor,
+    graph_record_fields,
+    graph_record_identity,
 )
 from app.python_models.card_script import saved_script, script_presentation
 from app.python_models.card_subsystem import normalize_card_subsystems
@@ -54,16 +56,10 @@ from app.python_models.data_anchor import (
     build_canonical_subject_directory,
     empty_graph_projection,
     resolve_data_anchors,
-    search_knowgraph_attention_candidates,
 )
 from app.python_models.engraphis import (
     JEV_ENDPOINT,
     JEV_MODEL,
-    MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
-    JevAttentionError,
-    _attention_choice_id,
-    decide_main_graph_attention,
-    recall_thinkgraph_attention_candidates,
 )
 from app.python_models.jev_validation import (
     validate_rounded_choice_winner,
@@ -93,13 +89,12 @@ class _CardJevError(RuntimeError):
 
 GRANT_FIELDS = {
     "tool": "tools",
-    "native_tool": "nativeTools",
     "skill": "skills",
     "toolset": "toolsets",
     "mcp_connection": "mcpConnectionIds",
 }
 KNOWN_RUNTIME_OPTION_FIELDS = {
-    "tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds",
+    "tools", "skills", "toolsets", "mcpConnectionIds",
     "provider", "modelKey", "providerModelId", "accessMode", "reasoningEffort",
     "temperature", "maxTokens", "maxTurns", "enabled",
 }
@@ -382,7 +377,6 @@ def _card_jev_context(
                 if runtime_options.get(key) is not None
             },
             "skills": list(call_config["skills"]),
-            "native_tools": list(call_config["nativeTools"]),
             "toolsets": list(call_config["toolsets"]),
         },
         "supplied_native_context": graph_text if include_native else "",
@@ -440,7 +434,7 @@ def _tool_jev_candidate(definition: dict[str, Any]) -> dict[str, Any]:
         {
             key: contract.get(key)
             for key in (
-                "sourceId", "connectionKind", "nativeName", "description",
+                "sourceId", "connectionKind", "providerToolName", "description",
                 "inputSchema", "effects",
             )
             if contract.get(key) is not None
@@ -1518,294 +1512,6 @@ def load_deck(project_ref: str, deck_id: str) -> dict[str, Any]:
         return _load_deck_with_cursor(cursor, project_ref, deck_id, include_internal=True)
 
 
-def observe_native_attention(
-    event: dict[str, Any], *, external_context: dict[str, Any] | None = None,
-) -> bool:
-    """Observe one proven MCP result on its Run in AGE.
-
-    This is deliberately fail-open for the tool caller: AGE observation never owns
-    dispatch.  Missing or mismatched Run/Card identity produces no graph write.
-    Authenticated external Main may establish its observation-only Run here.
-    """
-    project_id = str(event.get("projectId") or "").strip()
-    deck_id = str(event.get("deckId") or "").strip()
-    run_id = str(event.get("runId") or "").strip()
-    card_id = str(event.get("cardId") or "").strip()
-    event_id = str(event.get("eventId") or "").strip()
-    tool_name = str(event.get("toolName") or "").strip()
-    authority = str(event.get("authority") or "").strip()
-    operation = str(event.get("operation") or "").strip()
-    timestamp = str(event.get("timestamp") or "").strip()
-    result_hash = str(event.get("resultHash") or "").strip()
-    phase = str(event.get("phase") or "completed")
-    change = str(event.get("change") or operation)
-    node_ids = [
-        str(value).strip() for value in event.get("nativeNodeIds") or []
-        if str(value).strip()
-    ][:128]
-    edge_ids = [
-        str(value).strip() for value in event.get("nativeEdgeIds") or []
-        if str(value).strip()
-    ][:256]
-    native_edges = [
-        {
-            "id": str(value.get("id") or "").strip(),
-            "source": str(value.get("source") or "").strip(),
-            "target": str(value.get("target") or "").strip(),
-            "predicate": str(value.get("predicate") or "").strip() or None,
-            **(
-                {"provenance": value["provenance"]}
-                if isinstance(value.get("provenance"), dict)
-                else {}
-            ),
-        }
-        for value in event.get("nativeEdges") or []
-        if isinstance(value, dict)
-        and str(value.get("id") or "").strip() in edge_ids
-        and str(value.get("source") or "").strip()
-        and str(value.get("target") or "").strip()
-    ][:256]
-    if not all((project_id, deck_id, run_id, card_id, event_id, tool_name, authority,
-                operation, timestamp, result_hash)):
-        return False
-    references = [
-        {"nativeId": native_id, "nativeKind": native_kind}
-        for native_kind, native_ids in (("node", node_ids), ("edge", edge_ids))
-        for native_id in native_ids
-    ]
-    if not references and not (operation == "write" and (
-        phase in {"pending", "failed"} or change == "clear" and event.get("scopeGroupIds")
-        or tool_name == "graphiti.add_memory" and phase == "completed"
-    )):
-        return False
-    try:
-        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            # External Main has a server-owned grant/conversation identity, not a
-            # locally launched model Run. Establish only its AGE observation
-            # identity; do not launch a runtime or change saved Card/Run data.
-            if external_context is not None:
-                grant_id = run_id.removeprefix("external-main:")
-                if (
-                    not run_id.startswith("external-main:") or not grant_id
-                    or external_context.get("principalKind")
-                    or external_context.get("projectId") != project_id
-                    or external_context.get("deckId") != deck_id
-                    or external_context.get("mainCardId") != card_id
-                    or external_context.get("parentRunId") != run_id
-                    or external_context.get("conversationId") != f"external-mcp:{grant_id}"
-                    or event.get("conversationId") != external_context.get("conversationId")
-                ):
-                    return False
-                established = _age_rows(
-                    cursor,
-                    """
-                    MATCH (card:Card {
-                      projectId: $projectId, deckId: $deckId, cardId: $cardId
-                    })
-                    MERGE (run:Run {runId: $runId})
-                    WITH run, card
-                    WHERE (run.projectId IS NULL OR run.projectId=$projectId)
-                      AND (run.deckId IS NULL OR run.deckId=$deckId)
-                      AND (run.conversationId IS NULL OR run.conversationId=$conversationId)
-                    SET run.projectId=$projectId, run.deckId=$deckId,
-                        run.conversationId=$conversationId,
-                        run.rootRunId=coalesce(run.rootRunId, $runId),
-                        run.state=coalesce(run.state, 'observing'),
-                        run.runtimeKind=coalesce(run.runtimeKind, 'external-mcp'),
-                        run.startedAt=coalesce(run.startedAt, $timestamp)
-                    MERGE (run)-[:EXECUTED_BY]->(card)
-                    RETURN run.runId
-                    """,
-                    {"projectId": project_id, "deckId": deck_id, "cardId": card_id,
-                     "runId": run_id, "conversationId": event["conversationId"],
-                     "timestamp": timestamp},
-                    "run_id agtype",
-                )
-                if len(established) != 1:
-                    return False
-            matched = _age_rows(
-                cursor,
-                """
-                MATCH (run:Run {
-                  projectId: $projectId, deckId: $deckId, runId: $runId
-                })-[:EXECUTED_BY]->(card:Card {
-                  projectId: $projectId, deckId: $deckId, cardId: $cardId
-                })
-                MERGE (tool:Tool {toolId: $toolName})
-                MERGE (run)-[used:USED_TOOL {eventId: $eventId}]->(tool)
-                SET run.lastAttentionAt=$timestamp,
-                    used.timestamp=$timestamp,
-                    used.projectId=$projectId,
-                    used.deckId=$deckId,
-                    used.conversationId=$conversationId,
-                    used.cardId=$cardId,
-                    used.authority=$authority,
-                    used.operation=$operation,
-                    used.toolName=$toolName,
-                    used.phase=$phase, used.change=$change,
-                    used.nativeChildId=$nativeChildId, used.nativeRunId=$nativeRunId,
-                    used.scopeGroupIds=$scopeGroupIds,
-                    used.nativeNodeIds=$nativeNodeIds,
-                    used.nativeEdgeIds=$nativeEdgeIds,
-                    used.nativeEdges=$nativeEdges,
-                    used.resultHash=$resultHash,
-                    used.truncated=$truncated
-                RETURN run.runId
-                """,
-                {
-                    "projectId": project_id,
-                    "deckId": deck_id,
-                    "conversationId": str(event.get("conversationId") or ""),
-                    "runId": run_id,
-                    "cardId": card_id,
-                    "eventId": event_id,
-                    "timestamp": timestamp,
-                    "authority": authority,
-                    "operation": operation,
-                    "toolName": tool_name,
-                    "phase": phase, "change": change,
-                    "nativeChildId": event.get("nativeChildId"),
-                    "nativeRunId": event.get("nativeRunId"),
-                    "scopeGroupIds": event.get("scopeGroupIds") or [],
-                    "nativeNodeIds": node_ids,
-                    "nativeEdgeIds": edge_ids,
-                    "nativeEdges": native_edges,
-                    "resultHash": result_hash,
-                    "truncated": event.get("truncated") is True,
-                },
-                "run_id agtype",
-            )
-            if len(matched) != 1:
-                return False
-            _age_rows(
-                cursor,
-                """
-                MATCH (run:Run {
-                  projectId: $projectId, deckId: $deckId, runId: $runId
-                })
-                UNWIND $references AS reference
-                MERGE (native:NativeReference {
-                  projectId: $projectId,
-                  authority: $authority,
-                  nativeId: reference.nativeId
-                })
-                MERGE (run)-[used:USED {
-                  eventId: $eventId,
-                  nativeId: reference.nativeId,
-                  nativeKind: reference.nativeKind
-                }]->(native)
-                SET used.timestamp=$timestamp,
-                    used.toolName=$toolName,
-                    used.operation=$operation,
-                    used.resultHash=$resultHash
-                RETURN count(used)
-                """,
-                {
-                    "projectId": project_id,
-                    "deckId": deck_id,
-                    "runId": run_id,
-                    "eventId": event_id,
-                    "timestamp": timestamp,
-                    "authority": authority,
-                    "operation": operation,
-                    "toolName": tool_name,
-                    "resultHash": result_hash,
-                    "references": references,
-                },
-                "observed agtype",
-            )
-            target_card_id = str(event.get("targetCardId") or "").strip()
-            if target_card_id and target_card_id != card_id:
-                handed = _age_rows(
-                    cursor,
-                    """
-                    MATCH (run:Run {
-                      projectId: $projectId, deckId: $deckId, runId: $runId
-                    }), (target:Card {
-                      projectId: $projectId, deckId: $deckId, cardId: $targetCardId
-                    })
-                    MERGE (run)-[handoff:HANDED_CONTEXT_TO {eventId: $eventId}]->(target)
-                    SET handoff.timestamp=$timestamp,
-                        handoff.authority=$authority,
-                        handoff.toolName=$toolName,
-                        handoff.nativeNodeIds=$nativeNodeIds,
-                        handoff.nativeEdgeIds=$nativeEdgeIds,
-                        handoff.resultHash=$resultHash
-                    RETURN target.cardId
-                    """,
-                    {
-                        "projectId": project_id,
-                        "deckId": deck_id,
-                        "runId": run_id,
-                        "targetCardId": target_card_id,
-                        "eventId": event_id,
-                        "timestamp": timestamp,
-                        "authority": authority,
-                        "toolName": tool_name,
-                        "nativeNodeIds": node_ids,
-                        "nativeEdgeIds": edge_ids,
-                        "resultHash": result_hash,
-                    },
-                    "card_id agtype",
-                )
-                if len(handed) != 1:
-                    return False
-        return True
-    except Exception:
-        return False
-
-
-def observe_materialized_anchor_reads(
-    prepared: dict[str, Any],
-    *,
-    run_id: str,
-) -> bool:
-    """Attach only genuinely resolved pre-dispatch graph reads to this Run."""
-    references = prepared.get("resolvedNativeReads") or []
-    if not references:
-        return True
-    if not isinstance(references, list) or any(not isinstance(item, dict) for item in references):
-        return False
-    try:
-        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            matched = _age_rows(
-                cursor,
-                """
-                MATCH (run:Run {
-                  projectId: $projectId, deckId: $deckId, runId: $runId
-                })-[:EXECUTED_BY]->(card:Card {
-                  projectId: $projectId, deckId: $deckId, cardId: $cardId
-                })
-                UNWIND $references AS reference
-                MERGE (native:NativeReference {
-                  projectId: $projectId,
-                  authority: reference.authority,
-                  nativeId: reference.nativeId
-                })
-                MERGE (run)-[read:READ {
-                  authority: reference.authority,
-                  nativeId: reference.nativeId
-                }]->(native)
-                SET read.reason=reference.reason,
-                    read.asOf=reference.asOf,
-                    read.operation=reference.readOperation,
-                    read.required=reference.required
-                RETURN count(read)
-                """,
-                {
-                    "projectId": prepared["projectId"],
-                    "deckId": prepared["deckId"],
-                    "runId": run_id,
-                    "cardId": prepared["cardIdentity"]["cardId"],
-                    "references": references,
-                },
-                "observed agtype",
-            )
-        return len(matched) == 1
-    except Exception:
-        return False
-
-
 def observe_run_attempt(payload: dict[str, Any]) -> dict[str, Any]:
     """Attach one safe Hermes LLM/tool attempt event to its existing AGE Run."""
 
@@ -1945,7 +1651,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                       (card:Card {{{owner_scope}}})
                 WHERE true {run_filter}
                 RETURN properties(run), card.cardId
-                ORDER BY {"coalesce(run.acceptedAt, run.startedAt, run.lastAttentionAt) DESC" if direct_only else "coalesce(run.lastAttentionAt, run.acceptedAt, run.startedAt) DESC"}, run.runId DESC
+                ORDER BY coalesce(run.acceptedAt, run.startedAt) DESC, run.runId DESC
                 LIMIT {limit}
                 """,
                 {"projectId": project_id, "deckId": deck_id, "runId": run_id,
@@ -2008,7 +1714,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     ),
                     "nativeRootId": str(properties.get("nativeRootId") or "") or None,
                     "nativeRunId": str(properties.get("nativeRunId") or "") or None,
-                    "lastAttentionAt": str(properties.get("lastAttentionAt") or "") or None,
                     "cardId": str(row.get("card_id") or ""),
                     "assignedFromCardIds": [],
                     "parentRunIds": [],
@@ -2016,10 +1721,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "usedTools": [],
                     "graphReads": 0,
                     "graphWrites": 0,
-                    "attentionEvents": [],
-                    "nativeReferences": [],
-                    "viewedNativeReferences": [],
-                    "materializedNativeReferences": [],
                     "artifacts": [],
                     "idf": {
                         "sha256": str(properties.get("idfSha256") or "") or None,
@@ -2027,7 +1728,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     },
                     "jevDecisions": [
                         value for value in (
-                            properties.get("jevAttention"),
                             properties.get("jevAutoTools"),
                             properties.get("jevModelRouter"),
                         ) if isinstance(value, dict)
@@ -2039,25 +1739,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                 }
 
             run_ids = list(runs)
-            # READ is required vocabulary, installed by migration 028. Exercise
-            # the real typed query even for an empty Run selection: missing
-            # schema/permissions must fail visibly, never omit observations.
-            try:
-                materialized = _age_rows(
-                    cursor,
-                    f"""
-                    MATCH (run:Run {{{owner_scope}}})-[:READ]->(native:NativeReference)
-                    WHERE run.runId IN $runIds
-                    RETURN run.runId, native.authority, native.nativeId
-                    LIMIT {edge_limit}
-                    """,
-                    {"projectId": project_id, "deckId": deck_id, "runIds": run_ids},
-                    "run_id agtype, authority agtype, native_id agtype",
-                )
-            except Exception as error:
-                raise CardDomainError(
-                    f"agentgraph_materialized_read_unavailable:{type(error).__name__}"
-                ) from error
             if run_ids:
                 telemetry_queries = {
                     "assignments": (
@@ -2102,24 +1783,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         """,
                         "run_id agtype, operation agtype, event_count agtype",
                     ),
-                    "used": (
-                        """
-                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
-                              -[:USED]->(native:NativeReference)
-                        WHERE run.runId IN $runIds
-                        RETURN run.runId, native.authority, native.nativeId
-                        """,
-                        "run_id agtype, authority agtype, native_id agtype",
-                    ),
-                    "viewed": (
-                        """
-                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
-                              -[:VIEWED]->(native:NativeReference)
-                        WHERE run.runId IN $runIds
-                        RETURN run.runId, native.authority, native.nativeId
-                        """,
-                        "run_id agtype, authority agtype, native_id agtype",
-                    ),
                     "artifacts": (
                         """
                         MATCH (run:Run {projectId: $projectId, deckId: $deckId})
@@ -2144,7 +1807,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     )
                     for name, (query, columns) in telemetry_queries.items()
                 }
-                telemetry["materialized"] = materialized
                 for row in telemetry["assignments"]:
                     item = runs.get(str(row.get("run_id") or ""))
                     if item is not None:
@@ -2162,33 +1824,8 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     item = runs.get(str(row.get("run_id") or ""))
                     if item is not None:
                         tool_id = str(row.get("tool_id") or "")
-                        event = row.get("event")
-                        if isinstance(event, dict) and str(event.get("eventId") or "").strip():
-                            if tool_id and tool_id not in item["usedTools"]:
-                                item["usedTools"].append(tool_id)
-                            item["attentionEvents"].append({
-                                "eventId": str(event.get("eventId") or ""),
-                                "timestamp": str(event.get("timestamp") or ""),
-                                "projectId": str(event.get("projectId") or project_id),
-                                "deckId": str(event.get("deckId") or deck_id),
-                                "conversationId": str(event.get("conversationId") or "") or None,
-                                "runId": str(row.get("run_id") or "") or None,
-                                "cardId": str(event.get("cardId") or "") or None,
-                                "authority": str(event.get("authority") or ""),
-                                "operation": str(event.get("operation") or ""),
-                                "toolName": str(event.get("toolName") or tool_id),
-                                "nativeNodeIds": [str(value) for value in event.get("nativeNodeIds") or []],
-                                "nativeEdgeIds": [str(value) for value in event.get("nativeEdgeIds") or []],
-                                "nativeEdges": [
-                                    value for value in event.get("nativeEdges") or []
-                                    if isinstance(value, dict)
-                                ],
-                                "resultHash": str(event.get("resultHash") or ""),
-                                "truncated": event.get("truncated") is True,
-                                **{key: event[key] for key in (
-                                    "phase", "change", "nativeChildId", "nativeRunId", "scopeGroupIds",
-                                ) if event.get(key) is not None},
-                            })
+                        if tool_id and tool_id not in item["usedTools"]:
+                            item["usedTools"].append(tool_id)
                 for row in telemetry["tool_totals"]:
                     item = runs.get(str(row.get("run_id") or ""))
                     operation = str(row.get("operation") or "")
@@ -2196,18 +1833,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         item["graphReads" if operation == "read" else "graphWrites"] = int(
                             row.get("event_count") or 0
                         )
-                for telemetry_name, output_name in (
-                    ("used", "nativeReferences"),
-                    ("viewed", "viewedNativeReferences"),
-                    ("materialized", "materializedNativeReferences"),
-                ):
-                    for row in telemetry[telemetry_name]:
-                        item = runs.get(str(row.get("run_id") or ""))
-                        if item is not None:
-                            item[output_name].append({
-                                "authority": str(row.get("authority") or ""),
-                                "nativeId": str(row.get("native_id") or ""),
-                            })
                 for row in telemetry["artifacts"]:
                     item = runs.get(str(row.get("run_id") or ""))
                     artifact = row.get("artifact")
@@ -2266,10 +1891,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
         "runs": list(runs.values()),
         "telemetry": {
             "runIdentity": True,
-            "usedNativeReferences": True,
-            "viewedNativeReferences": True,
-            "nativeAttentionEvents": True,
-            "materializedNativeReferencesAvailable": True,
             "artifacts": True,
             "rawIdfStored": False,
         },
@@ -3047,12 +2668,6 @@ def resolve_hermes_bot_rosters(project_id: str, deck_id: str) -> dict[str, Any]:
 
 
 _DATA_ANCHOR_LIMIT = 16
-_MAIN_ATTENTION_TOKEN = object()
-_JEV_ATTENTION_SCHEMA_VERSION = "jev-attention.v1"
-_JEV_ATTENTION_QUESTION_SCHEMA_VERSION = "main.graph-attention-choice.v1"
-_JEV_ATTENTION_CUMULATIVE_MASS = 0.80
-_JEV_ATTENTION_MINIMUM_SELECTED = 1
-_JEV_ATTENTION_MAXIMUM_SELECTED = 3
 _FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
     "builderOperation", "agentBuilderOperation", "agentBuilderGuidance",
     "buildTarget", "selectedCardTarget",
@@ -3072,275 +2687,6 @@ def _reject_non_graph_invocation_context(payload: dict[str, Any]) -> None:
     for field in _FORBIDDEN_INVOCATION_CONTEXT_FIELDS:
         if field in payload:
             raise CardDomainError(f"invocation_context_field_forbidden:{field}")
-    if (
-        ("_mainAttentionQuery" in payload or "_mainAttentionToken" in payload)
-        and payload.get("_mainAttentionToken") is not _MAIN_ATTENTION_TOKEN
-    ):
-        raise CardDomainError("main_attention_context_private")
-
-
-def _attention_error_status(error: Exception) -> tuple[str, str]:
-    if isinstance(error, JevAttentionError):
-        return error.status, error.error_code
-    code = str(error).strip() or type(error).__name__
-    folded = code.casefold()
-    if "timeout" in folded:
-        return "timeout", code
-    if "invalid" in folded:
-        return "invalid", code
-    if "unavailable" in folded or "not_ready" in folded:
-        return "unavailable", code
-    return "error", code
-
-
-def _attention_failure_status(statuses: list[str]) -> str:
-    for status in ("invalid", "timeout", "error", "unavailable"):
-        if status in statuses:
-            return status
-    return "unavailable"
-
-
-def _attention_retrieval(
-    name: str,
-    operation: Any,
-) -> tuple[str, dict[str, Any]]:
-    started = time.perf_counter()
-    try:
-        candidates = operation()
-        if not isinstance(candidates, list):
-            raise JevAttentionError("invalid", f"jev_attention_{name}_result_invalid")
-        status = "success" if candidates else "unavailable"
-        return name, {
-            "status": status,
-            "candidateCount": len(candidates),
-            "timingMs": round((time.perf_counter() - started) * 1000, 3),
-            "candidates": candidates,
-            **(
-                {"errorCode": f"jev_attention_{name}_candidates_unavailable"}
-                if not candidates else {}
-            ),
-        }
-    except Exception as error:
-        status, error_code = _attention_error_status(error)
-        return name, {
-            "status": status,
-            "candidateCount": 0,
-            "timingMs": round((time.perf_counter() - started) * 1000, 3),
-            "candidates": [],
-            "errorCode": error_code,
-        }
-
-
-
-
-def _prepare_main_graph_attention(
-    *,
-    project_id: str,
-    deck_id: str,
-    card_id: str,
-    query: str,
-    excluded_identities: set[tuple[str, str]],
-    effective_assignment: str | None = None,
-) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
-    """Retrieve twin-graph candidates and make exactly one bounded Jev Choice."""
-
-    total_started = time.perf_counter()
-    retrieval_started = time.perf_counter()
-    operations = {
-        "thinkGraph": lambda: recall_thinkgraph_attention_candidates(
-            project_id, query, limit=8,
-        ),
-        "knowGraph": lambda: search_knowgraph_attention_candidates(
-            project_id, deck_id, card_id, query, limit=8,
-        ),
-    }
-    with ThreadPoolExecutor(
-        max_workers=2, thread_name_prefix="main-graph-attention"
-    ) as executor:
-        futures = {
-            name: executor.submit(_attention_retrieval, name, operation)
-            for name, operation in operations.items()
-        }
-        retrieval_results = {
-            name: future.result()[1] for name, future in futures.items()
-        }
-    retrieval_ms = round((time.perf_counter() - retrieval_started) * 1000, 3)
-    candidates: list[dict[str, Any]] = []
-    seen = set(excluded_identities)
-    for name in ("thinkGraph", "knowGraph"):
-        native_candidates = retrieval_results[name].pop("candidates")
-        for raw in native_candidates[:8]:
-            if not isinstance(raw, dict):
-                continue
-            authority = str(raw.get("authority") or "")
-            native_id = str(raw.get("nativeId") or "")
-            identity = (authority, native_id)
-            if (
-                authority not in {"ThinkGraph", "KnowGraph"}
-                or not native_id
-                or identity in seen
-            ):
-                continue
-            seen.add(identity)
-            candidates.append({
-                **raw,
-                "choiceId": _attention_choice_id(authority, native_id),
-            })
-            if len(candidates) >= 16:
-                break
-        if len(candidates) >= 16:
-            break
-    public_candidates = [{
-        "choiceId": candidate["choiceId"],
-        "authority": candidate["authority"],
-        "nativeId": candidate["nativeId"],
-        "title": str(candidate.get("title") or candidate["nativeId"])[:256],
-        "selected": False,
-        "hydrated": False,
-    } for candidate in candidates]
-    attention: dict[str, Any] = {
-        "schemaVersion": _JEV_ATTENTION_SCHEMA_VERSION,
-        "status": "unavailable",
-        "questionSchemaVersion": _JEV_ATTENTION_QUESTION_SCHEMA_VERSION,
-        "decisionId": f"jev-attention:{uuid4()}",
-        "candidates": public_candidates,
-        "distribution": {},
-        "winner": None,
-        "selectedReferences": [],
-        "policy": {
-            "cumulativeMass": _JEV_ATTENTION_CUMULATIVE_MASS,
-            "minimumSelected": _JEV_ATTENTION_MINIMUM_SELECTED,
-            "maximumSelected": _JEV_ATTENTION_MAXIMUM_SELECTED,
-            "selectedMass": 0.0,
-        },
-        "provider": "",
-        "requestedModel": JEV_MODEL,
-        "resolvedModel": "",
-        "usage": {},
-        "retrieval": retrieval_results,
-        "timingMs": {
-            "thinkRetrieval": retrieval_results["thinkGraph"]["timingMs"],
-            "knowRetrieval": retrieval_results["knowGraph"]["timingMs"],
-            "retrieval": retrieval_ms,
-            "jev": 0.0,
-            "hydration": 0.0,
-            "total": round((time.perf_counter() - total_started) * 1000, 3),
-        },
-    }
-    if not candidates:
-        statuses = [
-            str(result["status"]) for result in retrieval_results.values()
-        ]
-        attention["status"] = _attention_failure_status(statuses)
-        attention["errorCode"] = "jev_attention_candidates_unavailable"
-        return attention, [], total_started
-
-    jev_started = time.perf_counter()
-    try:
-        decision = decide_main_graph_attention(
-            query,
-            candidates,
-            effective_request=effective_assignment or query,
-        )
-    except Exception as error:
-        attention["timingMs"]["jev"] = round(
-            (time.perf_counter() - jev_started) * 1000, 3
-        )
-        attention["timingMs"]["total"] = round(
-            (time.perf_counter() - total_started) * 1000, 3
-        )
-        status, error_code = _attention_error_status(error)
-        attention["status"] = status
-        attention["errorCode"] = error_code
-        return attention, [], total_started
-    attention["timingMs"]["jev"] = round(
-        (time.perf_counter() - jev_started) * 1000, 3
-    )
-    distribution = decision.get("distribution")
-    candidate_choice_ids = {candidate["choiceId"] for candidate in candidates}
-    if not isinstance(distribution, dict) or set(distribution) != {
-        *candidate_choice_ids, MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
-    }:
-        attention["status"] = "invalid"
-        attention["errorCode"] = "jev_attention_response_invalid"
-        return attention, [], total_started
-    winner = str(decision.get("winner") or "")
-    if winner not in distribution:
-        attention["status"] = "invalid"
-        attention["errorCode"] = "jev_attention_response_invalid"
-        return attention, [], total_started
-    ordered = sorted(
-        ((choice_id, float(probability)) for choice_id, probability in distribution.items()
-         if choice_id != MAIN_GRAPH_ATTENTION_NEW_SUBJECT),
-        key=lambda item: (-item[1], 0 if item[0] == winner else 1, item[0]),
-    )
-    selected_choice_ids: list[str] = []
-    selected_mass = 0.0
-    for choice_id, probability in ordered:
-        if winner == MAIN_GRAPH_ATTENTION_NEW_SUBJECT:
-            break
-        if len(selected_choice_ids) >= _JEV_ATTENTION_MAXIMUM_SELECTED:
-            break
-        selected_choice_ids.append(choice_id)
-        selected_mass += probability
-        if (
-            len(selected_choice_ids) >= _JEV_ATTENTION_MINIMUM_SELECTED
-            and selected_mass >= _JEV_ATTENTION_CUMULATIVE_MASS
-        ):
-            break
-    selected_set = set(selected_choice_ids)
-    attention.update({
-        "status": "success",
-        "decisionId": str(decision.get("decisionId") or attention["decisionId"]),
-        "distribution": dict(distribution),
-        "winner": winner,
-        "contextSelection": (
-            "new_subject_abstention"
-            if winner == MAIN_GRAPH_ATTENTION_NEW_SUBJECT
-            else "reused_existing_context"
-        ),
-        "confidence": float(decision["confidence"]),
-        "provider": str(decision.get("provider") or ""),
-        "resolvedModel": str(decision.get("resolvedModel") or ""),
-        "usage": decision.get("usage") if isinstance(decision.get("usage"), dict) else {},
-    })
-    attention["policy"]["selectedMass"] = selected_mass
-    for candidate in attention["candidates"]:
-        candidate["probability"] = float(distribution[candidate["choiceId"]])
-        candidate["selected"] = candidate["choiceId"] in selected_set
-    by_choice = {candidate["choiceId"]: candidate for candidate in candidates}
-    selected_anchors = [{
-        "authority": by_choice[choice_id]["authority"],
-        "nativeId": by_choice[choice_id]["nativeId"],
-        "reason": "JevAttention selected this canonical native entity for the current Main message.",
-        "boundedExpansion": 0,
-        "resultLimit": 1,
-        "required": False,
-    } for choice_id in selected_choice_ids]
-    attention["timingMs"]["total"] = round(
-        (time.perf_counter() - total_started) * 1000, 3
-    )
-    return attention, selected_anchors, total_started
-
-
-def _fail_attention_hydration(
-    attention: dict[str, Any],
-    *,
-    error_code: str,
-    total_started: float,
-) -> None:
-    attention.update({
-        "status": "error",
-        "selectedReferences": [],
-        "errorCode": error_code,
-    })
-    for candidate in attention["candidates"]:
-        candidate["hydrated"] = False
-    attention["timingMs"]["total"] = round(
-        (time.perf_counter() - total_started) * 1000, 3
-    )
-
-
 def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, Any]]:
     if value is None:
         return []
@@ -3357,9 +2703,10 @@ def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, 
             anchor = DataAnchorReference.model_validate(item).model_dump(exclude_unset=True)
         except ValidationError as error:
             raise CardDomainError("data_anchor_invalid") from error
-        authority = _required_text(anchor.get("authority"), "data_anchor_authority")
-        native_id = _required_text(anchor.get("nativeId"), "data_anchor_native_id")
-        identity = (authority, native_id)
+        try:
+            identity = graph_record_identity(anchor)
+        except ValueError as error:
+            raise CardDomainError("data_anchor_identity_invalid") from error
         if identity in seen:
             raise CardDomainError("data_anchor_duplicate")
         seen.add(identity)
@@ -3370,8 +2717,7 @@ def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, 
         if result_limit < 1 or result_limit > 24:
             raise CardDomainError("data_anchor_result_limit_invalid")
         normalized.append({
-            "authority": authority,
-            "nativeId": native_id,
+            **graph_record_fields(*identity),
             "reason": _required_text(anchor.get("reason"), "data_anchor_reason")[:2_000],
             "priority": int(anchor.get("priority", 0)),
             "boundedExpansion": bounded_expansion,
@@ -3385,10 +2731,10 @@ def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, 
 def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve one bounded Main selection or Card-to-Card graph handoff.
 
-    The caller supplies only the target and one bounded native pointer.  The
+    The caller supplies only the target and one bounded provider pointer.  The
     official MCP host injects the source Card/Run/project/deck identities.  The
-    returned graph body is transient UI context; the saved Card and native
-    graph authorities are never mutated here.
+    returned graph body is transient UI context; the saved Card and graph
+    providers are never mutated here.
     """
 
     project_id = _required_text(payload.get("projectId"), "project_id")
@@ -3424,8 +2770,11 @@ def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
         raise CardDomainError("data_anchor_order_invalid")
     anchor = _normalized_data_anchors(
         [{
-            "authority": payload.get("authority"),
-            "nativeId": payload.get("nativeId"),
+            **{
+                field: payload.get(field)
+                for field in GRAPH_RECORD_ID_FIELDS
+                if payload.get(field) is not None
+            },
             "reason": payload.get("reason"),
             "priority": -order,
             "boundedExpansion": int(payload.get("depth", 0)),
@@ -3468,39 +2817,6 @@ def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
 
     resolved = bool(references)
     ready = resolved or anchor["required"] is False
-    attention_observed = False
-    if resolved:
-        node_ids = [
-            str(reference["nativeId"])
-            for reference in references
-            if reference.get("nativeKind") != "edge"
-        ]
-        edge_ids = [
-            str(reference["nativeId"])
-            for reference in references
-            if reference.get("nativeKind") == "edge"
-        ]
-        attention_observed = observe_native_attention({
-            "eventId": f"native-attention:{uuid4()}",
-            "timestamp": observed_at,
-            "projectId": loaded["projectId"],
-            "deckId": deck_id,
-            "conversationId": str(payload.get("conversationId") or ""),
-            "runId": source_run_id,
-            "cardId": source_card_id,
-            "targetCardId": target_card_id,
-            "toolName": "card.load_graph_references",
-            "authority": str(anchor["authority"]).lower(),
-            "operation": "read",
-            "nativeNodeIds": node_ids,
-            "nativeEdgeIds": edge_ids,
-            "resultHash": _sha(_canonical_json({
-                "authority": anchor["authority"],
-                "references": references,
-                "targetCardId": target_card_id,
-            })),
-            "truncated": any(reference.get("truncated") is True for reference in references),
-        })
     return {
         "ok": ready,
         **({"error": "data_anchor_required_not_resolved"} if not ready else {}),
@@ -3519,67 +2835,72 @@ def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
         "graphProjection": graph_projection,
         "resolved": resolved,
         "ready": ready,
-        "attentionObserved": attention_observed,
         "persisted": False,
         "started": False,
         "observedAt": observed_at,
     }
 
 
-def _normalized_graph_hooks(value: Any) -> list[dict[str, Any]]:
+def _normalized_graph_anchors(value: Any) -> list[dict[str, Any]]:
     if value is None:
         return []
     if not isinstance(value, list):
         raise CardDomainError("graph_hooks_invalid")
     if len(value) > _DATA_ANCHOR_LIMIT:
         raise CardDomainError("data_anchor_limit_exceeded")
-    hooks: list[dict[str, Any]] = []
+    anchors: list[dict[str, Any]] = []
     seen_exact: set[tuple[str, str]] = set()
     for index, item in enumerate(value):
         if not isinstance(item, dict):
             raise CardDomainError("graph_hook_invalid")
         try:
-            hook = GraphHook.model_validate(item).model_dump(exclude_unset=True)
+            anchor = GraphAnchor.model_validate(item).model_dump(exclude_unset=True)
         except ValidationError as error:
             raise CardDomainError("graph_hook_invalid") from error
-        authority = _required_text(hook.get("authority"), "data_anchor_authority")
-        native_id = str(hook.get("nativeId") or "").strip()
-        semantic_search = hook.get("searchDynamicInput") is True
-        if not native_id and not semantic_search:
-            raise CardDomainError("graph_hook_native_id_or_search_required")
-        if semantic_search and authority != "KnowGraph":
-            raise CardDomainError("graph_hook_dynamic_search_requires_knowgraph")
-        if native_id:
-            identity = (authority, native_id)
+        semantic_search = anchor.get("searchDynamicInput") is True
+        populated = [
+            field for field in GRAPH_RECORD_ID_FIELDS
+            if str(anchor.get(field) or "").strip()
+        ]
+        identity: tuple[str, str] | None = None
+        if populated:
+            try:
+                identity = graph_record_identity(anchor)
+            except ValueError as error:
+                raise CardDomainError("graph_anchor_identity_invalid") from error
+        if identity is None and not semantic_search:
+            raise CardDomainError("graph_anchor_record_or_search_required")
+        if semantic_search and identity is not None and not identity[0].startswith("graphiti"):
+            raise CardDomainError("graph_anchor_dynamic_search_requires_graphiti")
+        if identity is not None:
             if identity in seen_exact:
                 raise CardDomainError("data_anchor_duplicate")
             seen_exact.add(identity)
-        bounded_expansion = int(hook.get("boundedExpansion", 0))
+        bounded_expansion = int(anchor.get("boundedExpansion", 0))
         if bounded_expansion < 0 or bounded_expansion > 3:
             raise CardDomainError("data_anchor_expansion_invalid")
-        max_nodes = int(hook.get("maxNodes", 8))
-        max_facts = int(hook.get("maxFacts", 8))
+        max_nodes = int(anchor.get("maxNodes", 8))
+        max_facts = int(anchor.get("maxFacts", 8))
         if not 1 <= max_nodes <= 20 or not 1 <= max_facts <= 20:
             raise CardDomainError("graph_hook_result_limit_invalid")
-        hooks.append({
-            "authority": authority,
-            **({"nativeId": native_id} if native_id else {}),
-            "reason": _required_text(hook.get("reason"), "data_anchor_reason")[:2_000],
-            "priority": -int(hook.get("order", index)),
+        anchors.append({
+            **(graph_record_fields(*identity) if identity is not None else {}),
+            "reason": _required_text(anchor.get("reason"), "data_anchor_reason")[:2_000],
+            "priority": -int(anchor.get("order", index)),
             "boundedExpansion": bounded_expansion,
-            "required": hook.get("required") is True,
+            "required": anchor.get("required") is True,
             "searchDynamicInput": semantic_search,
-            "entityTypes": _string_list(hook.get("entityTypes"), "graph_hook_entity_types"),
-            "edgeTypes": _string_list(hook.get("edgeTypes"), "graph_hook_edge_types"),
-            "validAtAfter": str(hook.get("validAtAfter") or "").strip(),
-            "validAtBefore": str(hook.get("validAtBefore") or "").strip(),
-            "invalidAtAfter": str(hook.get("invalidAtAfter") or "").strip(),
-            "invalidAtBefore": str(hook.get("invalidAtBefore") or "").strip(),
+            "entityTypes": _string_list(anchor.get("entityTypes"), "graph_hook_entity_types"),
+            "edgeTypes": _string_list(anchor.get("edgeTypes"), "graph_hook_edge_types"),
+            "validAtAfter": str(anchor.get("validAtAfter") or "").strip(),
+            "validAtBefore": str(anchor.get("validAtBefore") or "").strip(),
+            "invalidAtAfter": str(anchor.get("invalidAtAfter") or "").strip(),
+            "invalidAtBefore": str(anchor.get("invalidAtBefore") or "").strip(),
             "maxNodes": max_nodes,
             "maxFacts": max_facts,
             "_inputOrder": index,
         })
-    return sorted(hooks, key=lambda item: (-item["priority"], item["_inputOrder"]))
+    return sorted(anchors, key=lambda item: (-item["priority"], item["_inputOrder"]))
 
 
 def _prepare_invocation(
@@ -3640,7 +2961,7 @@ def _prepare_invocation(
         if sender is None or not authorized:
             raise CardDomainError("card_invocation_edge_authority_required")
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
-    graph_hooks = _normalized_graph_hooks(options.get("graphHooks"))
+    graph_anchors = _normalized_graph_anchors(options.get("graphHooks"))
     runtime = _card_runtime(card)
     ceiling = _string_list(options.get("tools"), "tools")
     requested_tools = ceiling
@@ -3707,7 +3028,6 @@ def _prepare_invocation(
         },
         "runtimeOptions": runtime_options,
         "enabledTools": requested_tools,
-        "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
         "skills": _string_list(options.get("skills"), "skills"),
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
@@ -3736,7 +3056,25 @@ def _prepare_invocation(
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
     by_id = {item["canonicalId"]: item for item in catalog}
-    unknown_tools = [name for name in ceiling if name not in by_id]
+    hermes_tool_prefix = "hermes:tool:"
+    hermes_tools: list[dict[str, str]] = []
+    catalog_ceiling: list[str] = []
+    for name in ceiling:
+        if name.startswith(hermes_tool_prefix):
+            hermes_name = name.removeprefix(hermes_tool_prefix).strip()
+            if (
+                not hermes_name
+                or len(hermes_name) > 128
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", hermes_name) is None
+            ):
+                raise CardDomainError(f"configured_tool_invalid:{name}")
+            hermes_tools.append({
+                "canonicalName": name,
+                "hermesName": hermes_name,
+            })
+        else:
+            catalog_ceiling.append(name)
+    unknown_tools = [name for name in catalog_ceiling if name not in by_id]
     unexpected_unknown_tools = [
         name for name in unknown_tools
         if (
@@ -3764,8 +3102,7 @@ def _prepare_invocation(
     # An individual saved tool is its own grant. A saved MCP connection is the
     # optional broader form: it grants the catalog currently published by that
     # connection. Neither form depends on the other.
-    ceiling = list(dict.fromkeys([*ceiling, *connection_granted_tools]))
-    call_config["enabledTools"] = ceiling
+    catalog_ceiling = list(dict.fromkeys([*catalog_ceiling, *connection_granted_tools]))
 
     def unavailable_reason(name: str) -> str | None:
         definition = by_id.get(name)
@@ -3806,12 +3143,12 @@ def _prepare_invocation(
         return "hermes_capability_owner_unsupported"
 
     unavailable_tool_reasons = {
-        name: reason for name in ceiling
+        name: reason for name in catalog_ceiling
         if (reason := unavailable_reason(name)) is not None
     }
     unavailable_tools = list(unavailable_tool_reasons)
     effective_tools = [
-        name for name in call_config["enabledTools"]
+        name for name in catalog_ceiling
         if unavailable_reason(name) is None
     ]
     # Live discovery is the execution-availability owner for external MCP
@@ -3831,13 +3168,17 @@ def _prepare_invocation(
     selected_tools = [
         name for name in effective_tools if name in project_enabled_tools
     ]
-    call_config["enabledTools"] = selected_tools
+    call_config["enabledTools"] = [
+        *selected_tools,
+        *[tool["canonicalName"] for tool in hermes_tools],
+    ]
+    call_config["hermesSuppliedTools"] = hermes_tools
     call_config["unavailableTools"] = unavailable_tools
     call_config["unavailableToolReasons"] = unavailable_tool_reasons
     call_config["projectWorldview"] = project_worldview
     # `tools` remains the saved Card's deliberately selected presentation.
     presented_tools = [
-        name for name in ceiling
+        name for name in catalog_ceiling
         if name in selected_tools and name in by_id
     ]
     try:
@@ -3898,7 +3239,7 @@ def _prepare_invocation(
         "_effectiveToolDefinitions": (
             effective_tool_definitions if include_tool_definitions else []
         ),
-        "_graphHooks": graph_hooks,
+        "_graphAnchors": graph_anchors,
         "_savedScript": options.get("script"),
     }
 
@@ -4001,17 +3342,17 @@ def resolve_hermes_card_tools(payload: dict[str, Any]) -> dict[str, Any]:
         identities = {
             (
                 str(contract.get("sourceId") or ""),
-                str(contract.get("nativeName") or ""),
+                str(contract.get("providerToolName") or ""),
             )
             for contract in external_contracts
         }
         if len(identities) != 1:
             raise CardDomainError(f"hermes_card_tool_contract_ambiguous:{canonical_name}")
-        connection_id, native_name = next(iter(identities))
+        connection_id, provider_tool_name = next(iter(identities))
         external_mcp_tools.append({
             "canonicalName": canonical_name,
             "connectionId": connection_id,
-            "nativeName": native_name,
+            "providerToolName": provider_tool_name,
         })
     plugin_tools.sort(key=lambda item: item["canonicalName"])
     external_mcp_tools.sort(key=lambda item: item["canonicalName"])
@@ -4026,7 +3367,7 @@ def resolve_hermes_card_tools(payload: dict[str, Any]) -> dict[str, Any]:
         "unavailableTools": call_config["unavailableTools"],
         "unavailableToolReasons": call_config["unavailableToolReasons"],
         "presentedTools": call_config["presentedTools"],
-        "nativeTools": call_config["nativeTools"],
+        "hermesSuppliedTools": call_config["hermesSuppliedTools"],
         "toolsets": call_config["toolsets"],
         "mcpConnectionIds": call_config["mcpConnectionIds"],
         "pluginTools": plugin_tools,
@@ -4144,11 +3485,11 @@ def _apply_card_jev_decisions(
         if images:
             effective_sources.append("attachment_metadata")
             unavailable_sources.append("attachment_content")
-        native_references = [
+        graph_records = [
             {
                 key: reference.get(key)
                 for key in (
-                    "authority", "nativeId", "nativeKind", "label", "reason",
+                    *GRAPH_RECORD_ID_FIELDS, "label", "reason",
                     "asOf", "required", "readOperation", "contentSha256",
                     "selectionScope", "materializedContentBytes", "sourcePath",
                     "sourceUrl", "truncated", "provenance",
@@ -4182,7 +3523,7 @@ def _apply_card_jev_decisions(
                 str(context["request_or_delegated_mission"]).encode("utf-8")
             ).hexdigest(),
             "savedCardRevisionId": prepared["cardRevisionId"],
-            "nativeReferences": native_references,
+            "graphRecords": graph_records,
             "attachmentReferences": attachment_references,
             "conversationWindow": {
                 "messageCount": len(conversation_items),
@@ -4350,132 +3691,40 @@ def _resolve_invocation_components(
     assignment = prepared.pop("assignment")
     tool_definitions = prepared.pop("_toolDefinitions")
     effective_tool_definitions = prepared.pop("_effectiveToolDefinitions")
-    graph_hooks = prepared.pop("_graphHooks")
+    graph_anchors = prepared.pop("_graphAnchors")
     saved_script_value = prepared.pop("_savedScript")
     references: list[dict[str, Any]] = []
     incoming_anchors = _normalized_data_anchors(
         payload.get("dataAnchors"), record_name="data-anchor-reference"
     )
     incoming_anchors.sort(key=lambda item: (-item["priority"], item["_inputOrder"]))
-    anchors = [*graph_hooks, *incoming_anchors]
+    anchors = [*graph_anchors, *incoming_anchors]
     anchor_identities = [
-        (anchor["authority"], anchor["nativeId"])
+        graph_record_identity(anchor)
         for anchor in anchors
-        if anchor.get("nativeId")
+        if any(str(anchor.get(field) or "").strip() for field in GRAPH_RECORD_ID_FIELDS)
     ]
     if len(anchor_identities) != len(set(anchor_identities)):
         raise CardDomainError("data_anchor_duplicate")
-    attention: dict[str, Any] | None = None
-    attention_anchors: list[dict[str, Any]] = []
-    attention_started: float | None = None
-    attention_query = (
-        str(payload.get("_mainAttentionQuery") or "")
-        if payload.get("_mainAttentionToken") is _MAIN_ATTENTION_TOKEN
-        else ""
-    )
-    runtime = call_config.get("runtime") if isinstance(call_config, dict) else None
-    is_main_run = (
-        isinstance(runtime, dict)
-        and runtime.get("kind") == "hermes"
-        and runtime.get("mode") == "main"
-    )
-    if (
-        attention_query
-        and is_main_run
-    ):
-        attention, attention_anchors, attention_started = _prepare_main_graph_attention(
-            project_id=prepared["projectId"],
-            deck_id=prepared["deckId"],
-            card_id=prepared["cardIdentity"]["cardId"],
-            query=attention_query,
-            effective_assignment=assignment,
-            excluded_identities=set(anchor_identities),
-        )
     for anchor in anchors:
         anchor.pop("_inputOrder", None)
         anchor.pop("priority", None)
-    all_anchors = [*anchors, *attention_anchors]
-
-    def resolve(
-        current_anchors: list[dict[str, Any]],
-    ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
-        projection = empty_graph_projection(prepared["projectId"])
-        seed, resolved = resolve_data_anchors(
+    graph_projection = empty_graph_projection(prepared["projectId"])
+    try:
+        graph_seed, anchor_references = resolve_data_anchors(
             prepared["projectId"],
-            current_anchors,
+            anchors,
             deck_id=prepared["deckId"],
             card_id=prepared["cardIdentity"]["cardId"],
             search_text=assignment,
-            graph_projection=projection,
+            graph_projection=graph_projection,
         )
-        return seed, resolved, projection
-
-    hydration_started = time.perf_counter()
-    try:
-        graph_seed, anchor_references, graph_projection = resolve(all_anchors)
     except DataAnchorError as error:
-        if not attention_anchors or attention is None or attention_started is None:
-            raise CardDomainError(str(error)) from error
-        try:
-            graph_seed, anchor_references, graph_projection = resolve(anchors)
-        except DataAnchorError as baseline_error:
-            raise CardDomainError(str(baseline_error)) from baseline_error
-        _fail_attention_hydration(
-            attention,
-            error_code=f"jev_attention_hydration_failed:{error}",
-            total_started=attention_started,
-        )
-    else:
-        if attention_anchors and attention is not None and attention_started is not None:
-            resolved_by_identity = {
-                (reference["authority"], reference["nativeId"]): reference
-                for reference in anchor_references
-            }
-            selected_identities = [
-                (anchor["authority"], anchor["nativeId"])
-                for anchor in attention_anchors
-            ]
-            missing = [
-                identity for identity in selected_identities
-                if identity not in resolved_by_identity
-            ]
-            if missing:
-                try:
-                    graph_seed, anchor_references, graph_projection = resolve(anchors)
-                except DataAnchorError as baseline_error:
-                    raise CardDomainError(str(baseline_error)) from baseline_error
-                _fail_attention_hydration(
-                    attention,
-                    error_code="jev_attention_hydration_incomplete",
-                    total_started=attention_started,
-                )
-            else:
-                selected_set = set(selected_identities)
-                attention["selectedReferences"] = [
-                    resolved_by_identity[identity]
-                    for identity in selected_identities
-                ]
-                for candidate in attention["candidates"]:
-                    candidate["hydrated"] = (
-                        candidate["authority"], candidate["nativeId"]
-                    ) in selected_set
-                attention["timingMs"]["total"] = round(
-                    (time.perf_counter() - attention_started) * 1000, 3
-                )
-    if attention is not None and attention_started is not None:
-        attention["timingMs"]["hydration"] = round(
-            (time.perf_counter() - hydration_started) * 1000, 3
-        ) if attention_anchors else 0.0
-        attention["timingMs"]["total"] = round(
-            (time.perf_counter() - attention_started) * 1000, 3
-        )
-        prepared["jevAttention"] = attention
-    existing_reference_ids = {
-        (reference["authority"], reference["nativeId"]) for reference in references
-    }
+        raise CardDomainError(str(error)) from error
+    existing_reference_ids = {graph_record_identity(reference) for reference in references}
     references.extend(
         reference for reference in anchor_references
-        if (reference["authority"], reference["nativeId"]) not in existing_reference_ids
+        if graph_record_identity(reference) not in existing_reference_ids
     )
     images = payload.get("images") or []
     if not isinstance(images, list) or any(not isinstance(item, dict) for item in images):
@@ -4500,8 +3749,8 @@ def _resolve_invocation_components(
         "assignment": assignment,
         "toolDefinitions": tool_definitions,
         "graphText": graph_seed,
-        "nativeReferences": references,
-        "resolvedNativeReads": anchor_references,
+        "graphRecords": references,
+        "resolvedGraphReads": anchor_references,
         "resolvedGraphProjection": graph_projection,
         "images": images,
     }
@@ -4521,7 +3770,7 @@ def prepare_card_review_context(payload: dict[str, Any]) -> dict[str, Any]:
         "cardRevisionSha256": prepared["cardRevisionSha256"],
         "runtimeOwner": prepared["runtimeOwner"],
         "cardIdentity": prepared["cardIdentity"],
-        "resolvedNativeReads": resolved["resolvedNativeReads"],
+        "resolvedGraphReads": resolved["resolvedGraphReads"],
         "resolvedGraphProjection": resolved["resolvedGraphProjection"],
     }
 
@@ -4535,8 +3784,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     assignment = resolved["assignment"]
     tool_definitions = resolved["toolDefinitions"]
     graph_seed = resolved["graphText"]
-    references = resolved["nativeReferences"]
-    anchor_references = resolved["resolvedNativeReads"]
+    references = resolved["graphRecords"]
+    anchor_references = resolved["resolvedGraphReads"]
     graph_projection = resolved["resolvedGraphProjection"]
     images = resolved["images"]
     subject_directory: dict[str, Any] | None = None
@@ -4577,20 +3826,19 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
                 "presentedTools": call_config["presentedTools"],
                 "toolDefinitions": tool_definitions,
                 "scriptPresentation": call_config["scriptPresentation"],
-                "nativeTools": call_config["nativeTools"],
                 "skills": call_config["skills"],
                 "toolsets": call_config["toolsets"],
                 "mcpConnectionIds": call_config["mcpConnectionIds"],
             },
             graph_context=graph_seed,
-            native_references=references,
+            graph_records=references,
             graph_projection=graph_projection,
         )
     except InputMaterializationError as error:
         raise CardDomainError(str(error)) from error
     return {
         **prepared,
-        "resolvedNativeReads": anchor_references,
+        "resolvedGraphReads": anchor_references,
         "resolvedGraphProjection": graph_projection,
         **({"canonicalSubjectDirectory": subject_directory}
            if subject_directory is not None else {}),
@@ -4769,12 +4017,12 @@ def assert_selected_graph_data_resolved(
         return
 
     resolved = {
-        (str(reference.get("authority") or ""), str(reference.get("nativeId") or ""))
-        for reference in prepared.get("resolvedNativeReads") or []
+        graph_record_identity(reference)
+        for reference in prepared.get("resolvedGraphReads") or []
         if isinstance(reference, dict)
     }
     for anchor in requested:
-        identity = (anchor["authority"], anchor["nativeId"])
+        identity = graph_record_identity(anchor)
         if identity not in resolved:
             raise CardDomainError(
                 f"selected_graph_data_reference_stale:{identity[0]}:{identity[1]}"
@@ -5416,8 +4664,6 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         "cardId": main["cardIdentity"]["cardId"],
         "assignment": message,
         "sharedConversationTargetLabel": main["cardIdentity"]["title"],
-        "_mainAttentionQuery": message,
-        "_mainAttentionToken": _MAIN_ATTENTION_TOKEN,
     })
 
 
@@ -5536,7 +4782,6 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
             "workers": magentic_workers,
         }
     telemetry_written = False
-    anchor_telemetry_written = False
     if created:
         telemetry_written = _observe_run_start(
             prepared,
@@ -5545,10 +4790,6 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
             correlation_id=resolved_correlation_id,
             input_file=input_files,
         )
-        anchor_telemetry_written = observe_materialized_anchor_reads(
-            prepared,
-            run_id=resolved_run_id,
-        )
     return {
         **prepared,
         "runId": resolved_run_id,
@@ -5556,7 +4797,6 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         "rejoined": not created,
         "requestFingerprint": request_fingerprint,
         "telemetryWritten": telemetry_written,
-        "anchorTelemetryWritten": anchor_telemetry_written,
         "inputFile": input_files,
         "magenticExecution": magentic_execution,
         "hermesTransport": {
@@ -6021,7 +5261,6 @@ def _observe_run_start(
                     run.preparationError=null,
                     run.idfSha256=$idfSha256,
                     run.idfBytes=$idfBytes,
-                    run.jevAttention=$jevAttention,
                     run.jevAutoTools=$jevAutoTools,
                     run.jevModelRouter=$jevModelRouter
                 WITH run
@@ -6049,10 +5288,6 @@ def _observe_run_start(
                     "preparationElapsedMs": preparation_elapsed_ms,
                     "idfSha256": str((input_file or {}).get("idfSha256") or "").strip() or None,
                     "idfBytes": (input_file or {}).get("idfBytes"),
-                    "jevAttention": (
-                        prepared.get("jevAttention")
-                        if isinstance(prepared.get("jevAttention"), dict) else None
-                    ),
                     "jevAutoTools": (
                         prepared.get("jevAutoTools")
                         if isinstance(prepared.get("jevAutoTools"), dict) else None
@@ -6418,7 +5653,7 @@ def _request_fulfillment_model_input(
             contracts.append({
                 key: value.get(key)
                 for key in (
-                    "sourceId", "connectionKind", "nativeName", "description",
+                    "sourceId", "connectionKind", "providerToolName", "description",
                     "inputSchema", "effects",
                 )
                 if value.get(key) is not None

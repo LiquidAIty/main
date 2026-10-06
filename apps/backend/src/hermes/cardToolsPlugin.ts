@@ -1,4 +1,9 @@
-import { createHash, randomBytes } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import { spawn } from 'node:child_process';
 import {
   access,
@@ -19,17 +24,84 @@ import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient'
 import type { InternalMcpPrincipal } from '../services/mcp/internalMcpAuth';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveRepoRoot } from '../services/workspaceRoot';
-import type { AgentTerminalOwner } from './agentTerminal';
+import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
+import {
+  configureHermesCardModelRuntime,
+  configureHermesSubagentModel,
+  materializeHermesProfileSelections,
+} from './profileMaterialization';
+import type { CardRuntimeOwner, CardRuntimeState, CardRuntime } from './runtime/cardRuntime';
+import type { CardRuntimeRegistry } from './runtime/cardRuntimeRegistry';
+import { recordHermesStoredSession } from './runtime/hermesSession';
 
 export const HERMES_CARD_TOOLS_PLUGIN_KEY = 'card-tools';
 export const HERMES_CARD_TOOLS_TOOLSET = 'card-tools';
+export const PROJECT_ROSTER_AUTHORITY_TOOL = 'project_roster.resolve';
+export const RUNTIME_OBSERVATION_AUTHORITY_TOOL = 'runtime.observe_attempt';
+
+const AUTH_MAX_FUTURE_SECONDS = 10 * 60;
+const CARD_TOOL_NONCE_LIMIT = 512;
+
+export type AuthenticatedCardToolRequest = {
+  owner: CardRuntimeOwner;
+  state: CardRuntimeState;
+  canonicalToolName: string;
+  cardTools: {
+    cardRevisionId: string;
+    configurationFingerprint: string;
+    runtimeMode: 'main' | 'delegate' | 'magentic_one';
+  };
+  request: {
+    version: 1;
+    expiresAt: number;
+    nonce: string;
+    sourceStoredSessionId: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+  } | {
+    version: 2;
+    expiresAt: number;
+    nonce: string;
+    sourceTaskId: string;
+    sourceTaskRunId: number;
+    sourceProfile: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+  };
+  executionContext?: { parentRunId: string; conversationId: string };
+};
+
+export type MagenticCardToolAuthority = {
+  cardId: string;
+  cardRevisionId: string;
+  profile: string;
+  configurationFingerprint: string;
+};
+
+type MagenticWorkerToolProof = {
+  projectId: string;
+  deckId: string;
+  outerRunId: string;
+  taskRootId: string;
+  sourceTaskId: string;
+  sourceTaskRunId: number;
+  sourceProfile: string;
+  authorityProfile: string;
+  authorityCardId: string;
+  authorityCardRevisionId: string;
+  authorityConfigurationFingerprint: string;
+  expiresAt: number;
+  nonce: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+};
 
 const RETIRED_SYSTEM_CARD_PLUGIN_KEYS = ['card-bot-dm', 'liquidaity-card-mcp'] as const;
 const RETIRED_SYSTEM_CARD_PLUGIN_DIRECTORY = 'card-bot-dm';
 
 // Retired plugin state is reconciled through Hermes' config owner. Do not
 // parse or rewrite config.yaml in TypeScript: load_config/save_config preserve
-// every unrelated profile value and their native schema/version behavior.
+// every unrelated profile value and their provider schema/version behavior.
 export const HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT = [
   'from hermes_cli.config import load_config, save_config',
   `retired = ${JSON.stringify([...RETIRED_SYSTEM_CARD_PLUGIN_KEYS])}`,
@@ -133,7 +205,12 @@ export type HermesCardPluginTool = {
 export type HermesCardExternalMcpTool = {
   canonicalName: string;
   connectionId: string;
-  nativeName: string;
+  providerToolName: string;
+};
+
+export type HermesSuppliedTool = {
+  canonicalName: string;
+  hermesName: string;
 };
 
 export type HermesCardTools = {
@@ -147,7 +224,7 @@ export type HermesCardTools = {
   unavailableTools: string[];
   unavailableToolReasons: Record<string, string>;
   presentedTools: string[];
-  nativeTools: string[];
+  hermesSuppliedTools: HermesSuppliedTool[];
   toolsets: string[];
   mcpConnectionIds: string[];
   pluginTools: HermesCardPluginTool[];
@@ -177,7 +254,7 @@ function strings(value: unknown): string[] | null {
 
 function requireCardTools(
   value: unknown,
-  owner: AgentTerminalOwner,
+  owner: CardRuntimeOwner,
   card: AgentCardInstance,
   externalToolCatalogState: HermesCardTools['externalToolCatalogState'],
 ): HermesCardTools {
@@ -185,12 +262,12 @@ function requireCardTools(
   const runtime = record(body.runtime);
   const rawPluginTools = Array.isArray(body.pluginTools) ? body.pluginTools : null;
   const rawExternalMcpTools = Array.isArray(body.externalMcpTools) ? body.externalMcpTools : null;
+  const rawHermesTools = Array.isArray(body.hermesSuppliedTools) ? body.hermesSuppliedTools : null;
   const unavailableToolReasons = record(body.unavailableToolReasons);
   const listFields = {
     enabledTools: strings(body.enabledTools),
     unavailableTools: strings(body.unavailableTools),
     presentedTools: strings(body.presentedTools),
-    nativeTools: strings(body.nativeTools),
     toolsets: strings(body.toolsets),
     mcpConnectionIds: strings(body.mcpConnectionIds),
   };
@@ -207,6 +284,7 @@ function requireCardTools(
     || !/^[a-f0-9]{64}$/.test(String(body.configurationFingerprint || ''))
     || !rawPluginTools
     || !rawExternalMcpTools
+    || !rawHermesTools
     || Object.values(listFields).some((item) => item === null)
   ) throw new Error('hermes_card_tools_authority_response_invalid');
   const pluginTools = rawPluginTools.map((value): HermesCardPluginTool => {
@@ -228,19 +306,30 @@ function requireCardTools(
     const tool = record(value);
     const canonicalName = String(tool.canonicalName || '').trim();
     const connectionId = String(tool.connectionId || '').trim();
-    const nativeName = String(tool.nativeName || '').trim();
-    if (!canonicalName || !connectionId || !nativeName) {
+    const providerToolName = String(tool.providerToolName || '').trim();
+    if (!canonicalName || !connectionId || !providerToolName) {
       throw new Error('hermes_card_tools_authority_response_invalid');
     }
-    return { canonicalName, connectionId, nativeName };
+    return { canonicalName, connectionId, providerToolName };
+  });
+  const hermesSuppliedTools = rawHermesTools.map((value): HermesSuppliedTool => {
+    const tool = record(value);
+    const canonicalName = String(tool.canonicalName || '').trim();
+    const hermesName = String(tool.hermesName || '').trim();
+    if (!canonicalName.startsWith('hermes:tool:') || !hermesName) {
+      throw new Error('hermes_card_tools_authority_response_invalid');
+    }
+    return { canonicalName, hermesName };
   });
   const unavailableReasonEntries = Object.entries(unavailableToolReasons);
   if (
     new Set(pluginTools.map((tool) => tool.canonicalName)).size !== pluginTools.length
     || new Set(pluginTools.map((tool) => tool.hermesName)).size !== pluginTools.length
     || new Set(externalMcpTools.map((tool) => tool.canonicalName)).size !== externalMcpTools.length
-    || new Set(externalMcpTools.map((tool) => `${tool.connectionId}\0${tool.nativeName}`)).size
+    || new Set(externalMcpTools.map((tool) => `${tool.connectionId}\0${tool.providerToolName}`)).size
       !== externalMcpTools.length
+    || new Set(hermesSuppliedTools.map((tool) => tool.canonicalName)).size !== hermesSuppliedTools.length
+    || new Set(hermesSuppliedTools.map((tool) => tool.hermesName)).size !== hermesSuppliedTools.length
     || unavailableReasonEntries.some(([name, reason]) => (
       !listFields.unavailableTools!.includes(name) || typeof reason !== 'string' || !reason.trim()
     ))
@@ -263,7 +352,7 @@ function requireCardTools(
       unavailableReasonEntries.map(([name, reason]) => [name, String(reason)]),
     ),
     presentedTools: listFields.presentedTools!,
-    nativeTools: listFields.nativeTools!,
+    hermesSuppliedTools,
     toolsets: listFields.toolsets!,
     mcpConnectionIds: listFields.mcpConnectionIds!,
     pluginTools,
@@ -274,7 +363,7 @@ function requireCardTools(
 }
 
 export async function resolveHermesCardTools(
-  owner: AgentTerminalOwner,
+  owner: CardRuntimeOwner,
   card: AgentCardInstance,
   options: { externalCatalogPrincipal?: InternalMcpPrincipal } = {},
 ): Promise<HermesCardTools> {
@@ -298,9 +387,9 @@ export async function resolveHermesCardTools(
   }).map((tool) => ({
     ...tool,
     // Hermes connects to the application-owned aggregate MCP endpoint.  Its
-    // callable transport name is the canonical published name; source-native
+    // callable transport name is the canonical published name; source-provider
     // names remain catalog provenance and are not callable on that endpoint.
-    nativeName: tool.name,
+    hermesName: tool.name,
   }));
   const resolved = await requestPythonRailsJson('/domain/hermes-card-tools/resolve', {
     method: 'POST',
@@ -312,7 +401,7 @@ export async function resolveHermesCardTools(
       cardRevisionId: card._cardRevisionId,
       // Internal plugin definitions come directly from Python's canonical
       // operation registry. Only independently owned MCP contracts are supplied
-      // here for external-connection availability and native-name resolution.
+      // here for external-connection availability and provider-name resolution.
       discoveredTools: externalOwnerTools,
       discoveredToolCatalogState: externalToolCatalog.state,
       unavailableToolCatalogFamilies: externalToolCatalog.unavailableFamilies,
@@ -484,7 +573,7 @@ export async function materializeHermesCardToolsPlugin(
 
   // This function is reached only for an exact saved Card profile. Reconcile
   // every such profile after the replacement files were hashed/read back and
-  // Hermes successfully enabled card-tools. The native config owner rereads
+  // Hermes successfully enabled card-tools. The Hermes config owner rereads
   // the file and refuses retirement unless that replacement remains enabled.
   await (options.runCli ?? runHermesCli)(
     executable,
@@ -545,7 +634,7 @@ export async function materializeHermesApplicationMcpServers(
       throw new Error(`hermes_application_mcp_connection_invalid:${tool.connectionId}`);
     }
     const names = byConnection.get(tool.connectionId) || [];
-    names.push(tool.nativeName);
+    names.push(tool.providerToolName);
     byConnection.set(tool.connectionId, names);
   }
   if (!byConnection.size) return;
@@ -566,12 +655,12 @@ export async function materializeHermesApplicationMcpServers(
   if (!bearer) throw new Error('hermes_application_mcp_bearer_missing');
 
   const listed = record(await request('mcp.servers.list', {}));
-  if (!Array.isArray(listed.servers)) throw new Error('hermes_native_mcp_server_list_invalid');
+  if (!Array.isArray(listed.servers)) throw new Error('hermes_mcp_server_list_invalid');
   const configured = new Map<string, Record<string, unknown>>();
   for (const value of listed.servers) {
     const server = record(value);
     const name = String(server.name || '').trim();
-    if (!name || configured.has(name)) throw new Error('hermes_native_mcp_server_list_invalid');
+    if (!name || configured.has(name)) throw new Error('hermes_mcp_server_list_invalid');
     configured.set(name, server);
   }
 
@@ -588,7 +677,7 @@ export async function materializeHermesApplicationMcpServers(
       }
       // These definitions are transient Run material owned by this adapter.
       // Replace a same-route residue instead of renewing it in place because
-      // the native list response intentionally omits trust/approval policy and
+      // the provider list response intentionally omits trust/approval policy and
       // therefore cannot prove the Codex-facing policy from the prior Run.
       const removed = record(await request('mcp.servers.remove', {
         profile: configuration.runtime.profile,
@@ -629,7 +718,7 @@ export async function removeHermesApplicationMcpServers(
   if (!connectionIds.length) return;
 
   const listed = record(await request('mcp.servers.list', {}));
-  if (!Array.isArray(listed.servers)) throw new Error('hermes_native_mcp_server_list_invalid');
+  if (!Array.isArray(listed.servers)) throw new Error('hermes_mcp_server_list_invalid');
   const configured = new Set(listed.servers.map((value) => String(record(value).name || '').trim()));
   for (const name of connectionIds) {
     if (!configured.has(name)) continue;
@@ -646,7 +735,7 @@ export async function removeHermesApplicationMcpServers(
 /**
  * Apply Python-resolved external MCP tools through stock Hermes profile and
  * tool configuration calls. This function does not decide authority: every
- * allowed {connectionId, nativeName} pair already came from the saved Card.
+ * allowed {connectionId, providerToolName} pair already came from the saved Card.
  */
 export async function materializeHermesExternalMcpTools(
   request: HermesGatewayRequest,
@@ -668,12 +757,12 @@ export async function materializeHermesExternalMcpTools(
     }
   };
   const listed = record(await request('mcp.servers.list', {}));
-  if (!Array.isArray(listed.servers)) throw new Error('hermes_native_mcp_server_list_invalid');
+  if (!Array.isArray(listed.servers)) throw new Error('hermes_mcp_server_list_invalid');
   const configured = new Map<string, Record<string, unknown>>();
   for (const value of listed.servers) {
     const server = record(value);
     const name = String(server.name || '').trim();
-    if (!name || configured.has(name)) throw new Error('hermes_native_mcp_server_list_invalid');
+    if (!name || configured.has(name)) throw new Error('hermes_mcp_server_list_invalid');
     configured.set(name, server);
   }
 
@@ -705,14 +794,14 @@ export async function materializeHermesExternalMcpTools(
     for (const value of testedTools) {
       const name = String(record(value).name || '').trim();
       if (!name || publishedNames.includes(name)) {
-        throw new Error(`hermes_native_mcp_tool_list_invalid:${connectionId}`);
+        throw new Error(`hermes_mcp_tool_list_invalid:${connectionId}`);
       }
       publishedNames.push(name);
     }
-    const grantedNames = [...new Set(grantedTools.map((tool) => tool.nativeName))];
+    const grantedNames = [...new Set(grantedTools.map((tool) => tool.providerToolName))];
     const published = new Set(publishedNames);
     for (const tool of grantedTools) {
-      if (!published.has(tool.nativeName)) {
+      if (!published.has(tool.providerToolName)) {
         unavailable[tool.canonicalName] = 'mcp_tool_not_published';
       }
     }
@@ -767,7 +856,7 @@ export async function materializeHermesExternalMcpTools(
       enabled_mcp_servers: usableConnections,
     }));
     if (applied.ok !== true || record(applied.applied).mcp_servers !== true) {
-      throw new Error(`hermes_native_mcp_servers_apply_failed:${configuration.runtime.profile}`);
+      throw new Error(`hermes_mcp_servers_apply_failed:${configuration.runtime.profile}`);
     }
   }
   return unavailable;
@@ -776,7 +865,7 @@ export async function materializeHermesExternalMcpTools(
 export function requireHermesCardToolsReadback(
   value: unknown,
   configuration: HermesCardTools,
-  unavailableNativeToolReasons: Record<string, 'native_exact_filter_unavailable'> = {},
+  unavailableHermesToolReasons: Record<string, 'hermes_exact_filter_unavailable'> = {},
   unavailableRuntimeToolReasons: Record<string, string> = {},
 ): Record<string, string> {
   const sections = record(value).sections;
@@ -805,7 +894,7 @@ export function requireHermesCardToolsReadback(
   }
   const unavailableToolReasons: Record<string, string> = {
     ...configuration.unavailableToolReasons,
-    ...unavailableNativeToolReasons,
+    ...unavailableHermesToolReasons,
     ...unavailableRuntimeToolReasons,
   };
   const actualCardToolNames = new Set(actualCardTools);
@@ -814,9 +903,11 @@ export function requireHermesCardToolsReadback(
       unavailableToolReasons[tool.canonicalName] = 'internal_plugin_tool_unavailable';
     }
   }
-  for (const name of configuration.nativeTools) {
-    if (exposed.includes(name)) delete unavailableToolReasons[name];
-    else if (!unavailableToolReasons[name]) unavailableToolReasons[name] = 'native_tool_unavailable';
+  for (const tool of configuration.hermesSuppliedTools) {
+    if (exposed.includes(tool.hermesName)) delete unavailableToolReasons[tool.canonicalName];
+    else if (!unavailableToolReasons[tool.canonicalName]) {
+      unavailableToolReasons[tool.canonicalName] = 'hermes_tool_unavailable';
+    }
   }
 
   const selectedConnections = new Set(
@@ -839,7 +930,7 @@ export function requireHermesCardToolsReadback(
       });
     const expectedTools = configuration.externalMcpTools
       .filter((tool) => tool.connectionId === connectionId)
-      .map((tool) => hermesExternalMcpToolName(connectionId, tool.nativeName));
+      .map((tool) => hermesExternalMcpToolName(connectionId, tool.providerToolName));
     const expected = new Set(expectedTools);
     const extra = actual.filter((name) => !expected.has(name));
     if (extra.length) {
@@ -849,7 +940,7 @@ export function requireHermesCardToolsReadback(
     for (const tool of configuration.externalMcpTools.filter(
       (candidate) => candidate.connectionId === connectionId,
     )) {
-      const expectedName = hermesExternalMcpToolName(connectionId, tool.nativeName);
+      const expectedName = hermesExternalMcpToolName(connectionId, tool.providerToolName);
       if (!actualNames.has(expectedName)) {
         unavailableToolReasons[tool.canonicalName] = 'external_mcp_tool_unavailable';
       }
@@ -858,10 +949,437 @@ export function requireHermesCardToolsReadback(
   return unavailableToolReasons;
 }
 
-export function hermesExternalMcpToolName(connectionId: string, nativeName: string): string {
-  return `mcp__${mcpNameComponent(connectionId)}__${mcpNameComponent(nativeName)}`;
+export function hermesExternalMcpToolName(connectionId: string, providerToolName: string): string {
+  return `mcp__${mcpNameComponent(connectionId)}__${mcpNameComponent(providerToolName)}`;
 }
 
 function mcpNameComponent(value: string): string {
   return value.replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+function equalHex(left: string, right: string): boolean {
+  if (!/^[a-f0-9]{64}$/i.test(left) || !/^[a-f0-9]{64}$/i.test(right)) return false;
+  const leftBytes = Buffer.from(left, 'hex');
+  const rightBytes = Buffer.from(right, 'hex');
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function authenticationFailure(stage: string): never {
+  throw new Error(`hermes_card_tool_authentication_failed:${stage}`);
+}
+
+export function cardToolAuthenticationFailureStage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : '';
+  const prefix = 'hermes_card_tool_authentication_failed:';
+  if (!message.startsWith(prefix)) return null;
+  const stage = message.slice(prefix.length);
+  return /^[a-z_]{1,64}$/.test(stage) ? stage : null;
+}
+
+function exactText(value: unknown, max: number): string {
+  return typeof value === 'string' && value === value.trim() && value.length <= max
+    ? value
+    : '';
+}
+
+function magenticProof(value: unknown): MagenticWorkerToolProof {
+  const proof = record(value);
+  const expected = [
+    'arguments', 'authorityCardId', 'authorityCardRevisionId',
+    'authorityConfigurationFingerprint', 'authorityProfile', 'deckId', 'expiresAt',
+    'nonce', 'outerRunId', 'projectId', 'sourceProfile', 'sourceTaskId',
+    'sourceTaskRunId', 'taskRootId', 'tool',
+  ];
+  if (Object.keys(proof).sort().join('\0') !== expected.join('\0')) authenticationFailure('worker_shape');
+  const result = {
+    projectId: exactText(proof.projectId, 512),
+    deckId: exactText(proof.deckId, 512),
+    outerRunId: exactText(proof.outerRunId, 512),
+    taskRootId: exactText(proof.taskRootId, 512),
+    sourceTaskId: exactText(proof.sourceTaskId, 512),
+    sourceTaskRunId: Number(proof.sourceTaskRunId),
+    sourceProfile: exactText(proof.sourceProfile, 128),
+    authorityProfile: exactText(proof.authorityProfile, 128),
+    authorityCardId: exactText(proof.authorityCardId, 512),
+    authorityCardRevisionId: exactText(proof.authorityCardRevisionId, 512),
+    authorityConfigurationFingerprint: exactText(proof.authorityConfigurationFingerprint, 64),
+    expiresAt: Number(proof.expiresAt),
+    nonce: exactText(proof.nonce, 128),
+    tool: exactText(proof.tool, 128),
+    arguments: proof.arguments,
+  };
+  const now = Math.floor(Date.now() / 1000);
+  if (Object.entries(result).some(([key, item]) => (
+    key !== 'sourceTaskRunId' && key !== 'expiresAt' && key !== 'arguments' && !item
+  ))
+    || !Number.isSafeInteger(result.sourceTaskRunId) || result.sourceTaskRunId < 1
+    || !Number.isSafeInteger(result.expiresAt) || result.expiresAt <= now
+    || result.expiresAt > now + AUTH_MAX_FUTURE_SECONDS
+    || !/^[a-f0-9]{64}$/.test(result.authorityConfigurationFingerprint)
+    || !/^[a-f0-9]{32,128}$/i.test(result.nonce)
+    || !result.arguments || typeof result.arguments !== 'object' || Array.isArray(result.arguments)) {
+    authenticationFailure('worker_claim');
+  }
+  return result as MagenticWorkerToolProof;
+}
+
+export class HermesCardToolAuthority {
+  constructor(
+    private readonly registry: CardRuntimeRegistry,
+    private readonly activeContext: (sessionId: string) => {
+      runId: string;
+      conversationId: string;
+      authorizedCanonicalTools: string[];
+    } | null,
+    private readonly verifyWorker = (envelope: {
+      keyId: string;
+      payload: string;
+      signature: string;
+    }): Promise<unknown> => requestPythonRailsJson('/magentic/execution/worker-tool-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope),
+    }, { timeoutMs: 15_000 }),
+  ) {}
+
+  magenticAuthority(owner: CardRuntimeOwner): MagenticCardToolAuthority {
+    const candidates = this.registry.list().filter((runtime) => (
+      runtime.state.status === 'running' && runtime.owns(owner)
+    ));
+    if (candidates.length !== 1) throw new Error('magentic_card_tool_authority_unavailable');
+    const runtime = candidates[0];
+    return {
+      cardId: runtime.owner.cardId,
+      cardRevisionId: runtime.cardTools.cardRevisionId,
+      profile: runtime.state.profile,
+      configurationFingerprint: runtime.cardTools.configurationFingerprint,
+    };
+  }
+
+  async authenticate(
+    keyId: string,
+    payload: string,
+    signature: string,
+  ): Promise<AuthenticatedCardToolRequest> {
+    if (Buffer.byteLength(keyId) > 256
+      || Buffer.byteLength(signature) > 256
+      || Buffer.byteLength(payload) > 512 * 1024) authenticationFailure('bounds');
+    const candidates = this.registry.list().filter((runtime) => (
+      runtime.state.status === 'running' && equalHex(runtime.gatewayKeyId, keyId)
+    ));
+    if (candidates.length === 0) return this.authenticateWorker(keyId, payload, signature);
+    if (candidates.length !== 1) authenticationFailure('key_identity');
+    const runtime = candidates[0];
+    const expected = createHmac('sha256', runtime.gatewayToken).update(payload, 'utf8').digest('hex');
+    if (!equalHex(expected, signature)) authenticationFailure('signature');
+    let parsed: unknown;
+    try { parsed = JSON.parse(payload); } catch { authenticationFailure('payload_json'); }
+    const value = record(parsed);
+    const expectedKeys = [
+      'arguments', 'expiresAt', 'nonce', 'sourceStoredSessionId', 'tool', 'version',
+    ];
+    if (Object.keys(value).sort().join('\0') !== expectedKeys.join('\0')) {
+      authenticationFailure('payload_shape');
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = Number(value.expiresAt);
+    const nonce = exactText(value.nonce, 128);
+    const sourceStoredSessionId = exactText(value.sourceStoredSessionId, 512);
+    const tool = exactText(value.tool, 128);
+    const args = value.arguments;
+    if (!args || typeof args !== 'object' || Array.isArray(args)) authenticationFailure('arguments');
+    const snapshot = record(await runtime.client.request('session.activate', {
+      session_id: runtime.state.hermesSessionId,
+      profile: runtime.state.profile,
+      omit_messages: true,
+    }));
+    if (String(snapshot.session_id || '').trim() !== runtime.state.hermesSessionId) {
+      authenticationFailure('hermes_session');
+    }
+    const stored = String(snapshot.session_key || '').trim();
+    if (!stored) authenticationFailure('stored_session');
+    recordHermesStoredSession(runtime.state, runtime.priorStoredSessionIds, stored);
+    for (const [prior, expiry] of runtime.priorStoredSessionIds) {
+      if (expiry < now) runtime.priorStoredSessionIds.delete(prior);
+    }
+    const sourceKnown = sourceStoredSessionId === runtime.state.storedSessionId
+      || runtime.priorStoredSessionIds.has(sourceStoredSessionId);
+    const registered = runtime.cardTools.pluginTools.find((entry) => entry.hermesName === tool);
+    const argumentKeys = Object.keys(args);
+    const projectRoster = tool === PROJECT_ROSTER_AUTHORITY_TOOL && (
+      argumentKeys.length === 0
+      || (argumentKeys.length === 1 && argumentKeys[0] === 'target'
+        && typeof (args as Record<string, unknown>).target === 'string'
+        && Buffer.byteLength(String((args as Record<string, unknown>).target)) <= 256)
+    );
+    const active = this.activeContext(runtime.state.sessionId);
+    const observation = tool === RUNTIME_OBSERVATION_AUTHORITY_TOOL
+      && argumentKeys.sort().join('\0') === 'attempt';
+    if (value.version !== 1
+      || !Number.isSafeInteger(expiresAt) || expiresAt < now
+      || expiresAt > now + AUTH_MAX_FUTURE_SECONDS
+      || !/^[a-f0-9]{32,128}$/i.test(nonce)
+      || !sourceKnown
+      || (!registered && !projectRoster && !observation)
+      || (observation && active === null)
+      || (registered && active !== null
+        && !active.authorizedCanonicalTools.includes(registered.canonicalName))) {
+      authenticationFailure('run_authorization');
+    }
+    this.useNonce(runtime, nonce, expiresAt, now);
+    return {
+      owner: { ...runtime.owner },
+      state: runtime.snapshot(),
+      canonicalToolName: projectRoster
+        ? PROJECT_ROSTER_AUTHORITY_TOOL
+        : observation ? RUNTIME_OBSERVATION_AUTHORITY_TOOL : registered!.canonicalName,
+      cardTools: {
+        cardRevisionId: runtime.cardTools.cardRevisionId,
+        configurationFingerprint: runtime.cardTools.configurationFingerprint,
+        runtimeMode: runtime.card.runtime.kind === 'hermes'
+          ? runtime.card.runtime.mode
+          : 'delegate',
+      },
+      request: {
+        version: 1,
+        expiresAt,
+        nonce,
+        sourceStoredSessionId,
+        tool,
+        arguments: args as Record<string, unknown>,
+      },
+    };
+  }
+
+  private async authenticateWorker(
+    keyId: string,
+    payload: string,
+    signature: string,
+  ): Promise<AuthenticatedCardToolRequest> {
+    const proof = magenticProof(await this.verifyWorker({ keyId, payload, signature }));
+    const candidates = this.registry.list().filter((runtime) => (
+      runtime.state.status === 'running'
+      && runtime.owner.projectId === proof.projectId
+      && runtime.owner.deckId === proof.deckId
+      && runtime.owner.cardId === proof.authorityCardId
+      && runtime.state.profile === proof.authorityProfile
+      && runtime.cardTools.cardRevisionId === proof.authorityCardRevisionId
+      && runtime.cardTools.configurationFingerprint === proof.authorityConfigurationFingerprint
+    ));
+    if (candidates.length !== 1) authenticationFailure('worker_runtime');
+    const runtime = candidates[0];
+    const registered = runtime.cardTools.pluginTools.find((entry) => entry.hermesName === proof.tool);
+    if (!registered) authenticationFailure('worker_tool');
+    const now = Math.floor(Date.now() / 1000);
+    this.useNonce(runtime, proof.nonce, proof.expiresAt, now);
+    return {
+      owner: { ...runtime.owner },
+      state: runtime.snapshot(),
+      canonicalToolName: registered.canonicalName,
+      cardTools: {
+        cardRevisionId: runtime.cardTools.cardRevisionId,
+        configurationFingerprint: runtime.cardTools.configurationFingerprint,
+        runtimeMode: runtime.card.runtime.kind === 'hermes'
+          ? runtime.card.runtime.mode
+          : 'delegate',
+      },
+      request: {
+        version: 2,
+        expiresAt: proof.expiresAt,
+        nonce: proof.nonce,
+        sourceTaskId: proof.sourceTaskId,
+        sourceTaskRunId: proof.sourceTaskRunId,
+        sourceProfile: proof.sourceProfile,
+        tool: proof.tool,
+        arguments: proof.arguments,
+      },
+      executionContext: { parentRunId: proof.outerRunId, conversationId: '' },
+    };
+  }
+
+  private useNonce(runtime: CardRuntime, nonce: string, expiry: number, now: number): void {
+    for (const [used, expiresAt] of runtime.cardToolNonces) {
+      if (expiresAt <= now) runtime.cardToolNonces.delete(used);
+    }
+    if (runtime.cardToolNonces.has(nonce)) authenticationFailure('nonce_replay');
+    runtime.cardToolNonces.set(nonce, expiry);
+    while (runtime.cardToolNonces.size > CARD_TOOL_NONCE_LIMIT) {
+      const oldest = runtime.cardToolNonces.keys().next().value as string | undefined;
+      if (!oldest) break;
+      runtime.cardToolNonces.delete(oldest);
+    }
+  }
+}
+
+export async function acquireOptionalHermesCardTools(
+  runtime: CardRuntime,
+  resolveActiveContext: (sessionId: string) => {
+    runId: string;
+    conversationId: string;
+    authorizedCanonicalTools: string[];
+  } | null,
+  dependencies: {
+    resolveTools?: typeof resolveHermesCardTools;
+    materializeProfile?: typeof materializeHermesProfileSelections;
+    materializeExternalTools?: typeof materializeHermesExternalMcpTools;
+    resolveMcpServerSpec?: typeof resolvePythonAgentMcpServerSpec;
+    materializeApplicationServers?: typeof materializeHermesApplicationMcpServers;
+    configureModelRuntime?: typeof configureHermesCardModelRuntime;
+    removeApplicationServers?: typeof removeHermesApplicationMcpServers;
+  } = {},
+): Promise<HermesCardTools | null> {
+  let cleanupConfiguration: HermesCardTools | null = null;
+  try {
+    const active = resolveActiveContext(runtime.state.sessionId);
+    if (!active) return null;
+    const savedGrantedTools = [...new Set([
+      ...runtime.cardTools.enabledTools,
+      ...runtime.cardTools.unavailableTools,
+    ])];
+    const principal = {
+      kind: 'card-runtime' as const,
+      projectId: runtime.owner.projectId,
+      deckId: runtime.owner.deckId,
+      conversationId: active.conversationId,
+      parentRunId: active.runId,
+      callerCardId: runtime.owner.cardId,
+      callerRuntimeKind: 'hermes' as const,
+      callerRuntimeMode: runtime.cardTools.runtime.mode,
+      grantedTools: savedGrantedTools,
+      presentedTools: runtime.cardTools.presentedTools,
+    };
+    const resolved = await (dependencies.resolveTools ?? resolveHermesCardTools)(
+      runtime.owner,
+      runtime.card,
+      { externalCatalogPrincipal: principal },
+    );
+    if (resolved.externalToolCatalogState !== 'available') return null;
+    if (!sameCardToolAuthority(resolved, runtime.cardTools)) return null;
+    if (!resolved.externalMcpTools.length) {
+      runtime.cardTools = resolved;
+      return null;
+    }
+    cleanupConfiguration = resolved;
+    const request = <T>(method: string, params: Record<string, unknown>) => (
+      runtime.client.request<T>(method, params)
+    );
+    await (dependencies.materializeApplicationServers ?? materializeHermesApplicationMcpServers)(
+      request,
+      resolved,
+      (dependencies.resolveMcpServerSpec ?? resolvePythonAgentMcpServerSpec)({
+        ...principal,
+        callerRuntimeMode: resolved.runtime.mode,
+        grantedTools: resolved.enabledTools,
+        presentedTools: resolved.presentedTools,
+      }),
+    );
+    const connectionIds = [...new Set(
+      resolved.externalMcpTools.map((tool) => tool.connectionId),
+    )];
+    const configureModel = dependencies.configureModelRuntime ?? configureHermesCardModelRuntime;
+    const profile = await (dependencies.materializeProfile ?? materializeHermesProfileSelections)(
+      {
+        ...runtime.launch.profileSelection,
+        hermesSuppliedTools: resolved.hermesSuppliedTools,
+        toolsets: resolved.toolsets,
+        requiredToolsets: resolved.pluginTools.length ? [HERMES_CARD_TOOLS_TOOLSET] : [],
+        mcpConnectionIds: connectionIds,
+      },
+      (name) => request('profiles.describe', { name }),
+      configureHermesSubagentModel,
+      async (name, selection) => {
+        if (selection.apiMode === 'codex_app_server') {
+          await configureModel(name, selection);
+          return { ok: true, applied: { model: true } };
+        }
+        const configured = await request('profiles.configure', {
+          name,
+          provider: selection.provider,
+          model: selection.model,
+          confirm_expensive_model: true,
+        });
+        await configureModel(name, selection);
+        return configured;
+      },
+      (name, disabledSkills) => request('profiles.configure', {
+        name, disabled_skills: disabledSkills,
+      }),
+      (name, enabledToolsets) => request('profiles.configure', {
+        name, enabled_toolsets: enabledToolsets,
+      }),
+      (name, enabledMcpServers) => request('profiles.configure', {
+        name, enabled_mcp_servers: enabledMcpServers,
+      }),
+    );
+    const unavailableExternal = await (
+      dependencies.materializeExternalTools ?? materializeHermesExternalMcpTools
+    )(request, resolved, profile.unavailableMcpServerReasons);
+    const reload = record(await runtime.client.request('reload.mcp', {
+      session_id: runtime.state.hermesSessionId,
+      confirm: true,
+    }));
+    if (reload.status !== 'reloaded') throw new Error('hermes_mcp_reload_failed');
+    runtime.state.unavailableToolReasons = requireHermesCardToolsReadback(
+      await runtime.client.request('tools.show', { session_id: runtime.state.hermesSessionId }),
+      resolved,
+      profile.unavailableHermesToolReasons,
+      unavailableExternal,
+    );
+    runtime.cardTools = resolved;
+    runtime.emitState();
+    return resolved;
+  } catch (error) {
+    if (cleanupConfiguration) await releaseOptionalHermesCardTools(
+      runtime,
+      cleanupConfiguration,
+      dependencies.removeApplicationServers ?? removeHermesApplicationMcpServers,
+    );
+    console.warn(
+      `[card-tools] optional tool acquisition failed card=${runtime.state.cardId}`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
+}
+
+export async function releaseOptionalHermesCardTools(
+  runtime: CardRuntime,
+  configuration: HermesCardTools,
+  removeServers: typeof removeHermesApplicationMcpServers = removeHermesApplicationMcpServers,
+): Promise<void> {
+  try {
+    const request = <T>(method: string, params: Record<string, unknown>) => (
+      runtime.client.request<T>(method, params)
+    );
+    await removeServers(request, configuration);
+    const reload = record(await runtime.client.request('reload.mcp', {
+      session_id: runtime.state.hermesSessionId,
+      confirm: true,
+    }));
+    if (reload.status !== 'reloaded') throw new Error('hermes_mcp_reload_failed');
+  } catch (error) {
+    console.warn(
+      `[card-tools] optional tool cleanup failed card=${runtime.state.cardId}`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+function sameCardToolAuthority(left: HermesCardTools, right: HermesCardTools): boolean {
+  const stable = (value: HermesCardTools) => JSON.stringify({
+    projectId: value.projectId,
+    deckId: value.deckId,
+    cardId: value.cardId,
+    cardRevisionId: value.cardRevisionId,
+    cardRevisionSha256: value.cardRevisionSha256,
+    runtime: value.runtime,
+    selectedTools: [...new Set([
+      ...value.enabledTools,
+      ...value.unavailableTools,
+    ])].sort(),
+    hermesSuppliedTools: value.hermesSuppliedTools,
+    toolsets: value.toolsets,
+    pluginTools: value.pluginTools,
+  });
+  return stable(left) === stable(right);
 }

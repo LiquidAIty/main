@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from app.python_models.orchestration_contracts import (
+    GraphRecordReference,
+    graph_record_fields,
+    graph_record_identity,
+)
 
 
 IDF_FILENAME = "in.idf"
@@ -26,8 +31,10 @@ _FORBIDDEN_SECRET_KEYS = frozenset({
     "access_token", "refreshtoken", "refresh_token", "clientsecret",
     "client_secret", "oauthstate", "oauth_state",
 })
-_SELECTED_NATIVE_REFERENCE_FIELDS = frozenset({
-    "authority", "nativeId", "nativeKind", "label", "reason", "asOf",
+_SELECTED_GRAPH_RECORD_FIELDS = frozenset({
+    "engraphisMemoryId", "engraphisEntityId", "engraphisRelationshipId",
+    "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
+    "cbmQualifiedName", "label", "reason", "asOf",
     "required", "readOperation", "contentSha256", "provenance",
     "selectionScope", "materializedContentBytes", "materializedRecordSha256",
     "sourcePath", "sourceUrl", "truncated",
@@ -72,14 +79,12 @@ class StableSavedCardContext(BaseModel):
     runtimeOptions: dict[str, Any] = Field(default_factory=dict)
 
 
-class GraphDataRecord(BaseModel):
-    """One real bounded native graph record embedded in the Run input."""
+class GraphDataRecord(GraphRecordReference):
+    """One real bounded provider graph record embedded in the Run input."""
 
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["selection", "node", "relationship"]
-    authority: str
-    nativeId: str
     type: str
     content: dict[str, Any]
     provenance: dict[str, Any] = Field(default_factory=dict)
@@ -89,18 +94,18 @@ class GraphDataRecord(BaseModel):
 
 
 class ActualGraphData(BaseModel):
-    """Actual selected/resolved native graph data embedded first in the IDF."""
+    """Actual selected/resolved provider graph data embedded first in the IDF."""
 
     model_config = ConfigDict(extra="forbid")
 
-    authorities: list[str] = Field(default_factory=list)
-    selectedNativeReferences: list[dict[str, Any]] = Field(default_factory=list)
+    graphSystems: list[str] = Field(default_factory=list)
+    selectedGraphRecords: list[dict[str, Any]] = Field(default_factory=list)
     recordCounts: dict[str, int]
     provenanceSummary: list[dict[str, Any]] = Field(default_factory=list)
     records: list[GraphDataRecord] = Field(default_factory=list)
     modelText: str = ""
 
-    @field_validator("selectedNativeReferences", mode="before")
+    @field_validator("selectedGraphRecords", mode="before")
     @classmethod
     def reject_non_reference_fields(cls, value: Any) -> Any:
         if not isinstance(value, list):
@@ -108,7 +113,7 @@ class ActualGraphData(BaseModel):
         for item in value:
             if (
                 not isinstance(item, dict)
-                or set(item) - _SELECTED_NATIVE_REFERENCE_FIELDS
+                or set(item) - _SELECTED_GRAPH_RECORD_FIELDS
                 or _reference_contains_runtime_receipt(item)
             ):
                 raise ValueError("input_graph_reference_field_forbidden")
@@ -129,7 +134,6 @@ class SelectedToolsAndGrants(BaseModel):
         "mode": "selected-mcp",
         "fallbackReason": None,
     })
-    nativeTools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     toolsets: list[str] = Field(default_factory=list)
     mcpConnectionIds: list[str] = Field(default_factory=list)
@@ -264,30 +268,31 @@ def _source_path(properties: dict[str, Any]) -> str | None:
 def _graph_records(
     *,
     graph_context: str,
-    native_references: list[dict[str, Any]],
+    graph_records: list[dict[str, Any]],
     graph_projection: dict[str, Any],
     materialized_at: str,
 ) -> list[GraphDataRecord]:
     records: list[GraphDataRecord] = []
     retrieved_by_identity = {
-        (str(item.get("authority") or ""), str(item.get("nativeId") or "")): item
-        for item in native_references
+        graph_record_identity(item): item
+        for item in graph_records
         if isinstance(item, dict)
     }
-    for reference in native_references:
+    for reference in graph_records:
         if not isinstance(reference, dict):
             raise InputMaterializationError("input_graph_reference_invalid")
-        authority = str(reference.get("authority") or "").strip()
-        native_id = str(reference.get("nativeId") or "").strip()
-        if not authority or not native_id:
+        try:
+            id_field, identifier = graph_record_identity(reference)
+        except ValueError as error:
+            raise InputMaterializationError("input_graph_reference_invalid") from error
+        if not identifier:
             raise InputMaterializationError("input_graph_reference_invalid")
         records.append(GraphDataRecord(
             kind="selection",
-            authority=authority,
-            nativeId=native_id,
-            type=str(reference.get("nativeKind") or "native-reference"),
+            **graph_record_fields(id_field, identifier),
+            type=id_field,
             content={
-                "label": str(reference.get("label") or native_id),
+                "label": str(reference.get("label") or identifier),
                 "reason": str(reference.get("reason") or ""),
                 "required": reference.get("required") is True,
                 "readOperation": str(reference.get("readOperation") or "exact_read"),
@@ -306,31 +311,33 @@ def _graph_records(
             retrievedAt=str(reference.get("asOf") or materialized_at),
             sourcePath=str(reference.get("sourcePath") or "").strip() or None,
         ))
-    projection_authority = str(graph_projection.get("authority") or "").strip()
     for node in graph_projection.get("nodes") or []:
         if not isinstance(node, dict):
             raise InputMaterializationError("input_graph_node_invalid")
-        authority = str(node.get("authority") or projection_authority or "").strip()
-        native_id = str(node.get("id") or node.get("canonicalId") or "").strip()
+        graph_system = str(node.get("graphSystem") or "").strip()
+        entity_id = str(node.get("id") or node.get("canonicalId") or "").strip()
         properties = dict(node.get("properties") or {})
-        if not authority or not native_id:
+        id_field = {
+            "engraphis": "engraphisEntityId",
+            "graphiti": "graphitiEntityId",
+            "cbm": "cbmQualifiedName",
+        }.get(graph_system)
+        if not id_field or not entity_id:
             raise InputMaterializationError("input_graph_node_invalid")
-        selected = retrieved_by_identity.get((authority, native_id))
+        selected = retrieved_by_identity.get((id_field, entity_id))
         materialized_record_sha256 = str(
             (selected or {}).get("materializedRecordSha256") or ""
         ).strip()
         records.append(GraphDataRecord(
             kind="node",
-            authority=authority,
-            nativeId=native_id,
-            type=str(node.get("type") or "NativeObject"),
+            **graph_record_fields(id_field, entity_id),
+            type=str(node.get("type") or "GraphObject"),
             content={
-                "label": str(node.get("label") or native_id),
+                "label": str(node.get("label") or entity_id),
                 "labels": list(node.get("labels") or []),
                 **(
                     {"materializedRecord": {
-                        "authority": authority,
-                        "nativeId": native_id,
+                        **graph_record_fields(id_field, entity_id),
                         "sha256": materialized_record_sha256,
                     }}
                     if materialized_record_sha256 else {"properties": properties}
@@ -345,25 +352,28 @@ def _graph_records(
     for edge in graph_projection.get("edges") or []:
         if not isinstance(edge, dict):
             raise InputMaterializationError("input_graph_relationship_invalid")
-        native_id = str(edge.get("id") or "").strip()
-        authority = str(edge.get("authority") or projection_authority or "").strip()
+        relationship_id = str(edge.get("id") or "").strip()
+        graph_system = str(edge.get("graphSystem") or "").strip()
+        id_field = {
+            "engraphis": "engraphisRelationshipId",
+            "graphiti": "graphitiRelationshipId",
+        }.get(graph_system)
         source = str(edge.get("source") or "").strip()
         target = str(edge.get("target") or "").strip()
-        if not authority or not native_id or not source or not target:
+        if not id_field or not relationship_id or not source or not target:
             raise InputMaterializationError("input_graph_relationship_invalid")
         records.append(GraphDataRecord(
             kind="relationship",
-            authority=authority,
-            nativeId=native_id,
+            **graph_record_fields(id_field, relationship_id),
             type=str(edge.get("predicate") or "RELATED"),
             content={
-                "sourceNativeId": source,
-                "targetNativeId": target,
+                "sourceEntityId": source,
+                "targetEntityId": target,
                 "properties": dict(edge.get("properties") or {}),
             },
             provenance=dict(edge.get("provenance") or {}),
             retrievedAt=materialized_at,
-            relationshipIds=[native_id],
+            relationshipIds=[relationship_id],
         ))
     return records
 
@@ -374,9 +384,15 @@ def _record_counts(records: list[GraphDataRecord]) -> dict[str, int]:
     )}
     for record in records:
         counts[record.kind] += 1
-        authority_key = f"authority:{record.authority}"
+        id_field, _ = graph_record_identity(record.model_dump(exclude_none=True))
+        graph_system = (
+            "engraphis" if id_field.startswith("engraphis")
+            else "graphiti" if id_field.startswith("graphiti")
+            else "cbm"
+        )
+        system_key = f"graphSystem:{graph_system}"
         type_key = f"type:{record.type}"
-        counts[authority_key] = counts.get(authority_key, 0) + 1
+        counts[system_key] = counts.get(system_key, 0) + 1
         counts[type_key] = counts.get(type_key, 0) + 1
     counts["total"] = len(records)
     return counts
@@ -385,31 +401,37 @@ def _record_counts(records: list[GraphDataRecord]) -> dict[str, int]:
 def _provenance_summary(references: list[dict[str, Any]]) -> list[dict[str, Any]]:
     unique: dict[str, dict[str, Any]] = {}
     for reference in references:
-        authority = str(reference.get("authority") or "").strip()
-        provenance = dict(reference.get("provenance") or {})
-        if not authority:
+        try:
+            id_field, _ = graph_record_identity(reference)
+        except ValueError:
             continue
-        unique.setdefault(authority, {
-            "authority": authority,
+        graph_system = (
+            "engraphis" if id_field.startswith("engraphis")
+            else "graphiti" if id_field.startswith("graphiti")
+            else "cbm"
+        )
+        provenance = dict(reference.get("provenance") or {})
+        unique.setdefault(graph_system, {
+            "graphSystem": graph_system,
             "readOperations": [],
             "sources": [],
         })
         operation = str(reference.get("readOperation") or "exact_read")
-        if operation not in unique[authority]["readOperations"]:
-            unique[authority]["readOperations"].append(operation)
+        if operation not in unique[graph_system]["readOperations"]:
+            unique[graph_system]["readOperations"].append(operation)
         for key in (
             "source", "project", "database", "repository", "repositoryRoot",
             "path", "sourcePath", "url", "sourceUrl",
         ):
             value = str(provenance.get(key) or "").strip()
-            if value and value not in unique[authority]["sources"]:
-                unique[authority]["sources"].append(value)
+            if value and value not in unique[graph_system]["sources"]:
+                unique[graph_system]["sources"].append(value)
         for value in (
             str(reference.get("sourcePath") or "").strip(),
             str(reference.get("sourceUrl") or "").strip(),
         ):
-            if value and value not in unique[authority]["sources"]:
-                unique[authority]["sources"].append(value)
+            if value and value not in unique[graph_system]["sources"]:
+                unique[graph_system]["sources"].append(value)
     return [unique[key] for key in sorted(unique)]
 
 
@@ -419,7 +441,7 @@ def materialize_idf(
     variable: dict[str, Any],
     capabilities: dict[str, Any],
     graph_context: str,
-    native_references: list[dict[str, Any]],
+    graph_records: list[dict[str, Any]],
     graph_projection: dict[str, Any],
     materialized_at: str | None = None,
 ) -> MaterializedIdf:
@@ -429,27 +451,30 @@ def materialize_idf(
         raise InputMaterializationError("input_dynamic_field_forbidden")
     if any(
         not isinstance(reference, dict)
-        or set(reference) - _SELECTED_NATIVE_REFERENCE_FIELDS
+        or set(reference) - _SELECTED_GRAPH_RECORD_FIELDS
         or _reference_contains_runtime_receipt(reference)
-        for reference in native_references
+        for reference in graph_records
     ):
         raise InputMaterializationError("input_graph_reference_field_forbidden")
     timestamp = materialized_at or _timestamp()
     records = _graph_records(
         graph_context=graph_context,
-        native_references=native_references,
+        graph_records=graph_records,
         graph_projection=graph_projection,
         materialized_at=timestamp,
     )
-    authorities = sorted({
-        record.authority for record in records
-        if record.authority and record.authority != "mixed"
+    graph_systems = sorted({
+        "engraphis" if identity[0].startswith("engraphis")
+        else "graphiti" if identity[0].startswith("graphiti")
+        else "cbm"
+        for record in records
+        for identity in [graph_record_identity(record.model_dump(exclude_none=True))]
     })
     graph = ActualGraphData(
-        authorities=authorities,
-        selectedNativeReferences=[dict(item) for item in native_references],
+        graphSystems=graph_systems,
+        selectedGraphRecords=[dict(item) for item in graph_records],
         recordCounts=_record_counts(records),
-        provenanceSummary=_provenance_summary(native_references),
+        provenanceSummary=_provenance_summary(graph_records),
         records=records,
         modelText=graph_context,
     )
@@ -482,7 +507,6 @@ def materialize_idf(
             "mode": "selected-mcp",
             "fallbackReason": None,
         }),
-        nativeTools=list(capabilities.get("nativeTools") or []),
         skills=list(capabilities.get("skills") or []),
         toolsets=list(capabilities.get("toolsets") or []),
         mcpConnectionIds=list(capabilities.get("mcpConnectionIds") or []),
@@ -652,11 +676,10 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "presentedTools": list(grants.presentedTools),
         "toolDefinitions": list(grants.toolDefinitions),
         "scriptPresentation": dict(grants.scriptPresentation),
-        "nativeTools": list(grants.nativeTools),
         "skills": list(grants.skills),
         "toolsets": list(grants.toolsets),
         "mcpConnectionIds": list(grants.mcpConnectionIds),
-        "nativeReferences": list(idf.actualGraphData.selectedNativeReferences),
+        "graphRecords": list(idf.actualGraphData.selectedGraphRecords),
         "images": list(idf.dynamicContext.images),
         "estimates": _input_estimates(idf),
     }
@@ -670,7 +693,7 @@ def idf_public(materialized: MaterializedIdf) -> dict[str, Any]:
             "idfBytes": len(materialized.idf_bytes),
             "idfSha256": materialized.idf_sha256,
             "recordCounts": dict(materialized.idf.actualGraphData.recordCounts),
-            "authorities": list(materialized.idf.actualGraphData.authorities),
+            "graphSystems": list(materialized.idf.actualGraphData.graphSystems),
             "estimatedIdfFileTokens": _token_estimate(
                 materialized.idf_bytes.decode("utf-8")
             ),

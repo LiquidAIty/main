@@ -40,9 +40,9 @@ import type {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const identity = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_agent_cli' };
+const identity = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' };
 const session = (status: AgentTerminalSession['status'] = 'running'): AgentTerminalSession => ({
-  sessionId: 'session-1', cardId: identity.cardId, profile: 'agent-cli-proof', pid: 42, ptyId: 'pty-1',
+  sessionId: 'session-1', cardId: identity.cardId, profile: 'builder', pid: 42, ptyId: 'pty-1',
   status, cols: 80, rows: 24,
 });
 
@@ -81,12 +81,12 @@ function deferred<T>() {
 }
 
 describe('AgentTerminalPanel', () => {
-  it('attaches the dedicated under-chat Builder presentation to Builder\'s native PTY stream', async () => {
+  it('attaches the dedicated under-chat Builder presentation to Builder\'s Hermes PTY stream', async () => {
     const builderIdentity = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' };
     let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
     const client: AgentTerminalClient = {
       open: vi.fn(async () => ({
-        ...session(), cardId: 'builder', profile: 'builder', pid: 4242, ptyId: 'builder-native-pty',
+        ...session(), cardId: 'builder', profile: 'builder', pid: 4242, ptyId: 'builder-pty',
       })),
       stream: vi.fn((_identity, _sessionId, _after, candidate) => {
         handlers = candidate;
@@ -119,16 +119,16 @@ describe('AgentTerminalPanel', () => {
     expect(panel?.getAttribute('data-card-id')).toBe('builder');
     expect(panel?.getAttribute('data-profile')).toBe('builder');
     await act(async () => {
-      handlers?.onOutput({ sequence: 1, data: '\u001b[36mbuilder native tui\u001b[0m\r\n' });
+      handlers?.onOutput({ sequence: 1, data: '\u001b[36mbuilder Hermes tui\u001b[0m\r\n' });
       await Promise.resolve();
     });
-    expect(terminal.writes).toEqual(['\u001b[36mbuilder native tui\u001b[0m\r\n']);
+    expect(terminal.writes).toEqual(['\u001b[36mbuilder Hermes tui\u001b[0m\r\n']);
     expect(panel?.getAttribute('data-status')).toBe('running');
     expect(host!.querySelector('[data-testid="under-chat-card-work-surface"]')).not.toBeNull();
     expect(host!.querySelector('[data-testid="main-chat"]')).not.toBeNull();
   });
 
-  it('opens one saved-card session and writes only its raw PTY output to xterm', async () => {
+  it('opens one saved Builder session and writes only its raw PTY output to xterm', async () => {
     let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
     const client: AgentTerminalClient = {
       open: vi.fn(async () => session()),
@@ -147,12 +147,12 @@ describe('AgentTerminalPanel', () => {
     expect(host!.querySelector('[data-testid="agent-terminal-panel"]')?.getAttribute('data-session-id'))
       .toBe('session-1');
     expect(host!.querySelector('[data-testid="agent-terminal-panel"]')?.getAttribute('data-profile'))
-      .toBe('agent-cli-proof');
+      .toBe('builder');
     await act(async () => {
-      handlers?.onOutput({ sequence: 1, data: '\u001b[32mnative\u001b[0m\r\n' });
+      handlers?.onOutput({ sequence: 1, data: '\u001b[32mHermes\u001b[0m\r\n' });
       await Promise.resolve();
     });
-    expect(terminal.writes).toEqual(['\u001b[32mnative\u001b[0m\r\n']);
+    expect(terminal.writes).toEqual(['\u001b[32mHermes\u001b[0m\r\n']);
     expect(host!.querySelector('[data-testid="agent-terminal-start"]')).toBeNull();
     expect(host!.querySelector('[data-testid="agent-terminal-stop"]')).toBeNull();
   });
@@ -205,7 +205,7 @@ describe('AgentTerminalPanel', () => {
     expect(host.querySelector('[data-session-id="session-1"]')).toBeTruthy();
   });
 
-  it('does not attach an earlier card open or its failure after the saved identity changes', async () => {
+  it('does not attach an earlier Card open or its failure after the saved identity changes', async () => {
     const first = deferred<AgentTerminalSession>();
     const second = deferred<AgentTerminalSession>();
     const nextIdentity = { ...identity, cardId: 'card_second' };

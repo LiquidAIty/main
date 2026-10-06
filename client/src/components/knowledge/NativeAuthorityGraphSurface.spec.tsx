@@ -51,7 +51,6 @@ class ResizeObserverStub { observe() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
 import {
-  composeJevAttentionPresentation,
   composeThinkKnowPresentation as composeNativeThinkKnowPresentation,
   NativeJoinedGraphSurface,
   NativeGraphProjectionSurface,
@@ -208,7 +207,7 @@ describe('native authority graph surfaces', () => {
       ...empty('thinkgraph'),
       nodes: [
         { id: 'think-1', canonicalId: 'shared-entity', label: 'Shared',
-          properties: { attentionActive: true, evidence: [{ id: 'think-evidence' }] } },
+          properties: { evidence: [{ id: 'think-evidence' }] } },
         { id: 'same-id', label: 'Case', properties: {} },
         { id: 'think-target', label: 'Think target', properties: {} },
         { id: 'empty', label: '', properties: {} },
@@ -222,7 +221,7 @@ describe('native authority graph surfaces', () => {
       ...empty('knowgraph'),
       nodes: [
         { id: 'know-1', canonicalId: 'shared-entity', label: 'Shared',
-          properties: { attentionActive: true, evidence: [{ id: 'know-evidence' }] } },
+          properties: { evidence: [{ id: 'know-evidence' }] } },
         { id: 'same-id', label: 'case', properties: {} },
         { id: 'know-target', label: 'Know target', properties: {} },
         { id: 'empty', label: '', properties: {} },
@@ -267,7 +266,6 @@ describe('native authority graph surfaces', () => {
       material_role: 'PAIRED_SOLARPUNK_MATERIAL',
       material_blue: '#4FA2AD',
       material_orange: '#F2A64A',
-      turn_heat_active: true,
     });
     expect({ think, know }).toEqual(before);
 
@@ -422,198 +420,6 @@ describe('native authority graph surfaces', () => {
     expect(realTab).toBe(authority === 'thinkgraph' ? 'Think' : 'Know');
     expect(screen.queryByRole('tab', { name: absentTab })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Load$/ })).toBeNull();
-  });
-
-  it.each([
-    ['Think-only', true, false, ['thinkgraph:think-active']],
-    ['Know-only', false, true, ['knowgraph:know-active']],
-    ['both', true, true, ['thinkgraph:think-active', 'knowgraph:know-active']],
-  ] as const)('maps %s native attention onto one joined visual activation', (_case, thinkActive, knowActive, activeMembers) => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [{
-        id: 'think-active', canonicalId: 'activated-subject', label: 'Activated subject',
-        properties: thinkActive ? { attentionActive: true } : {},
-      }],
-    };
-    const know = {
-      ...empty('knowgraph'),
-      nodes: [{
-        id: 'know-active', canonicalId: 'activated-subject', label: 'Activated subject',
-        properties: knowActive ? { attentionActive: true } : {},
-      }],
-    };
-    const before = structuredClone({ think, know });
-
-    const presentation = composeThinkKnowPresentation(think, know);
-    expect(presentation.projection.nodes).toHaveLength(1);
-    const visualNode = presentation.projection.nodes[0] as any;
-    expect(visualNode.turn_heat_active).toBe(true);
-    expect(visualNode.properties.attentionActive).toBe(true);
-    expect(presentation.visualNodeIdByNativeMember.get('thinkgraph:think-active')).toBe(visualNode.id);
-    expect(presentation.visualNodeIdByNativeMember.get('knowgraph:know-active')).toBe(visualNode.id);
-    expect(presentation.nodeVariants.get(visualNode.id)
-      ?.filter(variant => variant.node.properties?.attentionActive === true)
-      .map(variant => `${variant.authority}:${variant.node.id}`)).toEqual(activeMembers);
-    expect({ think, know }).toEqual(before);
-  });
-
-  it('maps real selected Jev subjects into one bounded Galaxy scene without changing edge meaning', () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [
-        { id: 'think-center', canonicalId: 'shared-center', label: 'Shared center', visual_radius: 6,
-          properties: { attentionActive: true } },
-        { id: 'think-second', label: 'Second', properties: {} },
-        { id: 'think-support', label: 'Support', properties: {} },
-        { id: 'think-unrelated', label: 'Unrelated project node', properties: {} },
-      ],
-      edges: [{
-        id: 'weighted-edge', source: 'think-center', target: 'think-support',
-        predicate: 'DEPENDS_ON', label: '61%', relationship_strength: 0.61,
-        properties: { relationship_strength: 0.61 },
-      }],
-    };
-    const know = {
-      ...empty('knowgraph'),
-      nodes: [
-        { id: 'know-center', canonicalId: 'shared-center', label: 'Shared center', properties: { attentionActive: true } },
-        { id: 'know-third', label: 'Third', properties: { attentionActive: true } },
-      ],
-      edges: [{
-        id: 'know-edge', source: 'know-center', target: 'know-third',
-        predicate: 'SUPPORTS', properties: { relationship_strength: 0.44 },
-      }],
-    };
-    const nativeBefore = structuredClone({ think, know });
-    const presentation = composeThinkKnowPresentation(think, know);
-    const visual = {
-      decisionId: 'decision-1', runId: 'run-1', phase: 'attention_space' as const,
-      active: true, distribution: { center: 0.7, second: 0.2, third: 0.1 },
-      selectedSubjects: [
-        { choiceId: 'center', authority: 'ThinkGraph' as const, nativeId: 'think-center',
-          title: 'Shared center', probability: 0.7, hydrated: true, resolution: 'resolved' as const },
-        { choiceId: 'second', authority: 'ThinkGraph' as const, nativeId: 'think-second',
-          title: 'Second', probability: 0.2, hydrated: false, resolution: 'unavailable' as const },
-        { choiceId: 'third', authority: 'KnowGraph' as const, nativeId: 'know-third',
-          title: 'Third', probability: 0.1, hydrated: true, resolution: 'resolved' as const },
-      ],
-    };
-
-    const attention = composeJevAttentionPresentation(presentation, visual);
-    const byLabel = new Map(attention.nodes.map(node => [node.label, node]));
-    expect(byLabel.get('Shared center')).toMatchObject({
-      anchor_role: 'global',
-      turn_heat_active: true,
-      properties: { jevAttentionSource: 'paired', jevAttentionProbability: 0.7 },
-    });
-    expect(byLabel.get('Shared center')!.gravity_mass)
-      .toBeGreaterThan(byLabel.get('Second')!.gravity_mass!);
-    expect(byLabel.get('Second')!.gravity_mass)
-      .toBeGreaterThan(byLabel.get('Third')!.gravity_mass!);
-    expect(byLabel.get('Second')).toMatchObject({
-      anchor_role: 'community', turn_heat_active: false,
-      properties: { jevAttentionHydrated: false, attentionActive: false },
-    });
-    expect(byLabel.get('Third')!.properties?.jevAttentionSource).toBe('know');
-    expect(byLabel.get('Support')!.properties?.jevAttentionSource).toBe('think');
-    expect(byLabel.has('Unrelated project node')).toBe(false);
-    expect(attention.edges.map(edge => edge.id)).toEqual([
-      'thinkgraph:weighted-edge', 'knowgraph:know-edge',
-    ]);
-    expect(attention.edges[0]).toMatchObject({
-      predicate: 'DEPENDS_ON', label: '61%', relationship_strength: 0.61,
-      properties: { relationship_strength: 0.61 },
-    });
-    const restored = composeJevAttentionPresentation(presentation, null);
-    expect(byLabel.get('Shared center')!.visual_radius).toBeGreaterThan(6);
-    expect(restored.nodes.find(node => node.label === 'Shared center')?.visual_radius).toBe(6);
-    expect({ think, know }).toEqual(nativeBefore);
-  });
-
-  it('unfolds the same local IDs from Galaxy gravity to Compact without remounting or changing material style', async () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [
-        { id: 'center', label: 'Center', properties: { attentionActive: true } },
-        { id: 'neighbor', label: 'Neighbor', properties: {} },
-        { id: 'unrelated', label: 'Unrelated', properties: {} },
-      ],
-      edges: [{ id: 'edge', source: 'center', target: 'neighbor', predicate: 'RELATES_TO', properties: {} }],
-    };
-    const attention = {
-      decisionId: 'decision-1', runId: 'run-1', phase: 'attention_space' as const,
-      active: true, distribution: { center: 1 },
-      selectedSubjects: [{ choiceId: 'center', authority: 'ThinkGraph' as const,
-        nativeId: 'center', title: 'Center', probability: 1, hydrated: true,
-        resolution: 'resolved' as const }],
-    };
-    const local = { ...attention, phase: 'local_relational' as const, active: false };
-    const props = {
-      projections: { thinkgraph: think, knowgraph: empty('knowgraph') },
-      onExpand: vi.fn(),
-    };
-    const view = render(<NativeJoinedGraphSurface {...props} />);
-    const graph = forceGraphMocks.instances.at(-1);
-    const instanceCount = forceGraphMocks.instances.length;
-
-    view.rerender(<NativeJoinedGraphSurface {...props} jevAttentionVisual={attention} />);
-    await waitFor(() => expect(screen.getByTestId('native-joined-surface')
-      .getAttribute('data-attention-visual-phase')).toBe('attention_space'));
-    expect(graph.setPreset).toHaveBeenCalledWith('galaxy');
-    expect(graph.setStyle).toHaveBeenCalledWith('cyber');
-    const attentionNodeIds = graph.data.nodes.map((node: any) => node.id);
-    const attentionEdgeIds = graph.data.links.map((edge: any) => edge.id);
-    expect(graph.data.nodes.map((node: any) => node.label)).not.toContain('Unrelated');
-
-    view.rerender(<NativeJoinedGraphSurface {...props} jevAttentionVisual={local} />);
-    await waitFor(() => expect(screen.getByTestId('native-joined-surface')
-      .getAttribute('data-attention-visual-phase')).toBe('local_relational'));
-    expect(forceGraphMocks.instances).toHaveLength(instanceCount);
-    expect(graph.destroy).not.toHaveBeenCalled();
-    expect(graph.setPreset).toHaveBeenLastCalledWith('compact');
-    expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
-    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(attentionNodeIds);
-    expect(graph.data.links.map((edge: any) => edge.id)).toEqual(attentionEdgeIds);
-  });
-
-  it('keeps a manual layout choice made during Attention Space instead of fighting it on exit', async () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [{ id: 'center', label: 'Center', properties: { attentionActive: true } }],
-    };
-    const attention = {
-      decisionId: 'decision-1', runId: 'run-1', phase: 'attention_space' as const,
-      active: true, distribution: { center: 1 },
-      selectedSubjects: [{ choiceId: 'center', authority: 'ThinkGraph' as const,
-        nativeId: 'center', title: 'Center', probability: 1, hydrated: true,
-        resolution: 'resolved' as const }],
-    };
-    const props = {
-      projections: { thinkgraph: think, knowgraph: empty('knowgraph') },
-      onExpand: vi.fn(),
-    };
-    const view = render(<NativeJoinedGraphSurface {...props} jevAttentionVisual={attention} />);
-    const graph = forceGraphMocks.instances.at(-1);
-    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    fireEvent.change(screen.getByLabelText('Layout'), { target: { value: 'radial' } });
-    fireEvent.change(screen.getByLabelText('Style'), { target: { value: 'solar' } });
-    fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '7' } });
-    expect(graph.setPreset).toHaveBeenLastCalledWith('radial');
-
-    view.rerender(<NativeJoinedGraphSurface
-      {...props}
-      jevAttentionVisual={{ ...attention, phase: 'local_relational', active: false }}
-    />);
-    await waitFor(() => expect(screen.getByTestId('native-joined-surface')
-      .getAttribute('data-layout')).toBe('radial'));
-    expect(graph.setPreset).toHaveBeenLastCalledWith('radial');
-    expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solar');
-    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('7');
-    const saved = JSON.parse(window.localStorage.getItem(
-      'liquidaity.graph.joined.presentation.v1',
-    ) || '{}');
-    expect(saved).toMatchObject({ style: 'solar', layout: 'radial', settings: { size: 7 } });
   });
 
   it('renders only real direct Think and Know records and deletes the exact atomic fact', async () => {
@@ -923,7 +729,7 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.links.map((edge: any) => edge.id)).toEqual(edgeIds);
     expect(graph.focus).not.toHaveBeenCalled();
     expect(graph.setPreset).not.toHaveBeenCalledWith('galaxy');
-    expect(screen.queryByRole('button', { name: 'Focus' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Focus' })).toBeTruthy();
   });
 
   it('keeps a healthy authority visible while truthfully reporting the other authority failure', () => {
@@ -1101,96 +907,17 @@ describe('native authority graph surfaces', () => {
   it('keeps CodeGraph out of the launch graph surface', () => {
     const { container } = render(
       <KnowledgeGraphFramework
-        attentionProjections={{
+        projections={{
           thinkgraph: empty('thinkgraph'),
           knowgraph: empty('knowgraph'),
-          codegraph: empty('codegraph'),
         }}
-        attentionErrors={{}}
-        onExpandAttentionNode={vi.fn()}
+        errors={{}}
+        onExpandNode={vi.fn()}
       />,
     );
 
     expect(container.querySelector('[data-testid="native-codegraph-surface"]')).toBeNull();
     expect(screen.queryByRole('tablist', { name: 'Knowledge graph view' })).toBeNull();
-  });
-
-  it('preserves selection and supplied records across activity refreshes', async () => {
-    const first = {
-      schemaVersion: 'knowgraph.attention.projection.v1',
-      authority: 'knowgraph',
-      projectId: 'project-1',
-      nodes: [{
-        id: 'mem-one',
-        label: 'build',
-        mentionCount: 1,
-        currentState: 'active',
-        properties: { attentionActive: true, attentionActorColor: '#37ADAA', attentionActorCardId: 'card_main_chat' },
-      }],
-      edges: [],
-    };
-    const { rerender } = render(
-      <NativeGraphProjectionSurface
-        projection={first}
-        status="ready"
-        error={null}
-      />,
-    );
-    const graph = forceGraphMocks.instances.at(-1);
-    await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
-    const survivingNode = graph.data.nodes[0];
-    expect(survivingNode.properties.attentionActorColor).toBe('#37ADAA');
-    act(() => graph.nodeClick(survivingNode));
-    expect(graph.setHighlight).toHaveBeenLastCalledWith('mem-one');
-    expect(survivingNode.properties.attentionActorCardId).toBe('card_main_chat');
-
-    rerender(
-      <NativeGraphProjectionSurface
-        projection={{
-          ...first,
-          nodes: [{ ...first.nodes[0], currentState: 'settled', properties: { ...first.nodes[0].properties, state: 'settled' } }],
-        }}
-        status="ready"
-        error={null}
-      />,
-    );
-    await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
-    expect(graph.data.nodes[0].id).toBe(survivingNode.id);
-    expect(graph.data.nodes[0].currentState).toBe('settled');
-    expect(graph.setHighlight).toHaveBeenLastCalledWith('mem-one');
-
-    rerender(
-      <NativeGraphProjectionSurface
-        projection={{
-          ...first,
-          nodes: [
-            first.nodes[0],
-            {
-              ...first.nodes[0],
-              id: 'mem-two',
-              label: 'tests',
-              properties: { attentionActive: true, attentionActorColor: '#37ADAA', attentionActorCardId: 'card_main_chat' },
-            },
-          ],
-          edges: [{
-            id: 'memory-edge',
-            source: 'mem-one',
-            target: 'mem-two',
-            predicate: 'related',
-            mentionCount: 1,
-            properties: { attentionActorColor: '#37ADAA', attentionActorCardId: 'card_main_chat' },
-          }],
-        }}
-        status="ready"
-        error={null}
-      />,
-    );
-    await waitFor(() => expect(graph.data.nodes).toHaveLength(2));
-    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['mem-one', 'mem-two']);
-    expect(graph.setHighlight).toHaveBeenLastCalledWith('mem-one');
-    expect(graph.data.links[0].properties.attentionActorColor).toBe('#37ADAA');
-    expect(graph.data.links.map((link: any) => [link.id, link.source, link.target, link.relation]))
-      .toEqual([['memory-edge', 'mem-one', 'mem-two', 'related']]);
   });
 
   it('does not expose the removed copy-into-chat action', async () => {
@@ -1244,8 +971,8 @@ describe('native authority graph surfaces', () => {
 
   it('renders the joined native surface in the existing canvas and binds the pull tab to Engraphis settings', async () => {
     const { container } = render(<KnowledgeGraphFramework
-      attentionProjections={{ thinkgraph: empty('thinkgraph'), knowgraph: empty('knowgraph'), codegraph: empty('codegraph') }}
-      attentionErrors={{}} onExpandAttentionNode={vi.fn()} />);
+      projections={{ thinkgraph: empty('thinkgraph'), knowgraph: empty('knowgraph') }}
+      errors={{}} onExpandNode={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('native-joined-surface')).toBeTruthy());
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.getByText('No knowledge yet.')).toBeTruthy();
@@ -1478,9 +1205,9 @@ describe('native authority graph surfaces', () => {
       edges: [{ id: 'know-edge', source: 'shared-know', target: 'know-only', predicate: 'KNOWS_WITH', properties: {} }],
     };
     render(<KnowledgeGraphFramework
-      attentionProjections={{ thinkgraph: think, knowgraph: know, codegraph: empty('codegraph') }}
-      attentionErrors={{}}
-      onExpandAttentionNode={vi.fn()}
+      projections={{ thinkgraph: think, knowgraph: know }}
+      errors={{}}
+      onExpandNode={vi.fn()}
     />);
     await waitFor(() => expect(screen.getByTestId('native-joined-surface')).toBeTruthy());
     const graph = forceGraphMocks.instances.at(-1);

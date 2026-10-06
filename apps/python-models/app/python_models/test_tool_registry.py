@@ -99,7 +99,7 @@ def test_manifest_publishes_only_factual_private_runtime_contracts():
     assert calculator["kind"] == "tool"
     assert calculator["sourceId"] == "python_runtime"
     assert calculator["namespace"] == "python"
-    assert calculator["nativeName"] == "calculator"
+    assert calculator["providerToolName"] == "calculator"
     assert calculator["connectionKind"] == "private-runtime"
     assert calculator["enabled"] is True
     assert calculator["inputSchema"]["type"] == "object"
@@ -197,7 +197,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
         *external_mcp_manifest(),
         {
             "name": "cbm.search_graph",
-            "nativeName": "search_graph",
+            "providerToolName": "search_graph",
             "sourceId": "cbm",
             "namespace": "cbm",
             "connectionKind": "external-mcp",
@@ -225,7 +225,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
 def test_combined_publisher_contracts_have_no_duplicate_discovery_tuple():
     references = materialize_tool_catalog([*tool_manifest(), *external_mcp_manifest()])
     tuples = [
-        (reference["canonicalId"], contract["sourceId"], contract["nativeName"])
+        (reference["canonicalId"], contract["sourceId"], contract["providerToolName"])
         for reference in references
         for contract in reference["contracts"]
     ]

@@ -39,14 +39,13 @@ async function loadInputDictionaryToolCatalog() {
   return indexToolCatalogReferences(materialized.references as ToolCatalogReference[]);
 }
 
-async function cardNativeOptions(projectId: string, deckId: string, cardId: string) {
-  if (!projectId || !deckId || !cardId) return { nativeOptions: [], selectedIds: [] };
+async function cardCatalogOptions(projectId: string, deckId: string, cardId: string) {
+  if (!projectId || !deckId || !cardId) return { catalogOptions: [], selectedIds: [] };
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = deck?.nodes.find((node) => node.id === cardId);
   if (!deck || !card) throw new Error('card_not_found');
   const saved = card.runtimeOptions || {};
   const selectedIds = [card.templateId, ...(saved.tools || []),
-    ...(saved.nativeTools || []).map((name) => 'hermes:tool:' + name),
     ...(saved.skills || []).map((name) => 'skill:' + name),
     ...(saved.toolsets || []).map((name) => 'toolset:' + name),
     ...(saved.mcpConnectionIds || []).map((name) => 'mcp:' + name),
@@ -57,7 +56,7 @@ async function cardNativeOptions(projectId: string, deckId: string, cardId: stri
     id: tool.name, kind: 'tool', owner: tool.sourceId, source: tool.sourceId,
     schema: tool.inputSchema, available: tool.available !== false,
   }));
-  if (card.runtime.kind !== 'hermes') return { nativeOptions: options, selectedIds };
+  if (card.runtime.kind !== 'hermes') return { catalogOptions: options, selectedIds };
   const cardProfile = card.runtime.profile;
   const requestNative = (method: string, params: Record<string, unknown> = {}, profile?: string) => (
     agentTerminalManager.requestProfile<any>(profile || cardProfile, method, params)
@@ -84,10 +83,10 @@ async function cardNativeOptions(projectId: string, deckId: string, cardId: stri
     for (const tool of section.tools || []) options.push({
       id: 'hermes:tool:' + tool.name, kind: 'tool', owner: 'Hermes', source: 'tools.show:' + native.name,
       // Native tools.show does not expose schemas. Do not invent a callable signature.
-      schema: { nativeName: tool.name }, available: true,
+      schema: { providerName: tool.name }, available: true,
     });
   }
-  return { nativeOptions: options, selectedIds: [...new Set(selectedIds)] };
+  return { catalogOptions: options, selectedIds: [...new Set(selectedIds)] };
 }
 
 router.get('/options', async (_req, res) => {
@@ -116,7 +115,7 @@ iddRoutes.get('/card-editor', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         models: listConfiguredModelOptions(openaiDefault),
-        ...await cardNativeOptions(
+        ...await cardCatalogOptions(
           String(req.query.projectId || ''), String(req.query.deckId || ''), String(req.query.cardId || ''),
         ),
       }),

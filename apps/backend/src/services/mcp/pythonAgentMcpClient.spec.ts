@@ -71,7 +71,7 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(search).toMatchObject({
       sourceId: 'cbm',
       namespace: 'cbm',
-      nativeName: 'search_graph',
+      providerName: 'search_graph',
       connectionKind: 'external-mcp',
       inputSchema: expect.any(Object),
     });

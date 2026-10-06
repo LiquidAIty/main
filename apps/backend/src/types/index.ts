@@ -108,7 +108,6 @@ export type AgentCardRuntimeOptions = {
   /** Card-assigned NATIVE tool names for this agent's own session (e.g.
    * ['Agent'] for Main's doorway-only surface). Filtered by the engine BEFORE
    * provider schema serialization; null = no native-tool grant. */
-  nativeTools?: string[] | null;
 };
 
 export type DeckNodeKind = 'agent';

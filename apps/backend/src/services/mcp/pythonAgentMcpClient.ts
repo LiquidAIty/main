@@ -115,7 +115,7 @@ export type PythonMcpToolDescriptor = {
   description?: string;
   sourceId: string;
   namespace: string;
-  nativeName: string;
+  providerName: string;
   connectionKind: string;
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
@@ -195,9 +195,9 @@ export async function listPythonAgentMcpCatalog(
       const nativeSource = source as Record<string, unknown>;
       const sourceId = String(nativeSource.sourceId || '').trim();
       const namespace = String(nativeSource.namespace || '').trim();
-      const nativeName = String(nativeSource.nativeName || '').trim();
+      const providerName = String(nativeSource.providerName || '').trim();
       const connectionKind = String(nativeSource.connectionKind || '').trim();
-      if (!sourceId || !namespace || !nativeName || !connectionKind) {
+      if (!sourceId || !namespace || !providerName || !connectionKind) {
         throw new Error(`python_agent_mcp_source_metadata_invalid: ${tool.name}`);
       }
       const raw = tool as typeof tool & {
@@ -211,7 +211,7 @@ export async function listPythonAgentMcpCatalog(
         ...(tool.description ? { description: tool.description } : {}),
         sourceId,
         namespace,
-        nativeName,
+        providerName,
         connectionKind,
         inputSchema: tool.inputSchema as Record<string, unknown>,
         ...(raw.outputSchema && typeof raw.outputSchema === 'object' && !Array.isArray(raw.outputSchema)

@@ -87,7 +87,6 @@ export default function useAgentBuilderCardEditor({
         : Array.isArray(selectedCard.tools)
           ? selectedCard.tools
           : effectiveAgent?.tools || [],
-      native_tools: normalizeStringList(runtimeOptions.nativeTools),
       skills: normalizeStringList(runtimeOptions.skills),
       toolsets: normalizeStringList(runtimeOptions.toolsets),
       mcp_connection_ids: normalizeStringList(runtimeOptions.mcpConnectionIds),
@@ -147,7 +146,6 @@ export default function useAgentBuilderCardEditor({
           maxTokens: nextMaxTokens,
           maxTurns: nextMaxTurns,
           tools: nextTools,
-          nativeTools: normalizeStringList(nextConfig.native_tools),
           skills: normalizeStringList(nextConfig.skills),
           toolsets: normalizeStringList(nextConfig.toolsets),
           mcpConnectionIds: normalizeStringList(nextConfig.mcp_connection_ids),

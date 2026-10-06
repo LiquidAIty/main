@@ -99,7 +99,7 @@ describe('Python Agent MCP client', () => {
           liquidaitySource: {
             sourceId: 'graphiti',
             namespace: 'graphiti',
-            nativeName: 'search_nodes',
+            providerName: 'search_nodes',
             connectionKind: 'external-mcp',
           },
         },
@@ -112,7 +112,7 @@ describe('Python Agent MCP client', () => {
       tools: [{
         name: 'graphiti.search_nodes',
         sourceId: 'graphiti',
-        nativeName: 'search_nodes',
+        providerName: 'search_nodes',
       }],
     });
     expect(String(readiness.mock.calls[0]?.[0])).toBe('http://127.0.0.1:8765/health/catalog');
@@ -156,7 +156,7 @@ describe('Python Agent MCP client', () => {
           liquidaitySource: {
             sourceId: 'cbm',
             namespace: 'cbm',
-            nativeName: 'search_graph',
+            providerName: 'search_graph',
             connectionKind: 'external-mcp',
           },
         },
@@ -215,7 +215,7 @@ describe('Python Agent MCP client', () => {
           liquidaitySource: {
             sourceId: 'cbm',
             namespace: 'cbm',
-            nativeName: 'search_graph',
+            providerName: 'search_graph',
             connectionKind: 'external-mcp',
           },
         },

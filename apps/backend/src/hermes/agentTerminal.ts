@@ -1,198 +1,95 @@
 import {
   createHash,
-  createHmac,
-  randomBytes,
   randomUUID,
-  timingSafeEqual,
 } from 'node:crypto';
-import { spawn as spawnChild, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { spawn as spawnPty, type IPty } from 'node-pty';
-import { tsImport } from 'tsx/esm/api';
+import { spawn as spawnPty } from 'node-pty';
 import type { AgentCardInstance, DeckDocument } from '../types';
 import { BUILDER_CARD_ID } from '../decks/store';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
 import {
-  agentTerminalExecution,
-  type AgentTerminalTurnRouting,
-} from './agentTerminalExecution';
+  CardTurn,
+  cardTurnBridge,
+  type CardHermesTurnResult,
+  type CardTurnRouting,
+} from './runtime/cardTurn';
 import {
   configureHermesCardInstructions,
   configureHermesCardModelRuntime,
-  configureHermesNativeSubagentModel,
+  configureHermesBotProfile,
+  configureHermesSubagentModel,
+  materializeHermesBotProfiles,
+  materializeMagenticTaskProfile,
   materializeHermesProfileSelections,
   readSavedSubagentType,
   type HermesProfileSelection,
 } from './profileMaterialization';
-import { resolveSavedHermesProvider, type NativeHermesProviderSelection } from './providerSelection';
+import { resolveSavedHermesProvider, type HermesProviderSelection } from './providerSelection';
 import { readSavedSubagentModel } from './subagentModel';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import {
   HERMES_CARD_TOOLS_TOOLSET,
-  hermesExternalMcpToolName,
+  HermesCardToolAuthority,
+  acquireOptionalHermesCardTools,
   materializeHermesApplicationMcpServers,
   materializeHermesExternalMcpTools,
   materializeHermesCardToolsPlugin,
   removeHermesApplicationMcpServers,
+  releaseOptionalHermesCardTools,
   requireHermesCardToolsReadback,
   requireLoadedHermesCardToolsPlugin,
   resolveHermesCardTools,
+  type AuthenticatedCardToolRequest,
   type HermesCardTools,
+  type MagenticCardToolAuthority,
 } from './cardToolsPlugin';
+import {
+  startHermesProcess,
+  type HermesProcessHandle,
+  type HermesRuntimeClient,
+  type HermesRuntimeEvent,
+} from './runtime/hermesProcess';
+import {
+  resolveHermesSession,
+} from './runtime/hermesSession';
+import {
+  CardRuntime,
+  type CardRuntimeLaunch,
+  type CardRuntimeOwner,
+  type CardRuntimeState,
+  type CardTerminalListener,
+} from './runtime/cardRuntime';
+import { CardTerminal } from './runtime/cardTerminal';
+import { CardRuntimeRegistry } from './runtime/cardRuntimeRegistry';
+import {
+  reconcileCardRuntimes,
+  type BotRosterProjection,
+  type DesiredBotProfile,
+  type DesiredCardRuntime,
+} from './runtime/cardRuntimeReconciler';
+import {
+  HermesSessionMaintenance,
+  type SessionCompactionIdentity,
+  type SessionCompactionReceipt,
+} from './runtime/hermesSessionMaintenance';
 
-const GATEWAY_READY_TIMEOUT_MS = 120_000;
-const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
-const NATIVE_TURN_SETTLEMENT_TIMEOUT_MS = 5_000;
-const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
-const LIQUIDAITY_SESSION_TITLE_PREFIX = 'Bot Chat:';
-const AUTH_MAX_FUTURE_SECONDS = 10 * 60;
-const PRIOR_SESSION_LIMIT = 8;
-const CARD_TOOL_NONCE_LIMIT = 512;
 const TEAM_CARD_ID = 'card_team';
-export const PROJECT_ROSTER_AUTHORITY_TOOL = 'project_roster.resolve';
-export const RUNTIME_OBSERVATION_AUTHORITY_TOOL = 'runtime.observe_attempt';
 
-export type AgentTerminalOwner = {
-  userId: string;
-  projectId: string;
-  deckId: string;
-  cardId: string;
-  /** Current turn/presentation scope. It does not create another native Card session. */
-  conversationId?: string;
-};
-export type HermesBotRosterProjection = {
-  cardId: string;
-  cardRevisionId: string;
-  profile: string;
-  title: string;
-  botEnabled: boolean;
-  roster: string[];
-};
-export type AgentTerminalState = {
-  sessionId: string;
-  cardId: string;
-  profile: string;
-  /** PID of the Gateway process that owns the Card's AIAgent. */
-  pid: number;
-  gatewayPid: number;
-  /** PID of the attached native Ink TUI frontend, when this presentation uses one. */
-  tuiPid: number | null;
-  ptyId: string | null;
-  nativeSessionId: string;
-  storedSessionId: string;
-  /** Monotonic within this live native session; advances only on a completed turn. */
-  completedTurnGeneration: number;
-  /** Exact provider/native turn reported by the latest completed turn, when supplied. */
-  completedNativeRunId: string | null;
-  hermesHome: string;
-  unavailableToolReasons: Record<string, string>;
-  status: 'running' | 'exited' | 'failed';
-  cols: number;
-  rows: number;
-  exitCode?: number;
-  error?: string;
-  replayTruncated?: boolean;
-};
+export type AgentTerminalOwner = CardRuntimeOwner;
+export type HermesBotRosterProjection = BotRosterProjection;
+export type AgentTerminalState = CardRuntimeState;
 
-export type MagenticCardToolAuthority = {
-  cardId: string;
-  cardRevisionId: string;
-  profile: string;
-  configurationFingerprint: string;
-};
+export type { AuthenticatedCardToolRequest, MagenticCardToolAuthority };
 
-export type AgentTerminalGatewayEvent = {
-  type: string;
-  session_id?: string;
-  seq?: number;
-  payload?: Record<string, unknown>;
-};
+export type AgentTerminalGatewayEvent = HermesRuntimeEvent;
 
-export type AuthenticatedCardToolRequest = {
-  owner: AgentTerminalOwner;
-  state: AgentTerminalState;
-  canonicalToolName: string;
-  cardTools: {
-    cardRevisionId: string;
-    configurationFingerprint: string;
-    runtimeMode: 'main' | 'delegate' | 'magentic_one';
-  };
-  request: {
-    version: 1;
-    expiresAt: number;
-    nonce: string;
-    sourceStoredSessionId: string;
-    tool: string;
-    arguments: Record<string, unknown>;
-  } | {
-    version: 2;
-    expiresAt: number;
-    nonce: string;
-    sourceTaskId: string;
-    sourceTaskRunId: number;
-    sourceProfile: string;
-    tool: string;
-    arguments: Record<string, unknown>;
-  };
-  executionContext?: {
-    parentRunId: string;
-    conversationId: string;
-  };
-};
 
-type MagenticWorkerToolProof = {
-  projectId: string;
-  deckId: string;
-  outerRunId: string;
-  nativeRootId: string;
-  sourceTaskId: string;
-  sourceTaskRunId: number;
-  sourceProfile: string;
-  authorityProfile: string;
-  authorityCardId: string;
-  authorityCardRevisionId: string;
-  authorityConfigurationFingerprint: string;
-  expiresAt: number;
-  nonce: string;
-  tool: string;
-  arguments: Record<string, unknown>;
-};
-
-export type AgentTerminalTurnResult = {
-  text: string;
-  status: string;
-  event: AgentTerminalGatewayEvent;
-  completedTurnGeneration?: number;
-  completedNativeRunId?: string | null;
-};
-
-export type AgentTerminalCompactionReceipt = {
-  status: 'compressed' | 'aborted' | 'unavailable' | 'failed';
-  terminalSessionId: string;
-  nativeSessionId: string;
-  storedSessionId: string;
-  profile: string;
-  focusApplied: false;
-  beforeMessages: number | null;
-  afterMessages: number | null;
-  beforeTokens: number | null;
-  afterTokens: number | null;
-  errorCode: string | null;
-};
-
-export type AgentTerminalCompactionIdentity = Pick<
-  AgentTerminalState,
-  | 'sessionId'
-  | 'nativeSessionId'
-  | 'storedSessionId'
-  | 'profile'
-  | 'completedTurnGeneration'
-  | 'completedNativeRunId'
->;
+export type AgentTerminalCompactionReceipt = SessionCompactionReceipt;
+export type AgentTerminalCompactionIdentity = SessionCompactionIdentity;
 
 export type AgentTerminalVoiceState = {
   enabled: boolean;
@@ -204,133 +101,19 @@ export type AgentTerminalVoiceState = {
   recordStatus?: 'recording' | 'stopped';
 };
 
-type Output = { sequence: number; data: string };
-type Listener = (event: 'output' | 'state', value: Output | AgentTerminalState) => void;
+type Listener = CardTerminalListener;
 
-export type AgentTerminalLaunch = {
-  file: string;
-  gatewayArgs: string[];
-  tuiArgs: string[];
-  cwd: string;
-  env: Record<string, string>;
-  profile: string;
-  profileHome: string;
-  profileSelection: HermesProfileSelection;
-  providerSelection: NativeHermesProviderSelection;
-};
+export type AgentTerminalLaunch = CardRuntimeLaunch;
 
-type GatewayClient = {
-  readonly connectionState: string;
-  connect(url: string): Promise<void>;
-  close(): void;
-  request<T>(method: string, params?: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal): Promise<T>;
-  onEvent(handler: (event: AgentTerminalGatewayEvent) => void): () => void;
-  onState(handler: (state: string) => void): () => void;
-};
-
+type GatewayClient = HermesRuntimeClient;
 type GatewayClientFactory = () => Promise<GatewayClient>;
-type ProfileRequest = <T>(method: string, params: Record<string, unknown>) => Promise<T>;
 type GatewaySpawner = (
   file: string,
   args: string[],
   options: { cwd: string; env: Record<string, string>; windowsHide: boolean },
 ) => ChildProcess;
 
-type Session = {
-  owner: AgentTerminalOwner;
-  card: AgentCardInstance;
-  fingerprint: string;
-  profileCardFingerprint: string;
-  state: AgentTerminalState;
-  gateway: ChildProcess;
-  gatewayUrl: string;
-  client: GatewayClient;
-  detachGatewayEvents: () => void;
-  detachGatewayState: () => void;
-  gatewayToken: string;
-  gatewayKeyId: string;
-  priorStoredSessionIds: Map<string, number>;
-  cardToolNonces: Map<string, number>;
-  cardTools: HermesCardTools;
-  launch: AgentTerminalLaunch;
-  pty: IPty | null;
-  output: Output[];
-  outputBytes: number;
-  sequence: number;
-  listeners: Set<Listener>;
-  gatewayEventListeners: Set<(event: AgentTerminalGatewayEvent) => void>;
-  stopping: boolean;
-  turnTail: Promise<void>;
-  nativeTurnSettled: boolean;
-  nativeTurnSettlementWaiters: Set<(settled: boolean) => void>;
-};
-
-type PendingStart = {
-  owner: AgentTerminalOwner;
-  profile: string;
-  cardId: string;
-  fingerprint: string;
-  profileCardFingerprint: string;
-  promise: Promise<AgentTerminalState>;
-};
-
-type NativeTurnRouting = {
-  managedTools: string[];
-  allowedTools: string[];
-  modelOnce: AgentTerminalTurnRouting['modelOnce'];
-};
-
-function nativeToolName(configuration: HermesCardTools, canonicalName: string): string | null {
-  if (configuration.nativeTools.includes(canonicalName)) return canonicalName;
-  const plugin = configuration.pluginTools.find((tool) => tool.canonicalName === canonicalName);
-  if (plugin) return plugin.hermesName;
-  const external = configuration.externalMcpTools.find(
-    (tool) => tool.canonicalName === canonicalName,
-  );
-  return external
-    ? hermesExternalMcpToolName(external.connectionId, external.nativeName)
-    : null;
-}
-
-function nativeTurnRouting(
-  configuration: HermesCardTools,
-  routing: AgentTerminalTurnRouting,
-): NativeTurnRouting {
-  const mapExact = (names: string[]) => names.map((name) => {
-    const native = nativeToolName(configuration, name);
-    if (!native) throw new Error(`agent_terminal_turn_tool_unavailable:${name}`);
-    return native;
-  });
-  const managedTools = mapExact(routing.managedCanonicalTools);
-  const allowedTools = mapExact(routing.allowedCanonicalTools);
-  if (
-    new Set(managedTools).size !== managedTools.length
-    || new Set(allowedTools).size !== allowedTools.length
-    || !allowedTools.every((name) => managedTools.includes(name))
-  ) {
-    throw new Error('agent_terminal_turn_tools_invalid');
-  }
-  return { managedTools, allowedTools, modelOnce: routing.modelOnce };
-}
-
-function nativeCompactionRequestError(error: unknown): string {
-  const value = error && typeof error === 'object'
-    ? error as { code?: unknown; message?: unknown }
-    : {};
-  const code = typeof value.code === 'number' && Number.isSafeInteger(value.code)
-    ? value.code
-    : null;
-  if (code === 4009) return 'agent_terminal_context_compaction_native_session_busy';
-  if (code === -32601) return 'agent_terminal_context_compaction_native_method_unavailable';
-  if (code !== null) {
-    return `agent_terminal_context_compaction_native_rpc_${code < 0 ? `negative_${Math.abs(code)}` : code}`;
-  }
-  const message = typeof value.message === 'string' ? value.message.trim() : '';
-  if (/^request timed out after \d+s: session\.compress$/i.test(message)) {
-    return 'agent_terminal_context_compaction_request_timeout';
-  }
-  return 'agent_terminal_context_compaction_request_failed';
-}
+type Session = CardRuntime;
 
 function sameSavedCardToolAuthority(left: HermesCardTools, right: HermesCardTools): boolean {
   const stableAuthority = (value: HermesCardTools) => JSON.stringify({
@@ -344,32 +127,15 @@ function sameSavedCardToolAuthority(left: HermesCardTools, right: HermesCardTool
       ...value.enabledTools,
       ...value.unavailableTools,
     ])].sort(),
-    nativeTools: value.nativeTools,
+    hermesSuppliedTools: value.hermesSuppliedTools,
     toolsets: value.toolsets,
     pluginTools: value.pluginTools,
   });
   return stableAuthority(left) === stableAuthority(right);
 }
 
-export type DesiredAgentTerminal = {
-  owner: AgentTerminalOwner;
-  card: AgentCardInstance;
-  deck: DeckDocument;
-  workingDirectory?: string;
-  attachTui?: boolean;
-  /**
-   * Keep this saved Project/Card identity in reconciliation authority without
-   * eagerly starting another Gateway/TUI.  The exact Project/conversation
-   * session still opens on demand through the ordinary Card runtime path.
-   */
-  openAtReconcile?: boolean;
-};
-
-export type DesiredHermesBotProfile = {
-  owner: AgentTerminalOwner;
-  card: AgentCardInstance;
-  projection: HermesBotRosterProjection;
-};
+export type DesiredAgentTerminal = DesiredCardRuntime;
+export type DesiredHermesBotProfile = DesiredBotProfile;
 
 export type AgentTerminalOpenOptions = {
   workingDirectory?: string;
@@ -382,14 +148,23 @@ export function agentTerminalPresentationOptions(
   card: AgentCardInstance,
   attachTui: boolean,
 ): AgentTerminalOpenOptions {
-  if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
-  if (card.runtime.mode === 'main') {
+  requireAgentTerminalRuntime(card);
+  if (card.runtime.kind === 'hermes' && card.runtime.mode === 'main') {
     return { workingDirectory: resolveProductChatWorkingDirectory(), attachTui: false };
   }
-  if (card.id === BUILDER_CARD_ID) {
-    return { workingDirectory: resolveRepoRoot(), attachTui };
+  return card.id === BUILDER_CARD_ID
+    ? { workingDirectory: resolveRepoRoot(), attachTui }
+    : { attachTui };
+}
+
+export function requireAgentTerminalRuntime(
+  card: AgentCardInstance,
+): 'main' | 'delegate' | 'magentic_one' {
+  if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
+  if (!['main', 'delegate', 'magentic_one'].includes(card.runtime.mode)) {
+    throw new Error('agent_terminal_runtime_mode_unsupported');
   }
-  return { attachTui };
+  return card.runtime.mode;
 }
 
 function ownerKey(owner: AgentTerminalOwner): string {
@@ -403,24 +178,6 @@ function ownerKey(owner: AgentTerminalOwner): string {
 
 function sameOwner(left: AgentTerminalOwner, right: AgentTerminalOwner): boolean {
   return ownerKey(left) === ownerKey(right);
-}
-
-/**
- * Hermes owns the durable session mapping. The opaque title is only a lookup
- * key inside the selected stable profile; it contains the complete application
- * Project/Card scope without leaking user, Project, or Card names. Conversation
- * identity remains per-turn transport/persistence and never forks native memory.
- */
-export function agentTerminalNativeSessionTitle(owner: AgentTerminalOwner): string {
-  const scope = [
-    String(owner.userId || '').trim(),
-    String(owner.projectId || '').trim(),
-    String(owner.deckId || '').trim(),
-    String(owner.cardId || '').trim(),
-  ];
-  if (scope.some((value) => !value)) throw new Error('agent_terminal_session_scope_incomplete');
-  const digest = createHash('sha256').update(JSON.stringify(scope), 'utf8').digest('hex');
-  return `${LIQUIDAITY_SESSION_TITLE_PREFIX}${digest}`;
 }
 
 function cleanEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -440,8 +197,8 @@ function list(value: unknown): string[] {
 
 /**
  * Ordinary Card fallback used when no established presentation supplies a
- * workspace. Main and Builder pass their existing presentation-owned cwd into
- * the common launcher instead of being identified here by Card or profile name.
+ * workspace. Presentation owners pass an established cwd into the common
+ * launcher instead of being identified here by Card or profile name.
  */
 export function resolveAgentCardWorkingDirectory(
   owner: AgentTerminalOwner,
@@ -499,7 +256,7 @@ export function agentTerminalProfileCardFingerprint(card: AgentCardInstance): st
 }
 
 export function requireAgentTerminalCard(card: AgentCardInstance, deck: DeckDocument): string {
-  if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
+  requireAgentTerminalRuntime(card);
   const profile = String(card.runtime.profile || '').trim();
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) throw new Error('agent_terminal_profile_missing');
   if (deck.nodes.some((other) => other.id !== card.id && other.runtime.kind === 'hermes'
@@ -513,29 +270,9 @@ export function requireAgentTerminalCard(card: AgentCardInstance, deck: DeckDocu
   return profile;
 }
 
-function resolveMagenticTaskProviderSelection(
-  card: AgentCardInstance,
-): NativeHermesProviderSelection {
-  if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
-  const options = card.runtimeOptions as Record<string, unknown> | undefined;
-  const usesSavedChatGptAccount = String(options?.provider || '').trim().toLowerCase() === 'openai'
-    && String(options?.accessMode || '').trim().toLowerCase() === 'chatgpt-account';
-  return resolveSavedHermesProvider({
-    provider: options?.provider,
-    accessMode: options?.accessMode,
-    modelKey: options?.modelKey,
-    providerModelId: options?.providerModelId,
-    // Native task workers are detached CLI processes.  Use Codex's own
-    // already-authenticated app-server for the saved ChatGPT-account binding
-    // instead of requiring a cloned profile-local OAuth refresh grant.
-    openaiRuntime: options?.openaiRuntime
-      ?? (usesSavedChatGptAccount ? 'codex_app_server' : undefined),
-  });
-}
-
 function savedProfileSelection(
   card: AgentCardInstance,
-  providerSelection: NativeHermesProviderSelection,
+  providerSelection: HermesProviderSelection,
 ): HermesProfileSelection {
   if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
   const options = card.runtimeOptions as Record<string, unknown> | undefined;
@@ -549,7 +286,6 @@ function savedProfileSelection(
     providerModelId: providerSelection.model,
     openaiRuntime: providerSelection.openaiRuntime,
     skills: list(options?.skills),
-    nativeTools: list(options?.nativeTools),
     toolsets: list(options?.toolsets),
     ...(subagentModel ? { subagentModel } : {}),
     ...(subagentType ? { subagentType } : {}),
@@ -557,7 +293,7 @@ function savedProfileSelection(
   };
 }
 
-/** Resolve the exact saved Card into its Gateway owner and attached native TUI launch. */
+/** Resolve the exact saved Card into its Gateway owner and optional Builder TUI launch. */
 export function prepareAgentTerminal(
   owner: AgentTerminalOwner,
   card: AgentCardInstance,
@@ -570,7 +306,7 @@ export function prepareAgentTerminal(
   const root = resolveRepoRoot();
   const hermesRoot = path.join(root, 'Hermes');
   const file = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
-  if (!existsSync(file)) throw new Error('agent_terminal_native_executable_missing');
+  if (!existsSync(file)) throw new Error('agent_terminal_hermes_executable_missing');
   const hermesHome = path.join(hermesRoot, '.hermes');
   const profileHome = path.join(hermesHome, 'profiles', profile);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) throw new Error('agent_terminal_profile_missing');
@@ -628,8 +364,12 @@ export function prepareAgentTerminal(
     '--model', providerSelection.model,
     '--provider', providerSelection.provider,
   ];
-  if (options?.reasoningEffort) tuiArgs.push('--reasoning', String(options.reasoningEffort));
-  if (options?.maxTurns != null) tuiArgs.push('--max-turns', String(options.maxTurns));
+  if (options?.reasoningEffort) {
+    tuiArgs.push('--reasoning', String(options.reasoningEffort));
+  }
+  if (options?.maxTurns != null) {
+    tuiArgs.push('--max-turns', String(options.maxTurns));
+  }
   const skills = list(options?.skills);
   if (skills.length) tuiArgs.push('--skills', skills.join(','));
   return {
@@ -645,65 +385,6 @@ export function prepareAgentTerminal(
   };
 }
 
-export async function createNativeGatewayClient(): Promise<GatewayClient> {
-  const source = path.join(
-    resolveRepoRoot(), 'Hermes', 'apps', 'shared', 'src', 'json-rpc-gateway.ts',
-  );
-  if (!existsSync(source)) throw new Error('agent_terminal_gateway_client_missing');
-  // Hermes' shared source keeps Node-ESM .js specifiers for emitted/bundled output.
-  // Load that source through the workspace's supported TypeScript loader instead
-  // of making bare Node resolve those specifiers against an unbuilt source tree.
-  const moduleUrl = pathToFileURL(source).href;
-  const loaded = await tsImport(moduleUrl, pathToFileURL(__filename).href) as {
-    JsonRpcGatewayClient?: new (options?: Record<string, unknown>) => GatewayClient;
-  };
-  if (typeof loaded.JsonRpcGatewayClient !== 'function') {
-    throw new Error('agent_terminal_gateway_client_invalid');
-  }
-  return new loaded.JsonRpcGatewayClient({
-    requestIdPrefix: 'card',
-    requestTimeoutMs: DEFAULT_TURN_TIMEOUT_MS,
-  });
-}
-
-function gatewayReadyPort(gateway: ChildProcess, timeoutMs = GATEWAY_READY_TIMEOUT_MS): Promise<number> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let buffered = '';
-    const timer = setTimeout(() => finish(new Error('agent_terminal_gateway_start_timeout')), timeoutMs);
-    timer.unref?.();
-    const finish = (error?: Error, port?: number) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      gateway.off('error', onError);
-      gateway.off('exit', onExit);
-      gateway.stdout?.off('data', onData);
-      gateway.stderr?.off('data', onData);
-      if (error) reject(error);
-      else resolve(port!);
-    };
-    const onError = () => finish(new Error('agent_terminal_gateway_start_failed'));
-    const onExit = (code: number | null) => finish(
-      new Error(`agent_terminal_gateway_exited_before_ready:${code ?? 'null'}`),
-    );
-    const onData = (value: Buffer | string) => {
-      buffered = `${buffered}${String(value)}`.slice(-16_384);
-      const match = /HERMES_BACKEND_READY\s+port=(\d+)/.exec(buffered);
-      if (!match) return;
-      const port = Number(match[1]);
-      if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-        finish(new Error('agent_terminal_gateway_ready_invalid'));
-        return;
-      }
-      finish(undefined, port);
-    };
-    gateway.once('error', onError);
-    gateway.once('exit', onExit);
-    gateway.stdout?.on('data', onData);
-    gateway.stderr?.on('data', onData);
-  });
-}
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -777,21 +458,6 @@ export async function resolveHermesBotRosterProjection(
   return matches[0];
 }
 
-function sessionRows(value: unknown): Array<Record<string, unknown>> {
-  const rows = record(value).sessions;
-  if (!Array.isArray(rows)) throw new Error('agent_terminal_session_enumeration_invalid');
-  return rows.map((row) => {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) {
-      throw new Error('agent_terminal_session_enumeration_invalid');
-    }
-    return row as Record<string, unknown>;
-  });
-}
-
-function storedSessionId(row: Record<string, unknown>): string {
-  return String(row.resolved_id || row.id || '').trim();
-}
-
 function cardToolsHostUrl(env: NodeJS.ProcessEnv = process.env): string {
   const port = Number(env.PORT || 4000);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -800,118 +466,15 @@ function cardToolsHostUrl(env: NodeJS.ProcessEnv = process.env): string {
   return `http://127.0.0.1:${port}/api/hermes-card-tools`;
 }
 
-function equalHex(left: string, right: string): boolean {
-  if (!/^[a-f0-9]{64}$/i.test(left) || !/^[a-f0-9]{64}$/i.test(right)) return false;
-  const leftBytes = Buffer.from(left, 'hex');
-  const rightBytes = Buffer.from(right, 'hex');
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
-function cardToolAuthenticationFailure(stage: string): never {
-  throw new Error(`hermes_card_tool_authentication_failed:${stage}`);
-}
-
-export function cardToolAuthenticationFailureStage(error: unknown): string | null {
-  const message = error instanceof Error ? error.message : '';
-  const prefix = 'hermes_card_tool_authentication_failed:';
-  if (!message.startsWith(prefix)) return null;
-  const stage = message.slice(prefix.length);
-  return /^[a-z_]{1,64}$/.test(stage) ? stage : null;
-}
-
-function boundedString(value: unknown, max: number): string {
-  return typeof value === 'string' && value.length <= max ? value : '';
-}
-
-function exactBoundedString(value: unknown, max: number): string {
-  const candidate = boundedString(value, max);
-  return candidate && candidate === candidate.trim() ? candidate : '';
-}
-
-function requireMagenticWorkerToolProof(value: unknown): MagenticWorkerToolProof {
-  const proof = record(value);
-  const expectedKeys = [
-    'arguments', 'authorityCardId', 'authorityCardRevisionId',
-    'authorityConfigurationFingerprint', 'authorityProfile', 'deckId', 'expiresAt',
-    'nativeRootId', 'nonce', 'outerRunId', 'projectId', 'sourceProfile', 'sourceTaskId',
-    'sourceTaskRunId', 'tool',
-  ];
-  if (Object.keys(proof).sort().join('\0') !== expectedKeys.join('\0')) {
-    throw new Error('hermes_card_tool_authentication_failed');
-  }
-  const projectId = exactBoundedString(proof.projectId, 512);
-  const deckId = exactBoundedString(proof.deckId, 512);
-  const outerRunId = exactBoundedString(proof.outerRunId, 512);
-  const nativeRootId = exactBoundedString(proof.nativeRootId, 512);
-  const sourceTaskId = exactBoundedString(proof.sourceTaskId, 512);
-  const sourceTaskRunId = proof.sourceTaskRunId;
-  const sourceProfile = exactBoundedString(proof.sourceProfile, 128);
-  const authorityProfile = exactBoundedString(proof.authorityProfile, 128);
-  const authorityCardId = exactBoundedString(proof.authorityCardId, 512);
-  const authorityCardRevisionId = exactBoundedString(proof.authorityCardRevisionId, 512);
-  const authorityConfigurationFingerprint = exactBoundedString(
-    proof.authorityConfigurationFingerprint, 64,
-  );
-  const expiresAt = proof.expiresAt;
-  const nonce = exactBoundedString(proof.nonce, 128);
-  const tool = exactBoundedString(proof.tool, 128);
-  const args = proof.arguments;
-  const now = Math.floor(Date.now() / 1000);
-  if (
-    !projectId || !deckId || !outerRunId || !nativeRootId || !sourceTaskId
-    || !sourceProfile || !authorityProfile || !authorityCardId || !authorityCardRevisionId || !tool
-    || !/^[a-f0-9]{64}$/.test(authorityConfigurationFingerprint)
-    || !Number.isSafeInteger(sourceTaskRunId) || Number(sourceTaskRunId) < 1
-    || !Number.isSafeInteger(expiresAt) || Number(expiresAt) <= now
-    || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS
-    || !/^[a-f0-9]{32,128}$/i.test(nonce)
-    || !args || typeof args !== 'object' || Array.isArray(args)
-  ) throw new Error('hermes_card_tool_authentication_failed');
-  return {
-    projectId,
-    deckId,
-    outerRunId,
-    nativeRootId,
-    sourceTaskId,
-    sourceTaskRunId: Number(sourceTaskRunId),
-    sourceProfile,
-    authorityProfile,
-    authorityCardId,
-    authorityCardRevisionId,
-    authorityConfigurationFingerprint,
-    expiresAt: Number(expiresAt),
-    nonce,
-    tool,
-    arguments: args as Record<string, unknown>,
-  };
-}
-
-function requireNativeSession(
-  value: unknown,
-  error: string,
-): { sessionId: string; storedSessionId: string } {
-  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const sessionId = String(record.session_id || '').trim();
-  const storedSessionId = String(record.stored_session_id || '').trim();
-  if (!sessionId || !storedSessionId) throw new Error(error);
-  return { sessionId, storedSessionId };
-}
-
 export class AgentTerminalManager {
-  private readonly sessions = new Map<string, Session>();
-  private readonly pendingStarts = new Map<string, PendingStart>();
   private voiceLeaseSessionId: string | null = null;
 
   constructor(
     private readonly spawnPtyProcess: typeof spawnPty = spawnPty,
     private readonly prepare: typeof prepareAgentTerminal = prepareAgentTerminal,
-    private readonly onExit = (id: string) => agentTerminalExecution.abort(id),
-    private readonly spawnGateway: GatewaySpawner = (file, args, options) => spawnChild(
-      file,
-      args,
-      { ...options, stdio: ['ignore', 'pipe', 'pipe'] },
-    ),
-    private readonly createGatewayClient: GatewayClientFactory = createNativeGatewayClient,
+    private readonly onExit = (id: string) => cardTurnBridge.abort(id),
+    private readonly spawnGateway?: GatewaySpawner,
+    private readonly createGatewayClient?: GatewayClientFactory,
     private readonly materializeProfile: typeof materializeHermesProfileSelections = materializeHermesProfileSelections,
     private readonly resolveCardTools: typeof resolveHermesCardTools = resolveHermesCardTools,
     private readonly materializeCardToolsPlugin: typeof materializeHermesCardToolsPlugin = materializeHermesCardToolsPlugin,
@@ -919,7 +482,7 @@ export class AgentTerminalManager {
     private readonly resolveBotRoster: typeof resolveHermesBotRosterProjection = resolveHermesBotRosterProjection,
     private readonly configureCardInstructions: typeof configureHermesCardInstructions = configureHermesCardInstructions,
     private readonly configureCardModelRuntime: typeof configureHermesCardModelRuntime = configureHermesCardModelRuntime,
-    private readonly resolveActiveContext = (sessionId: string) => agentTerminalExecution.activeContext(sessionId),
+    private readonly resolveActiveContext = (sessionId: string) => cardTurnBridge.activeContext(sessionId),
     private readonly resolveMcpServerSpec: typeof resolvePythonAgentMcpServerSpec = resolvePythonAgentMcpServerSpec,
     private readonly materializeApplicationMcpServers: typeof materializeHermesApplicationMcpServers = materializeHermesApplicationMcpServers,
     private readonly removeApplicationMcpServers: typeof removeHermesApplicationMcpServers = removeHermesApplicationMcpServers,
@@ -936,23 +499,16 @@ export class AgentTerminalManager {
       },
       { timeoutMs: 15_000 },
     ),
+    private readonly registry = new CardRuntimeRegistry(),
   ) {}
 
   private async prepareMagenticTaskCard(
-    profile: string,
+    _profile: string,
     card: AgentCardInstance,
   ): Promise<void> {
-    await this.configureCardInstructions(profile, String(card.prompt || ''));
-    const selection = resolveMagenticTaskProviderSelection(card);
-    if (selection.apiMode !== 'codex_app_server') return;
-    const options = card.runtimeOptions as Record<string, unknown> | undefined;
-    const runtimeAlreadyProjected = card.runtime.mode === 'magentic_one'
-      || String(options?.openaiRuntime || '').trim().toLowerCase() === 'codex_app_server';
-    if (runtimeAlreadyProjected) return;
-    await this.configureCardModelRuntime(profile, {
-      provider: selection.provider,
-      model: selection.model,
-      openaiRuntime: selection.profileOpenaiRuntime,
+    await materializeMagenticTaskProfile(card, {
+      configureInstructions: this.configureCardInstructions,
+      configureModelRuntime: this.configureCardModelRuntime,
     });
   }
 
@@ -975,7 +531,7 @@ export class AgentTerminalManager {
     const fingerprint = agentTerminalFingerprint(owner, card, deck, workingDirectory);
     const profileCardFingerprint = agentTerminalProfileCardFingerprint(card);
     const attachTui = options.attachTui !== false;
-    for (const session of this.sessions.values()) {
+    for (const session of this.registry.list()) {
       if (session.state.status !== 'running') continue;
       if (!sameOwner(session.owner, owner)) continue;
       if (session.state.profile.toLowerCase() !== profile.toLowerCase()) {
@@ -996,16 +552,19 @@ export class AgentTerminalManager {
       }
       if (card.runtime.kind === 'hermes') {
         const botRosterProjection = options.botRosterProjection ?? await this.resolveBotRoster(owner);
-        await this.configureNativeBotProfile(
+        await configureHermesBotProfile(
           (method, params) => session.client.request(method, params),
-          owner,
-          card,
-          botRosterProjection,
+          { owner, card, projection: botRosterProjection },
         );
       }
-      return attachTui ? this.attachTui(session, cols, rows) : { ...session.state };
+      const binding = await session.ensureSession(owner);
+      return attachTui ? this.attachTui(session, cols, rows) : {
+        ...session.state,
+        hermesSessionId: binding.sessionId,
+        storedSessionId: binding.storedSessionId,
+      };
     }
-    for (const session of this.sessions.values()) {
+    for (const session of this.registry.list()) {
       if (session.state.status !== 'running') continue;
       if (session.state.profile.toLowerCase() !== profile.toLowerCase()) continue;
       if (
@@ -1013,8 +572,7 @@ export class AgentTerminalManager {
         || session.profileCardFingerprint !== profileCardFingerprint
       ) throw new Error('agent_terminal_profile_card_identity_mismatch');
     }
-    const pendingKey = ownerKey(owner);
-    const pending = this.pendingStarts.get(pendingKey);
+    const pending = this.registry.pendingFor(owner);
     if (pending) {
       if (pending.fingerprint !== fingerprint) {
         throw new Error('agent_terminal_configuration_changed_stop_required');
@@ -1028,27 +586,24 @@ export class AgentTerminalManager {
           throw new Error('agent_terminal_tool_configuration_changed_stop_required');
         }
       }
+      const binding = await session.ensureSession(owner);
       return attachTui
         ? this.attachTui(session, cols, rows)
-        : state;
+        : { ...state, hermesSessionId: binding.sessionId, storedSessionId: binding.storedSessionId };
     }
-    for (const candidate of this.pendingStarts.values()) {
+    for (const candidate of this.registry.listPending()) {
       if (candidate.profile.toLowerCase() !== profile.toLowerCase()) continue;
       if (
         candidate.cardId !== owner.cardId
         || candidate.profileCardFingerprint !== profileCardFingerprint
       ) throw new Error('agent_terminal_profile_card_identity_mismatch');
     }
-    for (const [id, session] of this.sessions) {
-      if (sameOwner(session.owner, owner) && session.state.status !== 'running' && !session.listeners.size) {
-        this.sessions.delete(id);
-      }
-    }
+    this.registry.deleteExitedFor(owner);
     const promise = this.start(
       owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
       options.botRosterProjection,
     );
-    this.pendingStarts.set(pendingKey, {
+    this.registry.setPending(owner, {
       owner: { ...owner }, profile, cardId: card.id, fingerprint, profileCardFingerprint,
       promise,
     });
@@ -1058,144 +613,8 @@ export class AgentTerminalManager {
         ? this.attachTui(this.running(owner, state.sessionId), cols, rows)
         : state;
     } finally {
-      if (this.pendingStarts.get(pendingKey)?.promise === promise) {
-        this.pendingStarts.delete(pendingKey);
-      }
+      this.registry.clearPending(owner, promise);
     }
-  }
-
-  private async configureNativeBotProfile(
-    request: ProfileRequest,
-    owner: AgentTerminalOwner,
-    card: AgentCardInstance,
-    projection: HermesBotRosterProjection,
-  ): Promise<void> {
-    if (card.runtime.kind !== 'hermes') throw new Error('hermes_bot_roster_projection_card_invalid');
-    const cardProfile = String(card.runtime.profile || '').trim();
-    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(cardProfile)) {
-      throw new Error('hermes_bot_roster_projection_profile_invalid');
-    }
-    if (projection.cardId !== owner.cardId || projection.cardId !== card.id
-      || projection.profile !== cardProfile) {
-      throw new Error('hermes_bot_roster_projection_identity_mismatch');
-    }
-    if (card._cardRevisionId && projection.cardRevisionId
-      && projection.cardRevisionId !== card._cardRevisionId) {
-      throw new Error('hermes_bot_roster_projection_revision_mismatch');
-    }
-    const findProfile = async (): Promise<Record<string, unknown>> => {
-      const listed = record(await request<unknown>('profiles.list', { include_sessions: false }));
-      if (!Array.isArray(listed.profiles)) throw new Error('hermes_bot_profile_list_invalid');
-      const matches = listed.profiles.filter((value) => (
-        record(value).name === projection.profile
-      ));
-      if (matches.length !== 1) throw new Error('hermes_bot_profile_identity_invalid');
-      return record(matches[0]);
-    };
-    const current = await findProfile();
-    const uiMeta = record(current.ui_meta);
-    const hasExistingBotMeta = Object.prototype.hasOwnProperty.call(uiMeta, 'hermes-bots');
-    const existing = record(uiMeta['hermes-bots']);
-    const desired = projection.botEnabled ? {
-      ...existing,
-      title: String(card.title || card.id).trim() || card.id,
-    } : null;
-    const metaChanged = projection.botEnabled
-      ? JSON.stringify(existing) !== JSON.stringify(desired)
-      : hasExistingBotMeta;
-    if (metaChanged) {
-      const revisions = record(current.ui_meta_revisions);
-      const revision = revisions['hermes-bots'];
-      if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
-        throw new Error('hermes_bot_profile_revision_invalid');
-      }
-      const configured = record(await request<unknown>('profiles.configure', {
-        name: projection.profile,
-        ...(metaChanged ? {
-          ui_meta: { 'hermes-bots': desired },
-          ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
-        } : {}),
-      }));
-      const applied = record(configured.applied);
-      if (configured.ok !== true || applied.ui_meta !== true) {
-        throw new Error('hermes_bot_profile_configuration_failed');
-      }
-    }
-    const readbackRow = await findProfile();
-    const readbackMeta = record(record(readbackRow.ui_meta)['hermes-bots']);
-    if (projection.botEnabled) {
-      if (readbackMeta.title !== desired?.title) throw new Error('hermes_bot_profile_readback_failed');
-    } else if (Object.prototype.hasOwnProperty.call(record(readbackRow.ui_meta), 'hermes-bots')) {
-      throw new Error('hermes_bot_profile_readback_failed');
-    }
-  }
-
-  private async resolveBoundConversationSession(
-    request: ProfileRequest,
-    owner: AgentTerminalOwner,
-    card: AgentCardInstance,
-    launch: AgentTerminalLaunch,
-    cols: number,
-  ): Promise<{ sessionId: string; storedSessionId: string }> {
-    const title = agentTerminalNativeSessionTitle(owner);
-    const exact = sessionRows(await request('session.list', {
-      profile: launch.profile,
-      title,
-      include_hidden: true,
-      limit: 200,
-    }));
-    if (exact.length > 1) throw new Error('agent_terminal_session_binding_ambiguous');
-    let native: { sessionId: string; storedSessionId: string };
-    if (exact.length === 1) {
-      const stored = storedSessionId(exact[0]);
-      if (!stored) throw new Error('agent_terminal_session_enumeration_invalid');
-      const resumed = await request<Record<string, unknown>>('session.resume', {
-        session_id: stored,
-        profile: launch.profile,
-      });
-      native = requireNativeSession(
-        resumed && typeof resumed === 'object'
-          ? { ...resumed, stored_session_id: stored }
-          : resumed,
-        'agent_terminal_session_resume_invalid',
-      );
-    } else {
-      const createParams: Record<string, unknown> = {
-        profile: launch.profile,
-        title,
-        cwd: launch.cwd,
-        cols,
-        model: launch.providerSelection.model,
-        provider: launch.providerSelection.provider,
-        follow_profile_config: true,
-        close_on_disconnect: false,
-        hidden: true,
-      };
-      const reasoning = (card.runtimeOptions as Record<string, unknown> | undefined)?.reasoningEffort;
-      if (reasoning) createParams.reasoning_effort = String(reasoning);
-      native = requireNativeSession(
-        await request('session.create', createParams),
-        'agent_terminal_session_create_invalid',
-      );
-      const titled = record(await request('session.title', {
-        session_id: native.sessionId,
-        profile: launch.profile,
-        title,
-      }));
-      if (titled.title !== title) throw new Error('agent_terminal_session_binding_title_failed');
-    }
-
-    const readback = sessionRows(await request('session.list', {
-      profile: launch.profile,
-      title,
-      include_hidden: true,
-      limit: 200,
-    }));
-    if (readback.length !== 1) throw new Error('agent_terminal_session_binding_readback_invalid');
-    if (storedSessionId(readback[0]) !== native.storedSessionId) {
-      throw new Error('agent_terminal_session_binding_identity_mismatch');
-    }
-    return native;
   }
 
   private async start(
@@ -1221,33 +640,43 @@ export class AgentTerminalManager {
       });
     }
     await this.materializeCardToolsPlugin(launch.profileHome, cardTools, { env: launch.env });
-    const gatewayToken = randomBytes(32).toString('hex');
-    const gatewayKeyId = createHash('sha256').update(gatewayToken, 'utf8').digest('hex');
     const gatewayEnv = {
       ...launch.env,
-      HERMES_DASHBOARD_SESSION_TOKEN: gatewayToken,
       CARD_TOOLS_MANAGED: '1',
       CARD_TOOLS_HOST_URL: cardToolsHostUrl(),
     };
-    const gateway = this.spawnGateway(launch.file, launch.gatewayArgs, {
-      cwd: launch.cwd,
-      env: gatewayEnv,
-      windowsHide: true,
-    });
-    let client: GatewayClient | undefined;
+    let sessionRef: Session | undefined;
+    let process: HermesProcessHandle | undefined;
     try {
-      if (!gateway.pid) throw new Error('agent_terminal_gateway_pid_missing');
-      const port = await gatewayReadyPort(gateway);
-      client = await this.createGatewayClient();
-      const gatewayUrl = `ws://127.0.0.1:${port}/api/ws?token=${encodeURIComponent(gatewayToken)}`;
-      await client.connect(gatewayUrl);
+      process = await startHermesProcess(
+        {
+          executable: launch.file,
+          args: launch.gatewayArgs,
+          cwd: launch.cwd,
+          env: gatewayEnv,
+        },
+        {
+          onExit: (exitCode) => {
+            if (sessionRef) sessionRef.processExited(exitCode);
+          },
+          onTransportClosed: () => {
+            if (sessionRef) this.onGatewayTransportClosed(sessionRef);
+          },
+        },
+        {
+          ...(this.spawnGateway ? { spawnProcess: this.spawnGateway } : {}),
+          ...(this.createGatewayClient ? { createClient: this.createGatewayClient } : {}),
+        },
+      );
+      const client = process.client;
+      const gatewayUrl = process.url;
       const request = <T>(method: string, params: Record<string, unknown>) => (
-        client!.request<T>(method, params)
+        client.request<T>(method, params)
       );
       const profileMaterialization = await this.materializeProfile(
         {
           ...launch.profileSelection,
-          nativeTools: cardTools.nativeTools,
+          hermesSuppliedTools: cardTools.hermesSuppliedTools,
           toolsets: cardTools.toolsets,
           requiredToolsets: cardTools.pluginTools.length ? [HERMES_CARD_TOOLS_TOOLSET] : [],
           // External MCP credentials are scoped to an active Card Run. Keep
@@ -1257,7 +686,7 @@ export class AgentTerminalManager {
           mcpConnectionIds: [],
         },
         (profile) => request('profiles.describe', { name: profile }),
-        configureHermesNativeSubagentModel,
+        configureHermesSubagentModel,
         async (profile, selection) => {
           if (selection.apiMode === 'codex_app_server') {
             await this.configureCardModelRuntime(profile, selection);
@@ -1285,247 +714,127 @@ export class AgentTerminalManager {
           enabled_mcp_servers: enabledMcpServers,
         }),
       );
-      await this.configureNativeBotProfile(
+      await configureHermesBotProfile(
         request,
-        owner,
-        card,
-        botRosterProjection ?? await this.resolveBotRoster(owner),
+        {
+          owner,
+          card,
+          projection: botRosterProjection ?? await this.resolveBotRoster(owner),
+        },
       );
-      const native = await this.resolveBoundConversationSession(request, owner, card, launch, cols);
+      const reasoningEffort = String(
+        (card.runtimeOptions as Record<string, unknown> | undefined)?.reasoningEffort || '',
+      ).trim();
+      const hermes = await resolveHermesSession(client, owner, {
+        profile: launch.profile,
+        cwd: launch.cwd,
+        cols,
+        model: launch.providerSelection.model,
+        provider: launch.providerSelection.provider,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      });
       // These stock Gateway methods are session/install scoped and their public
       // contracts deliberately do not accept a profile selector.  The live
       // session already identifies the profile for tools.show.
-      const plugins = await client!.request('plugins.list', {});
+      const plugins = await client.request('plugins.list', {});
       requireLoadedHermesCardToolsPlugin(plugins);
       const unavailableToolReasons = requireHermesCardToolsReadback(
-        await client!.request('tools.show', { session_id: native.sessionId }),
+        await client.request('tools.show', { session_id: hermes.sessionId }),
         cardTools,
-        profileMaterialization.unavailableNativeToolReasons,
+        profileMaterialization.unavailableHermesToolReasons,
       );
 
-      const session: Session = {
-        owner: { ...owner },
-        card: structuredClone(card),
+      const session = new CardRuntime({
+        owner,
+        card,
+        deck,
         fingerprint,
         profileCardFingerprint: agentTerminalProfileCardFingerprint(card),
-        gateway,
+        process,
         gatewayUrl,
         client,
-        detachGatewayEvents: () => {},
-        detachGatewayState: () => {},
-        gatewayToken,
-        gatewayKeyId,
-        priorStoredSessionIds: new Map(),
-        cardToolNonces: new Map(),
+        gatewayToken: process.credential,
+        gatewayKeyId: process.credentialId,
         cardTools,
         launch,
-        pty: null,
         state: {
           sessionId,
           cardId: card.id,
           profile: launch.profile,
-          pid: gateway.pid,
-          gatewayPid: gateway.pid,
+          pid: process.pid,
+          gatewayPid: process.pid,
           tuiPid: null,
           ptyId: null,
-          nativeSessionId: native.sessionId,
-          storedSessionId: native.storedSessionId,
+          hermesSessionId: hermes.sessionId,
+          storedSessionId: hermes.storedSessionId,
           completedTurnGeneration: 0,
-          completedNativeRunId: null,
+          completedHermesRunId: null,
           hermesHome: launch.profileHome,
           unavailableToolReasons,
           status: 'running',
           cols,
           rows,
         },
-        output: [],
-        outputBytes: 0,
-        sequence: 0,
-        listeners: new Set(),
-        gatewayEventListeners: new Set(),
-        stopping: false,
-        turnTail: Promise.resolve(),
-        nativeTurnSettled: true,
-        nativeTurnSettlementWaiters: new Set(),
-      };
+        onRunExit: this.onExit,
+      });
+      sessionRef = session;
       session.detachGatewayEvents = client.onEvent((event) => {
-        if (event.session_id !== session.state.nativeSessionId) return;
+        if (!event.session_id || !session.ownsHermesSession(event.session_id)) return;
         if (event.type === 'message.start') {
-          session.nativeTurnSettled = false;
+          session.hermesTurnSettled = false;
         }
         if (event.type === 'session.info') {
           const stored = String(event.payload?.stored_session_id || '').trim();
-          if (stored) this.recordStoredSessionId(session, stored);
+          if (stored && event.session_id) session.recordStoredSession(event.session_id, stored);
           if (event.payload?.running === false) {
-            session.nativeTurnSettled = true;
-            for (const settle of [...session.nativeTurnSettlementWaiters]) settle(true);
+            session.hermesTurnSettled = true;
+            for (const settle of [...session.hermesTurnSettlementWaiters]) settle(true);
           }
         }
         for (const listener of session.gatewayEventListeners) {
           try { listener(event); } catch {}
         }
       });
-      this.sessions.set(sessionId, session);
-      gateway.once('exit', (exitCode) => this.onProcessExit(session, 'gateway', exitCode));
-      gateway.once('error', () => this.onProcessExit(session, 'gateway', null));
-      session.detachGatewayState = client.onState((state) => {
-        if (state !== 'open') this.onGatewayTransportClosed(session);
-      });
+      this.registry.register(session);
       if (session.state.status !== 'running') {
         throw new Error(session.state.error || 'agent_terminal_gateway_disconnected');
       }
-      if (gateway.exitCode !== null) {
-        this.onProcessExit(session, 'gateway', gateway.exitCode);
-        throw new Error(`agent_terminal_gateway_exited_after_ready:${gateway.exitCode}`);
+      if (process.exitCode() !== null) {
+        session.processExited(process.exitCode());
+        throw new Error(`hermes_process_exited_after_ready:${process.exitCode()}`);
       }
       return { ...session.state };
     } catch (error) {
-      this.sessions.delete(sessionId);
-      try { client?.close(); } catch {}
-      if (gateway.exitCode === null && !gateway.killed) gateway.kill();
+      this.registry.remove(sessionId);
+      process?.stop();
       throw error;
     }
   }
 
   private attachTui(session: Session, cols: number, rows: number): AgentTerminalState {
-    if (session.state.status !== 'running') throw new Error('agent_terminal_not_running');
-    if (session.pty) {
-      if (session.state.cols !== cols || session.state.rows !== rows) {
-        session.pty.resize(cols, rows);
-        Object.assign(session.state, { cols, rows });
-      }
-      return { ...session.state };
-    }
-    const tui = this.spawnPtyProcess(
-      session.launch.file,
-      [...session.launch.tuiArgs, '--resume', session.state.storedSessionId],
-      {
-        name: 'xterm-256color',
-        cols,
-        rows,
-        cwd: session.launch.cwd,
-        env: {
-          ...session.launch.env,
-          HERMES_TUI_GATEWAY_URL: session.gatewayUrl,
-          HERMES_TUI_INLINE: '1',
-        },
-        useConpty: true,
-      },
-    );
-    if (!tui.pid) {
-      try { tui.kill(); } catch {}
-      throw new Error('agent_terminal_tui_pid_missing');
-    }
-    session.pty = tui;
-    Object.assign(session.state, {
-      tuiPid: tui.pid,
-      ptyId: session.state.sessionId,
-      cols,
-      rows,
-      exitCode: undefined,
-    });
-    if (session.state.error?.startsWith('agent_terminal_tui_exited:')) {
-      session.state.error = undefined;
-    }
-    tui.onData((data) => this.onPtyData(session, data));
-    tui.onExit(({ exitCode }) => this.onProcessExit(session, 'tui', exitCode, tui));
-    for (const listener of session.listeners) listener('state', { ...session.state });
-    return { ...session.state };
-  }
-
-  private onPtyData(session: Session, data: string): void {
-    const output = { sequence: ++session.sequence, data };
-    session.output.push(output);
-    session.outputBytes += Buffer.byteLength(data);
-    while (session.outputBytes > MAX_TERMINAL_REPLAY_BYTES && session.output.length) {
-      session.outputBytes -= Buffer.byteLength(session.output.shift()!.data);
-      session.state.replayTruncated = true;
-    }
-    for (const listener of session.listeners) listener('output', output);
-  }
-
-  private onProcessExit(
-    session: Session,
-    source: 'gateway' | 'tui',
-    exitCode: number | null,
-    tui?: IPty,
-  ): void {
-    if (session.state.status !== 'running') return;
-    if (source === 'tui') {
-      if (tui && session.pty !== tui) return;
-      session.pty = null;
-      session.state.tuiPid = null;
-      session.state.ptyId = null;
-      session.state.exitCode = exitCode ?? undefined;
-      if (!session.stopping && exitCode !== 0 && exitCode !== null) {
-        session.state.error = `agent_terminal_tui_exited:${exitCode}`;
-      }
-      for (const listener of session.listeners) listener('state', { ...session.state });
-      return;
-    }
-    session.state.status = session.stopping && (exitCode === 0 || exitCode === null)
-      ? 'exited'
-      : 'failed';
-    session.state.exitCode = exitCode ?? undefined;
-    if (!session.stopping) session.state.error = `agent_terminal_${source}_exited:${exitCode ?? 'null'}`;
-    session.detachGatewayState();
-    session.detachGatewayEvents();
-    session.gatewayEventListeners.clear();
-    session.priorStoredSessionIds.clear();
-    session.cardToolNonces.clear();
-    session.client.close();
-    try { session.pty?.kill(); } catch {}
-    session.pty = null;
-    session.state.tuiPid = null;
-    session.state.ptyId = null;
-    void this.onExit(session.state.sessionId).catch((error) => {
-      session.state.error = String(error);
-      for (const listener of session.listeners) listener('state', { ...session.state });
-    });
-    for (const listener of session.listeners) listener('state', { ...session.state });
+    new CardTerminal(session, this.spawnPtyProcess).attach(cols, rows);
+    return session.snapshot();
   }
 
   private onGatewayTransportClosed(session: Session): void {
-    if (session.state.status !== 'running' || session.stopping) return;
-    session.state.status = 'failed';
-    session.state.error = 'agent_terminal_gateway_disconnected';
-    session.detachGatewayState();
-    session.detachGatewayEvents();
-    session.gatewayEventListeners.clear();
-    session.priorStoredSessionIds.clear();
-    session.cardToolNonces.clear();
-    try { session.pty?.kill(); } catch {}
-    session.pty = null;
-    session.state.tuiPid = null;
-    session.state.ptyId = null;
-    if (session.gateway.exitCode === null && !session.gateway.killed) session.gateway.kill();
-    void this.onExit(session.state.sessionId).catch((error) => {
-      session.state.error = String(error);
-      for (const listener of session.listeners) listener('state', { ...session.state });
-    });
-    for (const listener of session.listeners) listener('state', { ...session.state });
+    session.transportClosed();
   }
 
   private owned(owner: AgentTerminalOwner, id: string): Session {
-    const session = this.sessions.get(id);
-    if (!session || !sameOwner(session.owner, owner)) throw new Error('agent_terminal_session_not_found');
-    return session;
+    return this.registry.get(owner, id);
   }
 
   private running(owner: AgentTerminalOwner, id: string): Session {
     const session = this.owned(owner, id);
-    if (session.state.status !== 'running') throw new Error('agent_terminal_not_running');
-    return session;
+    return session.requireRunning(owner);
   }
 
   state(owner: AgentTerminalOwner, id: string): AgentTerminalState {
-    return { ...this.owned(owner, id).state };
+    return this.owned(owner, id).snapshot(owner);
   }
 
   find(owner: AgentTerminalOwner): AgentTerminalState | null {
-    const session = [...this.sessions.values()].find((candidate) => (
-      sameOwner(candidate.owner, owner) && candidate.state.status === 'running'
-    ));
+    const session = this.registry.find(owner);
     return session ? { ...session.state } : null;
   }
 
@@ -1533,145 +842,20 @@ export class AgentTerminalManager {
     owner: AgentTerminalOwner;
     state: AgentTerminalState;
   } | null {
-    const matches = [...this.sessions.values()].filter((candidate) => (
-      candidate.owner.projectId === projectId
-      && candidate.owner.deckId === deckId
-      && candidate.owner.cardId === cardId
-      && candidate.state.status === 'running'
-    ));
-    if (matches.length > 1) throw new Error('agent_terminal_card_runtime_ambiguous');
-    const session = matches[0];
+    const session = this.registry.findCard(projectId, deckId, cardId);
     return session ? { owner: { ...session.owner }, state: { ...session.state } } : null;
   }
 
   listRunning(): Array<{ owner: AgentTerminalOwner; state: AgentTerminalState }> {
-    return [...this.sessions.values()]
-      .filter((session) => session.state.status === 'running')
-      .map((session) => ({ owner: { ...session.owner }, state: { ...session.state } }));
-  }
-
-  private recordStoredSessionId(
-    session: Session,
-    storedSessionId: string,
-    now = Math.floor(Date.now() / 1000),
-  ): void {
-    const stored = storedSessionId.trim();
-    if (!stored || stored === session.state.storedSessionId) return;
-    for (const [prior, expiry] of session.priorStoredSessionIds) {
-      if (expiry < now) session.priorStoredSessionIds.delete(prior);
-    }
-    session.priorStoredSessionIds.delete(stored);
-    session.priorStoredSessionIds.set(
-      session.state.storedSessionId,
-      now + AUTH_MAX_FUTURE_SECONDS,
-    );
-    while (session.priorStoredSessionIds.size > PRIOR_SESSION_LIMIT) {
-      const oldest = session.priorStoredSessionIds.keys().next().value as string | undefined;
-      if (!oldest) break;
-      session.priorStoredSessionIds.delete(oldest);
-    }
-    session.state.storedSessionId = stored;
-  }
-
-  private waitForNativeTurnSettlement(
-    session: Session,
-    timeoutMs = NATIVE_TURN_SETTLEMENT_TIMEOUT_MS,
-  ): Promise<boolean> {
-    if (session.nativeTurnSettled) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      let done = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const finish = (settled: boolean) => {
-        if (done) return;
-        done = true;
-        if (timer) clearTimeout(timer);
-        session.nativeTurnSettlementWaiters.delete(finish);
-        resolve(settled);
-      };
-      session.nativeTurnSettlementWaiters.add(finish);
-      if (session.nativeTurnSettled) {
-        finish(true);
-        return;
-      }
-      timer = setTimeout(() => finish(false), timeoutMs);
-      timer.unref?.();
-    });
-  }
-
-  private async authenticateMagenticWorkerToolRequest(
-    keyId: string,
-    payload: string,
-    signature: string,
-  ): Promise<AuthenticatedCardToolRequest> {
-    const proof = requireMagenticWorkerToolProof(
-      await this.verifyMagenticWorkerToolRequest({ keyId, payload, signature }),
-    );
-    const candidates = [...this.sessions.values()].filter((session) => (
-      session.state.status === 'running'
-      && session.owner.projectId === proof.projectId
-      && session.owner.deckId === proof.deckId
-      && session.owner.cardId === proof.authorityCardId
-      && session.state.profile === proof.authorityProfile
-      && session.cardTools.cardRevisionId === proof.authorityCardRevisionId
-      && session.cardTools.configurationFingerprint === proof.authorityConfigurationFingerprint
-    ));
-    if (candidates.length !== 1) throw new Error('hermes_card_tool_authentication_failed');
-    const session = candidates[0];
-    const registered = session.cardTools.pluginTools.find(
-      (candidate) => candidate.hermesName === proof.tool,
-    );
-    if (!registered) throw new Error('hermes_card_tool_authentication_failed');
-    const now = Math.floor(Date.now() / 1000);
-    for (const [usedNonce, expiry] of session.cardToolNonces) {
-      if (expiry <= now) session.cardToolNonces.delete(usedNonce);
-    }
-    if (session.cardToolNonces.has(proof.nonce)) {
-      throw new Error('hermes_card_tool_authentication_failed');
-    }
-    session.cardToolNonces.set(proof.nonce, proof.expiresAt);
-    while (session.cardToolNonces.size > CARD_TOOL_NONCE_LIMIT) {
-      const oldest = session.cardToolNonces.keys().next().value as string | undefined;
-      if (!oldest) break;
-      session.cardToolNonces.delete(oldest);
-    }
-    return {
-      owner: { ...session.owner },
-      state: { ...session.state },
-      canonicalToolName: registered.canonicalName,
-      cardTools: {
-        cardRevisionId: session.cardTools.cardRevisionId,
-        configurationFingerprint: session.cardTools.configurationFingerprint,
-        runtimeMode: session.cardTools.runtime.mode,
-      },
-      request: {
-        version: 2,
-        expiresAt: proof.expiresAt,
-        nonce: proof.nonce,
-        sourceTaskId: proof.sourceTaskId,
-        sourceTaskRunId: proof.sourceTaskRunId,
-        sourceProfile: proof.sourceProfile,
-        tool: proof.tool,
-        arguments: proof.arguments,
-      },
-      executionContext: {
-        parentRunId: proof.outerRunId,
-        conversationId: '',
-      },
-    };
+    return this.registry.listRunning();
   }
 
   magenticCardToolAuthority(owner: AgentTerminalOwner): MagenticCardToolAuthority {
-    const candidates = [...this.sessions.values()].filter((session) => (
-      session.state.status === 'running' && sameOwner(session.owner, owner)
-    ));
-    if (candidates.length !== 1) throw new Error('magentic_card_tool_authority_unavailable');
-    const session = candidates[0];
-    return {
-      cardId: session.owner.cardId,
-      cardRevisionId: session.cardTools.cardRevisionId,
-      profile: session.state.profile,
-      configurationFingerprint: session.cardTools.configurationFingerprint,
-    };
+    return new HermesCardToolAuthority(
+      this.registry,
+      this.resolveActiveContext,
+      this.verifyMagenticWorkerToolRequest,
+    ).magenticAuthority(owner);
   }
 
   async authenticateCardToolRequest(
@@ -1679,160 +863,11 @@ export class AgentTerminalManager {
     payload: string,
     signature: string,
   ): Promise<AuthenticatedCardToolRequest> {
-    if (
-      Buffer.byteLength(keyId) > 256
-      || Buffer.byteLength(signature) > 256
-      || Buffer.byteLength(payload) > 512 * 1024
-    ) cardToolAuthenticationFailure('bounds');
-    const candidates = [...this.sessions.values()].filter((session) => (
-      session.state.status === 'running' && equalHex(session.gatewayKeyId, keyId)
-    ));
-    if (candidates.length === 0) {
-      try {
-        return await this.authenticateMagenticWorkerToolRequest(keyId, payload, signature);
-      } catch (error) {
-        if (cardToolAuthenticationFailureStage(error)) throw error;
-        cardToolAuthenticationFailure('key_or_worker');
-      }
-    }
-    if (candidates.length !== 1) cardToolAuthenticationFailure('key_identity');
-    const session = candidates[0];
-    const expected = createHmac('sha256', session.gatewayToken).update(payload, 'utf8').digest('hex');
-    if (!equalHex(expected, signature)) cardToolAuthenticationFailure('signature');
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      cardToolAuthenticationFailure('payload_json');
-    }
-    const value = record(parsed);
-    const expectedKeys = [
-      'arguments', 'expiresAt', 'nonce', 'sourceStoredSessionId', 'tool', 'version',
-    ];
-    if (Object.keys(value).sort().join('\0') !== expectedKeys.join('\0')) {
-      cardToolAuthenticationFailure('payload_shape');
-    }
-    const now = Math.floor(Date.now() / 1000);
-    const expiresAt = value.expiresAt;
-    const nonce = boundedString(value.nonce, 128);
-    const sourceStoredSessionId = boundedString(value.sourceStoredSessionId, 512);
-    const tool = boundedString(value.tool, 128);
-    const args = value.arguments;
-    if (!args || typeof args !== 'object' || Array.isArray(args)) {
-      cardToolAuthenticationFailure('arguments');
-    }
-    const snapshot = record(await session.client.request('session.activate', {
-      session_id: session.state.nativeSessionId,
-      profile: session.state.profile,
-      omit_messages: true,
-    }));
-    if (String(snapshot.session_id || '').trim() !== session.state.nativeSessionId) {
-      cardToolAuthenticationFailure('native_session');
-    }
-    const stored = String(snapshot.session_key || '').trim();
-    if (!stored) cardToolAuthenticationFailure('stored_session');
-    this.recordStoredSessionId(session, stored);
-    for (const [prior, expiry] of session.priorStoredSessionIds) {
-      if (expiry < now) session.priorStoredSessionIds.delete(prior);
-    }
-    const sourceSessionKnown = sourceStoredSessionId === session.state.storedSessionId
-      || session.priorStoredSessionIds.has(sourceStoredSessionId);
-    const registered = session.cardTools.pluginTools.find(
-      (candidate) => candidate.hermesName === tool,
-    );
-    const rosterArgumentKeys = Object.keys(args);
-    const projectRosterRequest = tool === PROJECT_ROSTER_AUTHORITY_TOOL && (
-      rosterArgumentKeys.length === 0
-      || (
-        rosterArgumentKeys.length === 1
-        && rosterArgumentKeys[0] === 'target'
-        && typeof (args as Record<string, unknown>).target === 'string'
-        && Buffer.byteLength(String((args as Record<string, unknown>).target)) <= 256
-      )
-    );
-    const active = this.resolveActiveContext(session.state.sessionId);
-    const runtimeObservationRequest = tool === RUNTIME_OBSERVATION_AUTHORITY_TOOL
-      && Object.keys(args).sort().join('\0') === 'attempt';
-    if (
-      value.version !== 1
-      || !Number.isSafeInteger(expiresAt)
-      || Number(expiresAt) < now
-      || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS
-      || !/^[a-f0-9]{32,128}$/i.test(nonce)
-      || !sourceSessionKnown
-      || (!registered && !projectRosterRequest && !runtimeObservationRequest)
-      || (runtimeObservationRequest && active === null)
-      || (registered !== undefined
-        && active !== null
-        && !active.authorizedCanonicalTools.includes(registered.canonicalName))
-    ) {
-      if (value.version !== 1) cardToolAuthenticationFailure('version');
-      if (!Number.isSafeInteger(expiresAt)
-        || Number(expiresAt) < now
-        || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS) {
-        cardToolAuthenticationFailure('expiry');
-      }
-      if (!/^[a-f0-9]{32,128}$/i.test(nonce)) cardToolAuthenticationFailure('nonce_shape');
-      if (!sourceSessionKnown) cardToolAuthenticationFailure('source_session');
-      if (!registered && !projectRosterRequest && !runtimeObservationRequest) {
-        cardToolAuthenticationFailure('registered_tool');
-      }
-      if (runtimeObservationRequest && active === null) {
-        cardToolAuthenticationFailure('active_run');
-      }
-      cardToolAuthenticationFailure('run_authorization');
-    }
-    for (const [usedNonce, expiry] of session.cardToolNonces) {
-      if (expiry < now) session.cardToolNonces.delete(usedNonce);
-    }
-    if (session.cardToolNonces.has(nonce)) cardToolAuthenticationFailure('nonce_replay');
-    session.cardToolNonces.set(nonce, Number(expiresAt));
-    while (session.cardToolNonces.size > CARD_TOOL_NONCE_LIMIT) {
-      const oldest = session.cardToolNonces.keys().next().value as string | undefined;
-      if (!oldest) break;
-      session.cardToolNonces.delete(oldest);
-    }
-    return {
-      owner: { ...session.owner },
-      state: { ...session.state },
-      canonicalToolName: projectRosterRequest
-        ? PROJECT_ROSTER_AUTHORITY_TOOL
-        : runtimeObservationRequest
-          ? RUNTIME_OBSERVATION_AUTHORITY_TOOL
-          : registered!.canonicalName,
-      cardTools: {
-        cardRevisionId: session.cardTools.cardRevisionId,
-        configurationFingerprint: session.cardTools.configurationFingerprint,
-        runtimeMode: session.cardTools.runtime.mode,
-      },
-      request: {
-        version: 1,
-        expiresAt: Number(expiresAt),
-        nonce,
-        sourceStoredSessionId,
-        tool,
-        arguments: args as Record<string, unknown>,
-      },
-    };
-  }
-
-  async history(owner: AgentTerminalOwner, id: string): Promise<{
-    count: number;
-    messages: Array<Record<string, unknown>>;
-  }> {
-    const session = this.running(owner, id);
-    const history = await session.client.request<{
-      count?: unknown;
-      messages?: unknown;
-    }>('session.history', {
-      session_id: session.state.nativeSessionId,
-      profile: session.state.profile,
-    });
-    if (!Number.isSafeInteger(history?.count) || !Array.isArray(history?.messages)) {
-      throw new Error('agent_terminal_history_invalid');
-    }
-    return { count: Number(history.count), messages: history.messages as Array<Record<string, unknown>> };
+    return new HermesCardToolAuthority(
+      this.registry,
+      this.resolveActiveContext,
+      this.verifyMagenticWorkerToolRequest,
+    ).authenticate(keyId, payload, signature);
   }
 
   async requestProfile<T>(
@@ -1844,7 +879,7 @@ export class AgentTerminalManager {
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalized)) {
       throw new Error('agent_terminal_profile_missing');
     }
-    const matches = [...this.sessions.values()].filter((candidate) => (
+    const matches = this.registry.list().filter((candidate) => (
       candidate.state.status === 'running' && candidate.state.profile.toLowerCase() === normalized
     ));
     if (matches.length === 0) throw new Error('agent_terminal_profile_runtime_not_running');
@@ -1854,13 +889,14 @@ export class AgentTerminalManager {
   }
 
   async dispatchLearn(profile: string, request: string): Promise<string> {
-    const result = await this.requestProfile<any>(profile, 'command.dispatch', {
-      name: 'learn',
-      arg: request,
-    });
-    const message = result?.type === 'send' ? String(result.message || '').trim() : '';
-    if (!message) throw new Error('hermes_learn_command_dispatch_failed');
-    return message;
+    const normalized = String(profile || '').trim().toLowerCase();
+    const matches = this.registry.list().filter((runtime) => (
+      runtime.state.status === 'running'
+      && runtime.state.profile.toLowerCase() === normalized
+    ));
+    if (matches.length !== 1) throw new Error('hermes_session_runtime_unavailable');
+    return new HermesSessionMaintenance(matches[0], this.resolveActiveContext)
+      .dispatchLearn(request);
   }
 
   verifyConfiguration(
@@ -1871,22 +907,22 @@ export class AgentTerminalManager {
     workingDirectory?: string,
   ): void {
     const session = this.owned(owner, id);
-    if (session.fingerprint !== agentTerminalFingerprint(
+    session.verifyFingerprint(agentTerminalFingerprint(
       owner,
       card,
       deck,
       workingDirectory || session.launch.cwd,
-    )) {
-      throw new Error('agent_terminal_configuration_changed_stop_required');
-    }
+    ));
   }
 
   resize(owner: AgentTerminalOwner, id: string, cols: number, rows: number): AgentTerminalState {
     const session = this.running(owner, id);
-    if (!session.pty) throw new Error('agent_terminal_tui_not_attached');
-    session.pty.resize(cols, rows);
-    Object.assign(session.state, { cols, rows });
-    return { ...session.state };
+    new CardTerminal(session, this.spawnPtyProcess).resize(cols, rows);
+    return session.snapshot();
+  }
+
+  input(owner: AgentTerminalOwner, id: string, data: string): void {
+    new CardTerminal(this.running(owner, id), this.spawnPtyProcess).input(data);
   }
 
   stop(owner: AgentTerminalOwner, id: string): void {
@@ -1894,11 +930,7 @@ export class AgentTerminalManager {
   }
 
   async interrupt(owner: AgentTerminalOwner, id: string): Promise<void> {
-    const session = this.running(owner, id);
-    await session.client.request('session.interrupt', {
-      session_id: session.state.nativeSessionId,
-      profile: session.state.profile,
-    });
+    await this.running(owner, id).interrupt(owner);
   }
 
   async startVoiceCapture(
@@ -1934,7 +966,7 @@ export class AgentTerminalManager {
       }
       const recording = record(await session.client.request('voice.record', {
         action: 'start',
-        session_id: session.state.nativeSessionId,
+        session_id: session.state.hermesSessionId,
         profile: session.state.profile,
       }));
       if (recording.status !== 'recording') {
@@ -1989,7 +1021,7 @@ export class AgentTerminalManager {
     }
     const result = record(await session.client.request('voice.record', {
       action: 'stop',
-      session_id: session.state.nativeSessionId,
+      session_id: session.state.hermesSessionId,
       profile: session.state.profile,
     }));
     if (result.status !== 'stopped') {
@@ -2020,25 +1052,7 @@ export class AgentTerminalManager {
         profile: session.state.profile,
       }).catch(() => undefined);
     }
-    session.stopping = true;
-    session.state.status = 'exited';
-    session.detachGatewayState();
-    session.detachGatewayEvents();
-    session.gatewayEventListeners.clear();
-    for (const settle of [...session.nativeTurnSettlementWaiters]) settle(false);
-    session.priorStoredSessionIds.clear();
-    session.cardToolNonces.clear();
-    session.client.close();
-    try { session.pty?.kill(); } catch {}
-    session.pty = null;
-    session.state.tuiPid = null;
-    session.state.ptyId = null;
-    if (session.gateway.exitCode === null && !session.gateway.killed) session.gateway.kill();
-    void this.onExit(session.state.sessionId).catch((error) => {
-      session.state.error = String(error);
-      for (const listener of session.listeners) listener('state', { ...session.state });
-    });
-    for (const listener of session.listeners) listener('state', { ...session.state });
+    session.stop();
   }
 
   async submit(
@@ -2050,582 +1064,70 @@ export class AgentTerminalManager {
       timeoutMs?: number;
       onEvent?: (event: AgentTerminalGatewayEvent) => void;
       surface?: 'card-shared-chat';
-      routing?: AgentTerminalTurnRouting;
+      routing?: CardTurnRouting;
       images?: unknown[];
     } = {},
-  ): Promise<AgentTerminalTurnResult> {
-    if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
+  ): Promise<CardHermesTurnResult> {
     const session = this.running(owner, id);
-    const execute = async () => {
-      const externalConfiguration = await this.refreshOptionalCardTools(session);
-      try {
-        const { images = [], ...turnOptions } = options;
-        await this.attachTurnImages(session, images, options.onEvent);
-        const resolvedRouting = options.routing
-          ? nativeTurnRouting(session.cardTools, options.routing)
-          : null;
-        return await this.submitNow(session, text, {
-          ...turnOptions,
-          ...(resolvedRouting || {}),
-        });
-      } finally {
-        if (externalConfiguration) {
-          await this.releaseOptionalCardTools(session, externalConfiguration);
-        }
-      }
-    };
-    const result = session.turnTail.then(execute, execute);
-    session.turnTail = result.then(() => undefined, () => undefined);
-    return result;
+    return new CardTurn(session).submit(text, {
+      ...options,
+      resolveBinding: () => session.ensureSession(owner),
+      prepare: async () => {
+        const externalConfiguration = await acquireOptionalHermesCardTools(
+          session,
+          this.resolveActiveContext,
+          {
+            resolveTools: this.resolveCardTools,
+            materializeProfile: this.materializeProfile,
+            materializeExternalTools: this.materializeExternalMcpTools,
+            resolveMcpServerSpec: this.resolveMcpServerSpec,
+            materializeApplicationServers: this.materializeApplicationMcpServers,
+            configureModelRuntime: this.configureCardModelRuntime,
+            removeApplicationServers: this.removeApplicationMcpServers,
+          },
+        );
+        return externalConfiguration
+          ? () => releaseOptionalHermesCardTools(
+            session,
+            externalConfiguration,
+            this.removeApplicationMcpServers,
+          )
+          : undefined;
+      },
+    });
   }
 
   /**
-   * Queue one native, post-turn context compaction on the exact running Card
+   * Queue one Hermes post-turn context compaction on the exact running Card
    * session. The receipt deliberately excludes Hermes' generated summary: the
    * shared conversation and graph owners remain the durable/auditable record.
    *
    * Callers may ignore the returned Promise and use onReceipt. This method
-   * always resolves an honest bounded receipt; native compaction failure never
+   * always resolves an honest bounded receipt; hermes compaction failure never
    * rejects or stops a later Card turn. A later submit observes the updated
    * turnTail and therefore starts only after this maintenance attempt settles.
    */
-  queueNativeContextCompaction(
+  queueHermesContextCompaction(
     owner: AgentTerminalOwner,
     expected: AgentTerminalCompactionIdentity,
     onReceipt?: (receipt: AgentTerminalCompactionReceipt) => void,
   ): Promise<AgentTerminalCompactionReceipt> {
-    const base = (): Omit<AgentTerminalCompactionReceipt, 'status' | 'errorCode'> => ({
-      terminalSessionId: String(expected?.sessionId || ''),
-      nativeSessionId: String(expected?.nativeSessionId || ''),
-      storedSessionId: String(expected?.storedSessionId || ''),
-      profile: String(expected?.profile || ''),
-      focusApplied: false,
-      beforeMessages: null,
-      afterMessages: null,
-      beforeTokens: null,
-      afterTokens: null,
-    });
-    const deliver = (receipt: AgentTerminalCompactionReceipt) => {
-      try { onReceipt?.({ ...receipt }); } catch {}
-      return receipt;
-    };
-    const resolved = (
-      status: AgentTerminalCompactionReceipt['status'],
-      errorCode: string | null,
-    ) => Promise.resolve(deliver({ ...base(), status, errorCode }));
-    if (
-      !expected
-      || !expected.sessionId?.trim()
-      || !expected.nativeSessionId?.trim()
-      || !expected.storedSessionId?.trim()
-      || !expected.profile?.trim()
-      || !Number.isSafeInteger(expected.completedTurnGeneration)
-      || expected.completedTurnGeneration < 0
-      || (expected.completedNativeRunId !== null
-        && (typeof expected.completedNativeRunId !== 'string'
-          || !expected.completedNativeRunId.trim()))
-    ) {
-      return resolved('failed', 'agent_terminal_context_compaction_identity_invalid');
-    }
-
-    let session: Session;
-    try {
-      session = this.running(owner, expected.sessionId);
-    } catch {
-      return resolved('unavailable', 'agent_terminal_context_compaction_session_unavailable');
-    }
-    const identityMatches = () => (
-      session.state.status === 'running'
-      && session.state.sessionId === expected.sessionId
-      && session.state.nativeSessionId === expected.nativeSessionId
-      && session.state.storedSessionId === expected.storedSessionId
-      && session.state.profile === expected.profile
-    );
-    const completedTurnMatches = () => (
-      session.state.completedTurnGeneration === expected.completedTurnGeneration
-      && session.state.completedNativeRunId === expected.completedNativeRunId
-    );
-    if (!identityMatches()) {
-      return resolved('unavailable', 'agent_terminal_context_compaction_identity_changed');
-    }
-    try {
-      if (this.resolveActiveContext(session.state.sessionId) !== null) {
-        return resolved('unavailable', 'agent_terminal_context_compaction_run_active');
-      }
-    } catch {
-      return resolved('unavailable', 'agent_terminal_context_compaction_run_state_unavailable');
-    }
-
-    const count = (value: unknown): number | null => (
-      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-        ? value
-        : null
-    );
-    const execute = async (): Promise<AgentTerminalCompactionReceipt> => {
-      if (!identityMatches()) {
-        return { ...base(), status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_identity_changed' };
-      }
-      if (!await this.waitForNativeTurnSettlement(session)) {
-        return { ...base(), status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_settlement_timeout' };
-      }
-      if (!identityMatches()) {
-        return { ...base(), status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_identity_changed' };
-      }
-      try {
-        if (this.resolveActiveContext(session.state.sessionId) !== null) {
-          return { ...base(), status: 'unavailable',
-            errorCode: 'agent_terminal_context_compaction_run_active' };
-        }
-      } catch {
-        return { ...base(), status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_run_state_unavailable' };
-      }
-      // Settlement runs after the visible turn and may be delayed behind graph
-      // work. Recheck the exact completion immediately before native mutation so
-      // turn N can never compact away a now-completed turn N+1.
-      if (!completedTurnMatches()) {
-        return { ...base(), status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_turn_changed' };
-      }
-
-      let result: unknown;
-      try {
-        result = await session.client.request('session.compress', {
-          session_id: expected.nativeSessionId,
-          profile: expected.profile,
-        });
-      } catch (error) {
-        return { ...base(), status: 'failed',
-          errorCode: nativeCompactionRequestError(error) };
-      }
-      if (!identityMatches() || !result || typeof result !== 'object' || Array.isArray(result)) {
-        return { ...base(), status: 'failed', errorCode: identityMatches()
-          ? 'agent_terminal_context_compaction_result_invalid'
-          : 'agent_terminal_context_compaction_identity_changed' };
-      }
-      const value = result as Record<string, unknown>;
-      const info = value.info && typeof value.info === 'object' && !Array.isArray(value.info)
-        ? value.info as Record<string, unknown>
-        : {};
-      const reportedNative = String(info.session_id || '').trim();
-      const reportedStored = String(info.stored_session_id || '').trim();
-      if (
-        (reportedNative && reportedNative !== expected.nativeSessionId)
-        || (reportedStored && reportedStored !== expected.storedSessionId)
-      ) {
-        return { ...base(), status: 'failed',
-          errorCode: 'agent_terminal_context_compaction_identity_changed' };
-      }
-      const measurements = {
-        beforeMessages: count(value.before_messages),
-        afterMessages: count(value.after_messages),
-        beforeTokens: count(value.before_tokens),
-        afterTokens: count(value.after_tokens),
-      };
-      const status = String(value.status || '').trim();
-      if (status === 'compressed') {
-        return { ...base(), ...measurements, status: 'compressed', errorCode: null };
-      }
-      if (status === 'aborted') {
-        return { ...base(), ...measurements, status: 'aborted',
-          errorCode: 'agent_terminal_context_compaction_aborted' };
-      }
-      if (value.lock_held === true) {
-        return { ...base(), ...measurements, status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_lock_held' };
-      }
-      if (status === 'pending') {
-        return { ...base(), ...measurements, status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_pending' };
-      }
-      if (value.compressed === false) {
-        return { ...base(), ...measurements, status: 'unavailable',
-          errorCode: 'agent_terminal_context_compaction_unavailable' };
-      }
-      return { ...base(), ...measurements, status: 'failed',
-        errorCode: 'agent_terminal_context_compaction_result_invalid' };
-    };
-
-    const attempt = session.turnTail
-      .then(execute, execute)
-      .then(deliver, () => deliver({ ...base(), status: 'failed',
-        errorCode: 'agent_terminal_context_compaction_request_failed' }));
-    session.turnTail = attempt.then(() => undefined, () => undefined);
-    return attempt;
+    return new HermesSessionMaintenance(
+      this.running(owner, expected.sessionId),
+      this.resolveActiveContext,
+    ).queueCompaction(expected, onReceipt);
   }
-
-  private async attachTurnImages(
-    session: Session,
-    images: unknown[],
-    onEvent?: (event: AgentTerminalGatewayEvent) => void,
-  ): Promise<void> {
-    if (!Array.isArray(images) || images.length > 12) {
-      throw new Error('agent_terminal_turn_images_invalid');
-    }
-    for (const [index, raw] of images.entries()) {
-      try {
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-          throw new Error('attachment_record_invalid');
-        }
-        const image = raw as Record<string, unknown>;
-        const name = String(image.name || `attachment-${index + 1}.png`).trim();
-        const dataUrl = String(image.dataUrl || '').trim();
-        if (image.schemaVersion === 'worldview.turn-context.v1' && !dataUrl) {
-          onEvent?.({
-            type: 'attachment.context_only',
-            session_id: session.state.nativeSessionId,
-            payload: {
-              index,
-              source: String(image.kind || 'worldview-context'),
-              captureError: String(image.captureError || ''),
-            },
-          });
-          continue;
-        }
-        const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
-        if (!match || !name || name.length > 200 || /[\\/]/.test(name)) {
-          throw new Error('attachment_image_invalid');
-        }
-        const bytes = Buffer.from(match[2], 'base64');
-        if (!bytes.length || bytes.length > 10 * 1024 * 1024) {
-          throw new Error('attachment_image_size_invalid');
-        }
-        const expectedMediaType = String(image.mediaType || match[1]).trim().toLowerCase();
-        if (expectedMediaType !== match[1]) throw new Error('attachment_image_media_type_mismatch');
-        const expectedSha256 = String(image.sha256 || '').trim().toLowerCase();
-        const actualSha256 = createHash('sha256').update(bytes).digest('hex');
-        if (expectedSha256 && expectedSha256 !== actualSha256) {
-          throw new Error('attachment_image_hash_mismatch');
-        }
-        const result = record(await session.client.request('image.attach_bytes', {
-          session_id: session.state.nativeSessionId,
-          profile: session.state.profile,
-          content_base64: match[2],
-          filename: name,
-        }));
-        if (result.attached !== true) throw new Error('attachment_image_not_accepted');
-        onEvent?.({
-          type: 'attachment.accepted',
-          session_id: session.state.nativeSessionId,
-          payload: {
-            index,
-            name,
-            mediaType: match[1],
-            sha256: actualSha256,
-            source: String(image.kind || 'user-upload'),
-          },
-        });
-      } catch (error) {
-        onEvent?.({
-          type: 'attachment.error',
-          session_id: session.state.nativeSessionId,
-          payload: {
-            index,
-            error: error instanceof Error ? error.message : 'attachment_image_failed',
-          },
-        });
-      }
-    }
-  }
-
-  private async refreshOptionalCardTools(session: Session): Promise<HermesCardTools | null> {
-    let cleanupConfiguration: HermesCardTools | null = null;
-    try {
-      const active = this.resolveActiveContext(session.state.sessionId);
-      if (!active) return null;
-      const savedGrantedTools = [...new Set([
-        ...session.cardTools.enabledTools,
-        ...session.cardTools.unavailableTools,
-      ])];
-      const catalogPrincipal = {
-        kind: 'card-runtime' as const,
-        projectId: session.owner.projectId,
-        deckId: session.owner.deckId,
-        conversationId: active.conversationId,
-        parentRunId: active.runId,
-        callerCardId: session.owner.cardId,
-        callerRuntimeKind: 'hermes' as const,
-        callerRuntimeMode: session.cardTools.runtime.mode,
-        grantedTools: savedGrantedTools,
-        presentedTools: session.cardTools.presentedTools,
-      };
-      const resolved = await this.resolveCardTools(session.owner, session.card, {
-        externalCatalogPrincipal: catalogPrincipal,
-      });
-      if (resolved.externalToolCatalogState !== 'available') return null;
-      if (!sameSavedCardToolAuthority(resolved, session.cardTools)) return null;
-      if (!resolved.externalMcpTools.length) {
-        session.cardTools = resolved;
-        return null;
-      }
-      cleanupConfiguration = resolved;
-
-      const request = <T>(method: string, params: Record<string, unknown>) => (
-        session.client.request<T>(method, params)
-      );
-      await this.materializeApplicationMcpServers(
-        request,
-        resolved,
-        this.resolveMcpServerSpec({
-          ...catalogPrincipal,
-          callerRuntimeMode: resolved.runtime.mode,
-          grantedTools: resolved.enabledTools,
-          presentedTools: resolved.presentedTools,
-        }),
-      );
-      const externalMcpConnectionIds = [...new Set(
-        resolved.externalMcpTools.map((tool) => tool.connectionId),
-      )];
-      const profileMaterialization = await this.materializeProfile(
-        {
-          ...session.launch.profileSelection,
-          nativeTools: resolved.nativeTools,
-          toolsets: resolved.toolsets,
-          requiredToolsets: resolved.pluginTools.length ? [HERMES_CARD_TOOLS_TOOLSET] : [],
-          mcpConnectionIds: externalMcpConnectionIds,
-        },
-        (profile) => request('profiles.describe', { name: profile }),
-        configureHermesNativeSubagentModel,
-        async (profile, selection) => {
-          if (selection.apiMode === 'codex_app_server') {
-            await this.configureCardModelRuntime(profile, selection);
-            return { ok: true, applied: { model: true } };
-          }
-          const configured = await request('profiles.configure', {
-            name: profile,
-            provider: selection.provider,
-            model: selection.model,
-            confirm_expensive_model: true,
-          });
-          await this.configureCardModelRuntime(profile, selection);
-          return configured;
-        },
-        (profile, disabledSkills) => request('profiles.configure', {
-          name: profile,
-          disabled_skills: disabledSkills,
-        }),
-        (profile, enabledToolsets) => request('profiles.configure', {
-          name: profile,
-          enabled_toolsets: enabledToolsets,
-        }),
-        (profile, enabledMcpServers) => request('profiles.configure', {
-          name: profile,
-          enabled_mcp_servers: enabledMcpServers,
-        }),
-      );
-      const unavailableExternalMcpToolReasons = await this.materializeExternalMcpTools(
-        request,
-        resolved,
-        profileMaterialization.unavailableMcpServerReasons,
-      );
-      // These methods are session/install scoped. The native Gateway contract
-      // does not accept a profile selector; the live session already carries
-      // the exact saved Card profile identity.
-      const reload = record(await session.client.request('reload.mcp', {
-        session_id: session.state.nativeSessionId,
-        confirm: true,
-      }));
-      if (reload.status !== 'reloaded') throw new Error('hermes_native_mcp_reload_failed');
-      const unavailableToolReasons = requireHermesCardToolsReadback(
-        await session.client.request('tools.show', { session_id: session.state.nativeSessionId }),
-        resolved,
-        profileMaterialization.unavailableNativeToolReasons,
-        unavailableExternalMcpToolReasons,
-      );
-      session.cardTools = resolved;
-      session.state.unavailableToolReasons = unavailableToolReasons;
-      for (const listener of session.listeners) listener('state', { ...session.state });
-      return resolved;
-    } catch (error) {
-      if (cleanupConfiguration) {
-        await this.releaseOptionalCardTools(session, cleanupConfiguration);
-      }
-      // External catalog readiness is optional for conversation startup and
-      // submission. Keep the already-running exact Card surface and retry on
-      // a later turn instead of turning a tool outage into an application lock.
-      console.warn(
-        `[agent-terminal] optional Card tool refresh failed card=${session.state.cardId}`,
-        error instanceof Error ? error.message : String(error),
-      );
-      return null;
-    }
-  }
-
-  private async releaseOptionalCardTools(
-    session: Session,
-    configuration: HermesCardTools,
-  ): Promise<void> {
-    try {
-      const request = <T>(method: string, params: Record<string, unknown>) => (
-        session.client.request<T>(method, params)
-      );
-      await this.removeApplicationMcpServers(request, configuration);
-      const reload = record(await session.client.request('reload.mcp', {
-        session_id: session.state.nativeSessionId,
-        confirm: true,
-      }));
-      if (reload.status !== 'reloaded') throw new Error('hermes_native_mcp_reload_failed');
-    } catch (error) {
-      // Cleanup failure cannot erase an otherwise valid model response or
-      // invalidate the Gateway. The next explicit open also clears persisted
-      // transient server definitions before starting its Gateway.
-      console.warn(
-        `[agent-terminal] optional Card tool cleanup failed card=${session.state.cardId}`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  }
-
   subscribeGatewayEvents(
     owner: AgentTerminalOwner,
     id: string,
     listener: (event: AgentTerminalGatewayEvent) => void,
   ): () => void {
-    const session = this.running(owner, id);
-    session.gatewayEventListeners.add(listener);
-    let subscribed = true;
-    return () => {
-      if (!subscribed) return;
-      subscribed = false;
-      session.gatewayEventListeners.delete(listener);
-    };
-  }
-
-  private async submitNow(
-    session: Session,
-    text: string,
-    options: {
-      signal?: AbortSignal;
-      timeoutMs?: number;
-      onEvent?: (event: AgentTerminalGatewayEvent) => void;
-      surface?: 'card-shared-chat';
-      routing?: AgentTerminalTurnRouting;
-      managedTools?: string[];
-      allowedTools?: string[];
-      modelOnce?: AgentTerminalTurnRouting['modelOnce'];
-    },
-  ): Promise<AgentTerminalTurnResult> {
-    if (session.state.status !== 'running') throw new Error('agent_terminal_not_running');
-    if (options.signal?.aborted) throw new Error('agent_terminal_turn_cancelled');
-    const timeoutMs = options.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let detach: (() => void) | undefined;
-    let abortListener: (() => void) | undefined;
-    let finish!: (error?: Error, result?: AgentTerminalTurnResult) => void;
-    const completion = new Promise<AgentTerminalTurnResult>((resolve, reject) => {
-      finish = (error?: Error, result?: AgentTerminalTurnResult) => {
-        if (settled) return;
-        settled = true;
-        if (timer) clearTimeout(timer);
-        detach?.();
-        if (abortListener && options.signal) options.signal.removeEventListener('abort', abortListener);
-        if (error) reject(error);
-        else resolve(result!);
-      };
-      detach = session.client.onEvent((event) => {
-        if (event.session_id !== session.state.nativeSessionId) return;
-        options.onEvent?.(event);
-        if (event.type === 'message.complete') {
-          const status = String(event.payload?.status || 'completed');
-          const textValue = String(event.payload?.text || '');
-          if (status === 'error' || status === 'failed') {
-            finish(new Error(String(event.payload?.error || textValue || 'agent_terminal_turn_failed')));
-          } else {
-            if (options.managedTools && options.allowedTools) {
-              const exposed = event.payload?.exposedTools;
-              if (
-                !Array.isArray(exposed)
-                || exposed.some((name) => typeof name !== 'string')
-                || !options.allowedTools.every((name) => exposed.includes(name))
-                || options.managedTools.some(
-                  (name) => !options.allowedTools!.includes(name) && exposed.includes(name),
-                )
-              ) {
-                finish(new Error('agent_terminal_actual_tool_exposure_mismatch'));
-                return;
-              }
-            }
-            const completedNativeRunId = String(
-              event.payload?.nativeRunId ?? event.payload?.native_run_id ?? '',
-            ).trim() || null;
-            session.state.completedTurnGeneration += 1;
-            session.state.completedNativeRunId = completedNativeRunId;
-            finish(undefined, {
-              text: textValue,
-              status,
-              event,
-              completedTurnGeneration: session.state.completedTurnGeneration,
-              completedNativeRunId,
-            });
-          }
-        } else if (event.type === 'error') {
-          finish(new Error(String(event.payload?.message || 'agent_terminal_turn_failed')));
-        }
-      });
-      const interrupt = (reason: string) => {
-        void session.client.request('session.interrupt', {
-          session_id: session.state.nativeSessionId,
-          profile: session.state.profile,
-        }).catch(() => undefined);
-        finish(new Error(reason));
-      };
-      if (options.signal) {
-        abortListener = () => interrupt('agent_terminal_turn_cancelled');
-        options.signal.addEventListener('abort', abortListener, { once: true });
-      }
-      if (!settled) {
-        timer = setTimeout(() => interrupt('agent_terminal_turn_timeout'), timeoutMs);
-        timer.unref?.();
-      }
-    });
-    try {
-      await session.client.request(
-        'prompt.submit',
-        {
-          session_id: session.state.nativeSessionId,
-          text,
-          profile: session.state.profile,
-          ...(options.surface ? { surface: options.surface } : {}),
-          ...(options.managedTools ? { managed_tools: options.managedTools } : {}),
-          ...(options.allowedTools ? { allowed_tools: options.allowedTools } : {}),
-          ...(options.modelOnce ? { model_once: {
-            provider: options.modelOnce.provider,
-            model: options.modelOnce.model,
-            ...(options.modelOnce.reasoningEffort
-              ? { reasoning_effort: options.modelOnce.reasoningEffort }
-              : {}),
-          } } : {}),
-        },
-        timeoutMs,
-        options.signal,
-      );
-    } catch (error) {
-      finish(error instanceof Error ? error : new Error(String(error)));
-    }
-    return completion;
+    return new CardTurn(this.running(owner, id)).subscribe(listener);
   }
 
   subscribe(owner: AgentTerminalOwner, id: string, after: number, listener: Listener): () => void {
-    const session = this.owned(owner, id);
-    for (const output of session.output) if (output.sequence > after) listener('output', output);
-    listener('state', { ...session.state });
-    if (session.listeners.size >= 8) throw new Error('agent_terminal_connection_limit');
-    session.listeners.add(listener);
-    return () => { session.listeners.delete(listener); };
-  }
-
-  private async materializeNativeBotProfiles(
-    gatewaySession: Session,
-    profiles: DesiredHermesBotProfile[],
-  ): Promise<void> {
-    const request: ProfileRequest = (method, params) => gatewaySession.client.request(method, params);
-    for (const target of profiles) {
-      await this.configureNativeBotProfile(request, target.owner, target.card, target.projection);
-    }
+    return new CardTerminal(this.owned(owner, id), this.spawnPtyProcess)
+      .subscribe(after, listener);
   }
 
   async reconcile(
@@ -2633,127 +1135,36 @@ export class AgentTerminalManager {
     dimensions: { cols: number; rows: number } = { cols: 120, rows: 36 },
     botProfiles?: DesiredHermesBotProfile[],
   ): Promise<AgentTerminalState[]> {
-    const wantedOwners = new Map<string, DesiredAgentTerminal>();
-    for (const target of desired) {
-      requireAgentTerminalCard(target.card, target.deck);
-      const key = ownerKey(target.owner);
-      if (wantedOwners.has(key)) throw new Error('agent_terminal_topology_owner_duplicate');
-      wantedOwners.set(key, target);
-    }
-    const projectedByOwner = new Map<string, DesiredHermesBotProfile>();
-    for (const target of botProfiles ?? []) {
-      const key = ownerKey(target.owner);
-      if (projectedByOwner.has(key)) throw new Error('agent_terminal_bot_profile_owner_duplicate');
-      if (target.card.id !== target.owner.cardId || target.projection.cardId !== target.owner.cardId) {
-        throw new Error('agent_terminal_bot_profile_identity_invalid');
-      }
-      projectedByOwner.set(key, target);
-    }
-    const openingTargets = desired.filter((target) => target.openAtReconcile !== false);
-    const openingProfiles = new Set(openingTargets.map((target) => (
-      requireAgentTerminalCard(target.card, target.deck).toLowerCase()
-    )));
-    const existingGateway = [...this.sessions.values()].find((session) => (
-      session.state.status === 'running'
-    ));
-    // Saving a new Card and wiring it into a Bot roster is one application
-    // operation. Materialize each enabled saved profile before roster
-    // publication so the existing Gateway never observes a roster target
-    // whose profile identity has not been created yet. Disabled Cards are
-    // deliberately excluded so a retired profile cannot be resurrected. A
-    // profile opened below performs this same write in start(); do not spawn a
-    // duplicate configuration process for it during the same reconcile.
-    for (const target of botProfiles ?? []) {
-      if (!target.projection.botEnabled
-        || (!existingGateway && openingProfiles.has(target.projection.profile.toLowerCase()))) continue;
-      await this.configureCardInstructions(
-        target.projection.profile,
-        String(target.card.prompt || ''),
-      );
-    }
-    if (existingGateway && botProfiles !== undefined) {
-      const revocations: DesiredHermesBotProfile[] = [];
-      for (const session of this.sessions.values()) {
-        if (session.state.status !== 'running'
-          || [...(botProfiles ?? [])].some((target) => (
-            target.projection.profile.toLowerCase() === session.launch.profile.toLowerCase()
-          ))) continue;
-        const card = {
-          id: session.owner.cardId,
-          title: session.launch.profile,
-          kind: 'agent',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: session.launch.profile },
-        } as AgentCardInstance;
-        revocations.push({
-          owner: session.owner,
-          card,
-          projection: {
-            cardId: session.owner.cardId,
-            cardRevisionId: '',
-            profile: session.launch.profile,
-            title: session.launch.profile,
-            botEnabled: false,
-            roster: [],
-          },
-        });
-      }
-      await this.materializeNativeBotProfiles(existingGateway, [...botProfiles, ...revocations]);
-    }
-    for (const session of this.sessions.values()) {
-      if (session.state.status !== 'running') continue;
-      const target = wantedOwners.get(ownerKey(session.owner));
-      if (!target && !desired.some((candidate) => (
-        candidate.owner.projectId === session.owner.projectId
-        && candidate.owner.deckId === session.owner.deckId
-      ))) {
-        // Reconciliation is scoped to the Projects/decks present in `desired`.
-        // Another Project cannot retire this Project/Card session.
-        continue;
-      }
-      const targetProfile = target ? requireAgentTerminalCard(target.card, target.deck) : null;
-      const targetWorkingDirectory = target && targetProfile
-        ? resolveAgentCardWorkingDirectory(
+    return reconcileCardRuntimes(
+      this.registry,
+      desired,
+      dimensions,
+      botProfiles,
+      {
+        requireCard: requireAgentTerminalCard,
+        fingerprint: agentTerminalFingerprint,
+        resolveWorkingDirectory: resolveAgentCardWorkingDirectory,
+        open: (target, size, projection) => this.open(
           target.owner,
           target.card,
-          targetProfile,
-          target.workingDirectory,
-        )
-        : undefined;
-      if (!target || session.fingerprint !== agentTerminalFingerprint(
-        target.owner,
-        target.card,
-        target.deck,
-        targetWorkingDirectory,
-      )) {
-        this.stopSession(session);
-      }
-    }
-    const opened = await Promise.all(openingTargets.map((target) => this.open(
-      target.owner,
-      target.card,
-      target.deck,
-      dimensions.cols,
-      dimensions.rows,
-      {
-        workingDirectory: target.workingDirectory,
-        attachTui: target.attachTui,
-        botRosterProjection: projectedByOwner.get(ownerKey(target.owner))?.projection,
+          target.deck,
+          size.cols,
+          size.rows,
+          {
+            workingDirectory: target.workingDirectory,
+            attachTui: target.attachTui,
+            botRosterProjection: projection,
+          },
+        ),
+        stop: (runtime) => this.stopSession(runtime),
+        configureInstructions: this.configureCardInstructions,
+        configureBotProfiles: materializeHermesBotProfiles,
       },
-    )));
-    if (!existingGateway && botProfiles !== undefined && botProfiles.length) {
-      const firstState = opened[0];
-      if (!firstState) throw new Error('agent_terminal_bot_profile_gateway_unavailable');
-      const gatewaySession = this.running(
-        openingTargets[0].owner,
-        firstState.sessionId,
-      );
-      await this.materializeNativeBotProfiles(gatewaySession, botProfiles);
-    }
-    return opened;
+    );
   }
 
   stopAll(): void {
-    for (const session of this.sessions.values()) this.stopSession(session);
+    this.registry.stopAll();
   }
 }
 

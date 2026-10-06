@@ -247,9 +247,9 @@ def writable_tool_ids() -> frozenset[str]:
 
 
 def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
-    """Combine startup effect metadata with factual live native contracts.
+    """Combine startup effect metadata with factual live provider contracts.
 
-    Discovery contributes only native contract data and current availability.
+    Discovery contributes only provider contract data and current availability.
     The function does not infer risk, compatibility, runtime ownership, graph
     meaning, or card assignability from tool names or descriptions.
     """
@@ -262,7 +262,7 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
             raise IddValidationError("idd_tool_discovery_entry_invalid")
         canonical_id = raw.get("name")
         source_id = raw.get("sourceId")
-        native_name = raw.get("nativeName")
+        provider_tool_name = raw.get("providerToolName")
         namespace = raw.get("namespace")
         connection_kind = raw.get("connectionKind")
         input_schema = raw.get("inputSchema")
@@ -271,8 +271,8 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
             or not canonical_id
             or not isinstance(source_id, str)
             or not source_id
-            or not isinstance(native_name, str)
-            or not native_name
+            or not isinstance(provider_tool_name, str)
+            or not provider_tool_name
             or not isinstance(namespace, str)
             or not namespace
             or not isinstance(connection_kind, str)
@@ -296,13 +296,13 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
         if kind not in {"tool", "agent"}:
             raise IddValidationError("idd_tool_discovery_kind_invalid")
         available = raw.get("available", raw.get("enabled", True)) is not False
-        contract_key = (canonical_id, source_id, native_name)
+        contract_key = (canonical_id, source_id, provider_tool_name)
         if contract_key in seen_contracts:
             raise IddValidationError("idd_tool_discovery_duplicate")
         seen_contracts.add(contract_key)
         contract: dict[str, Any] = {
             "sourceId": source_id,
-            "nativeName": native_name,
+            "providerToolName": provider_tool_name,
             "connectionKind": connection_kind,
             "available": available,
             "description": raw.get("description", ""),
@@ -1132,7 +1132,7 @@ def _publisher_manifest(
         source_id = "python_runtime" if publisher == "internal-plugin" else "main_mcp"
         manifest.append({
             "name": definition.canonical_id,
-            "nativeName": definition.canonical_id,
+            "providerToolName": definition.canonical_id,
             "kind": "tool",
             "sourceId": source_id,
             "namespace": definition.namespace,

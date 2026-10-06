@@ -69,6 +69,35 @@ def _facts() -> list[Any]:
     )
 
 
+def _second_facts() -> list[Any]:
+    return adapter._extract_saved_card_facts(
+        {"facts": [{
+            "content": "Rocket Lab must convert launch revenue into cash generation.",
+            "title": "Launch revenue must convert to cash",
+            "mtype": "episodic",
+            "importance": 0.7,
+            "keywords": ["Rocket Lab", "Cash generation"],
+            "entities": ["Rocket Lab", "Cash generation"],
+            "relations": [{
+                "source": "Rocket Lab", "relation": "must convert revenue into",
+                "target": "Cash generation",
+            }],
+        }]},
+        pair_text="USER: What matters next?\n\nMAIN: Rocket Lab must convert launch revenue to cash.",
+        context={},
+        card_run={**_card_run(), "runId": "run-two"},
+    )
+
+
+def _table_counts(native_service) -> dict[str, int]:
+    return {
+        table: int(native_service.store.conn.execute(
+            f"SELECT COUNT(*) AS n FROM {table}"
+        ).fetchone()["n"])
+        for table in ("memories", "entities", "edges", "memory_entities", "edge_supports")
+    }
+
+
 def test_native_schema_has_no_custom_think_wrapper() -> None:
     schema, prompt = adapter._llm_structured_contract("USER: x\nMAIN: y", {})
 
@@ -96,6 +125,22 @@ def test_each_native_fact_is_one_memory_with_native_graph_evidence(native_servic
     ]
     assert [memories[mid].title for mid in memory_ids] == [fact.title for fact in facts]
     assert [memories[mid].importance for mid in memory_ids] == [0.8, 0.55]
+    assert [memories[mid].mtype.value for mid in memory_ids] == ["episodic", "semantic"]
+    assert [memories[mid].keywords for mid in memory_ids] == [
+        ["Rocket Lab", "Electron"], ["Electron cadence", "Launch revenue"],
+    ]
+    assert [memories[mid].metadata["entities"] for mid in memory_ids] == [
+        ["Rocket Lab", "Electron"], ["Electron cadence", "Launch revenue"],
+    ]
+    assert [memories[mid].metadata["relations"] for mid in memory_ids] == [
+        fact.metadata["relations"] for fact in facts
+    ]
+    assert all(memories[mid].provenance == {
+        "source": "saved_thinkgraph_card", "trusted": True,
+        "review_state": "approved", "trust_origin": "saved_card_runtime",
+    } for mid in memory_ids)
+    assert [memories[mid].metadata["thinkgraph_origin"]["fact_index"]
+            for mid in memory_ids] == [0, 1]
     assert all("think" not in memories[mid].metadata for mid in memory_ids)
     assert all("think" not in memories[mid].metadata.get("structured_extraction", {})
                for mid in memory_ids)
@@ -172,6 +217,148 @@ def test_completed_pair_settlement_returns_every_native_fact_identity(
     assert len(settled["changedNodeIds"]) == 4
     assert len(settled["changedEdgeIds"]) == 2
     assert settled["revisionChanged"] is True
+
+
+def test_separate_exchanges_reuse_entity_and_accumulate_unique_thinks(
+    native_service,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    first = adapter._save_extracted_facts(
+        native_service, workspace_id=workspace_id, completed=_completed(),
+        facts=_facts(), card_run=_card_run(), pair_reference="pair-one",
+    )
+    second = adapter._save_extracted_facts(
+        native_service, workspace_id=workspace_id,
+        completed={**_completed(), "runId": "main-run-two"},
+        facts=_second_facts(), card_run={**_card_run(), "runId": "run-two"},
+        pair_reference="pair-two",
+    )
+    first_id, second_id = str(first[0]["id"]), str(second[0]["id"])
+    assert first_id != second_id
+
+    entities = native_service.store.list_entities(
+        adapter.SearchFilter(workspace_id=workspace_id)
+    )
+    rocket_entities = [entity for entity in entities if entity.name == "Rocket Lab"]
+    assert len(rocket_entities) == 1
+    rocket_id = rocket_entities[0].id
+    assert rocket_id not in {first_id, second_id}
+
+    incidence = native_service.store.list_memory_entities(
+        adapter.SearchFilter(workspace_id=workspace_id),
+        entity_ids=[rocket_id],
+    )
+    assert {str(row["memory_id"]) for row in incidence} == {first_id, second_id}
+    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
+    evidence = adapter.inspect(
+        "project-one", "engraphisEntityId", rocket_id,
+    )["entity"]["evidence"]
+    evidence_ids = [str(item["memory_id"]) for item in evidence]
+    assert set(evidence_ids) == {first_id, second_id}
+    assert len(evidence_ids) == len(set(evidence_ids)) == 2
+
+    first_incidence = native_service.store.list_memory_entities(
+        adapter.SearchFilter(workspace_id=workspace_id), memory_ids=[first_id],
+    )
+    assert rocket_id in {str(row["entity_id"]) for row in first_incidence}
+    assert len(native_service.store.get_memories([first_id])) == 1
+
+
+def test_projection_edges_and_data_anchor_keep_entity_ids_separate(
+    native_service,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.python_models.data_anchor import read_thinkgraph_exact
+
+    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    saved = adapter._save_extracted_facts(
+        native_service, workspace_id=workspace_id, completed=_completed(),
+        facts=_facts(), card_run=_card_run(), pair_reference="pair-one",
+    )
+    memory_ids = {str(item["id"]) for item in saved}
+    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
+    monkeypatch.setattr(
+        adapter, "_projection_subject_directory",
+        lambda _project: {"subjects": [], "count": 0, "complete": True},
+    )
+
+    projection = adapter.projection("project-one")
+    node_ids = {str(node["id"]) for node in projection["nodes"]}
+    assert node_ids
+    assert node_ids.isdisjoint(memory_ids)
+    assert all(str(edge["source"]) in node_ids and str(edge["target"]) in node_ids
+               for edge in projection["edges"])
+    assert all(str(edge["source"]) not in memory_ids and str(edge["target"]) not in memory_ids
+               for edge in projection["edges"])
+
+    rocket_id = next(str(node["id"]) for node in projection["nodes"]
+                     if node["label"] == "Rocket Lab")
+    anchored = read_thinkgraph_exact(
+        "project-one", "engraphisEntityId", rocket_id,
+        engraphis_reader=lambda project, id_field, identifier: adapter.inspect(
+            project, id_field, identifier,
+        ),
+    )
+    assert anchored is not None
+    assert anchored["engraphisEntityId"] == rocket_id
+    assert anchored["engraphisEntityId"] not in memory_ids
+    assert anchored["recordKind"] == "entity"
+
+
+def test_settlement_replay_preserves_order_and_all_native_rows(
+    native_service,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = {
+        **_completed(), "deckId": "deck_builder", "conversationId": "conversation-one",
+        "cardId": "card_main_chat", "nativeSessionRef": "main-session",
+        "completedAt": "2026-10-05T21:00:00Z",
+    }
+    pair_reference = adapter._pair_reference(completed)
+    payload = {
+        **completed, "pairReference": pair_reference,
+        "structuredOutput": _structured_output(), "cardRun": _card_run(),
+    }
+    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
+
+    first = adapter.settle_completed_pair(payload)
+    before = _table_counts(native_service)
+    replay = adapter.settle_completed_pair(payload)
+
+    assert replay["intakeOperation"] == "noop"
+    assert replay["thinkMemoryIds"] == first["thinkMemoryIds"]
+    assert _table_counts(native_service) == before
+
+
+def test_empty_result_and_native_validation_failure_create_no_rows(native_service) -> None:
+    from engraphis.core.interfaces import ExtractedFact
+
+    empty = adapter._extract_saved_card_facts(
+        {"facts": []}, pair_text="", context={}, card_run=_card_run(),
+    )
+    assert empty == []
+    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    assert adapter._save_extracted_facts(
+        native_service, workspace_id=workspace_id, completed=_completed(),
+        facts=empty, card_run=_card_run(), pair_reference="pair-empty",
+    ) == []
+    assert _table_counts(native_service) == {
+        "memories": 0, "entities": 0, "edges": 0,
+        "memory_entities": 0, "edge_supports": 0,
+    }
+
+    with pytest.raises(TypeError, match="JSON serializable"):
+        adapter._save_extracted_facts(
+            native_service, workspace_id=workspace_id, completed=_completed(),
+            facts=[ExtractedFact(content="valid", metadata={"entities": object()})],
+            card_run=_card_run(),
+            pair_reference="pair-invalid",
+        )
+    assert _table_counts(native_service) == {
+        "memories": 0, "entities": 0, "edges": 0,
+        "memory_entities": 0, "edge_supports": 0,
+    }
 
 
 def test_official_remember_many_is_atomic(native_service) -> None:

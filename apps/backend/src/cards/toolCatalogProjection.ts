@@ -1,6 +1,6 @@
 export type NativeToolContract = {
   sourceId: string;
-  nativeName: string;
+  providerName: string;
   connectionKind: string;
   available: boolean;
   description: string;
@@ -100,7 +100,7 @@ export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: T
       reference.displayName,
       reference.shortDescription,
       ...reference.sourceIds,
-      ...reference.contracts.map((contract) => contract.nativeName),
+      ...reference.contracts.map((contract) => contract.providerName),
     ].join('\n').toLowerCase();
     return query.split(/\s+/).every((term) => haystack.includes(term));
   });

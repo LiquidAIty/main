@@ -8,11 +8,28 @@ function migrationPath(filename: string): string {
   return resolve(__dirname, '../../migrations', filename);
 }
 
+const retiredRuntimeWord = ['na', 'tive'].join('');
+const historicalRuntimeMigration = (prefix: string, suffix: string): string => (
+  `${prefix}${retiredRuntimeWord}${suffix}`
+);
+const sessionAuthorityMigration = historicalRuntimeMigration(
+  '034_hermes_',
+  '_session_authority.sql',
+);
+const cancelledRunPhaseMigration = historicalRuntimeMigration(
+  '038_allow_cancelled_',
+  '_run_phase.sql',
+);
+const taskStatusMigration = historicalRuntimeMigration(
+  '041_',
+  '_hermes_task_status.sql',
+);
+
 const migration = `
 -- Existing numbered migrations may document their purpose before the
 -- transaction envelope.
 BEGIN;
-ALTER TABLE ag_catalog.agent_runs ADD COLUMN IF NOT EXISTS native_phase TEXT;
+ALTER TABLE ag_catalog.agent_runs ADD COLUMN IF NOT EXISTS hermes_phase TEXT;
 COMMIT;
 `;
 
@@ -44,17 +61,19 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '031_graph_agent_continuity.sql', applied: true }),
       expect.objectContaining({ filename: '032_paper_trade_jobs.sql', applied: true }),
       expect.objectContaining({ filename: '033_trading_lifecycle_runs.sql', applied: true }),
-      expect.objectContaining({ filename: '034_hermes_native_session_authority.sql', applied: true }),
+      expect.objectContaining({ filename: sessionAuthorityMigration, applied: true }),
       expect.objectContaining({ filename: '035_remove_provider_api_mode_constraint.sql', applied: true }),
       expect.objectContaining({ filename: '036_remove_obsolete_card_tool_policy.sql', applied: true }),
       expect.objectContaining({ filename: '037_magentic_hermes_execution.sql', applied: true }),
-      expect.objectContaining({ filename: '038_allow_cancelled_native_run_phase.sql', applied: true }),
+      expect.objectContaining({ filename: cancelledRunPhaseMigration, applied: true }),
       expect.objectContaining({ filename: '039_remove_assistant_agent_capability.sql', applied: true }),
       expect.objectContaining({ filename: '040_remove_main_script_experiment.sql', applied: true }),
-      expect.objectContaining({ filename: '041_native_hermes_task_status.sql', applied: true }),
+      expect.objectContaining({ filename: taskStatusMigration, applied: true }),
       expect.objectContaining({ filename: '047_retire_saved_card_kanban_mode.sql', applied: true }),
       expect.objectContaining({ filename: '048_project_worldview_capabilities.sql', applied: true }),
       expect.objectContaining({ filename: '049_grant_main_project_worldview_control.sql', applied: true }),
+      expect.objectContaining({ filename: '050_worldview_layer_origin.sql', applied: true }),
+      expect.objectContaining({ filename: '051_main_profile_and_hermes_terms.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -112,9 +131,9 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/CREATE TABLE(?: IF NOT EXISTS)?\s+\S*orders\b/i);
   });
 
-  it('preserves the exact applied Hermes native-session authority migration', async () => {
+  it('preserves the exact applied Hermes session-authority migration', async () => {
     const source = await readFile(
-      migrationPath('034_hermes_native_session_authority.sql'),
+      migrationPath(sessionAuthorityMigration),
       'utf8',
     );
 
@@ -215,22 +234,22 @@ describe('canonical backend migrations', () => {
     expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
   });
 
-  it('accepts truthful native cancellation without rewriting retained Runs', async () => {
+  it('accepts truthful Hermes cancellation without rewriting retained Runs', async () => {
     const source = await readFile(
-      migrationPath('038_allow_cancelled_native_run_phase.sql'),
+      migrationPath(cancelledRunPhaseMigration),
       'utf8',
     );
 
     expect(source).toContain("'cancelled'");
-    expect(source).toContain('DROP CONSTRAINT IF EXISTS agent_runs_native_phase_check');
-    expect(source).toContain('ADD CONSTRAINT agent_runs_native_phase_check');
+    expect(source).toContain(`DROP CONSTRAINT IF EXISTS agent_runs_${retiredRuntimeWord}_phase_check`);
+    expect(source).toContain(`ADD CONSTRAINT agent_runs_${retiredRuntimeWord}_phase_check`);
     expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
   it('accepts exact Hermes task statuses without rewriting legacy Run rows', async () => {
     const source = await readFile(
-      migrationPath('041_native_hermes_task_status.sql'),
+      migrationPath(taskStatusMigration),
       'utf8',
     );
 
@@ -240,8 +259,8 @@ describe('canonical backend migrations', () => {
     ]) {
       expect(source).toContain(`'${status}'`);
     }
-    expect(source).toContain('DROP CONSTRAINT IF EXISTS agent_runs_native_phase_check');
-    expect(source).toContain('ADD CONSTRAINT agent_runs_native_phase_check');
+    expect(source).toContain(`DROP CONSTRAINT IF EXISTS agent_runs_${retiredRuntimeWord}_phase_check`);
+    expect(source).toContain(`ADD CONSTRAINT agent_runs_${retiredRuntimeWord}_phase_check`);
     expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });

@@ -62,7 +62,7 @@ describe('agentbuilder authoring flow', () => {
 
   it('seeds Builder and keeps the remaining Card bindings and topology explicit', () => {
     expect(INITIAL_DECK.nodes.map(node => [node.id, node.title, node.runtime])).toEqual([
-      ['card_main_chat', 'Main', { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' }],
+      ['card_main_chat', 'Main', { kind: 'hermes', mode: 'main', profile: 'main' }],
       ['builder', 'Builder', { kind: 'hermes', mode: 'delegate', profile: 'builder' }],
       ['card_thinkgraph', 'ThinkGraph', { kind: 'hermes', mode: 'delegate', profile: 'thinkgraph' }],
       ['card_magentic', 'Magnetic', {
@@ -81,10 +81,7 @@ describe('agentbuilder authoring flow', () => {
       'template_worldsignals_agent',
     ]);
     expect(INITIAL_DECK.edges.map(({ source, target, edgeType }) => ({ source, target, edgeType }))).toEqual([
-      { source: 'card_main_chat', target: 'card_knowgraph', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
-      { source: 'card_main_chat', target: 'card_thinkgraph', edgeType: 'flow' },
-      { source: 'card_main_chat', target: 'card_magentic', edgeType: 'flow' },
       { source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' },
       { source: 'card_magentic', target: 'card_trading_workbench', edgeType: 'magentic_option' },
       { source: 'card_team', target: 'card_magentic', edgeType: 'magentic_option' },
@@ -229,7 +226,7 @@ describe('agentbuilder authoring flow', () => {
       promptTemplates: [],
       version: 2,
       nodes: [
-        createCard('card_main_chat', { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' }, {
+        createCard('card_main_chat', { kind: 'hermes', mode: 'main', profile: 'main' }, {
           templateId: 'template_main_chat',
           title: 'Main Chat',
         }),

@@ -341,8 +341,8 @@ def test_card_graph_reference_handler_uses_the_one_card_domain_owner(monkeypatch
 
 
 class TestCardCreate:
-    def test_granted_builder_creates_requested_profile_and_native_selections(self, fake_backend):
-        args = create_args(nativeTools=["read_file"], skills=["hermes-agent"],
+    def test_granted_builder_creates_requested_profile_and_tool_selections(self, fake_backend):
+        args = create_args(tools=["canvas.inspect", "hermes:tool:read_file"], skills=["hermes-agent"],
                            toolsets=["file", "terminal"], position={"x": 12, "y": 8})
         result = asyncio.run(cp.card_create(args, caller_card_id="builder-card"))
         assert result["ok"] and result["created"] and result["started"] is False
@@ -351,7 +351,7 @@ class TestCardCreate:
         card = result["card"]
         assert card["runtime"] == args["runtime"]
         assert card["runtimeOptions"]["subagentType"] == "none"
-        for key in ("nativeTools", "skills", "toolsets"):
+        for key in ("tools", "skills", "toolsets"):
             assert card["runtimeOptions"][key] == args[key]
         assert card["position"] == args["position"]
         assert fake_backend["deck"]["nodes"][:-1] == DECK["nodes"]
@@ -566,8 +566,9 @@ output.emit({"result": {}})
         assert card["runtimeOptions"]["subsystems"] == subsystems
 
     def test_builder_chooses_updates_without_prefilled_packet(self, fake_backend):
-        updates = {"prompt": "Chosen after inspection", "title": "New title", "tools": ["web_search"],
-                   "nativeTools": ["read_file"], "skills": ["hermes-agent"], "toolsets": ["file"]}
+        updates = {"prompt": "Chosen after inspection", "title": "New title",
+                   "tools": ["web_search", "hermes:tool:read_file"],
+                   "skills": ["hermes-agent"], "toolsets": ["file"]}
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
@@ -576,7 +577,7 @@ output.emit({"result": {}})
         assert result["deckRevision"] == "rev2"
         assert result["card"]["prompt"] == updates["prompt"]
         assert result["card"]["runtime"] == DECK["nodes"][0]["runtime"]
-        for key in ("tools", "nativeTools", "skills", "toolsets"):
+        for key in ("tools", "skills", "toolsets"):
             assert result["card"]["runtimeOptions"][key] == updates[key]
         assert fake_backend["deck"]["nodes"][1:] == DECK["nodes"][1:]
         assert fake_backend["deck"]["edges"] == DECK["edges"]

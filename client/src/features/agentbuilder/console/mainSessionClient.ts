@@ -5,8 +5,8 @@
  * inference. The browser consumes backend SSE while each Card-owned Gateway
  * remains the AIAgent/runtime owner.
  *
- * `streamSession` forwards backend-projected native events to `onEvent` and
- * resolves with the native completion text. Stable event IDs are delivered
+ * `streamSession` forwards backend-projected Hermes events to `onEvent` and
+ * resolves with the Hermes completion text. Stable event IDs are delivered
  * once per connection; semantic classification remains server-owned.
  */
 import type {
@@ -15,123 +15,12 @@ import type {
 } from '../../../../../apps/backend/src/contracts/runtimeEvents';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 
-export type NativeSessionEvent = {
-  terminalEvent?: RuntimeEvent;
+export type HermesSessionEvent = {
+  runtimeEvent?: RuntimeEvent;
   projection?: MainProjectionEvent;
   kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
   [key: string]: unknown;
 };
-
-export type JevAttentionAuthority = 'ThinkGraph' | 'KnowGraph';
-export type JevAttentionStatus = 'success' | 'unavailable' | 'timeout' | 'invalid' | 'error';
-const JEV_ATTENTION_NEW_SUBJECT = 'ATTENTION_NEW_SUBJECT';
-
-export type JevAttentionCandidate = {
-  choiceId: string;
-  authority: JevAttentionAuthority;
-  nativeId: string;
-  title: string;
-  probability?: number;
-  selected: boolean;
-  hydrated: boolean;
-};
-
-export type JevAttentionEvent = NativeSessionEvent & {
-  kind: 'jev_attention';
-  schemaVersion: 'jev-attention.v1';
-  status: JevAttentionStatus;
-  decisionId: string;
-  candidates: JevAttentionCandidate[];
-  distribution: Record<string, number>;
-  selectedReferences: Array<{
-    authority: JevAttentionAuthority;
-    nativeId: string;
-    [key: string]: unknown;
-  }>;
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  cardId: string;
-  runId: string;
-  directAddressed: false;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function isJevAttentionEvent(value: unknown): value is JevAttentionEvent {
-  if (!isRecord(value)
-    || value.kind !== 'jev_attention'
-    || value.schemaVersion !== 'jev-attention.v1'
-    || !['success', 'unavailable', 'timeout', 'invalid', 'error'].includes(String(value.status || ''))
-    || typeof value.decisionId !== 'string' || !value.decisionId.trim()
-    || typeof value.projectId !== 'string' || !value.projectId.trim()
-    || typeof value.deckId !== 'string' || !value.deckId.trim()
-    || typeof value.conversationId !== 'string' || !value.conversationId.trim()
-    || typeof value.cardId !== 'string' || !value.cardId.trim()
-    || typeof value.runId !== 'string' || !value.runId.trim()
-    || value.directAddressed !== false
-    || !Array.isArray(value.candidates)
-    || !isRecord(value.distribution)
-    || !Array.isArray(value.selectedReferences)) return false;
-  const choiceIds = new Set<string>();
-  for (const candidate of value.candidates) {
-    if (!isRecord(candidate)
-      || typeof candidate.choiceId !== 'string' || !candidate.choiceId.trim()
-      || candidate.choiceId === JEV_ATTENTION_NEW_SUBJECT
-      || choiceIds.has(candidate.choiceId)
-      || !['ThinkGraph', 'KnowGraph'].includes(String(candidate.authority || ''))
-      || typeof candidate.nativeId !== 'string' || !candidate.nativeId.trim()
-      || typeof candidate.title !== 'string' || !candidate.title.trim()
-      || typeof candidate.selected !== 'boolean'
-      || typeof candidate.hydrated !== 'boolean'
-      || (candidate.probability !== undefined && (
-        typeof candidate.probability !== 'number'
-        || !Number.isFinite(candidate.probability)
-        || candidate.probability < 0
-        || candidate.probability > 1
-      ))) return false;
-    choiceIds.add(candidate.choiceId);
-  }
-  for (const [choiceId, probability] of Object.entries(value.distribution)) {
-    if (!choiceId.trim() || typeof probability !== 'number' || !Number.isFinite(probability)
-      || probability < 0 || probability > 1) return false;
-  }
-  if (!value.selectedReferences.every((reference) => isRecord(reference)
-    && ['ThinkGraph', 'KnowGraph'].includes(String(reference.authority || ''))
-    && typeof reference.nativeId === 'string' && Boolean(reference.nativeId.trim()))) return false;
-  if (value.status === 'success') {
-    const candidates = value.candidates as JevAttentionCandidate[];
-    const distribution = value.distribution as Record<string, number>;
-    const distributionKeys = Object.keys(distribution);
-    const candidateProbabilitiesMatch = candidates.every((candidate) => {
-      if (candidate.probability === undefined
-        || !(candidate.choiceId in distribution)
-        || Math.abs(distribution[candidate.choiceId] - candidate.probability) > 1e-9) return false;
-      return true;
-    });
-    const expectedDistributionKeys = new Set([...choiceIds, JEV_ATTENTION_NEW_SUBJECT]);
-    const distributionSum = Object.values(distribution).reduce(
-      (sum, probability) => sum + probability,
-      0,
-    );
-    if (!candidateProbabilitiesMatch
-      || distributionKeys.length !== expectedDistributionKeys.size
-      || distributionKeys.some((choiceId) => !expectedDistributionKeys.has(choiceId))
-      || Math.abs(distributionSum - 1) > 1e-6) return false;
-    const selectedCandidateRefs = new Set(candidates
-      .filter((candidate) => candidate.selected && candidate.hydrated)
-      .map((candidate) => `${candidate.authority}\u0000${candidate.nativeId}`));
-    const selectedReferences = value.selectedReferences as JevAttentionEvent['selectedReferences'];
-    const selectedReferenceRefs = new Set(selectedReferences
-      .map((reference) => `${reference.authority}\u0000${reference.nativeId}`));
-    if (selectedReferenceRefs.size !== selectedReferences.length
-      || selectedCandidateRefs.size !== selectedReferenceRefs.size
-      || [...selectedCandidateRefs].some((identity) => !selectedReferenceRefs.has(identity))) return false;
-  }
-  return true;
-}
 
 export type MainGatewayEvent = {
   type: string;
@@ -140,13 +29,13 @@ export type MainGatewayEvent = {
   payload?: Record<string, unknown>;
 };
 
-export type MainNativeSessionEvent = {
+export type MainHermesSessionEvent = {
   projectId: string;
   deckId: string;
   conversationId: string;
   cardId: string;
   runtimeSessionId: string;
-  nativeSessionId: string;
+  hermesSessionId: string;
   event: MainGatewayEvent;
 };
 
@@ -221,29 +110,22 @@ export type SharedChatMessage = {
 
 const BASE = '/api/main/session';
 
-export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
+export type GraphRecordIdentity =
+  | { engraphisMemoryId: string }
+  | { engraphisEntityId: string }
+  | { engraphisRelationshipId: string }
+  | { graphitiEpisodeId: string }
+  | { graphitiEntityId: string }
+  | { graphitiRelationshipId: string }
+  | { cbmQualifiedName: string };
 
-export async function loadMainDriverStatus(
-  projectId: string,
-  deckId: string,
-  conversationId: string,
-  signal?: AbortSignal,
-): Promise<{
-  ready: boolean;
-  activeDriver: MainDriverSource | null;
-}> {
-  const params = new URLSearchParams({ projectId, deckId, conversationId });
-  const res = await fetch(`${BASE}/driver?${params.toString()}`, { credentials: 'include', signal });
-  const payload = await res.json().catch(() => null) as {
-    ready?: unknown;
-    activeDriver?: unknown;
-  } | null;
-  if (!res.ok || !payload) throw new Error('main_driver_status_unavailable');
-  const activeDriver = ['internal_chat', 'external_plugin', 'native_cli'].includes(
-    String(payload.activeDriver || ''),
-  ) ? payload.activeDriver as MainDriverSource : null;
-  return { ready: payload.ready === true, activeDriver };
-}
+export type DataAnchor = GraphRecordIdentity & {
+  reason: string;
+  priority: number;
+  boundedExpansion: number;
+  resultLimit: number;
+  required: boolean;
+};
 
 export function selectedConversationId(search: string): string {
   const selected = new URLSearchParams(search).get('conversationId')?.trim();
@@ -281,16 +163,8 @@ export async function streamSession(args: {
   message: string;
   targetCardId?: string;
   images?: Array<Record<string, unknown>>;
-  dataAnchors?: Array<{
-    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
-    nativeId: string;
-    reason: string;
-    priority: number;
-    boundedExpansion: number;
-    resultLimit: number;
-    required: boolean;
-  }>;
-  onEvent: (event: NativeSessionEvent) => void;
+  dataAnchors?: DataAnchor[];
+  onEvent: (event: HermesSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
   const res = await fetch(`${BASE}/chat`, {
@@ -362,18 +236,8 @@ export async function streamSession(args: {
       }
       if (kind === 'end') sawEnd = true;
       const event = { ...data, kind };
-      if (kind === 'jev_attention' && !isJevAttentionEvent(event)) {
-        throw new SessionStreamError({
-          code: 'jev_attention_event_invalid',
-          message: 'The chat stream reported a malformed Jev attention decision.',
-          route: `${BASE}/chat`,
-        });
-      }
       const eventId = (data.projection as MainProjectionEvent | undefined)?.id
-        || (data.terminalEvent as RuntimeEvent | undefined)?.id
-        || (kind === 'jev_attention'
-          ? `${String(data.decisionId || '')}:${String(data.resultIdentity || data.resultHash || '')}`
-          : undefined);
+        || (data.runtimeEvent as RuntimeEvent | undefined)?.id;
       if (eventId) {
         const identity = `${String(data.projectId || '')}:${String(data.deckId || '')}:${String(data.runId || '')}:${eventId}`;
         if (deliveredEvents.has(identity)) continue;
@@ -430,7 +294,7 @@ export type HermesVoiceStreamEvent = {
   conversationId: string;
   cardId: string;
   runtimeSessionId: string;
-  nativeSessionId: string;
+  hermesSessionId: string;
   state?: {
     enabled?: boolean;
     tts?: boolean;
@@ -440,7 +304,7 @@ export type HermesVoiceStreamEvent = {
     details?: string;
     recordStatus?: string;
   };
-  event?: NativeSessionEvent;
+  event?: HermesSessionEvent;
   error?: string;
 };
 
@@ -558,8 +422,8 @@ export function subscribeSessionEvents(args: {
   deckId: string;
   conversationId: string;
   runtimeSessionId: string;
-  nativeSessionId: string;
-  onEvent: (event: MainNativeSessionEvent) => void;
+  hermesSessionId: string;
+  onEvent: (event: MainHermesSessionEvent) => void;
   onError: (code: string) => void;
 }): () => void {
   const params = new URLSearchParams({
@@ -567,15 +431,15 @@ export function subscribeSessionEvents(args: {
     deckId: args.deckId,
     conversationId: args.conversationId,
     runtimeSessionId: args.runtimeSessionId,
-    nativeSessionId: args.nativeSessionId,
+    hermesSessionId: args.hermesSessionId,
   });
   const source = new EventSource(`${BASE}/events?${params.toString()}`, { withCredentials: true });
   const receive = (raw: Event) => {
-    let value: MainNativeSessionEvent;
+    let value: MainHermesSessionEvent;
     try {
-      value = JSON.parse((raw as MessageEvent<string>).data) as MainNativeSessionEvent;
+      value = JSON.parse((raw as MessageEvent<string>).data) as MainHermesSessionEvent;
     } catch {
-      args.onError('main_native_event_invalid');
+      args.onError('main_hermes_event_invalid');
       return;
     }
     if (
@@ -583,19 +447,19 @@ export function subscribeSessionEvents(args: {
       || value.deckId !== args.deckId
       || value.conversationId !== args.conversationId
       || value.runtimeSessionId !== args.runtimeSessionId
-      || value.nativeSessionId !== args.nativeSessionId
+      || value.hermesSessionId !== args.hermesSessionId
       || !value.event || typeof value.event.type !== 'string'
-      || value.event.session_id !== args.nativeSessionId
+      || value.event.session_id !== args.hermesSessionId
       || !Number.isSafeInteger(value.event.seq) || Number(value.event.seq) < 1
     ) {
-      args.onError('main_native_event_identity_mismatch');
+      args.onError('main_hermes_event_identity_mismatch');
       return;
     }
     args.onEvent(value);
   };
   source.addEventListener('gateway', receive);
   source.onerror = () => {
-    // EventSource reconnects the same native session automatically. A transient
+    // EventSource reconnects the same hermes session automatically. A transient
     // transport break is not a chat failure and must not become transcript UI.
   };
   return () => {
@@ -617,11 +481,11 @@ export async function loadSessionHistory(args: {
   timeoutMs?: number;
 }): Promise<{
   runtimeSessionId: string;
-  nativeSessionId: string;
+  hermesSessionId: string;
   mainCardId: string;
   addressableAgents: AddressableAgent[];
   messages: SharedChatMessage[];
-  terminalEvents: RuntimeEvent[];
+  runtimeEvents: RuntimeEvent[];
 }> {
   const params = new URLSearchParams({
     projectId: args.projectId,
@@ -669,7 +533,7 @@ export async function loadSessionHistory(args: {
       speaker?: unknown;
       target?: unknown;
     }[];
-    terminalEvents?: RuntimeEvent[];
+    runtimeEvents?: RuntimeEvent[];
   } | null;
   if (!res.ok) {
     throw new SessionStreamError({
@@ -715,8 +579,8 @@ export async function loadSessionHistory(args: {
       };
     })
     .filter((message): message is SharedChatMessage => message !== null && message.text.length > 0);
-  const terminalEvents = Array.isArray(payload.terminalEvents)
-    ? payload.terminalEvents.filter((event) => (
+  const runtimeEvents = Array.isArray(payload.runtimeEvents)
+    ? payload.runtimeEvents.filter((event) => (
         event && typeof event.id === 'string'
         && typeof event.category === 'string'
         && event.category.startsWith('execution.')
@@ -725,7 +589,7 @@ export async function loadSessionHistory(args: {
   const runtimeSessionId = typeof payload.runtimeSessionId === 'string'
     ? payload.runtimeSessionId.trim()
     : '';
-  const nativeSessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+  const hermesSessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
   const mainCardId = typeof payload.mainCardId === 'string' ? payload.mainCardId.trim() : '';
   const addressableAgents = Array.isArray(payload.addressableAgents)
     ? payload.addressableAgents.flatMap((value): AddressableAgent[] => {
@@ -759,5 +623,5 @@ export async function loadSessionHistory(args: {
       status: res.status,
     });
   }
-  return { runtimeSessionId, nativeSessionId, mainCardId, addressableAgents, messages, terminalEvents };
+  return { runtimeSessionId, hermesSessionId, mainCardId, addressableAgents, messages, runtimeEvents };
 }

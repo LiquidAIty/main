@@ -4,16 +4,127 @@ import path from 'node:path';
 import { resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import {
-  sameNativeSubagentModel,
-  toNativeSubagentModel,
-  type NativeSubagentModel,
+  sameHermesSubagentModel,
+  toHermesSubagentModel,
+  type HermesSubagentModel,
   type SavedSubagentModel,
 } from './subagentModel';
 import { resolveSavedHermesProvider } from './providerSelection';
+import type { AgentCardInstance } from '../types';
+import type { CardRuntime } from './runtime/cardRuntime';
+import type { DesiredBotProfile } from './runtime/cardRuntimeReconciler';
 
-// Hermes makes this operating-manual skill non-disableable. It is a native
+// Hermes makes this operating-manual skill non-disableable. It is a Hermes
 // runtime prerequisite, not an additional saved Card capability.
-const NATIVE_ESSENTIAL_SKILL_NAMES = new Set(['hermes-agent']);
+const HERMES_ESSENTIAL_SKILL_NAMES = new Set(['hermes-agent']);
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+export async function configureHermesBotProfile(
+  request: <T>(method: string, params: Record<string, unknown>) => Promise<T>,
+  target: DesiredBotProfile,
+): Promise<void> {
+  const { owner, card, projection } = target;
+  if (card.runtime.kind !== 'hermes') throw new Error('hermes_bot_profile_card_invalid');
+  const profile = String(card.runtime.profile || '').trim();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)
+    || projection.cardId !== owner.cardId
+    || projection.cardId !== card.id
+    || projection.profile !== profile) {
+    throw new Error('hermes_bot_profile_identity_mismatch');
+  }
+  if (card._cardRevisionId && projection.cardRevisionId
+    && projection.cardRevisionId !== card._cardRevisionId) {
+    throw new Error('hermes_bot_profile_revision_mismatch');
+  }
+  const findProfile = async (): Promise<Record<string, unknown>> => {
+    const listed = object(await request<unknown>('profiles.list', { include_sessions: false }));
+    if (!Array.isArray(listed.profiles)) throw new Error('hermes_bot_profile_list_invalid');
+    const matches = listed.profiles.filter((value) => object(value).name === profile);
+    if (matches.length !== 1) throw new Error('hermes_bot_profile_identity_invalid');
+    return object(matches[0]);
+  };
+  const current = await findProfile();
+  const uiMeta = object(current.ui_meta);
+  const existing = object(uiMeta['hermes-bots']);
+  const desired = projection.botEnabled
+    ? { ...existing, title: String(card.title || card.id).trim() || card.id }
+    : null;
+  const changed = projection.botEnabled
+    ? JSON.stringify(existing) !== JSON.stringify(desired)
+    : Object.prototype.hasOwnProperty.call(uiMeta, 'hermes-bots');
+  if (changed) {
+    const revisions = object(current.ui_meta_revisions);
+    const revision = revisions['hermes-bots'];
+    if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
+      throw new Error('hermes_bot_profile_revision_invalid');
+    }
+    const configured = object(await request<unknown>('profiles.configure', {
+      name: profile,
+      ui_meta: { 'hermes-bots': desired },
+      ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
+    }));
+    if (configured.ok !== true || object(configured.applied).ui_meta !== true) {
+      throw new Error('hermes_bot_profile_configuration_failed');
+    }
+  }
+  const readback = await findProfile();
+  const readbackMeta = object(object(readback.ui_meta)['hermes-bots']);
+  if (projection.botEnabled) {
+    if (readbackMeta.title !== desired?.title) throw new Error('hermes_bot_profile_readback_failed');
+  } else if (Object.prototype.hasOwnProperty.call(object(readback.ui_meta), 'hermes-bots')) {
+    throw new Error('hermes_bot_profile_readback_failed');
+  }
+}
+
+export async function materializeHermesBotProfiles(
+  runtime: CardRuntime,
+  profiles: DesiredBotProfile[],
+): Promise<void> {
+  const request = <T>(method: string, params: Record<string, unknown>) => (
+    runtime.client.request<T>(method, params)
+  );
+  for (const target of profiles) await configureHermesBotProfile(request, target);
+}
+
+export async function materializeMagenticTaskProfile(
+  card: AgentCardInstance,
+  dependencies: {
+    configureInstructions?: typeof configureHermesCardInstructions;
+    configureModelRuntime?: typeof configureHermesCardModelRuntime;
+  } = {},
+): Promise<void> {
+  if (card.runtime.kind !== 'hermes') throw new Error('hermes_profile_card_invalid');
+  const profile = card.runtime.profile;
+  await (dependencies.configureInstructions ?? configureHermesCardInstructions)(
+    profile,
+    String(card.prompt || ''),
+  );
+  const options = card.runtimeOptions as Record<string, unknown> | undefined;
+  const usesSavedAccount = String(options?.provider || '').trim().toLowerCase() === 'openai'
+    && String(options?.accessMode || '').trim().toLowerCase() === 'chatgpt-account';
+  const selection = resolveSavedHermesProvider({
+    provider: options?.provider,
+    accessMode: options?.accessMode,
+    modelKey: options?.modelKey,
+    providerModelId: options?.providerModelId,
+    openaiRuntime: options?.openaiRuntime
+      ?? (usesSavedAccount ? 'codex_app_server' : undefined),
+  });
+  if (selection.apiMode === 'codex_app_server'
+    && card.runtime.mode !== 'magentic_one'
+    && String(options?.openaiRuntime || '').trim().toLowerCase() !== 'codex_app_server') {
+    await (dependencies.configureModelRuntime ?? configureHermesCardModelRuntime)(profile, {
+      provider: selection.provider,
+      model: selection.model,
+      openaiRuntime: selection.profileOpenaiRuntime,
+    });
+  }
+}
 
 export type HermesProfileSelection = {
   runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'magentic_one'; profile: string };
@@ -23,7 +134,7 @@ export type HermesProfileSelection = {
   providerModelId: string;
   openaiRuntime: 'codex_app_server' | null;
   skills?: string[];
-  nativeTools?: string[];
+  hermesSuppliedTools?: Array<{ canonicalName: string; hermesName: string }>;
   toolsets?: string[];
   requiredToolsets?: string[];
   mcpConnectionIds?: string[];
@@ -40,40 +151,40 @@ export type HermesProfileSelection = {
 };
 
 export type HermesProfileMaterialization = {
-  native: any;
-  unavailableNativeToolReasons: Record<string, 'native_exact_filter_unavailable'>;
+  hermesProfile: any;
+  unavailableHermesToolReasons: Record<string, 'hermes_exact_filter_unavailable'>;
   unavailableMcpServerReasons: Record<string, 'mcp_server_not_configured'>;
   effectiveSubagentModel?: NonNullable<HermesProfileSelection['effectiveSubagentModel']>;
 };
 
-type NativeParentModel = {
+type HermesParentModel = {
   provider: string;
   model: string;
   apiMode: 'codex_app_server' | null;
   openaiRuntime: 'codex_app_server' | 'auto';
 };
 
-type ConfigureNativeSkills = (
+type ConfigureHermesSkills = (
   profile: string,
   disabledSkills: string[],
 ) => Promise<any>;
 
-type ConfigureNativeToolsets = (
+type ConfigureHermesToolsets = (
   profile: string,
   enabledToolsets: string[],
 ) => Promise<any>;
 
-type ConfigureNativeMcpServers = (
+type ConfigureHermesMcpServers = (
   profile: string,
   enabledMcpServers: string[],
 ) => Promise<any>;
 
-type ConfigureNativeSubagentModel = (
+type ConfigureHermesSubagentModel = (
   profile: string,
-  selection: NativeSubagentModel,
+  selection: HermesSubagentModel,
 ) => Promise<unknown>;
 
-type ConfigureNativeSubagentType = (
+type ConfigureHermesSubagentType = (
   profile: string,
   subagentType: NonNullable<HermesProfileSelection['subagentType']>,
 ) => Promise<void>;
@@ -83,7 +194,7 @@ type ConfigureTaskMode = (
   taskMode: HermesProfileSelection['taskMode'],
 ) => Promise<void>;
 
-type NativeSubagentTypeConfig = {
+type HermesSubagentTypeConfig = {
   maxSpawnDepth: 1 | 2;
   orchestratorEnabled: boolean;
   delegationDisabled: boolean;
@@ -347,9 +458,9 @@ export async function configureHermesCardInstructions(
   });
 }
 
-export async function configureHermesNativeSubagentModel(
+export async function configureHermesSubagentModel(
   profile: string,
-  selection: NativeSubagentModel,
+  selection: HermesSubagentModel,
 ): Promise<void> {
   const normalizedProfile = String(profile || '').trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalizedProfile)) {
@@ -360,7 +471,7 @@ export async function configureHermesNativeSubagentModel(
   const profileHome = path.join(hermesRoot, '.hermes', 'profiles', normalizedProfile);
   if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) {
-    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+    throw new Error(`hermes_profile_not_found:${normalizedProfile}`);
   }
   const childEnv = withoutInternalMcpSecret(process.env);
   await new Promise<void>((resolve, reject) => {
@@ -382,7 +493,7 @@ export async function configureHermesNativeSubagentModel(
     child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (code === 0 && signal === null) resolve();
-      else reject(new Error('hermes_native_subagent_config_process_failed'));
+      else reject(new Error('hermes_subagent_config_process_failed'));
     });
   });
 }
@@ -395,9 +506,9 @@ export function readSavedSubagentType(
   throw new Error('card_subagent_type_invalid');
 }
 
-export function toNativeSubagentTypeConfig(
+export function toHermesSubagentTypeConfig(
   value: NonNullable<HermesProfileSelection['subagentType']>,
-): NativeSubagentTypeConfig {
+): HermesSubagentTypeConfig {
   const subagentType = readSavedSubagentType(value);
   if (!subagentType) throw new Error('card_subagent_type_invalid');
   if (subagentType === 'none') {
@@ -409,7 +520,7 @@ export function toNativeSubagentTypeConfig(
   return { maxSpawnDepth: 2, orchestratorEnabled: true, delegationDisabled: false };
 }
 
-export async function configureHermesNativeSubagentType(
+export async function configureHermesSubagentType(
   profile: string,
   subagentType: NonNullable<HermesProfileSelection['subagentType']>,
 ): Promise<void> {
@@ -417,13 +528,13 @@ export async function configureHermesNativeSubagentType(
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalizedProfile)) {
     throw new Error('hermes_runtime_profile_invalid');
   }
-  const config = toNativeSubagentTypeConfig(subagentType);
+  const config = toHermesSubagentTypeConfig(subagentType);
   const hermesRoot = path.join(resolveRepoRoot(), 'Hermes');
   const executable = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
   const profileHome = path.join(hermesRoot, '.hermes', 'profiles', normalizedProfile);
   if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) {
-    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+    throw new Error(`hermes_profile_not_found:${normalizedProfile}`);
   }
   const childEnv = withoutInternalMcpSecret(process.env);
   await new Promise<void>((resolve, reject) => {
@@ -452,11 +563,11 @@ export async function configureHermesNativeSubagentType(
       if (code === 0 && signal === null) {
         resolve();
       } else if (code === 3 && signal === null) {
-        reject(new Error(`hermes_native_subagent_type_config_invalid:${normalizedProfile}`));
+        reject(new Error(`hermes_subagent_type_config_invalid:${normalizedProfile}`));
       } else if ((code === 4 || code === 5) && signal === null) {
-        reject(new Error(`hermes_native_subagent_type_readback_mismatch:${normalizedProfile}`));
+        reject(new Error(`hermes_subagent_type_readback_mismatch:${normalizedProfile}`));
       } else {
-        reject(new Error(`hermes_native_subagent_type_config_process_failed:${normalizedProfile}`));
+        reject(new Error(`hermes_subagent_type_config_process_failed:${normalizedProfile}`));
       }
     });
   });
@@ -476,7 +587,7 @@ export async function configureHermesTaskMode(
   const profileHome = path.join(hermesRoot, '.hermes', 'profiles', normalizedProfile);
   if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) {
-    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+    throw new Error(`hermes_profile_not_found:${normalizedProfile}`);
   }
   const childEnv = withoutInternalMcpSecret(process.env);
   await new Promise<void>((resolve, reject) => {
@@ -526,7 +637,7 @@ export async function configureHermesCardModelRuntime(
   const profileHome = path.join(hermesRoot, '.hermes', 'profiles', normalizedProfile);
   if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) {
-    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+    throw new Error(`hermes_profile_not_found:${normalizedProfile}`);
   }
   const childEnv = withoutInternalMcpSecret(process.env);
   await new Promise<void>((resolve, reject) => {
@@ -556,7 +667,7 @@ export async function configureHermesCardModelRuntime(
   });
 }
 
-function toNativeParentModel(args: HermesProfileSelection): NativeParentModel {
+function toHermesParentModel(args: HermesProfileSelection): HermesParentModel {
   const resolved = resolveSavedHermesProvider({
     provider: args.provider,
     accessMode: args.accessMode,
@@ -572,29 +683,29 @@ function toNativeParentModel(args: HermesProfileSelection): NativeParentModel {
   };
 }
 
-function sameNativeParentModel(value: unknown, expected: NativeParentModel): boolean {
+function sameHermesParentModel(value: unknown, expected: HermesParentModel): boolean {
   const model = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return String(model.provider || '').trim() === expected.provider
     && String(model.default || '').trim() === expected.model;
 }
 
-function missingNativeProfile(error: unknown, profile: string): boolean {
+function missingHermesProfile(error: unknown, profile: string): boolean {
   return String(error instanceof Error ? error.message : error)
     .includes(`profile '${profile}' not found`);
 }
 
 export async function materializeHermesProfileSelections(
   args: HermesProfileSelection,
-  readNativeProfile: (profile: string) => Promise<any>,
-  configureNativeSubagentModel: ConfigureNativeSubagentModel,
-  configureNativeParentModel: (
+  readHermesProfile: (profile: string) => Promise<any>,
+  configureHermesSubagentModel: ConfigureHermesSubagentModel,
+  configureHermesParentModel: (
     profile: string,
-    selection: NativeParentModel,
+    selection: HermesParentModel,
   ) => Promise<any>,
-  configureNativeSkills: ConfigureNativeSkills,
-  configureNativeToolsets?: ConfigureNativeToolsets,
-  configureNativeMcpServers?: ConfigureNativeMcpServers,
-  configureNativeSubagentType: ConfigureNativeSubagentType = configureHermesNativeSubagentType,
+  configureHermesSkills: ConfigureHermesSkills,
+  configureHermesToolsets?: ConfigureHermesToolsets,
+  configureHermesMcpServers?: ConfigureHermesMcpServers,
+  applyHermesSubagentType: ConfigureHermesSubagentType = configureHermesSubagentType,
   configureTaskMode: ConfigureTaskMode = configureHermesTaskMode,
 ): Promise<HermesProfileMaterialization> {
   const profile = String(args.runtime.profile || '').trim();
@@ -603,50 +714,50 @@ export async function materializeHermesProfileSelections(
   if (taskMode !== undefined && taskMode !== null && taskMode !== 'team') {
     throw new Error('hermes_task_mode_invalid');
   }
-  const expectedParent = toNativeParentModel(args);
-  let native: any;
+  const expectedParent = toHermesParentModel(args);
+  let hermesProfile: any;
   try {
-    native = await readNativeProfile(profile);
+    hermesProfile = await readHermesProfile(profile);
   } catch (error) {
-    if (!missingNativeProfile(error, profile)) throw error;
-    throw new Error(`hermes_native_profile_missing:${profile}`);
+    if (!missingHermesProfile(error, profile)) throw error;
+    throw new Error(`hermes_profile_missing:${profile}`);
   }
-  if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
-    throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
+  if (!hermesProfile || String(hermesProfile.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
+    throw new Error(`hermes_profile_readback_mismatch:${profile}`);
   }
-  if (!sameNativeParentModel(native.model, expectedParent)) {
-    const configured = await configureNativeParentModel(profile, expectedParent);
+  if (!sameHermesParentModel(hermesProfile.model, expectedParent)) {
+    const configured = await configureHermesParentModel(profile, expectedParent);
     const applied = configured?.applied && typeof configured.applied === 'object'
       ? configured.applied as Record<string, unknown>
       : {};
     if (configured?.ok !== true || applied.model !== true) {
-      throw new Error(`hermes_native_parent_model_apply_failed:${profile}`);
+      throw new Error(`hermes_parent_model_apply_failed:${profile}`);
     }
-    native = await readNativeProfile(profile);
-    if (!sameNativeParentModel(native?.model, expectedParent)) {
-      throw new Error(`hermes_native_parent_model_readback_mismatch:${profile}`);
+    hermesProfile = await readHermesProfile(profile);
+    if (!sameHermesParentModel(hermesProfile?.model, expectedParent)) {
+      throw new Error(`hermes_parent_model_readback_mismatch:${profile}`);
     }
   }
   const selectedSkills = Array.isArray(args.skills)
     ? [...new Set(args.skills.map((name) => String(name || '').trim()).filter(Boolean))]
     : [];
-  const installedSkills = Array.isArray(native.skills)
-    ? native.skills
+  const installedSkills = Array.isArray(hermesProfile.skills)
+    ? hermesProfile.skills
       .map((skill: any) => String(skill?.name || '').trim())
       .filter(Boolean)
     : [];
   const installedByKey = new Map(installedSkills.map((name: string) => [name.toLowerCase(), name]));
   const missingSkills = selectedSkills.filter((name: string) => !installedByKey.has(name.toLowerCase()));
   if (missingSkills.length > 0) {
-    throw new Error(`hermes_native_skill_missing:${profile}:${missingSkills.join(',')}`);
+    throw new Error(`hermes_skill_missing:${profile}:${missingSkills.join(',')}`);
   }
   const selectedKeys = new Set(selectedSkills.map((name) => name.toLowerCase()));
   const expectedEnabledKeys = new Set([
     ...selectedKeys,
-    ...[...NATIVE_ESSENTIAL_SKILL_NAMES].filter((name) => installedByKey.has(name)),
+    ...[...HERMES_ESSENTIAL_SKILL_NAMES].filter((name) => installedByKey.has(name)),
   ]);
   const enabledKeys = new Set(
-    (Array.isArray(native.skills) ? native.skills : [])
+    (Array.isArray(hermesProfile.skills) ? hermesProfile.skills : [])
       .filter((skill: any) => skill?.enabled === true)
       .map((skill: any) => String(skill?.name || '').trim().toLowerCase())
       .filter(Boolean),
@@ -657,17 +768,17 @@ export async function materializeHermesProfileSelections(
   const selectionMatches = enabledKeys.size === expectedEnabledKeys.size
     && [...expectedEnabledKeys].every((name) => enabledKeys.has(name));
   if (!selectionMatches) {
-    const configured = await configureNativeSkills(profile, disabledSkills);
+    const configured = await configureHermesSkills(profile, disabledSkills);
     const applied = configured?.applied && typeof configured.applied === 'object'
       ? configured.applied as Record<string, unknown>
       : {};
     if (configured?.ok !== true || applied.skills !== true) {
-      throw new Error(`hermes_native_skills_apply_failed:${profile}`);
+      throw new Error(`hermes_skills_apply_failed:${profile}`);
     }
-    native = await readNativeProfile(profile);
+    hermesProfile = await readHermesProfile(profile);
   }
   const finalEnabledKeys = new Set(
-    (Array.isArray(native?.skills) ? native.skills : [])
+    (Array.isArray(hermesProfile?.skills) ? hermesProfile.skills : [])
       .filter((skill: any) => skill?.enabled === true)
       .map((skill: any) => String(skill?.name || '').trim().toLowerCase())
       .filter(Boolean),
@@ -676,10 +787,10 @@ export async function materializeHermesProfileSelections(
     finalEnabledKeys.size !== expectedEnabledKeys.size
     || ![...expectedEnabledKeys].every((name) => finalEnabledKeys.has(name))
   ) {
-    throw new Error(`hermes_native_skills_readback_mismatch:${profile}`);
+    throw new Error(`hermes_skills_readback_mismatch:${profile}`);
   }
   const availableToolsets = new Map<string, string>(
-    (Array.isArray(native?.toolsets) ? native.toolsets : [])
+    (Array.isArray(hermesProfile?.toolsets) ? hermesProfile.toolsets : [])
       .map((toolset: any) => String(toolset?.name || '').trim())
       .filter(Boolean)
       .map((name: string) => [name.toLowerCase(), name]),
@@ -694,48 +805,47 @@ export async function materializeHermesProfileSelections(
   const missingToolsets = [...savedToolsets, ...requiredToolsets]
     .filter((name) => !availableToolsets.has(name.toLowerCase()));
   if (missingToolsets.length) {
-    throw new Error(`hermes_native_toolset_missing:${profile}:${[...new Set(missingToolsets)].join(',')}`);
+    throw new Error(`hermes_toolset_missing:${profile}:${[...new Set(missingToolsets)].join(',')}`);
   }
-  const nativeToolToolsets = (args.nativeTools || [])
-    .map((name) => availableToolsets.get(String(name).trim().toLowerCase()))
+  const hermesToolToolsets = (args.hermesSuppliedTools || [])
+    .map((tool) => availableToolsets.get(tool.hermesName.trim().toLowerCase()))
     .filter((name): name is string => Boolean(name));
-  const unavailableNativeToolReasons = Object.fromEntries(
-    (args.nativeTools || [])
-      .map((name) => String(name).trim())
-      .filter((name) => name && !availableToolsets.has(name.toLowerCase()))
-      .map((name) => [name, 'native_exact_filter_unavailable' as const]),
+  const unavailableHermesToolReasons = Object.fromEntries(
+    (args.hermesSuppliedTools || [])
+      .filter((tool) => !availableToolsets.has(tool.hermesName.trim().toLowerCase()))
+      .map((tool) => [tool.canonicalName, 'hermes_exact_filter_unavailable' as const]),
   );
   const desiredToolsets: string[] = [...new Set<string>([
     ...savedToolsets.map((name) => availableToolsets.get(name.toLowerCase())!),
-    ...nativeToolToolsets,
+    ...hermesToolToolsets,
     ...requiredToolsets.map((name) => availableToolsets.get(name.toLowerCase())!),
   ])].sort();
-  const enabledToolsets = (Array.isArray(native?.toolsets) ? native.toolsets : [])
+  const enabledToolsets = (Array.isArray(hermesProfile?.toolsets) ? hermesProfile.toolsets : [])
     .filter((toolset: any) => toolset?.enabled === true)
     .map((toolset: any) => String(toolset?.name || '').trim())
     .filter(Boolean)
     .sort();
   if (JSON.stringify(enabledToolsets) !== JSON.stringify(desiredToolsets)) {
-    if (!configureNativeToolsets) throw new Error(`hermes_native_toolset_configurator_missing:${profile}`);
-    const configured = await configureNativeToolsets(profile, desiredToolsets);
+    if (!configureHermesToolsets) throw new Error(`hermes_toolset_configurator_missing:${profile}`);
+    const configured = await configureHermesToolsets(profile, desiredToolsets);
     const applied = configured?.applied && typeof configured.applied === 'object'
       ? configured.applied as Record<string, unknown>
       : {};
     if (configured?.ok !== true || applied.toolsets !== true) {
-      throw new Error(`hermes_native_toolsets_apply_failed:${profile}`);
+      throw new Error(`hermes_toolsets_apply_failed:${profile}`);
     }
-    native = await readNativeProfile(profile);
+    hermesProfile = await readHermesProfile(profile);
   }
-  const finalEnabledToolsets = (Array.isArray(native?.toolsets) ? native.toolsets : [])
+  const finalEnabledToolsets = (Array.isArray(hermesProfile?.toolsets) ? hermesProfile.toolsets : [])
     .filter((toolset: any) => toolset?.enabled === true)
     .map((toolset: any) => String(toolset?.name || '').trim())
     .filter(Boolean)
     .sort();
   if (JSON.stringify(finalEnabledToolsets) !== JSON.stringify(desiredToolsets)) {
-    throw new Error(`hermes_native_toolsets_readback_mismatch:${profile}`);
+    throw new Error(`hermes_toolsets_readback_mismatch:${profile}`);
   }
   if (subagentType) {
-    await configureNativeSubagentType(profile, subagentType);
+    await applyHermesSubagentType(profile, subagentType);
   }
   if (taskMode !== undefined) {
     await configureTaskMode(profile, taskMode);
@@ -743,25 +853,25 @@ export async function materializeHermesProfileSelections(
   const desiredMcpServers = [...new Set(
     (args.mcpConnectionIds || []).map((name) => String(name).trim()).filter(Boolean),
   )].sort();
-  const enabledMcpServers = (Array.isArray(native?.mcp_servers) ? native.mcp_servers : [])
+  const enabledMcpServers = (Array.isArray(hermesProfile?.mcp_servers) ? hermesProfile.mcp_servers : [])
     .filter((server: any) => server?.enabled === true)
     .map((server: any) => String(server?.name || '').trim())
     .filter(Boolean)
     .sort();
   if (JSON.stringify(enabledMcpServers) !== JSON.stringify(desiredMcpServers)) {
-    if (!configureNativeMcpServers) {
-      throw new Error(`hermes_native_mcp_server_configurator_missing:${profile}`);
+    if (!configureHermesMcpServers) {
+      throw new Error(`hermes_mcp_server_configurator_missing:${profile}`);
     }
-    const configured = await configureNativeMcpServers(profile, desiredMcpServers);
+    const configured = await configureHermesMcpServers(profile, desiredMcpServers);
     const applied = configured?.applied && typeof configured.applied === 'object'
       ? configured.applied as Record<string, unknown>
       : {};
     if (configured?.ok !== true || applied.mcp_servers !== true) {
-      throw new Error(`hermes_native_mcp_servers_apply_failed:${profile}`);
+      throw new Error(`hermes_mcp_servers_apply_failed:${profile}`);
     }
-    native = await readNativeProfile(profile);
+    hermesProfile = await readHermesProfile(profile);
   }
-  const finalEnabledMcpServers: string[] = (Array.isArray(native?.mcp_servers) ? native.mcp_servers : [])
+  const finalEnabledMcpServers: string[] = (Array.isArray(hermesProfile?.mcp_servers) ? hermesProfile.mcp_servers : [])
     .filter((server: any) => server?.enabled === true)
     .map((server: any) => String(server?.name || '').trim())
     .filter(Boolean)
@@ -769,7 +879,7 @@ export async function materializeHermesProfileSelections(
   const desiredMcpServerNames = new Set(desiredMcpServers);
   const extraMcpServers = finalEnabledMcpServers.filter((name) => !desiredMcpServerNames.has(name));
   if (extraMcpServers.length) {
-    throw new Error(`hermes_native_mcp_servers_readback_broadened:${profile}:${extraMcpServers.join(',')}`);
+    throw new Error(`hermes_mcp_servers_readback_broadened:${profile}:${extraMcpServers.join(',')}`);
   }
   const enabledMcpServerNames = new Set(finalEnabledMcpServers);
   const unavailableMcpServerReasons = Object.fromEntries(
@@ -779,12 +889,12 @@ export async function materializeHermesProfileSelections(
   );
   let effectiveSubagentModel = args.effectiveSubagentModel;
   if (args.subagentModel) {
-    const expected = toNativeSubagentModel(args.subagentModel);
-    if (!sameNativeSubagentModel(native.subagent_model, expected)) {
+    const expected = toHermesSubagentModel(args.subagentModel);
+    if (!sameHermesSubagentModel(hermesProfile.subagent_model, expected)) {
       try {
-        await configureNativeSubagentModel(profile, expected);
+        await configureHermesSubagentModel(profile, expected);
       } catch {
-        throw new Error(`hermes_native_subagent_model_apply_failed:${profile}`);
+        throw new Error(`hermes_subagent_model_apply_failed:${profile}`);
       }
     }
     effectiveSubagentModel = {
@@ -796,8 +906,8 @@ export async function materializeHermesProfileSelections(
     };
   }
   return {
-    native,
-    unavailableNativeToolReasons,
+    hermesProfile,
+    unavailableHermesToolReasons,
     unavailableMcpServerReasons,
     ...(effectiveSubagentModel ? { effectiveSubagentModel } : {}),
   };

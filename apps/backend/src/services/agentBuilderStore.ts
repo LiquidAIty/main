@@ -29,7 +29,7 @@ export type CanonicalSavedCardBinding = {
 export const BUILDER_DECK_ID = 'deck_builder';
 
 export const SYSTEM6_PROJECT_CARDS = [
-  { cardId: 'card_main_chat', profile: 'liquidaity-main', x: -24, y: -24 },
+  { cardId: 'card_main_chat', profile: 'main', x: -24, y: -24 },
   { cardId: 'builder', profile: 'builder', x: 360, y: -80 },
   { cardId: 'card_thinkgraph', profile: 'thinkgraph', x: -260, y: 120 },
   { cardId: 'card_magentic', profile: 'card_magentic', x: 140, y: 120 },
@@ -38,17 +38,7 @@ export const SYSTEM6_PROJECT_CARDS = [
 ] as const;
 
 export const SYSTEM6_PROJECT_EDGES = [
-  { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_knowgraph', edgeType: 'flow' },
   { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
-  { id: 'edge_main_chat_thinkgraph', source: 'card_main_chat', target: 'card_thinkgraph', edgeType: 'flow' },
-  {
-    id: 'edge_main_chat_magnetic',
-    source: 'card_main_chat',
-    sourceHandle: 'card-control',
-    target: 'card_magentic',
-    targetHandle: 'card-control',
-    edgeType: 'flow',
-  },
   {
     id: 'edge_team_magentic_bus',
     source: 'card_team',
@@ -286,7 +276,7 @@ export async function listOwnedAgentProjects(): Promise<OwnedAgentProject[]> {
 /**
  * Resolve one deterministic current saved Card identity per Hermes profile.
  * Legacy duplicate rows remain untouched; startup uses this read-only view so
- * it never materializes two divergent authorities for one native profile.
+ * it never materializes two divergent authorities for one Hermes profile.
  */
 export async function listCanonicalSavedCardBindings(): Promise<CanonicalSavedCardBinding[]> {
   const { rows } = await pool.query(

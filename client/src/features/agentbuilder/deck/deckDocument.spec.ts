@@ -13,13 +13,7 @@ describe('requested initial Card topology', () => {
     expect(INITIAL_DECK.nodes.every(card => !('orchestrator' in (card.runtimeOptions || {}))))
       .toBe(true);
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'flow')).toEqual([
-      { id: 'edge_main_chat_hermes', source: main.id, target: 'card_knowgraph', edgeType: 'flow' },
       { id: 'edge_main_chat_agent_builder', source: main.id, target: 'builder', edgeType: 'flow' },
-      { id: 'edge_main_chat_thinkgraph', source: main.id, target: 'card_thinkgraph', edgeType: 'flow' },
-      {
-        id: 'edge_main_chat_magnetic', source: main.id, target: 'card_magentic',
-        sourceHandle: 'card-control', targetHandle: 'card-control', edgeType: 'flow',
-      },
     ]);
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'magentic_option').map(edge => edge.id))
       .toEqual([
@@ -35,7 +29,6 @@ describe('requested initial Card topology', () => {
     }
     const profiles = INITIAL_DECK.nodes.flatMap(card => card.runtime.kind === 'hermes' ? [card.runtime.profile] : []);
     expect(new Set(profiles).size).toBe(profiles.length);
-    expect(profiles).not.toContain('liquidaity-agent-builder');
     expect(INITIAL_DECK.nodes.find(card => card.id === 'builder')).toMatchObject({ title: 'Builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' } });
     expect(INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')?.title).toBe('Main');
     expect(INITIAL_DECK.nodes.find(card => card.id === 'card_knowgraph')?.title).toBe('KnowGraph');

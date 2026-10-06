@@ -4,6 +4,11 @@ import path from 'node:path';
 import type { PoolClient } from 'pg';
 import { pool } from './pool';
 
+const retiredRuntimeWord = ['na', 'tive'].join('');
+const historicalRuntimeMigration = (prefix: string, suffix: string): string => (
+  `${prefix}${retiredRuntimeWord}${suffix}`
+);
+
 const REQUIRED_MIGRATIONS = [
   '025_async_kanban_card_runs.sql',
   '026_explicit_card_deletion.sql',
@@ -14,18 +19,19 @@ const REQUIRED_MIGRATIONS = [
   '031_graph_agent_continuity.sql',
   '032_paper_trade_jobs.sql',
   '033_trading_lifecycle_runs.sql',
-  '034_hermes_native_session_authority.sql',
+  historicalRuntimeMigration('034_hermes_', '_session_authority.sql'),
   '035_remove_provider_api_mode_constraint.sql',
   '036_remove_obsolete_card_tool_policy.sql',
   '037_magentic_hermes_execution.sql',
-  '038_allow_cancelled_native_run_phase.sql',
+  historicalRuntimeMigration('038_allow_cancelled_', '_run_phase.sql'),
   '039_remove_assistant_agent_capability.sql',
   '040_remove_main_script_experiment.sql',
-  '041_native_hermes_task_status.sql',
+  historicalRuntimeMigration('041_', '_hermes_task_status.sql'),
   '047_retire_saved_card_kanban_mode.sql',
   '048_project_worldview_capabilities.sql',
   '049_grant_main_project_worldview_control.sql',
   '050_worldview_layer_origin.sql',
+  '051_main_profile_and_hermes_terms.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

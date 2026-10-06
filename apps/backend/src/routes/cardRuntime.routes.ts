@@ -10,7 +10,7 @@ import {
   type AgentTerminalOwner,
   type HermesBotRosterProjection,
 } from '../hermes/agentTerminal';
-import { agentTerminalExecution } from '../hermes/agentTerminalExecution';
+import { cardTurnBridge } from '../hermes/runtime/cardTurn';
 import { buildCardTerminal } from '../hermes/cardTerminal';
 import {
   appendSharedConversationTurn,
@@ -83,63 +83,6 @@ type PreparedMainCliRun = {
   savedDeck: any;
   savedCard: any;
 };
-
-type JevAttentionAuthority = 'ThinkGraph' | 'KnowGraph';
-type JevAttentionStatus = 'success' | 'unavailable' | 'timeout' | 'invalid' | 'error';
-const MAIN_GRAPH_ATTENTION_NEW_SUBJECT = 'ATTENTION_NEW_SUBJECT';
-
-export type JevAttentionDecision = {
-  schemaVersion: 'jev-attention.v1';
-  status: JevAttentionStatus;
-  decisionId: string;
-  candidates: Array<{
-    choiceId: string;
-    authority: JevAttentionAuthority;
-    nativeId: string;
-    title: string;
-    probability?: number;
-    selected: boolean;
-    hydrated: boolean;
-  }>;
-  distribution: Record<string, number>;
-  winner?: string | null;
-  confidence?: number;
-  selectedReferences: Array<{
-    authority: JevAttentionAuthority;
-    nativeId: string;
-    [key: string]: unknown;
-  }>;
-  [key: string]: unknown;
-};
-
-export function jevAttentionTelemetry(decision: JevAttentionDecision): Record<string, unknown> {
-  return {
-    schemaVersion: decision.schemaVersion,
-    status: decision.status,
-    decisionId: decision.decisionId,
-    candidates: decision.candidates.map((candidate) => ({
-      choiceId: candidate.choiceId,
-      authority: candidate.authority,
-      nativeId: candidate.nativeId,
-      ...(candidate.probability === undefined ? {} : { probability: candidate.probability }),
-      selected: candidate.selected,
-      hydrated: candidate.hydrated,
-    })),
-    distribution: decision.distribution,
-    winner: decision.winner ?? null,
-    selectedReferences: decision.selectedReferences.map((reference) => ({
-      authority: reference.authority,
-      nativeId: reference.nativeId,
-    })),
-    provider: decision.provider ?? null,
-    requestedModel: decision.requestedModel ?? null,
-    resolvedModel: decision.resolvedModel ?? null,
-    confidence: decision.confidence ?? null,
-    policy: decision.policy ?? null,
-    retrieval: decision.retrieval ?? null,
-    timingMs: decision.timingMs ?? null,
-  };
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -238,104 +181,6 @@ function preparedRequestFulfillmentAssessment(
   return value;
 }
 
-function preparedJevAttention(value: unknown): JevAttentionDecision | null {
-  if (value === undefined || value === null) return null;
-  if (!isRecord(value)
-    || value.schemaVersion !== 'jev-attention.v1'
-    || !['success', 'unavailable', 'timeout', 'invalid', 'error'].includes(String(value.status || ''))
-    || typeof value.decisionId !== 'string' || !value.decisionId.trim()
-    || !Array.isArray(value.candidates)
-    || !isRecord(value.distribution)
-    || !Array.isArray(value.selectedReferences)) {
-    throw new Error('main_jev_attention_invalid');
-  }
-  const choiceIds = new Set<string>();
-  for (const candidate of value.candidates) {
-    if (!isRecord(candidate)
-      || typeof candidate.choiceId !== 'string' || !candidate.choiceId.trim()
-      || choiceIds.has(candidate.choiceId)
-      || !['ThinkGraph', 'KnowGraph'].includes(String(candidate.authority || ''))
-      || typeof candidate.nativeId !== 'string' || !candidate.nativeId.trim()
-      || typeof candidate.title !== 'string' || !candidate.title.trim()
-      || typeof candidate.selected !== 'boolean'
-      || typeof candidate.hydrated !== 'boolean'
-      || (candidate.probability !== undefined && (
-        typeof candidate.probability !== 'number'
-        || !Number.isFinite(candidate.probability)
-        || candidate.probability < 0
-        || candidate.probability > 1
-      ))) {
-      throw new Error('main_jev_attention_invalid');
-    }
-    choiceIds.add(candidate.choiceId);
-  }
-  for (const [choiceId, probability] of Object.entries(value.distribution)) {
-    if (!choiceId.trim() || typeof probability !== 'number' || !Number.isFinite(probability)
-      || probability < 0 || probability > 1) {
-      throw new Error('main_jev_attention_invalid');
-    }
-  }
-  if (value.confidence !== undefined && (
-    typeof value.confidence !== 'number'
-    || !Number.isFinite(value.confidence)
-    || value.confidence < 0
-    || value.confidence > 1
-  )) {
-    throw new Error('main_jev_attention_invalid');
-  }
-  for (const reference of value.selectedReferences) {
-    if (!isRecord(reference)
-      || !['ThinkGraph', 'KnowGraph'].includes(String(reference.authority || ''))
-      || typeof reference.nativeId !== 'string' || !reference.nativeId.trim()) {
-      throw new Error('main_jev_attention_invalid');
-    }
-  }
-  if (value.status === 'success') {
-    const candidates = value.candidates as JevAttentionDecision['candidates'];
-    const distribution = value.distribution as Record<string, number>;
-    const distributionKeys = Object.keys(distribution);
-    candidates.forEach((candidate) => {
-      if (candidate.probability === undefined
-        || !(candidate.choiceId in distribution)
-        || Math.abs(distribution[candidate.choiceId] - candidate.probability) > 1e-9) {
-        throw new Error('main_jev_attention_invalid');
-      }
-    });
-    const expectedDistributionIds = new Set([...choiceIds, MAIN_GRAPH_ATTENTION_NEW_SUBJECT]);
-    if (distributionKeys.length !== candidates.length + 1
-      || distributionKeys.some((choiceId) => !expectedDistributionIds.has(choiceId))
-      || !isRoundedDecisionDistribution(distributionKeys.map((choiceId) => distribution[choiceId]))) {
-      throw new Error('main_jev_attention_invalid');
-    }
-    const winner = value.winner;
-    if (typeof winner !== 'string' || !expectedDistributionIds.has(winner)) {
-      throw new Error('main_jev_attention_invalid');
-    }
-    const winnerUpper = Math.min(1, distribution[winner] + 0.005);
-    if (distributionKeys.some((choiceId) => (
-      choiceId !== winner && Math.max(0, distribution[choiceId] - 0.005) > winnerUpper + 1e-12
-    ))) {
-      throw new Error('main_jev_attention_invalid');
-    }
-    const selectedCandidateRefs = new Set(candidates
-      .filter((candidate) => candidate.selected && candidate.hydrated)
-      .map((candidate) => `${candidate.authority}\u0000${candidate.nativeId}`));
-    const selectedReferenceRefs = new Set((value.selectedReferences as JevAttentionDecision['selectedReferences'])
-      .map((reference) => `${reference.authority}\u0000${reference.nativeId}`));
-    const selectedCount = candidates.filter((candidate) => candidate.selected).length;
-    if (selectedReferenceRefs.size !== value.selectedReferences.length
-      || selectedCandidateRefs.size !== selectedReferenceRefs.size
-      || [...selectedCandidateRefs].some((identity) => !selectedReferenceRefs.has(identity))
-      || (winner === MAIN_GRAPH_ATTENTION_NEW_SUBJECT
-        ? selectedCount !== 0 || selectedReferenceRefs.size !== 0
-        : selectedCount < 1 || selectedCount > 3)
-      || candidates.some((candidate) => candidate.selected !== candidate.hydrated)) {
-      throw new Error('main_jev_attention_invalid');
-    }
-  }
-  return value as JevAttentionDecision;
-}
-
 type AddressableAgent = {
   cardId: string;
   cardRevisionId: string;
@@ -371,8 +216,6 @@ type ThinkGraphRevisionEvent = {
   changedNodeIds: string[];
   changedEdgeIds: string[];
   affectedNodeIds: string[];
-  turnHeat: Record<string, number>;
-  topActiveNodes: Array<{ nativeId: string; turnHeat: number }>;
 };
 
 const thinkGraphRevisionSubscribers = new Map<string, Map<Response, string>>();
@@ -614,95 +457,30 @@ function boundedSharedContext(
   }));
 }
 
-function boundedContextualNodeReaderContext(
-  messages: ConversationMessage[],
-  main: AddressableAgent,
-): {
-  status: 'ready' | 'unavailable' | 'limit';
-  activeRequest: string;
-  messages: Array<Record<string, string>>;
-} {
-  const projected = messages
-    .filter((message) => (
-      (message.role === 'user' || message.role === 'assistant')
-      && message.status === 'complete'
-      && message.content.trim().length > 0
-    ))
-    .map((message) => sharedHistoryMessage(message, main));
-  let activeRequestIndex = -1;
-  for (let index = projected.length - 1; index >= 0; index -= 1) {
-    if (projected[index].role === 'user') {
-      activeRequestIndex = index;
-      break;
-    }
-  }
-  if (activeRequestIndex < 0) {
-    return { status: 'unavailable', activeRequest: '', messages: [] };
-  }
-  const activeRequest = projected[activeRequestIndex].text;
-  if (activeRequest.length > SHARED_CONTEXT_CHARACTER_LIMIT) {
-    return { status: 'limit', activeRequest: '', messages: [] };
-  }
-  const selectedIndexes = new Set<number>([activeRequestIndex]);
-  let characters = activeRequest.length;
-  for (
-    let index = projected.length - 1;
-    index >= 0 && selectedIndexes.size < SHARED_CONTEXT_MESSAGE_LIMIT;
-    index -= 1
-  ) {
-    if (index === activeRequestIndex) continue;
-    const candidate = projected[index];
-    if (characters + candidate.text.length > SHARED_CONTEXT_CHARACTER_LIMIT) continue;
-    selectedIndexes.add(index);
-    characters += candidate.text.length;
-  }
-  const selected = [...selectedIndexes]
-    .sort((left, right) => left - right)
-    .map((index) => projected[index]);
-  return {
-    status: 'ready',
-    activeRequest,
-    messages: selected.map((view) => ({
-      role: view.role,
-      speaker: view.speaker.label,
-      target: view.target?.label || '',
-      content: view.text,
-    })),
-  };
-}
-
-export function materializerReadPrincipalForSavedCard(args: {
-  projectId: string;
-  deckId: string;
-  cardId: string;
-  conversationId?: string;
-}, card: {
-  runtimeOptions?: { tools?: unknown; mcpConnectionIds?: unknown } | null;
-} | undefined): InternalMcpPrincipal {
-  const savedTools = Array.isArray(card?.runtimeOptions?.tools)
-    ? card.runtimeOptions.tools
+export function materializerReadPrincipalForSavedCard(
+  args: {
+    projectId: string;
+    deckId: string;
+    cardId: string;
+    conversationId?: string;
+  },
+  card: Pick<AgentCardInstance, 'runtimeOptions'> | null | undefined,
+): InternalMcpPrincipal {
+  const options = card?.runtimeOptions && typeof card.runtimeOptions === 'object'
+    ? card.runtimeOptions
+    : {};
+  const unique = (values: unknown): string[] => Array.isArray(values)
+    ? values.map(String).map((value) => value.trim())
+      .filter((value, index, all) => Boolean(value) && all.indexOf(value) === index)
     : [];
-  const grantedTools = [...new Set(savedTools
-    .filter((name): name is string => typeof name === 'string')
-    .map((name) => name.trim())
-    .filter(Boolean))]
-    .sort((left, right) => left.localeCompare(right));
-  const savedConnections = Array.isArray(card?.runtimeOptions?.mcpConnectionIds)
-    ? card.runtimeOptions.mcpConnectionIds
-    : [];
-  const grantedConnections = [...new Set(savedConnections
-    .filter((name): name is string => typeof name === 'string')
-    .map((name) => name.trim())
-    .filter(Boolean))]
-    .sort((left, right) => left.localeCompare(right));
   return {
     kind: 'materializer-read',
     projectId: args.projectId,
     deckId: args.deckId,
     callerCardId: args.cardId,
     ...(args.conversationId ? { conversationId: args.conversationId } : {}),
-    grantedTools,
-    grantedConnections,
+    grantedTools: unique(options.tools),
+    grantedConnections: unique(options.mcpConnectionIds),
   };
 }
 
@@ -1108,7 +886,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
     try {
       const authority = await resolveSharedChatAuthority(projectId, deckId);
       requestFulfillmentDeferred = true;
-      void enqueueRequestFulfillmentAssessment(run.runId, result.nativeCompletion);
+      void enqueueRequestFulfillmentAssessment(run.runId, result.hermesCompletion);
       void enqueueCompletedPairThinkGraphLifecycle({
         req,
         projectId,
@@ -1122,7 +900,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
           conversationId,
           runId: run.runId,
           cardId: mainCardId,
-          nativeSessionRef: result.nativeSessionId,
+          nativeSessionRef: result.hermesSessionId,
           completedAt: new Date().toISOString(),
           userMessage: message,
           mainResponse: result.text,
@@ -1140,8 +918,8 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       driverSource: run.driverSource,
       contextAuthorityMode: contextAuthorityModeForDriver('external_plugin'),
       finalText: result.text,
-      nativeSessionId: result.nativeSessionId,
-      nativeTurnId: result.nativeCompletion.nativeRunId,
+      hermesSessionId: result.hermesSessionId,
+      providerTurnId: result.hermesCompletion.providerTurnId,
       requestFulfillmentDeferred,
       configuration: {
         subagentModel: run.prepared.hermesTransport.request.runtimeOptions?.subagentModel || null,
@@ -1223,8 +1001,8 @@ type ConfiguredCardRunStatus = {
   jevDecisions: Record<string, unknown>[];
   attemptEvents: Record<string, unknown>[];
   toolEvents: Record<string, unknown>[];
-  nativeReferences: Record<string, unknown>[];
-  materializedNativeReferences: Record<string, unknown>[];
+  graphRecords: Record<string, unknown>[];
+  materializedGraphRecords: Record<string, unknown>[];
   artifacts: Record<string, unknown>[];
   observationGap: number;
   resultReady: boolean;
@@ -1707,15 +1485,12 @@ async function readConfiguredCardRunStatus(args: {
   const telemetryRun = Array.isArray(inspection?.runs)
     ? inspection.runs.find((candidate: any) => String(candidate?.runId || '') === runId)
     : null;
-  const attention = Array.isArray(telemetryRun?.attentionEvents)
-    ? telemetryRun.attentionEvents
-    : Array.isArray(inspection?.attentionEvents) ? inspection.attentionEvents : [];
   const graphReads = Number.isSafeInteger(telemetryRun?.graphReads)
     ? telemetryRun.graphReads
-    : attention.filter((event: any) => String(event?.operation || '') === 'read').length;
+    : 0;
   const graphWrites = Number.isSafeInteger(telemetryRun?.graphWrites)
     ? telemetryRun.graphWrites
-    : attention.filter((event: any) => String(event?.operation || '') === 'write').length;
+    : 0;
   const startedAt = Date.parse(String(run.startedAt || ''));
   const finishedAt = Date.parse(String(run.finishedAt || ''));
   const acceptedAtText = String(telemetryRun?.acceptedAt || run.createdAt || '').trim();
@@ -1775,12 +1550,8 @@ async function readConfiguredCardRunStatus(args: {
     return Number.isFinite(candidate) && candidate > maximum ? candidate : maximum;
   }, 0);
   const toolAttemptEvents = attemptEvents.filter((event: any) => event?.kind === 'tool');
-  // The native completion count is independent of the passive hook delivery.
-  // Reconcile them on read so a lost/unloaded observer can never present a
-  // smaller tool log with observationGap=0. Native graph-attention events are a
-  // useful legacy fallback, but once generic Hermes receipts exist they are the
-  // complete metadata-only tool-attempt surface (including message_agent).
-  const observedToolEvents = toolAttemptEvents.length > 0 ? toolAttemptEvents : attention;
+  // Generic Hermes receipts are the complete metadata-only tool-attempt surface.
+  const observedToolEvents = toolAttemptEvents;
   const nativeToolCallCount = nullableNonNegativeNumber(run.toolCallCount);
   const receiptObservationGap = nativeToolCallCount === null
     ? 0
@@ -1861,10 +1632,10 @@ async function readConfiguredCardRunStatus(args: {
       : [],
     attemptEvents,
     toolEvents: observedToolEvents,
-    nativeReferences: Array.isArray(telemetryRun?.nativeReferences)
-      ? telemetryRun.nativeReferences : [],
-    materializedNativeReferences: Array.isArray(telemetryRun?.materializedNativeReferences)
-      ? telemetryRun.materializedNativeReferences : [],
+    graphRecords: Array.isArray(telemetryRun?.graphRecords)
+      ? telemetryRun.graphRecords : [],
+    materializedGraphRecords: Array.isArray(telemetryRun?.materializedGraphRecords)
+      ? telemetryRun.materializedGraphRecords : [],
     artifacts: Array.isArray(telemetryRun?.artifacts) ? telemetryRun.artifacts : [],
     observationGap,
     resultReady: output !== null,
@@ -1934,12 +1705,12 @@ async function readConfiguredCardRunHistory(args: {
 type GatewayCardExecution = {
   owner: AgentTerminalOwner;
   terminalSessionId: string;
-  nativeSessionId: string;
+  hermesSessionId: string;
   storedSessionId: string;
   profile: string;
   completedTurnGeneration: number | null;
-  completedNativeRunId: string | null;
-  nativeCompletion: Awaited<ReturnType<typeof agentTerminalExecution.completeStaged>>;
+  completedHermesRunId: string | null;
+  hermesCompletion: Awaited<ReturnType<typeof cardTurnBridge.completeStaged>>;
   text: string;
 };
 
@@ -1950,7 +1721,7 @@ type PassiveContextCompaction = {
   deckId: string;
   cardId: string;
   runId: string;
-  nativeTurnId?: string;
+  hermesTurnId?: string;
 };
 
 function queuePassiveContextCompaction(args: PassiveContextCompaction): void {
@@ -1977,7 +1748,7 @@ function queuePassiveContextCompaction(args: PassiveContextCompaction): void {
           observedAt: new Date().toISOString(),
           toolName: 'session.compress',
           toolCallId: `session.compress:${args.runId}`,
-          turnId: args.nativeTurnId || undefined,
+          turnId: args.hermesTurnId || undefined,
           status: receipt.status,
           errorType: receipt.errorCode || undefined,
           errorMessage: receipt.errorCode || undefined,
@@ -1994,7 +1765,7 @@ function queuePassiveContextCompaction(args: PassiveContextCompaction): void {
     });
   };
   try {
-    void agentTerminalManager.queueNativeContextCompaction(
+    void agentTerminalManager.queueHermesContextCompaction(
       args.owner,
       args.identity,
       persistReceipt,
@@ -2016,7 +1787,7 @@ function queuePassiveContextCompaction(args: PassiveContextCompaction): void {
 
 async function assessGatewayRunCompletion(
   runId: string,
-  completion: GatewayCardExecution['nativeCompletion'],
+  completion: GatewayCardExecution['hermesCompletion'],
 ): Promise<Record<string, unknown>> {
   try {
     const result: any = await requestPythonRailsJson('/domain/runs/request-fulfillment', {
@@ -2057,7 +1828,7 @@ async function assessGatewayRunCompletion(
 
 function enqueueRequestFulfillmentAssessment(
   runId: string,
-  completion: GatewayCardExecution['nativeCompletion'],
+  completion: GatewayCardExecution['hermesCompletion'],
 ): Promise<void> {
   const assessment = assessGatewayRunCompletion(runId, completion)
     .then(() => undefined)
@@ -2089,14 +1860,14 @@ async function executePreparedGatewayCardRun(args: {
   savedDeck?: any;
   savedCard?: any;
   onEvent?: (event: AgentTerminalGatewayEvent) => void;
-  onBound?: (terminal: { sessionId: string; nativeSessionId: string; profile: string }) => void;
+  onBound?: (terminal: { sessionId: string; hermesSessionId: string; profile: string }) => void;
   onSubmitted?: () => void;
   attachTui?: boolean;
   surface?: 'card-shared-chat';
 }): Promise<GatewayCardExecution> {
   let terminalSessionId = '';
   let staged = false;
-  let nativeTurnQueued = false;
+  let hermesTurnQueued = false;
   let compactionQueued = false;
   let compactionIdentity: AgentTerminalCompactionIdentity | null = null;
   const passiveCompactionEnabled = (
@@ -2109,19 +1880,19 @@ async function executePreparedGatewayCardRun(args: {
       const state = agentTerminalManager.state(args.owner, terminalSessionId);
       compactionIdentity = {
         sessionId: state.sessionId,
-        nativeSessionId: state.nativeSessionId,
+        hermesSessionId: state.hermesSessionId,
         storedSessionId: state.storedSessionId,
         profile: state.profile,
         completedTurnGeneration: state.completedTurnGeneration,
-        completedNativeRunId: state.completedNativeRunId,
+        completedHermesRunId: state.completedHermesRunId,
       };
     } catch {
       // The queued manager call returns an honest unavailable receipt if the
       // exact session disappeared after settlement.
     }
   };
-  const queueDelegateCompaction = (nativeTurnId?: string) => {
-    if (!passiveCompactionEnabled || !nativeTurnQueued || compactionQueued || !compactionIdentity) {
+  const queueDelegateCompaction = (hermesTurnId?: string) => {
+    if (!passiveCompactionEnabled || !hermesTurnQueued || compactionQueued || !compactionIdentity) {
       return;
     }
     compactionQueued = true;
@@ -2132,7 +1903,7 @@ async function executePreparedGatewayCardRun(args: {
       deckId: args.owner.deckId,
       cardId: args.owner.cardId,
       runId: args.runId,
-      nativeTurnId,
+      hermesTurnId,
     });
   };
   try {
@@ -2167,11 +1938,11 @@ async function executePreparedGatewayCardRun(args: {
     terminalSessionId = terminal.sessionId;
     compactionIdentity = {
       sessionId: terminal.sessionId,
-      nativeSessionId: terminal.nativeSessionId,
+      hermesSessionId: terminal.hermesSessionId,
       storedSessionId: terminal.storedSessionId,
       profile: terminal.profile,
       completedTurnGeneration: terminal.completedTurnGeneration,
-      completedNativeRunId: terminal.completedNativeRunId,
+      completedHermesRunId: terminal.completedHermesRunId,
     };
     args.onBound?.(terminal);
 
@@ -2196,7 +1967,7 @@ async function executePreparedGatewayCardRun(args: {
         },
       };
     }
-    const preparedTurn = agentTerminalExecution.stage(
+    const preparedTurn = cardTurnBridge.stage(
       args.owner,
       terminal.sessionId,
       profile,
@@ -2204,7 +1975,7 @@ async function executePreparedGatewayCardRun(args: {
       args.conversationId,
     );
     staged = true;
-    nativeTurnQueued = true;
+    hermesTurnQueued = true;
     const pending = agentTerminalManager.submit(
       args.owner,
       terminal.sessionId,
@@ -2225,36 +1996,36 @@ async function executePreparedGatewayCardRun(args: {
       compactionIdentity = {
         ...compactionIdentity,
         completedTurnGeneration: Number(result.completedTurnGeneration),
-        completedNativeRunId: result.completedNativeRunId ?? null,
+        completedHermesRunId: result.completedHermesRunId ?? null,
       };
     }
-    const nativeCompletion = await agentTerminalExecution.completeStaged(
+    const hermesCompletion = await cardTurnBridge.completeStaged(
       terminal.sessionId,
-      terminal.nativeSessionId,
+      terminal.hermesSessionId,
       result,
     );
     staged = false;
     refreshCompactionIdentity();
-    queueDelegateCompaction(String(nativeCompletion.nativeRunId || '').trim() || undefined);
+    queueDelegateCompaction(String(hermesCompletion.providerTurnId || '').trim() || undefined);
     return {
       owner: args.owner,
       terminalSessionId: terminal.sessionId,
-      nativeSessionId: terminal.nativeSessionId,
+      hermesSessionId: terminal.hermesSessionId,
       storedSessionId: compactionIdentity?.storedSessionId || terminal.storedSessionId,
       profile: terminal.profile,
       completedTurnGeneration: Number.isSafeInteger(result.completedTurnGeneration)
         ? Number(result.completedTurnGeneration)
         : null,
-      completedNativeRunId: typeof result.completedNativeRunId === 'string'
-        ? result.completedNativeRunId
+      completedHermesRunId: typeof result.completedHermesRunId === 'string'
+        ? result.completedHermesRunId
         : null,
-      nativeCompletion,
+      hermesCompletion,
       text: result.text,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'agent_terminal_turn_failed';
     if (staged && terminalSessionId) {
-      const cancelledBeforeBegin = await agentTerminalExecution
+      const cancelledBeforeBegin = await cardTurnBridge
         .cancelStaged(
           terminalSessionId,
           message,
@@ -2262,7 +2033,7 @@ async function executePreparedGatewayCardRun(args: {
         )
         .catch(() => false);
       if (!cancelledBeforeBegin) {
-        await agentTerminalExecution.abort(terminalSessionId, message).catch(() => undefined);
+        await cardTurnBridge.abort(terminalSessionId, message).catch(() => undefined);
       }
     } else {
       await requestPythonRailsJson('/domain/runs/finish', {
@@ -2401,7 +2172,7 @@ async function runCompletedPairThinkGraphLifecycle(
           cardId: thinkGraphCard.cardId,
           revisionId: thinkGraphCard.cardRevisionId,
           profile: cardResult.profile,
-          nativeSessionRef: cardResult.nativeSessionId,
+          nativeSessionRef: cardResult.hermesSessionId,
           resolvedModel: String(
             prepared.hermesTransport?.request?.provider?.providerModelId || '',
           ),
@@ -2443,10 +2214,6 @@ async function runCompletedPairThinkGraphLifecycle(
           ? settled.changedEdgeIds.map(String) : [],
         affectedNodeIds: Array.isArray(settled.affectedNodeIds)
           ? settled.affectedNodeIds.map(String) : [],
-        turnHeat: settled.turnHeat && typeof settled.turnHeat === 'object'
-          ? settled.turnHeat : {},
-        topActiveNodes: Array.isArray(settled.topActiveNodes)
-          ? settled.topActiveNodes : [],
       });
     }
   } catch (error) {
@@ -2643,11 +2410,11 @@ router.post('/run', async (req, res) => {
       requireAgentTerminalCard(card, deck);
       const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId, conversationId);
       const terminal = agentTerminalManager.find(owner);
-      if (!terminal || !agentTerminalExecution.ownsRun(terminal.sessionId, runId)) {
+      if (!terminal || !cardTurnBridge.ownsRun(terminal.sessionId, runId)) {
         return res.status(409).json({ ok: false, error: 'agent_terminal_run_not_active' });
       }
       agentTerminalManager.verifyConfiguration(owner, terminal.sessionId, card, deck);
-      agentTerminalExecution.requestCancellation(terminal.sessionId, runId);
+      cardTurnBridge.requestCancellation(terminal.sessionId, runId);
       await agentTerminalManager.interrupt(owner, terminal.sessionId);
       return res.status(202).json({ ok: true, result: { ...status, status: 'stopping' } });
     } catch (error) {
@@ -2731,7 +2498,7 @@ router.post('/run', async (req, res) => {
     let providerInputTokens: number | null = null;
     let providerOutputTokens: number | null = null;
     let totalCostUsd: number | null = null;
-    let gatewayCompletion: GatewayCardExecution['nativeCompletion'] | null = null;
+    let gatewayCompletion: GatewayCardExecution['hermesCompletion'] | null = null;
     let magenticStatus: MagenticExecutionStatus | null = null;
     const magenticAcceptance: { status: MagenticExecutionStatus | null } = { status: null };
     let magenticProgressBound = false;
@@ -2748,19 +2515,19 @@ router.post('/run', async (req, res) => {
           onSubmitted: acceptBackground,
         });
         output = execution.text;
-        gatewayCompletion = execution.nativeCompletion;
+        gatewayCompletion = execution.hermesCompletion;
         transport = {
-          threadId: execution.nativeCompletion.nativeRootId,
-          turnId: execution.nativeCompletion.nativeRunId,
-          hermesSessionId: execution.nativeCompletion.hermesSessionId,
-          effectiveProvider: execution.nativeCompletion.effectiveProvider,
-          providerApiMode: execution.nativeCompletion.providerApiMode,
+          threadId: execution.hermesCompletion.providerThreadId,
+          turnId: execution.hermesCompletion.providerTurnId,
+          hermesSessionId: execution.hermesCompletion.hermesSessionId,
+          effectiveProvider: execution.hermesCompletion.effectiveProvider,
+          providerApiMode: execution.hermesCompletion.providerApiMode,
           terminalSessionId: execution.terminalSessionId,
           runtimeSource: 'repository_hermes_gateway',
         };
-        providerInputTokens = execution.nativeCompletion.inputTokens;
-        providerOutputTokens = execution.nativeCompletion.outputTokens;
-        totalCostUsd = execution.nativeCompletion.costUsd;
+        providerInputTokens = execution.hermesCompletion.inputTokens;
+        providerOutputTokens = execution.hermesCompletion.outputTokens;
+        totalCostUsd = execution.hermesCompletion.costUsd;
       } else if (prepared.runtimeOwner === 'mag_one' && prepared.magenticExecution) {
         magenticStatus = await executePreparedMagenticRun({
           req,
@@ -2858,7 +2625,7 @@ router.post('/run', async (req, res) => {
             cardRevision: prepared.cardRevision,
             cardRevisionSha256: prepared.cardRevisionSha256,
             runtimeOwner: prepared.runtimeOwner,
-            resolvedNativeReads: prepared.resolvedNativeReads,
+            resolvedGraphReads: prepared.resolvedGraphReads,
             resolvedGraphProjection: prepared.resolvedGraphProjection,
             jevAutoTools: prepared.jevAutoTools,
             idf: prepared.idf,
@@ -2914,110 +2681,6 @@ router.post('/run', async (req, res) => {
 // One stable native Hermes conversation per saved Main card and product
 // conversation. The saved Builder Agent remains a separate Hermes profile.
 
-type NativeAttentionEvent = {
-  eventId: string;
-  timestamp: string;
-  projectId: string | null;
-  deckId: string | null;
-  conversationId: string | null;
-  runId: string | null;
-  cardId: string | null;
-  authority: 'codegraph' | 'knowgraph' | 'thinkgraph' | 'agentgraph';
-  operation: 'read' | 'write';
-  toolName: string;
-  nativeNodeIds: string[];
-  nativeEdgeIds: string[];
-  nativeEdges: Array<{
-    id: string;
-    source: string;
-    target: string;
-    predicate: string | null;
-    provenance?: Record<string, unknown>;
-  }>;
-  resultHash: string;
-  truncated: boolean;
-  phase?: 'pending' | 'completed' | 'failed';
-  change?: 'read' | 'write' | 'create' | 'delete' | 'clear';
-  nativeChildId?: string | null;
-  nativeRunId?: string | null;
-  rootRunId?: string | null;
-  runState?: string;
-  scopeGroupIds?: string[];
-};
-
-function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
-  if (!value || typeof value !== 'object') return [];
-  const runs = Array.isArray((value as any).runs) ? (value as any).runs : [];
-  return runs.flatMap((run: any) => Array.isArray(run?.attentionEvents)
-    ? run.attentionEvents.map((event: any) => ({ ...event, runState: run.state,
-      rootRunId: run.rootRunId || run.runId })) : [])
-    .filter((event: any) => (
-      event
-      && typeof event === 'object'
-      && String(event.eventId || '').trim()
-      && ['codegraph', 'knowgraph', 'thinkgraph', 'agentgraph'].includes(event.authority)
-      && ['read', 'write'].includes(event.operation)
-    ))
-    .map((event: any) => ({
-      eventId: String(event.eventId),
-      timestamp: String(event.timestamp || ''),
-      projectId: event.projectId ? String(event.projectId) : null,
-      deckId: event.deckId ? String(event.deckId) : null,
-      conversationId: event.conversationId ? String(event.conversationId) : null,
-      runId: event.runId ? String(event.runId) : null,
-      cardId: event.cardId ? String(event.cardId) : null,
-      authority: event.authority,
-      operation: event.operation,
-      toolName: String(event.toolName || ''),
-      nativeNodeIds: Array.isArray(event.nativeNodeIds) ? event.nativeNodeIds.map(String).slice(0, 128) : [],
-      nativeEdgeIds: Array.isArray(event.nativeEdgeIds) ? event.nativeEdgeIds.map(String).slice(0, 256) : [],
-      nativeEdges: Array.isArray(event.nativeEdges) ? event.nativeEdges
-        .filter((edge: any) => edge && typeof edge === 'object')
-        .map((edge: any) => ({
-          id: String(edge.id || ''),
-          source: String(edge.source || ''),
-          target: String(edge.target || ''),
-          predicate: String(edge.predicate || '').trim() || null,
-          ...(edge.provenance && typeof edge.provenance === 'object'
-            ? { provenance: edge.provenance as Record<string, unknown> }
-            : {}),
-        }))
-        .filter((edge: any) => edge.id && edge.source && edge.target)
-        .slice(0, 256) : [],
-      resultHash: String(event.resultHash || ''),
-      truncated: event.truncated === true,
-      ...(event.phase ? { phase: event.phase } : {}),
-      ...(event.change ? { change: event.change } : {}),
-      ...(event.nativeChildId ? { nativeChildId: String(event.nativeChildId) } : {}),
-      ...(event.nativeRunId ? { nativeRunId: String(event.nativeRunId) } : {}),
-      ...(event.rootRunId ? { rootRunId: String(event.rootRunId) } : {}),
-      ...(event.runState ? { runState: String(event.runState) } : {}),
-      ...(Array.isArray(event.scopeGroupIds) ? { scopeGroupIds: event.scopeGroupIds.map(String).slice(0, 128) } : {}),
-    }));
-}
-
-function latestScopedNativeAttentionEvents(
-  value: unknown,
-  scope: { projectId: string; deckId: string; conversationId?: string; cardId?: string; runId?: string },
-): NativeAttentionEvent[] {
-  const scoped = nativeAttentionEvents(value)
-    .filter((event) => event.projectId === scope.projectId && event.deckId === scope.deckId)
-    .filter((event) => !scope.conversationId || event.conversationId === scope.conversationId)
-    .filter((event) => !scope.cardId || event.cardId === scope.cardId)
-    .filter((event) => !scope.runId || event.runId === scope.runId)
-    .filter((event) => event.authority !== 'agentgraph')
-    .filter((event) => event.runId && Number.isFinite(Date.parse(event.timestamp)))
-    .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
-  const latestRunId = scoped.at(-1)?.runId;
-  if (!latestRunId) return [];
-  const seen = new Set<string>();
-  return scoped.filter((event) => {
-    if (event.runId !== latestRunId || seen.has(event.eventId)) return false;
-    seen.add(event.eventId);
-    return true;
-  });
-}
-
 mainRoutes.get('/session/thinkgraph-revisions', async (req, res) => {
   const projectId = String(req.query?.projectId || '').trim();
   const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
@@ -3048,481 +2711,6 @@ mainRoutes.get('/session/thinkgraph-revisions', async (req, res) => {
     if (!subscribers.size) thinkGraphRevisionSubscribers.delete(key);
   });
   return undefined;
-});
-
-mainRoutes.get('/session/attention', async (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.query?.conversationId || '').trim();
-  const cardId = String(req.query?.cardId || '').trim();
-  const runId = String(req.query?.runId || '').trim();
-  const stream = req.query?.stream === 'true';
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-  try {
-    const readInspection = () => requestPythonRailsJson('/domain/agentgraph/inspect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, deckId, limit: cardId ? 1 : 50,
-        ...(conversationId ? { conversationId } : {}),
-        ...(cardId ? { cardId, directOnly: true } : {}),
-        ...(runId ? { runId } : {}),
-      }),
-    });
-    const inspection = await readInspection();
-    if (stream) {
-      // Follow the existing AGE observation store using the same session and
-      // native_attention SSE contracts as Main. No runtime or event bus is
-      // started by this read-only subscription.
-      res.writeHead(200, { 'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no' });
-      let closed = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let previous = new Map<string, string>();
-      const emit = (kind: string, value: Record<string, unknown>, key: string,
-        next: Map<string, string>) => {
-        const body = JSON.stringify({ ...value, kind });
-        next.set(key, body);
-        if (body !== previous.get(key) && !closed) res.write(`event: ${kind}\ndata: ${body}\n\n`);
-      };
-      const deliver = (value: any) => {
-        const next = new Map<string, string>();
-        const runs = Array.isArray(value?.runs) ? value.runs : [];
-        for (const run of runs) {
-          emit('session', { projectId, deckId: run.deckId || deckId,
-            conversationId: run.conversationId || null, cardId: run.cardId,
-            runId: run.runId, rootRunId: run.rootRunId || run.runId,
-            state: run.state, nativeChildId: run.nativeChildId || null,
-            materializedNativeReferences: run.materializedNativeReferences || [] },
-          `run:${run.runId}`, next);
-        }
-        if (cardId && !runs.length) emit('session', { projectId, deckId, cardId,
-          runId: null, state: null, materializedNativeReferences: [] }, `card:${cardId}`, next);
-        // AGE returns newest-first for bounded selection. Replay oldest-first
-        // so a retained read cannot resurrect an acknowledged later deletion.
-        for (const event of nativeAttentionEvents(value)
-          .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))) {
-          if (event.authority === 'agentgraph' || event.projectId !== projectId
-            || event.deckId !== deckId || (cardId && event.cardId !== cardId)) continue;
-          emit('native_attention', event, event.eventId, next);
-        }
-        previous = next;
-      };
-      const poll = async () => {
-        try { deliver(await readInspection()); }
-        catch (error) {
-          if (!closed) {
-            res.write(`event: error\ndata: ${JSON.stringify({ kind: 'error',
-              error: error instanceof Error ? error.message : 'native_attention_read_failed' })}\n\n`);
-            res.end();
-          }
-          return;
-        }
-        if (!closed) timer = setTimeout(poll, 2000);
-      };
-      res.on('close', () => { closed = true; if (timer) clearTimeout(timer); });
-      deliver(inspection);
-      res.write(': AGE attention connected\n\n');
-      timer = setTimeout(poll, 2000);
-      return;
-    }
-    return res.json({
-      ok: true,
-      events: latestScopedNativeAttentionEvents(inspection, {
-        projectId,
-        deckId,
-        ...(conversationId ? { conversationId } : {}),
-        ...(cardId ? { cardId } : {}),
-        ...(runId ? { runId } : {}),
-      }),
-    });
-  } catch (error) {
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'native_attention_read_failed',
-    });
-  }
-});
-
-async function resolveMainGatewayRuntime(
-  req: Request,
-  projectId: string,
-  deckId: string,
-  conversationId: string,
-) {
-  const { deck } = await getDeckDocument(projectId, deckId);
-  const cards = deck?.nodes.filter((card) => (
-    card.runtime.kind === 'hermes' && card.runtime.mode === 'main'
-  )) || [];
-  if (!deck || cards.length !== 1) throw new Error('persisted_main_chat_mismatch');
-  const card = cards[0];
-  const owner = await resolveCardRuntimeOwner(
-    req, projectId, deckId, card.id, conversationId,
-  );
-  let resolved = agentTerminalManager.findCard(projectId, deckId, card.id);
-  if (!resolved) {
-    const state = await agentTerminalManager.open(
-      owner,
-      card,
-      deck,
-      120,
-      36,
-      agentTerminalPresentationOptions(card, false),
-    );
-    resolved = { owner, state };
-  } else {
-    resolved = { owner, state: resolved.state };
-  }
-  agentTerminalManager.verifyConfiguration(resolved.owner, resolved.state.sessionId, card, deck);
-  return { ...resolved, card, deck };
-}
-
-async function resolveSharedChatVoiceRuntime(
-  req: Request,
-  projectId: string,
-  deckId: string,
-  conversationId: string,
-  targetCardId: string,
-) {
-  const authority = await resolveProjectSharedChatAuthority(projectId, deckId);
-  const target = targetCardId
-    ? authority.cards.find((candidate) => candidate.cardId === targetCardId)
-    : authority.main;
-  if (!target) throw new Error('target_card_unavailable');
-  const card = authority.deck.nodes.find((candidate) => candidate.id === target.cardId);
-  if (!card || card.runtime.kind !== 'hermes' || card.runtime.mode === 'magentic_one') {
-    throw new Error('card_voice_runtime_unsupported');
-  }
-  const owner = await resolveCardRuntimeOwner(
-    req, projectId, deckId, card.id, conversationId,
-  );
-  let resolved = agentTerminalManager.findCard(
-    projectId,
-    deckId,
-    card.id,
-  );
-  if (!resolved) {
-    const state = await agentTerminalManager.open(
-      owner,
-      card,
-      authority.deck,
-      120,
-      36,
-      agentTerminalPresentationOptions(card, false),
-    );
-    resolved = { owner, state };
-  } else {
-    resolved = { owner, state: resolved.state };
-  }
-  agentTerminalManager.verifyConfiguration(
-    resolved.owner,
-    resolved.state.sessionId,
-    card,
-    authority.deck,
-  );
-  return { ...resolved, card, target, deck: authority.deck };
-}
-
-mainRoutes.post('/session/voice/start', async (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  const targetCardId = String(req.body?.targetCardId || '').trim();
-  const tts = req.body?.tts !== false;
-  if (!projectId || !conversationId) {
-    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
-  }
-  if (!await authorizeMainProject(req, res, projectId)) return undefined;
-
-  let runtime: Awaited<ReturnType<typeof resolveSharedChatVoiceRuntime>>;
-  try {
-    runtime = await resolveSharedChatVoiceRuntime(
-      req,
-      projectId,
-      deckId,
-      conversationId,
-      targetCardId,
-    );
-  } catch (error) {
-    return res.status(503).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'card_voice_runtime_unavailable',
-    });
-  }
-
-  let closed = false;
-  let detach = () => {};
-  let keepAlive: ReturnType<typeof setInterval> | undefined;
-  const writeEvent = (name: string, payload: Record<string, unknown>) => {
-    if (closed || res.destroyed || res.writableEnded) return;
-    res.write(`event: ${name}\ndata: ${JSON.stringify({
-      projectId,
-      deckId,
-      conversationId,
-      cardId: runtime.card.id,
-      runtimeSessionId: runtime.state.sessionId,
-      nativeSessionId: runtime.state.nativeSessionId,
-      ...payload,
-    })}\n\n`);
-  };
-  const cleanup = () => {
-    if (closed) return;
-    closed = true;
-    detach();
-    if (keepAlive) clearInterval(keepAlive);
-    void agentTerminalManager.stopVoiceCapture(
-      runtime.owner,
-      runtime.state.sessionId,
-      { cancel: true },
-    ).catch(() => undefined);
-  };
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.write(': Hermes voice connected\n\n');
-  res.once('close', cleanup);
-  detach = agentTerminalManager.subscribeGatewayEvents(
-    runtime.owner,
-    runtime.state.sessionId,
-    (event) => {
-      if (event.session_id !== runtime.state.nativeSessionId) return;
-      if (!['voice.status', 'voice.transcript'].includes(event.type)) return;
-      writeEvent(event.type === 'voice.status' ? 'status' : 'transcript', {
-        event,
-      });
-      if (
-        event.type === 'voice.transcript'
-        && (event.payload?.stop_phrase === true || event.payload?.no_speech_limit === true)
-      ) {
-        void agentTerminalManager.stopVoiceCapture(
-          runtime.owner,
-          runtime.state.sessionId,
-          { cancel: true },
-        ).catch(() => undefined).finally(() => {
-          if (!res.writableEnded) res.end();
-        });
-      }
-    },
-  );
-  keepAlive = setInterval(() => {
-    if (!closed && !res.destroyed && !res.writableEnded) res.write(': voice active\n\n');
-  }, 15_000);
-  keepAlive.unref?.();
-
-  try {
-    const state = await agentTerminalManager.startVoiceCapture(
-      runtime.owner,
-      runtime.state.sessionId,
-      { tts },
-    );
-    writeEvent('ready', {
-      state,
-      participant: cardParticipant(runtime.target),
-    });
-    return undefined;
-  } catch (error) {
-    writeEvent('error', {
-      error: error instanceof Error ? error.message : 'card_voice_start_failed',
-    });
-    if (!res.writableEnded) res.end();
-    return undefined;
-  }
-});
-
-mainRoutes.post('/session/voice/stop', async (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  const targetCardId = String(req.body?.targetCardId || '').trim();
-  const cancel = req.body?.cancel === true;
-  if (!projectId || !conversationId) {
-    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
-  }
-  if (!await authorizeMainProject(req, res, projectId)) return undefined;
-  try {
-    const runtime = await resolveSharedChatVoiceRuntime(
-      req,
-      projectId,
-      deckId,
-      conversationId,
-      targetCardId,
-    );
-    const state = await agentTerminalManager.stopVoiceCapture(
-      runtime.owner,
-      runtime.state.sessionId,
-      { cancel },
-    );
-    return res.json({
-      ok: true,
-      cardId: runtime.card.id,
-      runtimeSessionId: runtime.state.sessionId,
-      nativeSessionId: runtime.state.nativeSessionId,
-      state,
-    });
-  } catch (error) {
-    return res.status(503).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'card_voice_stop_failed',
-    });
-  }
-});
-
-mainRoutes.get('/session/driver', async (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.query?.conversationId || '').trim();
-  if (!projectId || !conversationId) {
-    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
-  }
-  if (!await authorizeMainProject(req, res, projectId)) return undefined;
-  try {
-    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId, conversationId);
-    const runId = agentTerminalExecution.activeRunId(runtime.state.sessionId);
-    return res.json({
-      ok: true,
-      ready: true,
-      activeDriver: runId ? 'internal_chat' : null,
-      activeContextAuthorityMode: runId ? contextAuthorityModeForDriver('internal_chat') : null,
-      runId,
-      busy: runId !== null,
-    });
-  } catch (error) {
-    return res.status(503).json({ ok: false,
-      error: error instanceof Error ? error.message : 'main_gateway_runtime_unavailable' });
-  }
-});
-
-mainRoutes.get('/session/events', async (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.query?.conversationId || '').trim();
-  const runtimeSessionId = String(req.query?.runtimeSessionId || '').trim();
-  const nativeSessionId = String(req.query?.nativeSessionId || '').trim();
-  if (!projectId || !conversationId || !runtimeSessionId || !nativeSessionId) {
-    return res.status(400).json({ ok: false, error: 'main_native_event_scope_required' });
-  }
-  if (!await authorizeMainProject(req, res, projectId)) return undefined;
-
-  let runtime: Awaited<ReturnType<typeof resolveMainGatewayRuntime>>;
-  let detach = () => {};
-  try {
-    runtime = await resolveMainGatewayRuntime(req, projectId, deckId, conversationId);
-    if (runtime.state.sessionId !== runtimeSessionId) {
-      return res.status(409).json({ ok: false, error: 'main_gateway_runtime_identity_mismatch' });
-    }
-    if (runtime.state.nativeSessionId !== nativeSessionId) {
-      return res.status(409).json({ ok: false, error: 'main_gateway_native_session_identity_mismatch' });
-    }
-    detach = agentTerminalManager.subscribeGatewayEvents(
-      runtime.owner,
-      runtime.state.sessionId,
-      (event) => {
-        // Application-submitted Main turns already own their request SSE. This
-        // stream projects only exact native turns initiated inside the canonical
-        // Hermes session, such as Bot completion notifications.
-        if (agentTerminalExecution.activeRunId(runtime.state.sessionId)) return;
-        if (!['message.start', 'message.complete', 'status.update', 'error'].includes(event.type)) return;
-        if (!Number.isSafeInteger(event.seq) || Number(event.seq) < 1) return;
-        if (res.destroyed || res.writableEnded) return;
-        res.write(`event: gateway\ndata: ${JSON.stringify({
-          projectId,
-          deckId,
-          conversationId,
-          cardId: runtime.card.id,
-          runtimeSessionId: runtime.state.sessionId,
-          nativeSessionId: runtime.state.nativeSessionId,
-          event,
-        })}\n\n`);
-      },
-    );
-  } catch (error) {
-    return res.status(503).json({ ok: false,
-      error: error instanceof Error ? error.message : 'main_gateway_runtime_unavailable' });
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.write(': native Main Gateway events\n\n');
-  res.once('close', detach);
-  return undefined;
-});
-
-mainRoutes.post('/session/contextual-node-read', async (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  const sourceRevision = String(req.body?.sourceRevision || '').trim();
-  const clientContextRevision = String(req.body?.clientContextRevision || '').trim();
-  const rawMembers = req.body?.nativeMembers;
-  if (
-    !projectId
-    || !conversationId
-    || !sourceRevision
-    || sourceRevision.length > 1_024
-    || !Array.isArray(rawMembers)
-    || rawMembers.length < 1
-    || rawMembers.length > 64
-  ) {
-    return res.status(400).json({ ok: false, error: 'contextual_node_read_request_invalid' });
-  }
-  const nativeMembers: Array<{ authority: 'ThinkGraph' | 'KnowGraph'; nativeId: string }> = [];
-  const seen = new Set<string>();
-  for (const value of rawMembers) {
-    const authority = String(value?.authority || '');
-    const nativeId = String(value?.nativeId || '').trim();
-    const identity = `${authority}\u0000${nativeId}`;
-    if (
-      !['ThinkGraph', 'KnowGraph'].includes(authority)
-      || !nativeId
-      || nativeId.length > 1_024
-      || seen.has(identity)
-    ) {
-      return res.status(400).json({ ok: false, error: 'contextual_node_read_members_invalid' });
-    }
-    seen.add(identity);
-    nativeMembers.push({
-      authority: authority as 'ThinkGraph' | 'KnowGraph',
-      nativeId,
-    });
-  }
-  if (!await authorizeMainProject(req, res, projectId)) return undefined;
-
-  try {
-    const authority = await resolveSharedChatAuthority(projectId, deckId);
-    const messages = await getConversationMessages(projectId, conversationId);
-    const result = await requestPythonRailsJson('/graph/contextual-node-read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        deckId,
-        cardId: authority.main.cardId,
-        conversationId,
-        sourceRevision,
-        clientContextRevision,
-        readerContext: boundedContextualNodeReaderContext(messages, authority.main),
-        nativeMembers,
-      }),
-    }, { timeoutMs: 60_000 });
-    return res.json(result);
-  } catch (error) {
-    const reason = error instanceof Error
-      ? error.message
-      : 'contextual_node_read_unavailable';
-    logHarnessTrace(`[contextual-node-read] unavailable reason=${redactTrace(reason)}`);
-    return res.status(503).json({
-      ok: false,
-      error: 'contextual_node_read_unavailable',
-    });
-  }
 });
 
 mainRoutes.post('/session/chat', async (req, res) => {
@@ -3607,7 +2795,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
 
   const requestedRunId = `req_${randomUUID().slice(0, 8)}`;
   let run: PreparedMainCliRun;
-  let jevAttention: JevAttentionDecision | null = null;
   let completedPairAuthority: SharedChatAuthority | null = null;
   try {
     if (directAddressed) {
@@ -3684,7 +2871,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
       if (run.cardId !== projectAuthority.main.cardId) {
         throw new Error('main_card_identity_mismatch');
       }
-      jevAttention = preparedJevAttention(run.prepared?.jevAttention);
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : (
@@ -3697,7 +2883,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
         ? 'addressed_card_preparation_failed'
         : reason === 'main_hermes_card_not_runnable' ? reason : 'main_domain_preparation_failed',
       ...(directAddressed ? {
-        address: parsedAddress.address || target.address || null,
+        address: target.address || null,
         targetCardId: target.cardId,
       } : {}),
     });
@@ -3733,11 +2919,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
       contextAuthorityMode: contextAuthorityModeForDriver('internal_chat'),
     }),
   });
-  if (!directAddressed && jevAttention) {
-    logHarnessTrace(`[jev-attention] ${JSON.stringify(jevAttentionTelemetry(jevAttention))}`);
-    writeSse('jev_attention', { ...jevAttention, kind: 'jev_attention' });
-  }
-
   const magenticAcceptance: { status: MagenticExecutionStatus | null } = { status: null };
   let magenticProgressBound = false;
   let magenticOuterRunFinalized = false;
@@ -3748,7 +2929,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
   try {
     let resultText = '';
     let continuationRef = '';
-    let gatewayCompletion: GatewayCardExecution['nativeCompletion'] | null = null;
+    let gatewayCompletion: GatewayCardExecution['hermesCompletion'] | null = null;
     let usage = {
       providerInputTokens: null as number | null,
       providerOutputTokens: null as number | null,
@@ -3810,7 +2991,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
         surface: directAddressed ? 'card-shared-chat' : undefined,
         onBound: (terminal) => {
           writeSse('session', {
-            sessionId: terminal.nativeSessionId,
+            sessionId: terminal.hermesSessionId,
             runtimeSessionId: terminal.sessionId,
             turnOwner: directAddressed ? 'addressed_card' : 'main',
             ...(directAddressed ? {} : {
@@ -3835,16 +3016,16 @@ mainRoutes.post('/session/chat', async (req, res) => {
         },
       });
       resultText = result.text;
-      continuationRef = result.nativeSessionId;
-      gatewayCompletion = result.nativeCompletion;
+      continuationRef = result.hermesSessionId;
+      gatewayCompletion = result.hermesCompletion;
       usage = {
-        providerInputTokens: result.nativeCompletion.inputTokens,
-        providerOutputTokens: result.nativeCompletion.outputTokens,
-        providerCachedTokens: result.nativeCompletion.cachedTokens,
-        providerReasoningTokens: result.nativeCompletion.reasoningTokens,
-        totalCostUsd: result.nativeCompletion.costUsd,
-        usageAvailable: (result.nativeCompletion.inputTokens || 0) > 0
-          || (result.nativeCompletion.outputTokens || 0) > 0,
+        providerInputTokens: result.hermesCompletion.inputTokens,
+        providerOutputTokens: result.hermesCompletion.outputTokens,
+        providerCachedTokens: result.hermesCompletion.cachedTokens,
+        providerReasoningTokens: result.hermesCompletion.reasoningTokens,
+        totalCostUsd: result.hermesCompletion.costUsd,
+        usageAvailable: (result.hermesCompletion.inputTokens || 0) > 0
+          || (result.hermesCompletion.outputTokens || 0) > 0,
         usageSource: 'native_gateway',
       };
     }
@@ -4041,10 +3222,10 @@ mainRoutes.post('/session/stop', async (req, res) => {
     }
     const runtime = agentTerminalManager.findCard(projectId, deckId, cardId);
     if (!runtime) return res.status(404).json({ ok: false, error: 'no_active_turn' });
-    if (!agentTerminalExecution.ownsRun(runtime.state.sessionId, expectedRunId)) {
+    if (!cardTurnBridge.ownsRun(runtime.state.sessionId, expectedRunId)) {
       return res.status(404).json({ ok: false, error: 'no_active_turn' });
     }
-    agentTerminalExecution.requestCancellation(runtime.state.sessionId, expectedRunId);
+    cardTurnBridge.requestCancellation(runtime.state.sessionId, expectedRunId);
     await agentTerminalManager.interrupt(runtime.owner, runtime.state.sessionId);
     return res.status(202).json({ ok: true, runId: expectedRunId, state: 'stopping' });
   } catch (error) {
@@ -4068,7 +3249,7 @@ mainRoutes.get('/session/history', async (req, res) => {
   if (!await authorizeMainProject(req, res, projectId)) return undefined;
   let authority: ProjectSharedChatAuthority;
   let sharedMessages: ConversationMessage[];
-  let nativeSessionId = '';
+  let hermesSessionId = '';
   let runtimeSessionId = '';
   try {
     authority = await resolveProjectSharedChatAuthority(projectId, deckId);
@@ -4092,12 +3273,12 @@ mainRoutes.get('/session/history', async (req, res) => {
     authority.main.cardId,
   );
   if (runtime) {
-    nativeSessionId = runtime.state.nativeSessionId;
+    hermesSessionId = runtime.state.hermesSessionId;
     runtimeSessionId = runtime.state.sessionId;
   }
   return res.json({
     ok: true,
-    sessionId: nativeSessionId,
+    hermesSessionId,
     runtimeSessionId,
     mainCardId: authority.main.cardId,
     addressableAgents: authority.addressableAgents,

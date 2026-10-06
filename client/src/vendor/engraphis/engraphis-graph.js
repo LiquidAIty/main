@@ -8794,9 +8794,6 @@
         ctx, node, scale, galaxyAccent || nodeMaterial.identity, true
       );
       if (currentTurnHeat > 0) {
-        /* Current-turn heat is a transient UI overlay from the authoritative graph revision.
-           It does not alter node mass, radius, or the saved graph. One shared purple cue keeps
-           activity distinct from both Think teal and Know orange. */
         ctx.save();
         ctx.globalAlpha *= currentTurnHeat;
         ctx.lineWidth = 1.7 / scale;
