@@ -2283,14 +2283,14 @@ async function executePreparedGatewayCardRun(args: {
 
 function thinkGraphCardAssignment(preparation: any): string {
   return [
-    'Run one Engraphis llm_structured extraction pass using the native prompt and schema below.',
+    'Run one official Engraphis llm_structured extraction pass using the prompt and schema below.',
     'Use your saved ThinkGraph Card instructions and configured model. Do not call tools.',
     'Return only one JSON object that validates against OUTPUT_SCHEMA. Do not wrap it in prose.',
-    'Use native Engraphis structured extraction. Each returned Engraphis fact is one LiquidAIty Think.',
-    'The fact\'s content is the Think body. Preserve each fact\'s native title, content, memory',
-    'type, importance, keywords, entities, and relationships. Extract the fewest independently',
-    'reusable facts supported by the completed exchange. Preserve necessary context and uncertainty',
-    'without repeating conversational setup or turning every reasoning clause into a relationship.',
+    'Each facts[] item is one native Engraphis fact and one displayed Think.',
+    'Preserve each fact\'s content, title, memory type, importance, keywords, entities, and relations.',
+    'Extract the fewest independently reusable facts supported by the completed exchange.',
+    'Preserve necessary context and uncertainty without repeating conversational setup or turning',
+    'every reasoning clause into a relationship.',
     '',
     'OUTPUT_SCHEMA',
     JSON.stringify(preparation.enrichmentSchema),

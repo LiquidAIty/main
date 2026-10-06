@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import atexit
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from datetime import datetime, timezone
 from enum import Enum
@@ -18,24 +17,14 @@ import os
 from pathlib import Path
 import re
 import threading
-from typing import Any, Callable, Literal
+from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from engraphis.core.interfaces import (
-    Edge,
-    FactSpec,
-    MemoryType,
-    Node,
-    Scope,
-    SearchFilter,
-)
+from engraphis.core.interfaces import MemoryType, Scope, SearchFilter
 
 from .jev_edge_ontology import (
     SHARED_JEV_RELATIONSHIPS,
-    SHARED_JEV_RELATIONSHIP_CRITERIA,
-    SHARED_JEV_RELATIONSHIP_SCHEMA_HASH,
 )
 from .jev_validation import (
     validate_rounded_choice_winner,
@@ -51,7 +40,6 @@ WRITE_TOOLS = frozenset(['engraphis_answer', 'engraphis_check_update', 'engraphi
 _service = None
 _lock = threading.RLock()
 _intake_lock = threading.RLock()
-_intake_local = threading.local()
 
 JEV_MODEL = "typesafe/jev-1.13"
 JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
@@ -61,14 +49,15 @@ PYTHON_RAILS_DEFAULT_REQUEST_BUDGET_SECONDS = 120.0
 MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS = (
     PYTHON_RAILS_DEFAULT_REQUEST_BUDGET_SECONDS / 8.0
 )
-MAX_JEV_CONCURRENCY = 4
 CONTEXTUAL_NODE_MAX_REAL_OPTIONS = 254
 CONTEXTUAL_NODE_STATE_TOKEN_LIMIT = 26_000
 CONTEXTUAL_NODE_NONE_RELEVANT = "NONE_RELEVANT"
 CONTEXTUAL_NODE_VISIBLE_PER_SIDE = 2
 THINKGRAPH_CONTROL_OUTCOMES: tuple[str, ...] = ()
 THINKGRAPH_JEV_CHOICES = SHARED_JEV_RELATIONSHIPS + THINKGRAPH_CONTROL_OUTCOMES
-_THINK_INCIDENCE_KIND = "structured_extractor"
+_TRUSTED_STRUCTURED_GRAPH_KEYS = frozenset(
+    ("entities", "relations", "structured_extraction")
+)
 # Preserve the existing shared project-vocabulary ceiling used by both graph
 # writers. ThinkGraph no longer spends any of those labels on admission outcomes.
 JEV_CHOICE_OPTION_MAXIMUM = 255
@@ -82,13 +71,6 @@ _PROJECT_RELATIONSHIP_VOCABULARY_SETTING = (
 _RELATIONSHIP_LABEL_PATTERN = re.compile(
     r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){0,2}$"
 )
-
-_THINKGRAPH_RELATIONSHIP_CRITERIA = dict(SHARED_JEV_RELATIONSHIP_CRITERIA)
-
-
-class JevRelationshipError(RuntimeError):
-    """A real Jev decision could not be obtained or validated."""
-
 
 class JevAttentionError(RuntimeError):
     """One read-only Main attention decision failed with a typed public status."""
@@ -536,17 +518,7 @@ def _think_metadata(memory: Any) -> dict[str, Any] | None:
     origin = metadata.get("thinkgraph_origin")
     if not isinstance(origin, dict) or origin.get("authority") != "thinkgraph":
         return None
-    fact = metadata.get("thinkgraph_fact")
-    if not isinstance(fact, dict):
-        return None
-    entities = fact.get("entities")
-    relations = fact.get("relations")
-    if not isinstance(entities, list) or not isinstance(relations, list):
-        return None
-    return {
-        "entities": deepcopy(entities),
-        "relations": deepcopy(relations),
-    }
+    return deepcopy(origin)
 
 
 def _public_think_metadata(value: Any) -> dict[str, Any]:
@@ -588,7 +560,7 @@ def _bounded_graph_snapshot(
         store.neighbors(ids, flt=flt, limit=edge_source_limit)
     )
     eligible_edges = sorted([
-        edge for edge in raw_edges if _jev_edge(edge) is not None
+        edge for edge in raw_edges if str(edge.relation) != "co_occurs"
     ], key=lambda edge: (
         str(edge.id), str(edge.src), str(edge.dst), str(edge.relation),
     ))
@@ -644,9 +616,16 @@ def _bounded_graph_snapshot(
             memory = memories.get(str(row["memory_id"]))
             if memory is None:
                 continue
-            think_meta = _think_metadata(memory)
-            if think_meta is None or row.get("source_kind") != _THINK_INCIDENCE_KIND:
+            if _think_metadata(memory) is None:
                 continue
+            structured = (
+                memory.metadata.get("structured_extraction")
+                if isinstance(memory.metadata, dict) else {}
+            )
+            relations = (
+                structured.get("relations")
+                if isinstance(structured, dict) else []
+            )
             thinks.append({
                 "entity_id": canonical_by_member.get(
                     str(row["entity_id"]), str(row["entity_id"])
@@ -655,10 +634,8 @@ def _bounded_graph_snapshot(
                 "title": memory.title,
                 "content": memory.content,
                 "summary": memory.content,
-                "importance": float(memory.importance or 0.0),
                 "keywords": list(memory.keywords)[:16],
-                "entities": deepcopy(think_meta["entities"]),
-                "relations": deepcopy(think_meta["relations"]),
+                "relations": deepcopy(relations) if isinstance(relations, list) else [],
                 "valid_from": memory.valid_from,
                 "valid_to": memory.valid_to,
                 "valid_to_recorded_at": memory.valid_to_recorded_at,
@@ -670,9 +647,7 @@ def _bounded_graph_snapshot(
         thinks = thinks[:think_limit]
     incident_edges = []
     for edge in edges:
-        jev = _jev_edge(edge)
-        if jev is None:
-            continue
+        jev = _jev_edge(edge) or {}
         incident_edges.append({
             "id": edge.id,
             "source_id": _canonical_entity_id(store, edge.src) or edge.src,
@@ -705,55 +680,6 @@ def _bounded_graph_snapshot(
     }
 
 
-def _bounded_relationship_context(
-    store: Any,
-    *,
-    workspace_id: str,
-    source_id: str = "",
-    target_id: str = "",
-    source_name: str = "",
-    target_name: str = "",
-    prior_think_snapshot: dict[str, dict[str, Any] | None] | None = None,
-) -> dict[str, Any]:
-    snapshot = _bounded_graph_snapshot(
-        store, workspace_id=workspace_id,
-        entity_ids=[source_id, target_id], edge_limit=24, think_limit=0,
-    )
-    snapshot.pop("thinks", None)
-    latest_prior_thinks: list[dict[str, Any]] = []
-    for endpoint, native_id in (("A", source_id), ("B", target_id)):
-        if not native_id:
-            think = None
-        elif prior_think_snapshot is None:
-            think = _latest_endpoint_think(
-                store,
-                workspace_id=workspace_id,
-                canonical_id=native_id,
-            )
-        else:
-            # A supplied turn-start snapshot is authoritative for this turn.
-            # A missing/null entry deliberately means no prior Think; never
-            # refill it with a live lookup after the current Think may exist.
-            think = deepcopy(prior_think_snapshot.get(native_id))
-        if think is not None:
-            latest_prior_thinks.append({"endpoint": endpoint, **think})
-    snapshot["latest_prior_thinks"] = latest_prior_thinks
-    snapshot["source"] = {
-        "native_id": source_id or None,
-        "name": source_name,
-    }
-    snapshot["target"] = {
-        "native_id": target_id or None,
-        "name": target_name,
-    }
-    snapshot["prior_pair_edges"] = [
-        edge for edge in snapshot["incident_edges"]
-        if source_id and target_id
-        and edge["source_id"] == source_id and edge["target_id"] == target_id
-    ][:4]
-    return snapshot
-
-
 def _latest_endpoint_think(
     store: Any,
     *,
@@ -777,7 +703,7 @@ def _endpoint_thinks(
     canonical_id: str,
     limit: int,
 ) -> list[dict[str, Any]]:
-    """Read newest direct native Thinks without admitting text mentions."""
+    """Read newest Thinks through Engraphis's own memory/entity incidence."""
 
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 24:
         raise ValueError("think_endpoint_limit_invalid")
@@ -792,15 +718,14 @@ def _endpoint_thinks(
         return []
     marks = ",".join("?" for _ in member_ids)
     rows = store.conn.execute(
-        "SELECT m.id FROM memory_entities me "
+        "SELECT DISTINCT m.id FROM memory_entities me "
         "JOIN memories m ON m.id=me.memory_id "
         f"WHERE me.workspace_id=? AND me.entity_id IN ({marks}) "
-        "AND me.source_kind=? "
         "AND me.valid_to IS NULL AND me.expired_at IS NULL "
         "AND m.valid_to IS NULL AND m.expired_at IS NULL "
         "ORDER BY COALESCE(m.ingested_at,me.ingested_at,0) DESC, m.id DESC "
         "LIMIT ?",
-        (workspace_id, *member_ids, _THINK_INCIDENCE_KIND, limit),
+        (workspace_id, *member_ids, limit),
     ).fetchall()
     entity = _entity_row(store, canonical_id) or {}
     result: list[dict[str, Any]] = []
@@ -811,6 +736,14 @@ def _endpoint_thinks(
         think = _think_metadata(memory)
         if think is None:
             continue
+        structured = (
+            memory.metadata.get("structured_extraction")
+            if isinstance(memory.metadata, dict) else {}
+        )
+        relations = (
+            structured.get("relations")
+            if isinstance(structured, dict) else []
+        )
         result.append({
             "native_id": canonical_id,
             "canonical_name": str(entity.get("name") or ""),
@@ -818,10 +751,8 @@ def _endpoint_thinks(
             "title": memory.title,
             "content": memory.content,
             "summary": memory.content,
-            "importance": float(memory.importance or 0.0),
             "keywords": list(memory.keywords)[:16],
-            "entities": deepcopy(think["entities"]),
-            "relations": deepcopy(think["relations"]),
+            "relations": deepcopy(relations) if isinstance(relations, list) else [],
             "ingested_at": memory.ingested_at,
             "valid_from": memory.valid_from,
             "valid_to": memory.valid_to,
@@ -846,84 +777,6 @@ def _projection_subject_directory(project: str) -> dict[str, Any] | None:
         # ThinkGraph remains independently readable when KnowGraph is unavailable.
         # Joined then fails closed because it has no complete authority snapshot.
         return None
-
-
-def _turn_start_prior_think_snapshot(
-    store: Any,
-    *,
-    workspace_id: str,
-    opportunities: list[dict[str, Any]],
-) -> dict[str, dict[str, Any] | None]:
-    """Freeze bounded prior Thinks before this turn can append a Think."""
-    focus_ids: list[str] = []
-    for opportunity in opportunities:
-        for endpoint in (opportunity["source"], opportunity["target"]):
-            existing = _existing_entity_for_name(
-                store,
-                workspace_id=workspace_id,
-                name=endpoint["name"],
-                entity_type=endpoint["type"],
-            )
-            if existing is not None:
-                focus_ids.append(str(existing["id"]))
-    focus_ids = list(dict.fromkeys(focus_ids))
-    if not focus_ids:
-        return {}
-    return {
-        native_id: _latest_endpoint_think(
-            store,
-            workspace_id=workspace_id,
-            canonical_id=native_id,
-        )
-        for native_id in focus_ids
-    }
-
-
-def _bounded_jev_text(text: str, source: str, target: str) -> str:
-    """Reject an incomplete relationship judgment instead of sampling evidence."""
-    from engraphis.core.context import RegexTokenCounter
-
-    counter = RegexTokenCounter()
-    if counter(text) <= 26_000:
-        return text
-    del source, target
-    raise JevRelationshipError("jev_relationship_input_limit")
-
-
-def _validate_jev_response(
-    response: dict[str, Any],
-    choices: tuple[str, ...] = THINKGRAPH_JEV_CHOICES,
-) -> dict[str, Any]:
-    try:
-        answer = response["answers"]["relationship"]
-        if answer.get("type") != "choice":
-            raise ValueError("answer type")
-        winner = str(answer["choice"])
-        if winner not in choices:
-            raise ValueError("winner")
-        raw = answer["probabilities"]
-        if not isinstance(raw, dict) or set(raw) != set(choices):
-            raise ValueError("probability keys")
-        probabilities = validate_rounded_probability_distribution(raw, choices)
-        validate_rounded_choice_winner(winner, probabilities)
-        confidence = float(answer["confidence"])
-        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
-            raise ValueError("confidence")
-    except (KeyError, TypeError, ValueError, OverflowError) as error:
-        raise JevRelationshipError("jev_relationship_response_invalid") from error
-    return {
-        "winner": winner,
-        "distribution": probabilities,
-        # Provider confidence describes the Choice response; P(winner) remains
-        # the separate semantic edge support and visual weight.
-        "confidence": confidence,
-        "label_confidence": probabilities[winner],
-        "relationship_strength": probabilities[winner],
-        "provider": str(response.get("provider") or ""),
-        "requested_model": JEV_MODEL,
-        "resolved_model": str(response.get("model") or ""),
-        "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
-    }
 
 
 def _attention_choice_id(authority: str, native_id: str) -> str:
@@ -1018,11 +871,7 @@ def list_contextual_think_candidates(
             raise JevAttentionError(
                 "unavailable", "contextual_node_think_membership_unavailable"
             ) from error
-        direct = [
-            row for row in incidences
-            if isinstance(row, dict)
-            and row.get("source_kind") == _THINK_INCIDENCE_KIND
-        ]
+        direct = [row for row in incidences if isinstance(row, dict)]
         memory_ids = sorted({
             str(row.get("memory_id") or "").strip()
             for row in direct
@@ -1754,8 +1603,6 @@ def _recall_thinkgraph_attention_candidates_locked(
     )
     candidates_by_id: dict[str, dict[str, Any]] = {}
     for incidence in incidences:
-        if incidence.get("source_kind") != _THINK_INCIDENCE_KIND:
-            continue
         memory_id = str(incidence.get("memory_id") or "")
         memory = memories.get(memory_id)
         think = _think_metadata(memory) if memory is not None else None
@@ -2159,766 +2006,14 @@ def _winner_probability(decision: dict[str, Any]) -> float:
         return 0.0
 
 
-def classify_relationship(
-    source: str,
-    target: str,
-    payload: dict[str, Any],
-    proposition: str = "",
-    graph_context: dict[str, Any] | None = None,
-    relationship_proposal: str = "",
-    *,
-    relationship_vocabulary: tuple[str, ...] = SHARED_JEV_RELATIONSHIPS,
-    novel_relationship_candidate: str = "",
-    relationship_proposal_status: str = "reused_canonical",
-) -> dict[str, Any]:
-    """Ask real Jev one bounded Choice question and strictly validate its answer."""
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
-        raise JevRelationshipError("jev_openrouter_key_unavailable")
-    if payload.get("eventType") == "explicit_memory":
-        event_text = (
-            f"TITLE:\n{payload.get('title', '')}\n\n"
-            f"CONTENT:\n{payload.get('content', '')}\n\n"
-            f"REASON OR INSTRUCTION:\n{payload.get('reason', '')}"
-        )
-        event_kind = "explicit ThinkGraph memory write"
-    else:
-        event_text = (
-            f"USER:\n{payload['userMessage']}\n\n"
-            f"MAIN:\n{payload['mainResponse']}"
-        )
-        event_kind = "completed observable User/Main pair"
-    event_text = _bounded_jev_text(event_text, source, target)
-    state: dict[str, Any] = {
-        "description": (
-            f"One {event_kind}, one directed ThinkGraph entity pair, and a bounded "
-            "one-hop topology snapshot from the existing graph, plus at most the newest "
-            "prior Think directly attached to each existing endpoint. The graph-writing "
-            "model already supplied the endpoints, direction, and custom relationship. "
-            "Choose only the closest normalized relationship label for A -> B."
-        ),
-        "source_node_a": source,
-        "target_node_b": target,
-        "direction": "A -> B",
-        "current_event": event_text,
-        "bounded_local_graph": graph_context or {
-            "nodes": [], "latest_prior_thinks": [], "incident_edges": [],
-        },
-    }
-    if relationship_proposal:
-        state["thinkgraph_card_freeform_relationship_proposal"] = relationship_proposal
-    state["current_project_relationship_vocabulary"] = list(
-        relationship_vocabulary
-    )
-    if novel_relationship_candidate:
-        state["optional_novel_relationship_candidate"] = (
-            novel_relationship_candidate
-        )
-    if proposition:
-        state["supporting_structured_fact"] = proposition
-    choices = (
-        *relationship_vocabulary,
-        *((novel_relationship_candidate,)
-          if novel_relationship_candidate
-          and novel_relationship_candidate not in relationship_vocabulary
-          else ()),
-        *THINKGRAPH_CONTROL_OUTCOMES,
-    )
-    if len(choices) > JEV_CHOICE_OPTION_MAXIMUM:
-        raise JevRelationshipError(
-            "thinkgraph_relationship_choice_capacity_exceeded"
-        )
-    criteria = {
-        name: SHARED_JEV_RELATIONSHIP_CRITERIA.get(
-            name,
-            f"The proposed directed relationship is best represented by the canonical predicate {name}.",
-        )
-        for name in choices
-    }
-    body = {
-        "model": JEV_MODEL,
-        "state": state,
-        "questions": {
-            "relationship": {
-                "type": "choice",
-                "instructions": (
-                    "Choose the current project normalized relationship label that most closely "
-                    "represents the model-generated custom relationship for source_node_a -> "
-                    "target_node_b. Endpoint existence, direction, and custom relationship meaning "
-                    "are already model-owned and structurally validated; do not admit, reject, "
-                    "rename, remove, or reinterpret them. latest_prior_thinks and bounded local "
-                    "graph context help maintain normalization continuity only. "
-                    "A saved ThinkGraph Card free-form relationship proposal, when present, is "
-                    "the custom relationship to normalize, not a preselected answer. Prefer an existing canonical "
-                    "predicate when it accurately expresses the meaning. An optional novel predicate "
-                    "is only another Choice option; select it only when every existing predicate is "
-                    "less accurate. Do not infer unrelated graph regions."
-                ),
-                "criteria": criteria,
-            }
-        },
-    }
-    try:
-        with httpx.Client(timeout=45.0, follow_redirects=False) as client:
-            result = client.post(
-                JEV_ENDPOINT,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
-            result.raise_for_status()
-            response = result.json()
-    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as error:
-        raise JevRelationshipError("jev_relationship_unavailable") from error
-    if not isinstance(response, dict):
-        raise JevRelationshipError("jev_relationship_response_invalid")
-    parsed = _validate_jev_response(response, choices)
-    return {
-        **parsed,
-        "choice_options": list(choices),
-        "vocabulary_version": PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
-        "vocabulary_hash": relationship_vocabulary_hash(
-            relationship_vocabulary
-        ),
-        "vocabulary_count": len(relationship_vocabulary),
-        "vocabulary_at_maximum": (
-            len(relationship_vocabulary)
-            >= PROJECT_RELATIONSHIP_VOCABULARY_MAXIMUM
-        ),
-        "relationship_proposal_status": relationship_proposal_status,
-        "novel_relationship_candidate": novel_relationship_candidate,
-    }
 
 
-def _jev_provenance(
-    decision: dict[str, Any],
-    payload: dict[str, Any],
-    memory_ids: list[str],
-    *,
-    stage: str,
-    proposition_memory_id: str = "",
-    natural_relationship: str = "",
-) -> dict[str, Any]:
-    jev = {
-        "question_schema_version": "thinkgraph.relationship-choice.v4",
-        "vocabulary_version": decision.get(
-            "vocabulary_version", PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
-        ),
-        "vocabulary_hash": decision.get(
-            "vocabulary_hash", SHARED_JEV_RELATIONSHIP_SCHEMA_HASH,
-        ),
-        "vocabulary_count": int(
-            decision.get("vocabulary_count") or len(SHARED_JEV_RELATIONSHIPS)
-        ),
-        "provider": decision["provider"],
-        "requested_model": decision["requested_model"],
-        "resolved_model": decision["resolved_model"],
-        "evaluated_at": _utc_now(),
-        "winner": decision["winner"],
-        "distribution": decision["distribution"],
-        "provider_confidence": decision["confidence"],
-        "label_confidence": _winner_probability(decision),
-        "relationship_strength": _winner_probability(decision),
-        "source_event": _source_event_reference(payload),
-        "stage": stage,
-    }
-    if natural_relationship:
-        # Preserve the structured extractor's exact relationship proposal beside
-        # Jev's canonical winner. The renderer may display both authorities, but
-        # only the Jev winner remains the durable edge relation.
-        jev["natural_relationship"] = natural_relationship
-    for key in (
-        "relationship_proposal_status",
-        "novel_relationship_candidate",
-        "vocabulary_promotion",
-    ):
-        if decision.get(key):
-            jev[key] = decision[key]
-    if proposition_memory_id:
-        jev["proposition_memory_id"] = proposition_memory_id
-    return {
-        "source": "jev_relationship_classifier",
-        "memory_id": memory_ids[0] if memory_ids else "",
-        "memory_ids": list(dict.fromkeys(mid for mid in memory_ids if mid)),
-        "confidence": decision["label_confidence"],
-        "jev": jev,
-    }
 
 
-def _current_jev_pair_edges(
-    store: Any,
-    *,
-    workspace_id: str,
-    source_id: str,
-    target_id: str,
-) -> list[Any]:
-    return sorted(
-        (
-            edge for edge in store.neighbors(
-                [source_id],
-                flt=SearchFilter(workspace_id=workspace_id),
-                limit=256,
-            )
-            if edge.src == source_id
-            and edge.dst == target_id
-            and _jev_edge(edge) is not None
-        ),
-        key=lambda edge: edge.id,
-    )
 
 
-def _upsert_canonical_endpoint(
-    store: Any,
-    *,
-    workspace_id: str,
-    name: str,
-    entity_type: str,
-) -> tuple[str, bool]:
-    existing = _existing_entity_for_name(
-        store,
-        workspace_id=workspace_id,
-        name=name,
-        entity_type=entity_type,
-    )
-    if existing is not None:
-        return str(existing["id"]), False
-    written_id = store.upsert_entity(
-        Node(
-            id="",
-            name=name,
-            ntype=entity_type,
-            workspace_id=workspace_id,
-            repo_id=None,
-        ),
-        commit=False,
-    )
-    canonical_id = _canonical_entity_id(store, written_id) or written_id
-    return canonical_id, canonical_id == written_id
 
 
-def _apply_accepted_decision(
-    store: Any,
-    *,
-    source_id: str = "",
-    target_id: str = "",
-    source_name: str,
-    target_name: str,
-    source_type: str = "person_or_concept",
-    target_type: str = "person_or_concept",
-    workspace_id: str,
-    repo_id: str | None,
-    payload: dict[str, Any],
-    memory_ids: list[str],
-    source_think_memory_ids: list[str] | None = None,
-    target_think_memory_ids: list[str] | None = None,
-    decision: dict[str, Any],
-    stage: str,
-    proposition_memory_id: str = "",
-    natural_relationship: str = "",
-    commit: bool = True,
-) -> dict[str, Any]:
-    with store._write_operation("thinkgraph_jev_edge", commit=commit):
-        source_id = source_id or _upsert_canonical_endpoint(
-            store,
-            workspace_id=workspace_id,
-            name=source_name,
-            entity_type=source_type,
-        )[0]
-        target_id = target_id or _upsert_canonical_endpoint(
-            store,
-            workspace_id=workspace_id,
-            name=target_name,
-            entity_type=target_type,
-        )[0]
-        if not source_id or not target_id or source_id == target_id:
-            raise ThinkGraphIntakeError("thinkgraph_relationship_endpoints_invalid")
-
-        winner = str(decision["winner"])
-        candidate = str(decision.get("novel_relationship_candidate") or "")
-        current_vocabulary = _project_relationship_vocabulary(
-            store,
-            workspace_id,
-        )
-        if winner not in current_vocabulary:
-            if not candidate or winner != candidate:
-                raise ThinkGraphIntakeError(
-                    "thinkgraph_relationship_winner_not_canonical"
-                )
-            current_vocabulary, promoted = _promote_project_relationship_label(
-                store,
-                workspace_id=workspace_id,
-                label=winner,
-            )
-            promotion = "promoted" if promoted else "reused_concurrent"
-        else:
-            promotion = (
-                "reused_concurrent"
-                if candidate and winner == candidate
-                else "not_promoted"
-            )
-        decision = {
-            **decision,
-            "vocabulary_promotion": promotion,
-            "vocabulary_after_hash": relationship_vocabulary_hash(
-                current_vocabulary
-            ),
-            "vocabulary_after_count": len(current_vocabulary),
-        }
-
-        shared_memory_ids = list(dict.fromkeys(mid for mid in memory_ids if mid))
-        source_think_memory_ids = list(dict.fromkeys(
-            mid for mid in (source_think_memory_ids or []) if mid
-        ))
-        target_think_memory_ids = list(dict.fromkeys(
-            mid for mid in (target_think_memory_ids or []) if mid
-        ))
-        for memory_id in shared_memory_ids:
-            store.link_memory_entity(
-                memory_id=memory_id,
-                entity_id=source_id,
-                workspace_id=workspace_id,
-                repo_id=repo_id,
-                source_kind=stage,
-                confidence=1.0,
-                provenance={"source": "jev_relationship_classifier"},
-                commit=False,
-            )
-            store.link_memory_entity(
-                memory_id=memory_id,
-                entity_id=target_id,
-                workspace_id=workspace_id,
-                repo_id=repo_id,
-                source_kind=stage,
-                confidence=1.0,
-                provenance={"source": "jev_relationship_classifier"},
-                commit=False,
-            )
-        for memory_id in source_think_memory_ids:
-            store.link_memory_entity(
-                memory_id=memory_id,
-                entity_id=source_id,
-                workspace_id=workspace_id,
-                repo_id=repo_id,
-                source_kind=_THINK_INCIDENCE_KIND,
-                confidence=1.0,
-                provenance={
-                    "source": "structured_extractor",
-                    "source_kind": "structured_extractor",
-                    "memory_id": memory_id,
-                },
-                commit=False,
-            )
-        for memory_id in target_think_memory_ids:
-            store.link_memory_entity(
-                memory_id=memory_id,
-                entity_id=target_id,
-                workspace_id=workspace_id,
-                repo_id=repo_id,
-                source_kind=_THINK_INCIDENCE_KIND,
-                confidence=1.0,
-                provenance={
-                    "source": "structured_extractor",
-                    "source_kind": "structured_extractor",
-                    "memory_id": memory_id,
-                },
-                commit=False,
-            )
-
-        current = _current_jev_pair_edges(
-            store,
-            workspace_id=workspace_id,
-            source_id=source_id,
-            target_id=target_id,
-        )
-        prior_ids = list(dict.fromkeys(
-            memory_id
-            for edge in current
-            for memory_id in _edge_memory_ids(edge)
-        ))
-        all_memory_ids = list(dict.fromkeys([
-            *prior_ids,
-            *shared_memory_ids,
-            *source_think_memory_ids,
-            *target_think_memory_ids,
-        ]))
-        edge_weight = _winner_probability(decision)
-        provenance = _jev_provenance(
-            decision,
-            payload,
-            all_memory_ids,
-            stage=stage,
-            proposition_memory_id=proposition_memory_id,
-            natural_relationship=natural_relationship,
-        )
-        replaced_ids: list[str] = []
-        if len(current) == 1 and current[0].relation == winner:
-            existing = current[0]
-            prior_provenance = (
-                existing.provenance if isinstance(existing.provenance, dict) else {}
-            )
-            history = list(prior_provenance.get("jev_history") or [])
-            prior_jev = prior_provenance.get("jev")
-            if isinstance(prior_jev, dict):
-                history.append(deepcopy(prior_jev))
-            provenance["jev_history"] = history
-            edge_id = store.upsert_edge(
-                Edge(
-                    id=existing.id,
-                    src=source_id,
-                    dst=target_id,
-                    relation=winner,
-                    weight=edge_weight,
-                    workspace_id=workspace_id,
-                    repo_id=repo_id,
-                    valid_from=existing.valid_from,
-                    ingested_at=existing.ingested_at,
-                    provenance=provenance,
-                ),
-                commit=False,
-            )
-            status = "updated"
-        else:
-            for edge in current:
-                store.invalidate_edge(edge.id, commit=False)
-                replaced_ids.append(edge.id)
-            edge_id = store.upsert_edge(
-                Edge(
-                    id="",
-                    src=source_id,
-                    dst=target_id,
-                    relation=winner,
-                    weight=edge_weight,
-                    workspace_id=workspace_id,
-                    repo_id=repo_id,
-                    provenance=provenance,
-                ),
-                commit=False,
-            )
-            status = "superseded" if replaced_ids else "written"
-        return {
-            **decision,
-            "status": status,
-            "edge_id": edge_id,
-            "replaced_edge_ids": replaced_ids,
-            "source": source_id,
-            "target": target_id,
-            "label_confidence": edge_weight,
-            "relationship_strength": edge_weight,
-        }
-
-
-class _IntakeLocalGraphStore:
-    """Store-shaped native-feed sink with no database and no persistent identity."""
-
-    def __init__(self) -> None:
-        self.nodes: dict[str, dict[str, str]] = {}
-        self.opportunities: list[dict[str, Any]] = []
-
-    def upsert_entity(self, node: Any, **_kwargs: Any) -> str:
-        entity_id = f"intake_entity_{len(self.nodes):04d}"
-        self.nodes[entity_id] = {
-            "name": str(node.name),
-            "type": str(node.ntype or "person_or_concept"),
-        }
-        return entity_id
-
-    def neighbors(self, *_args: Any, **_kwargs: Any) -> list[Any]:
-        return []
-
-    def upsert_edge(self, edge: Any, **_kwargs: Any) -> str:
-        opportunity_id = f"intake_edge_{len(self.opportunities):04d}"
-        self.opportunities.append({
-            "id": opportunity_id,
-            "source": deepcopy(self.nodes[edge.src]),
-            "target": deepcopy(self.nodes[edge.dst]),
-            "native_relation": str(edge.relation),
-            "native_weight": float(edge.weight),
-            "provenance": deepcopy(
-                edge.provenance if isinstance(edge.provenance, dict) else {}
-            ),
-        })
-        return opportunity_id
-
-    def add_edge_support(
-        self,
-        edge_id: str,
-        provenance: dict[str, Any],
-        **_kwargs: Any,
-    ) -> None:
-        for opportunity in self.opportunities:
-            if opportunity["id"] != edge_id:
-                continue
-            existing = opportunity["provenance"]
-            memory_ids = [
-                *list(existing.get("memory_ids") or []),
-                *list(provenance.get("memory_ids") or []),
-            ]
-            for value in (existing.get("memory_id"), provenance.get("memory_id")):
-                if value:
-                    memory_ids.append(value)
-            existing["memory_ids"] = list(dict.fromkeys(map(str, memory_ids)))
-            return
-
-
-def _decision_failure(error: Exception) -> str:
-    text = str(error).strip()
-    return text if text else type(error).__name__
-
-
-def _classify_opportunities(
-    store: Any,
-    *,
-    workspace_id: str,
-    payload: dict[str, Any],
-    opportunities: list[dict[str, Any]],
-    classifier: Callable[..., dict[str, Any]],
-    propositions: dict[int, str] | None = None,
-    relationship_proposals: dict[int, str] | None = None,
-    prior_think_snapshot: dict[str, dict[str, Any] | None] | None = None,
-    relationship_vocabulary: tuple[str, ...] = SHARED_JEV_RELATIONSHIPS,
-) -> list[dict[str, Any]]:
-    """Build bounded contexts first, then run at most four Jev calls concurrently."""
-    work: list[dict[str, Any]] = []
-    results: list[dict[str, Any]] = [
-        {"status": "jev_failed", "error": "jev_relationship_unavailable"}
-        for _ in opportunities
-    ]
-    for index, opportunity in enumerate(opportunities):
-        source = opportunity["source"]
-        target = opportunity["target"]
-        existing_source = _existing_entity_for_name(
-            store,
-            workspace_id=workspace_id,
-            name=source["name"],
-            entity_type=source["type"],
-        )
-        existing_target = _existing_entity_for_name(
-            store,
-            workspace_id=workspace_id,
-            name=target["name"],
-            entity_type=target["type"],
-        )
-        source_id = str(existing_source["id"]) if existing_source else ""
-        target_id = str(existing_target["id"]) if existing_target else ""
-        relationship_proposal = str(
-            (relationship_proposals or {}).get(index) or ""
-        )
-        try:
-            choice_plan = relationship_choice_plan(
-                relationship_proposal,
-                relationship_vocabulary,
-            )
-        except Exception as error:
-            results[index] = {
-                "status": "jev_failed",
-                "error": _decision_failure(error),
-                "source_id": source_id,
-                "target_id": target_id,
-            }
-            continue
-        work.append({
-            "index": index,
-            "opportunity": opportunity,
-            "source_id": source_id,
-            "target_id": target_id,
-            "context": _bounded_relationship_context(
-                store,
-                workspace_id=workspace_id,
-                source_id=source_id,
-                target_id=target_id,
-                source_name=source["name"],
-                target_name=target["name"],
-                prior_think_snapshot=prior_think_snapshot,
-            ),
-            "proposition": str((propositions or {}).get(index) or ""),
-            "relationship_proposal": relationship_proposal,
-            "relationship_choice_plan": choice_plan,
-        })
-
-    if not work:
-        return results
-
-    def decide(item: dict[str, Any]) -> dict[str, Any]:
-        choice_plan = item["relationship_choice_plan"]
-        return classifier(
-            item["opportunity"]["source"]["name"],
-            item["opportunity"]["target"]["name"],
-            payload,
-            item["proposition"],
-            item["context"],
-            item["relationship_proposal"],
-            relationship_vocabulary=choice_plan["vocabulary"],
-            novel_relationship_candidate=choice_plan["novel_candidate"],
-            relationship_proposal_status=choice_plan["proposal_status"],
-        )
-
-    with ThreadPoolExecutor(
-        max_workers=min(MAX_JEV_CONCURRENCY, len(work)),
-        thread_name_prefix="thinkgraph-jev",
-    ) as executor:
-        future_items = {executor.submit(decide, item): item for item in work}
-        for future in as_completed(future_items):
-            item = future_items[future]
-            try:
-                results[item["index"]] = {
-                    "status": "decided",
-                    "decision": future.result(),
-                    "source_id": item["source_id"],
-                    "target_id": item["target_id"],
-                    "context": item["context"],
-                    "relationship_choice_plan": item[
-                        "relationship_choice_plan"
-                    ],
-                }
-            except Exception as error:
-                results[item["index"]] = {
-                    "status": "jev_failed",
-                    "error": _decision_failure(error),
-                    "source_id": item["source_id"],
-                    "target_id": item["target_id"],
-                    "relationship_choice_plan": item[
-                        "relationship_choice_plan"
-                    ],
-                }
-    return results
-
-
-def _persist_opportunity_decisions(
-    store: Any,
-    *,
-    workspace_id: str,
-    payload: dict[str, Any],
-    pair_memory_id: str,
-    stage: str,
-    opportunities: list[dict[str, Any]],
-    decisions: list[dict[str, Any]],
-    source_think_memory_ids: dict[int, list[str]] | None = None,
-    target_think_memory_ids: dict[int, list[str]] | None = None,
-) -> dict[str, Any]:
-    relationships: list[dict[str, Any]] = []
-    failures: list[dict[str, Any]] = []
-    changed_nodes: list[str] = []
-    changed_edges: list[str] = []
-    heat: dict[str, float] = {}
-    for index, (opportunity, classified) in enumerate(zip(opportunities, decisions)):
-        source = opportunity["source"]
-        target = opportunity["target"]
-        if classified["status"] != "decided":
-            failures.append({
-                "index": index,
-                "source": source["name"],
-                "target": target["name"],
-                "error": classified["error"],
-            })
-            continue
-        decision = classified["decision"]
-        provenance = opportunity.get("provenance") or {}
-        memory_ids = list(provenance.get("memory_ids") or [])
-        if provenance.get("memory_id"):
-            memory_ids.insert(0, provenance["memory_id"])
-        memory_ids = list(dict.fromkeys([
-            pair_memory_id,
-            *(str(value) for value in memory_ids if value),
-        ]))
-        try:
-            written = _apply_accepted_decision(
-                store,
-                source_id=classified.get("source_id") or "",
-                target_id=classified.get("target_id") or "",
-                source_name=source["name"],
-                target_name=target["name"],
-                source_type=source["type"],
-                target_type=target["type"],
-                workspace_id=workspace_id,
-                repo_id=None,
-                payload=payload,
-                memory_ids=memory_ids,
-                source_think_memory_ids=(source_think_memory_ids or {}).get(index),
-                target_think_memory_ids=(target_think_memory_ids or {}).get(index),
-                decision=decision,
-                stage=stage,
-                natural_relationship=str(
-                    opportunity.get("native_relation") or ""
-                ),
-            )
-            written["opportunity_index"] = index
-            relationships.append(written)
-            changed_nodes.extend((written["source"], written["target"]))
-            changed_edges.append(written["edge_id"])
-            changed_edges.extend(written.get("replaced_edge_ids") or [])
-            strength = float(written["relationship_strength"])
-            heat[written["source"]] = heat.get(written["source"], 0.0) + strength
-            heat[written["target"]] = heat.get(written["target"], 0.0) + strength
-        except Exception as error:
-            failures.append({
-                "index": index,
-                "source": source["name"],
-                "target": target["name"],
-                "error": _decision_failure(error),
-            })
-    return {
-        "relationships": relationships,
-        "failures": failures,
-        "changedNodeIds": list(dict.fromkeys(changed_nodes)),
-        "changedEdgeIds": list(dict.fromkeys(changed_edges)),
-        "turnHeat": heat,
-    }
-
-
-def _install_graph_feeder(service: Any) -> None:
-    if getattr(service.engine, "_liquidaity_native_graph_feeder", None) is not None:
-        return
-    native = service.engine.graph_feeder
-    service.engine._liquidaity_native_graph_feeder = native
-
-    def feeder(store: Any, content: str, **kwargs: Any) -> dict[str, int]:
-        context = getattr(_intake_local, "context", None)
-        if isinstance(context, dict) and context.get("suppress_graph"):
-            return {"entities": 0, "relations": 0}
-        local = _IntakeLocalGraphStore()
-        native(local, content, **kwargs)
-        if not local.opportunities:
-            return {"entities": 0, "relations": 0}
-        workspace_id = str(kwargs.get("workspace_id") or "")
-        row = store.conn.execute(
-            "SELECT name FROM workspaces WHERE id=?", (workspace_id,)
-        ).fetchone()
-        explicit = getattr(_intake_local, "explicit_event", None)
-        payload = {
-            "eventType": "explicit_memory",
-            "projectId": str(row["name"] if row is not None else workspace_id),
-            "toolName": str((explicit or {}).get("toolName") or "engraphis_memory_write"),
-            "runId": str((explicit or {}).get("runId") or ""),
-            "cardId": str((explicit or {}).get("cardId") or ""),
-            "title": str(kwargs.get("title") or (explicit or {}).get("title") or ""),
-            "content": content,
-            "reason": str((explicit or {}).get("reason") or ""),
-        }
-        decisions = _classify_opportunities(
-            store,
-            workspace_id=workspace_id,
-            payload=payload,
-            opportunities=local.opportunities,
-            classifier=classify_relationship,
-        )
-        memory_id = str((kwargs.get("provenance") or {}).get("memory_id") or "")
-        result = _persist_opportunity_decisions(
-            store,
-            workspace_id=workspace_id,
-            payload=payload,
-            pair_memory_id=memory_id,
-            stage="explicit_memory",
-            opportunities=local.opportunities,
-            decisions=decisions,
-        )
-        return {
-            "entities": len(result["changedNodeIds"]),
-            "relations": len(result["changedEdgeIds"]),
-        }
-
-    service.engine.graph_feeder = feeder
 
 
 def project_id(value: str) -> str:
@@ -2937,10 +2032,9 @@ def get_service():
             service = MemoryService.create(
                 str(DATABASE), embed_model=MODEL, embed_revision=MODEL_REVISION,
                 require_immutable_models=True, require_exact_backends=True,
-                extractor="none", graph_extractor="regex",
+                extractor="none", graph_extractor="none",
                 retention_supervisor="none", allow_automatic_critical_retention=False,
             )
-            _install_graph_feeder(service)
             set_service(service)
             _service = service
         return _service
@@ -2955,63 +2049,6 @@ def close_engine():
 
 
 atexit.register(close_engine)
-
-
-class _StructuredModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        str_strip_whitespace=True,
-        use_enum_values=True,
-    )
-
-
-class ThinkGraphStructuredRelation(_StructuredModel):
-    source: str = Field(min_length=1, max_length=256)
-    relation: str = Field(
-        min_length=1,
-        max_length=512,
-        description=(
-            "The model-authored directed relationship meaning grounded in this exchange. "
-            "Use an existing normalized label only when it preserves the full meaning; "
-            "otherwise write a concise, specific relationship phrase for Jev to normalize. "
-            "Do not use generic filler or omit material relationship meaning."
-        ),
-    )
-    target: str = Field(min_length=1, max_length=256)
-
-
-class _ProjectedPairEndpoint(_StructuredModel):
-    native_node_id: str = Field(default="", max_length=128)
-    canonical_name: str = Field(default="", max_length=256)
-
-    @model_validator(mode="after")
-    def exactly_one_identity(self) -> "_ProjectedPairEndpoint":
-        if bool(self.native_node_id) == bool(self.canonical_name):
-            raise ValueError("pair_endpoint_requires_exactly_one_identity")
-        return self
-
-
-class _ProjectedPairing(_StructuredModel):
-    source: _ProjectedPairEndpoint
-    target: _ProjectedPairEndpoint
-    direction: Literal["source_to_target"]
-    supporting_proposition: str = Field(min_length=1, max_length=100_000)
-    relationship_proposal: str = Field(min_length=1, max_length=512)
-
-
-class _ProjectedStructuredFact(_StructuredModel):
-    content: str = Field(min_length=1, max_length=100_000)
-    title: str = Field(default="", max_length=1_000)
-    mtype: Literal["semantic", "episodic", "procedural", "working"]
-    importance: float = Field(ge=0.0, le=1.0)
-    keywords: list[str] = Field(default_factory=list)
-    entities: list[str] = Field(default_factory=list)
-    relations: list[ThinkGraphStructuredRelation] = Field(default_factory=list)
-    pairings: list[_ProjectedPairing] = Field(default_factory=list)
-
-
-def _clean_concept(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "")).strip()[:256]
 
 
 def _graph_revision(store: Any, workspace_id: str) -> int:
@@ -3065,16 +2102,12 @@ def _llm_structured_contract(
     context_text = json.dumps(context, ensure_ascii=False, sort_keys=True)
     prompt = extractor._build_prompt(pair_text, context_text)
     prompt += (
-        "\nTHINKGRAPH:\n"
-        "Use native Engraphis structured extraction. Each returned Engraphis fact is one "
-        "LiquidAIty Think. The fact's content is the Think body. Preserve each fact's native "
-        "title, content, memory type, importance, keywords, entities, and relationships. "
-        "Extract the fewest independently reusable facts supported by the completed exchange. "
-        "Preserve necessary context and uncertainty without repeating conversational setup or "
-        "turning every reasoning clause into a relationship. canonical_subject_directory is "
-        "identity-only: reuse an exact canonicalName when it denotes the same subject, never "
-        "infer facts from the directory or copy authority IDs into semantic content. Preserve "
-        "natural directed relationship wording for the existing Jev normalization path.\n"
+        "\nUse native Engraphis structured extraction. Each returned Engraphis fact is "
+        "one LiquidAIty Think. The fact's content is the Think body. Preserve each "
+        "fact's native title, content, memory type, importance, keywords, entities, "
+        "and relationships. Extract the fewest independently reusable facts supported "
+        "by the completed exchange. Preserve necessary context and uncertainty without "
+        "repeating conversational setup or turning every reasoning clause into a relationship.\n"
     )
     return extractor._output_schema(), prompt
 
@@ -3092,69 +2125,10 @@ def _extract_saved_card_facts(
             card_run.get("resolvedModel") or card_run.get("profile") or "saved-card",
         )
     )
-    facts = extractor.extract(
+    return extractor.extract(
         pair_text,
         context=json.dumps(context, ensure_ascii=False, sort_keys=True),
     )
-    return facts
-
-
-def _project_structured_facts(facts: list[Any]) -> list[_ProjectedStructuredFact]:
-    from engraphis.backends.graph_extractor import StructuredMetadataGraphExtractor
-
-    projected: list[_ProjectedStructuredFact] = []
-    for fact in facts:
-        metadata = fact.metadata if isinstance(fact.metadata, dict) else {}
-        native_graph = StructuredMetadataGraphExtractor(metadata).extract(
-            str(fact.content), title=str(fact.title or ""),
-        )
-        entities = list(dict.fromkeys(
-            _clean_concept(name)
-            for name, _entity_type in native_graph.entities
-            if _clean_concept(name)
-        ))
-        pairings: list[_ProjectedPairing] = []
-        seen_pairs: set[tuple[str, str, str]] = set()
-        for raw_source, raw_label, raw_target in native_graph.relations:
-            source = _clean_concept(raw_source)
-            label = _clean_concept(raw_label)
-            target = _clean_concept(raw_target)
-            if source and label and target:
-                identity = (
-                    source.casefold(), target.casefold(), str(fact.content).casefold()
-                )
-                if identity not in seen_pairs:
-                    seen_pairs.add(identity)
-                    pairings.append(_ProjectedPairing(
-                        source=_ProjectedPairEndpoint(canonical_name=source),
-                        target=_ProjectedPairEndpoint(canonical_name=target),
-                        direction="source_to_target",
-                        supporting_proposition=str(fact.content),
-                        relationship_proposal=label,
-                    ))
-        item = _ProjectedStructuredFact(
-            content=str(fact.content),
-            title=str(fact.title or ""),
-            mtype=(
-                fact.mtype.value
-                if isinstance(fact.mtype, Enum)
-                else str(fact.mtype or MemoryType.EPISODIC.value)
-            ),
-            importance=float(fact.importance or 0.0),
-            keywords=list(fact.keywords)[:16],
-            entities=entities,
-            relations=[
-                ThinkGraphStructuredRelation(
-                    source=source,
-                    relation=relation,
-                    target=target,
-                )
-                for source, relation, target in native_graph.relations
-            ],
-            pairings=pairings,
-        )
-        projected.append(item)
-    return projected
 
 
 def _pair_reference(payload: dict[str, Any]) -> str:
@@ -3165,26 +2139,6 @@ def _pair_reference(payload: dict[str, Any]) -> str:
     return f"pair_{_text_hash(encoded)}"
 
 
-def _think_subject_prefix(pair_reference: str) -> str:
-    return f"thinkgraph:{pair_reference}:"
-
-
-def _think_fact_key(output: _ProjectedStructuredFact) -> str:
-    return _text_hash(json.dumps(
-        {"title": output.title, "content": output.content},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ))
-
-
-def _think_fact_subject_key(
-    pair_reference: str,
-    output: _ProjectedStructuredFact,
-) -> str:
-    return f"{_think_subject_prefix(pair_reference)}{_think_fact_key(output)}"
-
-
 def _existing_source_pair_thinks(
     store: Any,
     *,
@@ -3192,101 +2146,76 @@ def _existing_source_pair_thinks(
     pair_reference: str,
 ) -> list[Any]:
     rows = store.conn.execute(
-        "SELECT id FROM memories WHERE workspace_id=? AND subject_key LIKE ? "
-        "AND claim_kind='think' AND valid_to IS NULL AND expired_at IS NULL "
-        "ORDER BY COALESCE(ingested_at,0) ASC, id ASC",
-        (workspace_id, f"{_think_subject_prefix(pair_reference)}%"),
+        "SELECT id FROM memories WHERE workspace_id=? "
+        "AND valid_to IS NULL AND expired_at IS NULL "
+        "ORDER BY COALESCE(ingested_at,0) DESC, id DESC",
+        (workspace_id,),
     ).fetchall()
-    result: list[Any] = []
+    matches: list[Any] = []
     for row in rows:
         memory = store.get_memory(str(row["id"]))
-        if memory is not None and _think_metadata(memory) is not None:
-            result.append(memory)
-    result.sort(key=lambda memory: (
-        int((memory.metadata.get("thinkgraph_origin") or {}).get("fact_index", 0)),
-        float(memory.ingested_at or 0.0),
-        str(memory.id),
-    ))
-    return result
+        origin = _think_metadata(memory) if memory is not None else None
+        if origin is not None and origin.get("completed_pair_reference") == pair_reference:
+            matches.append(memory)
+    return matches
 
 
-def _save_think_memories(
+def _save_extracted_facts(
     service: Any,
     *,
     workspace_id: str,
     completed: dict[str, Any],
-    outputs: list[_ProjectedStructuredFact],
+    facts: list[Any],
     card_run: dict[str, str],
     pair_reference: str,
 ) -> list[dict[str, Any]]:
     source_pair = _source_pair(completed)
-    fact_count = len(outputs)
-    specs: list[FactSpec] = []
-    for index, output in enumerate(outputs):
-        relations = [item.model_dump(mode="json") for item in output.relations]
-        fact_key = _think_fact_key(output)
-        provenance = {
-            "source": "saved_thinkgraph_card",
-            "trusted": True,
-            "review_state": "approved",
-            "trust_origin": "saved_card_runtime",
-        }
-        specs.append(FactSpec(
-            content=output.content,
-            title=output.title,
-            mtype=MemoryType(output.mtype),
-            importance=output.importance,
-            keywords=list(output.keywords),
-            metadata={
-                "thinkgraph_fact": {
-                    "entities": list(output.entities),
-                    "relations": relations,
-                },
-                "consolidation_exempt": True,
-                "thinkgraph_origin": {
-                    "authority": "thinkgraph",
-                    "writer": "saved_thinkgraph_card",
-                    "card_id": card_run["cardId"],
-                    "card_revision_id": card_run["revisionId"],
-                    "run_id": card_run["runId"],
-                    "profile": card_run["profile"],
-                    "native_session_ref": card_run["nativeSessionRef"],
-                    "resolved_model": card_run["resolvedModel"],
-                    "completed_pair_reference": pair_reference,
-                    "fact_index": index,
-                    "fact_count": fact_count,
-                    "fact_key": fact_key,
-                    "source_pair": source_pair,
-                },
-                "provenance": provenance,
-            },
-            subject_key=_think_fact_subject_key(pair_reference, output),
-            claim_kind="think",
-            provenance=provenance,
-        ))
-
-    previous = getattr(_intake_local, "context", None)
-    _intake_local.context = {"suppress_graph": True}
-    try:
-        results = service.engine.remember_many(
-            specs,
-            workspace_id=workspace_id,
-            scope=Scope.WORKSPACE,
+    results: list[dict[str, Any]] = []
+    for fact in facts:
+        extracted_metadata = (
+            deepcopy(fact.metadata) if isinstance(fact.metadata, dict) else {}
         )
-    finally:
-        _intake_local.context = previous
-    if len(results) != len(outputs):
-        raise ThinkGraphIntakeError("thinkgraph_fact_batch_incomplete")
+        extraction_activity = extracted_metadata.pop("llm_extraction", None)
+        metadata = {
+            **extracted_metadata,
+            "thinkgraph_origin": {
+                "authority": "thinkgraph",
+                "writer": "saved_thinkgraph_card",
+                "card_id": card_run["cardId"],
+                "card_revision_id": card_run["revisionId"],
+                "run_id": card_run["runId"],
+                "profile": card_run["profile"],
+                "native_session_ref": card_run["nativeSessionRef"],
+                "resolved_model": card_run["resolvedModel"],
+                "completed_pair_reference": pair_reference,
+                "source_pair": source_pair,
+                **({"extraction": extraction_activity}
+                   if isinstance(extraction_activity, dict) else {}),
+            },
+            "provenance": {
+                "source": "saved_thinkgraph_card",
+                "trusted": True,
+                "review_state": "approved",
+                "trust_origin": "saved_card_runtime",
+            },
+        }
+        trusted_graph_keys = frozenset(
+            key for key in _TRUSTED_STRUCTURED_GRAPH_KEYS
+            if key in extracted_metadata
+        )
+        results.append(service.engine.remember_with_resolution(
+            str(fact.content),
+            workspace_id=workspace_id,
+            mtype=fact.mtype or MemoryType.SEMANTIC,
+            scope=Scope.WORKSPACE,
+            title=str(fact.title or ""),
+            importance=float(fact.importance),
+            keywords=list(fact.keywords),
+            metadata=metadata,
+            resolve_conflicts=True,
+            _trusted_graph_keys=trusted_graph_keys,
+        ))
     return results
-
-
-def _top_turn_heat(heat: dict[str, float]) -> list[dict[str, Any]]:
-    return [
-        {"nativeId": native_id, "turnHeat": round(float(value), 6)}
-        for native_id, value in sorted(
-            heat.items(), key=lambda item: (-float(item[1]), item[0])
-        )[:5]
-    ]
 
 
 def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -3334,8 +2263,8 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "ok": True,
                 "projectId": project,
-                "pairReference": pair_reference,
                 "thinkMemoryIds": [memory.id for memory in existing],
+                "pairReference": pair_reference,
                 "intakeOperation": "noop",
                 "structuredExtractionRequired": False,
                 "revision": revision_before,
@@ -3345,17 +2274,10 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
                 },
             }
         subject_directory = _subject_directory_for_project(project)
-        relationship_vocabulary = _project_relationship_vocabulary(
-            service.store,
-            workspace_id,
-        )
         enrichment_input = {
             "exact_user_message": payload["userMessage"],
             "exact_main_response": payload["mainResponse"],
             "canonical_subject_directory": subject_directory,
-            "current_project_relationship_vocabulary": list(
-                relationship_vocabulary
-            ),
         }
         enrichment_schema, enrichment_prompt = _llm_structured_contract(
             pair_text,
@@ -3375,9 +2297,6 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             "enrichmentPrompt": enrichment_prompt,
             "enrichmentInput": enrichment_input,
             "canonicalSubjectDirectory": subject_directory,
-            "relationshipVocabulary": _relationship_vocabulary_state(
-                relationship_vocabulary
-            ),
         }
 
 
@@ -3418,32 +2337,8 @@ def _validate_settle_payload(
     return completed, pair_reference, structured_output, card_run
 
 
-def _canonical_row_in_workspace(
-    store: Any,
-    *,
-    workspace_id: str,
-    native_id: str,
-) -> dict[str, Any]:
-    row = store.conn.execute(
-        "SELECT id, name, etype, canonical_id FROM entities "
-        "WHERE workspace_id=? AND id=?",
-        (workspace_id, native_id),
-    ).fetchone()
-    if row is None:
-        raise ThinkGraphIntakeError("thinkgraph_card_native_node_invalid")
-    canonical_id = str(row["canonical_id"] or row["id"])
-    canonical = _entity_row(store, canonical_id)
-    if canonical is None:
-        raise ThinkGraphIntakeError("thinkgraph_card_native_node_invalid")
-    return canonical
-
-
-def settle_completed_pair(
-    payload: dict[str, Any],
-    *,
-    classifier: Callable[..., dict[str, Any]] = classify_relationship,
-) -> dict[str, Any]:
-    """Persist one Engraphis fact batch, then apply each fact's Jev-settled edges."""
+def settle_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
+    """Store the saved Card's native Engraphis facts through Engraphis itself."""
     completed, pair_reference, card_output, card_run = _validate_settle_payload(payload)
     project = completed["projectId"]
     service = get_service()
@@ -3457,253 +2352,94 @@ def settle_completed_pair(
             pair_reference=pair_reference,
         )
         if existing:
-            vocabulary = _project_relationship_vocabulary(store, workspace_id)
             return {
                 "ok": True,
                 "projectId": project,
                 "pairReference": pair_reference,
                 "thinkMemoryIds": [memory.id for memory in existing],
-                "intakeOperations": ["noop" for _memory in existing],
+                "intakeOperation": "noop",
                 "revision": revision_before,
                 "revisionChanged": False,
-                "status": "duplicate_noop",
+                "status": "completed",
                 "cardRun": card_run,
-                "factCount": len(existing),
                 "relationships": [],
-                "relationshipVocabulary": {
-                    "before": _relationship_vocabulary_state(vocabulary),
-                    "after": _relationship_vocabulary_state(vocabulary),
-                    "added": [],
-                },
-                "failures": [],
                 "changedNodeIds": [],
                 "changedEdgeIds": [],
                 "affectedNodeIds": [],
-                "turnHeat": {},
-                "topActiveNodes": [],
             }
-        structured_context = {
-            "exact_user_message": completed["userMessage"],
-            "exact_main_response": completed["mainResponse"],
-        }
         facts = _extract_saved_card_facts(
             card_output,
             pair_text=(
                 f"USER:\n{completed['userMessage']}\n\n"
                 f"MAIN:\n{completed['mainResponse']}"
             ),
-            context=structured_context,
+            context={
+                "exact_user_message": completed["userMessage"],
+                "exact_main_response": completed["mainResponse"],
+            },
             card_run=card_run,
         )
-        outputs = _project_structured_facts(facts)
-        opportunities: list[dict[str, Any]] = []
-        propositions: dict[int, str] = {}
-        relationship_proposals: dict[int, str] = {}
-        seen_pairings: set[tuple[str, str, str, str]] = set()
-        for fact_index, output in enumerate(outputs):
-            for pairing in output.pairings:
-                source_name = _clean_concept(pairing.source.canonical_name)
-                target_name = _clean_concept(pairing.target.canonical_name)
-                if (
-                    not source_name
-                    or not target_name
-                    or source_name.casefold() == target_name.casefold()
-                ):
-                    raise ThinkGraphIntakeError("thinkgraph_card_pair_self_reference")
-                identity = (
-                    source_name.casefold(),
-                    target_name.casefold(),
-                    pairing.relationship_proposal.casefold(),
-                    pairing.supporting_proposition.casefold(),
-                )
-                if identity in seen_pairings:
-                    raise ThinkGraphIntakeError("thinkgraph_card_pair_duplicate")
-                seen_pairings.add(identity)
-                index = len(opportunities)
-                opportunities.append({
-                    "id": f"card_pair_{index:04d}",
-                    "fact_index": fact_index,
-                    "source": {
-                        "name": source_name,
-                        "type": "person_or_concept",
-                    },
-                    "target": {
-                        "name": target_name,
-                        "type": "person_or_concept",
-                    },
-                    "native_relation": pairing.relationship_proposal,
-                    "native_weight": 0.0,
-                    "provenance": {},
-                })
-                propositions[index] = pairing.supporting_proposition
-                relationship_proposals[index] = pairing.relationship_proposal
-
-        # Freeze prior temporal context before the current Think exists. Settled
-        # Jev must reuse this map and never re-query the just-written current Think.
-        prior_think_snapshot = _turn_start_prior_think_snapshot(
-            store,
-            workspace_id=workspace_id,
-            opportunities=opportunities,
-        )
-        relationship_vocabulary_before = _project_relationship_vocabulary(
-            store,
-            workspace_id,
-        )
-        decisions = _classify_opportunities(
-            store,
-            workspace_id=workspace_id,
-            payload=completed,
-            opportunities=opportunities,
-            classifier=classifier,
-            propositions=propositions,
-            relationship_proposals=relationship_proposals,
-            prior_think_snapshot=prior_think_snapshot,
-            relationship_vocabulary=relationship_vocabulary_before,
-        )
-        normalization_failures = [
-            classified for classified in decisions
-            if classified.get("status") != "decided"
-        ]
-        if normalization_failures:
-            raise JevRelationshipError(str(
-                normalization_failures[0].get("error")
-                or "jev_relationship_unavailable"
-            ))
-
-        saved_thinks: list[dict[str, Any]] = []
-        think_memory_ids: list[str] = []
-        think_memories: list[Any] = []
-        heat: dict[str, float] = {}
-        with store.write_transaction():
-            replay = _existing_source_pair_thinks(
-                store,
+        try:
+            results = _save_extracted_facts(
+                service,
                 workspace_id=workspace_id,
+                completed=completed,
+                facts=facts,
+                card_run=card_run,
                 pair_reference=pair_reference,
             )
-            if replay:
-                saved_thinks = [
-                    {"id": memory.id, "op": "noop"} for memory in replay
-                ]
-            else:
-                try:
-                    saved_thinks = _save_think_memories(
-                        service,
-                        workspace_id=workspace_id,
-                        completed=completed,
-                        outputs=outputs,
-                        card_run=card_run,
-                        pair_reference=pair_reference,
-                    )
-                except Exception as error:
-                    raise ThinkGraphIntakeError(
-                        "thinkgraph_think_batch_store_failed"
-                    ) from error
-            think_memory_ids = [str(result.get("id") or "") for result in saved_thinks]
-            if len(think_memory_ids) != len(outputs) or any(
-                not value for value in think_memory_ids
-            ):
-                raise ThinkGraphIntakeError("thinkgraph_fact_batch_incomplete")
-            think_memories = [store.get_memory(memory_id) for memory_id in think_memory_ids]
-            if any(
-                memory is None or _think_metadata(memory) is None
-                for memory in think_memories
-            ):
-                raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed")
-
-            direct_think_ids = {
-                index: [think_memory_ids[int(opportunity["fact_index"])]]
-                for index, opportunity in enumerate(opportunities)
-            }
-            card_persisted = _persist_opportunity_decisions(
-                store,
-                workspace_id=workspace_id,
-                payload=completed,
-                pair_memory_id="",
-                stage="thinkgraph_card",
-                opportunities=opportunities,
-                decisions=decisions,
-                source_think_memory_ids=direct_think_ids,
-                target_think_memory_ids=direct_think_ids,
-            )
-            if card_persisted["failures"]:
-                raise ThinkGraphIntakeError("thinkgraph_relationship_settlement_failed")
-            changed_node_ids = list(card_persisted["changedNodeIds"])
-            changed_edge_ids = list(card_persisted["changedEdgeIds"])
-            for native_id, value in card_persisted["turnHeat"].items():
-                heat[native_id] = heat.get(native_id, 0.0) + float(value)
-
-            with store._write_operation("thinkgraph_structured_incidence", commit=True):
-                for fact_index, output in enumerate(outputs):
-                    memory_id = think_memory_ids[fact_index]
-                    memory = think_memories[fact_index]
-                    for entity_name in output.entities:
-                        row = _existing_entity_for_name(
-                            store,
-                            workspace_id=workspace_id,
-                            name=entity_name,
-                        )
-                        if row is None:
-                            continue
-                        native_id = str(row["id"])
-                        store.link_memory_entity(
-                            memory_id=memory_id,
-                            entity_id=native_id,
-                            workspace_id=workspace_id,
-                            repo_id=None,
-                            source_kind=_THINK_INCIDENCE_KIND,
-                            confidence=1.0,
-                            valid_from=memory.valid_from,
-                            ingested_at=memory.ingested_at,
-                            provenance={
-                                "source": "structured_extractor",
-                                "source_kind": "structured_extractor",
-                                "memory_id": memory_id,
-                            },
-                            commit=False,
-                        )
-                        changed_node_ids.append(native_id)
-                        heat[native_id] = heat.get(native_id, 0.0) + 1.0
-
+        except Exception as error:
+            raise ThinkGraphIntakeError("thinkgraph_fact_store_failed") from error
+        memory_ids = list(dict.fromkeys(
+            str(result.get("id") or "") for result in results
+            if str(result.get("id") or "")
+        ))
+        memories = store.get_memories(memory_ids)
+        if any(
+            memory_id not in memories
+            or _think_metadata(memories[memory_id]) is None
+            for memory_id in memory_ids
+        ):
+            raise ThinkGraphIntakeError("thinkgraph_fact_store_failed")
+        incidences = store.list_memory_entities(
+            SearchFilter(workspace_id=workspace_id),
+            memory_ids=memory_ids,
+        ) if memory_ids else []
+        changed_node_ids = list(dict.fromkeys(
+            str(row.get("entity_id") or "") for row in incidences
+            if str(row.get("entity_id") or "")
+        ))
+        edge_rows = []
+        if memory_ids:
+            marks = ",".join("?" for _ in memory_ids)
+            edge_rows = store.conn.execute(
+                "SELECT DISTINCT e.id, e.src, e.dst, e.relation "
+                "FROM edge_supports s JOIN edges e ON e.id=s.edge_id "
+                f"WHERE s.memory_id IN ({marks}) ORDER BY e.id",
+                memory_ids,
+            ).fetchall()
+        relationships = [{
+            "id": str(row["id"]),
+            "source": str(row["src"]),
+            "target": str(row["dst"]),
+            "relation": str(row["relation"]),
+        } for row in edge_rows]
+        changed_edge_ids = [item["id"] for item in relationships]
         revision = _graph_revision(store, workspace_id)
-        relationship_vocabulary_after = _project_relationship_vocabulary(
-            store,
-            workspace_id,
-        )
-        changed_node_ids = list(dict.fromkeys(changed_node_ids))
-        changed_edge_ids = list(dict.fromkeys(changed_edge_ids))
-        affected_ids = set(changed_node_ids)
         return {
             "ok": True,
             "projectId": project,
             "pairReference": pair_reference,
-            "thinkMemoryIds": think_memory_ids,
-            "intakeOperations": [
-                str(result.get("op") or "") for result in saved_thinks
-            ],
+            "thinkMemoryIds": memory_ids,
+            "intakeOperations": [str(result.get("op") or "") for result in results],
             "revision": revision,
             "revisionChanged": revision != revision_before,
             "status": "completed",
             "cardRun": card_run,
-            "factCount": len(outputs),
-            "relationships": card_persisted["relationships"],
-            "relationshipVocabulary": {
-                "before": _relationship_vocabulary_state(
-                    relationship_vocabulary_before
-                ),
-                "after": _relationship_vocabulary_state(
-                    relationship_vocabulary_after
-                ),
-                "added": [
-                    label for label in relationship_vocabulary_after
-                    if label not in relationship_vocabulary_before
-                ],
-            },
-            "failures": [],
+            "relationships": relationships,
             "changedNodeIds": changed_node_ids,
             "changedEdgeIds": changed_edge_ids,
-            "affectedNodeIds": sorted(affected_ids),
-            "turnHeat": heat,
-            "topActiveNodes": _top_turn_heat(heat),
+            "affectedNodeIds": sorted(changed_node_ids),
         }
 
 
@@ -3852,27 +2588,7 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
         result["sources"] = [{**source, **{key: by_id.get(source["id"], {}).get(key)
             for key in ("title", "provenance")}} for source in result.pop("packed_sources", [])]
         return _apply_response_budget(result, max_response_tokens)
-    previous_event = getattr(_intake_local, "explicit_event", None)
-    if name != "engraphis_link" and name in WRITE_TOOLS:
-        exact_content = arguments.get("content")
-        if exact_content is None and "memories" in arguments:
-            exact_content = json.dumps(
-                arguments["memories"], ensure_ascii=False, sort_keys=True
-            )
-        _intake_local.explicit_event = {
-            "toolName": name,
-            "title": str(arguments.get("title") or ""),
-            "content": str(exact_content or ""),
-            "reason": str(
-                arguments.get("retention_reason")
-                or arguments.get("reason")
-                or ""
-            ),
-        }
-    try:
-        response = await server.call_tool(name, arguments)
-    finally:
-        _intake_local.explicit_event = previous_event
+    response = await server.call_tool(name, arguments)
     content = response.content if hasattr(response, "content") else response[0] if isinstance(response, tuple) else response
     if getattr(response, "isError", False):
         raise ValueError(" ".join(getattr(block, "text", "") for block in content))
@@ -3909,10 +2625,7 @@ def inspect(project: str, native_id: str) -> dict:
                 entity_ids=member_ids,
                 limit=512,
             )
-            direct = [
-                row for row in incidences
-                if row.get("source_kind") == _THINK_INCIDENCE_KIND
-            ]
+            direct = list(incidences)
             memory_ids = list(dict.fromkeys(
                 str(row["memory_id"]) for row in direct
             ))
@@ -3930,7 +2643,7 @@ def inspect(project: str, native_id: str) -> dict:
                         memory.mtype.value
                         if isinstance(memory.mtype, Enum) else str(memory.mtype)
                     ),
-                    "source_kind": _THINK_INCIDENCE_KIND,
+                    "source_kind": str(row.get("source_kind") or ""),
                     "confidence": float(row.get("confidence") or 0.0),
                     "valid_from": memory.valid_from,
                     "valid_to": memory.valid_to,
@@ -4031,11 +2744,9 @@ def _bounded_entity_projection(
                 "title": think["title"],
                 "summary": think["content"],
                 "content": think["content"],
-                "importance": think["importance"],
-                "metadata": {"thinkgraph_fact": {
-                    "entities": deepcopy(think["entities"]),
+                "metadata": {
                     "relations": deepcopy(think["relations"]),
-                }},
+                },
                 "validFrom": think.get("valid_from"),
                 "validTo": think.get("valid_to"),
                 "ingestedAt": think.get("ingested_at"),
@@ -4221,15 +2932,12 @@ def projection(project: str, native_id: str | None = None) -> dict:
             node["gravity_mass"] = 1.0 + (4.0 * math.log1p(mass))
             node["visual_radius"] = 2.5 + (3.0 * math.log1p(mass))
     supporting = {}
-    # The engine's stored memory/entity incidences also cover isolated entities.
-    # Hydrate these existing links; do not infer evidence from labels or text here.
+    # Hydrate Engraphis's stored memory/entity incidences without inventing links.
     entity_members = {node["id"]: node.get("member_ids", [node["id"]]) for node in scene["nodes"]}
     incidences = service.store.list_memory_entities(entity_ids=list(dict.fromkeys(
         member for members in entity_members.values() for member in members)))
     direct_incidence_ids = list(dict.fromkeys(
-        str(row["memory_id"])
-        for row in incidences
-        if row.get("source_kind") == _THINK_INCIDENCE_KIND
+        str(row["memory_id"]) for row in incidences
     ))
     direct_memories = service.store.get_memories(direct_incidence_ids)
     valid_think_ids = {
@@ -4239,7 +2947,6 @@ def projection(project: str, native_id: str | None = None) -> dict:
     entity_thinks = {node_id: list(dict.fromkeys(
         row["memory_id"] for row in incidences
         if row["entity_id"] in members
-        and row["source_kind"] == _THINK_INCIDENCE_KIND
         and row["memory_id"] in valid_think_ids))
         for node_id, members in entity_members.items()}
     evidence_groups = [edge.get("support_memory_ids", []) for edge in scene["edges"]]
@@ -4262,9 +2969,7 @@ def projection(project: str, native_id: str | None = None) -> dict:
                     supporting[mid]["content"] = memory["content"]
     nodes = []
     for node in scene["nodes"]:
-        # Node Think display is owned only by direct structured incidence. Edge
-        # support and literal text mentions remain separate evidence and must not
-        # become this node's temporal Think history.
+        # Node Think display follows Engraphis's own evidence incidence.
         evidence_ids = list(dict.fromkeys(entity_thinks[node["id"]]))
         evidence_ids.sort(
             key=lambda memory_id: _newest_think_key(supporting[memory_id])

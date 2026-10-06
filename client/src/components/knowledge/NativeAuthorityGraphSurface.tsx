@@ -1630,10 +1630,10 @@ function compactProbability(value: unknown): string | null {
 function nativeThinkRelationships(item: Record<string, any>): string[] {
   const metadata = item.metadata;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
-  const fact = metadata.thinkgraph_fact;
-  const raw = fact && typeof fact === 'object' && !Array.isArray(fact)
-    ? fact.relations
-    : [];
+  const structured = metadata.structured_extraction;
+  const raw = structured && typeof structured === 'object' && !Array.isArray(structured)
+    ? structured.relations
+    : metadata.relations;
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((value): string[] => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
@@ -1645,7 +1645,7 @@ function nativeThinkRelationships(item: Record<string, any>): string[] {
   });
 }
 
-function ThinkGraphThink({
+function ThinkRecordCard({
   item,
   heading,
   removing = false,
@@ -1956,12 +1956,9 @@ export function NativeGraphProjectionSurface({
   const directThinkAvailable = selectedNodeVariants.some(variant => (
     variant.authority === 'thinkgraph'
     && Array.isArray(variant.node.properties?.evidence)
-    && variant.node.properties.evidence.some((item: unknown) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
-      const metadata = (item as Record<string, any>).metadata;
-      return metadata?.thinkgraph_fact
-        && typeof metadata.thinkgraph_fact === 'object';
-    })
+    && variant.node.properties.evidence.some((item: unknown) => (
+      item !== null && typeof item === 'object' && !Array.isArray(item)
+    ))
   ));
   const nativeKnowEdges = authority === 'joined'
     ? activeJoinedPresentation?.nativeProjections.knowgraph.edges || []
@@ -2623,10 +2620,7 @@ export function NativeGraphProjectionSurface({
   const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
   const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
-    ? evidenceRecords.filter(item => item.metadata !== null
-      && typeof item.metadata === 'object'
-      && item.metadata.thinkgraph_fact !== null
-      && typeof item.metadata.thinkgraph_fact === 'object')
+    ? evidenceRecords
     : [];
   const thinks = directThinks.map((item, index) => ({ item, index }))
     .sort((left, right) => {
@@ -2975,7 +2969,7 @@ export function NativeGraphProjectionSurface({
         </span> : null}
         {visibleThinks.length ? <section className="graph-inspector-records" data-testid="native-think-records">
           <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
-          {visibleThinks.map(item => <ThinkGraphThink
+          {visibleThinks.map(item => <ThinkRecordCard
             key={item.id}
             item={item}
             heading="Think"
@@ -2987,7 +2981,7 @@ export function NativeGraphProjectionSurface({
         </section> : null}
         {earlierThinks.length ? <details className="graph-think-history">
           <summary>Earlier Thinks ({earlierThinks.length})</summary>
-          <div>{earlierThinks.map(item => <ThinkGraphThink
+          <div>{earlierThinks.map(item => <ThinkRecordCard
             key={item.id}
             item={item}
             heading="Think"

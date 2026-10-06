@@ -518,8 +518,7 @@ const orchestratorMocks = vi.hoisted(() => {
     if (endpoint === '/thinkgraph/completed-pair/prepare') {
       return {
         ok: true,
-        pairReference: 'pair_reference_one',
-        thinkMemoryIds: ['mem_pair_one'],
+        pairReference: 'mem_pair_one',
         intakeOperation: 'noop',
         structuredExtractionRequired: false,
         revision: 3,
@@ -5033,19 +5032,18 @@ describe('saved Card routes', () => {
           runId: expect.stringMatching(/^req_/),
           correlationId: expect.stringMatching(/^req_/),
         });
-        expect(cardBeginBody.assignment).toContain('current_project_relationship_vocabulary');
         expect(cardBeginBody.assignment).toContain(
-          'Each returned Engraphis fact is one LiquidAIty Think',
+          'Run one official Engraphis llm_structured extraction pass',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Preserve each fact\'s native title, content, memory',
+          'Each facts[] item is one native Engraphis fact and one displayed Think',
         );
-        expect(cardBeginBody.assignment).not.toContain('think.summary');
-        expect(cardBeginBody.assignment).not.toContain('mandatory relationship');
+        expect(cardBeginBody.assignment).toContain(
+          'Extract the fewest independently reusable facts',
+        );
         expect(cardBeginBody.assignment).toContain('canonical_subject_directory');
-        expect(cardBeginBody.assignment).toContain(
-          'without repeating conversational setup or turning every reasoning clause into a relationship',
-        );
+        expect(cardBeginBody.assignment).not.toContain('Jev alone normalizes');
+        expect(cardBeginBody.assignment).not.toContain('Loose entity metadata');
         expect(cardBeginBody.assignment).not.toContain('RegexGraphExtractor');
         expect(cardBeginBody.assignment).toContain(exactMessage);
         expect(cardBeginBody.assignment).toContain('Real assistant reply.');

@@ -458,7 +458,6 @@ def read_thinkgraph_exact(
         thinks = [
             item for item in evidence
             if isinstance(item.get("metadata"), dict)
-            and isinstance(item["metadata"].get("thinkgraph_fact"), dict)
             and isinstance(item["metadata"].get("thinkgraph_origin"), dict)
             and item["metadata"]["thinkgraph_origin"].get("authority") == "thinkgraph"
         ]

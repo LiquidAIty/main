@@ -339,10 +339,7 @@ def test_contextual_node_public_result_contains_only_hydrated_winners(
             "authority": "ThinkGraph", "nativeId": "mem-win", "nativeKind": "node",
             "type": "episodic", "title": "Winning Think", "content": "winner think body",
             "properties": {"ingestedAt": "2026-09-01T00:00:00Z"},
-            "metadata": {
-                "thinkgraph_fact": {"entities": ["Winner"], "relations": []},
-                "thinkgraph_origin": {"authority": "thinkgraph"},
-            },
+            "metadata": {"thinkgraph_origin": {"authority": "thinkgraph"}},
             "provenance": {"run_id": "run-one"}, "asOf": "current",
             "readOperation": "engraphis_get_memory", "relationshipEvidence": [],
             "resultLimit": 1, "truncated": False,
@@ -351,10 +348,7 @@ def test_contextual_node_public_result_contains_only_hydrated_winners(
             "authority": "ThinkGraph", "nativeId": "mem-second", "nativeKind": "node",
             "type": "episodic", "title": "Second Think", "content": "second think body",
             "properties": {"ingestedAt": "2026-08-31T00:00:00Z"},
-            "metadata": {
-                "thinkgraph_fact": {"entities": ["Second"], "relations": []},
-                "thinkgraph_origin": {"authority": "thinkgraph"},
-            },
+            "metadata": {"thinkgraph_origin": {"authority": "thinkgraph"}},
             "provenance": {"run_id": "run-two"}, "asOf": "current",
             "readOperation": "engraphis_get_memory", "relationshipEvidence": [],
             "resultLimit": 1, "truncated": False,
@@ -792,10 +786,7 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
                 {
                     "memory_id": "mem_think",
                     "excerpt": "Self-contained structured Think.",
-                    "metadata": {
-                        "thinkgraph_fact": {"entities": ["Jev"], "relations": []},
-                        "thinkgraph_origin": {"authority": "thinkgraph"},
-                    },
+                    "metadata": {"thinkgraph_origin": {"authority": "thinkgraph"}},
                 },
                 {
                     "memory_id": "mem_other",
@@ -831,11 +822,10 @@ def test_jev_attention_hydrates_rocket_lab_twin_anchors_with_explicit_record_bou
 
     evidence = [{
         "memory_id": f"mem_rocket_{index}",
-        "excerpt": f"Rocket Lab Think {index} " + ("x" * 7_000),
-        "metadata": {
-            "thinkgraph_fact": {"entities": ["Rocket Lab"], "relations": []},
-            "thinkgraph_origin": {"authority": "thinkgraph"},
-        },
+        "excerpt": f"Rocket Lab Think {index}",
+        "metadata": {"thinkgraph_origin": {
+            "authority": "thinkgraph", "native_payload": "x" * 7_000,
+        }},
     } for index in range(5)]
     native = {"entity": {
         "canonical_id": "think-rocket-lab",
@@ -871,8 +861,9 @@ def test_jev_attention_hydrates_rocket_lab_twin_anchors_with_explicit_record_bou
             "truncated": False,
         },
     )
-    # Several complete Think bodies can exceed the whole seed cap before
-    # KnowGraph is added, even though Jev requested one record from each anchor.
+    # This is the live failure shape: five structured Think records duplicated
+    # under both metadata keys exceeded the whole seed cap before KnowGraph was
+    # added, even though Jev requested one record from each selected anchor.
     assert len(json.dumps({
         "thinks": evidence, "evidence": evidence,
     }, separators=(",", ":")).encode()) > data_anchor._GRAPH_SEED_LIMIT
@@ -933,10 +924,9 @@ def test_required_anchor_materializes_real_data_and_stable_reference(native_grap
 def test_exact_repeated_native_payload_is_rendered_once_without_losing_distinct_records(
     monkeypatch,
 ) -> None:
-    shared_metadata = {
-        "thinkgraph_fact": {"entities": ["Shared subject"], "relations": []},
-        "thinkgraph_origin": {"authority": "thinkgraph"},
-    }
+    shared_metadata = {"thinkgraph_origin": {
+        "authority": "thinkgraph", "body": "x" * 2_000,
+    }}
 
     def read(_project_id, _deck_id, _card_id, anchor, **_kwargs):
         native_id = anchor["nativeId"]
@@ -946,10 +936,9 @@ def test_exact_repeated_native_payload_is_rendered_once_without_losing_distinct_
             "type": "person_or_concept", "title": native_id,
             "content": "different content" if distinct else "same exact content " * 40,
             "metadata": (
-                {
-                    "thinkgraph_fact": {"entities": ["Different subject"], "relations": []},
-                    "thinkgraph_origin": {"authority": "thinkgraph"},
-                }
+                {"thinkgraph_origin": {
+                    "authority": "thinkgraph", "body": "different",
+                }}
                 if distinct else shared_metadata
             ),
             "provenance": {"engine": "engraphis", "memberIds": [native_id]},
@@ -968,9 +957,10 @@ def test_exact_repeated_native_payload_is_rendered_once_without_losing_distinct_
     assert [reference["nativeId"] for reference in references] == [
         "entity-one", "entity-two", "entity-three",
     ]
+    assert seed.count("\"body\":\"" + "x" * 2_000 + "\"") == 1
     assert seed.count(("same exact content " * 40).strip()) == 1
     assert '"nativeId":"entity-one"' in seed
-    assert "different content" in seed and "Different subject" in seed
+    assert "different content" in seed and '"body":"different"' in seed
     assert len({reference["materializedRecordSha256"] for reference in references}) == 3
 
 

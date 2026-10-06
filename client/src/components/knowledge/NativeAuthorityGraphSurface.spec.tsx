@@ -625,7 +625,7 @@ describe('native authority graph surfaces', () => {
             id: 'memory-1',
             ingestedAt: '2026-10-03T12:00:00Z',
             summary: 'Direct Think summary.',
-            metadata: { thinkgraph_fact: { entities: ['Shared'], relations: [] } },
+            metadata: { thinkgraph_origin: { authority: 'thinkgraph' } },
           }],
         },
       }],
@@ -692,7 +692,7 @@ describe('native authority graph surfaces', () => {
       id,
       ingestedAt: '2026-10-03T12:00:00Z',
       summary,
-      metadata: { thinkgraph_fact: { entities: ['Joined subject'], relations: [] } },
+      metadata: { thinkgraph_origin: { authority: 'thinkgraph' } },
     });
     const think = {
       ...empty('thinkgraph'),
@@ -1500,7 +1500,7 @@ describe('native authority graph surfaces', () => {
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: {
       evidence: [{ id: 'memory-one', title: 'Existing saved Think', ingestedAt: 100,
         summary: 'Saved Think.',
-        metadata: { thinkgraph_fact: { entities: ['Existing entry'], relations: [] } } }],
+        metadata: { thinkgraph_origin: { authority: 'thinkgraph' }, relations: [] } }],
     } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
@@ -1525,17 +1525,16 @@ describe('native authority graph surfaces', () => {
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
       properties: { evidence: [
         { id: 'memory-new', title: 'Neutron as discounted option value', summary: paragraph, ingestedAt: 300,
-          metadata: { keywords: ['latest', 'decision'], thinkgraph_fact: { entities: [
-            'Electron', 'Neutron', 'Execution quality', 'Launch cadence', 'Dilution',
-          ], relations: [
+          metadata: { keywords: ['latest', 'decision'],
+            thinkgraph_origin: { authority: 'thinkgraph' }, relations: [
             { source: 'Electron', relation: 'SUPPORTS', target: 'Execution quality' },
             { source: 'Neutron', relation: 'DEPENDS_ON', target: 'Launch cadence' },
             { source: 'Dilution', relation: 'AFFECTS', target: 'Neutron' },
-          ] } } },
+          ] } },
         { id: 'memory-second', title: 'Second retained Think', summary: 'Second recent saved Think.', ingestedAt: 200,
-          metadata: { thinkgraph_fact: { entities: ['Existing entry'], relations: [] } } },
+          metadata: { thinkgraph_origin: { authority: 'thinkgraph' }, relations: [] } },
         { id: 'memory-old', title: 'Earlier retained Think', summary: 'Earlier saved Think.', ingestedAt: 100,
-          metadata: { thinkgraph_fact: { entities: ['Existing entry'], relations: [] } } },
+          metadata: { thinkgraph_origin: { authority: 'thinkgraph' }, relations: [] } },
       ] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
       status="ready" error={null} onRemoveEvidence={remove} />);
@@ -1792,7 +1791,7 @@ describe('native authority graph surfaces', () => {
         runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
         properties: { evidence: [{
           id: 'memory-one', ingestedAt: 100, summary: 'The complete Think summary.',
-          metadata: { thinkgraph_fact: { entities: ['Recorded subject'], relations: [] } },
+          metadata: { thinkgraph_origin: { authority: 'thinkgraph' } },
         }] },
         provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] }
       : { ...empty(authority), nodes: [

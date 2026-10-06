@@ -34,7 +34,7 @@ describe('launch Graphs surface', () => {
       'utf8',
     );
     const thinkCard = nativeSurface.slice(
-      nativeSurface.indexOf('function ThinkGraphThink'),
+      nativeSurface.indexOf('function ThinkRecordCard'),
       nativeSurface.indexOf('type KnowInspectorRecord'),
     );
     const openNodeInspector = nativeSurface.slice(
