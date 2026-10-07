@@ -1,15 +1,15 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { randomUUID } from 'crypto';
 import {
-  agentTerminalManager,
-  agentTerminalPresentationOptions,
-  requireAgentTerminalCard,
+  cardRuntimeManager,
+  cardRuntimeWorkingDirectory,
+  requireCardRuntimeCard,
   resolveHermesBotRosterProjections,
-  type AgentTerminalCompactionIdentity,
-  type AgentTerminalGatewayEvent,
-  type AgentTerminalOwner,
+  type CardRuntimeGatewayEvent,
   type HermesBotRosterProjection,
-} from '../hermes/agentTerminal';
+} from '../hermes/cardRuntimeManager';
+import type { CardRuntimeOwner } from '../hermes/runtime/cardRuntime';
+import type { SessionCompactionIdentity } from '../hermes/runtime/hermesSessionMaintenance';
 import { cardTurnBridge } from '../hermes/runtime/cardTurn';
 import { buildCardTerminal } from '../hermes/cardTerminal';
 import {
@@ -68,8 +68,8 @@ type RemoteMainDriverSource = 'internal_chat' | 'external_plugin';
 
 function contextAuthorityModeForDriver(
   driverSource: RemoteMainDriverSource,
-): 'main_native_honcho' | 'plugin_context_only' {
-  return driverSource === 'external_plugin' ? 'plugin_context_only' : 'main_native_honcho';
+): 'main_honcho' | 'plugin_context_only' {
+  return driverSource === 'external_plugin' ? 'plugin_context_only' : 'main_honcho';
 }
 
 type PreparedMainCliRun = {
@@ -230,7 +230,7 @@ type CompletedPairThinkGraphLifecycleArgs = {
   completedPair: Record<string, unknown>;
 };
 
-// A saved ThinkGraph Card/profile has one native terminal session. Keep completed
+// A saved ThinkGraph Card/profile has one Hermes session. Keep completed
 // pairs ordered inside that authority rather than staging overlapping Card turns.
 // Main has already ended its response before this path is enqueued.
 const completedPairThinkGraphLifecycleTails = new Map<string, Promise<void>>();
@@ -303,7 +303,7 @@ function projectSharedChatCard(
   card: AgentCardInstance,
   deck: DeckDocument,
 ): AddressableAgent {
-  const profile = requireAgentTerminalCard(card, deck);
+  const profile = requireCardRuntimeCard(card, deck);
   const cardRevisionId = String(card._cardRevisionId || '').trim();
   if (!cardRevisionId) throw new Error('shared_chat_card_revision_missing');
   const title = String(card.title || '').trim();
@@ -360,7 +360,7 @@ async function resolveSharedChatAuthority(
   if (!mainProjection?.botEnabled) throw new Error('shared_chat_main_authority_unavailable');
   const byProfile = new Map(projections.map((entry) => [entry.profile, entry]));
   const agents = mainProjection.roster.map((profile) => byProfile.get(profile))
-    .filter((entry): entry is HermesBotRosterProjection => entry?.botEnabled === true)
+    .filter((entry): entry is HermesBotRosterProjection => Boolean(entry))
     .map(addressableAgent);
   return { main: addressableAgent(mainProjection), agents };
 }
@@ -434,7 +434,7 @@ function boundedSharedContext(
   }
   // Every saved Hermes Card resumes one exact stored conversation session. Only
   // project-chat messages after that Card's last completed reply are unseen by
-  // the native session and need to cross the canonical IDF boundary again.
+  // the Hermes session and need to cross the canonical IDF boundary again.
   // This keeps direct-Card exchanges visible to Main without replaying Main's
   // already-retained transcript on every persistent turn.
   const contextStart = lastParticipantReply + 1;
@@ -657,10 +657,10 @@ async function resolveCardRuntimeOwner(
   deckId: string,
   cardId: string,
   conversationId: string,
-): Promise<AgentTerminalOwner> {
+): Promise<CardRuntimeOwner> {
   const project = await getProjectCard(projectId);
   const savedOwnerUserId = String(project?.ownerUserId || '').trim();
-  if (!savedOwnerUserId) throw new Error('agent_terminal_project_owner_missing');
+  if (!savedOwnerUserId) throw new Error('card_runtime_project_owner_missing');
 
   const bridgeScope = internalMainBridgeScope(req);
   if (bridgeScope) {
@@ -668,21 +668,21 @@ async function resolveCardRuntimeOwner(
       bridgeScope.projectId !== projectId
       || bridgeScope.deckId !== deckId
       || bridgeScope.conversationId !== conversationId
-    ) throw new Error('agent_terminal_internal_scope_mismatch');
+    ) throw new Error('card_runtime_internal_scope_mismatch');
   } else {
     const authenticatedUserId = typeof (req as any).userId === 'string'
       ? String((req as any).userId).trim()
       : '';
-    if (!authenticatedUserId) throw new Error('agent_terminal_owner_authentication_required');
+    if (!authenticatedUserId) throw new Error('card_runtime_owner_authentication_required');
     if (authenticatedUserId !== savedOwnerUserId) {
-      throw new Error('agent_terminal_project_access_denied');
+      throw new Error('card_runtime_project_access_denied');
     }
   }
 
-  const runtime = agentTerminalManager.findCard(projectId, deckId, cardId);
+  const runtime = cardRuntimeManager.findCard(projectId, deckId, cardId);
   if (runtime) {
     if (runtime.owner.userId !== savedOwnerUserId) {
-      throw new Error('agent_terminal_runtime_owner_mismatch');
+      throw new Error('card_runtime_owner_mismatch');
     }
     return { ...runtime.owner, conversationId };
   }
@@ -862,15 +862,17 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
     const owner = await resolveCardRuntimeOwner(
       req, projectId, deckId, mainCardId, conversationId,
     );
-    let runtime = agentTerminalManager.findCard(projectId, deckId, mainCardId);
+    let runtime = cardRuntimeManager.findCard(projectId, deckId, mainCardId);
     if (!runtime) {
-      const state = await agentTerminalManager.open(
+      const state = await cardRuntimeManager.open(
         owner,
         run.savedCard,
         run.savedDeck,
         120,
         36,
-        agentTerminalPresentationOptions(run.savedCard, false),
+        cardRuntimeWorkingDirectory(run.savedCard)
+          ? { workingDirectory: cardRuntimeWorkingDirectory(run.savedCard) }
+          : {},
       );
       runtime = { owner, state };
     }
@@ -900,7 +902,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
           conversationId,
           runId: run.runId,
           cardId: mainCardId,
-          nativeSessionRef: result.hermesSessionId,
+          hermesSessionId: result.hermesSessionId,
           completedAt: new Date().toISOString(),
           userMessage: message,
           mainResponse: result.text,
@@ -969,10 +971,10 @@ type ConfiguredCardRunStatus = {
   runtimeProfile: string;
   state: string;
   status: string;
-  nativeStatus: HermesKanbanTaskStatus | null;
-  nativeTasks: HermesKanbanTaskProjection[];
-  nativeRootId: string | null;
-  nativeRunId: string | number | null;
+  hermesStatus: HermesKanbanTaskStatus | null;
+  hermesTasks: HermesKanbanTaskProjection[];
+  hermesRootId: string | null;
+  hermesRunId: string | number | null;
   hermesSessionId: string | null;
   provider: string | null;
   model: string | null;
@@ -1024,22 +1026,22 @@ function nullableNonNegativeNumber(value: unknown): number | null {
 type MagenticExecutionStatus = {
   ok: boolean;
   state: 'running' | 'completed' | 'blocked' | 'failed' | 'cancelled';
-  nativeStatus: HermesKanbanTaskStatus;
-  nativeRootId: string;
-  nativeRunId?: number | string | null;
-  nativeIdentity?: string | null;
+  hermesStatus: HermesKanbanTaskStatus;
+  hermesRootId: string;
+  hermesRunId?: number | string | null;
+  hermesProfile?: string | null;
   effectiveProvider?: string | null;
   providerApiMode?: string | null;
   model?: string | null;
   outerRunBound?: boolean;
   finalResult?: string;
   error?: string;
-  nativeTasks?: unknown;
+  hermesTasks?: unknown;
 };
 
 function requireMagenticTaskProjections(
   value: unknown,
-  nativeRootId: string,
+  hermesRootId: string,
 ): HermesKanbanTaskProjection[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error('magentic_execution_tasks_invalid');
@@ -1120,7 +1122,7 @@ function requireMagenticTaskProjections(
       handoffSummary,
     };
   });
-  if (!taskIds.has(nativeRootId)) throw new Error('magentic_execution_tasks_invalid');
+  if (!taskIds.has(hermesRootId)) throw new Error('magentic_execution_tasks_invalid');
   return tasks;
 }
 
@@ -1147,14 +1149,14 @@ async function ensureMagenticAgents(
   const orchestrator = execution.orchestrator;
   const orchestratorCardId = String(orchestrator?.cardId || '').trim();
   const orchestratorRevisionId = String(orchestrator?.cardRevisionId || '').trim();
-  const orchestratorIdentity = String(orchestrator?.nativeIdentity || '').trim();
+  const orchestratorIdentity = String(orchestrator?.hermesProfile || '').trim();
   const orchestratorCard = deck.nodes.find((candidate: any) => candidate.id === orchestratorCardId);
   if (!orchestratorCardId || !orchestratorRevisionId || !orchestratorIdentity
     || !orchestratorCard || orchestratorCard.runtime.kind !== 'hermes'
     || orchestratorCard.runtime.mode !== 'magentic_one') {
     throw new Error('magentic_execution_orchestrator_identity_invalid');
   }
-  const currentOrchestratorIdentity = requireAgentTerminalCard(orchestratorCard, deck);
+  const currentOrchestratorIdentity = requireCardRuntimeCard(orchestratorCard, deck);
   if (currentOrchestratorIdentity !== orchestratorIdentity
     || String(orchestratorCard._cardRevisionId || '') !== orchestratorRevisionId) {
     throw new Error('magentic_execution_orchestrator_saved_identity_changed');
@@ -1166,14 +1168,16 @@ async function ensureMagenticAgents(
     const orchestratorOwner = await resolveCardRuntimeOwner(
       req, projectId, deckId, orchestratorCardId, conversationId,
     );
-    await agentTerminalManager.open(
+    await cardRuntimeManager.open(
       orchestratorOwner,
       orchestratorCard,
       deck,
       120,
       36,
       {
-        ...agentTerminalPresentationOptions(orchestratorCard, false),
+        ...(cardRuntimeWorkingDirectory(orchestratorCard)
+          ? { workingDirectory: cardRuntimeWorkingDirectory(orchestratorCard) }
+          : {}),
         materializeTaskProfile: true,
       },
     );
@@ -1189,39 +1193,41 @@ async function ensureMagenticAgents(
   for (const worker of workers) {
     const cardId = String(worker?.cardId || '').trim();
     const revisionId = String(worker?.cardRevisionId || '').trim();
-    const nativeIdentity = String(worker?.profile || '').trim();
-    if (!cardId || !revisionId || !nativeIdentity || seen.has(nativeIdentity)) {
+    const hermesProfile = String(worker?.profile || '').trim();
+    if (!cardId || !revisionId || !hermesProfile || seen.has(hermesProfile)) {
       throw new Error('magentic_execution_worker_identity_invalid');
     }
     if (worker?.teamTaskMode === true && cardId !== 'card_team') {
       throw new Error('magentic_execution_team_identity_invalid');
     }
-    seen.add(nativeIdentity);
+    seen.add(hermesProfile);
     const card = deck.nodes.find((candidate: any) => candidate.id === cardId);
     if (!card || card.runtime.kind !== 'hermes') {
       throw new Error(`magentic_execution_worker_card_invalid:${cardId}`);
     }
-    const currentIdentity = requireAgentTerminalCard(card, deck);
-    if (currentIdentity !== nativeIdentity || String(card._cardRevisionId || '') !== revisionId) {
+    const currentIdentity = requireCardRuntimeCard(card, deck);
+    if (currentIdentity !== hermesProfile || String(card._cardRevisionId || '') !== revisionId) {
       throw new Error(`magentic_execution_worker_saved_identity_changed:${cardId}`);
     }
     const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId, conversationId);
-    await agentTerminalManager.open(
+    await cardRuntimeManager.open(
       owner,
       card,
       deck,
       120,
       36,
       {
-        ...agentTerminalPresentationOptions(card, false),
+        ...(cardRuntimeWorkingDirectory(card)
+          ? { workingDirectory: cardRuntimeWorkingDirectory(card) }
+          : {}),
         materializeTaskProfile: true,
       },
     );
-    const authority = agentTerminalManager.magenticCardToolAuthority(owner);
+    const authority = cardRuntimeManager.magenticCardToolAuthority(owner);
     if (
       authority.cardId !== cardId
       || authority.cardRevisionId !== revisionId
-      || authority.profile !== nativeIdentity
+      || authority.profile !== hermesProfile
       || !/^[a-f0-9]{64}$/.test(authority.configurationFingerprint)
     ) throw new Error(`magentic_execution_worker_authority_changed:${cardId}`);
     authorities.push(authority);
@@ -1230,14 +1236,14 @@ async function ensureMagenticAgents(
 }
 
 async function writeMagenticProgress(runId: string, status: MagenticExecutionStatus): Promise<void> {
-  if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(status.nativeStatus)) return;
+  if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(status.hermesStatus)) return;
   const result = await requestPythonRailsJson('/domain/runs/progress', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       runId,
-      nativeRootId: status.nativeRootId,
-      nativeStatus: status.nativeStatus,
+      hermesRootId: status.hermesRootId,
+      hermesStatus: status.hermesStatus,
     }),
   }) as Record<string, unknown>;
   if (result?.ok !== true || result.runId !== runId || result.updated !== true) {
@@ -1245,13 +1251,13 @@ async function writeMagenticProgress(runId: string, status: MagenticExecutionSta
   }
 }
 
-async function readMagenticExecution(nativeRootId: string): Promise<MagenticExecutionStatus> {
+async function readMagenticExecution(hermesRootId: string): Promise<MagenticExecutionStatus> {
   const result = await requestPythonRailsJson('/magentic/execution/status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nativeRootId }),
+    body: JSON.stringify({ hermesRootId }),
   }) as MagenticExecutionStatus;
-  if (!result?.ok || result.nativeRootId !== nativeRootId) {
+  if (!result?.ok || result.hermesRootId !== hermesRootId) {
     throw new Error('magentic_execution_status_invalid');
   }
   return result;
@@ -1275,7 +1281,7 @@ async function executePreparedMagenticRun(args: {
     args.req, args.projectId, args.deckId, args.conversationId, args.prepared, args.savedDeck,
   );
   const sender = args.senderCardId
-    ? agentTerminalManager.findCard(args.projectId, args.deckId, args.senderCardId)
+    ? cardRuntimeManager.findCard(args.projectId, args.deckId, args.senderCardId)
     : null;
   await requestPythonRailsJson('/domain/runs/magentic-mission-readiness', {
     method: 'POST',
@@ -1307,20 +1313,20 @@ async function executePreparedMagenticRun(args: {
       } : {}),
     }),
   }) as MagenticExecutionStatus;
-  const nativeRootId = String(submitted?.nativeRootId || '').trim();
-  if (!submitted?.ok || !nativeRootId || submitted.outerRunBound !== true) {
+  const hermesRootId = String(submitted?.hermesRootId || '').trim();
+  if (!submitted?.ok || !hermesRootId || submitted.outerRunBound !== true) {
     throw new Error('magentic_execution_submit_invalid');
   }
   const normalizedStatus: MagenticExecutionStatus = {
     ...submitted,
-    nativeRootId,
+    hermesRootId,
     state: submitted.state || 'running',
-    nativeStatus: submitted.nativeStatus,
+    hermesStatus: submitted.hermesStatus,
   };
-  if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(normalizedStatus.nativeStatus)) {
-    throw new Error('magentic_execution_native_status_invalid');
+  if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(normalizedStatus.hermesStatus)) {
+    throw new Error('magentic_execution_hermes_status_invalid');
   }
-  // Python stages the native root until the first outer-Run binding succeeds.
+  // Python stages the Hermes root until the first outer-Run binding succeeds.
   // This second exact write is a readback/continuity check; expose the root
   // first so the caller can stop it if that check fails.
   args.onAccepted(normalizedStatus);
@@ -1348,13 +1354,13 @@ async function finishMagenticOuterRun(
     body: JSON.stringify({
       runId,
       state,
-      // Mag One is one native task root across every claimed Magnetic attempt.
+      // Mag One is one Hermes task root across every claimed Magnetic attempt.
       hermesSessionRef: null,
-      providerThreadRef: status.nativeRootId,
-      providerTurnRef: status.nativeRunId ?? null,
+      providerThreadRef: status.hermesRootId,
+      providerTurnRef: status.hermesRunId ?? null,
       effectiveProvider: status.effectiveProvider || null,
       providerApiMode: status.providerApiMode || null,
-      nativeStatus: status.nativeStatus,
+      hermesStatus: status.hermesStatus,
       finalResult: state === 'completed' ? finalResult : null,
       errorCode: state === 'completed'
         ? null
@@ -1377,10 +1383,10 @@ async function settleUnboundMagenticSubmission(
     const stopped = await requestPythonRailsJson('/magentic/execution/stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nativeRootId: accepted.nativeRootId }),
+      body: JSON.stringify({ hermesRootId: accepted.hermesRootId }),
     }) as MagenticExecutionStatus;
     if (!stopped?.ok || stopped.state !== 'cancelled'
-      || stopped.nativeRootId !== accepted.nativeRootId) {
+      || stopped.hermesRootId !== accepted.hermesRootId) {
       throw new Error('magentic_execution_stop_invalid');
     }
     await finishMagenticOuterRun(runId, stopped);
@@ -1396,11 +1402,11 @@ async function settleUnboundMagenticSubmission(
         runId,
         state: 'blocked',
         hermesSessionRef: null,
-        providerThreadRef: accepted.nativeRootId,
-        providerTurnRef: accepted.nativeRunId ?? null,
+        providerThreadRef: accepted.hermesRootId,
+        providerTurnRef: accepted.hermesRunId ?? null,
         effectiveProvider: accepted.effectiveProvider || null,
         providerApiMode: accepted.providerApiMode || null,
-        nativeStatus: accepted.nativeStatus,
+        hermesStatus: accepted.hermesStatus,
         finalResult: null,
         errorCode: 'magentic_progress_bind_failed',
         errorSummary: `${reason}; ${stopReason}`,
@@ -1414,7 +1420,7 @@ async function readConfiguredCardRunStatus(args: {
   deckId: string;
   runId?: string;
   correlationId?: string;
-  nativeRootId?: string;
+  hermesRootId?: string;
   cardId?: string;
   conversationId?: string;
   includeTerminal?: boolean;
@@ -1429,7 +1435,7 @@ async function readConfiguredCardRunStatus(args: {
     : null;
   const scopedRun = scopedInspection?.runs?.find((candidate: any) => (
     candidate.cardId === args.cardId && candidate.conversationId === args.conversationId
-    && !candidate.nativeChildId
+    && !candidate.hermesChildId
   ));
   if (args.cardId && args.conversationId && !scopedRun?.runId) return null;
   let response = await requestPythonRailsJson('/domain/runs/read', {
@@ -1448,9 +1454,9 @@ async function readConfiguredCardRunStatus(args: {
     && run.runtimeKind === 'hermes'
     && run.runtimeMode === 'magentic_one'
     && ['pending', 'running'].includes(String(run.state || ''))
-    && /^t_[A-Za-z0-9_-]+$/.test(String(run.nativeRootId || ''))
+    && /^t_[A-Za-z0-9_-]+$/.test(String(run.hermesRootId || ''))
   ) {
-    liveMagenticStatus = await readMagenticExecution(String(run.nativeRootId));
+    liveMagenticStatus = await readMagenticExecution(String(run.hermesRootId));
     if (['completed', 'blocked', 'failed', 'cancelled'].includes(liveMagenticStatus.state)) {
       await finishMagenticOuterRun(String(run.runId), liveMagenticStatus);
     } else {
@@ -1471,7 +1477,7 @@ async function readConfiguredCardRunStatus(args: {
   }
   const runId = String(run.runId || '').trim();
   const state = String(run.state || 'running');
-  const nativeRootId = String(run.nativeRootId || '').trim();
+  const hermesRootId = String(run.hermesRootId || '').trim();
   const inspection = scopedInspection || await requestPythonRailsJson('/domain/agentgraph/inspect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1513,27 +1519,27 @@ async function readConfiguredCardRunStatus(args: {
   const totalElapsedMs = Number.isFinite(acceptedAt)
     ? Math.max(0, (Number.isFinite(finishedAt) ? finishedAt : Date.now()) - acceptedAt)
     : null;
-  const persistedNativeStatus = String(run.nativeStatus || '').trim().toLowerCase();
-  let nativeStatus = (HERMES_KANBAN_TASK_STATUSES as readonly string[])
-    .includes(persistedNativeStatus)
-    ? persistedNativeStatus as HermesKanbanTaskStatus
+  const persistedHermesStatus = String(run.hermesStatus || '').trim().toLowerCase();
+  let hermesStatus = (HERMES_KANBAN_TASK_STATUSES as readonly string[])
+    .includes(persistedHermesStatus)
+    ? persistedHermesStatus as HermesKanbanTaskStatus
     : null;
-  let nativeTasks: HermesKanbanTaskProjection[] = [];
+  let hermesTasks: HermesKanbanTaskProjection[] = [];
   if (
     args.inspectOnly
     && run.runtimeKind === 'hermes'
     && run.cardId === 'card_magentic'
     && run.runtimeMode === 'magentic_one'
-    && /^t_[A-Za-z0-9_-]+$/.test(nativeRootId)
+    && /^t_[A-Za-z0-9_-]+$/.test(hermesRootId)
   ) {
-    const status = await readMagenticExecution(nativeRootId);
-    if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(status.nativeStatus)) {
-      throw new Error('magentic_execution_native_status_invalid');
+    const status = await readMagenticExecution(hermesRootId);
+    if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(status.hermesStatus)) {
+      throw new Error('magentic_execution_hermes_status_invalid');
     }
-    nativeStatus = status.nativeStatus;
-    nativeTasks = requireMagenticTaskProjections(status.nativeTasks, nativeRootId);
+    hermesStatus = status.hermesStatus;
+    hermesTasks = requireMagenticTaskProjections(status.hermesTasks, hermesRootId);
   } else if (liveMagenticStatus) {
-    nativeStatus = liveMagenticStatus.nativeStatus;
+    hermesStatus = liveMagenticStatus.hermesStatus;
   }
   const output = typeof run.result === 'string' && run.result.length > 0
     ? run.result
@@ -1552,10 +1558,10 @@ async function readConfiguredCardRunStatus(args: {
   const toolAttemptEvents = attemptEvents.filter((event: any) => event?.kind === 'tool');
   // Generic Hermes receipts are the complete metadata-only tool-attempt surface.
   const observedToolEvents = toolAttemptEvents;
-  const nativeToolCallCount = nullableNonNegativeNumber(run.toolCallCount);
-  const receiptObservationGap = nativeToolCallCount === null
+  const providerToolCallCount = nullableNonNegativeNumber(run.toolCallCount);
+  const receiptObservationGap = providerToolCallCount === null
     ? 0
-    : Math.max(0, nativeToolCallCount - observedToolEvents.length);
+    : Math.max(0, providerToolCallCount - observedToolEvents.length);
   const observationGap = Math.max(reportedObservationGap, receiptObservationGap);
   const lastLlmAttempt = [...attemptEvents].reverse().find((event: any) => (
     event?.kind === 'llm' && String(event?.model || '').trim()
@@ -1588,12 +1594,12 @@ async function readConfiguredCardRunStatus(args: {
     runtimeMode: String(run.runtimeMode || ''),
     runtimeProfile: String(run.runtimeProfile || ''),
     state,
-    status: nativeStatus || state,
-    nativeStatus,
-    nativeTasks,
-    nativeRootId: nativeRootId || null,
-    nativeRunId: typeof run.nativeRunId === 'number' || typeof run.nativeRunId === 'string'
-      ? run.nativeRunId
+    status: hermesStatus || state,
+    hermesStatus,
+    hermesTasks,
+    hermesRootId: hermesRootId || null,
+    hermesRunId: typeof run.hermesRunId === 'number' || typeof run.hermesRunId === 'string'
+      ? run.hermesRunId
       : null,
     hermesSessionId: String(run.hermesSessionId || '').trim() || null,
     provider: preparationFailure ? null : actualProvider,
@@ -1608,7 +1614,7 @@ async function readConfiguredCardRunStatus(args: {
     preparationMs,
     totalElapsedMs,
     elapsedMs,
-    toolCallCount: nativeToolCallCount,
+    toolCallCount: providerToolCallCount,
     graphReads,
     graphWrites,
     inputTokens: nullableNonNegativeNumber(run.inputTokens),
@@ -1703,8 +1709,8 @@ async function readConfiguredCardRunHistory(args: {
 }
 
 type GatewayCardExecution = {
-  owner: AgentTerminalOwner;
-  terminalSessionId: string;
+  owner: CardRuntimeOwner;
+  runtimeSessionId: string;
   hermesSessionId: string;
   storedSessionId: string;
   profile: string;
@@ -1715,8 +1721,8 @@ type GatewayCardExecution = {
 };
 
 type PassiveContextCompaction = {
-  owner: AgentTerminalOwner;
-  identity: AgentTerminalCompactionIdentity;
+  owner: CardRuntimeOwner;
+  identity: SessionCompactionIdentity;
   projectId: string;
   deckId: string;
   cardId: string;
@@ -1765,7 +1771,7 @@ function queuePassiveContextCompaction(args: PassiveContextCompaction): void {
     });
   };
   try {
-    void agentTerminalManager.queueHermesContextCompaction(
+    void cardRuntimeManager.queueHermesContextCompaction(
       args.owner,
       args.identity,
       persistReceipt,
@@ -1853,31 +1859,30 @@ export async function waitForRequestFulfillmentAssessments(): Promise<void> {
 }
 
 async function executePreparedGatewayCardRun(args: {
-  owner: AgentTerminalOwner;
+  owner: CardRuntimeOwner;
   conversationId: string;
   runId: string;
   prepared: any;
   savedDeck?: any;
   savedCard?: any;
-  onEvent?: (event: AgentTerminalGatewayEvent) => void;
-  onBound?: (terminal: { sessionId: string; hermesSessionId: string; profile: string }) => void;
+  onEvent?: (event: CardRuntimeGatewayEvent) => void;
+  onBound?: (runtime: { sessionId: string; hermesSessionId: string; profile: string }) => void;
   onSubmitted?: () => void;
-  attachTui?: boolean;
   surface?: 'card-shared-chat';
 }): Promise<GatewayCardExecution> {
-  let terminalSessionId = '';
+  let runtimeSessionId = '';
   let staged = false;
   let hermesTurnQueued = false;
   let compactionQueued = false;
-  let compactionIdentity: AgentTerminalCompactionIdentity | null = null;
+  let compactionIdentity: SessionCompactionIdentity | null = null;
   const passiveCompactionEnabled = (
     args.prepared?.runtimeOwner === 'hermes'
     && args.prepared?.hermesTransport?.request?.runtime?.mode === 'delegate'
   );
   const refreshCompactionIdentity = () => {
-    if (!terminalSessionId) return;
+    if (!runtimeSessionId) return;
     try {
-      const state = agentTerminalManager.state(args.owner, terminalSessionId);
+      const state = cardRuntimeManager.state(args.owner, runtimeSessionId);
       compactionIdentity = {
         sessionId: state.sessionId,
         hermesSessionId: state.hermesSessionId,
@@ -1913,43 +1918,36 @@ async function executePreparedGatewayCardRun(args: {
     const deck = loaded.deck;
     const card = args.savedCard
       || deck?.nodes.find((candidate: any) => candidate.id === args.owner.cardId);
-    if (!deck || !card) throw new Error('agent_terminal_card_not_found');
+    if (!deck || !card) throw new Error('card_runtime_card_not_found');
     assertPreparedSavedCardSnapshot(args.prepared, card);
-    const profile = requireAgentTerminalCard(card, deck);
-    const existing = agentTerminalManager.find(args.owner);
-    const terminal = args.attachTui
-      ? await agentTerminalManager.open(
+    const profile = requireCardRuntimeCard(card, deck);
+    const existing = cardRuntimeManager.find(args.owner);
+    const runtime = existing || await cardRuntimeManager.open(
         args.owner,
         card,
         deck,
         120,
         36,
-        agentTerminalPresentationOptions(card, true),
-      )
-      : existing || await agentTerminalManager.open(
-        args.owner,
-        card,
-        deck,
-        120,
-        36,
-        agentTerminalPresentationOptions(card, false),
+        cardRuntimeWorkingDirectory(card)
+          ? { workingDirectory: cardRuntimeWorkingDirectory(card) }
+          : {},
       );
-    agentTerminalManager.verifyConfiguration(args.owner, terminal.sessionId, card, deck);
-    terminalSessionId = terminal.sessionId;
+    cardRuntimeManager.verifyConfiguration(args.owner, runtime.sessionId, card, deck);
+    runtimeSessionId = runtime.sessionId;
     compactionIdentity = {
-      sessionId: terminal.sessionId,
-      hermesSessionId: terminal.hermesSessionId,
-      storedSessionId: terminal.storedSessionId,
-      profile: terminal.profile,
-      completedTurnGeneration: terminal.completedTurnGeneration,
-      completedHermesRunId: terminal.completedHermesRunId,
+      sessionId: runtime.sessionId,
+      hermesSessionId: runtime.hermesSessionId,
+      storedSessionId: runtime.storedSessionId,
+      profile: runtime.profile,
+      completedTurnGeneration: runtime.completedTurnGeneration,
+      completedHermesRunId: runtime.completedHermesRunId,
     };
-    args.onBound?.(terminal);
+    args.onBound?.(runtime);
 
     let stagedPrepared = args.prepared;
     const transientTask = String(args.prepared.hermesTransport?.request?.task || '').trim();
     if (transientTask === '/learn' || transientTask.startsWith('/learn ')) {
-      const learnedPrompt = await agentTerminalManager.dispatchLearn(
+      const learnedPrompt = await cardRuntimeManager.dispatchLearn(
         profile,
         transientTask.slice('/learn'.length).trim(),
       );
@@ -1969,16 +1967,16 @@ async function executePreparedGatewayCardRun(args: {
     }
     const preparedTurn = cardTurnBridge.stage(
       args.owner,
-      terminal.sessionId,
+      runtime.sessionId,
       profile,
       stagedPrepared,
       args.conversationId,
     );
     staged = true;
     hermesTurnQueued = true;
-    const pending = agentTerminalManager.submit(
+    const pending = cardRuntimeManager.submit(
       args.owner,
-      terminal.sessionId,
+      runtime.sessionId,
       preparedTurn.message,
       {
         onEvent: args.onEvent,
@@ -2000,8 +1998,8 @@ async function executePreparedGatewayCardRun(args: {
       };
     }
     const hermesCompletion = await cardTurnBridge.completeStaged(
-      terminal.sessionId,
-      terminal.hermesSessionId,
+      runtime.sessionId,
+      runtime.hermesSessionId,
       result,
     );
     staged = false;
@@ -2009,10 +2007,10 @@ async function executePreparedGatewayCardRun(args: {
     queueDelegateCompaction(String(hermesCompletion.providerTurnId || '').trim() || undefined);
     return {
       owner: args.owner,
-      terminalSessionId: terminal.sessionId,
-      hermesSessionId: terminal.hermesSessionId,
-      storedSessionId: compactionIdentity?.storedSessionId || terminal.storedSessionId,
-      profile: terminal.profile,
+      runtimeSessionId: runtime.sessionId,
+      hermesSessionId: runtime.hermesSessionId,
+      storedSessionId: compactionIdentity?.storedSessionId || runtime.storedSessionId,
+      profile: runtime.profile,
       completedTurnGeneration: Number.isSafeInteger(result.completedTurnGeneration)
         ? Number(result.completedTurnGeneration)
         : null,
@@ -2023,17 +2021,17 @@ async function executePreparedGatewayCardRun(args: {
       text: result.text,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'agent_terminal_turn_failed';
-    if (staged && terminalSessionId) {
+    const message = error instanceof Error ? error.message : 'card_runtime_turn_failed';
+    if (staged && runtimeSessionId) {
       const cancelledBeforeBegin = await cardTurnBridge
         .cancelStaged(
-          terminalSessionId,
+          runtimeSessionId,
           message,
           message === 'hermes_turn_cancelled' ? 'cancelled' : 'failed',
         )
         .catch(() => false);
       if (!cancelledBeforeBegin) {
-        await cardTurnBridge.abort(terminalSessionId, message).catch(() => undefined);
+        await cardTurnBridge.abort(runtimeSessionId, message).catch(() => undefined);
       }
     } else {
       await requestPythonRailsJson('/domain/runs/finish', {
@@ -2057,7 +2055,7 @@ function thinkGraphCardAssignment(preparation: any): string {
     'Run one official Engraphis llm_structured extraction pass using the prompt and schema below.',
     'Use your saved ThinkGraph Card instructions and configured model. Do not call tools.',
     'Return only one JSON object that validates against OUTPUT_SCHEMA. Do not wrap it in prose.',
-    'Each facts[] item is one native Engraphis fact and one displayed Think.',
+    'Each facts[] item is one Engraphis fact and one displayed Think.',
     'Preserve each fact\'s content, title, memory type, importance, keywords, entities, and relations.',
     'Extract the fewest independently reusable facts supported by the completed exchange.',
     'Preserve necessary context and uncertainty without repeating conversational setup or turning',
@@ -2073,7 +2071,7 @@ function thinkGraphCardAssignment(preparation: any): string {
 
 const COMPLETED_PAIR_EXTRACTOR_FIELDS = [
   'projectId', 'deckId', 'conversationId', 'runId', 'cardId',
-  'nativeSessionRef', 'completedAt', 'userMessage', 'mainResponse',
+  'hermesSessionId', 'completedAt', 'userMessage', 'mainResponse',
 ] as const;
 
 function completedPairExtractorPayload(
@@ -2156,7 +2154,6 @@ async function runCompletedPairThinkGraphLifecycle(
       prepared,
       savedDeck: savedPreparation.savedDeck,
       savedCard: savedPreparation.savedCard,
-      attachTui: false,
     });
 
     stage = 'settle';
@@ -2172,7 +2169,7 @@ async function runCompletedPairThinkGraphLifecycle(
           cardId: thinkGraphCard.cardId,
           revisionId: thinkGraphCard.cardRevisionId,
           profile: cardResult.profile,
-          nativeSessionRef: cardResult.hermesSessionId,
+          hermesSessionId: cardResult.hermesSessionId,
           resolvedModel: String(
             prepared.hermesTransport?.request?.provider?.providerModelId || '',
           ),
@@ -2322,8 +2319,8 @@ router.post('/run', async (req, res) => {
 
   if (action === 'status') {
     const runId = String(body.runId || '').trim();
-    const nativeRootId = String(body.nativeRootId || '').trim();
-    const selectors = [runId, correlationId, nativeRootId, cardId].filter(Boolean);
+    const hermesRootId = String(body.hermesRootId || '').trim();
+    const selectors = [runId, correlationId, hermesRootId, cardId].filter(Boolean);
     if (selectors.length !== 1) {
       return res.status(400).json({ ok: false, error: 'card_run_status_selector_invalid' });
     }
@@ -2333,7 +2330,7 @@ router.post('/run', async (req, res) => {
         deckId,
         ...(runId ? { runId } : {}),
         ...(correlationId ? { correlationId } : {}),
-        ...(nativeRootId ? { nativeRootId } : {}),
+        ...(hermesRootId ? { hermesRootId } : {}),
         ...(cardId ? { cardId } : {}),
         ...(cardId && String(body.conversationId || '').trim()
           ? { conversationId: String(body.conversationId).trim() } : {}),
@@ -2384,13 +2381,13 @@ router.post('/run', async (req, res) => {
         return res.json({ ok: true, result: status });
       }
       if (status.runtimeKind === 'hermes' && status.runtimeMode === 'magentic_one') {
-        if (!status.nativeRootId) {
-          return res.status(409).json({ ok: false, error: 'magentic_native_root_missing' });
+        if (!status.hermesRootId) {
+          return res.status(409).json({ ok: false, error: 'magentic_hermes_root_missing' });
         }
         const stopped = await requestPythonRailsJson('/magentic/execution/stop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nativeRootId: status.nativeRootId }),
+          body: JSON.stringify({ hermesRootId: status.hermesRootId }),
         }) as MagenticExecutionStatus;
         if (!stopped?.ok || stopped.state !== 'cancelled') {
           throw new Error('magentic_execution_stop_invalid');
@@ -2405,17 +2402,17 @@ router.post('/run', async (req, res) => {
       const { deck } = await getDeckDocument(projectId, deckId);
       const card = deck?.nodes.find((candidate) => candidate.id === cardId);
       if (!deck || !card) {
-        return res.status(404).json({ ok: false, error: 'agent_terminal_card_not_found' });
+        return res.status(404).json({ ok: false, error: 'card_runtime_card_not_found' });
       }
-      requireAgentTerminalCard(card, deck);
+      requireCardRuntimeCard(card, deck);
       const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId, conversationId);
-      const terminal = agentTerminalManager.find(owner);
-      if (!terminal || !cardTurnBridge.ownsRun(terminal.sessionId, runId)) {
-        return res.status(409).json({ ok: false, error: 'agent_terminal_run_not_active' });
+      const runtime = cardRuntimeManager.find(owner);
+      if (!runtime || !cardTurnBridge.ownsRun(runtime.sessionId, runId)) {
+        return res.status(409).json({ ok: false, error: 'card_runtime_run_not_active' });
       }
-      agentTerminalManager.verifyConfiguration(owner, terminal.sessionId, card, deck);
-      cardTurnBridge.requestCancellation(terminal.sessionId, runId);
-      await agentTerminalManager.interrupt(owner, terminal.sessionId);
+      cardRuntimeManager.verifyConfiguration(owner, runtime.sessionId, card, deck);
+      cardTurnBridge.requestCancellation(runtime.sessionId, runId);
+      await cardRuntimeManager.interrupt(owner, runtime.sessionId);
       return res.status(202).json({ ok: true, result: { ...status, status: 'stopping' } });
     } catch (error) {
       return res.status(502).json({
@@ -2464,13 +2461,13 @@ router.post('/run', async (req, res) => {
       const canResumeUnboundMagentic = prepared.runtimeOwner === 'mag_one'
         && status
         && ['pending', 'running'].includes(status.state)
-        && !status.nativeRootId;
+        && !status.hermesRootId;
       if (!canResumeUnboundMagentic) {
         return res.json({ ok: true, result: status });
       }
     }
 
-    // A live native execution must own cancellation before acceptance is sent.
+    // A live Hermes execution must own cancellation before acceptance is sent.
     // End only the HTTP wait; this handler still retains completion and failure.
     const acceptBackground = () => {
       if (body.background === true && !res.destroyed && !res.writableEnded) {
@@ -2522,7 +2519,7 @@ router.post('/run', async (req, res) => {
           hermesSessionId: execution.hermesCompletion.hermesSessionId,
           effectiveProvider: execution.hermesCompletion.effectiveProvider,
           providerApiMode: execution.hermesCompletion.providerApiMode,
-          terminalSessionId: execution.terminalSessionId,
+          runtimeSessionId: execution.runtimeSessionId,
           runtimeSource: 'repository_hermes_gateway',
         };
         providerInputTokens = execution.hermesCompletion.inputTokens;
@@ -2549,8 +2546,8 @@ router.post('/run', async (req, res) => {
         });
         output = String(magenticStatus.finalResult || '');
         transport = {
-          threadId: magenticStatus.nativeRootId,
-          turnId: magenticStatus.nativeRunId ?? null,
+          threadId: magenticStatus.hermesRootId,
+          turnId: magenticStatus.hermesRunId ?? null,
           hermesSessionId: null,
           effectiveProvider: magenticStatus.effectiveProvider || null,
           providerApiMode: magenticStatus.providerApiMode || null,
@@ -2657,13 +2654,13 @@ router.post('/run', async (req, res) => {
         await finishRun(cancelled ? 'cancelled' : 'failed', {
           ...(magenticAcceptedStatus ? {
             hermesSessionRef: null,
-            providerThreadRef: magenticAcceptedStatus.nativeRootId,
-            providerTurnRef: magenticAcceptedStatus.nativeRunId ?? null,
+            providerThreadRef: magenticAcceptedStatus.hermesRootId,
+            providerTurnRef: magenticAcceptedStatus.hermesRunId ?? null,
             effectiveProvider: magenticAcceptedStatus.effectiveProvider || null,
             providerApiMode: magenticAcceptedStatus.providerApiMode || null,
           } : {}),
           ...(magenticAcceptedStatus ? {
-            nativeStatus: magenticAcceptedStatus.nativeStatus,
+            hermesStatus: magenticAcceptedStatus.hermesStatus,
           } : {}),
           errorCode: cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed',
           errorSummary: message,
@@ -2678,7 +2675,7 @@ router.post('/run', async (req, res) => {
 });
 
 // ── Persistent repo-owned Hermes Main bridge (BuilderChat -> Gateway) ───────
-// One stable native Hermes conversation per saved Main card and product
+// One stable Hermes conversation per saved Main card and product
 // conversation. The saved Builder Agent remains a separate Hermes profile.
 
 mainRoutes.get('/session/thinkgraph-revisions', async (req, res) => {
@@ -2824,7 +2821,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       const exactMagenticIdentity = prepared.runtimeOwner === 'mag_one'
         && String(prepared.magenticExecution?.orchestrator?.cardId || '') === target.cardId
         && String(prepared.magenticExecution?.orchestrator?.cardRevisionId || '') === target.cardRevisionId
-        && String(prepared.magenticExecution?.orchestrator?.nativeIdentity || '') === target.profile
+        && String(prepared.magenticExecution?.orchestrator?.hermesProfile || '') === target.profile
         && Boolean(prepared.magenticExecution);
       if (
         String(prepared.runId || '') !== requestedRunId
@@ -2937,7 +2934,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       providerReasoningTokens: null as number | null,
       totalCostUsd: null as number | null,
       usageAvailable: false,
-      usageSource: 'native_magnetic_submission',
+      usageSource: 'hermes_magnetic_submission',
     };
     if (directAddressed && run.prepared.runtimeOwner === 'mag_one') {
       const status = await executePreparedMagenticRun({
@@ -2961,7 +2958,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
           });
         },
       });
-      continuationRef = status.nativeRootId;
+      continuationRef = status.hermesRootId;
       if (['completed', 'blocked', 'failed', 'cancelled'].includes(status.state)) {
         await finishMagenticOuterRun(run.runId, status);
         magenticOuterRunFinalized = true;
@@ -2987,12 +2984,11 @@ mainRoutes.post('/session/chat', async (req, res) => {
         prepared: run.prepared,
         savedDeck: run.savedDeck,
         savedCard: run.savedCard,
-        attachTui: directAddressed,
         surface: directAddressed ? 'card-shared-chat' : undefined,
-        onBound: (terminal) => {
+        onBound: (runtime) => {
           writeSse('session', {
-            sessionId: terminal.hermesSessionId,
-            runtimeSessionId: terminal.sessionId,
+            sessionId: runtime.hermesSessionId,
+            runtimeSessionId: runtime.sessionId,
             turnOwner: directAddressed ? 'addressed_card' : 'main',
             ...(directAddressed ? {} : {
               driverSource: 'internal_chat',
@@ -3001,7 +2997,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
             configuration: {
               provider: run.prepared.hermesTransport.request.provider?.provider || null,
               model: run.prepared.hermesTransport.request.provider?.providerModelId || null,
-              profile: terminal.profile,
+              profile: runtime.profile,
               grantedTools: run.prepared.hermesTransport.request.enabledTools || [],
               unavailableTools: run.prepared.hermesTransport.request.unavailableTools || [],
               loadedSkills: run.prepared.hermesTransport.request.skills || [],
@@ -3026,7 +3022,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
         totalCostUsd: result.hermesCompletion.costUsd,
         usageAvailable: (result.hermesCompletion.inputTokens || 0) > 0
           || (result.hermesCompletion.outputTokens || 0) > 0,
-        usageSource: 'native_gateway',
+        usageSource: 'hermes_gateway',
       };
     }
     if (!resultText.trim()) {
@@ -3090,7 +3086,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
         conversationId,
         runId: run.runId,
         cardId: run.cardId,
-        nativeSessionRef: continuationRef,
+        hermesSessionId: continuationRef,
         completedAt: new Date().toISOString(),
         userMessage: message,
         mainResponse: resultText,
@@ -3127,7 +3123,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       }).catch(() => undefined);
       magenticOuterRunFinalized = true;
     }
-    const busy = reason === 'agent_terminal_turn_already_running';
+    const busy = reason === 'card_runtime_turn_already_running';
     const cancelled = reason === 'hermes_turn_cancelled';
     const persistence = reason === 'shared_conversation_persistence_failed';
     writeSse('error', {
@@ -3139,10 +3135,10 @@ mainRoutes.post('/session/chat', async (req, res) => {
         : cancelled
           ? `The ${target.title} turn was cancelled.`
           : persistence
-            ? 'The native reply completed but the shared conversation could not be persisted.'
+            ? 'The Hermes reply completed but the shared conversation could not be persisted.'
             : directAddressed
-              ? `The native ${target.title} turn failed.`
-              : 'The native Main CLI turn failed.',
+              ? `The Hermes ${target.title} turn failed.`
+              : 'The Hermes Main turn failed.',
       status: busy
         ? 409
         : 502,
@@ -3205,28 +3201,28 @@ mainRoutes.post('/session/stop', async (req, res) => {
       if (['completed', 'failed', 'cancelled', 'blocked'].includes(configuredRun.state)) {
         return res.status(404).json({ ok: false, error: 'no_active_turn' });
       }
-      if (!configuredRun.nativeRootId) {
-        return res.status(409).json({ ok: false, error: 'magentic_native_root_missing' });
+      if (!configuredRun.hermesRootId) {
+        return res.status(409).json({ ok: false, error: 'magentic_hermes_root_missing' });
       }
       const stopped = await requestPythonRailsJson('/magentic/execution/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nativeRootId: configuredRun.nativeRootId }),
+        body: JSON.stringify({ hermesRootId: configuredRun.hermesRootId }),
       }) as MagenticExecutionStatus;
       if (!stopped?.ok || stopped.state !== 'cancelled'
-        || stopped.nativeRootId !== configuredRun.nativeRootId) {
+        || stopped.hermesRootId !== configuredRun.hermesRootId) {
         throw new Error('magentic_execution_stop_invalid');
       }
       await finishMagenticOuterRun(expectedRunId, stopped);
       return res.status(202).json({ ok: true, runId: expectedRunId, state: 'cancelled' });
     }
-    const runtime = agentTerminalManager.findCard(projectId, deckId, cardId);
+    const runtime = cardRuntimeManager.findCard(projectId, deckId, cardId);
     if (!runtime) return res.status(404).json({ ok: false, error: 'no_active_turn' });
     if (!cardTurnBridge.ownsRun(runtime.state.sessionId, expectedRunId)) {
       return res.status(404).json({ ok: false, error: 'no_active_turn' });
     }
     cardTurnBridge.requestCancellation(runtime.state.sessionId, expectedRunId);
-    await agentTerminalManager.interrupt(runtime.owner, runtime.state.sessionId);
+    await cardRuntimeManager.interrupt(runtime.owner, runtime.state.sessionId);
     return res.status(202).json({ ok: true, runId: expectedRunId, state: 'stopping' });
   } catch (error) {
     return res.status(503).json({ ok: false,
@@ -3259,15 +3255,15 @@ mainRoutes.get('/session/history', async (req, res) => {
     sharedMessages = await getConversationMessages(projectId, conversationId);
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'main_cli_history_read_failed';
-    return res.status(reason === 'agent_terminal_history_scope_mismatch' ? 409 : 503)
+    return res.status(reason === 'card_runtime_history_scope_mismatch' ? 409 : 503)
       .json({ ok: false, error: [
-        'agent_terminal_history_scope_mismatch',
+        'card_runtime_history_scope_mismatch',
         'persisted_main_chat_mismatch',
         'shared_chat_agent_address_invalid',
       ].includes(reason)
         ? reason : 'main_cli_history_read_failed', messages: [] });
   }
-  const runtime = agentTerminalManager.findCard(
+  const runtime = cardRuntimeManager.findCard(
     projectId,
     deckId,
     authority.main.cardId,
@@ -3294,7 +3290,7 @@ mainRoutes.get('/session/history', async (req, res) => {
 mainRoutes.delete('/session/history', (_req, res) => {
   return res.status(405).json({
     ok: false,
-    error: 'main_cli_history_is_native_owned',
+    error: 'main_chat_history_is_hermes_owned',
   });
 });
 mainRoutes.get('/session/conversations', async (req, res) => {

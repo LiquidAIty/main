@@ -8,7 +8,7 @@ import WorldViewSurface from './WorldViewSurface';
 
 // jsdom cannot parse the vendor's container-query stylesheet; visual layout
 // belongs to the loaded preview, while these tests verify the control bridge.
-vi.mock('virtual:worldview-native-css', () => ({ default: '' }));
+vi.mock('virtual:worldview-runtime-css', () => ({ default: '' }));
 
 const directHost = vi.hoisted(() => ({
   props: null as Record<string, any> | null,
@@ -102,7 +102,7 @@ function openSelection() {
   fireEvent.click(screen.getByRole('tab', { name: 'Selection' }));
 }
 
-function nativeReady(state = layerState) {
+function runtimeReady(state = layerState) {
   act(() => {
     callbacks().onReady?.('0.1.0');
     callbacks().onLayerStateChange?.(state);
@@ -173,7 +173,7 @@ describe('WorldView direct source presentation', () => {
     expect(directHost.focusSelection).not.toHaveBeenCalled();
 
     openDataSources();
-    nativeReady();
+    runtimeReady();
     const inspector = screen.getByTestId('workspace-inspector-drawer');
     const host = document.getElementById('worldview-inspector-controls');
     expect(screen.getByLabelText('WorldView globe').parentElement?.contains(inspector)).toBe(false);
@@ -192,7 +192,7 @@ describe('WorldView direct source presentation', () => {
     directHost.executeAction.mockResolvedValue({ ok: true });
     render(<WorldViewSurface {...scope} />);
     expect(screen.queryByRole('button', { name: 'Fit view' })).toBeNull();
-    nativeReady();
+    runtimeReady();
     const controls = screen.getByTestId('graph-navigation-controls');
     expect(controls.parentElement).toBe(screen.getByLabelText('WorldView globe').parentElement);
     expect(screen.getByTestId('workspace-inspector-drawer').contains(controls)).toBe(false);
@@ -214,7 +214,7 @@ describe('WorldView direct source presentation', () => {
   it('fits Earth even with satellites on without changing layer or catalog settings', () => {
     directHost.executeAction.mockResolvedValue({ ok: true });
     render(<WorldViewSurface {...scope} />);
-    nativeReady({
+    runtimeReady({
       ...layerState,
       enabledLayerIds: ['satellites'],
       sources: [{ ...source, id: 'satellites', name: 'Satellites', enabled: true }],
@@ -229,7 +229,7 @@ describe('WorldView direct source presentation', () => {
   it('leaves the Inspector Satellite view unchanged without adding a labeled Earth mode', () => {
     directHost.executeAction.mockResolvedValue({ ok: true });
     render(<WorldViewSurface {...scope} />);
-    nativeReady();
+    runtimeReady();
     fireEvent.click(screen.getByRole('tab', { name: 'View' }));
     expect(screen.getByRole('button', { name: 'Satellite view' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Earth view' })).toBeNull();
@@ -245,7 +245,7 @@ describe('WorldView direct source presentation', () => {
     const { container } = render(<div data-companion-visible-viewport="true">
       <WorldViewSurface {...scope} />
     </div>);
-    nativeReady();
+    runtimeReady();
     const pane = screen.getByLabelText('WorldView globe').parentElement as HTMLElement;
     const clip = container.firstElementChild as HTMLElement;
     const controls = screen.getByTestId('graph-navigation-controls');
@@ -275,7 +275,7 @@ describe('WorldView direct source presentation', () => {
   it('frames live satellites after the explicit ON and options requests settle', () => {
     directHost.executeAction.mockResolvedValue({ ok: true, action: 'satellite_overview' });
     render(<WorldViewSurface {...scope} />);
-    nativeReady({
+    runtimeReady({
       ...layerState,
       enabledLayerIds: ['satellites'],
       sources: [{ ...source, id: 'satellites', name: 'Satellites', enabled: true }],
@@ -319,7 +319,7 @@ describe('WorldView direct source presentation', () => {
 
   it('does not apply satellite presentation when explicit ON fails', () => {
     render(<WorldViewSurface {...scope} />);
-    nativeReady();
+    runtimeReady();
     fireEvent.click(screen.getByRole('tab', { name: 'View' }));
     fireEvent.click(screen.getByRole('button', { name: 'Satellite view' }));
     act(() => callbacks().onCommandResult?.({
@@ -340,7 +340,7 @@ describe('WorldView direct source presentation', () => {
 
   it('does not move the camera when satellite options fail', () => {
     render(<WorldViewSurface {...scope} />);
-    nativeReady();
+    runtimeReady();
     fireEvent.click(screen.getByRole('tab', { name: 'View' }));
     fireEvent.click(screen.getByRole('button', { name: 'Satellite view' }));
     act(() => callbacks().onCommandResult?.({
@@ -362,10 +362,10 @@ describe('WorldView direct source presentation', () => {
       node.textContent?.includes('Core catalog unavailable'))).toBe(true);
   });
 
-  it('persists a settled native ON/OFF event without toggling the layer twice', async () => {
+  it('persists a settled runtime ON/OFF event without toggling the layer twice', async () => {
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
+    runtimeReady();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/worldview/projects/project-1/capabilities', { method: 'GET' },
     ));
@@ -387,7 +387,7 @@ describe('WorldView direct source presentation', () => {
     await waitFor(() => expect(directHost.setLayerVisibility).not.toHaveBeenCalled());
   });
 
-  it('restores the last confirmed Project choice when the native toggle cannot be saved', async () => {
+  it('restores the last confirmed Project choice when the runtime toggle cannot be saved', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       if ((init?.method || 'GET') === 'GET') {
         return projectResponse('project-1', [{
@@ -399,7 +399,7 @@ describe('WorldView direct source presentation', () => {
     });
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
+    runtimeReady();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/worldview/projects/project-1/capabilities', { method: 'GET' },
     ));
@@ -416,7 +416,7 @@ describe('WorldView direct source presentation', () => {
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1);
   });
 
-  it('keeps saved ON distinct from a failed native feed, then accepts the native OFF control', async () => {
+  it('keeps saved ON distinct from a failed provider feed, then accepts the provider OFF control', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if ((init?.method || 'GET') === 'GET') {
@@ -445,7 +445,7 @@ describe('WorldView direct source presentation', () => {
     });
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady({
+    runtimeReady({
       ...layerState,
       enabledLayerIds: [],
       sources: [{
@@ -488,12 +488,12 @@ describe('WorldView direct source presentation', () => {
     );
   });
 
-  it('focuses a real native selection only after the explicit user action', async () => {
+  it('focuses a real provider selection only after the explicit user action', async () => {
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
+    runtimeReady();
     act(() => callbacks().onSelectionChange?.({
-      id: 'native-flight-1',
+      id: 'provider-flight-1',
       type: 'flight',
       label: 'Flight 1',
       position: { longitude: -97, latitude: 30 },
@@ -505,17 +505,17 @@ describe('WorldView direct source presentation', () => {
     expect(directHost.focusSelection).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
     expect(directHost.focusSelection).toHaveBeenCalledExactlyOnceWith({
-      id: 'native-flight-1',
+      id: 'provider-flight-1',
       type: 'flight',
       label: 'Flight 1',
       position: { longitude: -97, latitude: 30 },
     });
   });
 
-  it('keeps native layer controls available and clears selection on Project remount', async () => {
+  it('keeps provider layer controls available and clears selection on Project remount', async () => {
     const { rerender } = render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady({
+    runtimeReady({
       ...layerState,
       enabledLayerIds: [],
       sources: [{
@@ -573,7 +573,7 @@ describe('WorldView direct source presentation', () => {
     });
     const { rerender } = render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
+    runtimeReady();
     await waitFor(() => expect(directHost.setLayerVisibility)
       .toHaveBeenCalledExactlyOnceWith('earthquakes', false, { origin: 'restore' }));
 
@@ -620,7 +620,7 @@ describe('WorldView direct source presentation', () => {
   it('shows command failures without replacing the playable globe', async () => {
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
+    runtimeReady();
     openDataSources();
 
     act(() => callbacks().onCommandResult?.({
@@ -650,7 +650,7 @@ describe('WorldView direct source presentation', () => {
     });
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
+    runtimeReady();
     await waitFor(() => expect(actionStreams).toHaveLength(1));
 
     act(() => actionStreams[0].emit('action', {
@@ -687,7 +687,7 @@ describe('WorldView direct source presentation', () => {
     ));
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
-    nativeReady();
+    runtimeReady();
     await waitFor(() => expect(actionStreams).toHaveLength(1));
     act(() => actionStreams[0].emit('action', {
       requestId: 'request-layer-1', name: 'set_layer_visibility',

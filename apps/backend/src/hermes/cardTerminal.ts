@@ -3,7 +3,7 @@ import type { RuntimeIdentity, RuntimeEvent, RuntimeObservation } from '../contr
 export type CardTerminalEvent = RuntimeEvent;
 
 // Presentation-only credential redaction. Never applied to a runtime request,
-// saved result, model prompt, or native session data.
+// saved result, model prompt, or Hermes session data.
 export function terminalText(value: unknown): string {
   const sensitive = new Set(['authorization', 'password', 'secret', 'token', 'access_token',
     'refresh_token', 'api_key', 'apikey', 'bearer', 'env', 'environment', 'headers', 'credentials']);
@@ -40,7 +40,7 @@ export function terminalIdentity(run: any): RuntimeIdentity {
     projectId: String(run.projectId || ''), deckId: String(run.deckId || ''),
     cardId: String(run.cardId || ''), cardName: String(run.terminal?.cardName || ''),
     runId: String(run.runId || ''), parentRunId: run.terminal?.parentRunIds?.[0] || null,
-    nativeChildId: null,
+    hermesChildId: null,
   };
 }
 
@@ -51,7 +51,8 @@ export function buildCardTerminal(run: any): RuntimeObservation {
     sequence: 0, timestamp: run.startedAt, status: String(run.state) });
   for (const child of run.terminal?.children || []) {
     const childIdentity = { ...identity, runId: child.runId, cardId: child.cardId,
-      cardName: child.cardName, parentRunId: child.parentRunId, nativeChildId: child.nativeChildId || null };
+      cardName: child.cardName, parentRunId: child.parentRunId,
+      hermesChildId: child.hermesChildId || null };
     if (child.startedAt) events.push({ ...childIdentity, id: `${child.runId}:start`, kind: 'child_started',
       sequence: 0, timestamp: child.startedAt, status: 'running' });
     if (child.finishedAt) events.push({ ...childIdentity, id: `${child.runId}:finish`, kind: 'child_finished',
@@ -64,7 +65,7 @@ export function buildCardTerminal(run: any): RuntimeObservation {
   return {
     ...identity, events,
     // The persisted root Run and persisted active child Runs are observable;
-    // native stream detail remains on the Gateway/TUI surface that owns it.
+    // Hermes stream detail remains on the Gateway/TUI surface that owns it.
     activeAgentCount: active ? 1 + Number(run.terminal?.activeChildren || 0) : 0,
     observation: active || pending ? 'unavailable' : 'finished',
     unavailableReason: active ? (run.runtimeMode === 'magentic_one'

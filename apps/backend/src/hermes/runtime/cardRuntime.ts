@@ -47,7 +47,6 @@ export type CardRuntimeState = {
 export type CardRuntimeLaunch = {
   file: string;
   gatewayArgs: string[];
-  tuiArgs: string[];
   cwd: string;
   env: Record<string, string>;
   profile: string;

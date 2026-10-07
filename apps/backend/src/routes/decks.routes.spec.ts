@@ -20,7 +20,7 @@ const access = vi.hoisted(() => ({ requireOwnedProject: vi.fn() }));
 vi.mock('../decks/store', () => decks);
 vi.mock('../services/agentBuilderStore', () => membership);
 vi.mock('../startup/pythonOwnedStartup', () => ({
-  requestConnectedAgentTerminalReconcile: startup.reconcile,
+  requestConnectedCardRuntimeReconcile: startup.reconcile,
 }));
 vi.mock('./projectAccess', () => access);
 

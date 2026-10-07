@@ -7,10 +7,10 @@ import React, {
 } from 'react';
 
 import {
-  loadWorldViewNative,
-  type NativeWorldViewMount,
-  type NativeWorldViewVisualReadiness,
-} from './loadWorldViewNative';
+  loadWorldViewRuntime,
+  type WorldViewMount,
+  type WorldViewVisualReadiness,
+} from './loadWorldViewRuntime';
 
 export type GodsEyeSelectionRef = {
   id: string;
@@ -64,7 +64,7 @@ export type GodsEyeBridge = {
     options?: { disabledLayerIds?: string[]; signal?: AbortSignal },
   ) => Promise<unknown>;
   prepareRunImages: () => Promise<Array<Record<string, unknown>>>;
-  getVisualReadiness: () => NativeWorldViewVisualReadiness | null;
+  getVisualReadiness: () => WorldViewVisualReadiness | null;
 };
 
 export type GodsEyeCommandResult = {
@@ -94,7 +94,7 @@ type GodsEyeSurfaceProps = {
   onError?: (error: { code: string; message: string }) => void;
 };
 
-/** React owns the pane; the controlled native app owns everything inside it. */
+/** React owns the pane; the controlled WorldView runtime owns everything inside it. */
 const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function GodsEyeSurface({
   projectId,
   cardId,
@@ -107,10 +107,10 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   onError,
 }, bridgeRef): React.ReactElement {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const mountRef = useRef<NativeWorldViewMount | null>(null);
+  const mountRef = useRef<WorldViewMount | null>(null);
   const [status, setStatus] = useState<'starting' | 'ready' | 'failed'>('starting');
   const [failure, setFailure] = useState<string | null>(null);
-  const [visualReadiness, setVisualReadiness] = useState<NativeWorldViewVisualReadiness | null>(null);
+  const [visualReadiness, setVisualReadiness] = useState<WorldViewVisualReadiness | null>(null);
   const callbacksRef = useRef({
     onReady,
     onBridgeUnavailable,
@@ -172,7 +172,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
     mountRef.current = null;
     callbacksRef.current.onBridgeUnavailable?.();
 
-    void loadWorldViewNative(root, {
+    void loadWorldViewRuntime(root, {
       projectId,
       cardId,
       callbacks: {
@@ -233,7 +233,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
       setStatus('failed');
       setFailure(message);
       callbacksRef.current.onError?.({
-        code: 'worldview_native_mount_failed',
+        code: 'worldview_runtime_mount_failed',
         message,
       });
     });

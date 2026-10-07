@@ -1,6 +1,6 @@
-export type NativeToolContract = {
+export type ProviderToolContract = {
   sourceId: string;
-  providerName: string;
+  providerToolName: string;
   connectionKind: string;
   available: boolean;
   description: string;
@@ -19,7 +19,7 @@ export type ToolCatalogReference = {
   shortDescription: string;
   availability: 'available' | 'disabled';
   access: 'read' | 'write';
-  contracts: NativeToolContract[];
+  contracts: ProviderToolContract[];
   requiredCallerRuntimeKind?: 'hermes';
   requiredCallerRuntimeMode?: 'main' | 'delegate' | 'magentic_one';
 };
@@ -100,7 +100,7 @@ export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: T
       reference.displayName,
       reference.shortDescription,
       ...reference.sourceIds,
-      ...reference.contracts.map((contract) => contract.providerName),
+      ...reference.contracts.map((contract) => contract.providerToolName),
     ].join('\n').toLowerCase();
     return query.split(/\s+/).every((term) => haystack.includes(term));
   });

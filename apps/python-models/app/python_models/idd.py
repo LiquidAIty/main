@@ -17,7 +17,7 @@ IDD_PATH = Path(__file__).resolve().parents[4] / "LiquidAIty.idd"
 
 
 class IddValidationError(ValueError):
-    """Secret-safe structural error in builder data or native projections."""
+    """Secret-safe structural error in builder data or provider projections."""
 
 
 def load_input_data_dictionary() -> dict[str, Any]:
@@ -186,7 +186,10 @@ def materialize_runtime_options(model_options: Any, *, document: dict[str, Any] 
     if not isinstance(model_options, list):
         raise IddValidationError("model_catalog_invalid")
     try:
-        models = [ModelOption.model_validate(value).model_dump() for value in model_options]
+        models = [
+            ModelOption.model_validate(value).model_dump(exclude_none=True)
+            for value in model_options
+        ]
     except ValidationError as error:
         raise IddValidationError("model_catalog_entry_invalid") from error
     if len({(item["provider"], item["key"]) for item in models}) != len(models):

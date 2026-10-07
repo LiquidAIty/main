@@ -95,21 +95,23 @@ function hermesToolName(configuration: HermesCardTools, canonicalName: string): 
     (tool) => tool.canonicalName === canonicalName,
   );
   return external
-    ? hermesExternalMcpToolName(external.connectionId, external.providerToolName)
+    ? hermesExternalMcpToolName(external.connectionId, external.canonicalName)
     : null;
 }
 
 function hermesTurnRouting(
   configuration: HermesCardTools,
   routing: CardTurnRouting,
+  unavailableToolReasons: Record<string, string>,
 ): HermesTurnRouting {
   const mapExact = (names: string[]) => names.map((name) => {
     const hermes = hermesToolName(configuration, name);
     if (!hermes) throw new Error(`card_turn_tool_unavailable:${name}`);
     return hermes;
   });
-  const managedTools = mapExact(routing.managedCanonicalTools);
-  const allowedTools = mapExact(routing.allowedCanonicalTools);
+  const available = (names: string[]) => names.filter((name) => !unavailableToolReasons[name]);
+  const managedTools = mapExact(available(routing.managedCanonicalTools));
+  const allowedTools = mapExact(available(routing.allowedCanonicalTools));
   if (
     new Set(managedTools).size !== managedTools.length
     || new Set(allowedTools).size !== allowedTools.length
@@ -140,23 +142,23 @@ function resolveTurnRouting(prepared: any, input: any): CardTurnRouting {
     Object.prototype.hasOwnProperty.call(toolReceipt, 'normalAuthorizedTools')
       ? toolReceipt.normalAuthorizedTools
       : input?.presentedTools || [],
-    'agent_terminal_turn_tools_invalid',
+    'card_runtime_turn_tools_invalid',
   );
   const allowedCanonicalTools = exactStringList(
     input?.presentedTools || [],
-    'agent_terminal_turn_tools_invalid',
+    'card_runtime_turn_tools_invalid',
   );
   if (!allowedCanonicalTools.every((name) => managedCanonicalTools.includes(name))) {
-    throw new Error('agent_terminal_turn_tools_broadened');
+    throw new Error('card_runtime_turn_tools_broadened');
   }
   const authorizedCanonicalTools = exactStringList(
     Array.isArray(toolReceipt.selectedTools)
       ? toolReceipt.selectedTools
       : allowedCanonicalTools,
-    'agent_terminal_turn_tools_invalid',
+    'card_runtime_turn_tools_invalid',
   );
   if (!authorizedCanonicalTools.every((name) => managedCanonicalTools.includes(name))) {
-    throw new Error('agent_terminal_turn_tools_broadened');
+    throw new Error('card_runtime_turn_tools_broadened');
   }
 
   const router = prepared?.jevModelRouter;
@@ -241,12 +243,12 @@ function resolveStagedRun(
     || !input
     || typeof input !== 'object'
     || runtime?.kind !== 'hermes'
-    || runtime?.mode !== 'delegate'
+    || !['main', 'delegate'].includes(String(runtime?.mode || ''))
     || !String(runtime?.profile || '').trim()
     || !message.trim()
     || message.length > 512_000
   ) {
-    throw new Error('agent_terminal_staged_run_invalid');
+    throw new Error('card_runtime_staged_run_invalid');
   }
   const rawImages = Object.prototype.hasOwnProperty.call(input, 'images')
     ? input.images
@@ -256,7 +258,7 @@ function resolveStagedRun(
     || rawImages.length > 12
     || rawImages.some((image) => !image || typeof image !== 'object' || Array.isArray(image))
   ) {
-    throw new Error('agent_terminal_staged_run_images_invalid');
+    throw new Error('card_runtime_staged_run_images_invalid');
   }
   const images = rawImages as Array<Record<string, unknown>>;
   const retiredFields = [
@@ -286,7 +288,7 @@ function resolveStagedRun(
     || !/^[a-f0-9]{64}$/.test(authorityFingerprint)
     || String(input.runtimeOptions?.executionAuthorityFingerprint || '') !== authorityFingerprint
   ) {
-    throw new Error('agent_terminal_staged_run_identity_mismatch');
+    throw new Error('card_runtime_staged_run_identity_mismatch');
   }
   // Validate the exact saved provider before any text reaches the Hermes session.
   resolvePreparedHermesProvider(input);
@@ -305,7 +307,7 @@ export class CardTurnBridge {
 
   stage(
     owner: CardRuntimeOwner,
-    terminalSessionId: string,
+    runtimeSessionId: string,
     profile: string,
     prepared: any,
     conversationId = '',
@@ -315,11 +317,11 @@ export class CardTurnBridge {
     images: Array<Record<string, unknown>>;
     routing: CardTurnRouting;
   } {
-    if (this.staged.has(terminalSessionId)) {
-      throw new Error('agent_terminal_turn_already_running');
+    if (this.staged.has(runtimeSessionId)) {
+      throw new Error('card_runtime_turn_already_running');
     }
     const { runId, message, images, routing } = resolveStagedRun(owner, profile, prepared);
-    this.staged.set(terminalSessionId, {
+    this.staged.set(runtimeSessionId, {
       owner: { ...owner },
       profile,
       prepared,
@@ -335,14 +337,14 @@ export class CardTurnBridge {
 
   /** Persist the exact Hermes Gateway completion for an application-submitted turn. */
   async completeStaged(
-    terminalSessionId: string,
+    runtimeSessionId: string,
     hermesSessionId: string,
     result: CardHermesTurnResult,
   ): Promise<CardTurnCompletion> {
-    const staged = this.staged.get(terminalSessionId);
-    if (!staged) throw new Error('agent_terminal_staged_run_missing');
+    const staged = this.staged.get(runtimeSessionId);
+    if (!staged) throw new Error('card_runtime_staged_run_missing');
     if (staged.cancelRequested) {
-      await this.cancelStaged(terminalSessionId, 'hermes_turn_cancelled', 'cancelled');
+      await this.cancelStaged(runtimeSessionId, 'hermes_turn_cancelled', 'cancelled');
       throw new Error('hermes_turn_cancelled');
     }
     const payload = result.event.payload || {};
@@ -355,11 +357,11 @@ export class CardTurnBridge {
     const actualProvider = optionalText(payload.actualProvider ?? payload.actual_provider);
     const actualModel = optionalText(payload.actualModel ?? payload.actual_model);
     if (!actualProvider || !actualModel) {
-      throw new Error('agent_terminal_actual_model_missing');
+      throw new Error('card_runtime_actual_model_missing');
     }
     const exposedTools = exactStringList(
       payload.exposedTools ?? payload.exposed_tools ?? [],
-      'agent_terminal_completion_tools_invalid',
+      'card_runtime_completion_tools_invalid',
     );
     const executionEvidence = Array.isArray(payload.executionEvidence)
       ? payload.executionEvidence
@@ -367,12 +369,14 @@ export class CardTurnBridge {
     const executionEvidenceComplete = payload.executionEvidenceComplete === true;
     const executionEvidenceError = optionalText(payload.executionEvidenceError);
     if (actualProvider !== selectedProvider.provider || actualModel !== selectedProvider.model) {
-      throw new Error('agent_terminal_actual_model_mismatch');
+      throw new Error('card_runtime_actual_model_mismatch');
     }
     const completion: CardTurnCompletion = {
       hermesSessionId,
-      providerThreadId: optionalText(payload.providerThreadId ?? payload.provider_thread_id),
-      providerTurnId: optionalText(payload.providerTurnId ?? payload.provider_turn_id),
+      // Hermes owns these two wire fields. The application maps them once into
+      // the provider-thread/provider-turn Run receipt vocabulary.
+      providerThreadId: optionalText(payload.nativeRootId ?? payload.native_root_id),
+      providerTurnId: optionalText(payload.nativeRunId ?? payload.native_run_id),
       effectiveProvider: actualProvider,
       actualModel,
       exposedTools,
@@ -440,16 +444,16 @@ export class CardTurnBridge {
         durationMs: Date.now() - staged.started,
       }),
     });
-    this.staged.delete(terminalSessionId);
+    this.staged.delete(runtimeSessionId);
     return completion;
   }
 
   async cancelStaged(
-    terminalSessionId: string,
+    runtimeSessionId: string,
     errorSummary: string,
     state: 'failed' | 'cancelled' = 'failed',
   ): Promise<boolean> {
-    const staged = this.staged.get(terminalSessionId);
+    const staged = this.staged.get(runtimeSessionId);
     if (!staged) return false;
     await this.request('/domain/runs/finish', {
       method: 'POST',
@@ -457,27 +461,27 @@ export class CardTurnBridge {
       body: JSON.stringify({
         runId: staged.runId,
         state,
-        errorSummary: String(errorSummary || 'agent_terminal_staged_turn_cancelled'),
+        errorSummary: String(errorSummary || 'card_runtime_staged_turn_cancelled'),
       }),
     });
-    this.staged.delete(terminalSessionId);
+    this.staged.delete(runtimeSessionId);
     return true;
   }
 
-  ownsRun(terminalSessionId: string, runId: string): boolean {
-    return this.staged.get(terminalSessionId)?.runId === runId;
+  ownsRun(runtimeSessionId: string, runId: string): boolean {
+    return this.staged.get(runtimeSessionId)?.runId === runId;
   }
 
-  activeRunId(terminalSessionId: string): string | null {
-    return this.staged.get(terminalSessionId)?.runId || null;
+  activeRunId(runtimeSessionId: string): string | null {
+    return this.staged.get(runtimeSessionId)?.runId || null;
   }
 
-  activeContext(terminalSessionId: string): {
+  activeContext(runtimeSessionId: string): {
     runId: string;
     conversationId: string;
     authorizedCanonicalTools: string[];
   } | null {
-    const staged = this.staged.get(terminalSessionId);
+    const staged = this.staged.get(runtimeSessionId);
     return staged ? {
       runId: staged.runId,
       conversationId: staged.conversationId,
@@ -485,14 +489,14 @@ export class CardTurnBridge {
     } : null;
   }
 
-  requestCancellation(terminalSessionId: string, runId: string): void {
-    const staged = this.staged.get(terminalSessionId);
-    if (staged?.runId !== runId) throw new Error('agent_terminal_run_not_active');
+  requestCancellation(runtimeSessionId: string, runId: string): void {
+    const staged = this.staged.get(runtimeSessionId);
+    if (staged?.runId !== runId) throw new Error('card_runtime_run_not_active');
     staged.cancelRequested = true;
   }
 
-  async abort(terminalSessionId: string, reason = 'hermes_process_exited'): Promise<void> {
-    await this.cancelStaged(terminalSessionId, reason);
+  async abort(runtimeSessionId: string, reason = 'hermes_process_exited'): Promise<void> {
+    await this.cancelStaged(runtimeSessionId, reason);
   }
 }
 
@@ -516,7 +520,11 @@ export class CardTurn {
           };
         await this.attachImages(binding, options.images || [], options.onEvent);
         const routing = options.routing
-          ? hermesTurnRouting(this.runtime.cardTools, options.routing)
+          ? hermesTurnRouting(
+            this.runtime.cardTools,
+            options.routing,
+            this.runtime.state.unavailableToolReasons,
+          )
           : null;
         return await this.submitNow(binding, text, {
           ...options,
@@ -651,7 +659,7 @@ export class CardTurn {
             }
           }
           const completedHermesRunId = String(
-            event.payload?.hermesRunId ?? event.payload?.hermes_run_id ?? '',
+            event.payload?.nativeRunId ?? event.payload?.native_run_id ?? '',
           ).trim() || null;
           this.runtime.state.completedTurnGeneration += 1;
           this.runtime.state.completedHermesRunId = completedHermesRunId;

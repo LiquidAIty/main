@@ -29,7 +29,7 @@ vi.mock('../services/agentBuilderStore', () => ({
 }));
 vi.mock('../decks/store', () => decks);
 vi.mock('../startup/pythonOwnedStartup', () => ({
-  requestConnectedAgentTerminalReconcile: startup.reconcile,
+  requestConnectedCardRuntimeReconcile: startup.reconcile,
 }));
 vi.mock('./projectAccess', () => access);
 vi.mock('../db/pool', () => ({ pool: database }));

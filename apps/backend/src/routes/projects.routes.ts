@@ -8,7 +8,7 @@ import {
   listAgentCards,
   SYSTEM6_PROJECT_EDGES,
 } from '../services/agentBuilderStore';
-import { requestConnectedAgentTerminalReconcile } from '../startup/pythonOwnedStartup';
+import { requestConnectedCardRuntimeReconcile } from '../startup/pythonOwnedStartup';
 import { requireOwnedProject, resolveProjectOwnerUserId } from './projectAccess';
 
 const router = Router();
@@ -108,7 +108,7 @@ router.post('/', async (req, res) => {
       // Runtime reconciliation happens only after the complete saved Project
       // exists.  A reconciliation failure must not delete canonical relational
       // state after the Python transaction has already committed AGE topology.
-      void requestConnectedAgentTerminalReconcile().catch((error) => {
+      void requestConnectedCardRuntimeReconcile().catch((error) => {
         console.warn('[projects] runtime reconcile deferred', {
           projectId: project.id,
           error: error instanceof Error ? error.message : String(error),

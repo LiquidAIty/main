@@ -54,7 +54,7 @@ class ForecastPoint:
     median: Optional[float] = None
     p10: Optional[float] = None
     p90: Optional[float] = None
-    # Candle-native (Kronos): full predicted OHLCV.
+    # Candle-level (Kronos): full predicted OHLCV.
     open: Optional[float] = None
     high: Optional[float] = None
     low: Optional[float] = None

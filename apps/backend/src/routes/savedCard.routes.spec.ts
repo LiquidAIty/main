@@ -156,7 +156,7 @@ const agentTerminalMocks = vi.hoisted(() => {
   });
   const history = vi.fn(async () => ({ count: 0, messages: [] as Array<Record<string, unknown>> }));
   const dispatchLearn = vi.fn(async (_profile: string, request: string) => (
-    `NATIVE LEARN PROMPT: ${request}`
+    `LEARN PROMPT: ${request}`
   ));
   const requestProfile = vi.fn(async (profile: string, method: string) => {
     if (method === 'profiles.describe') return {
@@ -361,19 +361,19 @@ const agentTerminalMocks = vi.hoisted(() => {
     },
     {
       cardId: 'card_test_delegate', cardRevisionId: 'revision:card_test_delegate',
-      profile: 'delegate', title: 'Delegate', botEnabled: true, roster: [],
+      profile: 'delegate', title: 'Delegate', botEnabled: false, roster: [],
     },
     {
       cardId: 'builder', cardRevisionId: 'revision:builder',
-      profile: 'builder', title: 'Builder', botEnabled: true, roster: [],
+      profile: 'builder', title: 'Builder', botEnabled: false, roster: [],
     },
     {
       cardId: 'card_thinkgraph', cardRevisionId: 'revision:card_thinkgraph',
-      profile: 'thinkgraph', title: 'ThinkGraph', botEnabled: true, roster: [],
+      profile: 'thinkgraph', title: 'ThinkGraph', botEnabled: false, roster: [],
     },
     {
       cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
-      profile: 'card_magentic', title: 'Magnetic', botEnabled: true, roster: [],
+      profile: 'card_magentic', title: 'Magnetic', botEnabled: false, roster: [],
     },
   ]));
   return {
@@ -481,7 +481,7 @@ const orchestratorMocks = vi.hoisted(() => {
   dispatchConfiguredRuntime: vi.fn(async (): Promise<any> => ({
     ok: true,
     runId: 'run-mag-one',
-    finalResponseText: 'Native Mag One response.',
+    finalResponseText: 'Mag One response.',
   })),
   requestPythonRailsJson: vi.fn(async (
     endpoint: string,
@@ -536,7 +536,6 @@ const orchestratorMocks = vi.hoisted(() => {
         changedEdgeIds: ['think-rich-edge'],
         affectedNodeIds: ['think-rich-a', 'think-fast-a'],
         turnHeat: { 'think-rich-a': 1.7 },
-        topActiveNodes: [{ nativeId: 'think-rich-a', turnHeat: 1.7 }],
       };
     }
     if (endpoint === '/domain/runs/request-fulfillment') {
@@ -573,7 +572,7 @@ const orchestratorMocks = vi.hoisted(() => {
         preparationElapsedMs: 1,
         errorCode: body.errorCode,
         errorSummary: body.errorSummary,
-        nativeRunId: null,
+        hermesRunId: null,
       };
     }
     if (endpoint === '/domain/main/prepare') {
@@ -665,11 +664,11 @@ const orchestratorMocks = vi.hoisted(() => {
           status: 'selected',
           selectedTools: ['cbm.search_graph'],
         } : undefined,
-        resolvedNativeReads: graphConfigured
-          ? [{ authority: 'ThinkGraph', nativeId: 'think-root-1' }]
-          : delegateCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_idf' }] : [],
+        resolvedGraphReads: graphConfigured
+          ? [{ engraphisEntityId: 'think-root-1' }]
+          : delegateCard ? [{ cbmQualifiedName: 'pkg.materialize_idf' }] : [],
         resolvedGraphProjection: {
-          schemaVersion: 'native-card-context.v1',
+          schemaVersion: 'provider-card-context.v1',
           authority: 'mixed',
           projectId: body.projectId,
           nodes: delegateCard ? [{ id: 'pkg.materialize_idf', label: 'materialize_idf', mentionCount: 1 }] : [],
@@ -680,7 +679,7 @@ const orchestratorMocks = vi.hoisted(() => {
           actualGraphData: {
             recordCounts: { total: delegateCard || graphConfigured ? 2 : 0 }, authorities: [], records: [],
             modelText: graphConfigured
-              ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
+              ? '## Resolved ThinkGraph\nBounded graph context for think-root-1.'
               : delegateCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
           },
           stableSavedCardContext: {
@@ -723,12 +722,12 @@ const orchestratorMocks = vi.hoisted(() => {
             systemPrompt: delegateCard ? 'Saved Delegate prompt' : 'Saved prompt',
             outputRequirements: '',
             graphContext: graphConfigured
-              ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
+              ? '## Resolved ThinkGraph\nBounded graph context for think-root-1.'
               : delegateCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
             task: String(mainChat ? body.message || '' : body.assignment || ''),
             message: [
               graphConfigured
-                ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
+                ? '## Resolved ThinkGraph\nBounded graph context for think-root-1.'
                 : delegateCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
               String(mainChat ? body.message || '' : body.assignment || ''),
             ].filter(Boolean).join('\n\n'),
@@ -794,7 +793,7 @@ const orchestratorMocks = vi.hoisted(() => {
       const run = records.find((record) => (
         (body.runId && record.runId === body.runId)
         || (body.correlationId && record.correlationId === body.correlationId)
-        || (body.nativeRootId && record.nativeRootId === body.nativeRootId)
+        || (body.hermesRootId && record.hermesRootId === body.hermesRootId)
         || (body.cardId && record.cardId === body.cardId)
       ));
       return {
@@ -829,11 +828,6 @@ const orchestratorMocks = vi.hoisted(() => {
       return {
         ok: true,
         runs: [],
-        attentionEvents: body.runId ? [
-          { operation: 'read', runId: body.runId },
-          { operation: 'read', runId: body.runId },
-          { operation: 'write', runId: body.runId },
-        ] : [],
       };
     }
     return {};
@@ -872,6 +866,18 @@ vi.mock('../hermes/agentTerminal', () => ({
   requireAgentTerminalCard: (card: any) => {
     if (card?.runtime?.kind !== 'hermes' || !String(card?.runtime?.profile || '').trim()) {
       throw new Error('agent_terminal_card_runtime_unsupported');
+    }
+    return String(card.runtime.profile).trim();
+  },
+  resolveHermesBotRosterProjections: agentTerminalMocks.resolveHermesBotRosterProjections,
+}));
+
+vi.mock('../hermes/cardRuntimeManager', () => ({
+  cardRuntimeManager: agentTerminalMocks.manager,
+  cardRuntimeWorkingDirectory: () => undefined,
+  requireCardRuntimeCard: (card: any) => {
+    if (card?.runtime?.kind !== 'hermes' || !String(card?.runtime?.profile || '').trim()) {
+      throw new Error('card_runtime_card_unsupported');
     }
     return String(card.runtime.profile).trim();
   },
@@ -922,7 +928,7 @@ async function createApiServer(userId: string | null = 'owner-user'): Promise<{ 
 async function closeServer(server: Server): Promise<void> {
   // Main ends its SSE response before scheduling the saved ThinkGraph Card lifecycle.
   // Let it enqueue, then drain that already-authorized background turn so its
-  // native session and mocks cannot bleed into the next test.
+  // Hermes session and mocks cannot bleed into the next test.
   await new Promise<void>((resolve) => setImmediate(resolve));
   await waitForCompletedPairThinkGraphLifecycles();
   await waitForRequestFulfillmentAssessments();
@@ -1018,7 +1024,7 @@ describe('saved Card routes', () => {
       });
       expect(run.status).toBe(502);
       await expect(run.json()).resolves.toMatchObject({
-        ok: false, error: 'agent_terminal_project_access_denied',
+        ok: false, error: 'card_runtime_project_access_denied',
       });
       expect(agentTerminalMocks.manager.findCard).not.toHaveBeenCalled();
       expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
@@ -1027,7 +1033,7 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('does not substitute native Main session history for an empty Project conversation', async () => {
+  it('does not substitute Main session history for an empty Project conversation', async () => {
     agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 3, messages: [
       { role: 'user', text: 'Question' },
       { role: 'tool', text: 'private tool event' },
@@ -1056,7 +1062,7 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('resolves Main history A to B to A through one Project/Card native session', async () => {
+  it('resolves Main history A to B to A through one Project/Card Hermes session', async () => {
     agentTerminalMocks.manager.findCard.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
@@ -1151,7 +1157,7 @@ describe('saved Card routes', () => {
       description: 'Search CodeGraph.',
       sourceId: 'cbm',
       namespace: 'cbm',
-      providerName: 'search_graph',
+      providerToolName: 'search_graph',
       connectionKind: 'external-mcp',
       inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
       annotations: { readOnlyHint: true },
@@ -1159,7 +1165,7 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
       tools: [{
         name: 'calculator',
-        providerName: 'calculator',
+        providerToolName: 'calculator',
         kind: 'tool',
         sourceId: 'python_runtime',
         namespace: 'python',
@@ -1173,7 +1179,7 @@ describe('saved Card routes', () => {
           canonicalId: 'cbm.search_graph', kind: 'tool', namespace: 'cbm',
           sourceIds: ['cbm'], displayName: 'Search graph', shortDescription: 'Search CodeGraph.',
           availability: 'available', contracts: [{
-            sourceId: 'cbm', providerName: 'search_graph', connectionKind: 'external-mcp',
+            sourceId: 'cbm', providerToolName: 'search_graph', connectionKind: 'external-mcp',
             available: true, description: 'Search CodeGraph.',
             inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
             annotations: { readOnlyHint: true },
@@ -1184,7 +1190,7 @@ describe('saved Card routes', () => {
           sourceIds: ['python_runtime'], displayName: 'Calculator',
           shortDescription: 'Evaluate bounded arithmetic.', availability: 'available',
           contracts: [{
-            sourceId: 'python_runtime', nativeName: 'calculator', connectionKind: 'private-runtime',
+            sourceId: 'python_runtime', providerToolName: 'calculator', connectionKind: 'private-runtime',
             available: true, description: 'Evaluate bounded arithmetic.',
             inputSchema: { type: 'object', properties: { expression: { type: 'string' } } },
           }],
@@ -1233,7 +1239,7 @@ describe('saved Card routes', () => {
       description: 'Read the saved canvas.',
       sourceId: 'liquidaity',
       namespace: 'canvas',
-      nativeName: 'canvas.inspect',
+      providerToolName: 'canvas.inspect',
       connectionKind: 'application-mcp',
       inputSchema: { type: 'object', properties: {} },
       annotations: { readOnlyHint: true },
@@ -1243,7 +1249,7 @@ describe('saved Card routes', () => {
       description: 'Update saved Card configuration.',
       sourceId: 'liquidaity',
       namespace: 'card',
-      nativeName: 'card.update_configuration',
+      providerToolName: 'card.update_configuration',
       connectionKind: 'application-mcp',
       inputSchema: { type: 'object', properties: { cardId: { type: 'string' } } },
       annotations: { readOnlyHint: false },
@@ -1256,7 +1262,7 @@ describe('saved Card routes', () => {
           sourceIds: ['liquidaity'], displayName: 'Inspect canvas',
           shortDescription: 'Read the saved canvas.', availability: 'available', access: 'read',
           contracts: [{
-            sourceId: 'liquidaity', nativeName: 'canvas.inspect', connectionKind: 'application-mcp',
+            sourceId: 'liquidaity', providerToolName: 'canvas.inspect', connectionKind: 'application-mcp',
             available: true, description: 'Read the saved canvas.', inputSchema: { type: 'object', properties: {} },
             annotations: { readOnlyHint: true },
           }],
@@ -1265,7 +1271,7 @@ describe('saved Card routes', () => {
           sourceIds: ['liquidaity'], displayName: 'Update Card',
           shortDescription: 'Update saved Card configuration.', availability: 'available', access: 'write',
           contracts: [{
-            sourceId: 'liquidaity', nativeName: 'card.update_configuration', connectionKind: 'application-mcp',
+            sourceId: 'liquidaity', providerToolName: 'card.update_configuration', connectionKind: 'application-mcp',
             available: true, description: 'Update saved Card configuration.',
             inputSchema: { type: 'object', properties: { cardId: { type: 'string' } } },
             annotations: { readOnlyHint: false },
@@ -1298,7 +1304,7 @@ describe('saved Card routes', () => {
   it('validates Card Python against the same selected-tool palette used by the editor', async () => {
     mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
       name: 'canvas.inspect', title: 'Inspect canvas', description: 'Read the saved canvas.',
-      sourceId: 'liquidaity', namespace: 'canvas', nativeName: 'canvas.inspect',
+      sourceId: 'liquidaity', namespace: 'canvas', providerToolName: 'canvas.inspect',
       connectionKind: 'application-mcp', inputSchema: { type: 'object', properties: {} },
       annotations: { readOnlyHint: true },
     }]);
@@ -1309,7 +1315,7 @@ describe('saved Card routes', () => {
           canonicalId: 'canvas.inspect', kind: 'tool', namespace: 'canvas', sourceIds: ['liquidaity'],
           displayName: 'Inspect canvas', shortDescription: 'Read the saved canvas.',
           availability: 'available', access: 'read', contracts: [{
-            sourceId: 'liquidaity', nativeName: 'canvas.inspect', connectionKind: 'application-mcp',
+            sourceId: 'liquidaity', providerToolName: 'canvas.inspect', connectionKind: 'application-mcp',
             available: true, description: 'Read the saved canvas.', inputSchema: { type: 'object', properties: {} },
             annotations: { readOnlyHint: true },
           }],
@@ -1318,9 +1324,9 @@ describe('saved Card routes', () => {
       .mockResolvedValueOnce({
         enabled: true, version: 3, sourceHash: 'source-hash', compiledHash: 'compiled-hash',
         lastValidation: { status: 'valid', executionTested: false, errors: [], toolHandles: ['canvas.inspect'] },
-        nativeSupport: {
+        hermesSupport: {
           available: false, active: false, executor: null,
-          reason: 'card_script_native_bridge_unavailable',
+          reason: 'card_script_hermes_runner_unavailable',
         },
         compiled: { toolHandles: ['canvas.inspect'] },
       });
@@ -1343,10 +1349,10 @@ describe('saved Card routes', () => {
       expect(response.status).toBe(200);
       const payload = await response.json() as any;
       expect(payload.script.lastValidation.status).toBe('valid');
-      expect(payload.script.nativeSupport).toMatchObject({
+      expect(payload.script.hermesSupport).toMatchObject({
         available: false,
         active: false,
-        reason: 'card_script_native_bridge_unavailable',
+        reason: 'card_script_hermes_runner_unavailable',
       });
       expect(payload.references.map((entry: any) => entry.canonicalId)).toEqual(['canvas.inspect']);
       const validationCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
@@ -1357,13 +1363,12 @@ describe('saved Card routes', () => {
         script,
         selectedTools: ['canvas.inspect'],
         defaultAgentTools: ['canvas.inspect'],
-        nativeAvailable: false,
         paletteFingerprint: payload.paletteFingerprint,
       }));
     } finally { await closeServer(server); }
   });
 
-  it('serves ordinary card-editor options without a Card read, full palette, or native tool discovery', async () => {
+  it('serves ordinary card-editor options without a Card read, full palette, or provider tool discovery', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     deckMocks.getDeckDocument.mockClear();
     mcpClientMocks.listPythonAgentMcpCatalog.mockClear();
@@ -1437,7 +1442,7 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('projects native discovery and preserves missing saved selections without rewriting the Card', async () => {
+  it('projects provider discovery and preserves missing saved selections without rewriting the Card', async () => {
     const card = { id: 'custom', templateId: 'removed_template',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
       runtimeOptions: { tools: ['removed.tool'], provider: 'openrouter', modelKey: 'removed-model' } };
@@ -1539,7 +1544,7 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('does not expose conversation deletion outside the native Main Chat', async () => {
+  it('does not expose conversation deletion outside the Main Chat', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
@@ -1549,7 +1554,7 @@ describe('saved Card routes', () => {
       expect(response.status).toBe(405);
       await expect(response.json()).resolves.toEqual({
         ok: false,
-        error: 'main_cli_history_is_native_owned',
+        error: 'main_chat_history_is_hermes_owned',
       });
     } finally {
       await closeServer(server);
@@ -1642,7 +1647,7 @@ describe('saved Card routes', () => {
     });
   });
 
-  it('reports the native-versus-observed tool receipt deficit as an observation gap', async () => {
+  it('reports the declared-versus-observed tool receipt deficit as an observation gap', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.runRecords.set('tool-gap', {
@@ -1662,10 +1667,6 @@ describe('saved Card routes', () => {
         attemptEvents: [{
           eventId: 'tool-call-one', attemptId: 'tool-call-one', kind: 'tool',
           phase: 'completed', toolName: 'engraphis_get_memory', status: 'ok',
-        }],
-        attentionEvents: [{
-          eventId: 'graph-attention-one', operation: 'read',
-          toolName: 'engraphis_get_memory',
         }],
       }] };
     });
@@ -1870,7 +1871,7 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('runs an ordinary Builder mission and forwards native usage once', async () => {
+  it('runs an ordinary Builder mission and forwards provider usage once', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
@@ -1919,7 +1920,7 @@ describe('saved Card routes', () => {
         'main',
       );
       expect(payload.result.transport).toMatchObject({
-        terminalSessionId: 'terminal:builder', hermesSessionId: 'hermes:builder',
+        runtimeSessionId: 'terminal:builder', hermesSessionId: 'hermes:builder',
         effectiveProvider: 'openai-codex', providerApiMode: 'codex_responses',
       });
 
@@ -1993,7 +1994,7 @@ describe('saved Card routes', () => {
     });
 
 
-  it.each([true, false])('uses only the conversation-scoped native Run selection (found=%s)', async (found) => {
+  it.each([true, false])('uses only the conversation-scoped Hermes Run selection (found=%s)', async (found) => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     const scoped = { runId: 'conversation-run', cardId: 'builder', conversationId: 'one',
@@ -2106,7 +2107,6 @@ describe('saved Card routes', () => {
           runId: 'failed-new', cardId: 'builder', acceptedAt: '2026-10-01T20:00:00Z',
           attemptEvents: [{ eventId: 'latest-model', kind: 'llm',
             provider: 'actual-provider', model: 'gpt-5.6-sol' }],
-          attentionEvents: [],
         }] };
       });
     const { server, baseUrl } = await createApiServer();
@@ -2145,7 +2145,7 @@ describe('saved Card routes', () => {
         model: null, inputTokens: null, outputTokens: null, toolCallCount: null, costUsd: null,
       } }))
       .mockImplementationOnce(async () => ({ ok: true, runs: [{
-        runId: 'cancelled-new', cardId: 'builder', attemptEvents: [], attentionEvents: [],
+        runId: 'cancelled-new', cardId: 'builder', attemptEvents: [],
       }] }));
     const { server, baseUrl } = await createApiServer();
     try {
@@ -2309,7 +2309,7 @@ describe('saved Card routes', () => {
       runtimeMode: 'delegate',
       runtimeProfile: 'delegate',
       state: 'completed',
-      finalResult: 'Exact stored native Delegate result.',
+      finalResult: 'Exact stored Delegate result.',
       startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(),
     });
@@ -2334,7 +2334,7 @@ describe('saved Card routes', () => {
           cardId: 'card_test_delegate',
           state: 'completed',
           resultReady: true,
-          output: 'Exact stored native Delegate result.',
+          output: 'Exact stored Delegate result.',
         },
       });
       expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
@@ -2346,7 +2346,7 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('runs native Hermes /learn through the same materialized Delegate Card turn', async () => {
+  it('runs Hermes /learn through the same materialized Delegate Card turn', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
@@ -2378,7 +2378,7 @@ describe('saved Card routes', () => {
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
         expect.objectContaining({ cardId: 'card_test_delegate' }),
         'terminal:card_test_delegate',
-        '## Resolved CodeGraph\n- pkg.materialize_idf\n\nNATIVE LEARN PROMPT: study the bounded repository context',
+        '## Resolved CodeGraph\n- pkg.materialize_idf\n\nLEARN PROMPT: study the bounded repository context',
         expect.any(Object),
       );
       expect(agentTerminalMocks.execution.stage.mock.calls[0]?.[3].hermesTransport.request).toMatchObject({
@@ -2395,7 +2395,7 @@ describe('saved Card routes', () => {
     }
   });
 
-  it.each(['completed', 'failed'] as const)('accepts a background handoff before its native %s result and retains that result', async (state) => {
+  it.each(['completed', 'failed'] as const)('accepts a background handoff before its provider %s result and retains that result', async (state) => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
@@ -2409,12 +2409,12 @@ describe('saved Card routes', () => {
       agentTerminalMocks.staged.delete(sessionId);
       try {
         await done;
-        agentTerminalMocks.complete(record.runId, owner, 'Native graph proposal');
-        return { text: 'Native graph proposal', status: 'completed',
+        agentTerminalMocks.complete(record.runId, owner, 'Graph proposal');
+        return { text: 'Graph proposal', status: 'completed',
           completedTurnGeneration: 1, completedHermesRunId: null, event: {
           type: 'message.complete', session_id: sessionId,
           payload: {
-            status: 'completed', text: 'Native graph proposal', usage: {},
+            status: 'completed', text: 'Graph proposal', usage: {},
             effectiveProvider: 'openai-codex', providerApiMode: null,
             actualProvider: 'openai-codex', actualModel: 'gpt-5.6-luna',
             exposedTools: [], executionEvidence: [],
@@ -2447,8 +2447,8 @@ describe('saved Card routes', () => {
       expect(accepted.result).toMatchObject({ runId: `background-${state}`, state: 'running', acceptedAt: expect.any(String) });
       expect(agentTerminalMocks.completed.has(`background-${state}`)).toBe(false);
       await vi.waitFor(() => expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1));
-      if (state === 'completed') settle({ finalText: 'Native graph proposal', usage: chatSessionMocks.usage, transport: {} });
-      else fail(new Error('native failure'));
+      if (state === 'completed') settle({ finalText: 'Graph proposal', usage: chatSessionMocks.usage, transport: {} });
+      else fail(new Error('provider failure'));
       await vi.waitFor(() => {
         expect(agentTerminalMocks.completed.get(`background-${state}`)).toMatchObject({ state });
       });
@@ -2459,7 +2459,7 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('keeps a configured Hermes turn durable after request disconnect and records late native completion', async () => {
+  it('keeps a configured Hermes turn durable after request disconnect and records late provider completion', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
@@ -2665,7 +2665,7 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('submits Mag One to native Hermes execution without a backend poll loop', async () => {
+  it('submits Mag One to Hermes execution without a backend poll loop', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
     agentTerminalMocks.manager.open.mockClear();
@@ -2684,7 +2684,7 @@ describe('saved Card routes', () => {
       orchestrator: {
         cardId: 'card_magentic',
         cardRevisionId: 'revision:card_magentic',
-        nativeIdentity: 'card_magentic',
+        hermesProfile: 'card_magentic',
         instructions: 'Saved Mag One prompt',
         provider: {
           provider: 'openai', accessMode: 'chatgpt-account',
@@ -2741,16 +2741,16 @@ describe('saved Card routes', () => {
         },
       });
       return {
-        ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_mag_root',
+        ok: true, state: 'running', hermesStatus: 'ready', hermesRootId: 't_mag_root',
         outerRunBound: true,
-        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        hermesProfile: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
       };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
       expect(endpoint).toBe('/domain/runs/progress');
       expect(JSON.parse(String(init?.body))).toEqual({
-        runId: 'corr-mag-1', nativeRootId: 't_mag_root', nativeStatus: 'ready',
+        runId: 'corr-mag-1', hermesRootId: 't_mag_root', hermesStatus: 'ready',
       });
       return { ok: true, runId: 'corr-mag-1', updated: true };
     });
@@ -2781,7 +2781,7 @@ describe('saved Card routes', () => {
         expect.any(Object),
         120,
         36,
-        { attachTui: false, materializeTaskProfile: true },
+        { materializeTaskProfile: true },
       );
       expect(agentTerminalMocks.manager.open).toHaveBeenNthCalledWith(
         2,
@@ -2790,7 +2790,7 @@ describe('saved Card routes', () => {
         expect.any(Object),
         120,
         36,
-        { attachTui: false, materializeTaskProfile: true },
+        { materializeTaskProfile: true },
       );
       expect(agentTerminalMocks.manager.open).toHaveBeenNthCalledWith(
         3,
@@ -2799,7 +2799,7 @@ describe('saved Card routes', () => {
         expect.any(Object),
         120,
         36,
-        { attachTui: false, materializeTaskProfile: true },
+        { materializeTaskProfile: true },
       );
       const body = await response.json() as any;
       expect(body).toMatchObject({
@@ -2830,17 +2830,17 @@ describe('saved Card routes', () => {
         return { ok: true, run: {
           runId: 'corr-mag-1', correlationId: 'corr-mag-1', cardId: 'card_magentic',
           state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-          runtimeProfile: 'card_magentic', nativeRootId: 't_mag_root',
-          nativeStatus: 'running', startedAt, result: null,
+          runtimeProfile: 'card_magentic', hermesRootId: 't_mag_root',
+          hermesStatus: 'running', startedAt, result: null,
         } };
       });
       orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
         expect(endpoint).toBe('/magentic/execution/status');
         return {
-          ok: true, state: 'completed', nativeStatus: 'done', nativeRootId: 't_mag_root',
-          nativeRunId: 2, nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+          ok: true, state: 'completed', hermesStatus: 'done', hermesRootId: 't_mag_root',
+          hermesRunId: 2, hermesProfile: 'card_magentic', effectiveProvider: 'openai-codex',
           providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
-          finalResult: 'Native Hermes Mag One response.',
+          finalResult: 'Hermes Mag One response.',
         };
       });
       orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
@@ -2850,7 +2850,7 @@ describe('saved Card routes', () => {
           runId: 'corr-mag-1', state: 'completed', hermesSessionRef: null,
           providerThreadRef: 't_mag_root', providerTurnRef: 2,
           effectiveProvider: 'openai-codex', providerApiMode: 'codex_app_server',
-          nativeStatus: 'done', finalResult: 'Native Hermes Mag One response.',
+          hermesStatus: 'done', finalResult: 'Hermes Mag One response.',
         });
         expect(finish).not.toHaveProperty('tasksCompleted');
         expect(finish).not.toHaveProperty('tasksTotal');
@@ -2862,15 +2862,15 @@ describe('saved Card routes', () => {
         return { ok: true, run: {
           runId: 'corr-mag-1', correlationId: 'corr-mag-1', cardId: 'card_magentic',
           state: 'completed', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-          runtimeProfile: 'card_magentic', nativeRootId: 't_mag_root', nativeRunId: 2,
-          nativeStatus: 'done', effectiveProvider: 'openai-codex',
+          runtimeProfile: 'card_magentic', hermesRootId: 't_mag_root', hermesRunId: 2,
+          hermesStatus: 'done', effectiveProvider: 'openai-codex',
           providerApiMode: 'codex_app_server', startedAt, finishedAt: new Date().toISOString(),
-          result: 'Native Hermes Mag One response.',
+          result: 'Hermes Mag One response.',
         } };
       });
       orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
         expect(endpoint).toBe('/domain/agentgraph/inspect');
-        return { runs: [], attentionEvents: [] };
+        return { runs: [] };
       });
       const statusResponse = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
@@ -2884,8 +2884,8 @@ describe('saved Card routes', () => {
         ok: true,
         result: {
           runId: 'corr-mag-1', state: 'completed', status: 'done',
-          nativeRootId: 't_mag_root', nativeRunId: 2,
-          output: 'Native Hermes Mag One response.',
+          hermesRootId: 't_mag_root', hermesRunId: 2,
+          output: 'Hermes Mag One response.',
         },
       });
     } finally {
@@ -2942,7 +2942,7 @@ describe('saved Card routes', () => {
       mission: 'Use the automatic Team.',
       orchestrator: {
         cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
-        nativeIdentity: 'card_magentic', instructions: 'Saved Magnetic prompt',
+        hermesProfile: 'card_magentic', instructions: 'Saved Magnetic prompt',
         provider: {
           provider: 'openai', accessMode: 'chatgpt-account',
           modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
@@ -2976,9 +2976,9 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/magentic/execution/submit');
       return {
-        ok: true, state: 'running', nativeStatus: 'triage', nativeRootId: 't_team_root',
+        ok: true, state: 'running', hermesStatus: 'triage', hermesRootId: 't_team_root',
         outerRunBound: true,
-        nativeIdentity: 'team', effectiveProvider: 'openai-codex',
+        hermesProfile: 'team', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-terra',
       };
     });
@@ -3007,7 +3007,7 @@ describe('saved Card routes', () => {
         expect.any(Object),
         120,
         36,
-        { attachTui: false, materializeTaskProfile: true },
+        { materializeTaskProfile: true },
       );
       expect(agentTerminalMocks.manager.open).not.toHaveBeenCalledWith(
         expect.anything(), expect.objectContaining({ id: 'card_magentic' }),
@@ -3035,15 +3035,15 @@ describe('saved Card routes', () => {
       runId: 'magnetic-inspection', correlationId: 'magnetic-inspection',
       projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
       state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-      runtimeProfile: 'card_magentic', nativeRootId: 't_magnetic_inspection',
-      nativeStatus: 'ready', startedAt: new Date().toISOString(), result: null,
+      runtimeProfile: 'card_magentic', hermesRootId: 't_magnetic_inspection',
+      hermesStatus: 'ready', startedAt: new Date().toISOString(), result: null,
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
       if (endpoint === '/magentic/execution/status') {
         return {
-          ok: true, state: 'running', nativeStatus: 'ready',
-          nativeRootId: 't_magnetic_inspection', nativeRunId: null,
-          nativeTasks: [{
+          ok: true, state: 'running', hermesStatus: 'ready',
+          hermesRootId: 't_magnetic_inspection', hermesRunId: null,
+          hermesTasks: [{
             taskId: 't_magnetic_inspection', title: 'Magnetic mission',
             assignee: 'card_magentic', status: 'ready', dependencyIds: [],
             latestAttempt: null, resultAvailable: false,
@@ -3066,8 +3066,8 @@ describe('saved Card routes', () => {
       await expect(response.json()).resolves.toMatchObject({
         ok: true,
         result: {
-          runId: 'magnetic-inspection', state: 'running', nativeStatus: 'ready',
-          nativeTasks: [{
+          runId: 'magnetic-inspection', state: 'running', hermesStatus: 'ready',
+          hermesTasks: [{
             taskId: 't_magnetic_inspection', status: 'ready',
             handoffSummary: 'Worker returned one bounded saved Card result.',
           }],
@@ -3092,15 +3092,15 @@ describe('saved Card routes', () => {
       runId: 'magnetic-invalid-detail', correlationId: 'magnetic-invalid-detail',
       projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
       state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-      runtimeProfile: 'card_magentic', nativeRootId: 't_magnetic_invalid_detail',
-      nativeStatus: 'ready', startedAt: new Date().toISOString(), result: null,
+      runtimeProfile: 'card_magentic', hermesRootId: 't_magnetic_invalid_detail',
+      hermesStatus: 'ready', startedAt: new Date().toISOString(), result: null,
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
       if (endpoint === '/magentic/execution/status') {
         return {
-          ok: true, state: 'running', nativeStatus: 'ready',
-          nativeRootId: 't_magnetic_invalid_detail', nativeRunId: null,
-          nativeTasks: [{
+          ok: true, state: 'running', hermesStatus: 'ready',
+          hermesRootId: 't_magnetic_invalid_detail', hermesRunId: null,
+          hermesTasks: [{
             taskId: 't_magnetic_invalid_detail', title: 'Magnetic mission',
             assignee: 'card_magentic', status: 'ready', dependencyIds: [],
             latestAttempt: null, resultAvailable: false,
@@ -3126,7 +3126,7 @@ describe('saved Card routes', () => {
       expect(body).toMatchObject({
         ok: true,
         result: {
-          nativeTasks: [{
+          hermesTasks: [{
             taskId: 't_magnetic_invalid_detail',
             handoffSummary: 'Bounded handoff.',
           }],
@@ -3159,7 +3159,7 @@ describe('saved Card routes', () => {
       orchestrator: {
         cardId: 'card_magentic',
         cardRevisionId: 'revision:card_magentic',
-        nativeIdentity: 'card_magentic',
+        hermesProfile: 'card_magentic',
         instructions: 'Saved Mag One prompt',
         provider: {
           provider: 'openai', accessMode: 'chatgpt-account',
@@ -3189,9 +3189,9 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/magentic/execution/submit');
       return {
-        ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_mag_unbound',
+        ok: true, state: 'running', hermesStatus: 'ready', hermesRootId: 't_mag_unbound',
         outerRunBound: true,
-        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        hermesProfile: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
       };
     });
@@ -3201,10 +3201,10 @@ describe('saved Card routes', () => {
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
       expect(endpoint).toBe('/magentic/execution/stop');
-      expect(JSON.parse(String(init?.body))).toEqual({ nativeRootId: 't_mag_unbound' });
+      expect(JSON.parse(String(init?.body))).toEqual({ hermesRootId: 't_mag_unbound' });
       return {
-        ok: true, state: 'cancelled', nativeStatus: 'archived', nativeRootId: 't_mag_unbound',
-        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        ok: true, state: 'cancelled', hermesStatus: 'archived', hermesRootId: 't_mag_unbound',
+        hermesProfile: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', error: 'cancelled_by_outer_run_bind_failure',
       };
     });
@@ -3212,7 +3212,7 @@ describe('saved Card routes', () => {
       expect(endpoint).toBe('/domain/runs/finish');
       expect(JSON.parse(String(init?.body))).toMatchObject({
         runId: 'corr-mag-unbound', state: 'cancelled',
-        providerThreadRef: 't_mag_unbound', nativeStatus: 'archived',
+        providerThreadRef: 't_mag_unbound', hermesStatus: 'archived',
         errorCode: 'magentic_execution_cancelled',
         errorSummary: 'cancelled_by_outer_run_bind_failure',
       });
@@ -3248,25 +3248,25 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('reconciles a native Mag One blocked root without claiming completion', async () => {
+  it('reconciles a Hermes Mag One blocked root without claiming completion', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
     const startedAt = new Date().toISOString();
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/domain/runs/read');
       return { ok: true, run: {
-        runId: 'failed-native-root', correlationId: 'failed-native-root', cardId: 'card_magentic',
+        runId: 'failed-hermes-root', correlationId: 'failed-hermes-root', cardId: 'card_magentic',
         state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-        runtimeProfile: 'card_magentic', nativeRootId: 't_failed_root',
-        nativeStatus: 'running', startedAt, result: null,
+        runtimeProfile: 'card_magentic', hermesRootId: 't_failed_root',
+        hermesStatus: 'running', startedAt, result: null,
       } };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/magentic/execution/status');
       return {
-        ok: true, state: 'blocked', nativeStatus: 'blocked', nativeRootId: 't_failed_root',
-        nativeRunId: 1,
-        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        ok: true, state: 'blocked', hermesStatus: 'blocked', hermesRootId: 't_failed_root',
+        hermesRunId: 1,
+        hermesProfile: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
         error: 'magentic_task_blocked:t_worker',
       };
@@ -3274,21 +3274,21 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
       expect(endpoint).toBe('/domain/runs/finish');
       expect(JSON.parse(String(init?.body))).toMatchObject({
-        runId: 'failed-native-root', state: 'blocked', nativeStatus: 'blocked',
+        runId: 'failed-hermes-root', state: 'blocked', hermesStatus: 'blocked',
         providerThreadRef: 't_failed_root', providerTurnRef: 1,
         errorCode: 'magentic_execution_blocked',
         errorSummary: 'magentic_task_blocked:t_worker',
         finalResult: null,
       });
-      return { receipt: { runId: 'failed-native-root', state: 'blocked' } };
+      return { receipt: { runId: 'failed-hermes-root', state: 'blocked' } };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/domain/runs/read');
       return { ok: true, run: {
-        runId: 'failed-native-root', correlationId: 'failed-native-root', cardId: 'card_magentic',
+        runId: 'failed-hermes-root', correlationId: 'failed-hermes-root', cardId: 'card_magentic',
         state: 'blocked', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-        runtimeProfile: 'card_magentic', nativeRootId: 't_failed_root', nativeRunId: 1,
-        nativeStatus: 'blocked', effectiveProvider: 'openai-codex',
+        runtimeProfile: 'card_magentic', hermesRootId: 't_failed_root', hermesRunId: 1,
+        hermesStatus: 'blocked', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', errorCode: 'magentic_execution_blocked',
         errorSummary: 'magentic_task_blocked:t_worker', startedAt,
         finishedAt: new Date().toISOString(), result: null,
@@ -3296,22 +3296,22 @@ describe('saved Card routes', () => {
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/domain/agentgraph/inspect');
-      return { runs: [], attentionEvents: [] };
+      return { runs: [] };
     });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectId: 'project-1', deckId: 'deck_builder', runId: 'failed-native-root', action: 'status',
+          projectId: 'project-1', deckId: 'deck_builder', runId: 'failed-hermes-root', action: 'status',
         }),
       });
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({
         ok: true,
         result: {
-          runId: 'failed-native-root', state: 'blocked', status: 'blocked',
-          nativeRootId: 't_failed_root', nativeRunId: 1,
+          runId: 'failed-hermes-root', state: 'blocked', status: 'blocked',
+          hermesRootId: 't_failed_root', hermesRunId: 1,
           output: null, errorCode: 'magentic_execution_blocked',
           errorSummary: 'magentic_task_blocked:t_worker',
         },
@@ -3330,22 +3330,22 @@ describe('saved Card routes', () => {
       return { ok: true, run: {
         runId: 'missing-final-root', correlationId: 'missing-final-root', cardId: 'card_magentic',
         state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-        runtimeProfile: 'card_magentic', nativeRootId: 't_missing_final',
-        nativeStatus: 'running', startedAt, result: null,
+        runtimeProfile: 'card_magentic', hermesRootId: 't_missing_final',
+        hermesStatus: 'running', startedAt, result: null,
       } };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/magentic/execution/status');
       return {
-        ok: true, state: 'completed', nativeStatus: 'done', nativeRootId: 't_missing_final',
-        nativeRunId: 4, nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        ok: true, state: 'completed', hermesStatus: 'done', hermesRootId: 't_missing_final',
+        hermesRunId: 4, hermesProfile: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol', finalResult: '   ',
       };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
       expect(endpoint).toBe('/domain/runs/finish');
       expect(JSON.parse(String(init?.body))).toMatchObject({
-        runId: 'missing-final-root', state: 'failed', nativeStatus: 'done',
+        runId: 'missing-final-root', state: 'failed', hermesStatus: 'done',
         providerThreadRef: 't_missing_final', providerTurnRef: 4,
         errorCode: 'magentic_final_result_missing',
         errorSummary: 'magentic_final_result_missing', finalResult: null,
@@ -3357,8 +3357,8 @@ describe('saved Card routes', () => {
       return { ok: true, run: {
         runId: 'missing-final-root', correlationId: 'missing-final-root', cardId: 'card_magentic',
         state: 'failed', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
-        runtimeProfile: 'card_magentic', nativeRootId: 't_missing_final', nativeRunId: 4,
-        nativeStatus: 'done', effectiveProvider: 'openai-codex',
+        runtimeProfile: 'card_magentic', hermesRootId: 't_missing_final', hermesRunId: 4,
+        hermesStatus: 'done', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', errorCode: 'magentic_final_result_missing',
         errorSummary: 'magentic_final_result_missing', startedAt,
         finishedAt: new Date().toISOString(), result: null,
@@ -3366,7 +3366,7 @@ describe('saved Card routes', () => {
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/domain/agentgraph/inspect');
-      return { runs: [], attentionEvents: [] };
+      return { runs: [] };
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -3381,7 +3381,7 @@ describe('saved Card routes', () => {
         ok: true,
         result: {
           runId: 'missing-final-root', state: 'failed', status: 'done',
-          nativeRootId: 't_missing_final', nativeRunId: 4, output: null,
+          hermesRootId: 't_missing_final', hermesRunId: 4, output: null,
           errorCode: 'magentic_final_result_missing',
           errorSummary: 'magentic_final_result_missing',
         },
@@ -3452,7 +3452,7 @@ describe('saved Card routes', () => {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'attention', message: 'inspect' }),
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'isolation', message: 'inspect' }),
         });
         const body = await response.text();
 
@@ -3466,10 +3466,10 @@ describe('saved Card routes', () => {
         const session = JSON.parse(sessionFrame.split('\ndata: ')[1]);
         expect(session).toMatchObject({ cardId: 'card_main_chat', sessionId: 'hermes:default',
           driverSource: 'internal_chat',
-          contextAuthorityMode: 'main_native_honcho',
+          contextAuthorityMode: 'main_honcho',
           configuration: { profile: 'default', provider: 'openai', model: 'gpt-5.6-luna' } });
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'attention' },
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'isolation' },
           'terminal:card_main_chat',
           'inspect',
           expect.any(Object),
@@ -3543,7 +3543,7 @@ describe('saved Card routes', () => {
         .mockResolvedValueOnce(projectDeck)
         .mockResolvedValueOnce(projectDeck);
       const fullReply = [
-        'BUILDER_DIRECT_OK: the native Builder completion is intentionally longer than the retired shared-chat limit so this test proves the complete answer is accepted without a one-line restriction.',
+        'BUILDER_DIRECT_OK: the Builder completion is intentionally longer than the retired shared-chat limit so this test proves the complete answer is accepted without a one-line restriction.',
         '',
         'Detailed Builder report:',
         '- The full multiline completion remains unchanged.',
@@ -3649,7 +3649,7 @@ describe('saved Card routes', () => {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            projectId: 'project-1', conversationId: 'first-direct-after-native-main',
+            projectId: 'project-1', conversationId: 'first-direct-after-main',
             targetCardId: 'builder', message: 'Continue from the shared conversation.',
           }),
         });
@@ -3716,7 +3716,7 @@ describe('saved Card routes', () => {
               },
               orchestrator: {
                 cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
-                nativeIdentity: 'card_magentic', instructions: 'Saved Mag One prompt',
+                hermesProfile: 'card_magentic', instructions: 'Saved Mag One prompt',
                 provider: { provider: 'openai', accessMode: 'chatgpt-account',
                   modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol' },
                 runtimeOptions: {},
@@ -3737,13 +3737,13 @@ describe('saved Card routes', () => {
         if (endpoint === '/magentic/execution/submit') {
           expect(request).toMatchObject({
             runId: preparedRunId,
-            orchestrator: { cardId: 'card_magentic', nativeIdentity: 'card_magentic' },
+            orchestrator: { cardId: 'card_magentic', hermesProfile: 'card_magentic' },
           });
           expect(request).not.toHaveProperty('notifySession');
           return {
-            ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_shared_magnetic',
+            ok: true, state: 'running', hermesStatus: 'ready', hermesRootId: 't_shared_magnetic',
             outerRunBound: true,
-            nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+            hermesProfile: 'card_magentic', effectiveProvider: 'openai-codex',
             providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
           };
         }
@@ -3775,7 +3775,7 @@ describe('saved Card routes', () => {
         const done = JSON.parse(doneFrame.split('\ndata: ')[1]);
         expect(done).toMatchObject({
           fullText: `Magnetic accepted this mission. Run ${preparedRunId} is active.`,
-          usage: { usageAvailable: false, usageSource: 'native_magnetic_submission' },
+          usage: { usageAvailable: false, usageSource: 'hermes_magnetic_submission' },
         });
         expect(done.fullText).not.toMatch(/complete|finished|final/i);
         expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
@@ -3805,16 +3805,16 @@ describe('saved Card routes', () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
       agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 2, messages: [
-        { role: 'user', text: 'Existing native question' },
-        { role: 'assistant', text: 'Existing native answer' },
+        { role: 'user', text: 'Existing question' },
+        { role: 'assistant', text: 'Existing answer' },
       ] });
-      agentTerminalMocks.manager.submit.mockRejectedValueOnce(new Error('native_builder_unavailable'));
+      agentTerminalMocks.manager.submit.mockRejectedValueOnce(new Error('builder_unavailable'));
       agentTerminalMocks.manager.queueHermesContextCompaction.mockRejectedValueOnce(
-        new Error('native_compaction_unavailable'),
+        new Error('hermes_compaction_unavailable'),
       );
       const { server, baseUrl } = await createApiServer();
       try {
-        const exactMessage = '@builder Native failure probe';
+        const exactMessage = '@builder Provider failure probe';
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3853,7 +3853,7 @@ describe('saved Card routes', () => {
           }),
           expect.any(Function),
         );
-        expect(body).not.toContain('native_compaction_unavailable');
+        expect(body).not.toContain('hermes_compaction_unavailable');
         expect(body).not.toContain('session.compress');
         expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
       } finally {
@@ -4218,7 +4218,7 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('does not duplicate the preceding completed Main exchange into its resumed native session', async () => {
+    it('does not duplicate the preceding completed Main exchange into its resumed Hermes session', async () => {
       chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
         {
           role: 'user', status: 'complete', content: 'State one falsifiable claim.',
@@ -4328,10 +4328,10 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('persists and streams the native Main token totals without inventing cost', async () => {
+    it('persists and streams the Main token totals without inventing cost', async () => {
       const usage = { providerInputTokens: 240, providerOutputTokens: 20,
         providerCachedTokens: 40, providerReasoningTokens: 6, totalCostUsd: null,
-        usageAvailable: true, usageSource: 'native_gateway' };
+        usageAvailable: true, usageSource: 'hermes_gateway' };
       agentTerminalMocks.manager.submit.mockImplementationOnce(async (owner, sessionId, message, options) => (
         agentTerminalMocks.finishSubmitted(owner, sessionId, message, options, 'Measured reply.', {
           providerInputTokens: 240,
@@ -4475,7 +4475,7 @@ describe('saved Card routes', () => {
             required: ['facts'],
           },
           enrichmentPrompt: [
-            'Native Engraphis llm_structured prompt.',
+            'Engraphis llm_structured prompt.',
             'exact_user_message: complete with hybrid ThinkGraph intake',
             'exact_main_response: Real assistant reply.',
             'canonical_subject_directory: complete compact subject headers',
@@ -4528,7 +4528,7 @@ describe('saved Card routes', () => {
           conversationId: 'chat',
           runId: expect.stringMatching(/^req_/),
           cardId: 'card_main_chat',
-          nativeSessionRef: 'hermes:default',
+          hermesSessionId: 'hermes:default',
           completedAt: expect.any(String),
           userMessage: exactMessage,
           mainResponse: 'Real assistant reply.',
@@ -4554,7 +4554,7 @@ describe('saved Card routes', () => {
           'Run one official Engraphis llm_structured extraction pass',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Each facts[] item is one native Engraphis fact and one displayed Think',
+          'Each facts[] item is one Engraphis fact and one displayed Think',
         );
         expect(cardBeginBody.assignment).toContain(
           'Extract the fewest independently reusable facts',
@@ -4588,7 +4588,7 @@ describe('saved Card routes', () => {
             cardId: 'card_thinkgraph',
             revisionId: 'revision:card_thinkgraph',
             profile: 'thinkgraph',
-            nativeSessionRef: 'hermes:thinkgraph',
+            hermesSessionId: 'hermes:thinkgraph',
             resolvedModel: 'gpt-5.6-luna',
           },
         });
@@ -4654,7 +4654,7 @@ describe('saved Card routes', () => {
     });
 
 
-    it('stops after a native Engraphis noop without running the saved ThinkGraph Card', async () => {
+    it('stops after a Engraphis noop without running the saved ThinkGraph Card', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
       const { server, baseUrl } = await createApiServer();
@@ -4799,11 +4799,11 @@ describe('saved Card routes', () => {
     it('does not project CLI bytes or private tool traffic into Chat', async () => {
       agentTerminalMocks.manager.submit.mockImplementationOnce(async (owner, sessionId, message, options) => {
         options?.onEvent?.({
-          type: 'terminal.output', session_id: 'native:default',
-          payload: { text: '\u001b[31mprivate native bytes\u001b[0m' },
+          type: 'terminal.output', session_id: 'hermes:default',
+          payload: { text: '\u001b[31mprivate provider bytes\u001b[0m' },
         });
         options?.onEvent?.({
-          type: 'item.tool.call', session_id: 'native:default',
+          type: 'item.tool.call', session_id: 'hermes:default',
           payload: { name: 'private_tool', result: 'private result' },
         });
         return agentTerminalMocks.finishSubmitted(
@@ -4815,7 +4815,7 @@ describe('saved Card routes', () => {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'attention-event', message: 'inspect' }),
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'tool-event', message: 'inspect' }),
         });
         const body = await response.text();
         expect(body).toContain('Public answer.');
@@ -4838,7 +4838,7 @@ describe('saved Card routes', () => {
           body: JSON.stringify({
             projectId: 'project-1', conversationId: 'main', message: 'materialize exactly once',
             dataAnchors: [{
-              authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+              cbmQualifiedName: 'pkg.materialize_idf',
               reason: 'Current production definition', priority: 0,
               boundedExpansion: 1, resultLimit: 12, required: true,
             }],
@@ -4869,7 +4869,7 @@ describe('saved Card routes', () => {
         expect(JSON.parse(String(mainBeginCalls[0]?.[1]?.body))).toMatchObject({
           driverSource: 'internal_chat',
           dataAnchors: [{
-            authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
+            cbmQualifiedName: 'pkg.materialize_idf',
             reason: 'Current production definition', required: true,
           }],
         });
@@ -4885,7 +4885,7 @@ describe('saved Card routes', () => {
           owner, sessionId, message, options, 'Finished before late event.',
         );
         setTimeout(() => options?.onEvent?.({
-          type: 'message.delta', session_id: 'native:default', payload: { text: 'late native delta' },
+          type: 'message.delta', session_id: 'hermes:default', payload: { text: 'late provider delta' },
         }), 0);
         return result;
       });
@@ -4901,13 +4901,13 @@ describe('saved Card routes', () => {
 
         expect(response.status).toBe(200);
         expect(body).toContain('event: end');
-        expect(body).not.toContain('late native delta');
+        expect(body).not.toContain('late provider delta');
       } finally {
         await closeServer(server);
       }
     });
 
-    it('keeps Main running after the browser disconnects and persists native completion', async () => {
+    it('keeps Main running after the browser disconnects and persists provider completion', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
       agentTerminalMocks.manager.interrupt.mockClear();
@@ -5013,7 +5013,7 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('stops the exact active Magnetic outer Run through native Magnetic control', async () => {
+    it('stops the exact active Magnetic outer Run through Magnetic control', async () => {
       const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
       const runId = 'req_magnetic_stop';
       orchestratorMocks.runRecords.set(runId, {
@@ -5024,8 +5024,8 @@ describe('saved Card routes', () => {
         runtimeKind: 'hermes',
         runtimeMode: 'magentic_one',
         runtimeProfile: 'card_magentic',
-        nativeRootId: 't_shared_magnetic_stop',
-        nativeStatus: 'running',
+        hermesRootId: 't_shared_magnetic_stop',
+        hermesStatus: 'running',
         startedAt: new Date().toISOString(),
       });
       orchestratorMocks.requestPythonRailsJson.mockClear();
@@ -5034,17 +5034,17 @@ describe('saved Card routes', () => {
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string, init?: RequestInit) => {
         const request = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
         if (endpoint === '/magentic/execution/status') {
-          expect(request).toEqual({ nativeRootId: 't_shared_magnetic_stop' });
+          expect(request).toEqual({ hermesRootId: 't_shared_magnetic_stop' });
           return {
-            ok: true, state: 'running', nativeStatus: 'running',
-            nativeRootId: 't_shared_magnetic_stop', nativeIdentity: 'card_magentic',
+            ok: true, state: 'running', hermesStatus: 'running',
+            hermesRootId: 't_shared_magnetic_stop', hermesProfile: 'card_magentic',
           };
         }
         if (endpoint === '/magentic/execution/stop') {
-          expect(request).toEqual({ nativeRootId: 't_shared_magnetic_stop' });
+          expect(request).toEqual({ hermesRootId: 't_shared_magnetic_stop' });
           return {
-            ok: true, state: 'cancelled', nativeStatus: 'archived',
-            nativeRootId: 't_shared_magnetic_stop', nativeIdentity: 'card_magentic',
+            ok: true, state: 'cancelled', hermesStatus: 'archived',
+            hermesRootId: 't_shared_magnetic_stop', hermesProfile: 'card_magentic',
             error: 'cancelled_by_user',
           };
         }
@@ -5127,7 +5127,7 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('renders native Gateway completion without a Run readback or optional transport fields', async () => {
+    it('renders Hermes Gateway completion without a Run readback or optional transport fields', async () => {
       agentTerminalMocks.manager.submit.mockImplementationOnce(async (owner, sessionId, message, options) => (
         agentTerminalMocks.finishSubmitted(
           owner, sessionId, message, options, 'Gateway result without optional telemetry.',

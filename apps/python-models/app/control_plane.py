@@ -487,7 +487,7 @@ async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def card_load_graph_references(args: dict[str, Any]) -> dict[str, Any]:
-    """Load one bounded native reference into transient target-Card context."""
+    """Load one bounded graph reference into transient target-Card context."""
     from app.python_models.card_domain import CardDomainError, load_card_graph_reference
 
     try:
@@ -545,8 +545,8 @@ async def card_create(
 
     if runtime_kind == "hermes" and not runtime_profile:
         raise ControlPlaneError("card_create_profile_required")
-    # The existing native Hermes profile identifier contract; reject paths and
-    # reserved native names before saving a binding the runtime cannot use.
+    # The existing Hermes profile identifier contract rejects paths and
+    # reserved profile names before saving a binding the runtime cannot use.
     if runtime_kind == "hermes" and (
         not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", runtime_profile)
         or runtime_profile in {"hermes", "test", "tmp", "root", "sudo"}
@@ -784,7 +784,7 @@ async def card_update_configuration(
                     "kind": "user" if authenticated_user_edit else "agent-builder",
                     "id": caller_card_id,
                 },
-            }, native_available=False)}
+            }, hermes_available=False)}
         except IddValidationError as error:
             raise ControlPlaneError(str(error)) from error
     if (

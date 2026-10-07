@@ -308,7 +308,7 @@ def lumibot_readiness() -> dict[str, Any]:
                 "scheduler": "not_started",
                 "diagnostics": type(error).__name__,
             },
-            "nativeAgents": {
+            "subsystemAgents": {
                 "enabled": False,
                 "authority": "hermes",
                 "diagnostics": "Direct subsystem model providers are disabled.",
@@ -336,7 +336,7 @@ def lumibot_readiness() -> dict[str, Any]:
                 "before separate execution approval."
             ),
         },
-        "nativeAgents": {
+        "subsystemAgents": {
             "enabled": False,
             "authority": "hermes",
             "diagnostics": "Use the saved Card's Hermes Team; direct subsystem providers are disabled.",

@@ -11,6 +11,10 @@ import {
   type AgentTerminalLaunch,
   type AgentTerminalOwner,
 } from './agentTerminal';
+import {
+  CardRuntimeManager,
+  type HermesBotRosterProjection,
+} from './cardRuntimeManager';
 import { createHermesRuntimeClient } from './runtime/hermesProcess';
 import { hermesSessionTitle } from './runtime/hermesSession';
 import type { AgentCardInstance, DeckDocument } from '../types';
@@ -88,6 +92,7 @@ class FakeGatewayClient {
   settlementBarrier: Promise<void> | null = null;
   compressError: Error | null = null;
   compressResult: unknown = null;
+  ordinaryToolErrorBeforeCompletion = false;
   private readonly botMeta = new Map<string, { value: Record<string, unknown>; revision: number }>();
   private readonly botRosters = new Map<string, string[]>();
 
@@ -288,6 +293,17 @@ class FakeGatewayClient {
       const hermesRunId = `hermes-turn-${++this.completedTurnIndex}`;
       this.emitEvent({ type: 'message.start', session_id: sessionId });
       queueMicrotask(() => {
+        if (this.ordinaryToolErrorBeforeCompletion) {
+          this.emitEvent({
+            type: 'tool.completed',
+            session_id: sessionId,
+            payload: {
+              tool_name: 'mcp__example__read',
+              is_error: true,
+              error: 'provider tool rejected the request',
+            },
+          });
+        }
         this.emitEvent({
           type: 'message.complete',
           session_id: sessionId,
@@ -297,7 +313,8 @@ class FakeGatewayClient {
             actualProvider: String(modelOnce.provider || 'openai-codex'),
             actualModel: String(modelOnce.model || 'gpt-5.6-sol'),
             exposedTools: ['memory', ...allowedTools],
-            hermesRunId,
+            nativeRootId: `hermes-root-${this.index}`,
+            nativeRunId: hermesRunId,
           },
         });
         void (async () => {
@@ -408,7 +425,6 @@ function fixture(extraProfileNames: string[] = []) {
   const prepare = vi.fn((_owner: AgentTerminalOwner, selected: AgentCardInstance, _deck: DeckDocument, sessionId: string, workingDirectory?: string): AgentTerminalLaunch => ({
     file: 'hermes.exe',
     gatewayArgs: ['-p', selected.runtime.kind === 'hermes' ? selected.runtime.profile : '', 'serve'],
-    tuiArgs: ['-p', selected.runtime.kind === 'hermes' ? selected.runtime.profile : '', '--tui'],
     cwd: workingDirectory || process.cwd(),
     profile: selected.runtime.kind === 'hermes' ? selected.runtime.profile : '',
     profileHome: `C:\\profiles\\${selected.runtime.kind === 'hermes' ? selected.runtime.profile : ''}`,
@@ -490,19 +506,17 @@ function fixture(extraProfileNames: string[] = []) {
   const materializeApplicationMcpServers = vi.fn(async () => undefined);
   const removeApplicationMcpServers = vi.fn(async () => undefined);
   const verifyMagenticWorkerToolRequest = vi.fn(async () => ({}));
-  const resolveBotRoster = vi.fn(async (owner: AgentTerminalOwner) => {
-    const selected = cards.find((candidate) => candidate.id === owner.cardId)!;
-    return {
+  const resolveBotProfiles = vi.fn(async (): Promise<HermesBotRosterProjection[]> => (
+    cards.map((selected) => ({
       cardId: selected.id,
       cardRevisionId: '',
       profile: selected.runtime.kind === 'hermes' ? selected.runtime.profile : '',
       title: selected.title,
       botEnabled: true,
       roster: [],
-    };
-  });
-  const manager = new AgentTerminalManager(
-    spawnPty,
+    }))
+  ));
+  const runtimeManager = new CardRuntimeManager(
     prepare,
     onExit,
     spawnGateway,
@@ -511,7 +525,7 @@ function fixture(extraProfileNames: string[] = []) {
     resolveCardTools as never,
     materializeCardToolsPlugin as never,
     materializeExternalMcpTools as never,
-    resolveBotRoster,
+    resolveBotProfiles,
     configureCardInstructions,
     configureCardModelRuntime,
     resolveActiveContext,
@@ -520,13 +534,26 @@ function fixture(extraProfileNames: string[] = []) {
     removeApplicationMcpServers,
     verifyMagenticWorkerToolRequest,
   );
+  const manager = Object.assign(
+    new AgentTerminalManager(runtimeManager, spawnPty),
+    {
+      requestProfile: runtimeManager.requestProfile.bind(runtimeManager),
+      reconcile: runtimeManager.reconcile.bind(runtimeManager),
+      submit: runtimeManager.submit.bind(runtimeManager),
+      queueHermesContextCompaction:
+        runtimeManager.queueHermesContextCompaction.bind(runtimeManager),
+      subscribeGatewayEvents: runtimeManager.subscribeGatewayEvents.bind(runtimeManager),
+      authenticateCardToolRequest:
+        runtimeManager.authenticateCardToolRequest.bind(runtimeManager),
+    },
+  );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
   }));
   return {
-    manager, spawnPty, spawnGateway, prepare, materialize,
+    manager, runtimeManager, spawnPty, spawnGateway, prepare, materialize,
     resolveCardTools, materializeCardToolsPlugin, cards, deck, owners,
-    materializeExternalMcpTools, resolveBotRoster,
+    materializeExternalMcpTools, resolveBotProfiles,
     configureCardInstructions, configureCardModelRuntime,
     resolveActiveContext, resolveMcpServerSpec, materializeApplicationMcpServers,
     removeApplicationMcpServers, verifyMagenticWorkerToolRequest,
@@ -629,7 +656,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
       materializeTaskProfile: true,
     });
 
-    expect(f.resolveBotRoster).toHaveBeenCalledExactlyOnceWith(f.owners[0]);
+    expect(f.resolveBotProfiles).toHaveBeenCalledExactlyOnceWith('project', 'deck');
     expect(f.configureCardInstructions).toHaveBeenCalledExactlyOnceWith(
       'signal-analyst', 'Prompt signal',
     );
@@ -694,7 +721,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
       attachTui: false,
       materializeTaskProfile: true,
-    })).rejects.toThrow('agent_terminal_configuration_changed_stop_required');
+    })).rejects.toThrow('card_runtime_configuration_changed_stop_required');
     expect(f.configureCardInstructions).not.toHaveBeenCalled();
   });
 
@@ -806,9 +833,10 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     expect(attached.tuiPid).not.toBeNull();
     expect(f.spawnGateway).toHaveBeenCalledOnce();
     expect(f.spawnPty).toHaveBeenCalledOnce();
-    expect(f.spawnPty.mock.calls[0]?.[1]).toEqual([
-      '-p', 'signal-analyst', '--tui', '--resume', headless.storedSessionId,
-    ]);
+    expect(f.spawnPty.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+      '-m', 'hermes_cli.main', '-p', 'signal-analyst', '--tui',
+      '--resume', headless.storedSessionId,
+    ]));
     expect(f.ptys[0].options.env).toMatchObject({
       HERMES_TUI_INLINE: '1',
     });
@@ -889,9 +917,11 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     detach();
     f.manager.stop(f.owners[0], a.sessionId);
     expect(f.ptys[0].kill).toHaveBeenCalledOnce();
-    expect(f.gateways[0].kill).toHaveBeenCalledOnce();
+    expect(f.gateways[0].kill).not.toHaveBeenCalled();
     expect(f.ptys[1].kill).not.toHaveBeenCalled();
-    expect(f.manager.state(f.owners[0], a.sessionId).status).toBe('exited');
+    expect(f.manager.state(f.owners[0], a.sessionId)).toMatchObject({
+      status: 'running', tuiPid: null, ptyId: null,
+    });
     expect(f.manager.state(f.owners[1], b.sessionId).status).toBe('running');
   });
 
@@ -926,6 +956,27 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
       .toBeLessThan(f.clients[0].requests.findIndex((request) => request.method === 'prompt.submit'));
   });
 
+  it('returns an ordinary tool error to the active turn without failing the Card Run', async () => {
+    const f = fixture();
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    f.clients[0].ordinaryToolErrorBeforeCompletion = true;
+    const onEvent = vi.fn();
+
+    await expect(f.manager.submit(
+      f.owners[0], state.sessionId, 'continue after the tool result', { onEvent },
+    )).resolves.toMatchObject({
+      text: 'reply:continue after the tool result',
+      status: 'completed',
+    });
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'tool.completed',
+      payload: expect.objectContaining({ is_error: true }),
+    }));
+    expect(f.manager.state(f.owners[0], state.sessionId).status).toBe('running');
+  });
+
   it('queues one exact hermes compaction and returns only a bounded same-session receipt', async () => {
     const f = fixture();
     f.resolveActiveContext.mockReturnValue(null);
@@ -946,7 +997,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     }]);
     expect(receipt).toEqual({
       status: 'compressed',
-      terminalSessionId: state.sessionId,
+      runtimeSessionId: state.sessionId,
       hermesSessionId: state.hermesSessionId,
       storedSessionId: state.storedSessionId,
       profile: state.profile,
@@ -1050,7 +1101,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     });
     await expect(delayedCompaction).resolves.toMatchObject({
       status: 'unavailable',
-      errorCode: 'agent_terminal_context_compaction_turn_changed',
+      errorCode: 'card_runtime_context_compaction_turn_changed',
     });
     expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress')).toEqual([]);
   });
@@ -1063,7 +1114,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
 
     await expect(f.manager.queueHermesContextCompaction(f.owners[0], state)).resolves.toMatchObject({
       status: 'unavailable',
-      errorCode: 'agent_terminal_context_compaction_run_active',
+      errorCode: 'card_runtime_context_compaction_run_active',
       hermesSessionId: state.hermesSessionId,
       storedSessionId: state.storedSessionId,
       focusApplied: false,
@@ -1083,7 +1134,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
       storedSessionId: 'stale-stored-session',
     })).resolves.toMatchObject({
       status: 'unavailable',
-      errorCode: 'agent_terminal_context_compaction_identity_changed',
+      errorCode: 'card_runtime_context_compaction_identity_changed',
     });
     expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress')).toEqual([]);
     expect(f.manager.state(f.owners[0], state.sessionId).storedSessionId).toBe(state.storedSessionId);
@@ -1095,35 +1146,35 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
       result: { status: 'aborted', summary: { note: 'private abort summary' } },
       error: null,
       status: 'aborted',
-      errorCode: 'agent_terminal_context_compaction_aborted',
+      errorCode: 'card_runtime_context_compaction_aborted',
     },
     {
       label: 'compression lock',
       result: { compressed: false, lock_held: true, message: 'private lock holder' },
       error: null,
       status: 'unavailable',
-      errorCode: 'agent_terminal_context_compaction_lock_held',
+      errorCode: 'card_runtime_context_compaction_lock_held',
     },
     {
       label: 'invalid result',
       result: { status: 'unexpected', summary: { headline: 'private invalid summary' } },
       error: null,
       status: 'failed',
-      errorCode: 'agent_terminal_context_compaction_result_invalid',
+      errorCode: 'card_runtime_context_compaction_result_invalid',
     },
     {
       label: 'transport failure',
       result: null,
       error: new Error('private transport detail'),
       status: 'failed',
-      errorCode: 'agent_terminal_context_compaction_request_failed',
+      errorCode: 'card_runtime_context_compaction_request_failed',
     },
     {
       label: 'hermes session-busy refusal',
       result: null,
       error: Object.assign(new Error('private hermes busy detail'), { code: 4009 }),
       status: 'failed',
-      errorCode: 'agent_terminal_context_compaction_hermes_session_busy',
+      errorCode: 'card_runtime_context_compaction_hermes_session_busy',
     },
   ])('keeps $label nonfatal and excludes hermes summary/error prose', async ({
     result, error, status, errorCode,
@@ -1378,7 +1429,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     expect(f.manager.state(f.owners[0], state.sessionId)).toMatchObject({
       sessionId: state.sessionId,
       status: 'running',
-      unavailableToolReasons: { 'cbm.search_graph': 'catalog_unavailable' },
+      unavailableToolReasons: { 'cbm.search_graph': 'external_tool_acquisition_failed' },
     });
     expect(f.removeApplicationMcpServers).toHaveBeenCalledExactlyOnceWith(
       expect.any(Function),
@@ -1466,7 +1517,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
 
     await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false });
     await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24))
-      .rejects.toThrow('agent_terminal_tool_configuration_changed_stop_required');
+      .rejects.toThrow('card_runtime_tool_configuration_changed_stop_required');
   });
 
   it('projects exact same-session Gateway events without submitting or owning a turn', async () => {
@@ -1626,7 +1677,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
         a.hermesSessionId, b.hermesSessionId, a.hermesSessionId,
       ]);
 
-    f.manager.stop(ownerA, a.sessionId);
+    f.runtimeManager.stop(ownerA, a.sessionId);
     const resumedB = await f.manager.open(
       ownerB, f.cards[0], f.deck, 80, 24, { attachTui: false },
     );
@@ -1750,31 +1801,6 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
       unknownPayload,
       createHmac('sha256', token).update(unknownPayload).digest('hex'),
     )).rejects.toThrow('hermes_card_tool_authentication_failed');
-
-    const rosterPayload = JSON.stringify({
-      version: 1,
-      expiresAt: Math.floor(Date.now() / 1000) + 60,
-      nonce: 'a'.repeat(32),
-      sourceStoredSessionId: state.storedSessionId,
-      tool: 'project_roster.resolve',
-      arguments: { target: '@KnowGraph' },
-    });
-    await expect(f.manager.authenticateCardToolRequest(
-      keyId,
-      rosterPayload,
-      createHmac('sha256', token).update(rosterPayload).digest('hex'),
-    )).resolves.toEqual(expect.objectContaining({
-      owner: f.owners[0],
-      state: expect.objectContaining({
-        sessionId: state.sessionId,
-        storedSessionId: 'stored-after-compression',
-      }),
-      canonicalToolName: 'project_roster.resolve',
-      request: expect.objectContaining({
-        tool: 'project_roster.resolve',
-        arguments: { target: '@KnowGraph' },
-      }),
-    }));
 
     const observationPayload = JSON.stringify({
       version: 1,
@@ -1919,7 +1945,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
   it('restarts the Gateway and TUI while resuming the exact durable Card session', async () => {
     const f = fixture();
     const first = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
-    f.manager.stop(f.owners[0], first.sessionId);
+    f.runtimeManager.stop(f.owners[0], first.sessionId);
     const second = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
     expect(second.sessionId).not.toBe(first.sessionId);
     expect(second.gatewayPid).not.toBe(first.gatewayPid);
@@ -1928,9 +1954,10 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     expect(second.hermesSessionId).not.toBe(first.hermesSessionId);
     expect(f.clients[1].requests.map((request) => request.method)).toContain('session.resume');
     expect(f.clients[1].requests.map((request) => request.method)).not.toContain('session.create');
-    expect(f.spawnPty.mock.calls[1]?.[1]).toEqual([
-      '-p', 'signal-analyst', '--tui', '--resume', first.storedSessionId,
-    ]);
+    expect(f.spawnPty.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
+      '-m', 'hermes_cli.main', '-p', 'signal-analyst', '--tui',
+      '--resume', first.storedSessionId,
+    ]));
     expect(f.ptys[1].options.env).toMatchObject({
       HERMES_TUI_INLINE: '1',
     });
@@ -1966,10 +1993,14 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     const unsupported = card('unsupported', 'unsupported');
     unsupported.runtime = { kind: 'hermes', mode: 'single' as never, profile: 'unsupported' };
     expect(() => requireAgentTerminalCard(unsupported, frozenDeck(unsupported)))
-      .toThrow('agent_terminal_runtime_mode_unsupported');
+      .toThrow('card_runtime_mode_unsupported');
     const missing = card('other', 'valid');
     missing.runtime = { kind: 'hermes', mode: 'delegate', profile: '' };
     expect(() => requireAgentTerminalCard(missing, { ...frozenDeck(missing) })).toThrow('profile_missing');
+    const chatOnly = card('card_main_chat', 'main');
+    chatOnly.runtime = { kind: 'hermes', mode: 'main', profile: 'main' };
+    expect(() => requireAgentTerminalCard(chatOnly, frozenDeck(chatOnly)))
+      .toThrow('agent_terminal_runtime_mode_unsupported');
   });
 
   it('shares one stable profile only across the same exact saved Card authority', async () => {
@@ -1995,7 +2026,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     await expect(f.manager.open(
       otherOwner, otherCard, { ...frozenDeck(otherCard), id: 'deck-c' }, 80, 24,
       { attachTui: false },
-    )).rejects.toThrow('agent_terminal_profile_card_identity_mismatch');
+    )).rejects.toThrow('card_runtime_profile_card_identity_mismatch');
 
     const divergent = {
       ...f.cards[0],
@@ -2009,11 +2040,11 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     await expect(f.manager.open(
       divergentOwner, divergent, { ...frozenDeck(divergent), id: 'deck-d' }, 80, 24,
       { attachTui: false },
-    )).rejects.toThrow('agent_terminal_profile_card_identity_mismatch');
+    )).rejects.toThrow('card_runtime_profile_card_identity_mismatch');
     expect(f.spawnGateway).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps Project rosters out of stable profile configuration', async () => {
+  it('materializes and revokes exact orange topology through the Hermes Bot roster', async () => {
     const f = fixture();
     f.cards[0].runtime = { kind: 'hermes', mode: 'delegate', profile: 'signal-analyst' };
     const desired = f.cards.map((selected, index) => ({
@@ -2035,12 +2066,24 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
       };
     });
 
+    f.resolveBotProfiles.mockResolvedValue(projected.map((target) => target.projection));
     await f.manager.reconcile(desired, { cols: 120, rows: 36 }, projected);
     const configured = f.clients.flatMap((client) => client.requests)
       .filter((request) => request.method === 'profiles.configure');
-    expect(configured.some((request) => (
-      Object.prototype.hasOwnProperty.call(request.params, 'bot_mode_roster')
-    ))).toBe(false);
+    expect(configured).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        params: expect.objectContaining({
+          name: 'signal-analyst',
+          bot_mode_roster: ['quant-analyst'],
+        }),
+      }),
+      expect.objectContaining({
+        params: expect.objectContaining({
+          name: 'quant-analyst',
+          bot_mode_roster: [],
+        }),
+      }),
+    ]));
 
     const revoked = projected.map((target) => ({
       ...target,
@@ -2049,9 +2092,47 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     await f.manager.reconcile([desired[0]], { cols: 120, rows: 36 }, revoked);
     expect(f.clients.flatMap((client) => client.requests).some((request) => (
       request.method === 'profiles.configure'
-      && Object.prototype.hasOwnProperty.call(request.params, 'bot_mode_roster')
-    ))).toBe(false);
+      && request.params.name === 'signal-analyst'
+      && JSON.stringify(request.params.bot_mode_roster) === '[]'
+    ))).toBe(true);
     expect(f.manager.find(f.owners[1])).toBeNull();
+  });
+
+  it('activates the saved Bot roster from orchestrator authority without a Card tool grant', async () => {
+    const f = fixture();
+    f.resolveBotProfiles.mockResolvedValue([
+      {
+        cardId: f.cards[0].id,
+        cardRevisionId: f.cards[0]._cardRevisionId || '',
+        profile: 'signal-analyst',
+        title: f.cards[0].title,
+        botEnabled: true,
+        roster: ['quant-analyst'],
+      },
+      {
+        cardId: f.cards[1].id,
+        cardRevisionId: f.cards[1]._cardRevisionId || '',
+        profile: 'quant-analyst',
+        title: f.cards[1].title,
+        botEnabled: true,
+        roster: [],
+      },
+    ]);
+
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 120, 36, { attachTui: false });
+
+    const configurations = f.clients[0].requests.filter((request) => (
+      request.method === 'profiles.configure' && request.params.name === 'signal-analyst'
+    ));
+    expect(configurations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        params: expect.objectContaining({ bot_mode_roster: ['quant-analyst'] }),
+      }),
+    ]));
+    expect(configurations.some((request) => (
+      (request.params.ui_meta as Record<string, unknown> | undefined)?.['hermes-bots']
+        && (request.params.bot_mode_roster as string[] | undefined)?.includes('quant-analyst')
+    ))).toBe(true);
   });
 
   it('does not write cold-opening Card instructions twice before Bot roster publication', async () => {
@@ -2082,7 +2163,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     }
   });
 
-  it('materializes a newly added saved profile without publishing Project roster to it', async () => {
+  it('materializes a newly added saved profile with the exact Hermes Bot roster', async () => {
     const f = fixture();
     const orchestrator = f.cards[0];
     await f.manager.open(f.owners[0], orchestrator, f.deck, 120, 36);
@@ -2127,14 +2208,16 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
       },
     ];
 
+    f.resolveBotProfiles.mockResolvedValue(projected.map((target) => target.projection));
     const states = await f.manager.reconcile(desired, { cols: 120, rows: 36 }, projected);
 
     expect(f.configureCardInstructions).toHaveBeenCalledWith('knowgraph', 'Prompt card_knowgraph');
     expect(states.some((state) => state.cardId === added.id && state.profile === 'knowgraph')).toBe(true);
     expect(f.clients.flatMap((client) => client.requests).some((request) => (
       request.method === 'profiles.configure'
-      && Object.prototype.hasOwnProperty.call(request.params, 'bot_mode_roster')
-    ))).toBe(false);
+      && request.params.name === 'signal-analyst'
+      && JSON.stringify(request.params.bot_mode_roster) === '["knowgraph"]'
+    ))).toBe(true);
   });
 
   it('does not claim or rewrite an unprojected standalone hermes Bot profile', async () => {
@@ -2175,12 +2258,13 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     await f.manager.reconcile([{ owner: f.owners[0], card: f.cards[0], deck: f.deck }]);
     expect(f.manager.find(f.owners[0])?.sessionId).toBe(a.sessionId);
     expect(f.manager.find(f.owners[1])).toBeNull();
-    expect(f.ptys[1].kill).toHaveBeenCalledOnce();
+    expect(f.ptys).toHaveLength(0);
+    expect(f.gateways[1].kill).toHaveBeenCalledOnce();
 
     const changed = { ...f.cards[0], prompt: 'Changed saved prompt', _cardRevisionId: 'revision-next' };
     const replaced = await f.manager.reconcile([{ owner: f.owners[0], card: changed, deck: { ...f.deck, nodes: [changed, f.cards[1]] } }]);
     expect(replaced[0].sessionId).not.toBe(a.sessionId);
-    expect(f.ptys[0].kill).toHaveBeenCalledOnce();
+    expect(f.gateways[0].kill).toHaveBeenCalledOnce();
     expect(f.spawnGateway).toHaveBeenCalledTimes(3);
     expect(b.cardId).toBe('quant');
   });
@@ -2273,7 +2357,7 @@ describe('one Gateway-owned runtime and hermes TUI per saved Card', () => {
     expect(wired.storedSessionId).toBe(direct.storedSessionId);
     expect(wired.hermesHome).toBe(direct.hermesHome);
     expect(f.spawnGateway).toHaveBeenCalledOnce();
-    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(f.spawnPty).not.toHaveBeenCalled();
   });
 
   it('bounds hermes PTY replay without inventing terminal content', async () => {

@@ -1,4 +1,4 @@
-"""Kronos adapter — candle-native OHLCV forecast.
+"""Kronos adapter — candle-level OHLCV forecast.
 
 Loads the vendored Kronos repo code (top-level ``Kronos-main/``) + the cached HF weights.
 Lazy-imports its runtime (torch via the repo's model module) so the rails import cleanly

@@ -30,9 +30,9 @@ export type InternalMcpPrincipal =
       callerRuntimeMode: 'main' | 'delegate' | 'magentic_one';
       grantedTools: string[];
       presentedTools?: string[];
-      // Signed native attribution only; these do not grant permissions.
-      nativeChildId?: string;
-      nativeRunId?: string;
+      // Signed Hermes attribution only; these do not grant permissions.
+      hermesChildId?: string;
+      hermesRunId?: string;
     };
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {

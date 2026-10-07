@@ -96,7 +96,7 @@ describe('agentbuilder authoring flow', () => {
       toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'cbm.search_graph',
         'cbm.trace_path', 'cbm.get_code_snippet', 'cbm.check_index_coverage', 'cbm.detect_changes',
-        'cbm.search_code', 'cbm.query_graph'],
+        'cbm.search_code', 'cbm.query_graph', 'hermes:tool:memory'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');
     expect(INITIAL_DECK.nodes

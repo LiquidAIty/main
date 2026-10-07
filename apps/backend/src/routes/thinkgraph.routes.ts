@@ -16,7 +16,7 @@ router.post('/retire', async (req, res) => {
   try {
     return res.json(await requestPythonRailsJson('/thinkgraph/operation', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, operation: 'retire', arguments: { nativeId: memoryId } }),
+      body: JSON.stringify({ projectId, operation: 'retire', arguments: { memoryId } }),
     }));
   } catch (error: any) {
     return res.status(409).json({ error: String(error?.message || 'thinkgraph_remove_failed') });

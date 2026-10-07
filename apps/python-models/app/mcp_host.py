@@ -158,7 +158,7 @@ _CATALOG_UNAVAILABLE_FAMILIES: tuple[str, ...] = ()
 _CATALOG_INITIALIZING_FAMILY: str | None = "liquidaity"
 _CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
-_NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
+_PROVIDER_TOOL_TIMEOUT_SECONDS = 30.0
 _CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 # The installed CBM owns a bounded 30-second cold daemon-start window. Give
 # that one application-owned attempt time to return its own result, then let
@@ -194,7 +194,7 @@ _TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset(
 )
 _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
     {"callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools",
-     "nativeChildId", "nativeRunId"}
+     "hermesChildId", "hermesRunId"}
 )
 
 
@@ -768,8 +768,8 @@ def _authenticated_main_context() -> dict[str, Any] | None:
             "callerRuntimeMode": internal.get("callerRuntimeMode"),
             "principalKind": internal.get("kind"),
             "grantedTools": internal.get("grantedTools", []),
-            "nativeChildId": internal.get("nativeChildId"),
-            "nativeRunId": internal.get("nativeRunId"),
+            "hermesChildId": internal.get("hermesChildId"),
+            "hermesRunId": internal.get("hermesRunId"),
         }
     else:
         context = claims.get("main") if isinstance(claims, dict) else None
@@ -1231,7 +1231,7 @@ async def _call_graphiti(name: str, arguments: dict[str, Any]):
     try:
         await asyncio.wait_for(
             _ensure_graphiti_service(),
-            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+            timeout=_PROVIDER_TOOL_TIMEOUT_SECONDS,
         )
     except TimeoutError as error:
         raise RuntimeError("graphiti_initialization_timeout") from error
@@ -1240,7 +1240,7 @@ async def _call_graphiti(name: str, arguments: dict[str, Any]):
     try:
         result = await asyncio.wait_for(
             _GRAPHITI_MODULE.mcp.call_tool(name, arguments),
-            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+            timeout=_PROVIDER_TOOL_TIMEOUT_SECONDS,
         )
     except TimeoutError as error:
         raise RuntimeError(f"graphiti_timeout:{name}") from error
@@ -2556,6 +2556,11 @@ def _requested_provider_catalog_families() -> tuple[str, ...]:
         # startup itself has no request token and never reaches this branch.
         return ("cbm", "graphiti") if get_access_token() is not None else ()
     kind = str(principal.get("kind") or "")
+    if kind == "catalog-reader":
+        # The catalog reader can inspect every loaded provider contract but
+        # cannot execute any tool. Card-specific principals remain narrowed to
+        # their saved grants below.
+        return tuple(_PROVIDER_PREFIXES)
     if kind not in {"materializer-read", "card-runtime"}:
         return ()
     grants = principal.get("grantedTools")

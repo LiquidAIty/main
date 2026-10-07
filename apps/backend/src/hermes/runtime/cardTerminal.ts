@@ -1,4 +1,5 @@
 import { spawn as spawnPty, type IPty } from 'node-pty';
+import path from 'node:path';
 import type { CardRuntime, CardTerminalListener } from './cardRuntime';
 
 const MAX_REPLAY_BYTES = 2 * 1024 * 1024;
@@ -11,7 +12,6 @@ export class CardTerminal {
 
   attach(cols: number, rows: number): void {
     this.runtime.requireRunning();
-    if (!this.runtime.launch.tuiArgs.length) throw new Error('card_terminal_launch_unavailable');
     if (this.runtime.pty) {
       if (this.runtime.state.cols !== cols || this.runtime.state.rows !== rows) {
         this.resize(cols, rows);
@@ -20,7 +20,7 @@ export class CardTerminal {
     }
     const process = this.spawnProcess(
       this.runtime.launch.file,
-      [...this.runtime.launch.tuiArgs, '--resume', this.runtime.state.storedSessionId],
+      [...this.tuiArgs(), '--resume', this.runtime.state.storedSessionId],
       {
         name: 'xterm-256color',
         cols,
@@ -28,6 +28,12 @@ export class CardTerminal {
         cwd: this.runtime.launch.cwd,
         env: {
           ...this.runtime.launch.env,
+          TERMINAL_CWD: this.runtime.launch.cwd,
+          HERMES_TUI_DIR: path.join(
+            path.resolve(this.runtime.launch.profileHome, '..', '..'),
+            'ui-tui',
+          ),
+          TERM: 'xterm-256color',
           HERMES_TUI_GATEWAY_URL: this.runtime.gatewayUrl,
           HERMES_TUI_INLINE: '1',
         },
@@ -52,6 +58,26 @@ export class CardTerminal {
     process.onData((data) => this.record(data));
     process.onExit(({ exitCode }) => this.exited(process, exitCode));
     this.runtime.emitState();
+  }
+
+  private tuiArgs(): string[] {
+    const options = this.runtime.card.runtimeOptions as Record<string, unknown> | undefined;
+    const args = [
+      '-m', 'hermes_cli.main',
+      '-p', this.runtime.launch.profile,
+      '--tui', '--in', this.runtime.launch.cwd,
+      '--model', this.runtime.launch.providerSelection.model,
+      '--provider', this.runtime.launch.providerSelection.provider,
+    ];
+    if (typeof options?.reasoningEffort === 'string' && options.reasoningEffort.trim()) {
+      args.push('--reasoning', options.reasoningEffort.trim());
+    }
+    if (options?.maxTurns != null) args.push('--max-turns', String(options.maxTurns));
+    const skills = Array.isArray(options?.skills)
+      ? options.skills.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+    if (skills.length) args.push('--skills', [...new Set(skills)].join(','));
+    return args;
   }
 
   input(data: string): void {

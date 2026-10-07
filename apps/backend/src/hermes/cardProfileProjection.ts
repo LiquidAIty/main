@@ -1,7 +1,7 @@
 import type { AgentCardInstance, DeckDocument } from '../types';
 import { readSavedSubagentModel, type SavedSubagentModel } from './subagentModel';
 
-export type NativeHermesMcpServer = {
+export type HermesMcpServer = {
   name: string;
   transport: string;
   enabled: boolean;
@@ -10,7 +10,7 @@ export type NativeHermesMcpServer = {
   toolFilter: string[];
 };
 
-export type NativeHermesProfileState = {
+export type HermesProfileState = {
   name: string;
   description: string;
   soul: string;
@@ -18,7 +18,7 @@ export type NativeHermesProfileState = {
   skills: Array<{ name: string; enabled: boolean }>;
   toolsets: Array<{ name: string; label?: string; description?: string; tool_count?: number; enabled: boolean }>;
   toolsetsPinned: boolean;
-  mcpServers: NativeHermesMcpServer[];
+  mcpServers: HermesMcpServer[];
   learning: {
     count: number;
     summary: string[];
@@ -52,12 +52,12 @@ export type HermesCardProfileBinding = {
 export type HermesCardProfileReadback = {
   binding: HermesCardProfileBinding;
   desired: { subagentModel: SavedSubagentModel | null };
-  native: NativeHermesProfileState;
-  nativeApply: 'run_start';
-  cardSaveMutatesNative: false;
+  profile: HermesProfileState;
+  profileApply: 'run_start';
+  cardSaveMutatesProfile: false;
 };
 
-export type HermesNativeCardOperation =
+export type HermesCardOperation =
   | { method: 'profiles.configure'; params: Record<string, unknown> }
   | { method: 'learning.detail'; params: { id: string } }
   | { method: 'learning.edit'; params: { id: string; content: string } }
@@ -67,7 +67,7 @@ export type HermesNativeCardOperation =
   | { method: 'mcp.servers.list'; params?: Record<string, unknown> }
   | { method: 'mcp.servers.test'; params: { name: string } };
 
-export type RequestHermesNative = (
+export type RequestHermes = (
   method: string,
   params?: Record<string, unknown>,
   profile?: string,
@@ -90,7 +90,7 @@ export function projectHermesCardBinding(
   };
 }
 
-function safeMcpServer(value: unknown, enabledByName: Map<string, boolean>): NativeHermesMcpServer | null {
+function safeMcpServer(value: unknown, enabledByName: Map<string, boolean>): HermesMcpServer | null {
   const server = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const name = String(server.name || '').trim();
   if (!name) return null;
@@ -110,15 +110,15 @@ function safeMcpServer(value: unknown, enabledByName: Map<string, boolean>): Nat
   };
 }
 
-function normalizeNative(
+function normalizeProfile(
   profileValue: unknown,
   mcpValue: unknown,
   learningValue: unknown,
-): NativeHermesProfileState {
+): HermesProfileState {
   const profile = profileValue && typeof profileValue === 'object'
     ? profileValue as Record<string, unknown>
     : null;
-  if (!profile || !String(profile.name || '').trim()) throw new Error('hermes_native_profile_read_invalid');
+  if (!profile || !String(profile.name || '').trim()) throw new Error('hermes_profile_read_invalid');
   const model = profile.model && typeof profile.model === 'object'
     ? profile.model as Record<string, unknown>
     : {};
@@ -153,7 +153,7 @@ function normalizeNative(
     toolsetsPinned: profile.toolsets_pinned === true,
     mcpServers: (Array.isArray(mcp.servers) ? mcp.servers : [])
       .map((item) => safeMcpServer(item, enabledByName))
-      .filter((item): item is NativeHermesMcpServer => item !== null),
+      .filter((item): item is HermesMcpServer => item !== null),
     learning: {
       count: Number.isFinite(learning.count) ? Number(learning.count) : 0,
       summary: Array.isArray(learning.summary)
@@ -182,83 +182,83 @@ function normalizeNative(
   };
 }
 
-async function readNativeProfile(
+async function readProfile(
   binding: HermesCardProfileBinding,
   desiredSubagentModel: SavedSubagentModel | null,
-  requestNative: RequestHermesNative,
+  requestHermes: RequestHermes,
 ): Promise<HermesCardProfileReadback> {
-  const profile = await requestNative('profiles.describe', { name: binding.profile });
-  const mcp = await requestNative('mcp.servers.list', { profile: binding.profile });
-  const learning = await requestNative(
+  const profile = await requestHermes('profiles.describe', { name: binding.profile });
+  const mcp = await requestHermes('mcp.servers.list', { profile: binding.profile });
+  const learning = await requestHermes(
     'learning.frames',
     { cols: 60, rows: 18, frames: 2 },
     binding.profile,
   );
-  const native = normalizeNative(profile, mcp, learning);
+  const profileState = normalizeProfile(profile, mcp, learning);
   return {
     binding,
     desired: { subagentModel: desiredSubagentModel },
-    native,
-    nativeApply: 'run_start',
-    cardSaveMutatesNative: false,
+    profile: profileState,
+    profileApply: 'run_start',
+    cardSaveMutatesProfile: false,
   };
 }
 
 export async function hydrateHermesCardProfile(
   card: AgentCardInstance,
   deck: Pick<DeckDocument, 'workspaceRoot'>,
-  requestNative: RequestHermesNative,
+  requestHermes: RequestHermes,
 ): Promise<HermesCardProfileReadback> {
   const binding = projectHermesCardBinding(card, deck);
   if (!binding.profile) throw new Error('hermes_profile_binding_required');
   const desiredSubagentModel = readSavedSubagentModel(card.runtimeOptions?.subagentModel);
-  return readNativeProfile(binding, desiredSubagentModel, requestNative);
+  return readProfile(binding, desiredSubagentModel, requestHermes);
 }
 
-async function callBoundNativeOperation(
+async function callBoundProfileOperation(
   binding: HermesCardProfileBinding,
-  operation: HermesNativeCardOperation,
-  requestNative: RequestHermesNative,
+  operation: HermesCardOperation,
+  requestHermes: RequestHermes,
 ): Promise<unknown> {
   const params = { ...(operation.params || {}) };
   if ('name' in params && operation.method !== 'mcp.servers.test') {
-    throw new Error('hermes_native_profile_override_forbidden');
+    throw new Error('hermes_profile_override_forbidden');
   }
   if (operation.method === 'profiles.configure') {
-    return requestNative(operation.method, { ...params, name: binding.profile });
+    return requestHermes(operation.method, { ...params, name: binding.profile });
   }
   if (operation.method === 'skills.manage' || operation.method.startsWith('mcp.servers.')) {
-    return requestNative(operation.method, { ...params, profile: binding.profile });
+    return requestHermes(operation.method, { ...params, profile: binding.profile });
   }
-  return requestNative(operation.method, params, binding.profile);
+  return requestHermes(operation.method, params, binding.profile);
 }
 
-function assertNativeOperationResult(
-  operation: HermesNativeCardOperation,
+function assertOperationResult(
+  operation: HermesCardOperation,
   value: unknown,
 ): void {
   if (!['profiles.configure', 'learning.detail', 'learning.edit'].includes(operation.method)) return;
   const result = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   if (result.ok === true) return;
   throw new Error(
-    `hermes_native_${operation.method.replaceAll('.', '_')}_failed:${String(result.message || 'native operation rejected')}`,
+    `hermes_${operation.method.replaceAll('.', '_')}_failed:${String(result.message || 'operation rejected')}`,
   );
 }
 
-export async function invokeHermesNativeOperation(
+export async function invokeHermesCardOperation(
   card: AgentCardInstance,
   deck: Pick<DeckDocument, 'workspaceRoot'>,
-  operation: HermesNativeCardOperation,
-  requestNative: RequestHermesNative,
+  operation: HermesCardOperation,
+  requestHermes: RequestHermes,
 ): Promise<{ result: unknown; readback: HermesCardProfileReadback }> {
   const binding = projectHermesCardBinding(card, deck);
   if (!binding.profile) throw new Error('hermes_profile_binding_required');
-  const result = await callBoundNativeOperation(binding, operation, requestNative);
-  const readback = await readNativeProfile(
+  const result = await callBoundProfileOperation(binding, operation, requestHermes);
+  const readback = await readProfile(
     binding,
     readSavedSubagentModel(card.runtimeOptions?.subagentModel),
-    requestNative,
+    requestHermes,
   );
-  assertNativeOperationResult(operation, result);
+  assertOperationResult(operation, result);
   return { result, readback };
 }

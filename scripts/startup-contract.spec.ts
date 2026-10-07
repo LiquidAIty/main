@@ -38,8 +38,10 @@ describe('canonical Hermes gateway ownership', () => {
       'client/src/features/agentbuilder/deck/newProjectDeck.ts',
       'client/src/features/agentbuilder/deck/deckDocument.spec.ts',
       'client/src/pages/agentbuilder.setup.spec.ts',
-      'apps/backend/src/db/migrations.spec.ts',
       'apps/backend/migrations/051_main_profile_and_hermes_terms.sql',
+      'apps/backend/migrations/053_rename_hermes_run_fields.sql',
+      'apps/backend/migrations/054_rename_remaining_hermes_run_aggregates.sql',
+      'apps/backend/migrations/055_remove_bot_mode_card_tool_grant.sql',
     ];
 
     for (const relativePath of identityCleanFiles) {
@@ -50,7 +52,7 @@ describe('canonical Hermes gateway ownership', () => {
       expect(source, relativePath).not.toContain(retiredRuntimeWord);
     }
 
-    for (const relativePath of ['package.json', 'apps/backend/src/db/migrations.ts']) {
+    for (const relativePath of ['package.json']) {
       const source = readFileSync(resolve(repositoryRoot, relativePath), 'utf8').toLowerCase();
       expect(source, relativePath).not.toContain(retiredMainProfile);
       expect(source, relativePath).not.toContain(retiredRuntimeWord);

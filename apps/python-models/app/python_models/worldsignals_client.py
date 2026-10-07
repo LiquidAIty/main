@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from app.python_models.signal_contracts import (
     SignalPackage,
     build_signal_query,
-    package_native_signal_result,
+    package_signal_result,
 )
 
 
@@ -387,7 +387,7 @@ def collect_worldsignals_signal_package(
 
     This is an internal Card-runtime seam, not a public tool: the trusted caller
     must supply authenticated Card/Run identity. Before dispatch it reads the
-    live native manifest and refuses commands not explicitly classified read.
+    live WorldSignals manifest and refuses commands not explicitly classified read.
     """
 
     source_client = client or WorldSignalsClient()
@@ -409,7 +409,7 @@ def collect_worldsignals_signal_package(
     if operation_class != "read":
         raise WorldSignalsError(f"worldsignals_signal_query_requires_read_command:{query.command}")
     result = source_client.command(query.command, query.arguments)
-    return package_native_signal_result(
+    return package_signal_result(
         query=query,
         producer_card_id=producer_card_id,
         producer_run_id=producer_run_id,

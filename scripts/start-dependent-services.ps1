@@ -45,7 +45,7 @@ if ($WaitForMcpReadiness) {
     Write-Host 'Optional public MCP tunnel stopped; the local MCP host and internal clients remain running.'
   }
   # This command is one optional sibling under concurrently. Its failure must
-  # not terminate the canonical MCP host, native CBM, or application services.
+  # not terminate the canonical MCP host, CBM, or application services.
   exit 0
 }
 

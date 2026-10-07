@@ -300,6 +300,7 @@ describe('materializeHermesCardToolsPlugin retired profile residue', () => {
       expect(actual.plugins['custom-plugin']).toEqual({ setting: 'keep-me' });
       expect(actual.unrelated).toEqual({ nested: 'keep-me-too' });
     },
+    60_000,
   );
 
   it('does not broaden the saved Card grants or external MCP surface during retirement', async () => {
@@ -358,6 +359,22 @@ describe('requireHermesCardToolsReadback', () => {
     });
   });
 
+  it('does not treat Bot Mode messaging as a selected Card tool', () => {
+    const selected = configuration({
+      enabledTools: ['hermes:tool:message_agent'],
+      presentedTools: [],
+      hermesSuppliedTools: [{
+        canonicalName: 'hermes:tool:message_agent',
+        hermesName: 'message_agent',
+      }],
+      pluginTools: [],
+    });
+
+    expect(requireHermesCardToolsReadback({ sections: [] }, selected)).toEqual({
+      'hermes:tool:message_agent': 'hermes_tool_unavailable',
+    });
+  });
+
   it('accepts only the selected external MCP tool and reports a missing one', () => {
     const selected = configuration({
       enabledTools: ['graphiti.search_nodes'],
@@ -373,7 +390,7 @@ describe('requireHermesCardToolsReadback', () => {
     });
     expect(requireHermesCardToolsReadback({ sections: [{
       name: 'mcp-graphiti',
-      tools: [{ name: 'mcp__graphiti__search_nodes' }],
+      tools: [{ name: 'mcp__graphiti__graphiti_search_nodes' }],
     }] }, selected)).toEqual({});
     expect(requireHermesCardToolsReadback({ sections: [], }, selected)).toEqual({
       'graphiti.search_nodes': 'external_mcp_tool_unavailable',
@@ -396,8 +413,8 @@ describe('requireHermesCardToolsReadback', () => {
     expect(() => requireHermesCardToolsReadback({ sections: [{
       name: 'mcp-graphiti',
       tools: [
-        { name: 'mcp__graphiti__search_nodes' },
-        { name: 'mcp__graphiti__add_memory' },
+        { name: 'mcp__graphiti__graphiti_search_nodes' },
+        { name: 'mcp__graphiti__graphiti_add_memory' },
       ],
     }] }, selected)).toThrow('hermes_external_mcp_readback_broadened:graphiti');
   });
@@ -421,22 +438,22 @@ describe('materializeHermesExternalMcpTools', () => {
       };
       if (method === 'mcp.servers.test') return {
         ok: true,
-        tools: [{ name: 'search_nodes' }, { name: 'add_memory' }],
+        tools: [{ name: 'graphiti.search_nodes' }, { name: 'graphiti.add_memory' }],
         prompts: 0,
         resources: 0,
       };
-      if (method === 'tools.configure') return { changed: ['graphiti:search_nodes'] };
+      if (method === 'tools.configure') return { changed: ['graphiti:graphiti.search_nodes'] };
       throw new Error(`unexpected:${method}`);
     });
 
     await expect(materializeHermesExternalMcpTools(request, selected)).resolves.toEqual({});
     expect(request).toHaveBeenCalledWith('tools.configure', {
       action: 'disable',
-      names: ['graphiti:add_memory'],
+      names: ['graphiti:graphiti.add_memory'],
     });
     expect(request).toHaveBeenCalledWith('tools.configure', {
       action: 'enable',
-      names: ['graphiti:search_nodes'],
+      names: ['graphiti:graphiti.search_nodes'],
     });
   });
 

@@ -126,19 +126,19 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             kwargs["organizing_principle"], "Preserve source provenance."
         )
 
-    def test_delete_native_routes_one_project_scoped_fact_to_graphiti(self) -> None:
-        delete_native = AsyncMock(
-            return_value={"kind": "fact", "native_id": "fact-1"}
+    def test_delete_fact_routes_one_project_scoped_fact_to_graphiti(self) -> None:
+        delete_fact = AsyncMock(
+            return_value={"kind": "fact", "graphiti_fact_uuid": "fact-1"}
         )
         with (
-            patch.object(app, "_delete_native_know", delete_native),
+            patch.object(app, "_delete_graphiti_fact", delete_fact),
         ):
             response = asyncio.run(_request(
                 "POST",
-                "/delete_native",
+                "/delete_fact",
                 json={
                     "project_id": "project-1",
-                    "native_id": "fact-1",
+                    "graphiti_fact_uuid": "fact-1",
                     "kind": "fact",
                 },
             ))
@@ -147,25 +147,25 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         self.assertEqual(response.json(), {
             "ok": True,
             "kind": "fact",
-            "native_id": "fact-1",
+            "graphiti_fact_uuid": "fact-1",
         })
-        delete_native.assert_awaited_once()
-        payload = delete_native.await_args.args[0]
+        delete_fact.assert_awaited_once()
+        payload = delete_fact.await_args.args[0]
         self.assertEqual(payload.project_id, "project-1")
-        self.assertEqual(payload.native_id, "fact-1")
+        self.assertEqual(payload.graphiti_fact_uuid, "fact-1")
         self.assertEqual(payload.kind, "fact")
 
-    def test_delete_native_returns_not_found_for_unknown_fact(self) -> None:
-        delete_native = AsyncMock(side_effect=EdgeNotFoundError("missing-fact"))
+    def test_delete_fact_returns_not_found_for_unknown_fact(self) -> None:
+        delete_fact = AsyncMock(side_effect=EdgeNotFoundError("missing-fact"))
         with (
-            patch.object(app, "_delete_native_know", delete_native),
+            patch.object(app, "_delete_graphiti_fact", delete_fact),
         ):
             response = asyncio.run(_request(
                 "POST",
-                "/delete_native",
+                "/delete_fact",
                 json={
                     "project_id": "project-1",
-                    "native_id": "missing-fact",
+                    "graphiti_fact_uuid": "missing-fact",
                     "kind": "fact",
                 },
             ))
@@ -176,7 +176,7 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             "error": {"message": "KnowGraph item not found."},
         })
 
-    def test_delete_native_removes_only_a_fact_in_the_requested_project(self) -> None:
+    def test_delete_fact_removes_only_a_fact_in_the_requested_project(self) -> None:
         edge = SimpleNamespace(
             group_id="liquidaity-project-1",
             delete=AsyncMock(),
@@ -198,17 +198,17 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 new=AsyncMock(return_value=edge),
             ),
         ):
-            result = asyncio.run(app._delete_native_know(app.NativeKnowDeleteRequest(
+            result = asyncio.run(app._delete_graphiti_fact(app.GraphitiFactDeleteRequest(
                 project_id="project-1",
-                native_id="fact-1",
+                graphiti_fact_uuid="fact-1",
                 kind="fact",
             )))
 
-        self.assertEqual(result, {"kind": "fact", "native_id": "fact-1"})
+        self.assertEqual(result, {"kind": "fact", "graphiti_fact_uuid": "fact-1"})
         edge.delete.assert_awaited_once_with(driver)
         driver.close.assert_awaited_once()
 
-    def test_delete_native_rejects_cross_project_fact_without_deleting(self) -> None:
+    def test_delete_fact_rejects_cross_project_fact_without_deleting(self) -> None:
         edge = SimpleNamespace(
             group_id="liquidaity-other-project",
             delete=AsyncMock(),
@@ -230,10 +230,10 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                 new=AsyncMock(return_value=edge),
             ),
         ):
-            with self.assertRaisesRegex(LookupError, "knowgraph_native_record_not_found"):
-                asyncio.run(app._delete_native_know(app.NativeKnowDeleteRequest(
+            with self.assertRaisesRegex(LookupError, "knowgraph_graphiti_fact_not_found"):
+                asyncio.run(app._delete_graphiti_fact(app.GraphitiFactDeleteRequest(
                     project_id="project-1",
-                    native_id="fact-1",
+                    graphiti_fact_uuid="fact-1",
                     kind="fact",
                 )))
 

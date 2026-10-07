@@ -4,7 +4,25 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'worldview-runtime-test-modules',
+      enforce: 'pre',
+      resolveId(id) {
+        if (id === 'virtual:worldview-runtime-css') return '\0worldview-runtime-test-css';
+        if (id === 'virtual:worldview-runtime-mount') return '\0worldview-runtime-test-mount';
+        return null;
+      },
+      load(id) {
+        if (id === '\0worldview-runtime-test-css') return 'export default "";';
+        if (id === '\0worldview-runtime-test-mount') {
+          return 'export const importWorldViewMount = async () => ({ mountWorldView: () => null });';
+        }
+        return null;
+      },
+    },
+  ],
   test: {
     // The one Vitest workspace definition (replaces the deprecated
     // vitest.workspace.ts). Three projects, nothing else is ever collected:

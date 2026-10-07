@@ -33,7 +33,7 @@ class FakeGraphDriver:
         if self.existing_episode_id and "LIMIT 1" in cypher:
             rows = [{"uuid": self.existing_episode_id}]
         elif (
-            "fact.jev_native_signature AS native_signature" in cypher
+            "fact.jev_graphiti_signature AS graphiti_signature" in cypher
             and "SET fact.jev_relation_winner" not in cypher
         ):
             rows = [
@@ -45,8 +45,8 @@ class FakeGraphDriver:
             if self.persist_error:
                 raise self.persist_error
             persisted = {
-                "uuid": params["native_fact_uuid"],
-                "native_signature": params["native_signature"],
+                "uuid": params["graphiti_fact_uuid"],
+                "graphiti_signature": params["graphiti_signature"],
                 "winner": params["winner"],
                 "distribution_json": params["distribution_json"],
                 "label_confidence": params["label_confidence"],
@@ -59,7 +59,7 @@ class FakeGraphDriver:
                 "vocabulary_count": params["vocabulary_count"],
                 "choice_options_json": params["choice_options_json"],
             }
-            self.existing_jev[params["native_fact_uuid"]] = {
+            self.existing_jev[params["graphiti_fact_uuid"]] = {
                 key: value for key, value in persisted.items() if key != "uuid"
             }
             rows = [persisted]
@@ -86,7 +86,7 @@ class FakeGraphiti:
         )
         self.add_calls: list[dict] = []
         self.jev_calls: list[list[dict]] = []
-        self.native_edge = SimpleNamespace(
+        self.graphiti_edge = SimpleNamespace(
             uuid="fact-1",
             source_node_uuid="entity-a",
             target_node_uuid="entity-b",
@@ -107,7 +107,7 @@ class FakeGraphiti:
                 SimpleNamespace(uuid="entity-a", name="Alpha"),
                 SimpleNamespace(uuid="entity-b", name="Beta"),
             ],
-            edges=[self.native_edge],
+            edges=[self.graphiti_edge],
         )
 
 
@@ -124,7 +124,7 @@ def _runtime():
     )
 
 
-def _decision(native_fact_uuid: str = "fact-1") -> dict:
+def _decision(graphiti_fact_uuid: str = "fact-1") -> dict:
     choice_options = [
         "IS_A", "PART_OF", "HAS_PART", "CAUSES", "AFFECTS",
         "DEPENDS_ON", "ENABLES", "CONSTRAINS", "REQUIRES", "SUPPORTS",
@@ -135,7 +135,7 @@ def _decision(native_fact_uuid: str = "fact-1") -> dict:
     distribution = {choice: 0.0 for choice in choice_options}
     distribution.update({"PROVIDES": 0.88, "ASSOCIATED_WITH": 0.12})
     return {
-        "nativeFactUuid": native_fact_uuid,
+        "graphitiFactUuid": graphiti_fact_uuid,
         "status": "success",
         "winner": "PROVIDES",
         "distribution": distribution,
@@ -170,7 +170,7 @@ def _run(
         if jev_error:
             raise jev_error
         return decisions if decisions is not None else [
-            _decision(str(fact["nativeFactUuid"])) for fact in facts
+            _decision(str(fact["graphitiFactUuid"])) for fact in facts
         ]
 
     vocabulary = {
@@ -345,7 +345,7 @@ class GraphitiIngestTests(unittest.TestCase):
 
     def test_new_source_uses_one_graphiti_episode_and_records_authority(self) -> None:
         graphiti = FakeGraphiti()
-        native_before = vars(graphiti.native_edge).copy()
+        graphiti_before = vars(graphiti.graphiti_edge).copy()
         result = _run(graphiti)
 
         self.assertFalse(result["idempotent"])
@@ -374,7 +374,7 @@ class GraphitiIngestTests(unittest.TestCase):
             any("graphiti_version" in cypher for cypher, _ in graphiti.driver.queries)
         )
         self.assertEqual(len(graphiti.jev_calls), 1)
-        self.assertEqual(graphiti.jev_calls[0][0]["nativeFactUuid"], "fact-1")
+        self.assertEqual(graphiti.jev_calls[0][0]["graphitiFactUuid"], "fact-1")
         self.assertEqual(result["jev_classification"], {
             "status": "success",
             "touched_fact_count": 1,
@@ -392,7 +392,7 @@ class GraphitiIngestTests(unittest.TestCase):
             if "SET fact.jev_relation_winner" in cypher
         ]
         self.assertEqual(len(persisted), 1)
-        self.assertEqual(persisted[0]["native_fact_uuid"], "fact-1")
+        self.assertEqual(persisted[0]["graphiti_fact_uuid"], "fact-1")
         self.assertEqual(persisted[0]["winner"], "PROVIDES")
         self.assertEqual(persisted[0]["label_confidence"], 0.88)
         self.assertEqual(persisted[0]["provider_confidence"], 0.64)
@@ -401,12 +401,12 @@ class GraphitiIngestTests(unittest.TestCase):
             persisted[0]["relationship_proposal_status"],
             "invalid_novel_label",
         )
-        self.assertEqual(vars(graphiti.native_edge), native_before)
+        self.assertEqual(vars(graphiti.graphiti_edge), graphiti_before)
         self.assertTrue(graphiti.driver.closed)
 
-    def test_vocabulary_guidance_failure_does_not_discard_native_graphiti_fact(self) -> None:
+    def test_vocabulary_guidance_failure_does_not_discard_graphiti_fact(self) -> None:
         graphiti = FakeGraphiti()
-        native_before = vars(graphiti.native_edge).copy()
+        graphiti_before = vars(graphiti.graphiti_edge).copy()
 
         result = _run(
             graphiti,
@@ -423,17 +423,17 @@ class GraphitiIngestTests(unittest.TestCase):
             graphiti.add_calls[0]["custom_extraction_instructions"],
             "Keep claims grounded.",
         )
-        self.assertEqual(vars(graphiti.native_edge), native_before)
+        self.assertEqual(vars(graphiti.graphiti_edge), graphiti_before)
 
     def test_support_only_update_reuses_semantically_identical_classification(self) -> None:
-        signature = ingest._native_fact_signature({
+        signature = ingest._graphiti_fact_signature({
             "sourceEntity": {"uuid": "entity-a"},
             "targetEntity": {"uuid": "entity-b"},
-            "nativeRelation": "supplies launch services to",
+            "graphitiRelation": "supplies launch services to",
             "fact": "Alpha supplies launch services to Beta.",
         })
         graphiti = FakeGraphiti(existing_jev={"fact-1": {
-            "native_signature": signature,
+            "graphiti_signature": signature,
             "winner": "PROVIDES",
             "distribution_json": json.dumps(
                 _decision()["distribution"], sort_keys=True, separators=(",", ":")
@@ -469,9 +469,9 @@ class GraphitiIngestTests(unittest.TestCase):
             for cypher, _ in graphiti.driver.queries
         ))
 
-    def test_materially_changed_native_fact_is_classified_once(self) -> None:
+    def test_materially_changed_graphiti_fact_is_classified_once(self) -> None:
         graphiti = FakeGraphiti(existing_jev={"fact-1": {
-            "native_signature": "old-meaning",
+            "graphiti_signature": "old-meaning",
             "winner": "ASSOCIATED_WITH",
             "distribution_json": '{"ASSOCIATED_WITH":1.0}',
         }})
@@ -484,7 +484,7 @@ class GraphitiIngestTests(unittest.TestCase):
 
     def test_explicit_reconciliation_repairs_malformed_annotation_then_is_idempotent(self) -> None:
         graphiti = FakeGraphiti(existing_jev={"fact-1": {
-            "native_signature": "stale-signature",
+            "graphiti_signature": "stale-signature",
             "winner": "PROVIDES",
             "distribution_json": '{"ASSOCIATED_WITH":1.0}',
             "label_confidence": 1.0,
@@ -497,12 +497,12 @@ class GraphitiIngestTests(unittest.TestCase):
             "vocabulary_count": 20,
             "choice_options_json": '["ASSOCIATED_WITH"]',
         }})
-        native_before = vars(graphiti.native_edge).copy()
+        graphiti_before = vars(graphiti.graphiti_edge).copy()
         fact = {
-            "nativeFactUuid": "fact-1",
+            "graphitiFactUuid": "fact-1",
             "sourceEntity": {"uuid": "entity-a", "name": "Alpha"},
             "targetEntity": {"uuid": "entity-b", "name": "Beta"},
-            "nativeRelation": "supplies launch services to",
+            "graphitiRelation": "supplies launch services to",
             "fact": "Alpha supplies launch services to Beta.",
             "supportingEpisodeUuids": ["graphiti-episode-1"],
             "supportingEpisodes": [],
@@ -523,7 +523,7 @@ class GraphitiIngestTests(unittest.TestCase):
         async def classify(project_id: str, facts: list[dict]) -> list[dict]:
             self.assertEqual(project_id, "project-1")
             calls.append(facts)
-            return [_decision(str(item["nativeFactUuid"])) for item in facts]
+            return [_decision(str(item["graphitiFactUuid"])) for item in facts]
 
         with patch.object(ingest, "_call_knowgraph_jev", side_effect=classify):
             repaired = asyncio.run(ingest._reconcile_jev_facts(
@@ -550,11 +550,11 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(current["skipped_fact_uuids"], ["fact-1"])
         self.assertEqual(current["still_unsettled_fact_uuids"], [])
         self.assertEqual(len(calls), 1)
-        self.assertEqual(vars(graphiti.native_edge), native_before)
+        self.assertEqual(vars(graphiti.graphiti_edge), graphiti_before)
 
-    def test_jev_failure_keeps_the_grounded_native_fact(self) -> None:
+    def test_jev_failure_keeps_the_grounded_graphiti_fact(self) -> None:
         graphiti = FakeGraphiti()
-        native_before = vars(graphiti.native_edge).copy()
+        graphiti_before = vars(graphiti.graphiti_edge).copy()
 
         result = _run(graphiti, jev_error=RuntimeError("jev unavailable"))
 
@@ -562,16 +562,16 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(result["fact_count"], 1)
         self.assertEqual(result["jev_classification"]["status"], "unavailable")
         self.assertEqual(result["jev_classification"]["failed_fact_uuids"], ["fact-1"])
-        self.assertEqual(vars(graphiti.native_edge), native_before)
+        self.assertEqual(vars(graphiti.graphiti_edge), graphiti_before)
         self.assertFalse(any(
             "SET fact.jev_relation_winner" in cypher
             for cypher, _ in graphiti.driver.queries
         ))
         self.assertTrue(graphiti.driver.closed)
 
-    def test_unmapped_jev_control_outcome_keeps_the_grounded_native_fact(self) -> None:
+    def test_unmapped_jev_control_outcome_keeps_the_grounded_graphiti_fact(self) -> None:
         graphiti = FakeGraphiti()
-        native_before = vars(graphiti.native_edge).copy()
+        graphiti_before = vars(graphiti.graphiti_edge).copy()
         insufficient = {
             **_decision(),
             "status": "unavailable",
@@ -587,7 +587,7 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(result["fact_count"], 1)
         self.assertEqual(result["jev_classification"]["status"], "unavailable")
         self.assertEqual(result["jev_classification"]["failed_fact_uuids"], ["fact-1"])
-        self.assertEqual(vars(graphiti.native_edge), native_before)
+        self.assertEqual(vars(graphiti.graphiti_edge), graphiti_before)
         self.assertFalse(any(
             "SET fact.jev_relation_winner" in cypher
             for cypher, _ in graphiti.driver.queries

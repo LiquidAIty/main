@@ -27,7 +27,7 @@ function Get-DotEnvValue {
 }
 
 # The former client-Vite import injected these existing provider settings while
-# compiling the native module graph. The public :4174 module doorway must inherit
+# compiling the WorldView module graph. The public :4174 module doorway must inherit
 # the same values so moving that graph does not silently downgrade the renderer.
 foreach ($name in @('GOOGLE_MAPS_API_KEY', 'CESIUM_ION_TOKEN')) {
   if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, 'Process'))) {

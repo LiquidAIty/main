@@ -4,7 +4,7 @@ import type {
   GraphProjectionEdge,
   GraphProjectionNode,
   GraphProjectionV1,
-} from '../../../components/knowledge/NativeAuthorityGraphSurface';
+} from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 
 export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph';
@@ -367,11 +367,15 @@ export default function useAgentBuilderKnowledgeGraphs({
     await refreshThinkGraph();
   }, [projectId, refreshThinkGraph]);
 
-  const removeKnowGraphEvidence = useCallback(async (episodeId: string) => {
-    const response = await fetch('/api/knowgraph/delete-native', {
+  const removeKnowGraphEvidence = useCallback(async (graphitiFactUuid: string) => {
+    const response = await fetch('/api/knowgraph/delete-fact', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, native_id: episodeId, kind: 'episode' }),
+      body: JSON.stringify({
+        project_id: projectId,
+        graphiti_fact_uuid: graphitiFactUuid,
+        kind: 'fact',
+      }),
     });
     if (!response.ok) throw new Error('Could not delete this Know.');
     await refreshKnowGraph();

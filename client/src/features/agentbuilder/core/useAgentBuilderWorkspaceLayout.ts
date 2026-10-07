@@ -9,7 +9,6 @@ const DEFAULT_CHAT_WIDTH = 420;
 // product font stack. Keep the full CodeGraph control visible in integer CSS
 // pixels, then let Main overlap the graph underplane beyond that boundary.
 export const KNOWLEDGE_TAB_STRIP_SAFE_WIDTH = 401;
-export const CANVAS_INSPECTOR_WIDTH = 344;
 
 export const COMPANION_MIN_WIDTHS = Object.freeze({
   canvas: 520,
@@ -76,22 +75,6 @@ export function resolveHybridWorkspaceGeometry({
     companionViewportWidth,
     companionVisibleWidth,
   };
-}
-
-export function shouldCloseCanvasInspector({
-  workspaceView,
-  inspectorOpen,
-  companionVisibleWidth,
-  inspectorWidth = CANVAS_INSPECTOR_WIDTH,
-}: {
-  workspaceView: string;
-  inspectorOpen: boolean;
-  companionVisibleWidth: number;
-  inspectorWidth?: number;
-}): boolean {
-  return workspaceView === 'canvas'
-    && inspectorOpen
-    && companionVisibleWidth <= Math.max(0, inspectorWidth) + COMPANION_MIN_WIDTHS.canvas;
 }
 
 type UseAgentBuilderWorkspaceLayoutArgs<T extends string> = {

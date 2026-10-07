@@ -4,7 +4,7 @@ export type SignalGeoPoint = {
 };
 
 export type SignalEvidenceReference = {
-  sourceNativeRef: string;
+  sourceRef: string;
   contentHash: string;
   artifactId?: string | null;
 };
@@ -18,7 +18,7 @@ export type SignalCandidate = {
   producerRunId: string;
   source: {
     system: string;
-    nativeRef: string;
+    sourceRef: string;
     retrievalMethod: string;
     contentHash: string;
     licenseRef?: string | null;
@@ -114,7 +114,7 @@ function isGeoPoint(value: unknown): value is SignalGeoPoint {
 
 function isEvidenceReference(value: unknown): value is SignalEvidenceReference {
   return isRecord(value)
-    && hasString(value, 'sourceNativeRef')
+    && hasString(value, 'sourceRef')
     && hasString(value, 'contentHash');
 }
 
@@ -134,7 +134,7 @@ function isSignalCandidate(value: unknown): value is SignalCandidate {
     && hasString(value, 'domain')
     && isRecord(source)
     && hasString(source, 'system')
-    && hasString(source, 'nativeRef')
+    && hasString(source, 'sourceRef')
     && hasString(source, 'retrievalMethod')
     && hasString(source, 'contentHash')
     && isOptionalString(source.licenseRef)

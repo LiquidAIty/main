@@ -20,6 +20,16 @@ import {
   toggleSavedToolAssignment,
 } from './AgentManager';
 
+const CLIENT_ROOT = path.basename(process.cwd()).toLowerCase() === 'client'
+  ? process.cwd()
+  : path.resolve(process.cwd(), 'client');
+const AGENT_MANAGER_SOURCE = path.resolve(CLIENT_ROOT, 'src/components/AgentManager.tsx');
+const HERMES_CARD_PROFILE_SOURCE = path.resolve(
+  CLIENT_ROOT,
+  'src/features/agentbuilder/hermesCardProfile.ts',
+);
+const AGENT_BUILDER_PAGE_SOURCE = path.resolve(CLIENT_ROOT, 'src/pages/agentbuilder.tsx');
+
 let leaveCard: (() => Promise<boolean>) | null = null;
 function AgentManager(props: React.ComponentProps<typeof AgentManagerComponent>) {
   return React.createElement(AgentManagerComponent, { ...props, registerCardLeave: (save) => { leaveCard = save; } });
@@ -42,8 +52,8 @@ const runtimeOptions = {
     { name: 'subagentType', label: 'Subagents', path: 'runtimeOptions.subagentType', control: 'select', options: ['none', 'leaf', 'recursive'] },
     { name: 'accessMode', options: ['chatgpt-account', 'openai-api', 'openrouter-api'] },
     { name: 'reasoningEffort', options: ['low', 'medium', 'high', 'xhigh'] },
-    { name: 'jevModelChoiceContext', label: 'Model-choice context', options: ['inherited', 'request_card', 'conversation_window', 'selected_native_context'] },
-    { name: 'jevAutoToolsContext', label: 'Auto-tools context', options: ['inherited', 'request_card', 'conversation_window', 'selected_native_context'] },
+    { name: 'jevModelChoiceContext', label: 'Model-choice context', options: ['inherited', 'request_card', 'conversation_window', 'selected_graph_context'] },
+    { name: 'jevAutoToolsContext', label: 'Auto-tools context', options: ['inherited', 'request_card', 'conversation_window', 'selected_graph_context'] },
     ...['runtimeProfile', 'modelKey', 'temperature', 'maxTokens', 'maxTurns'].map((name) => ({ name, options: [] })),
   ].map((field) => ({
     ...field,
@@ -68,8 +78,8 @@ function mockEditorFetch(optionsAvailable = true, toolsAvailable = true) {
       return { ok: toolsAvailable, json: async () => ({ ok: toolsAvailable, references: [],
         selectedKnownReferences: [], unresolvedSelectedIds: ['calculator'], total: 0 }) };
     }
-    // Native profile discovery is independent of ordinary runtime choices.
-    return { ok: false, json: async () => ({ ok: false, error: 'Native profile unavailable.' }) };
+    // Hermes profile discovery is independent of ordinary runtime choices.
+    return { ok: false, json: async () => ({ ok: false, error: 'Hermes profile unavailable.' }) };
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
@@ -156,13 +166,13 @@ describe('AgentManager active builder config', () => {
     const modelContext = screen.getByLabelText<HTMLSelectElement>('Model-choice context');
     const toolContext = screen.getByLabelText<HTMLSelectElement>('Auto-tools context');
     expect([...modelContext.options].map((option) => option.value)).not.toContain('everything');
-    fireEvent.change(modelContext, { target: { value: 'selected_native_context' } });
+    fireEvent.change(modelContext, { target: { value: 'selected_graph_context' } });
     fireEvent.change(toolContext, { target: { value: 'conversation_window' } });
     await leaveEditor();
 
     expect(onSave).toHaveBeenCalledOnce();
     expect(onSave.mock.calls[0][0].runtime_options.jevContext).toEqual({
-      modelChoice: 'selected_native_context',
+      modelChoice: 'selected_graph_context',
       autoTools: 'conversation_window',
     });
   });
@@ -412,7 +422,7 @@ describe('AgentManager active builder config', () => {
   it('uses PromptBlocks as the only Soul editor and opens real learning-frame nodes without background writes', async () => {
     const fetchMock = mockEditorFetch();
     const fallback = fetchMock.getMockImplementation()!;
-    const native = {
+    const profileState = {
       soul: 'Original soul', skills: [{ name: 'research', enabled: true }],
       toolsets: [], mcpServers: [], honcho: null,
       learning: {
@@ -461,7 +471,7 @@ describe('AgentManager active builder config', () => {
         return { ok: true, json: async () => ({
           ok: true,
           result: { ok: true },
-          native: structuredClone(native),
+          profile: structuredClone(profileState),
           binding: { profile: 'saved-profile', mode: 'delegate' },
         }) };
       }
@@ -509,7 +519,7 @@ describe('AgentManager active builder config', () => {
     }));
     expect(screen.queryByTestId('agent-runtime-kind')).toBeNull();
     expect(screen.queryByTestId('agent-runtime-mode')).toBeNull();
-    expect(screen.queryByTestId('agent-native-profile-status')).toBeNull();
+    expect(screen.queryByTestId('agent-hermes-profile-status')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Re-read profile' })).toBeNull();
     await waitFor(() => expect(screen.queryByText(/Loading runtime options/)).toBeNull());
     await leaveEditor();
@@ -677,7 +687,7 @@ describe('AgentManager active builder config', () => {
     expect(onSave).not.toHaveBeenCalled();
     expect(savedConfig.runtime.profile).toBe('saved-profile');
   });
-  it('shows native-contract runtime choices without full Builder discovery or implicit model replacement', async () => {
+  it('shows saved-contract runtime choices without full Builder discovery or implicit model replacement', async () => {
     const fetchMock = mockEditorFetch();
     const onSave = vi.fn();
     const before = JSON.stringify(savedConfig);
@@ -747,7 +757,7 @@ describe('AgentManager active builder config', () => {
     expect(onSave.mock.calls[0][0].runtime_options.subagentType).toBe('leaf');
   });
 
-  it('does not project the new selector over a preserved native Auto Team Card', async () => {
+  it('does not project the new selector over a preserved Auto Team Card', async () => {
     mockEditorFetch();
     render(React.createElement(AgentManager, {
       activeTab: 'Runtime',
@@ -803,7 +813,7 @@ describe('AgentManager active builder config', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it('reports only an exact saved Card to native profile model mismatch', () => {
+  it('reports only an exact saved Card to Hermes profile model mismatch', () => {
     expect(hasHermesModelDrift('gpt-5.6-terra', 'gpt-5.6-luna')).toBe(true);
     expect(hasHermesModelDrift('gpt-5.6-luna', 'gpt-5.6-luna')).toBe(false);
     expect(hasHermesModelDrift('', 'gpt-5.6-luna')).toBe(false);
@@ -885,39 +895,27 @@ describe('AgentManager active builder config', () => {
   });
 
   it('keeps Card Save separate from the bounded learning operations', () => {
-    const source = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
-      'utf8',
-    );
-    const nativeClient = readFileSync(
-      path.resolve(process.cwd(), 'client/src/features/agentbuilder/nativeHermesCard.ts'),
-      'utf8',
-    );
+    const source = readFileSync(AGENT_MANAGER_SOURCE, 'utf8');
+    const profileClient = readFileSync(HERMES_CARD_PROFILE_SOURCE, 'utf8');
 
     expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
     expect(source).not.toContain('Saving this Card cannot change the profile.');
-    expect(source).not.toMatch(/applyNativeHermesCard|previewNativeHermesCard|buildHermesCardDraftFromLocalConfig/);
+    expect(source).not.toMatch(/previewHermesCardProfile|buildHermesCardDraftFromLocalConfig/);
     expect(source).not.toContain("method: 'profiles.configure'");
-    expect(nativeClient).toContain('/native`');
-    expect(nativeClient).not.toMatch(/\/preview|expectedFingerprint|HermesCardDraft/);
-    expect(source).not.toContain('runNativeApply(buildCurrentLocalPayload');
-    expect(source).not.toContain('data-testid="native-background-review"');
+    expect(profileClient).toContain('/operations`');
+    expect(profileClient).not.toMatch(/\/preview|expectedFingerprint|HermesCardDraft/);
+    expect(source).not.toContain('runProfileApply(buildCurrentLocalPayload');
+    expect(source).not.toContain('data-testid="profile-background-review"');
     expect(source).not.toContain('aria-label="Memory provider"');
     expect(source).not.toContain('Contextualized GPT-plugin Main turns report Honcho bypassed');
-    expect(source).not.toContain('nativeHermesState?.native.honcho');
+    expect(source).not.toContain('hermesProfileState?.profile.honcho');
     expect(source).not.toContain('CardSubagentsTab');
     expect(source).not.toContain('Use account Luna');
   });
 
   it('keeps the general Card tabs configuration-only and leaves CLI ownership to the page', () => {
-    const source = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
-      'utf8',
-    );
-    const pageSource = readFileSync(
-      path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
-      'utf8',
-    );
+    const source = readFileSync(AGENT_MANAGER_SOURCE, 'utf8');
+    const pageSource = readFileSync(AGENT_BUILDER_PAGE_SOURCE, 'utf8');
 
     expect(pageSource).toContain(
       "const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;",
@@ -939,40 +937,37 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).not.toContain("['Invocation', 'Prompt', 'Knowledge', 'Capabilities', 'Runtime']");
   });
 
-  it('keeps saved grants editable and effective Hermes state read-only', () => {
-    const source = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
-      'utf8',
-    );
-    const nativeClient = readFileSync(
-      path.resolve(process.cwd(), 'client/src/features/agentbuilder/nativeHermesCard.ts'),
-      'utf8',
-    );
+  it('keeps saved grants editable and profile state read-only without a second tool surface', () => {
+    const source = readFileSync(AGENT_MANAGER_SOURCE, 'utf8');
+    const profileClient = readFileSync(HERMES_CARD_PROFILE_SOURCE, 'utf8');
 
     expect(source).toContain('data-testid="agent-manager-skills"');
     expect(source).toContain('data-testid="effective-hermes-skills"');
     expect(source).not.toContain('data-testid="main-honcho-status"');
     expect(source).toContain('data-testid="effective-hermes-runtime"');
     expect(source).toContain('aria-label="Card skill grants"');
-    expect(source).toContain('Hermes capabilities');
-    expect(source).toContain('Hermes toolsets');
+    expect(source).not.toContain('aria-label="Hermes capabilities"');
+    expect(source).not.toContain('One Hermes toolset ID per line');
+    expect(source).not.toContain('Effective Hermes toolsets');
+    expect(source.indexOf("renderSectionBody('Script')")).toBeLessThan(
+      source.indexOf('aria-label="External connections"'),
+    );
     expect(source).toContain('External MCP connection references');
     expect(source).not.toContain('changes.disabled_skills');
     expect(source).not.toContain('changes.enabled_toolsets');
     expect(source).not.toContain('changes.enabled_mcp_servers');
-    expect(source).toContain('onClick={() => void openNativeLearningNode(node.id)}');
+    expect(source).toContain('onClick={() => void openHermesLearningNode(node.id)}');
     expect(source).toContain("change: { method: 'learning.edit', params: { id, content } }");
-    expect(nativeClient).toContain("method: 'learning.detail'");
+    expect(profileClient).toContain("method: 'learning.detail'");
     expect(source).not.toContain('Automatic learning');
     expect(source).not.toContain('background_review');
-    expect(nativeClient).not.toContain('backgroundReview');
-    expect(nativeClient).not.toContain('StarmapGraph');
+    expect(profileClient).not.toContain('backgroundReview');
+    expect(profileClient).not.toContain('StarmapGraph');
     expect(source).toContain('const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true)');
   });
 
   it('keeps the card identity fields without adding another persistence path', () => {
-    const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
-    const source = readFileSync(filePath, 'utf8');
+    const source = readFileSync(AGENT_MANAGER_SOURCE, 'utf8');
 
     expect(source).toContain('cardName');
     expect(source).toContain('onChangeCardName');
@@ -991,16 +986,17 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('/api/config/models');
     expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Card skill grants');
-    expect(source).toContain('Hermes capabilities');
-    expect(source).toContain('Hermes toolsets');
+    expect(source).not.toContain('aria-label="Hermes capabilities"');
+    expect(source).not.toContain('One Hermes toolset ID per line');
+    expect(source).not.toContain('Effective Hermes toolsets');
     expect(source).toContain('External MCP connection references');
-    expect(source).not.toContain('params: { description: nativeDescriptionDraft }');
-    expect(source).not.toContain('nativeSoulDraft');
+    expect(source).not.toContain('params: { description: profileDescriptionDraft }');
+    expect(source).not.toContain('profileSoulDraft');
     expect(source).not.toContain('changes.soul');
     expect(source).not.toContain('agent-profile-soul');
     expect(source).not.toContain("renderSectionBody('Soul')");
-    expect(source).not.toContain('nativeProviderDraft');
-    expect(source).not.toContain('nativeModelDraft');
+    expect(source).not.toContain('profileProviderDraft');
+    expect(source).not.toContain('profileModelDraft');
     expect(source).not.toContain('changes.disabled_skills');
     expect(source).not.toContain('changes.enabled_toolsets');
     expect(source).not.toContain('changes.enabled_mcp_servers');

@@ -1,12 +1,15 @@
 import {
-  agentTerminalManager,
-  agentTerminalPresentationOptions,
+  cardRuntimeWorkingDirectory,
   resolveHermesBotRosterProjections,
-  type AgentTerminalState,
-  type DesiredAgentTerminal,
   type DesiredHermesBotProfile,
-  type HermesBotRosterProjection,
-} from '../hermes/agentTerminal';
+} from '../hermes/cardRuntimeManager';
+import { agentTerminalManager } from '../hermes/agentTerminal';
+import type {
+  CardRuntimeState,
+} from '../hermes/runtime/cardRuntime';
+import type {
+  DesiredCardRuntime,
+} from '../hermes/runtime/cardRuntimeReconciler';
 import { getV3ProjectBlob } from '../decks/store';
 import { BUILDER_CARD_ID } from '../decks/store';
 import {
@@ -43,28 +46,33 @@ function isMagenticOne(card: AgentCardInstance | undefined): boolean {
 }
 
 /**
- * Resolve automatic Hermes runtime demand from Python-owned, saved-orchestrator
- * Bot roster projections and the existing Magnetic worker-membership contract.
- * FLOW authority is not reimplemented here. Blue membership is endpoint-order
- * independent; handles remain presentation metadata once edgeType is saved.
+ * Resolve automatic Hermes runtime demand from the existing Magnetic
+ * worker-membership contract. Orange Bot topology configures Hermes profile
+ * rosters and never opens source or target Card runtimes.
  */
 export function deriveAutomaticHermesCardIds(
   deck: DeckDocument,
-  botProfiles: HermesBotRosterProjection[],
+  botProfiles: Array<{
+    cardId: string;
+    profile: string;
+    botEnabled: boolean;
+    roster: string[];
+  }>,
 ): Set<string> {
   const cards = new Map(deck.nodes.map((card) => [card.id, card] as const));
   const profiles = new Map(botProfiles.map((projection) => [projection.profile, projection] as const));
   const required = new Set<string>();
 
+  for (const card of deck.nodes) {
+    if (card.runtime.kind === 'hermes' && card.runtime.mode === 'main') required.add(card.id);
+  }
+
   for (const projection of botProfiles) {
     if (!projection.botEnabled || !projection.roster.length) continue;
-    const source = cards.get(projection.cardId);
-    if (source?.runtime.kind === 'hermes' && source.runtime.mode !== 'main') {
-      required.add(projection.cardId);
-    }
+    required.add(projection.cardId);
     for (const profile of projection.roster) {
       const target = profiles.get(profile);
-      if (target?.botEnabled) required.add(target.cardId);
+      if (target) required.add(target.cardId);
     }
   }
 
@@ -94,14 +102,14 @@ export function deriveAutomaticHermesCardIds(
   return required;
 }
 
-export async function reconcileConnectedAgentTerminals(dependencies: {
+export async function reconcileConnectedCardRuntimes(dependencies: {
   listProjects?: typeof listOwnedAgentProjects;
   loadProject?: typeof getV3ProjectBlob;
   reconcile?: typeof agentTerminalManager.reconcile;
   resolveBotProfiles?: typeof resolveHermesBotRosterProjections;
   listCanonicalBindings?: typeof listCanonicalSavedCardBindings;
   builderWorkingDirectory?: () => string;
-} = {}): Promise<AgentTerminalState[]> {
+} = {}): Promise<CardRuntimeState[]> {
   const projects = await (dependencies.listProjects ?? listOwnedAgentProjects)();
   const canonicalBindings = await (
     dependencies.listCanonicalBindings ?? listCanonicalSavedCardBindings
@@ -131,7 +139,7 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
     left.project.ownerUserId.localeCompare(right.project.ownerUserId)
     || left.project.id.localeCompare(right.project.id)
   ));
-  const desired: DesiredAgentTerminal[] = [];
+  const desired: DesiredCardRuntime[] = [];
   const botProfiles: DesiredHermesBotProfile[] = [];
   const eagerProfiles = new Set<string>();
   const projectedProfiles = new Set<string>();
@@ -146,7 +154,6 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
         const card = cards.get(projection.cardId);
         if (!card || card.runtime.kind !== 'hermes'
           || card.runtime.profile !== projection.profile
-          || Boolean(card.kind === 'agent' && isEnabledCard(card)) !== projection.botEnabled
           || (card._cardRevisionId || '') !== projection.cardRevisionId) {
           throw new Error('agent_terminal_bot_roster_saved_identity_mismatch');
         }
@@ -171,7 +178,6 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
       for (const card of deck.nodes) {
         if (card.runtime.kind !== 'hermes') continue;
         if (!isCanonicalCard(card)) continue;
-        if (card.runtime.mode === 'main') continue;
         if (!requiredCardIds.has(card.id)) continue;
         const isBuilderPresentation = card.id === BUILDER_CARD_ID;
         const profileKey = card.runtime.profile.toLowerCase();
@@ -183,13 +189,17 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
             projectId: project.id,
             deckId,
             cardId: card.id,
+            ...(card.runtime.mode === 'main' ? { conversationId: 'main' } : {}),
           },
           card,
           deck,
           openAtReconcile,
+          attachTui: card.runtime.mode !== 'main' && card.runtime.mode !== 'magentic_one',
           ...(dependencies.builderWorkingDirectory && isBuilderPresentation
-              ? { workingDirectory: dependencies.builderWorkingDirectory(), attachTui: true }
-              : agentTerminalPresentationOptions(card, card.runtime.mode !== 'magentic_one')),
+            ? { workingDirectory: dependencies.builderWorkingDirectory() }
+            : cardRuntimeWorkingDirectory(card)
+              ? { workingDirectory: cardRuntimeWorkingDirectory(card) }
+              : {}),
         });
       }
     }
@@ -201,10 +211,10 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
   );
 }
 
-export function requestConnectedAgentTerminalReconcile(
-  dependencies: Parameters<typeof reconcileConnectedAgentTerminals>[0] = {},
-): Promise<AgentTerminalState[]> {
-  const result = topologyReconcileTail.then(() => reconcileConnectedAgentTerminals(dependencies));
+export function requestConnectedCardRuntimeReconcile(
+  dependencies: Parameters<typeof reconcileConnectedCardRuntimes>[0] = {},
+): Promise<CardRuntimeState[]> {
+  const result = topologyReconcileTail.then(() => reconcileConnectedCardRuntimes(dependencies));
   topologyReconcileTail = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -263,6 +273,6 @@ export async function runPythonOwnedStartupTasks(
   // backend listener; failures remain visible instead of replaying Deck reads
   // inside the readiness loop.
   if (!isActive()) throw new Error('python_owned_startup_cancelled');
-  await (dependencies.startCardRuntimes ?? requestConnectedAgentTerminalReconcile)();
+  await (dependencies.startCardRuntimes ?? requestConnectedCardRuntimeReconcile)();
   await logModels();
 }

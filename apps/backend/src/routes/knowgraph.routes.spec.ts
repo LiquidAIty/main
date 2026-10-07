@@ -53,7 +53,7 @@ afterEach(() => {
 });
 
 describe('KnowGraph PDF upload project authority', () => {
-  it('keeps native provenance but excludes embedding vectors from bounded UI projections', () => {
+  it('keeps Graphiti provenance but excludes embedding vectors from bounded UI projections', () => {
     expect(boundedKnowGraphProperties({
       uuid: 'node-1',
       source: 'Graphiti',
@@ -68,7 +68,7 @@ describe('KnowGraph PDF upload project authority', () => {
     });
   });
 
-  it('projects one native Graphiti fact as a portable sourced temporal Know', () => {
+  it('projects one Graphiti fact as a portable sourced temporal Know', () => {
     expect(portableKnowGraphFact(
       'fact-1',
       'RELATES_TO',
@@ -84,11 +84,11 @@ describe('KnowGraph PDF upload project authority', () => {
       { uuid: 'entity-b', name: 'Beta' },
     )).toMatchObject({
       authority: 'know',
-      nativeStore: 'graphiti/neo4j',
+      graphitiStore: 'neo4j',
       portableKind: 'know',
-      nativeFactUuid: 'fact-1',
-      nativeRelationshipType: 'RELATES_TO',
-      nativeRelation: 'partners with',
+      graphitiFactUuid: 'fact-1',
+      graphitiRelationshipType: 'RELATES_TO',
+      graphitiRelation: 'partners with',
       fact: 'Alpha partners with Beta.',
       sourceEntity: { uuid: 'entity-a', name: 'Alpha' },
       targetEntity: { uuid: 'entity-b', name: 'Beta' },
@@ -97,7 +97,7 @@ describe('KnowGraph PDF upload project authority', () => {
     });
   });
 
-  it('passively projects stored Jev metadata without replacing native fact fields', () => {
+  it('passively projects stored Jev metadata without replacing Graphiti fact fields', () => {
     const properties = portableKnowGraphFact(
       'fact-1',
       'RELATES_TO',
@@ -124,15 +124,15 @@ describe('KnowGraph PDF upload project authority', () => {
     );
 
     expect(properties).toMatchObject({
-      nativeFactUuid: 'fact-1',
-      nativeRelation: 'was awarded a launch services contract by',
+      graphitiFactUuid: 'fact-1',
+      graphitiRelation: 'was awarded a launch services contract by',
       fact: 'NASA awarded Rocket Lab a launch services contract.',
       supportingEpisodeUuids: ['episode-1'],
       validAt: '2026-09-01T00:00:00Z',
       jevCanonicalRelation: 'PROVIDES',
       relationship_strength: 0.92,
       jev: {
-        nativeFactUuid: 'fact-1',
+        graphitiFactUuid: 'fact-1',
         status: 'success',
         winner: 'PROVIDES',
         distribution: { PROVIDES: 0.92, ASSOCIATED_WITH: 0.08 },
@@ -225,34 +225,34 @@ describe('KnowGraph PDF upload project authority', () => {
     }
   });
 
-  it('proxies one authenticated project-scoped native Know deletion', async () => {
+  it('proxies one authenticated project-scoped Graphiti fact deletion', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
     const realFetch = globalThis.fetch.bind(globalThis);
     const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      if (String(input) === 'http://knowgraph.test/delete_native') {
+      if (String(input) === 'http://knowgraph.test/delete_fact') {
         return Promise.resolve(new Response(JSON.stringify({
-          ok: true, kind: 'fact', native_id: 'fact-1',
+          ok: true, kind: 'fact', graphiti_fact_uuid: 'fact-1',
         }), { status: 200, headers: { 'content-type': 'application/json' } }));
       }
       return realFetch(input, init);
     });
     const { server, baseUrl } = await createApiServer('user-1');
     try {
-      const response = await fetch(`${baseUrl}/delete-native`, {
+      const response = await fetch(`${baseUrl}/delete-fact`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          project_id: 'project-alias', native_id: 'fact-1', kind: 'fact',
+          project_id: 'project-alias', graphiti_fact_uuid: 'fact-1', kind: 'fact',
         }),
       });
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, kind: 'fact', native_id: 'fact-1' });
+      expect(await response.json()).toEqual({ ok: true, kind: 'fact', graphiti_fact_uuid: 'fact-1' });
       const forwarded = upstreamFetch.mock.calls.find(([input]) => (
-        String(input) === 'http://knowgraph.test/delete_native'
+        String(input) === 'http://knowgraph.test/delete_fact'
       ));
       expect(JSON.parse(String(forwarded?.[1]?.body))).toEqual({
-        project_id: 'project-canonical', native_id: 'fact-1', kind: 'fact',
+        project_id: 'project-canonical', graphiti_fact_uuid: 'fact-1', kind: 'fact',
       });
     } finally {
       await closeServer(server);

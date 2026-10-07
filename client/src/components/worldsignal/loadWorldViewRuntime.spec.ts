@@ -3,20 +3,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  importNativeWorldViewMount,
-  observeNativeWorldViewVisualReadiness,
+  importWorldViewMount,
+  observeWorldViewVisualReadiness,
   WORLDVIEW_CANVAS_SIZE_DEADLINE_MS,
   WORLDVIEW_FIRST_CONTENT_DEADLINE_MS,
-  WORLDVIEW_NATIVE_MOUNT_MODULE_URL,
+  WORLDVIEW_MOUNT_MODULE_URL,
   WORLDVIEW_RENDER_FRAME_DEADLINE_MS,
-} from './loadWorldViewNative';
+} from './loadWorldViewRuntime';
 
-vi.mock('virtual:worldview-native-css', () => ({ default: '' }));
-vi.mock('virtual:worldview-native-mount', () => ({
-  importNativeWorldViewMount: vi.fn(),
+vi.mock('virtual:worldview-runtime-css', () => ({ default: '' }));
+vi.mock('virtual:worldview-runtime-mount', () => ({
+  importWorldViewMount: vi.fn(),
 }));
 
-describe('WorldView native module doorway', () => {
+describe('WorldView runtime module doorway', () => {
   it('waits for the dev module server and imports without a machine-path Vite URL', async () => {
     const module = { mountWorldView: vi.fn() };
     const moduleImporter = vi.fn(async () => module);
@@ -24,7 +24,7 @@ describe('WorldView native module doorway', () => {
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
-    await expect(importNativeWorldViewMount({
+    await expect(importWorldViewMount({
       dev: true,
       moduleImporter,
       fetcher,
@@ -33,12 +33,12 @@ describe('WorldView native module doorway', () => {
     })).resolves.toBe(module);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher).toHaveBeenLastCalledWith(
-      WORLDVIEW_NATIVE_MOUNT_MODULE_URL,
+      WORLDVIEW_MOUNT_MODULE_URL,
       { method: 'HEAD', cache: 'no-store' },
     );
     expect(moduleImporter).toHaveBeenCalledTimes(1);
-    expect(WORLDVIEW_NATIVE_MOUNT_MODULE_URL).not.toContain('/@fs/');
-    expect(WORLDVIEW_NATIVE_MOUNT_MODULE_URL).not.toMatch(/[A-Z]:\//);
+    expect(WORLDVIEW_MOUNT_MODULE_URL).not.toContain('/@fs/');
+    expect(WORLDVIEW_MOUNT_MODULE_URL).not.toMatch(/[A-Z]:\//);
   });
 
   it('uses the bundled production module without localhost readiness traffic', async () => {
@@ -46,7 +46,7 @@ describe('WorldView native module doorway', () => {
     const moduleImporter = vi.fn(async () => module);
     const fetcher = vi.fn();
 
-    await expect(importNativeWorldViewMount({
+    await expect(importWorldViewMount({
       dev: false,
       moduleImporter,
       fetcher,
@@ -60,20 +60,20 @@ describe('WorldView native module doorway', () => {
     const moduleImporter = vi.fn();
     const fetcher = vi.fn(async () => new Response(null, { status: 503 }));
 
-    await expect(importNativeWorldViewMount({
+    await expect(importWorldViewMount({
       dev: true,
       moduleImporter,
       fetcher,
       attempts: 2,
       retryDelayMs: 0,
-    })).rejects.toThrow('worldview_native_module_http_503');
+    })).rejects.toThrow('worldview_runtime_module_http_503');
 
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(moduleImporter).not.toHaveBeenCalled();
   });
 });
 
-function nativeEvent() {
+function runtimeEvent() {
   const listeners = new Set<(...args: any[]) => void>();
   return {
     listeners,
@@ -107,11 +107,11 @@ function fixture({
   withTileset?: boolean;
   tilesLoaded?: boolean;
 } = {}) {
-  const postRender = nativeEvent();
-  const renderError = nativeEvent();
-  const tileFailed = nativeEvent();
-  const tileVisible = nativeEvent();
-  const initialTilesLoaded = nativeEvent();
+  const postRender = runtimeEvent();
+  const renderError = runtimeEvent();
+  const tileFailed = runtimeEvent();
+  const tileVisible = runtimeEvent();
+  const initialTilesLoaded = runtimeEvent();
   const canvas = document.createElement('canvas');
   canvas.width = backingWidth;
   canvas.height = backingHeight;
@@ -167,7 +167,7 @@ describe('WorldView visual readiness', () => {
   it('accepts visible photoreal content after a rendered frame without fallback', () => {
     const f = fixture();
     const states: any[] = [];
-    const observer = observeNativeWorldViewVisualReadiness(f.mounted, (state) => states.push(state));
+    const observer = observeWorldViewVisualReadiness(f.mounted, (state) => states.push(state));
 
     expect(observer.getState()).toMatchObject({
       phase: 'waiting-for-photoreal-content',
@@ -192,7 +192,7 @@ describe('WorldView visual readiness', () => {
 
   it('accepts photoreal content that loaded before observer attachment', () => {
     const f = fixture({ tilesLoaded: true });
-    const observer = observeNativeWorldViewVisualReadiness(f.mounted);
+    const observer = observeWorldViewVisualReadiness(f.mounted);
 
     expect(observer.getState()).toMatchObject({
       phase: 'waiting-for-photoreal-content',
@@ -212,7 +212,7 @@ describe('WorldView visual readiness', () => {
 
   it('switches exactly once to existing OSM when photoreal content misses its deadline', async () => {
     const f = fixture();
-    const observer = observeNativeWorldViewVisualReadiness(f.mounted);
+    const observer = observeWorldViewVisualReadiness(f.mounted);
 
     await vi.advanceTimersByTimeAsync(WORLDVIEW_FIRST_CONTENT_DEADLINE_MS);
 
@@ -233,7 +233,7 @@ describe('WorldView visual readiness', () => {
 
   it('does not override a map stack changed before the photoreal deadline', async () => {
     const f = fixture();
-    const observer = observeNativeWorldViewVisualReadiness(f.mounted);
+    const observer = observeWorldViewVisualReadiness(f.mounted);
     f.setActiveStack('osm');
 
     await vi.advanceTimersByTimeAsync(WORLDVIEW_FIRST_CONTENT_DEADLINE_MS);
@@ -253,7 +253,7 @@ describe('WorldView visual readiness', () => {
     ['tileFailed', (f: ReturnType<typeof fixture>) => f.tileFailed.raise({ message: 'tile 503' })],
   ])('uses one OSM fallback for %s and records the decisive cause', async (kind, fail) => {
     const f = fixture();
-    const observer = observeNativeWorldViewVisualReadiness(f.mounted);
+    const observer = observeWorldViewVisualReadiness(f.mounted);
 
     fail(f);
     fail(f);
@@ -270,7 +270,7 @@ describe('WorldView visual readiness', () => {
 
   it('fails honestly at zero canvas size without changing map stacks', async () => {
     const f = fixture({ width: 0, height: 0, backingWidth: 0, backingHeight: 0 });
-    const observer = observeNativeWorldViewVisualReadiness(f.mounted);
+    const observer = observeWorldViewVisualReadiness(f.mounted);
     f.postRender.raise();
 
     await vi.advanceTimersByTimeAsync(WORLDVIEW_CANVAS_SIZE_DEADLINE_MS);
@@ -286,7 +286,7 @@ describe('WorldView visual readiness', () => {
 
   it('requires a post-fallback frame and reports unavailable when it never arrives', async () => {
     const f = fixture();
-    const observer = observeNativeWorldViewVisualReadiness(f.mounted);
+    const observer = observeWorldViewVisualReadiness(f.mounted);
     f.tileFailed.raise({ message: 'tile failed' });
     await Promise.resolve();
     await Promise.resolve();
@@ -303,7 +303,7 @@ describe('WorldView visual readiness', () => {
 
   it('cleans listeners and timers on unmount and supports an independent remount', () => {
     const first = fixture();
-    const firstObserver = observeNativeWorldViewVisualReadiness(first.mounted);
+    const firstObserver = observeWorldViewVisualReadiness(first.mounted);
     expect(first.postRender.listeners.size).toBe(1);
     expect(first.tileVisible.listeners.size).toBe(1);
     firstObserver.dispose();
@@ -313,7 +313,7 @@ describe('WorldView visual readiness', () => {
     expect(vi.getTimerCount()).toBe(0);
 
     const second = fixture();
-    const secondObserver = observeNativeWorldViewVisualReadiness(second.mounted);
+    const secondObserver = observeWorldViewVisualReadiness(second.mounted);
     second.initialTilesLoaded.raise();
     second.postRender.raise();
     expect(secondObserver.getState().phase).toBe('ready');
@@ -323,7 +323,7 @@ describe('WorldView visual readiness', () => {
   });
 
   it('reports the missing component seam without attempting another runtime', () => {
-    const observer = observeNativeWorldViewVisualReadiness({ getComponents: () => ({}) } as any);
+    const observer = observeWorldViewVisualReadiness({ getComponents: () => ({}) } as any);
 
     expect(observer.getState()).toMatchObject({
       phase: 'unavailable',

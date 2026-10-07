@@ -8,10 +8,10 @@ import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/req
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 import { listenAfterRequiredMigrations } from "./db/migrations";
 import {
-  requestConnectedAgentTerminalReconcile,
+  requestConnectedCardRuntimeReconcile,
   runPythonOwnedStartupTasks,
 } from "./startup/pythonOwnedStartup";
-import { agentTerminalManager } from "./hermes/agentTerminal";
+import { cardRuntimeManager } from "./hermes/cardRuntimeManager";
 
 const app = express();
 app.set('etag', false);
@@ -161,7 +161,7 @@ function installShutdownHooks() {
   const shutdown = async () => {
     const activeServer = globalThis.__liquidaityBackendServer__;
     try {
-      agentTerminalManager.stopAll();
+      cardRuntimeManager.stopAll();
       if (activeServer) {
         await closeServer(activeServer);
       }
@@ -187,7 +187,7 @@ async function startServer() {
   const existingServer = globalThis.__liquidaityBackendServer__;
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
-    agentTerminalManager.stopAll();
+    cardRuntimeManager.stopAll();
     await closePythonAgentMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;
@@ -222,9 +222,9 @@ async function startServer() {
   void runPythonOwnedStartupTasks({
     isActive: () => globalThis.__liquidaityBackendServer__ === server,
     startCardRuntimes: async () => {
-      const terminals = await requestConnectedAgentTerminalReconcile();
-      for (const terminal of terminals) {
-        console.log(`[BOOT] Hermes Card ready card=${terminal.cardId} profile=${terminal.profile} gatewayPid=${terminal.gatewayPid}`);
+      const runtimes = await requestConnectedCardRuntimeReconcile();
+      for (const runtime of runtimes) {
+        console.log(`[BOOT] Hermes Card ready card=${runtime.cardId} profile=${runtime.profile} gatewayPid=${runtime.gatewayPid}`);
       }
     },
   }).catch((error) => {

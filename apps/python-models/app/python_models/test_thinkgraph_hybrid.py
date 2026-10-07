@@ -9,7 +9,7 @@ from app.python_models import engraphis as adapter
 
 
 @pytest.fixture()
-def native_service():
+def engraphis_service():
     from engraphis.service import MemoryService
 
     service = MemoryService.create(
@@ -25,7 +25,7 @@ def _card_run() -> dict[str, str]:
     return {
         "runId": "run-one", "cardId": "card_thinkgraph",
         "revisionId": "revision-one", "profile": "thinkgraph",
-        "nativeSessionRef": "session-one", "resolvedModel": "configured/model",
+        "hermesSessionId": "session-one", "resolvedModel": "configured/model",
     }
 
 
@@ -89,37 +89,37 @@ def _second_facts() -> list[Any]:
     )
 
 
-def _table_counts(native_service) -> dict[str, int]:
+def _table_counts(engraphis_service) -> dict[str, int]:
     return {
-        table: int(native_service.store.conn.execute(
+        table: int(engraphis_service.store.conn.execute(
             f"SELECT COUNT(*) AS n FROM {table}"
         ).fetchone()["n"])
         for table in ("memories", "entities", "edges", "memory_entities", "edge_supports")
     }
 
 
-def test_native_schema_has_no_custom_think_wrapper() -> None:
+def test_engraphis_schema_has_no_custom_think_wrapper() -> None:
     schema, prompt = adapter._llm_structured_contract("USER: x\nMAIN: y", {})
 
     rendered = str(schema)
     assert "facts" in schema.get("properties", {})
     assert "summary" not in rendered
-    assert "native Engraphis structured extraction" in prompt
+    assert "Engraphis structured extraction" in prompt
 
 
-def test_each_native_fact_is_one_memory_with_native_graph_evidence(native_service) -> None:
+def test_each_engraphis_fact_is_one_memory_with_engraphis_graph_evidence(engraphis_service) -> None:
     facts = _facts()
-    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
 
     results = adapter._save_extracted_facts(
-        native_service, workspace_id=workspace_id, completed=_completed(),
+        engraphis_service, workspace_id=workspace_id, completed=_completed(),
         facts=facts, card_run=_card_run(), pair_reference="pair-one",
     )
 
     memory_ids = [str(result["id"]) for result in results]
     assert len(memory_ids) == len(facts) == 2
     assert len(set(memory_ids)) == 2
-    memories = native_service.store.get_memories(memory_ids)
+    memories = engraphis_service.store.get_memories(memory_ids)
     assert [memories[mid].content for mid in memory_ids] == [
         fact.content for fact in facts
     ]
@@ -145,7 +145,7 @@ def test_each_native_fact_is_one_memory_with_native_graph_evidence(native_servic
     assert all("think" not in memories[mid].metadata.get("structured_extraction", {})
                for mid in memory_ids)
 
-    entities = native_service.store.list_entities(
+    entities = engraphis_service.store.list_entities(
         adapter.SearchFilter(workspace_id=workspace_id)
     )
     entity_ids = {entity.id for entity in entities}
@@ -153,15 +153,15 @@ def test_each_native_fact_is_one_memory_with_native_graph_evidence(native_servic
     assert {entity.name for entity in entities} == {
         "Rocket Lab", "Electron", "Electron cadence", "Launch revenue",
     }
-    edge_rows = native_service.store.conn.execute(
+    edge_rows = engraphis_service.store.conn.execute(
         "SELECT id, relation FROM edges ORDER BY id"
     ).fetchall()
     assert {str(row["relation"]) for row in edge_rows} == {"operates", "can affect"}
-    support_rows = native_service.store.conn.execute(
+    support_rows = engraphis_service.store.conn.execute(
         "SELECT edge_id, memory_id FROM edge_supports ORDER BY edge_id, memory_id"
     ).fetchall()
     assert {str(row["memory_id"]) for row in support_rows} == set(memory_ids)
-    incidence_rows = native_service.store.list_memory_entities(
+    incidence_rows = engraphis_service.store.list_memory_entities(
         adapter.SearchFilter(workspace_id=workspace_id), memory_ids=memory_ids,
     )
     assert {str(row["memory_id"]) for row in incidence_rows} == set(memory_ids)
@@ -170,27 +170,27 @@ def test_each_native_fact_is_one_memory_with_native_graph_evidence(native_servic
     )
 
 
-def test_identical_replay_reuses_native_memory_ids(native_service) -> None:
-    workspace_id = native_service.store.get_or_create_workspace("project-one")
+def test_identical_replay_reuses_engraphis_memory_ids(engraphis_service) -> None:
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
     first = adapter._save_extracted_facts(
-        native_service, workspace_id=workspace_id, completed=_completed(),
+        engraphis_service, workspace_id=workspace_id, completed=_completed(),
         facts=_facts(), card_run=_card_run(), pair_reference="pair-one",
     )
     second = adapter._save_extracted_facts(
-        native_service, workspace_id=workspace_id, completed=_completed(),
+        engraphis_service, workspace_id=workspace_id, completed=_completed(),
         facts=_facts(), card_run=_card_run(), pair_reference="pair-one",
     )
 
     assert [item["id"] for item in second] == [item["id"] for item in first]
     assert all(item["op"] == "noop" for item in second)
-    row = native_service.store.conn.execute(
+    row = engraphis_service.store.conn.execute(
         "SELECT COUNT(*) AS n FROM memories"
     ).fetchone()
     assert int(row["n"]) == 2
 
 
-def test_completed_pair_settlement_returns_every_native_fact_identity(
-    native_service,
+def test_completed_pair_settlement_returns_every_engraphis_fact_identity(
+    engraphis_service,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completed = {
@@ -198,11 +198,11 @@ def test_completed_pair_settlement_returns_every_native_fact_identity(
         "deckId": "deck_builder",
         "conversationId": "conversation-one",
         "cardId": "card_main_chat",
-        "nativeSessionRef": "main-session",
+        "hermesSessionId": "main-session",
         "completedAt": "2026-10-05T21:00:00Z",
     }
     pair_reference = adapter._pair_reference(completed)
-    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
+    monkeypatch.setattr(adapter, "get_service", lambda: engraphis_service)
 
     settled = adapter.settle_completed_pair({
         **completed,
@@ -220,16 +220,16 @@ def test_completed_pair_settlement_returns_every_native_fact_identity(
 
 
 def test_separate_exchanges_reuse_entity_and_accumulate_unique_thinks(
-    native_service,
+    engraphis_service,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
     first = adapter._save_extracted_facts(
-        native_service, workspace_id=workspace_id, completed=_completed(),
+        engraphis_service, workspace_id=workspace_id, completed=_completed(),
         facts=_facts(), card_run=_card_run(), pair_reference="pair-one",
     )
     second = adapter._save_extracted_facts(
-        native_service, workspace_id=workspace_id,
+        engraphis_service, workspace_id=workspace_id,
         completed={**_completed(), "runId": "main-run-two"},
         facts=_second_facts(), card_run={**_card_run(), "runId": "run-two"},
         pair_reference="pair-two",
@@ -237,7 +237,7 @@ def test_separate_exchanges_reuse_entity_and_accumulate_unique_thinks(
     first_id, second_id = str(first[0]["id"]), str(second[0]["id"])
     assert first_id != second_id
 
-    entities = native_service.store.list_entities(
+    entities = engraphis_service.store.list_entities(
         adapter.SearchFilter(workspace_id=workspace_id)
     )
     rocket_entities = [entity for entity in entities if entity.name == "Rocket Lab"]
@@ -245,12 +245,12 @@ def test_separate_exchanges_reuse_entity_and_accumulate_unique_thinks(
     rocket_id = rocket_entities[0].id
     assert rocket_id not in {first_id, second_id}
 
-    incidence = native_service.store.list_memory_entities(
+    incidence = engraphis_service.store.list_memory_entities(
         adapter.SearchFilter(workspace_id=workspace_id),
         entity_ids=[rocket_id],
     )
     assert {str(row["memory_id"]) for row in incidence} == {first_id, second_id}
-    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
+    monkeypatch.setattr(adapter, "get_service", lambda: engraphis_service)
     evidence = adapter.inspect(
         "project-one", "engraphisEntityId", rocket_id,
     )["entity"]["evidence"]
@@ -258,26 +258,26 @@ def test_separate_exchanges_reuse_entity_and_accumulate_unique_thinks(
     assert set(evidence_ids) == {first_id, second_id}
     assert len(evidence_ids) == len(set(evidence_ids)) == 2
 
-    first_incidence = native_service.store.list_memory_entities(
+    first_incidence = engraphis_service.store.list_memory_entities(
         adapter.SearchFilter(workspace_id=workspace_id), memory_ids=[first_id],
     )
     assert rocket_id in {str(row["entity_id"]) for row in first_incidence}
-    assert len(native_service.store.get_memories([first_id])) == 1
+    assert len(engraphis_service.store.get_memories([first_id])) == 1
 
 
 def test_projection_edges_and_data_anchor_keep_entity_ids_separate(
-    native_service,
+    engraphis_service,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.python_models.data_anchor import read_thinkgraph_exact
 
-    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
     saved = adapter._save_extracted_facts(
-        native_service, workspace_id=workspace_id, completed=_completed(),
+        engraphis_service, workspace_id=workspace_id, completed=_completed(),
         facts=_facts(), card_run=_card_run(), pair_reference="pair-one",
     )
     memory_ids = {str(item["id"]) for item in saved}
-    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
+    monkeypatch.setattr(adapter, "get_service", lambda: engraphis_service)
     monkeypatch.setattr(
         adapter, "_projection_subject_directory",
         lambda _project: {"subjects": [], "count": 0, "complete": True},
@@ -306,13 +306,13 @@ def test_projection_edges_and_data_anchor_keep_entity_ids_separate(
     assert anchored["recordKind"] == "entity"
 
 
-def test_settlement_replay_preserves_order_and_all_native_rows(
-    native_service,
+def test_settlement_replay_preserves_order_and_all_engraphis_rows(
+    engraphis_service,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completed = {
         **_completed(), "deckId": "deck_builder", "conversationId": "conversation-one",
-        "cardId": "card_main_chat", "nativeSessionRef": "main-session",
+        "cardId": "card_main_chat", "hermesSessionId": "main-session",
         "completedAt": "2026-10-05T21:00:00Z",
     }
     pair_reference = adapter._pair_reference(completed)
@@ -320,71 +320,71 @@ def test_settlement_replay_preserves_order_and_all_native_rows(
         **completed, "pairReference": pair_reference,
         "structuredOutput": _structured_output(), "cardRun": _card_run(),
     }
-    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
+    monkeypatch.setattr(adapter, "get_service", lambda: engraphis_service)
 
     first = adapter.settle_completed_pair(payload)
-    before = _table_counts(native_service)
+    before = _table_counts(engraphis_service)
     replay = adapter.settle_completed_pair(payload)
 
     assert replay["intakeOperation"] == "noop"
     assert replay["thinkMemoryIds"] == first["thinkMemoryIds"]
-    assert _table_counts(native_service) == before
+    assert _table_counts(engraphis_service) == before
 
 
-def test_empty_result_and_native_validation_failure_create_no_rows(native_service) -> None:
+def test_empty_result_and_engraphis_validation_failure_create_no_rows(engraphis_service) -> None:
     from engraphis.core.interfaces import ExtractedFact
 
     empty = adapter._extract_saved_card_facts(
         {"facts": []}, pair_text="", context={}, card_run=_card_run(),
     )
     assert empty == []
-    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
     assert adapter._save_extracted_facts(
-        native_service, workspace_id=workspace_id, completed=_completed(),
+        engraphis_service, workspace_id=workspace_id, completed=_completed(),
         facts=empty, card_run=_card_run(), pair_reference="pair-empty",
     ) == []
-    assert _table_counts(native_service) == {
+    assert _table_counts(engraphis_service) == {
         "memories": 0, "entities": 0, "edges": 0,
         "memory_entities": 0, "edge_supports": 0,
     }
 
     with pytest.raises(TypeError, match="JSON serializable"):
         adapter._save_extracted_facts(
-            native_service, workspace_id=workspace_id, completed=_completed(),
+            engraphis_service, workspace_id=workspace_id, completed=_completed(),
             facts=[ExtractedFact(content="valid", metadata={"entities": object()})],
             card_run=_card_run(),
             pair_reference="pair-invalid",
         )
-    assert _table_counts(native_service) == {
+    assert _table_counts(engraphis_service) == {
         "memories": 0, "entities": 0, "edges": 0,
         "memory_entities": 0, "edge_supports": 0,
     }
 
 
-def test_official_remember_many_is_atomic(native_service) -> None:
+def test_official_remember_many_is_atomic(engraphis_service) -> None:
     from engraphis.core.interfaces import FactSpec
 
-    workspace_id = native_service.store.get_or_create_workspace("project-one")
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
     with pytest.raises(ValueError, match="non-empty content"):
-        native_service.engine.remember_many(
+        engraphis_service.engine.remember_many(
             [FactSpec(content="valid"), FactSpec(content="")],
             workspace_id=workspace_id,
         )
-    row = native_service.store.conn.execute(
+    row = engraphis_service.store.conn.execute(
         "SELECT COUNT(*) AS n FROM memories"
     ).fetchone()
     assert int(row["n"]) == 0
 
 
-def test_projection_excludes_memory_nodes(native_service, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_projection_excludes_memory_nodes(engraphis_service, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, Any]] = []
 
     def graph_scene(**kwargs: Any) -> dict[str, Any]:
         calls.append(kwargs)
         return {"nodes": [], "edges": [], "meta": {"truncated": False}}
 
-    monkeypatch.setattr(adapter, "get_service", lambda: native_service)
-    monkeypatch.setattr(native_service, "graph_scene", graph_scene)
+    monkeypatch.setattr(adapter, "get_service", lambda: engraphis_service)
+    monkeypatch.setattr(engraphis_service, "graph_scene", graph_scene)
     monkeypatch.setattr(
         adapter, "_projection_subject_directory",
         lambda _project: {"subjects": [], "count": 0, "complete": True},

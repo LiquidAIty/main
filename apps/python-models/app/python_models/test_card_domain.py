@@ -28,7 +28,7 @@ def project_worldview_defaults_to_existing_availability(monkeypatch):
 
 
 @pytest.mark.parametrize("conversation_matches", [True, False])
-def test_scoped_run_read_checks_native_conversation_before_output(monkeypatch, conversation_matches):
+def test_scoped_run_read_checks_provider_conversation_before_output(monkeypatch, conversation_matches):
     from unittest.mock import MagicMock
 
     connection = MagicMock()
@@ -168,6 +168,22 @@ def test_saved_profiles_stay_unique_and_stable_grants_are_preserved():
         card_domain._validated_deck_collections({
             "id": "d", "nodes": [controller, duplicate], "edges": [], "promptTemplates": [],
         }, "d")
+
+
+def test_one_tools_list_preserves_stored_tool_owners() -> None:
+    grants = {
+        "tools": ["card.create", "hermes:tool:memory"],
+        "skills": [],
+        "toolsets": [],
+        "mcpConnectionIds": [],
+    }
+
+    assert card_domain.GRANT_FIELDS["tool"] == "tools"
+    assert card_domain.GRANT_FIELDS["hermes_tool"] == "tools"
+    assert card_domain._grant_ids_for_kind(grants, "tool", "tools") == ["card.create"]
+    assert card_domain._grant_ids_for_kind(
+        grants, "hermes_tool", "tools",
+    ) == ["hermes:tool:memory"]
 
 
 def test_existing_saved_hermes_card_profile_is_immutable() -> None:
@@ -785,10 +801,10 @@ def test_hermes_card_tools_are_exact_saved_presentation_with_stable_wire_names(m
         "deck": {"id": "deck-one", "nodes": [card], "edges": []},
         "meta": {"deckRevision": "deck-revision"},
     })
-    def discovered(name, native_name, source, *, read_only):
+    def discovered(name, provider_name, source, *, read_only):
         return {
         "name": name,
-        "providerToolName": native_name,
+        "providerToolName": provider_name,
         "kind": "tool",
         "sourceId": source,
         "namespace": name.split(".")[0],
@@ -1117,7 +1133,7 @@ def test_saved_mcp_connection_grants_its_catalog_without_an_individual_tool_gran
     }]
 
 
-def test_valid_enabled_script_is_retained_but_cannot_replace_tools_without_native_owner(
+def test_valid_enabled_script_is_retained_but_cannot_replace_tools_without_hermes_runner(
     monkeypatch,
 ):
     loaded = _destination_fixture(monkeypatch)
@@ -1144,14 +1160,14 @@ output.emit({"result": {}})
     assert grants["presentedTools"] == ["calculator"]
     assert grants["scriptPresentation"] == {
         "mode": "selected-mcp",
-        "fallbackReason": "card_script_native_bridge_unavailable",
+        "fallbackReason": "card_script_hermes_runner_unavailable",
     }
     assert saved["lastValidation"]["status"] == "valid"
-    assert saved["nativeSupport"] == {
+    assert saved["hermesSupport"] == {
         "available": False,
         "executor": None,
         "active": False,
-        "reason": "card_script_native_bridge_unavailable",
+        "reason": "card_script_hermes_runner_unavailable",
     }
 
 
@@ -1187,7 +1203,7 @@ def test_disabled_script_remains_readable_saved_configuration(monkeypatch):
     saved = stable["runtimeExtensions"]["script"]
     assert saved["enabled"] is False
     assert saved["source"] == "not executable"
-    assert saved["nativeSupport"]["available"] is False
+    assert saved["hermesSupport"]["available"] is False
     assert stable["grants"]["tools"] == ["calculator"]
 
 
@@ -1958,7 +1974,7 @@ def test_optional_editor_review_never_materializes_an_idf(
         },
         "resolvedGraphReads": [],
         "resolvedGraphProjection": {
-            "schemaVersion": "native-card-context.v1",
+            "schemaVersion": "provider-card-context.v1",
             "authority": "",
             "projectId": "project-one",
             "nodes": [],
@@ -2147,7 +2163,7 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
     assert result["magenticExecution"]["orchestrator"] == {
         "cardId": "card-one",
         "cardRevisionId": "revision-one",
-        "nativeIdentity": "card-one",
+        "hermesProfile": "card-one",
         "instructions": "test instructions",
         "provider": {
             "provider": "openai",
@@ -2181,21 +2197,21 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
         "provider_model_id": "gpt-5.6-luna",
         "access_mode": "chatgpt-account",
         "state": "failed",
-        "native_phase": "ready",
+        "hermes_phase": "ready",
     })
 
     assert projected["runId"] == "run-one"
     assert projected["runtimeProfile"] == "research"
-    assert projected["nativeRootId"] == "t_retained_root"
+    assert projected["hermesRootId"] == "t_retained_root"
     assert projected["provider"] == "openai-codex"
     assert projected["model"] == "gpt-5.6-luna"
     assert projected["accessMode"] == "chatgpt-account"
-    assert projected["nativeStatus"] == "ready"
-    legacy = card_domain._run_projection({"run_id": "old", "native_phase": "queued"})
-    assert legacy["nativeStatus"] is None
+    assert projected["hermesStatus"] == "ready"
+    legacy = card_domain._run_projection({"run_id": "old", "hermes_phase": "queued"})
+    assert legacy["hermesStatus"] is None
 
 
-def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
+def test_run_progress_casts_numeric_hermes_run_id_to_persisted_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, object]] = []
@@ -2230,9 +2246,9 @@ def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
 
     result = card_domain.update_run_progress({
         "runId": "run-one",
-        "nativeRootId": "t_retained_root",
-        "nativeRunId": 18,
-        "nativeStatus": "running",
+        "hermesRootId": "t_retained_root",
+        "hermesRunId": 18,
+        "hermesStatus": "running",
         "tasksCompleted": 2,
         "tasksTotal": 5,
         "activeWorkers": 1,
@@ -2243,7 +2259,7 @@ def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
     assert "run.runtime_mode!='magentic_one'" in query
     assert "run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s" in query
     assert params[2] == 18
-    assert result["nativeRootId"] == "t_retained_root"
+    assert result["hermesRootId"] == "t_retained_root"
     assert result["updated"] is True
 
 
@@ -2282,12 +2298,12 @@ def test_run_progress_refuses_to_rebind_a_magnetic_root(monkeypatch: pytest.Monk
 
     assert card_domain.update_run_progress({
         "runId": "run-one",
-        "nativeRootId": "t_conflicting_root",
-        "nativeStatus": "running",
+        "hermesRootId": "t_conflicting_root",
+        "hermesStatus": "running",
     }) == {
         "ok": True,
         "runId": "run-one",
-        "nativeRootId": None,
+        "hermesRootId": None,
         "updated": False,
         "telemetryWritten": False,
     }
@@ -2345,7 +2361,7 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
         "runId": "run-one",
         "state": "completed",
         "finalResult": "Exact Gateway answer",
-        "hermesSessionRef": "native-session",
+        "hermesSessionId": "hermes-session",
         "effectiveProvider": "openai-codex",
     })
 
@@ -2360,7 +2376,7 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
     assert result["state"] == "completed"
 
 
-def test_finish_run_accepts_mag_one_native_root_and_final_task_without_fake_session(
+def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, object]] = []
@@ -2410,13 +2426,13 @@ def test_finish_run_accepts_mag_one_native_root_and_final_task_without_fake_sess
     result = card_domain.finish_run({
         "runId": "run-mag-one",
         "state": "completed",
-        "finalResult": "Exact native synthesis",
-        "hermesSessionRef": None,
+        "finalResult": "Exact Hermes synthesis",
+        "hermesSessionId": None,
         "providerThreadRef": "t_mag_root",
         "providerTurnRef": "t_mag_final",
         "effectiveProvider": "openai-codex",
         "providerApiMode": "codex_app_server",
-        "nativeStatus": "done",
+        "hermesStatus": "done",
     })
 
     update_query, update_params = next(
@@ -2435,7 +2451,7 @@ def test_finish_run_reconciles_one_hash_verified_result_without_rewriting_receip
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, object]] = []
-    final_result = "Exact native assistant result."
+    final_result = "Exact provider assistant result."
     receipt = {
         "run_id": "run-one",
         "state": "completed",
@@ -2508,7 +2524,7 @@ def test_finish_run_result_reconciliation_rejects_wrong_hash() -> None:
         card_domain.finish_run({
             "runId": "run-one",
             "state": "completed",
-            "finalResult": "Exact native result.",
+            "finalResult": "Exact provider result.",
             "expectedResultSha256": "0" * 64,
             "reconcilePersistedResult": True,
         })
@@ -3316,10 +3332,9 @@ def test_idf_materialization_requires_an_actual_run_identity(
     ("field", "value"),
     [
         ("contextMarkdown", "copied parent context"),
-        ("nativeReferences", [{"nativeId": "unresolved"}]),
         ("keyContext", "arbitrary caller summary"),
         ("visibleMessages", [{"role": "user", "content": "old chat"}]),
-        ("priorResults", [{"nativeId": "copied-result"}]),
+        ("priorResults", [{"recordId": "copied-result"}]),
         ("outputRequirements", "caller-authored extra prompt"),
         ("tools", ["calculator"]),
     ],
@@ -3462,7 +3477,7 @@ def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
     assert invocation["inputSummary"]["estimatedGraphContextTokens"] > 0
 
 
-def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
+def test_card_graph_handoff_rereads_provider_data_and_attributes_source_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _agent("helper", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"})
@@ -3946,7 +3961,7 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     ) is True
     assert any("EXECUTED_BY" in query for query, _params in statements)
     assert statements[0][1]["driverSource"] == "internal_chat"
-    assert statements[0][1]["contextAuthorityMode"] == "main_native_honcho"
+    assert statements[0][1]["contextAuthorityMode"] == "main_honcho"
     assert statements[0][1]["acceptedAt"] == "2026-10-01T20:00:00.000Z"
     assert statements[0][1]["preparationElapsedMs"] is not None
     assert statements[0][1]["idfSha256"] == "a" * 64
@@ -3974,7 +3989,7 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     assert "PRODUCED_ARTIFACT" in statements[0][0]
 
 
-def test_accepted_run_request_is_pending_scoped_and_has_no_native_run(
+def test_accepted_run_request_is_pending_scoped_and_has_no_hermes_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, tuple | None]] = []
@@ -4043,7 +4058,7 @@ def test_accepted_run_request_is_pending_scoped_and_has_no_native_run(
     insert_params = next(params for query, params in statements if "INSERT INTO" in query)
     assert insert_params[-1] == datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc)
     assert result["state"] == "pending"
-    assert result["nativeRunId"] is None
+    assert result["hermesRunId"] is None
     assert result["acceptedAt"] == "2026-10-01T20:00:00+00:00"
     assert observed[0]["project_id"] == "project-one"
     assert observed[0]["deck_id"] == "deck-one"
@@ -4114,7 +4129,7 @@ def test_beginning_an_accepted_run_types_nullable_request_fingerprint(
     assert "%s::text IS NOT NULL" in lookup_query
 
 
-def test_failed_preparation_settles_same_request_with_exact_error_and_no_native_run(
+def test_failed_preparation_settles_same_request_with_exact_error_and_no_hermes_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     updates: list[tuple[str, tuple | None]] = []
@@ -4176,7 +4191,7 @@ def test_failed_preparation_settles_same_request_with_exact_error_and_no_native_
     assert result["runId"] == "request-one"
     assert result["state"] == "failed"
     assert result["errorSummary"] == "configured_tool_unknown:provider.tool"
-    assert result["nativeRunId"] is None
+    assert result["hermesRunId"] is None
     assert observed[0]["run_id"] == "request-one"
     assert observed[0]["error_summary"] == "configured_tool_unknown:provider.tool"
 
@@ -4257,7 +4272,7 @@ def test_begin_run_preserves_source_failure_after_settling_accepted_attempt(
     }]
 
 
-def test_run_finish_links_native_identity_to_the_same_observed_request(
+def test_run_finish_links_hermes_identity_to_the_same_observed_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, dict]] = []
@@ -4287,18 +4302,18 @@ def test_run_finish_links_native_identity_to_the_same_observed_request(
     )
 
     assert card_domain._observe_run_finish("request-one", "failed", {
-        "providerThreadRef": "native-root-one",
-        "providerTurnRef": "native-run-one",
-        "errorCode": "native_failure",
-        "errorSummary": "native source failure",
+        "providerThreadRef": "provider-root-one",
+        "providerTurnRef": "provider-run-one",
+        "errorCode": "provider_failure",
+        "errorSummary": "provider source failure",
     }) is True
     query, params = statements[0]
     assert "MATCH (run:Run {runId: $runId})" in query
-    assert "run.nativeRunId=$nativeRunId" in query
+    assert "run.hermesRunId=$hermesRunId" in query
     assert params["runId"] == "request-one"
-    assert params["nativeRootId"] == "native-root-one"
-    assert params["nativeRunId"] == "native-run-one"
-    assert params["errorSummary"] == "native source failure"
+    assert params["hermesRootId"] == "provider-root-one"
+    assert params["hermesRunId"] == "provider-run-one"
+    assert params["errorSummary"] == "provider source failure"
 
 
 def test_run_attempt_observation_inserts_and_replaces_metadata_by_event_identity(
@@ -4376,7 +4391,7 @@ def test_run_attempt_observation_inserts_and_replaces_metadata_by_event_identity
             "phase": "completed",
             "observedAt": "2026-10-01T20:00:03Z",
             "toolName": "engraphis_get_memory",
-            "toolCallId": "native-call-one",
+            "toolCallId": "tool-call-one",
             "argumentsHash": "c" * 64,
             "argumentsBytes": 42,
             "resultHash": "d" * 64,
@@ -4485,7 +4500,7 @@ def test_run_attempt_observation_propagates_age_failure(
         })
 
 
-def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatch):
+def test_selected_agentgraph_root_includes_only_its_cards_hermes_team(monkeypatch):
     from contextlib import nullcontext
     class Cursor:
         def execute(self, statement):
@@ -4502,11 +4517,11 @@ def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatc
         queries.append((query, params))
         if "rootRunIds" in params:
             assert params["rootRunIds"] == ["root"]
-            assert "run.nativeChildId IS NOT NULL" in query and "LIMIT 20" in query
+            assert "run.hermesChildId IS NOT NULL" in query and "LIMIT 20" in query
             return [
-                {"run": {"runId": "team", "rootRunId": "root", "nativeChildId": "t_team", "state": "completed"}, "card_id": "graph"},
-                {"run": {"runId": "profile", "rootRunId": "root", "nativeChildId": "t_other"}, "card_id": "other"},
-                {"run": {"runId": "old-team", "rootRunId": "old", "nativeChildId": "t_old"}, "card_id": "graph"},
+                {"run": {"runId": "team", "rootRunId": "root", "hermesChildId": "t_team", "state": "completed"}, "card_id": "graph"},
+                {"run": {"runId": "profile", "rootRunId": "root", "hermesChildId": "t_other"}, "card_id": "other"},
+                {"run": {"runId": "old-team", "rootRunId": "old", "hermesChildId": "t_old"}, "card_id": "graph"},
             ]
         if "EXECUTED_BY" in query:
             assert params["cardId"] == "graph" and "LIMIT 1" in query
@@ -4515,8 +4530,8 @@ def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatc
         if "USED_TOOL" in query and "count(edge)" not in query:
             assert "directOnly" not in query
             return [{"run_id": "team", "tool_id": "cbm.search_graph", "event": {
-                "eventId": "worker-read", "cardId": "graph", "nativeChildId": "t_worker",
-                "authority": "codegraph", "operation": "read", "nativeNodeIds": ["pkg.worker"],
+                "eventId": "worker-read", "cardId": "graph", "hermesChildId": "t_worker",
+                "authority": "codegraph", "operation": "read", "entityIds": ["pkg.worker"],
                 "resultHash": "a" * 64,
             }}]
         return []
@@ -4525,7 +4540,7 @@ def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatc
     assert [run["runId"] for run in result["runs"]] == ["root", "team"]
     team = result["runs"][1]
     assert team["cardId"] == "graph" and team["rootRunId"] == "root"
-    assert team["nativeChildId"] == "t_team"
+    assert team["hermesChildId"] == "t_team"
     assert all("-[:READ]->" not in query for query, _ in queries)
     assert team["usedTools"] == ["cbm.search_graph"]
 
@@ -4605,7 +4620,7 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
                 "run_id": "run-one",
                 "tool_id": "cbm.search_graph",
                 "event": {
-                    "eventId": "native-attention:event-one",
+                    "eventId": "tool:event-one",
                     "timestamp": "2026-08-18T12:00:00Z",
                     "projectId": "project-one",
                     "deckId": "deck-one",
@@ -4614,8 +4629,8 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
                     "authority": "codegraph",
                     "operation": "read",
                     "toolName": "cbm.search_graph",
-                    "nativeNodeIds": ["pkg._runtime_owner"],
-                    "nativeEdgeIds": [],
+                    "entityIds": ["pkg._runtime_owner"],
+                    "relationshipIds": [],
                     "resultHash": "a" * 64,
                     "truncated": False,
                 },
@@ -4624,12 +4639,12 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
             return [{
                 "run_id": "run-one",
                 "authority": "KnowGraph",
-                "native_id": "episode:one",
+                "provider_id": "episode:one",
             }]
         if "-[:VIEWED]->" in query:
             return []
         if "-[:READ]->" in query:
-            return [{"run_id": "run-one", "authority": "CodeGraph", "native_id": "pkg.materialized"}]
+            return [{"run_id": "run-one", "authority": "CodeGraph", "provider_id": "pkg.materialized"}]
         if "PRODUCED_ARTIFACT" in query:
             return [{
                 "run_id": "run-one",
@@ -4680,7 +4695,7 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "deckId": "deck-one",
         "conversationId": "",
         "rootRunId": "run-one",
-        "nativeChildId": None,
+        "hermesChildId": None,
         "startedAt": None,
         "acceptedAt": None,
         "finishedAt": None,
@@ -4689,8 +4704,8 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "preparationElapsedMs": None,
         "preparationState": None,
         "preparationError": None,
-        "nativeRootId": None,
-        "nativeRunId": None,
+        "hermesRootId": None,
+        "hermesRunId": None,
         "cardId": "card-one",
         "assignedFromCardIds": ["card-main"],
         "parentRunIds": [],
@@ -4886,48 +4901,48 @@ def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
             runtimeOptions={"configuration": {"token": "configuration-secret"}},
         ),
         actualGraphData=SimpleNamespace(modelText="Exact bounded graph context."),
-        dynamicContext=SimpleNamespace(task="Inspect the native record."),
+        dynamicContext=SimpleNamespace(task="Inspect the provider record."),
         selectedToolsAndGrants=SimpleNamespace(toolDefinitions=[{
-            "canonicalId": "native.read",
-            "displayName": "Native read",
-            "shortDescription": "Read one native record.",
+            "canonicalId": "records.read",
+            "displayName": "Record read",
+            "shortDescription": "Read one provider record.",
             "effects": ["read"],
             "contracts": [{
                 "sourceId": "python_runtime",
                 "connectionKind": "private-runtime",
-                "providerToolName": "native.read",
-                "description": "Read one native record.",
+                "providerToolName": "records.read",
+                "description": "Read one provider record.",
                 "inputSchema": {"type": "object", "properties": {}},
                 "effects": ["read"],
                 "credential": "tool-secret",
             }],
             "configurationFingerprint": "tool-fingerprint",
         }, {
-            "canonicalId": "native.write",
+            "canonicalId": "records.write",
             "shortDescription": "Unexposed tool.",
             "contracts": [],
         }]),
     ))
 
     projected = card_domain._request_fulfillment_model_input(
-        materialized, ["native.read"],
+        materialized, ["records.read"],
     )
 
     assert projected == {
         "saved_instructions": "Follow the saved instructions.",
         "output_requirements": "Return the requested result.",
         "graph_context": "Exact bounded graph context.",
-        "request_or_delegated_mission": "Inspect the native record.",
+        "request_or_delegated_mission": "Inspect the provider record.",
         "presented_tool_contracts": [{
-            "canonicalId": "native.read",
-            "displayName": "Native read",
-            "shortDescription": "Read one native record.",
+            "canonicalId": "records.read",
+            "displayName": "Record read",
+            "shortDescription": "Read one provider record.",
             "effects": ["read"],
             "contracts": [{
                 "sourceId": "python_runtime",
                 "connectionKind": "private-runtime",
-                "providerToolName": "native.read",
-                "description": "Read one native record.",
+                "providerToolName": "records.read",
+                "description": "Read one provider record.",
                 "inputSchema": {"type": "object", "properties": {}},
                 "effects": ["read"],
             }],
@@ -4937,7 +4952,7 @@ def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
     assert "configuration-secret" not in serialized
     assert "tool-secret" not in serialized
     assert "tool-fingerprint" not in serialized
-    assert "native.write" not in serialized
+    assert "records.write" not in serialized
 
 
 def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
@@ -4946,7 +4961,7 @@ def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
     monkeypatch.setattr(card_domain, "_jev_request", lambda *_args, **_kwargs: {
         "model": "typesafe/jev-1.13-test",
         "answers": {
-            "tool_" + card_domain._sha("native.read")[:24]: {
+            "tool_" + card_domain._sha("records.read")[:24]: {
                 "type": "choice",
                 "choice": "USE",
                 "confidence": 0.0,
@@ -4957,17 +4972,17 @@ def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
     })
 
     selected, receipt = card_domain._decide_card_auto_tools(
-        {"effective_request": "Inspect the saved native record."},
+        {"effective_request": "Inspect the saved provider record."},
         [{
-            "canonicalId": "native.read",
-            "displayName": "Native read",
-            "shortDescription": "Read one native record.",
+            "canonicalId": "records.read",
+            "displayName": "Record read",
+            "shortDescription": "Read one provider record.",
             "effects": ["read"],
             "contracts": [{
                 "sourceId": "python_runtime",
                 "connectionKind": "private-runtime",
-                "providerToolName": "native.read",
-                "description": "Read one native record.",
+                "providerToolName": "records.read",
+                "description": "Read one provider record.",
                 "inputSchema": {"type": "object"},
                 "effects": ["read"],
                 "available": True,
@@ -4976,7 +4991,7 @@ def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
     )
 
     assert selected == []
-    decision = receipt["decisions"]["native.read"]
+    decision = receipt["decisions"]["records.read"]
     assert decision["winner"] == "USE"
     assert decision["providerWinner"] == "USE"
     assert decision["effectiveDecision"] == "OMIT"
@@ -5039,7 +5054,7 @@ def test_request_fulfillment_missing_idf_persists_explicit_unavailable(
         "runId": "run-one",
         "actualProvider": "openrouter",
         "actualModel": "configured/model",
-        "exposedTools": ["native.read"],
+        "exposedTools": ["records.read"],
         "executionEvidence": [],
         "executionEvidenceComplete": True,
     })
@@ -5248,10 +5263,10 @@ def _card_jev_application_fixture(*, auto_tools: bool, auto_select: bool):
             "autoSelect": auto_select,
             "reasoningEffort": "high",
         },
-        "enabledTools": ["native.read", "native.write"],
+        "enabledTools": ["records.read", "records.write"],
         "unavailableTools": [],
         "unavailableToolReasons": {},
-        "presentedTools": ["native.read", "native.write"],
+        "presentedTools": ["records.read", "records.write"],
         "scriptPresentation": {"mode": "ordinary", "fallbackReason": None},
         "skills": [],
         "toolsets": ["file"],
@@ -5305,9 +5320,9 @@ def test_card_jev_context_omits_credentials_configuration_and_fingerprints() -> 
     context = card_domain._card_jev_context(
         prepared=prepared,
         call_config=call_config,
-        assignment="Inspect the native record.",
+        assignment="Inspect the provider record.",
         output_requirements="Return the requested result.",
-        graph_text="Native context.",
+        graph_text="Graph context.",
         references=[],
         images=[],
     )
@@ -5335,10 +5350,10 @@ def test_card_jev_context_omits_credentials_configuration_and_fingerprints() -> 
 @pytest.mark.parametrize(
     ("auto_tools", "auto_select", "expected_tools", "expected_model"),
     [
-        (False, False, ["native.read", "native.write"], "gpt-5.6-luna"),
-        (True, False, ["native.read"], "gpt-5.6-luna"),
-        (False, True, ["native.read", "native.write"], "gpt-5.6-terra"),
-        (True, True, ["native.read"], "gpt-5.6-terra"),
+        (False, False, ["records.read", "records.write"], "gpt-5.6-luna"),
+        (True, False, ["records.read"], "gpt-5.6-luna"),
+        (False, True, ["records.read", "records.write"], "gpt-5.6-terra"),
+        (True, True, ["records.read"], "gpt-5.6-terra"),
     ],
 )
 def test_card_jev_toggle_combinations_apply_tools_before_model_without_widening(
@@ -5359,7 +5374,7 @@ def test_card_jev_toggle_combinations_apply_tools_before_model_without_widening(
             "tools",
             [str(candidate["canonicalId"]) for candidate in candidates],
         ))
-        return ["native.read"], {
+        return ["records.read"], {
             "schemaVersion": "card-auto-tools.v1",
             "enabled": True,
             "status": "selected",
@@ -5368,7 +5383,7 @@ def test_card_jev_toggle_combinations_apply_tools_before_model_without_widening(
             "normalAuthorizedTools": [
                 str(candidate["canonicalId"]) for candidate in candidates
             ],
-            "selectedTools": ["native.read"],
+            "selectedTools": ["records.read"],
         }
 
     def decide_model(context, _candidates, saved):
@@ -5400,10 +5415,10 @@ def test_card_jev_toggle_combinations_apply_tools_before_model_without_widening(
         prepared=prepared,
         call_config=call_config,
         output_requirements="Return the completed requested result.",
-        assignment="Inspect the native record and report the result.",
+        assignment="Inspect the provider record and report the result.",
         tool_definitions=definitions,
         saved_script_value=None,
-        graph_text="Native context.",
+        graph_text="Graph context.",
         references=[],
         images=[],
     )
@@ -5427,16 +5442,16 @@ def test_card_jev_context_policy_is_per_decision_bounded_and_receipted(monkeypat
     )
     call_config["runtimeOptions"]["jevContext"] = {
         "autoTools": "conversation_window",
-        "modelChoice": "selected_native_context",
+        "modelChoice": "selected_graph_context",
     }
     captured: dict[str, dict] = {}
 
     def decide_tools(context, _candidates):
         captured["tools"] = context
-        return ["native.read"], {
+        return ["records.read"], {
             "schemaVersion": "card-auto-tools.v1", "enabled": True,
             "status": "selected", "requestCount": 1, "questionCount": 2,
-            "selectedTools": ["native.read"],
+            "selectedTools": ["records.read"],
         }
 
     def decide_model(context, _candidates, saved):
@@ -5464,7 +5479,7 @@ def test_card_jev_context_policy_is_per_decision_bounded_and_receipted(monkeypat
         assignment="LEGACY MERGED HISTORY\nCurrent bounded request.",
         tool_definitions=definitions,
         saved_script_value=None,
-        graph_text="Selected native graph context.",
+        graph_text="Selected graph context.",
         references=[{
             "engraphisMemoryId": "think-one",
             "readOperation": "engraphis_get_memory", "contentSha256": "a" * 64,
@@ -5478,20 +5493,20 @@ def test_card_jev_context_policy_is_per_decision_bounded_and_receipted(monkeypat
     )
 
     assert captured["tools"]["request_or_delegated_mission"] == "Current bounded request."
-    assert captured["tools"]["supplied_native_context"] == ""
+    assert captured["tools"]["supplied_graph_context"] == ""
     assert [item["content"] for item in captured["tools"]["bounded_conversation_window"]] == [
         "Earlier bounded context.", "Earlier answer.",
     ]
     assert captured["model"]["request_or_delegated_mission"] == "Current bounded request."
-    assert captured["model"]["supplied_native_context"] == "Selected native graph context."
+    assert captured["model"]["supplied_graph_context"] == "Selected graph context."
     assert "bounded_conversation_window" not in captured["model"]
     assert prepared["jevAutoTools"]["context"]["policy"] == "conversation_window"
     assert prepared["jevAutoTools"]["context"]["effectiveSources"] == [
         "current_request", "saved_card", "conversation_window",
     ]
-    assert prepared["jevModelRouter"]["context"]["policy"] == "selected_native_context"
+    assert prepared["jevModelRouter"]["context"]["policy"] == "selected_graph_context"
     assert prepared["jevModelRouter"]["context"]["effectiveSources"] == [
-        "current_request", "saved_card", "selected_native_context",
+        "current_request", "saved_card", "selected_graph_context",
     ]
     assert len(prepared["jevAutoTools"]["context"]["inputSha256"]) == 64
     assert len(prepared["jevAutoTools"]["context"]["requestSha256"]) == 64
@@ -5519,7 +5534,7 @@ def test_card_jev_context_receipts_name_missing_optional_sources_without_disabli
     )
     call_config["runtimeOptions"]["jevContext"] = {
         "autoTools": "conversation_window",
-        "modelChoice": "selected_native_context",
+        "modelChoice": "selected_graph_context",
     }
     card_domain._apply_card_jev_decisions(
         payload={"configuredModels": models, "_currentJevRequest": "Required request."},
@@ -5539,27 +5554,27 @@ def test_card_jev_context_receipts_name_missing_optional_sources_without_disabli
     assert auto_context["requiredSources"] == ["current_request", "saved_card"]
     assert model_context["requiredSources"] == ["current_request", "saved_card"]
     assert auto_context["unavailableSources"] == ["conversation_window"]
-    assert model_context["unavailableSources"] == ["selected_native_context"]
+    assert model_context["unavailableSources"] == ["selected_graph_context"]
     assert auto_context["effectiveSources"] == ["current_request", "saved_card"]
     assert model_context["effectiveSources"] == ["current_request", "saved_card"]
-    assert prepared["jevAutoTools"]["selectedTools"] == ["native.read", "native.write"]
+    assert prepared["jevAutoTools"]["selectedTools"] == ["records.read", "records.write"]
     assert prepared["jevModelRouter"]["selectedModel"] == call_config["provider"]
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected_sources", "native_count", "conversation_count"),
+    ("mode", "expected_sources", "graph_count", "conversation_count"),
     [
         ("inherited", ["current_request", "saved_card", "inherited_invocation_context",
-                       "selected_native_context", "attachment_metadata"], 1, 0),
+                       "selected_graph_context", "attachment_metadata"], 1, 0),
         ("request_card", ["current_request", "saved_card", "attachment_metadata"], 0, 0),
         ("conversation_window", ["current_request", "saved_card", "conversation_window",
                                  "attachment_metadata"], 0, 1),
-        ("selected_native_context", ["current_request", "saved_card", "selected_native_context",
+        ("selected_graph_context", ["current_request", "saved_card", "selected_graph_context",
                                      "attachment_metadata"], 1, 0),
     ],
 )
 def test_every_supported_card_jev_context_selector_has_an_exact_bounded_receipt(
-    mode, expected_sources, native_count, conversation_count,
+    mode, expected_sources, graph_count, conversation_count,
 ) -> None:
     prepared, call_config, definitions, models = _card_jev_application_fixture(
         auto_tools=False,
@@ -5599,7 +5614,7 @@ def test_every_supported_card_jev_context_selector_has_an_exact_bounded_receipt(
         assert receipt["policy"] == mode
         assert receipt["requiredSources"] == ["current_request", "saved_card"]
         assert receipt["effectiveSources"] == expected_sources
-        assert len(receipt["graphRecords"]) == native_count
+        assert len(receipt["graphRecords"]) == graph_count
         assert receipt["conversationWindow"]["messageCount"] == conversation_count
         assert receipt["attachmentReferences"] == [{
             "name": "evidence.png", "mediaType": "image/png",
@@ -5632,13 +5647,13 @@ def test_card_auto_tools_selects_with_hermes_skill_without_selecting_the_skill(
     def decide_tools(context, candidates):
         calls.append([item["canonicalId"] for item in candidates])
         assert context["saved_card"]["skills"] == ["grounded-citations"]
-        return ["native.read"], {
+        return ["records.read"], {
             "schemaVersion": "card-auto-tools.v1",
             "enabled": True,
             "status": "selected",
             "requestCount": 1,
             "questionCount": len(candidates),
-            "selectedTools": ["native.read"],
+            "selectedTools": ["records.read"],
         }
 
     monkeypatch.setattr(card_domain, "_decide_card_auto_tools", decide_tools)
@@ -5647,7 +5662,7 @@ def test_card_auto_tools_selects_with_hermes_skill_without_selecting_the_skill(
         prepared=prepared,
         call_config=call_config,
         output_requirements="Return the result.",
-        assignment="Inspect the native record.",
+        assignment="Inspect the provider record.",
         tool_definitions=definitions,
         saved_script_value=None,
         graph_text="",
@@ -5655,11 +5670,11 @@ def test_card_auto_tools_selects_with_hermes_skill_without_selecting_the_skill(
         images=[],
     )
 
-    assert calls == [["native.read", "native.write"]]
-    assert [item["canonicalId"] for item in selected] == ["native.read"]
+    assert calls == [["records.read", "records.write"]]
+    assert [item["canonicalId"] for item in selected] == ["records.read"]
     assert call_config["skills"] == ["grounded-citations"]
     assert prepared["jevAutoTools"]["status"] == "selected"
-    assert prepared["jevAutoTools"]["selectedTools"] == ["native.read"]
+    assert prepared["jevAutoTools"]["selectedTools"] == ["records.read"]
     assert prepared["jevModelRouter"]["status"] == "unavailable"
     assert prepared["jevModelRouter"]["errorCode"] == "card_jev_skill_material_unavailable"
 
@@ -5684,9 +5699,9 @@ def test_card_auto_tools_failure_restores_complete_saved_authorized_set(
         definitions,
     )
 
-    assert selected == ["native.read", "native.write"]
+    assert selected == ["records.read", "records.write"]
     assert receipt["status"] == "unavailable"
-    assert receipt["selectedTools"] == ["native.read", "native.write"]
+    assert receipt["selectedTools"] == ["records.read", "records.write"]
     assert receipt["errorCode"] == "card_auto_tools_unavailable"
 
 
@@ -5703,27 +5718,27 @@ def test_card_auto_tools_cannot_omit_a_saved_script_mandatory_handle(
     "output": {"type": "object", "properties": {"result": {}}, "required": ["result"]},
 }
 from hermes_tools import SCRIPT, output, tools
-tools.native.write = SCRIPT
-tools.call("native.write")
+tools.records.write = SCRIPT
+tools.call("records.write")
 output.emit({"result": {}})
 '''
     saved_script_value = card_domain.saved_script(
         {"enabled": True, "source": source},
-        selected_tools=["native.read", "native.write"],
-        default_agent_tools=["native.read"],
-        native_available=False,
+        selected_tools=["records.read", "records.write"],
+        default_agent_tools=["records.read"],
+        hermes_available=False,
     )
     call_config["runtimeOptions"]["script"] = saved_script_value
 
     def decide_tools(_context, candidates):
-        assert [candidate["canonicalId"] for candidate in candidates] == ["native.read"]
+        assert [candidate["canonicalId"] for candidate in candidates] == ["records.read"]
         return [], {
             "schemaVersion": "card-auto-tools.v1",
             "enabled": True,
             "status": "selected",
             "requestCount": 1,
             "questionCount": 1,
-            "normalAuthorizedTools": ["native.read"],
+            "normalAuthorizedTools": ["records.read"],
             "selectedTools": [],
         }
 
@@ -5733,22 +5748,22 @@ output.emit({"result": {}})
         prepared=prepared,
         call_config=call_config,
         output_requirements="Return the requested result.",
-        assignment="Write the requested native record.",
+        assignment="Write the requested provider record.",
         tool_definitions=definitions,
         saved_script_value=saved_script_value,
-        graph_text="Native context.",
+        graph_text="Graph context.",
         references=[],
         images=[],
     )
 
-    assert call_config["enabledTools"] == ["native.write"]
-    assert call_config["presentedTools"] == ["native.write"]
-    assert [definition["canonicalId"] for definition in selected] == ["native.write"]
+    assert call_config["enabledTools"] == ["records.write"]
+    assert call_config["presentedTools"] == ["records.write"]
+    assert [definition["canonicalId"] for definition in selected] == ["records.write"]
     assert prepared["jevAutoTools"]["normalAuthorizedTools"] == [
-        "native.read", "native.write",
+        "records.read", "records.write",
     ]
-    assert prepared["jevAutoTools"]["mandatoryTools"] == ["native.write"]
-    assert prepared["jevAutoTools"]["selectedTools"] == ["native.write"]
+    assert prepared["jevAutoTools"]["mandatoryTools"] == ["records.write"]
+    assert prepared["jevAutoTools"]["selectedTools"] == ["records.write"]
 
 
 def test_card_model_router_failure_uses_saved_model_only_when_still_eligible(
@@ -5775,7 +5790,7 @@ def test_card_model_router_failure_uses_saved_model_only_when_still_eligible(
     )
 
     selected, receipt = card_domain._decide_card_model_router(
-        {"actual_initial_tools": [{"canonical_id": "native.read"}]},
+        {"actual_initial_tools": [{"canonical_id": "records.read"}]},
         candidates,
         call_config["provider"],
     )

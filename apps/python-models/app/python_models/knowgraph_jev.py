@@ -1,4 +1,4 @@
-"""Write-lifecycle Jev classification for native, source-grounded Graphiti facts.
+"""Write-lifecycle Jev classification for source-grounded Graphiti facts.
 
 Graphiti remains the fact, entity, provenance, and temporal authority.  This
 module returns one bounded canonical relationship Choice for each fact touched
@@ -47,7 +47,7 @@ KNOWGRAPH_JEV_CHOICES = SHARED_JEV_RELATIONSHIPS + KNOWGRAPH_CONTROL_OUTCOMES
 
 _KNOWGRAPH_RELATIONSHIP_CRITERIA = {
     **SHARED_JEV_RELATIONSHIP_CRITERIA,
-    "INSUFFICIENT_CONTEXT": "The supplied native fact and source context do not support a canonical choice.",
+    "INSUFFICIENT_CONTEXT": "The supplied Graphiti fact and source context do not support a canonical choice.",
 }
 
 
@@ -99,10 +99,10 @@ def _nearby_context(value: Any) -> list[dict[str, Any]]:
     if len(facts) > 8:
         raise KnowGraphJevError("knowgraph_jev_nearby_context_limit")
     return [{
-        "native_fact_uuid": _bounded_text(item.get("nativeFactUuid"), 512),
+        "graphiti_fact_uuid": _bounded_text(item.get("graphitiFactUuid"), 512),
         "source": _entity(item.get("sourceEntity")),
         "target": _entity(item.get("targetEntity")),
-        "native_relation": _bounded_text(item.get("nativeRelation"), 1_000),
+        "graphiti_relation": _bounded_text(item.get("graphitiRelation"), 1_000),
         "fact": _bounded_text(item.get("fact"), 2_000),
     } for item in facts if isinstance(item, dict)]
 
@@ -195,16 +195,16 @@ def classify_knowgraph_fact(
     relationship_vocabulary: tuple[str, ...] = SHARED_JEV_RELATIONSHIPS,
     transport: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Map one native Graphiti fact to the shared semantic edge vocabulary."""
-    native_fact_uuid = _bounded_text(fact.get("nativeFactUuid"), 512)
+    """Map one Graphiti fact to the shared semantic edge vocabulary."""
+    graphiti_fact_uuid = _bounded_text(fact.get("graphitiFactUuid"), 512)
     source = _entity(fact.get("sourceEntity"))
     target = _entity(fact.get("targetEntity"))
-    native_relation = _bounded_text(fact.get("nativeRelation"), 1_000)
+    graphiti_relation = _bounded_text(fact.get("graphitiRelation"), 1_000)
     statement = _bounded_text(fact.get("fact"), 8_000)
-    if not native_fact_uuid or not source["uuid"] or not target["uuid"] or not statement:
+    if not graphiti_fact_uuid or not source["uuid"] or not target["uuid"] or not statement:
         raise KnowGraphJevError("knowgraph_jev_input_invalid")
     choice_plan = relationship_choice_plan(
-        native_relation,
+        graphiti_relation,
         relationship_vocabulary,
         KNOWGRAPH_CONTROL_OUTCOMES,
     )
@@ -212,7 +212,7 @@ def classify_knowgraph_fact(
     criteria = {
         name: SHARED_JEV_RELATIONSHIP_CRITERIA.get(
             name,
-            f"The native directed fact is best represented by the canonical predicate {name}.",
+            f"The Graphiti directed fact is best represented by the canonical predicate {name}.",
         )
         for name in choices
         if name not in KNOWGRAPH_CONTROL_OUTCOMES
@@ -226,14 +226,14 @@ def classify_knowgraph_fact(
         "model": JEV_MODEL,
         "state": {
             "description": (
-                "One existing source-grounded native Graphiti EntityEdge. Classify only its "
+                "One existing source-grounded Graphiti EntityEdge. Classify only its "
                 "directed factual relationship; never judge whether the fact may exist."
             ),
-            "native_fact_uuid": native_fact_uuid,
+            "graphiti_fact_uuid": graphiti_fact_uuid,
             "source_entity_a": source,
             "target_entity_b": target,
             "direction": "A -> B",
-            "native_graphiti_relationship": native_relation,
+            "graphiti_relationship": graphiti_relation,
             "graphiti_fact": statement,
             "current_project_relationship_vocabulary": list(
                 relationship_vocabulary
@@ -253,7 +253,7 @@ def classify_knowgraph_fact(
                 "type": "choice",
                 "instructions": (
                     "Choose the current project semantic relationship that best describes the existing directed "
-                    "Graphiti fact source_entity_a -> target_entity_b. The native relation, natural-"
+                    "Graphiti fact source_entity_a -> target_entity_b. The Graphiti relation, natural-"
                     "language fact, exact supporting episodes, temporal fields, and bounded nearby "
                     "facts are context. Prefer an existing canonical predicate whenever it accurately "
                     "expresses the fact. The optional novel candidate is only another Choice option; "
@@ -261,7 +261,7 @@ def classify_knowgraph_fact(
                     "truth, source quality, admission, deletion, or "
                     "entity validity. If no shared semantic relationship can be supported, choose "
                     "INSUFFICIENT_CONTEXT. It is a control outcome, never a persisted edge label. "
-                    "The native Graphiti fact remains unchanged and usable either way."
+                    "The Graphiti fact remains unchanged and usable either way."
                 ),
                 "criteria": criteria,
             }
@@ -351,9 +351,9 @@ def classify_knowgraph_facts(
     active: dict[Future[dict[str, Any]], int] = {}
 
     def failure(index: int, error: Exception) -> dict[str, Any]:
-        native_id = str(facts[index].get("nativeFactUuid") or "").strip()
+        graphiti_fact_id = str(facts[index].get("graphitiFactUuid") or "").strip()
         return {
-            "nativeFactUuid": native_id,
+            "graphitiFactUuid": graphiti_fact_id,
             "status": _failure_status(error),
             "requested_model": JEV_MODEL,
             "question_schema_version": QUESTION_SCHEMA_VERSION,
@@ -393,10 +393,10 @@ def classify_knowgraph_facts(
                 break
             for future in completed:
                 index = active.pop(future)
-                native_id = str(facts[index].get("nativeFactUuid") or "").strip()
+                graphiti_fact_id = str(facts[index].get("graphitiFactUuid") or "").strip()
                 try:
                     results[index] = {
-                        "nativeFactUuid": native_id,
+                        "graphitiFactUuid": graphiti_fact_id,
                         **future.result(),
                     }
                 except Exception as error:
@@ -411,9 +411,9 @@ def classify_knowgraph_facts(
     for future, index in list(active.items()):
         if future.cancelled():
             continue
-        native_id = str(facts[index].get("nativeFactUuid") or "").strip()
+        graphiti_fact_id = str(facts[index].get("graphitiFactUuid") or "").strip()
         try:
-            results[index] = {"nativeFactUuid": native_id, **future.result()}
+            results[index] = {"graphitiFactUuid": graphiti_fact_id, **future.result()}
         except Exception as error:
             results[index] = failure(index, error)
 
@@ -421,8 +421,8 @@ def classify_knowgraph_facts(
         if result:
             continue
         results[index] = {
-            "nativeFactUuid": str(
-                facts[index].get("nativeFactUuid") or ""
+            "graphitiFactUuid": str(
+                facts[index].get("graphitiFactUuid") or ""
             ).strip(),
             "status": "unfinished",
             "requested_model": JEV_MODEL,

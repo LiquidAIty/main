@@ -89,10 +89,24 @@ class _CardJevError(RuntimeError):
 
 GRANT_FIELDS = {
     "tool": "tools",
+    "hermes_tool": "tools",
     "skill": "skills",
     "toolset": "toolsets",
     "mcp_connection": "mcpConnectionIds",
 }
+
+
+def _grant_ids_for_kind(
+    grants: dict[str, list[str]],
+    grant_kind: str,
+    field: str,
+) -> list[str]:
+    values = grants[field]
+    if field != "tools":
+        return values
+    if grant_kind == "hermes_tool":
+        return [value for value in values if value.startswith("hermes:tool:")]
+    return [value for value in values if not value.startswith("hermes:tool:")]
 KNOWN_RUNTIME_OPTION_FIELDS = {
     "tools", "skills", "toolsets", "mcpConnectionIds",
     "provider", "modelKey", "providerModelId", "accessMode", "reasoningEffort",
@@ -159,7 +173,7 @@ CARD_TELEMETRY_CARD_EDGE_PATTERNS = (
     "(source:Card)-[edge:DELEGATED_TO]->(card)",
 )
 
-_HERMES_NATIVE_TASK_STATUSES = {
+_HERMES_TASK_STATUSES = {
     "triage", "todo", "scheduled", "ready", "running",
     "blocked", "review", "done", "archived",
 }
@@ -322,7 +336,7 @@ def _card_jev_context(
     provider = call_config["provider"]
     runtime_options = call_config["runtimeOptions"]
     explicit_mode = context_mode != "inherited"
-    include_native = not explicit_mode or context_mode == "selected_native_context"
+    include_graph = not explicit_mode or context_mode == "selected_graph_context"
     conversation_window: list[dict[str, str]] = []
     if explicit_mode and context_mode == "conversation_window":
         if not isinstance(shared_conversation, list):
@@ -379,14 +393,18 @@ def _card_jev_context(
             "skills": list(call_config["skills"]),
             "toolsets": list(call_config["toolsets"]),
         },
-        "supplied_native_context": graph_text if include_native else "",
-        "supplied_native_references": [
+        "supplied_graph_context": graph_text if include_graph else "",
+        "supplied_graph_references": [
             {
                 key: reference.get(key)
-                for key in ("authority", "nativeId", "contentSha256", "provenance")
+                for key in (
+                    "authority", "engraphisMemoryId", "engraphisEntityId",
+                    "engraphisRelationshipId", "graphitiEpisodeId", "graphitiEntityId",
+                    "graphitiRelationshipId", "cbmQualifiedName", "contentSha256", "provenance",
+                )
                 if reference.get(key) is not None
             }
-            for reference in (references if include_native else [])
+            for reference in (references if include_graph else [])
         ],
         "attachments": [
             {
@@ -409,7 +427,7 @@ def _card_jev_context(
 
 
 _CARD_JEV_CONTEXT_MODES = {
-    "inherited", "request_card", "conversation_window", "selected_native_context",
+    "inherited", "request_card", "conversation_window", "selected_graph_context",
 }
 
 
@@ -543,7 +561,7 @@ def _decide_card_auto_tools(
                 error_code="card_auto_tools_response_invalid",
             )
             # An exact tie is deliberately conservative for optional exposure,
-            # while the provider's native Choice winner remains inspectable.
+            # while the provider's Choice winner remains inspectable.
             effective_decision = (
                 "OMIT" if math.isclose(
                     answer["probabilities"]["USE"],
@@ -1158,7 +1176,7 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         try:
             extensions["script"] = saved_script(
                 extensions["script"],
-                native_available=False,
+                hermes_available=False,
             )
         except IddValidationError as error:
             raise CardDomainError(str(error)) from error
@@ -1224,7 +1242,7 @@ def _lock_and_validate_hermes_profile_bindings(
     """Serialize and enforce the permanent global Hermes profile binding.
 
     The same stable Card identity may be present in multiple Projects, but one
-    native profile can never become authority for a different Card identity.
+    Hermes profile can never become authority for a different Card identity.
     Lock every profile in sorted order before reading any binding so concurrent
     Project saves and backend Card attachment share one race-free boundary.
     """
@@ -1261,7 +1279,7 @@ def _lock_and_validate_hermes_profile_bindings(
 def _subagent_model_selection(value: Any) -> dict[str, str] | None:
     """Validate the saved desired child-model selector without consulting availability.
 
-    Stale native selections remain durable and inspectable. Availability and
+    Stale Hermes selections remain durable and inspectable. Availability and
     credential resolution belong to the bound Hermes profile at Run start.
     """
     if value is None:
@@ -1282,7 +1300,7 @@ def _subagent_model_selection(value: Any) -> dict[str, str] | None:
 def _subagent_type_selection(value: Any) -> CardSubagentType | None:
     """Validate an explicitly saved temporary-subagent topology choice.
 
-    Missing remains missing so legacy native Team profiles are not rewritten by
+    Missing remains missing so legacy Hermes Team profiles are not rewritten by
     an unrelated Card read or save.
     """
     if value is None:
@@ -1379,7 +1397,9 @@ def _insert_revision(
         ),
     )
     for grant_kind, field in GRANT_FIELDS.items():
-        for ordinal, grant_id in enumerate(stable["grants"][field]):
+        for ordinal, grant_id in enumerate(
+            _grant_ids_for_kind(stable["grants"], grant_kind, field)
+        ):
             cursor.execute(
                 """
                 INSERT INTO ag_catalog.card_capability_grants
@@ -1639,7 +1659,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     (bool(run_id), "AND run.runId = $runId"),
                     (bool(card_id), "AND card.cardId = $cardId"),
                     (bool(conversation_id), "AND run.conversationId = $conversationId"),
-                    (direct_only, "AND (run.nativeChildId IS NULL OR run.nativeChildId = '')"),
+                    (direct_only, "AND (run.hermesChildId IS NULL OR run.hermesChildId = '')"),
                 ) if enabled
             )
             owner_scope = "projectId: $projectId" + ("" if project_wide else ", deckId: $deckId")
@@ -1659,18 +1679,18 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                 "run agtype, card_id agtype",
             )
             if direct_only and run_rows:
-                # Select root Runs first, then include their own native work.
+                # Select root Runs first, then include their own Hermes work.
                 # A Profile target is a different Card and is never rolled up.
                 root_cards = {
                     str(row["run"].get("runId") or ""): str(row.get("card_id") or "")
                     for row in run_rows if isinstance(row.get("run"), dict)
                 }
-                native_rows = _age_rows(
+                hermes_rows = _age_rows(
                     cursor,
                     f"""
                     MATCH (run:Run {{{owner_scope}}})-[:EXECUTED_BY]->(card:Card {{{owner_scope}}})
                     WHERE run.rootRunId IN $rootRunIds
-                      AND run.nativeChildId IS NOT NULL AND run.nativeChildId <> ''
+                      AND run.hermesChildId IS NOT NULL AND run.hermesChildId <> ''
                     RETURN properties(run), card.cardId
                     ORDER BY run.startedAt, run.runId
                     LIMIT {edge_limit}
@@ -1678,7 +1698,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     {"projectId": project_id, "deckId": deck_id, "rootRunIds": list(root_cards)},
                     "run agtype, card_id agtype",
                 )
-                run_rows.extend(row for row in native_rows
+                run_rows.extend(row for row in hermes_rows
                     if isinstance(row.get("run"), dict)
                     and root_cards.get(str(row["run"].get("rootRunId") or "")) == row.get("card_id"))
             runs: dict[str, dict[str, Any]] = {}
@@ -1695,7 +1715,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "deckId": str(properties.get("deckId") or deck_id),
                     "conversationId": str(properties.get("conversationId") or ""),
                     "rootRunId": str(properties.get("rootRunId") or current_run_id),
-                    "nativeChildId": str(properties.get("nativeChildId") or "") or None,
+                    "hermesChildId": str(properties.get("hermesChildId") or "") or None,
                     "startedAt": str(properties.get("startedAt") or "") or None,
                     "acceptedAt": str(properties.get("acceptedAt") or "") or None,
                     "finishedAt": str(properties.get("finishedAt") or "") or None,
@@ -1712,8 +1732,8 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "preparationError": (
                         str(properties.get("preparationError") or "") or None
                     ),
-                    "nativeRootId": str(properties.get("nativeRootId") or "") or None,
-                    "nativeRunId": str(properties.get("nativeRunId") or "") or None,
+                    "hermesRootId": str(properties.get("hermesRootId") or "") or None,
+                    "hermesRunId": str(properties.get("hermesRunId") or "") or None,
                     "cardId": str(row.get("card_id") or ""),
                     "assignedFromCardIds": [],
                     "parentRunIds": [],
@@ -2635,10 +2655,7 @@ def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         card_id = str(card.get("id") or "")
         profile = str(runtime.get("profile") or "").strip()
-        bot_enabled = (
-            card.get("kind") == "agent"
-            and _card_enabled(card)
-        )
+        bot_enabled = _card_has_orchestrator_authority(card)
         projections.append({
             "cardId": card_id,
             "cardRevisionId": str(card.get("_cardRevisionId") or ""),
@@ -2654,7 +2671,7 @@ def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def resolve_hermes_bot_rosters(project_id: str, deck_id: str) -> dict[str, Any]:
-    """Read one saved Deck and return its native Hermes Bot roster projections."""
+    """Read one saved Deck and return its Hermes Bot roster projections."""
     loaded = load_deck(
         _required_text(project_id, "project_id"),
         _required_text(deck_id, "deck_id"),
@@ -2672,7 +2689,6 @@ _FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
     "builderOperation", "agentBuilderOperation", "agentBuilderGuidance",
     "buildTarget", "selectedCardTarget",
     "contextMarkdown",
-    "nativeReferences",
     "keyContext",
     "visibleMessages",
     "priorResults",
@@ -3186,7 +3202,7 @@ def _prepare_invocation(
             options.get("script"),
             selected_tools=selected_tools,
             default_agent_tools=presented_tools,
-            native_available=False,
+            hermes_available=False,
         )
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
@@ -3201,10 +3217,10 @@ def _prepare_invocation(
         by_id[name] for name in selected_tools if name in by_id
     ]
     tool_definitions = [by_id[name] for name in call_config["presentedTools"]]
-    # Native thread ownership binds only stable saved-Card/runtime identity.
+    # Hermes thread ownership binds only stable saved-Card/runtime identity.
     # Live catalog schemas and availability can change after a plugin reconnect;
     # those remain per-turn tool evidence and must not invalidate the Card's
-    # already-established native thread. The saved revision hash already covers
+    # already-established Hermes thread. The saved revision hash already covers
     # the Card's prompt, grants, tools, skills, and other saved configuration.
     execution_authority = {
         "schemaVersion": "liquidaity.card-execution-authority.v1",
@@ -3259,7 +3275,7 @@ def _hermes_card_tool_name(canonical_name: str) -> str:
 
 
 def resolve_hermes_card_tools(payload: dict[str, Any]) -> dict[str, Any]:
-    """Resolve the exact saved Card tool surface registered in native Hermes.
+    """Resolve the exact saved Card tool surface registered in Hermes.
 
     The returned Hermes names are transport names only. Canonical operation
     identity, availability, presentation and authorization remain the saved
@@ -3473,15 +3489,15 @@ def _apply_card_jev_decisions(
         if mode == "inherited":
             effective_sources.append("inherited_invocation_context")
             if graph_text or references:
-                effective_sources.append("selected_native_context")
+                effective_sources.append("selected_graph_context")
         elif mode == "conversation_window" and context.get("bounded_conversation_window"):
             effective_sources.append("conversation_window")
         elif mode == "conversation_window":
             unavailable_sources.append("conversation_window")
-        elif mode == "selected_native_context" and (graph_text or references):
-            effective_sources.append("selected_native_context")
-        elif mode == "selected_native_context":
-            unavailable_sources.append("selected_native_context")
+        elif mode == "selected_graph_context" and (graph_text or references):
+            effective_sources.append("selected_graph_context")
+        elif mode == "selected_graph_context":
+            unavailable_sources.append("selected_graph_context")
         if images:
             effective_sources.append("attachment_metadata")
             unavailable_sources.append("attachment_content")
@@ -3498,7 +3514,7 @@ def _apply_card_jev_decisions(
             }
             for reference in (
                 references
-                if mode in {"inherited", "selected_native_context"}
+                if mode in {"inherited", "selected_graph_context"}
                 else []
             )
         ]
@@ -3606,7 +3622,7 @@ def _apply_card_jev_decisions(
             saved_script_value,
             selected_tools=selected_tools,
             default_agent_tools=selected_tools,
-            native_available=False,
+            hermes_available=False,
         )
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
@@ -4046,7 +4062,7 @@ def _observe_run_acceptance(
     preparation_started_at: datetime,
     conversation_id: str | None,
 ) -> bool:
-    """Observe one real accepted outer request before native preparation."""
+    """Observe one real accepted outer request before Hermes preparation."""
 
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -4092,7 +4108,7 @@ def accept_run_request(payload: dict[str, Any]) -> dict[str, Any]:
     """Persist one accepted outer Card request before fallible preparation.
 
     The row is the existing product Run authority in ``pending`` state.  It is
-    not evidence that a native Hermes Run, provider call, or tool call exists.
+    not evidence that a Hermes Run, provider call, or tool call exists.
     """
 
     project_ref = _required_text(payload.get("projectId"), "project_id")
@@ -4174,7 +4190,7 @@ def accept_run_request(payload: dict[str, Any]) -> dict[str, Any]:
         "acceptedAt": accepted_at.isoformat(),
         "preparationStartedAt": preparation_started_at.isoformat(),
         "state": str(existing.get("state") or "pending"),
-        "nativeRunId": str(existing.get("provider_turn_ref") or "") or None,
+        "hermesRunId": str(existing.get("provider_turn_ref") or "") or None,
         "created": created,
         "telemetryWritten": observed,
     }
@@ -4206,8 +4222,8 @@ def _observe_run_preparation_failure(
                     run.preparationEndedAt=$endedAt,
                     run.preparationElapsedMs=$elapsedMs,
                     run.preparationError=$errorSummary,
-                    run.nativeRunId=null,
-                    run.nativeRootId=null
+                    run.hermesRunId=null,
+                    run.hermesRootId=null
                 RETURN run.runId
                 """,
                 {
@@ -4227,7 +4243,7 @@ def _observe_run_preparation_failure(
 
 
 def fail_run_preparation(payload: dict[str, Any]) -> dict[str, Any]:
-    """Settle an accepted request that failed before any native Run existed."""
+    """Settle an accepted request that failed before any Hermes Run existed."""
 
     accepted = accept_run_request(payload)
     error_summary = _required_text(payload.get("errorSummary"), "error_summary")
@@ -4259,7 +4275,7 @@ def fail_run_preparation(payload: dict[str, Any]) -> dict[str, Any]:
         if row is None:
             raise CardDomainError("run_preparation_scope_mismatch")
         if row.get("provider_thread_ref") is not None or row.get("provider_turn_ref") is not None:
-            raise CardDomainError("run_preparation_native_run_already_created")
+            raise CardDomainError("run_preparation_hermes_run_already_created")
         preparation_terminal = (
             row.get("state") in {"pending", "running"}
             or (
@@ -4318,7 +4334,7 @@ def fail_run_preparation(payload: dict[str, Any]) -> dict[str, Any]:
         "state": "failed",
         "errorCode": error_code,
         "errorSummary": error_summary,
-        "nativeRunId": None,
+        "hermesRunId": None,
         "updated": updated,
         "telemetryWritten": observed,
     }
@@ -4691,7 +4707,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Create one Run, retain its one IDF, then expose one native request."""
+    """Create one Run, retain its one IDF, then expose one Hermes request."""
 
     effective_payload = payload
     shared_target_label: str | None = None
@@ -4774,7 +4790,7 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
             "orchestrator": {
                 "cardId": card_identity["cardId"],
                 "cardRevisionId": prepared["cardRevisionId"],
-                "nativeIdentity": runtime["profile"],
+                "hermesProfile": runtime["profile"],
                 "instructions": prepared["idf"]["stableSavedCardContext"]["instructions"],
                 "provider": provider,
                 "runtimeOptions": options,
@@ -4813,7 +4829,7 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         return value.isoformat() if isinstance(value, datetime) else None
 
     cost = row.get("total_cost_usd")
-    persisted_native_status = str(row.get("native_phase") or "").strip().lower()
+    persisted_hermes_status = str(row.get("hermes_phase") or "").strip().lower()
     return {
         "runId": str(row.get("run_id") or ""),
         "correlationId": str(row.get("correlation_id") or ""),
@@ -4832,17 +4848,17 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "providerApiMode": str(row.get("provider_api_mode") or "") or None,
         "executionAuthorityFingerprint": str(row.get("execution_authority_sha256") or "") or None,
         "state": str(row.get("state") or ""),
-        "nativeStatus": (
-            persisted_native_status
-            if persisted_native_status in _HERMES_NATIVE_TASK_STATUSES
+        "hermesStatus": (
+            persisted_hermes_status
+            if persisted_hermes_status in _HERMES_TASK_STATUSES
             else None
         ),
-        "nativeRootId": str(row.get("provider_thread_ref") or "") or None,
-        "nativeRunId": str(row.get("provider_turn_ref") or "") or None,
+        "hermesRootId": str(row.get("provider_thread_ref") or "") or None,
+        "hermesRunId": str(row.get("provider_turn_ref") or "") or None,
         "hermesSessionId": str(row.get("hermes_session_ref") or "") or None,
-        "tasksCompleted": row.get("native_task_completed_count"),
-        "tasksTotal": row.get("native_task_total_count"),
-        "activeWorkers": row.get("native_active_worker_count"),
+        "tasksCompleted": row.get("hermes_task_completed_count"),
+        "tasksTotal": row.get("hermes_task_total_count"),
+        "activeWorkers": row.get("hermes_active_worker_count"),
         "toolCallCount": row.get("tool_call_count"),
         "inputTokens": row.get("provider_input_tokens"),
         "outputTokens": row.get("provider_output_tokens"),
@@ -4893,7 +4909,7 @@ def read_run_history(payload: dict[str, Any]) -> dict[str, Any]:
                       -[:EXECUTED_BY]->(card:Card {
                         projectId: $projectId, deckId: $deckId, cardId: $cardId
                       })
-                WHERE run.nativeChildId IS NOT NULL AND run.nativeChildId <> ''
+                WHERE run.hermesChildId IS NOT NULL AND run.hermesChildId <> ''
                 RETURN run.runId
                 """,
                 {"projectId": project_id, "deckId": deck_id, "cardId": card_id},
@@ -4934,7 +4950,7 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
     selectors = {
         "run_id": str(payload.get("runId") or "").strip(),
         "correlation_id": str(payload.get("correlationId") or "").strip(),
-        "provider_thread_ref": str(payload.get("nativeRootId") or "").strip(),
+        "provider_thread_ref": str(payload.get("hermesRootId") or "").strip(),
         "card_id": str(payload.get("cardId") or "").strip(),
     }
     selected = [(name, value) for name, value in selectors.items() if value]
@@ -4949,7 +4965,7 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
             project = _resolve_project(cursor, project_ref)
             project_id = str(project["id"])
             if selector == "card_id":
-                # Native children inherit the Card revision. They are not the
+                # Hermes children inherit the Card revision. They are not the
                 # Card's most recent root invocation when reconnecting its UI.
                 child_ids = []
                 if include_terminal:
@@ -4958,7 +4974,7 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                         """
                         MATCH (run:Run {projectId: $projectId, deckId: $deckId})
                               -[:EXECUTED_BY]->(card:Card {cardId: $cardId})
-                        WHERE run.nativeChildId IS NOT NULL
+                        WHERE run.hermesChildId IS NOT NULL
                         RETURN run.runId
                         """,
                         {"projectId": project_id, "deckId": deck_id, "cardId": value},
@@ -5031,11 +5047,11 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any], *, conversation_id: str
         WHERE (parent.runId=$runId OR child.rootRunId=$runId OR child.runId=$runId)
         """ + ("AND parent.conversationId=$conversationId AND child.conversationId=$conversationId"
                if conversation_id is not None else "") + """
-        RETURN parent.runId, child.runId, child.nativeChildId
+        RETURN parent.runId, child.runId, child.hermesChildId
         """,
         {"projectId": str(row["project_id"]), "deckId": row["deck_id"], "runId": run_id,
          **({"conversationId": conversation_id} if conversation_id is not None else {})},
-        "parent_id agtype, child_id agtype, native_id agtype",
+        "parent_id agtype, child_id agtype, hermes_child_id agtype",
     )
     children_by_id = {
         str(item["child_id"]): item for item in lineage
@@ -5061,7 +5077,7 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any], *, conversation_id: str
                 **_run_projection(dict(child)),
                 "cardName": str(child.get("title") or ""),
                 "parentRunId": str(item["parent_id"]),
-                "nativeChildId": item.get("native_id"),
+                "hermesChildId": item.get("hermes_child_id"),
             })
     return {
         "cardName": str(row.get("title") or ""),
@@ -5084,13 +5100,13 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any], *, conversation_id: str
 
 
 def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
-    """Update the existing Run with native aggregate progress only."""
+    """Update the existing Run with Hermes aggregate progress only."""
 
     run_id = _required_text(payload.get("runId"), "run_id")
-    native_root_id = _required_text(payload.get("nativeRootId"), "native_root_id")
-    native_status = _required_text(payload.get("nativeStatus"), "native_status").lower()
-    if native_status not in _HERMES_NATIVE_TASK_STATUSES:
-        raise CardDomainError("native_task_status_invalid")
+    hermes_root_id = _required_text(payload.get("hermesRootId"), "hermes_root_id")
+    hermes_status = _required_text(payload.get("hermesStatus"), "hermes_status").lower()
+    if hermes_status not in _HERMES_TASK_STATUSES:
+        raise CardDomainError("hermes_task_status_invalid")
 
     def count(name: str) -> int | None:
         value = payload.get(name)
@@ -5118,10 +5134,10 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
                 ELSE COALESCE(%s, run.provider_thread_ref)
               END,
               provider_turn_ref=COALESCE(%s::text, provider_turn_ref),
-              native_phase=%s,
-              native_task_completed_count=COALESCE(%s, native_task_completed_count),
-              native_task_total_count=COALESCE(%s, native_task_total_count),
-              native_active_worker_count=COALESCE(%s, native_active_worker_count),
+              hermes_phase=%s,
+              hermes_task_completed_count=COALESCE(%s, hermes_task_completed_count),
+              hermes_task_total_count=COALESCE(%s, hermes_task_total_count),
+              hermes_active_worker_count=COALESCE(%s, hermes_active_worker_count),
               tool_call_count=COALESCE(%s, tool_call_count),
               provider_input_tokens=COALESCE(%s, provider_input_tokens),
               provider_output_tokens=COALESCE(%s, provider_output_tokens),
@@ -5144,41 +5160,41 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
             RETURNING run.provider_thread_ref
             """,
             (
-                native_root_id, native_root_id,
-                payload.get("nativeRunId"), native_status,
+                hermes_root_id, hermes_root_id,
+                payload.get("hermesRunId"), hermes_status,
                 counts["tasksCompleted"], counts["tasksTotal"],
                 counts["activeWorkers"], counts["toolCallCount"],
                 counts["providerInputTokens"], counts["providerOutputTokens"],
                 counts["providerCachedTokens"], counts["providerReasoningTokens"],
-                payload.get("totalCostUsd"), run_id, native_root_id,
+                payload.get("totalCostUsd"), run_id, hermes_root_id,
             ),
         )
         row = cursor.fetchone()
-        effective_native_root_id = row[0] if row is not None else None
-        updated = cursor.rowcount == 1 and effective_native_root_id == native_root_id
-    telemetry_written = _observe_run_progress(run_id, native_status, payload) if updated else False
+        effective_hermes_root_id = row[0] if row is not None else None
+        updated = cursor.rowcount == 1 and effective_hermes_root_id == hermes_root_id
+    telemetry_written = _observe_run_progress(run_id, hermes_status, payload) if updated else False
     return {
         "ok": True,
         "runId": run_id,
-        "nativeRootId": effective_native_root_id,
+        "hermesRootId": effective_hermes_root_id,
         "updated": updated,
         "telemetryWritten": telemetry_written,
     }
 
 
-def _observe_run_progress(run_id: str, native_status: str, payload: dict[str, Any]) -> bool:
+def _observe_run_progress(run_id: str, hermes_status: str, payload: dict[str, Any]) -> bool:
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             _age_rows(
                 cursor,
                 """
                 MATCH (run:Run {runId: $runId})
-                SET run.nativeRootId=$nativeRootId,
-                    run.nativeRunId=$nativeRunId,
-                    run.nativeStatus=$nativeStatus,
-                    run.nativeTaskCompletedCount=$tasksCompleted,
-                    run.nativeTaskTotalCount=$tasksTotal,
-                    run.nativeActiveWorkerCount=$activeWorkers,
+                SET run.hermesRootId=$hermesRootId,
+                    run.hermesRunId=$hermesRunId,
+                    run.hermesStatus=$hermesStatus,
+                    run.hermesTaskCompletedCount=$tasksCompleted,
+                    run.hermesTaskTotalCount=$tasksTotal,
+                    run.hermesActiveWorkerCount=$activeWorkers,
                     run.toolCallCount=$toolCallCount,
                     run.providerCachedTokens=$providerCachedTokens,
                     run.providerReasoningTokens=$providerReasoningTokens
@@ -5186,9 +5202,9 @@ def _observe_run_progress(run_id: str, native_status: str, payload: dict[str, An
                 """,
                 {
                     "runId": run_id,
-                    "nativeRootId": payload.get("nativeRootId"),
-                    "nativeRunId": payload.get("nativeRunId"),
-                    "nativeStatus": native_status,
+                    "hermesRootId": payload.get("hermesRootId"),
+                    "hermesRunId": payload.get("hermesRunId"),
+                    "hermesStatus": hermes_status,
                     "tasksCompleted": payload.get("tasksCompleted"),
                     "tasksTotal": payload.get("tasksTotal"),
                     "activeWorkers": payload.get("activeWorkers"),
@@ -5223,13 +5239,13 @@ def _observe_run_start(
             )
         driver_source = str(payload.get("driverSource") or "").strip()
         if driver_source and driver_source not in {
-            "internal_chat", "external_plugin", "native_cli"
+            "internal_chat", "external_plugin", "hermes_cli"
         }:
             raise CardDomainError("run_driver_source_invalid")
         context_authority_mode = (
             "plugin_context_only"
             if driver_source == "external_plugin"
-            else ("main_native_honcho" if driver_source else None)
+            else ("main_honcho" if driver_source else None)
         )
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             identity = prepared["cardIdentity"]
@@ -5245,8 +5261,8 @@ def _observe_run_start(
                 })
                 SET run.correlationId=$correlationId, run.state='running',
                     run.startedAt=$startedAt,
-                    run.nativeChildId=$nativeChildId,
-                    run.nativeProfileId=$nativeProfileId,
+                    run.hermesChildId=$hermesChildId,
+                    run.hermesProfile=$hermesProfile,
                     run.driverSource=$driverSource,
                     run.contextAuthorityMode=$contextAuthorityMode,
                     run.conversationId=$conversationId,
@@ -5275,8 +5291,8 @@ def _observe_run_start(
                     "correlationId": correlation_id,
                     "startedAt": started_at.isoformat(),
                     "cardId": identity["cardId"],
-                    "nativeChildId": str(payload.get("nativeChildId") or "").strip() or None,
-                    "nativeProfileId": (
+                    "hermesChildId": str(payload.get("hermesChildId") or "").strip() or None,
+                    "hermesProfile": (
                         str(runtime.get("profile") or "").strip()
                         or None
                     ),
@@ -5343,9 +5359,9 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     state = _required_text(payload.get("state"), "state")
     if state not in {"completed", "blocked", "failed", "cancelled"}:
         raise CardDomainError("run_terminal_state_invalid")
-    native_status = str(payload.get("nativeStatus") or "").strip().lower() or None
-    if native_status is not None and native_status not in _HERMES_NATIVE_TASK_STATUSES:
-        raise CardDomainError("native_task_status_invalid")
+    hermes_status = str(payload.get("hermesStatus") or "").strip().lower() or None
+    if hermes_status is not None and hermes_status not in _HERMES_TASK_STATUSES:
+        raise CardDomainError("hermes_task_status_invalid")
     reconcile_persisted_result = payload.get("reconcilePersistedResult", False)
     if not isinstance(reconcile_persisted_result, bool):
         raise CardDomainError("run_result_reconciliation_invalid")
@@ -5429,17 +5445,17 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("providerApiMode") or ""
         ).strip()
         runtime_mode = str(authority_row.get("runtime_mode") or "").strip()
-        has_native_root = bool(str(payload.get("providerThreadRef") or "").strip())
-        has_native_result = bool(str(payload.get("providerTurnRef") or "").strip())
+        has_hermes_root = bool(str(payload.get("providerThreadRef") or "").strip())
+        has_hermes_result = bool(str(payload.get("providerTurnRef") or "").strip())
         magentic_transport_incomplete = (
             runtime_mode == "magentic_one"
-            and (not has_native_root or not has_native_result)
+            and (not has_hermes_root or not has_hermes_result)
         )
         codex_transport_incomplete = (
             expected_provider_api_mode == "codex_app_server"
             and (
-                not has_native_root
-                or not has_native_result
+                not has_hermes_root
+                or not has_hermes_result
                 or (
                     runtime_mode != "magentic_one"
                     and not str(payload.get("hermesSessionRef") or "").strip()
@@ -5472,7 +5488,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                 or codex_transport_incomplete
             )
         ):
-            raise CardDomainError("run_native_transport_evidence_incomplete")
+            raise CardDomainError("run_provider_transport_evidence_incomplete")
         if reconcile_persisted_result:
             cursor.execute(
                 """
@@ -5498,10 +5514,10 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                   provider_input_tokens=%s, provider_output_tokens=%s,
                   provider_cached_tokens=%s, provider_reasoning_tokens=%s,
                   tool_call_count=%s, total_cost_usd=%s,
-                  native_phase=%s,
-                  native_task_completed_count=%s,
-                  native_task_total_count=%s,
-                  native_active_worker_count=%s,
+                  hermes_phase=%s,
+                  hermes_task_completed_count=%s,
+                  hermes_task_total_count=%s,
+                  hermes_active_worker_count=%s,
                   final_result=%s,
                   card_script_execution=%s::jsonb
                 WHERE run_id=%s AND state IN ('pending','running')
@@ -5516,7 +5532,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                     payload.get("providerInputTokens"), payload.get("providerOutputTokens"),
                     payload.get("providerCachedTokens"), payload.get("providerReasoningTokens"),
                     payload.get("toolCallCount"), payload.get("totalCostUsd"),
-                    native_status, payload.get("tasksCompleted"),
+                    hermes_status, payload.get("tasksCompleted"),
                     payload.get("tasksTotal"), payload.get("activeWorkers"),
                     payload.get("finalResult"),
                     (
@@ -5538,8 +5554,8 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                    error_code, error_summary, provider_input_tokens,
                    provider_output_tokens, provider_cached_tokens,
                    provider_reasoning_tokens, tool_call_count, total_cost_usd,
-                   native_phase, native_task_completed_count,
-                   native_task_total_count, native_active_worker_count,
+                   hermes_phase, hermes_task_completed_count,
+                   hermes_task_total_count, hermes_active_worker_count,
                    final_result, model_fallback_occurred, model_fallback_reason,
                    card_script_execution
             FROM ag_catalog.agent_runs WHERE run_id=%s
@@ -5593,7 +5609,7 @@ def _validated_request_semantic_answer(
 
 
 def _validated_request_fulfillment_answer(answer: Any) -> dict[str, Any]:
-    """Validate TypeSafe's native five-level Score without repairing it."""
+    """Validate TypeSafe's five-level Score without repairing it."""
 
     try:
         if not isinstance(answer, dict) or answer.get("type") != "score":
@@ -5858,7 +5874,7 @@ def assess_run_request_fulfillment(payload: dict[str, Any]) -> dict[str, Any]:
             "effective_model_input": _request_fulfillment_model_input(
                 materialized, exposed_tools,
             ),
-            "actual_native_execution": {
+            "actual_hermes_execution": {
                 "provider": actual_provider,
                 "model": actual_model,
                 "exposed_tools": exposed_tools,
@@ -6152,15 +6168,15 @@ def _observe_run_finish(
                     run.model=$model,
                     run.modelFallbackOccurred=$modelFallbackOccurred,
                     run.modelFallbackReason=$modelFallbackReason,
-                    run.nativeRootId=$nativeRootId,
-                    run.nativeRunId=$nativeRunId,
+                    run.hermesRootId=$hermesRootId,
+                    run.hermesRunId=$hermesRunId,
                     run.hermesSessionId=$hermesSessionId,
                     run.effectiveProvider=$effectiveProvider,
                     run.providerApiMode=$providerApiMode,
-                    run.nativeStatus=$nativeStatus,
-                    run.nativeTaskCompletedCount=$tasksCompleted,
-                    run.nativeTaskTotalCount=$tasksTotal,
-                    run.nativeActiveWorkerCount=$activeWorkers,
+                    run.hermesStatus=$hermesStatus,
+                    run.hermesTaskCompletedCount=$tasksCompleted,
+                    run.hermesTaskTotalCount=$tasksTotal,
+                    run.hermesActiveWorkerCount=$activeWorkers,
                     run.resultReady=$resultReady,
                     run.errorCode=$errorCode,
                     run.errorSummary=$errorSummary
@@ -6181,12 +6197,12 @@ def _observe_run_finish(
                     "model": (payload or {}).get("model"),
                     "modelFallbackOccurred": (payload or {}).get("modelFallbackOccurred", False),
                     "modelFallbackReason": (payload or {}).get("modelFallbackReason"),
-                    "nativeRootId": (payload or {}).get("providerThreadRef"),
-                    "nativeRunId": (payload or {}).get("providerTurnRef"),
+                    "hermesRootId": (payload or {}).get("providerThreadRef"),
+                    "hermesRunId": (payload or {}).get("providerTurnRef"),
                     "hermesSessionId": (payload or {}).get("hermesSessionRef"),
                     "effectiveProvider": (payload or {}).get("effectiveProvider"),
                     "providerApiMode": (payload or {}).get("providerApiMode"),
-                    "nativeStatus": (payload or {}).get("nativeStatus"),
+                    "hermesStatus": (payload or {}).get("hermesStatus"),
                     "tasksCompleted": (payload or {}).get("tasksCompleted"),
                     "tasksTotal": (payload or {}).get("tasksTotal"),
                     "activeWorkers": (payload or {}).get("activeWorkers"),

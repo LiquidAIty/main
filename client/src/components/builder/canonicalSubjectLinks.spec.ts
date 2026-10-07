@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   GraphProjectionV1,
   JoinedGraphPresentation,
-} from '../knowledge/NativeAuthorityGraphSurface';
+} from '../knowledge/KnowledgeAuthorityGraphSurface';
 import {
   createCanonicalSubjectMatcher,
   resolveCanonicalSubjectFocusVisualId,
@@ -25,13 +25,13 @@ function projections({
   subjects?: string[][];
   nodes?: Partial<Record<'thinkgraph' | 'knowgraph', GraphProjectionV1['nodes']>>;
 } = {}) {
-  const headers = subjects.map(([authority, nativeId, canonicalName, entityKind]) => ({
-    authority: authority as 'ThinkGraph' | 'KnowGraph', nativeId, canonicalName, entityKind,
+  const headers = subjects.map(([authority, entityId, canonicalName, entityKind]) => ({
+    authority: authority as 'ThinkGraph' | 'KnowGraph', entityId, canonicalName, entityKind,
   }));
   const makeNodes = (authority: 'ThinkGraph' | 'KnowGraph') => headers
     .filter(subject => subject.authority === authority)
     .map(subject => ({
-      id: subject.nativeId,
+      id: subject.entityId,
       label: subject.canonicalName,
       canonicalName: subject.canonicalName,
       entityKind: subject.entityKind,
@@ -68,15 +68,15 @@ function linkedNames(value: ReturnType<NonNullable<ReturnType<typeof createCanon
 }
 
 describe('canonical subject chat links', () => {
-  it('matches exact case-sensitive names and carries paired native evidence without displaying ids', () => {
+  it('matches exact case-sensitive names and carries paired provider evidence without displaying ids', () => {
     const matcher = createCanonicalSubjectMatcher(projections())!;
     const segments = matcher.segmentMessage('assistant', 'Rocket Lab builds Electron.');
     expect(linkedNames(segments)).toEqual(['Rocket Lab', 'Electron']);
     expect(segments.find(segment => segment.text === 'Rocket Lab')?.target).toMatchObject({
       canonicalName: 'Rocket Lab', view: 'all', projectId: 'project-1',
       members: [
-        { authority: 'thinkgraph', nativeId: 'think-rocket' },
-        { authority: 'knowgraph', nativeId: 'know-rocket' },
+        { authority: 'thinkgraph', entityId: 'think-rocket' },
+        { authority: 'knowgraph', entityId: 'know-rocket' },
       ],
     });
     expect(matcher.segmentMessage('assistant', 'rocket lab and RocketLab').some(
@@ -100,7 +100,7 @@ describe('canonical subject chat links', () => {
     expect(matcher).toBeNull();
   });
 
-  it('leaves stale directory names plain when the current native node no longer byte-matches', () => {
+  it('leaves stale directory names plain when the current provider node no longer byte-matches', () => {
     const current = projections();
     current.thinkgraph.nodes[0] = { ...current.thinkgraph.nodes[0], label: 'Rocket lab' };
     const matcher = createCanonicalSubjectMatcher(current)!;
@@ -157,7 +157,7 @@ describe('canonical subject chat links', () => {
           { id: electronVisualId, label: 'Electron' },
         ], edges: [],
       },
-      nativeProjections: current,
+      providerProjections: current,
       nodeVariants: new Map([
         [visualId, [
           { authority: 'thinkgraph', node: current.thinkgraph.nodes[0] },
@@ -168,7 +168,7 @@ describe('canonical subject chat links', () => {
         ]],
       ]),
       edgeVariants: new Map(),
-      visualNodeIdByNativeMember: new Map([
+      visualNodeIdByProviderMember: new Map([
         ['thinkgraph:think-rocket', visualId],
         ['knowgraph:know-rocket', visualId],
         ['knowgraph:know-electron', electronVisualId],

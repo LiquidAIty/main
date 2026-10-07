@@ -1,4 +1,4 @@
-"""Native mechanics in a disposable store; never product acceptance data."""
+"""Engraphis mechanics in a disposable store; never product acceptance data."""
 import asyncio
 import time
 from types import SimpleNamespace
@@ -9,53 +9,53 @@ from app.python_models import engraphis as adapter
 
 
 @pytest.fixture(scope="module")
-def native(tmp_path_factory):
+def engraphis_adapter(tmp_path_factory):
     original = adapter.DATABASE
     adapter.DATABASE = tmp_path_factory.mktemp("engraphis") / "memory.sqlite"
     started = time.perf_counter()
     adapter.get_service()
-    print(f"\nnative cold initialization: {time.perf_counter() - started:.3f}s")
+    print(f"\nEngraphis cold initialization: {time.perf_counter() - started:.3f}s")
     yield adapter
     adapter.close_engine()
     adapter.DATABASE = original
 
 
-def call(native, name, **arguments):
-    return asyncio.run(native.invoke_tool("project-one", name, arguments))
+def call(engraphis_adapter, name, **arguments):
+    return asyncio.run(engraphis_adapter.invoke_tool("project-one", name, arguments))
 
 
-def test_service_keeps_native_engraphis_with_automatic_llm_extraction_disabled(native):
+def test_service_keeps_engraphis_with_automatic_llm_extraction_disabled(engraphis_adapter):
     from engraphis.service import MemoryService
-    service = native.get_service()
+    service = engraphis_adapter.get_service()
     assert type(service) is MemoryService
     assert service.engine.extractor is None
     assert service.engine.graph_extractor is None
-    assert native.get_service() is service
+    assert engraphis_adapter.get_service() is service
 
 
-def test_private_workspace_deletion_requires_confirmation_and_preserves_other_workspace(native):
-    saved = call(native, "engraphis_remember", content="Disposable erasure fixture.")
-    other = asyncio.run(native.invoke_tool("project-two", "engraphis_remember",
+def test_private_workspace_deletion_requires_confirmation_and_preserves_other_workspace(engraphis_adapter):
+    saved = call(engraphis_adapter, "engraphis_remember", content="Disposable erasure fixture.")
+    other = asyncio.run(engraphis_adapter.invoke_tool("project-two", "engraphis_remember",
         {"content": "Unrelated workspace fixture."}))
     mid = saved["id"]
     with pytest.raises(ValueError):
-        native.private_operation("project-one", "delete_workspace", {})
+        engraphis_adapter.private_operation("project-one", "delete_workspace", {})
     with pytest.raises(ValueError):
-        native.private_operation("project-one", "delete_workspace", {"confirmed": True, "workspace": "project-two"})
-    assert native.inspect(
+        engraphis_adapter.private_operation("project-one", "delete_workspace", {"confirmed": True, "workspace": "project-two"})
+    assert engraphis_adapter.inspect(
         "project-one", "engraphisMemoryId", mid,
     )["memory"]["content"]
-    result = native.private_operation("project-one", "delete_workspace", {"confirmed": True})
+    result = engraphis_adapter.private_operation("project-one", "delete_workspace", {"confirmed": True})
     assert result["deleted"] is True
     assert result["workspace"] == "project-one"
     with pytest.raises(ValueError):
-        native.inspect("project-one", "engraphisMemoryId", mid)
-    scene = native.projection("project-one")
+        engraphis_adapter.inspect("project-one", "engraphisMemoryId", mid)
+    scene = engraphis_adapter.projection("project-one")
     assert scene["counts"] == {"nodes": 0, "edges": 0}
-    assert native.inspect(
+    assert engraphis_adapter.inspect(
         "project-two", "engraphisMemoryId", other["id"],
     )["memory"]["content"]
-    assert "delete_workspace" not in native.WRITE_TOOLS
+    assert "delete_workspace" not in engraphis_adapter.WRITE_TOOLS
 
 
 def test_catalog_matches_both_installed_interfaces_without_added_graph_fields():
@@ -65,7 +65,7 @@ def test_catalog_matches_both_installed_interfaces_without_added_graph_fields():
     async def inspect_catalog():
         original = {t.name: t for t in await smart_mcp.list_tools()}
         original.update({t.name: t for t in await classic_mcp.list_tools()})
-        exposed = {t["name"]: t for t in await adapter.native_tools()}
+        exposed = {t["name"]: t for t in await adapter.engraphis_tools()}
         return original, exposed
     original, exposed = asyncio.run(inspect_catalog())
     assert exposed.keys() == original.keys()
@@ -103,61 +103,61 @@ def test_operation_definitions_can_initialize_inside_an_active_event_loop():
     )
 
 
-def test_readonly_paraphrase_and_scope(native):
-    saved = call(native, "engraphis_remember", content="I enjoy learning how satellites are built and who supplies their components.", title="Satellite suppliers")
-    service = native.get_service()
+def test_readonly_paraphrase_and_scope(engraphis_adapter):
+    saved = call(engraphis_adapter, "engraphis_remember", content="I enjoy learning how satellites are built and who supplies their components.", title="Satellite suppliers")
+    service = engraphis_adapter.get_service()
     before = service.store.conn.total_changes
-    recalled = call(native, "engraphis_recall_context", query="Who makes spacecraft parts?", k=6, token_budget=600)
+    recalled = call(engraphis_adapter, "engraphis_recall_context", query="Who makes spacecraft parts?", k=6, token_budget=600)
     assert saved["id"] in [source["id"] for source in recalled["sources"]]
     assert service.store.conn.total_changes == before
     assert recalled["semantic_support"] is True
     with pytest.raises(ValueError):
-        asyncio.run(native.invoke_tool("project-two", "engraphis_get_memory", {"memory_id": saved["id"]}))
+        asyncio.run(engraphis_adapter.invoke_tool("project-two", "engraphis_get_memory", {"memory_id": saved["id"]}))
     with pytest.raises(ValueError, match="scope_is_owned"):
-        call(native, "engraphis_recall_context", query="parts", workspace="project-two")
+        call(engraphis_adapter, "engraphis_recall_context", query="parts", workspace="project-two")
 
 
-def test_stats_result_is_engine_output(native):
-    expected = native.get_service().stats(workspace="project-one")
-    actual = call(native, "engraphis_stats")
+def test_stats_result_is_engine_output(engraphis_adapter):
+    expected = engraphis_adapter.get_service().stats(workspace="project-one")
+    actual = call(engraphis_adapter, "engraphis_stats")
     assert actual == expected
 
 
-def test_inspector_removal_retires_only_selected_memory(native):
-    saved = call(native, "engraphis_remember", content="Disposable erasure fixture.")
+def test_inspector_removal_retires_only_selected_memory(engraphis_adapter):
+    saved = call(engraphis_adapter, "engraphis_remember", content="Disposable erasure fixture.")
     with pytest.raises(ValueError):
-        native.private_operation("project-two", "retire", {"memoryId": saved["id"]})
-    result = native.private_operation("project-one", "retire", {"memoryId": saved["id"]})
+        engraphis_adapter.private_operation("project-two", "retire", {"memoryId": saved["id"]})
+    result = engraphis_adapter.private_operation("project-one", "retire", {"memoryId": saved["id"]})
     assert result["status"] == "retired"
-    recalled = call(native, "engraphis_recall_context", query="Disposable erasure fixture", k=20)
+    recalled = call(engraphis_adapter, "engraphis_recall_context", query="Disposable erasure fixture", k=20)
     assert saved["id"] not in [item["id"] for item in recalled["sources"]]
-    projected = native.projection("project-one")
+    projected = engraphis_adapter.projection("project-one")
     assert all(saved["id"] != evidence["id"] for node in projected["nodes"]
                for evidence in node["properties"]["evidence"])
 
 
-def test_discovered_read_uses_engine_schema_and_project_binding(native):
-    discovered = call(native, "engraphis_discover_actions", task="stats", intent="read", limit=3)
+def test_discovered_read_uses_engine_schema_and_project_binding(engraphis_adapter):
+    discovered = call(engraphis_adapter, "engraphis_discover_actions", task="stats", intent="read", limit=3)
     action = next(item for item in discovered["actions"] if item["canonical_action"] == "stats")
     arguments = {"capability_id": action["capability_id"], "schema_digest": action["schema_digest"], "arguments": {}}
-    actual = call(native, "engraphis_execute_read", **arguments)
-    expected = native.get_service().stats(workspace="project-one")
+    actual = call(engraphis_adapter, "engraphis_execute_read", **arguments)
+    expected = engraphis_adapter.get_service().stats(workspace="project-one")
     assert actual["result"] == expected
     with pytest.raises(ValueError, match="scope_is_owned_by_project"):
-        call(native, "engraphis_execute_read", **{**arguments, "arguments": {"workspace": "project-two"}})
+        call(engraphis_adapter, "engraphis_execute_read", **{**arguments, "arguments": {"workspace": "project-two"}})
 
 
 def _focus_request(candidate_count: int = 10) -> dict:
     center_members = [
         {
             "authority": "ThinkGraph",
-            "nativeId": "center-think",
+            "entityId": "center-think",
             "title": "Shared center",
             "description": "The stored Think description.",
         },
         {
             "authority": "KnowGraph",
-            "nativeId": "center-know",
+            "entityId": "center-know",
             "title": "Shared center",
             "description": None,
         },
@@ -165,23 +165,23 @@ def _focus_request(candidate_count: int = 10) -> dict:
     candidates = []
     for index in range(candidate_count):
         authority = "ThinkGraph" if index % 2 == 0 else "KnowGraph"
-        center_native_id = "center-think" if authority == "ThinkGraph" else "center-know"
+        center_entity_id = "center-think" if authority == "ThinkGraph" else "center-know"
         visual_id = "visual-paired" if index < 2 else f"visual-{index}"
-        native_id = f"subject-{index}"
+        entity_id = f"subject-{index}"
         candidates.append({
             "visualId": visual_id,
             "authority": authority,
-            "nativeId": native_id,
+            "entityId": entity_id,
             "title": f"Subject {index}",
-            "description": None if index == 1 else f"Stored native description {index}.",
+            "description": None if index == 1 else f"Stored engraphis_adapter description {index}.",
             "incidentRelationships": [{
                 "edgeId": f"visual-edge-{index}",
-                "nativeEdgeId": f"native-edge-{index}",
+                "relationshipId": f"engraphis_adapter-edge-{index}",
                 "sourceVisualId": "visual-center",
-                "sourceId": center_native_id,
+                "sourceId": center_entity_id,
                 "sourceTitle": "Shared center",
                 "targetVisualId": visual_id,
-                "targetId": native_id,
+                "targetId": entity_id,
                 "targetTitle": f"Subject {index}",
                 "predicate": "EXPLAINS",
                 "direction": "outgoing",
@@ -195,7 +195,7 @@ def _focus_request(candidate_count: int = 10) -> dict:
         "center": {
             "visualId": "visual-center",
             "title": "Shared center",
-            "nativeMembers": center_members,
+            "providerMembers": center_members,
         },
         "candidates": candidates,
     }
@@ -206,7 +206,7 @@ def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
 ):
     payload = _focus_request()
     choice_ids = [
-        adapter._focus_choice_id(candidate["authority"], candidate["nativeId"])
+        adapter._focus_choice_id(candidate["authority"], candidate["entityId"])
         for candidate in payload["candidates"]
     ]
     values = [0.24, 0.01, 0.18, 0.15, 0.12, 0.10, 0.075, 0.075, 0.04, 0.01]
@@ -372,7 +372,7 @@ def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
 
 def test_focus_request_rejects_center_candidates_and_nonincident_records():
     payload = _focus_request(1)
-    payload["candidates"][0]["nativeId"] = "center-think"
+    payload["candidates"][0]["entityId"] = "center-think"
     with pytest.raises(adapter.JevGraphError, match="jev_focus_request_invalid"):
         adapter._validated_focus_request(payload)
 
@@ -382,7 +382,7 @@ def test_focus_request_rejects_center_candidates_and_nonincident_records():
         adapter._validated_focus_request(payload)
 
 
-def test_native_id_projection_uses_only_bounded_direct_neighborhood(
+def test_entity_id_projection_uses_only_bounded_direct_neighborhood(
     monkeypatch: pytest.MonkeyPatch,
 ):
     class Result:
@@ -441,7 +441,7 @@ def test_native_id_projection_uses_only_bounded_direct_neighborhood(
 
     def latest(*_args, canonical_id, **_kwargs):
         return {
-            "native_id": canonical_id,
+            "entity_id": canonical_id,
             "memory_id": f"memory-{canonical_id}",
             "title": f"Stored Think {canonical_id}",
             "content": f"Stored Think for {canonical_id}",

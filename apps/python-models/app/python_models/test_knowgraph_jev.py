@@ -22,12 +22,12 @@ EXPECTED_RELATIONSHIPS = (
 EXPECTED_CHOICES = EXPECTED_RELATIONSHIPS + ("INSUFFICIENT_CONTEXT",)
 
 
-def native_fact() -> dict:
+def graphiti_fact() -> dict:
     return {
-        "nativeFactUuid": "fact-1",
+        "graphitiFactUuid": "fact-1",
         "sourceEntity": {"uuid": "company-a", "name": "Rocket Lab"},
         "targetEntity": {"uuid": "customer-b", "name": "NASA"},
-        "nativeRelation": "provides launch services to",
+        "graphitiRelation": "provides launch services to",
         "fact": "Rocket Lab provides NASA launch services under contract.",
         "supportingEpisodes": [{
             "uuid": "episode-1",
@@ -61,10 +61,10 @@ def choice_response(
     }
 
 
-def test_choice_uses_exact_vocabulary_and_preserves_native_fact() -> None:
+def test_choice_uses_exact_vocabulary_and_preserves_graphiti_fact() -> None:
     assert SHARED_JEV_RELATIONSHIPS == EXPECTED_RELATIONSHIPS
     assert KNOWGRAPH_JEV_CHOICES == EXPECTED_CHOICES
-    fact = native_fact()
+    fact = graphiti_fact()
     original = deepcopy(fact)
     captured = {}
 
@@ -83,10 +83,10 @@ def test_choice_uses_exact_vocabulary_and_preserves_native_fact() -> None:
     assert abs(sum(result["distribution"].values()) - 1.0) < 1e-9
     assert "relationship_strength" not in result
     state = captured["state"]
-    assert state["native_fact_uuid"] == "fact-1"
+    assert state["graphiti_fact_uuid"] == "fact-1"
     assert state["source_entity_a"]["name"] == "Rocket Lab"
     assert state["target_entity_b"]["name"] == "NASA"
-    assert state["native_graphiti_relationship"] == "provides launch services to"
+    assert state["graphiti_relationship"] == "provides launch services to"
     assert state["supporting_source_episodes"][0]["uuid"] == "episode-1"
     assert set(captured["questions"]["relationship"]["criteria"]) == set(EXPECTED_CHOICES)
     assert result["vocabulary_version"] == PROJECT_RELATIONSHIP_VOCABULARY_VERSION
@@ -99,7 +99,7 @@ def test_materially_malformed_probability_total_is_rejected() -> None:
     response["answers"]["relationship"]["probabilities"]["PROVIDES"] = 0.50
 
     try:
-        classify_knowgraph_fact(native_fact(), transport=lambda _body: response)
+        classify_knowgraph_fact(graphiti_fact(), transport=lambda _body: response)
     except Exception as error:
         assert str(error) == "knowgraph_jev_response_invalid"
     else:
@@ -114,7 +114,7 @@ def test_possible_two_decimal_probability_total_is_preserved() -> None:
     }
 
     result = classify_knowgraph_fact(
-        native_fact(),
+        graphiti_fact(),
         relationship_vocabulary=("PROVIDES", "QUALIFIES"),
         transport=lambda _body: response,
     )
@@ -127,23 +127,23 @@ def test_provider_confidence_is_distinct_and_validated() -> None:
     response = choice_response()
     response["answers"]["relationship"]["confidence"] = 0.41
     result = classify_knowgraph_fact(
-        native_fact(), transport=lambda _body: response
+        graphiti_fact(), transport=lambda _body: response
     )
     assert result["provider_confidence"] == 0.41
     assert result["label_confidence"] == 0.75
 
     response["answers"]["relationship"]["confidence"] = 1.01
     try:
-        classify_knowgraph_fact(native_fact(), transport=lambda _body: response)
+        classify_knowgraph_fact(graphiti_fact(), transport=lambda _body: response)
     except Exception as error:
         assert str(error) == "knowgraph_jev_response_invalid"
     else:
         raise AssertionError("provider confidence outside [0, 1] must fail")
 
 
-def test_concise_native_relation_competes_as_one_optional_novel_candidate() -> None:
-    fact = native_fact()
-    fact["nativeRelation"] = "amplifies"
+def test_concise_graphiti_relation_competes_as_one_optional_novel_candidate() -> None:
+    fact = graphiti_fact()
+    fact["graphitiRelation"] = "amplifies"
     captured = {}
 
     def transport(body):
@@ -163,8 +163,8 @@ def test_concise_native_relation_competes_as_one_optional_novel_candidate() -> N
     assert captured["state"]["optional_novel_relationship_candidate"] == "AMPLIFIES"
 
 
-def test_insufficient_context_is_control_only_and_preserves_native_fact() -> None:
-    fact = native_fact()
+def test_insufficient_context_is_control_only_and_preserves_graphiti_fact() -> None:
+    fact = graphiti_fact()
     original = deepcopy(fact)
 
     result = classify_knowgraph_fact(
@@ -181,7 +181,7 @@ def test_insufficient_context_is_control_only_and_preserves_native_fact() -> Non
 
 
 def test_batch_failure_is_visible_and_never_removes_or_rewrites_fact() -> None:
-    fact = native_fact()
+    fact = graphiti_fact()
     original = deepcopy(fact)
 
     def unavailable(_fact):
@@ -191,7 +191,7 @@ def test_batch_failure_is_visible_and_never_removes_or_rewrites_fact() -> None:
 
     assert fact == original
     assert results == [{
-        "nativeFactUuid": "fact-1",
+        "graphitiFactUuid": "fact-1",
         "status": "unavailable",
         "requested_model": "typesafe/jev-1.13",
         "question_schema_version": "knowgraph.relationship-choice.v3",
@@ -203,7 +203,7 @@ def test_batch_failure_is_visible_and_never_removes_or_rewrites_fact() -> None:
     }]
 
 
-def test_full_batch_is_bounded_to_four_workers_and_preserves_native_order() -> None:
+def test_full_batch_is_bounded_to_four_workers_and_preserves_graphiti_order() -> None:
     lock = Lock()
     active = 0
     maximum_active = 0
@@ -224,7 +224,7 @@ def test_full_batch_is_bounded_to_four_workers_and_preserves_native_order() -> N
         }
 
     facts = [
-        {**native_fact(), "nativeFactUuid": f"fact-{index:02d}"}
+        {**graphiti_fact(), "graphitiFactUuid": f"fact-{index:02d}"}
         for index in range(64)
     ]
     results = classify_knowgraph_facts(
@@ -235,7 +235,7 @@ def test_full_batch_is_bounded_to_four_workers_and_preserves_native_order() -> N
     )
 
     assert maximum_active == 4
-    assert [result["nativeFactUuid"] for result in results] == [
+    assert [result["graphitiFactUuid"] for result in results] == [
         f"fact-{index:02d}" for index in range(64)
     ]
     assert all(result["status"] == "success" for result in results)
@@ -246,7 +246,7 @@ def test_deadline_reports_exact_unfinished_ids_and_joins_admitted_work() -> None
 
     def classify(fact):
         sleep(0.03)
-        completed.append(fact["nativeFactUuid"])
+        completed.append(fact["graphitiFactUuid"])
         return {
             "status": "success",
             "winner": "PROVIDES",
@@ -255,7 +255,7 @@ def test_deadline_reports_exact_unfinished_ids_and_joins_admitted_work() -> None
         }
 
     facts = [
-        {**native_fact(), "nativeFactUuid": f"fact-{index}"}
+        {**graphiti_fact(), "graphitiFactUuid": f"fact-{index}"}
         for index in range(8)
     ]
     results = classify_knowgraph_facts(
@@ -265,7 +265,7 @@ def test_deadline_reports_exact_unfinished_ids_and_joins_admitted_work() -> None
         provider_timeout_seconds=0.04,
     )
     unfinished = [
-        result["nativeFactUuid"]
+        result["graphitiFactUuid"]
         for result in results
         if result["status"] == "unfinished"
     ]

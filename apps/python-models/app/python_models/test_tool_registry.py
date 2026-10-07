@@ -40,7 +40,7 @@ def test_default_registry_exposes_known_tools():
     assert len(names) >= 1
 
 
-def test_worldsignals_batch_uses_the_native_command_contract():
+def test_worldsignals_batch_uses_the_provider_command_contract():
     registry = build_default_tool_registry()
     spec = registry.spec("worldsignals.batch")
     assert spec is not None
@@ -201,7 +201,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
             "sourceId": "cbm",
             "namespace": "cbm",
             "connectionKind": "external-mcp",
-            "description": "Native CBM search.",
+            "description": "CBM search.",
             "inputSchema": {"type": "object", "properties": {}},
             "annotations": {"readOnlyHint": True},
         },

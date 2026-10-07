@@ -2,7 +2,7 @@ import type {
   GraphProjectionEdge,
   GraphProjectionNode,
   GraphProjectionV1,
-} from './NativeAuthorityGraphSurface';
+} from './KnowledgeAuthorityGraphSurface';
 
 export const JEV_GRAPH_PHYSICS_PROFILES = [
   'balanced',
@@ -221,7 +221,7 @@ function applyToRecords(
 }
 
 /**
- * Returns a display projection. The native graph projection and persisted Jev
+ * Returns a display projection. The provider graph projection and persisted Jev
  * metadata are never mutated, and changing profiles performs no I/O.
  */
 export function applyJevGraphPhysics(

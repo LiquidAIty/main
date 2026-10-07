@@ -6,7 +6,7 @@ import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient'
 import { indexToolCatalogReferences, resolveScriptToolReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { hydrateHermesCardProfile } from '../hermes/cardProfileProjection';
-import { agentTerminalManager } from '../hermes/agentTerminal';
+import { cardRuntimeManager } from '../hermes/cardRuntimeManager';
 
 const router = Router();
 export const iddRoutes = Router();
@@ -58,32 +58,32 @@ async function cardCatalogOptions(projectId: string, deckId: string, cardId: str
   }));
   if (card.runtime.kind !== 'hermes') return { catalogOptions: options, selectedIds };
   const cardProfile = card.runtime.profile;
-  const requestNative = (method: string, params: Record<string, unknown> = {}, profile?: string) => (
-    agentTerminalManager.requestProfile<any>(profile || cardProfile, method, params)
+  const requestHermes = (method: string, params: Record<string, unknown> = {}, profile?: string) => (
+    cardRuntimeManager.requestProfile<any>(profile || cardProfile, method, params)
   );
-  const { native } = await hydrateHermesCardProfile(card, deck, requestNative);
+  const { profile: profileState } = await hydrateHermesCardProfile(card, deck, requestHermes);
   const [tools, plugins] = await Promise.all([
-    requestNative('tools.show', {}, cardProfile),
-    requestNative('plugins.list', {}, cardProfile),
+    requestHermes('tools.show', {}, cardProfile),
+    requestHermes('plugins.list', {}, cardProfile),
   ]) as Array<Record<string, any>>;
-  options.push({ id: 'profile:' + native.name, kind: 'profile', owner: 'Hermes',
-    source: 'profiles.describe', schema: { name: native.name, model: native.model }, available: true });
+  options.push({ id: 'profile:' + profileState.name, kind: 'profile', owner: 'Hermes',
+    source: 'profiles.describe', schema: { name: profileState.name, model: profileState.model }, available: true });
   selectedIds.push('profile:' + cardProfile);
   for (const [kind, values] of [
-    ['skill', native.skills], ['toolset', native.toolsets], ['mcp', native.mcpServers],
+    ['skill', profileState.skills], ['toolset', profileState.toolsets], ['mcp', profileState.mcpServers],
     ['plugin', Array.isArray(plugins.plugins) ? plugins.plugins : []],
   ] as const) {
     for (const item of values) {
       options.push({ id: kind + ':' + item.name, kind, owner: 'Hermes',
-        source: 'profile:' + native.name, schema: item, available: item.enabled !== false });
+        source: 'profile:' + profileState.name, schema: item, available: item.enabled !== false });
       if (item.enabled === true) selectedIds.push(kind + ':' + item.name);
     }
   }
   for (const section of Array.isArray(tools.sections) ? tools.sections : []) {
     for (const tool of section.tools || []) options.push({
-      id: 'hermes:tool:' + tool.name, kind: 'tool', owner: 'Hermes', source: 'tools.show:' + native.name,
-      // Native tools.show does not expose schemas. Do not invent a callable signature.
-      schema: { providerName: tool.name }, available: true,
+      id: 'hermes:tool:' + tool.name, kind: 'tool', owner: 'Hermes', source: 'tools.show:' + profileState.name,
+      // Hermes tools.show does not expose schemas. Do not invent a callable signature.
+      schema: { providerToolName: tool.name }, available: true,
     });
   }
   return { catalogOptions: options, selectedIds: [...new Set(selectedIds)] };
@@ -237,7 +237,6 @@ router.post('/script/validate', async (req, res) => {
         selectedTools: references.map((reference) => reference.canonicalId),
         defaultAgentTools,
         paletteFingerprint,
-        nativeAvailable: false,
       }),
     });
     return res.json({ ok: true, script, references, paletteFingerprint });

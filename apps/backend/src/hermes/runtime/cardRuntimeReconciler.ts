@@ -43,7 +43,6 @@ export type CardRuntimeReconcilerDependencies = {
   open(
     target: DesiredCardRuntime,
     dimensions: { cols: number; rows: number },
-    projection?: BotRosterProjection,
   ): Promise<CardRuntimeState>;
   stop(runtime: ReturnType<CardRuntimeRegistry['list']>[number]): void;
   configureInstructions(profile: string, prompt: string): Promise<void>;
@@ -71,14 +70,14 @@ export async function reconcileCardRuntimes(
     if (wantedOwners.has(key)) throw new Error('card_runtime_topology_owner_duplicate');
     wantedOwners.set(key, target);
   }
-  const projectedByOwner = new Map<string, DesiredBotProfile>();
+  const projectedOwners = new Set<string>();
   for (const target of botProfiles ?? []) {
     const key = ownerKey(target.owner);
-    if (projectedByOwner.has(key)) throw new Error('card_runtime_bot_profile_owner_duplicate');
+    if (projectedOwners.has(key)) throw new Error('card_runtime_bot_profile_owner_duplicate');
     if (target.card.id !== target.owner.cardId || target.projection.cardId !== target.owner.cardId) {
       throw new Error('card_runtime_bot_profile_identity_invalid');
     }
-    projectedByOwner.set(key, target);
+    projectedOwners.add(key);
   }
   const openingTargets = desired.filter((target) => target.openAtReconcile !== false);
   const openingProfiles = new Set(openingTargets.map((target) => (
@@ -151,17 +150,7 @@ export async function reconcileCardRuntimes(
 
   const opened: CardRuntimeState[] = [];
   for (const target of openingTargets) {
-    opened.push(await dependencies.open(
-      target,
-      dimensions,
-      projectedByOwner.get(ownerKey(target.owner))?.projection,
-    ));
-  }
-  if (!existingRuntime && botProfiles !== undefined && botProfiles.length) {
-    const first = opened[0];
-    if (!first) throw new Error('card_runtime_bot_profile_gateway_unavailable');
-    const runtime = registry.get(openingTargets[0].owner, first.sessionId);
-    await dependencies.configureBotProfiles(runtime, botProfiles);
+    opened.push(await dependencies.open(target, dimensions));
   }
   return opened;
 }

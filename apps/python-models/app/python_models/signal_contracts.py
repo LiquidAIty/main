@@ -47,7 +47,7 @@ class SignalGeoPoint(SignalContract):
 
 class SignalSourceReference(SignalContract):
     system: BoundedId
-    nativeRef: BoundedId
+    sourceRef: BoundedId
     retrievalMethod: BoundedId
     contentHash: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
     licenseRef: BoundedText | None = None
@@ -55,7 +55,7 @@ class SignalSourceReference(SignalContract):
 
 
 class SignalEvidenceReference(SignalContract):
-    sourceNativeRef: BoundedId
+    sourceRef: BoundedId
     contentHash: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
     artifactId: BoundedId | None = None
 
@@ -203,7 +203,7 @@ def build_signal_query(
     minimum_confidence: float | None = None,
     limit: int = 25,
 ) -> SignalQuery:
-    """Build a stable query identity from bounded source-native parameters."""
+    """Build a stable query identity from bounded source parameters."""
 
     identity = {
         "projectId": str(project_id or "").strip(),
@@ -228,7 +228,7 @@ def build_signal_query(
     return SignalQuery(queryId=f"signal-query:{_sha256(identity)[:24]}", **identity)
 
 
-def package_native_signal_result(
+def package_signal_result(
     *,
     query: SignalQuery,
     producer_card_id: str,
@@ -240,7 +240,7 @@ def package_native_signal_result(
     license_ref: str | None = None,
     attribution: str | None = None,
 ) -> SignalPackage:
-    """Wrap one exact native read as an unassessed, provenance-bound candidate.
+    """Wrap one exact provider read as an unassessed, provenance-bound candidate.
 
     The wrapper deliberately keeps freshness ``unknown`` and domain
     ``unclassified`` unless those fields came from the explicit bounded query.
@@ -250,14 +250,14 @@ def package_native_signal_result(
     collected_at = retrieved_at or utc_now()
     payload = dict(result)
     payload_hash = _sha256(payload)
-    native_ref = f"{query.sourceSystem}:{query.command}:sha256:{payload_hash}"
+    source_ref = f"{query.sourceSystem}:{query.command}:sha256:{payload_hash}"
     evidence = SignalEvidenceReference(
-        sourceNativeRef=native_ref,
+        sourceRef=source_ref,
         contentHash=f"sha256:{payload_hash}",
     )
     candidate_identity = {
         "queryId": query.queryId,
-        "sourceNativeRef": native_ref,
+        "sourceRef": source_ref,
         "contentHash": evidence.contentHash,
     }
     candidate = SignalCandidate(
@@ -268,7 +268,7 @@ def package_native_signal_result(
         producerRunId=producer_run_id,
         source=SignalSourceReference(
             system=query.sourceSystem,
-            nativeRef=native_ref,
+            sourceRef=source_ref,
             retrievalMethod=query.command,
             contentHash=evidence.contentHash,
             licenseRef=license_ref,

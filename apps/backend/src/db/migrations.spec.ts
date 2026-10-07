@@ -8,22 +8,12 @@ function migrationPath(filename: string): string {
   return resolve(__dirname, '../../migrations', filename);
 }
 
-const retiredRuntimeWord = ['na', 'tive'].join('');
-const historicalRuntimeMigration = (prefix: string, suffix: string): string => (
-  `${prefix}${retiredRuntimeWord}${suffix}`
-);
-const sessionAuthorityMigration = historicalRuntimeMigration(
-  '034_hermes_',
-  '_session_authority.sql',
-);
-const cancelledRunPhaseMigration = historicalRuntimeMigration(
-  '038_allow_cancelled_',
-  '_run_phase.sql',
-);
-const taskStatusMigration = historicalRuntimeMigration(
-  '041_',
-  '_hermes_task_status.sql',
-);
+// Applied migration filenames and the retired schema identifiers asserted
+// inside them are immutable migration-ledger evidence, not current terminology.
+const sessionAuthorityMigration = '034_hermes_native_session_authority.sql';
+const cancelledRunPhaseMigration = '038_allow_cancelled_native_run_phase.sql';
+const taskStatusMigration = '041_native_hermes_task_status.sql';
+const retiredRunPhaseConstraint = 'agent_runs_native_phase_check';
 
 const migration = `
 -- Existing numbered migrations may document their purpose before the
@@ -33,10 +23,13 @@ ALTER TABLE ag_catalog.agent_runs ADD COLUMN IF NOT EXISTS hermes_phase TEXT;
 COMMIT;
 `;
 
-function fakeClient(existingChecksum?: string) {
-  const query = vi.fn(async (sql: string) => {
+function fakeClient(existingChecksum?: string | Record<string, string>) {
+  const query = vi.fn(async (sql: string, params?: unknown[]) => {
     if (sql.includes('SELECT checksum_sha256')) {
-      return { rows: existingChecksum ? [{ checksum_sha256: existingChecksum }] : [] };
+      const checksum = typeof existingChecksum === 'string'
+        ? existingChecksum
+        : existingChecksum?.[String(params?.[0] || '')];
+      return { rows: checksum ? [{ checksum_sha256: checksum }] : [] };
     }
     return { rows: [] };
   });
@@ -74,6 +67,10 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '049_grant_main_project_worldview_control.sql', applied: true }),
       expect.objectContaining({ filename: '050_worldview_layer_origin.sql', applied: true }),
       expect.objectContaining({ filename: '051_main_profile_and_hermes_terms.sql', applied: true }),
+      expect.objectContaining({ filename: '052_grant_main_message_agent.sql', applied: true }),
+      expect.objectContaining({ filename: '053_rename_hermes_run_fields.sql', applied: true }),
+      expect.objectContaining({ filename: '054_rename_remaining_hermes_run_aggregates.sql', applied: true }),
+      expect.objectContaining({ filename: '055_remove_bot_mode_card_tool_grant.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -241,8 +238,8 @@ describe('canonical backend migrations', () => {
     );
 
     expect(source).toContain("'cancelled'");
-    expect(source).toContain(`DROP CONSTRAINT IF EXISTS agent_runs_${retiredRuntimeWord}_phase_check`);
-    expect(source).toContain(`ADD CONSTRAINT agent_runs_${retiredRuntimeWord}_phase_check`);
+    expect(source).toContain(`DROP CONSTRAINT IF EXISTS ${retiredRunPhaseConstraint}`);
+    expect(source).toContain(`ADD CONSTRAINT ${retiredRunPhaseConstraint}`);
     expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
@@ -259,10 +256,132 @@ describe('canonical backend migrations', () => {
     ]) {
       expect(source).toContain(`'${status}'`);
     }
-    expect(source).toContain(`DROP CONSTRAINT IF EXISTS agent_runs_${retiredRuntimeWord}_phase_check`);
-    expect(source).toContain(`ADD CONSTRAINT agent_runs_${retiredRuntimeWord}_phase_check`);
+    expect(source).toContain(`DROP CONSTRAINT IF EXISTS ${retiredRunPhaseConstraint}`);
+    expect(source).toContain(`ADD CONSTRAINT ${retiredRunPhaseConstraint}`);
     expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('preserves the exact applied Main-profile and grant-kind migration bytes', async () => {
+    const source = await readFile(
+      migrationPath('051_main_profile_and_hermes_terms.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("'profile', 'main'");
+    expect(source).toContain("'main', source.provider");
+    expect(source).toContain("'hermesTools'");
+    expect(source).toContain("grant_kind = 'hermes_tool'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toMatch(/\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\b/i);
+    expect(createHash('sha256').update(source).digest('hex')).toBe(
+      '57d488974601cba22016ff46621a9a193135b867bc677994ea4d8c22498ca51f',
+    );
+  });
+
+  it('preserves the exact applied historical Main grant migration', async () => {
+    const source = await readFile(
+      migrationPath('052_grant_main_message_agent.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("revision.runtime_mode = 'main'");
+    expect(source).toContain("capability.grant_kind = 'hermes_tool'");
+    expect(source).toContain("capability.grant_id = 'hermes:tool:message_agent'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
+    expect(createHash('sha256').update(source).digest('hex')).toBe(
+      'ff932e12b198a126a2e2067d61c0cb0c9481204c04aa010e3d5188965fb47ea4',
+    );
+  });
+
+  it('renames the active Hermes Run fields in one forward migration', async () => {
+    const source = await readFile(
+      migrationPath('053_rename_hermes_run_fields.sql'),
+      'utf8',
+    );
+
+    for (const field of [
+      'hermes_phase',
+      'hermes_run_id',
+      'hermes_task_id',
+      'hermes_task_run_id',
+      'hermes_session_id',
+    ]) {
+      expect(source).toContain(field);
+    }
+    expect(source).toContain('TO agent_runs_hermes_phase_check');
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
+    expect(createHash('sha256').update(source).digest('hex')).toBe(
+      '73fe0e0341998252c60e1356d36d40c6f9e81922a40010e5319faa83ad39ae26',
+    );
+  });
+
+  it('renames the three omitted Hermes Run aggregates without duplicate columns', async () => {
+    const source = await readFile(
+      migrationPath('054_rename_remaining_hermes_run_aggregates.sql'),
+      'utf8',
+    );
+
+    for (const field of [
+      'hermes_task_completed_count',
+      'hermes_task_total_count',
+      'hermes_active_worker_count',
+    ]) {
+      expect(source).toContain(field);
+    }
+    expect(source).toContain("concat('na', 'tive', '_task_completed_count')");
+    expect(source).toContain("concat('na', 'tive', '_task_total_count')");
+    expect(source).toContain("concat('na', 'tive', '_active_worker_count')");
+    expect(source).toContain('hermes_run_column_rename_conflict');
+    expect(source).not.toMatch(/\bADD\s+COLUMN\b/i);
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
+  });
+
+  it('removes the false Bot Mode Card-tool grant only through new current revisions', async () => {
+    const source = await readFile(
+      migrationPath('055_remove_bot_mode_card_tool_grant.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("grant_kind = 'hermes_tool'");
+    expect(source).toContain("grant_id = 'hermes:tool:message_agent'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('accepts an applied 053 ledger and schedules only the two forward corrections', async () => {
+    const migrationsDirectory = resolve(__dirname, '../../migrations');
+    const fresh = await applyBackendMigrations({
+      client: fakeClient() as any,
+      migrationsDirectory,
+    });
+    const existingThrough053 = Object.fromEntries(
+      fresh
+        .filter((entry) => Number(entry.filename.slice(0, 3)) <= 53)
+        .map((entry) => [entry.filename, entry.checksum]),
+    );
+    const upgraded = await applyBackendMigrations({
+      client: fakeClient(existingThrough053) as any,
+      migrationsDirectory,
+    });
+
+    expect(upgraded.filter((entry) => entry.applied).map((entry) => entry.filename)).toEqual([
+      '054_rename_remaining_hermes_run_aggregates.sql',
+      '055_remove_bot_mode_card_tool_grant.sql',
+    ]);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 2);
   });
 
   it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {

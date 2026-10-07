@@ -67,7 +67,7 @@ def health():
 
 @app.post("/knowgraph/jev/classify")
 async def knowgraph_jev_classify(payload: dict[str, Any]):
-    """Derive Jev Choice metadata for selected native Graphiti facts."""
+    """Derive Jev Choice metadata for selected Graphiti facts."""
     from app.python_models.knowgraph_jev import (
         KnowGraphJevError,
         classify_knowgraph_facts,
@@ -137,14 +137,14 @@ async def knowgraph_jev_classify(payload: dict[str, Any]):
                 result["vocabulary_after_hash"] = after["hash"]
                 result["vocabulary_after_count"] = after["count"]
         unfinished_fact_uuids = [
-            str(result.get("nativeFactUuid") or "")
+            str(result.get("graphitiFactUuid") or "")
             for result in results
             if result.get("status") == "unfinished"
         ]
         return {
             "results": results,
             "attemptedFactUuids": [
-                str(result.get("nativeFactUuid") or "")
+                str(result.get("graphitiFactUuid") or "")
                 for result in results
                 if result.get("status") != "unfinished"
             ],
@@ -190,7 +190,7 @@ async def graph_relationship_vocabulary_read(payload: dict[str, Any]):
 
 @app.post("/graph/jev-focus")
 async def graph_jev_focus(payload: dict[str, Any]):
-    """Rerank one bounded client-supplied native-subject neighborhood."""
+    """Rerank one bounded client-supplied provider-entity neighborhood."""
     from app.python_models.engraphis import JevGraphError, decide_graph_focus
     import asyncio
 
@@ -411,7 +411,7 @@ def card_editor_options(payload: dict[str, Any]):
 
 @app.post("/idd/tools/materialize")
 def idd_tools_materialize(payload: dict[str, Any]):
-    """Ingest live native contracts into the one current IDD vocabulary."""
+    """Ingest live provider contracts into the one current IDD vocabulary."""
     try:
         return {"references": materialize_tool_catalog(payload.get("tools"))}
     except IddValidationError as err:
@@ -440,9 +440,9 @@ def card_script_validate(payload: dict[str, Any]):
             selected_tools=list(dict.fromkeys(item.strip() for item in selected_tools)),
             default_agent_tools=list(dict.fromkeys(item.strip() for item in default_agent_tools)),
             palette_fingerprint=str(payload.get("paletteFingerprint") or ""),
-            # Activation stays disabled until its approved Hermes-native
+            # Activation stays disabled until its approved Hermes
             # Script executor is connected.
-            native_available=False,
+            hermes_available=False,
         )
     except IddValidationError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
@@ -753,7 +753,7 @@ def thinkgraph_projection(
     includeHistorical: bool = False,
     memoryType: str | None = None,
 ):
-    """Read the native Engraphis projection for the selected project."""
+    """Read the Engraphis projection for the selected project."""
     from app.python_models.engraphis import projection
 
     project_id = str(projectId or "").strip()
@@ -769,7 +769,7 @@ def thinkgraph_projection(
 
 @app.get("/thinkgraph/neighborhood")
 def thinkgraph_neighborhood(projectId: str, canonicalId: str):
-    """Read one exact Engraphis memory and its native neighborhood."""
+    """Read one exact Engraphis memory and its Engraphis neighborhood."""
     from app.python_models.engraphis import projection
 
     project_id = str(projectId or "").strip()

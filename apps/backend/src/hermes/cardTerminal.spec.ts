@@ -16,14 +16,14 @@ const run = {
     children: [
       {
         runId: 'child', cardId: 'c', cardName: 'Saved name', parentRunId: 'root',
-        nativeChildId: 'native-child', state: 'running',
+        hermesChildId: 'hermes-child', state: 'running',
         startedAt: '2026-08-26T01:00:01Z', finishedAt: null,
       },
       {
         runId: 'done-child', cardId: 'c', cardName: 'Saved name', parentRunId: 'root',
-        nativeChildId: 'native-done', state: 'failed',
+        hermesChildId: 'hermes-done', state: 'failed',
         startedAt: '2026-08-26T01:00:02Z', finishedAt: '2026-08-26T01:00:03Z',
-        errorCode: 'hermes_native_child_failed',
+        errorCode: 'hermes_child_failed',
       },
     ],
   },
@@ -37,8 +37,8 @@ describe('persisted Run to Card terminal presentation', () => {
       id: 'root:session', kind: 'session', runId: 'root', parentRunId: 'sender', status: 'running',
     });
     expect(value.events.find((event) => event.kind === 'child_finished')).toMatchObject({
-      runId: 'done-child', nativeChildId: 'native-done', parentRunId: 'root',
-      status: 'failed', detail: 'hermes_native_child_failed',
+      runId: 'done-child', hermesChildId: 'hermes-done', parentRunId: 'root',
+      status: 'failed', detail: 'hermes_child_failed',
     });
     expect(buildCardTerminal({ ...run, state: 'completed', result: 'Accepted result' })).toMatchObject({
       activeAgentCount: 0, finalText: 'Accepted result', observation: 'finished', unavailableReason: null,

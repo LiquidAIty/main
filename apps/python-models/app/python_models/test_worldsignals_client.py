@@ -26,7 +26,7 @@ class _PackageClient:
 
     def command(self, command: str, arguments: dict[str, object]) -> dict[str, object]:
         self.commands.append((command, arguments))
-        return {"ok": True, "native": {"id": "source-result-1"}}
+        return {"ok": True, "provider": {"id": "source-result-1"}}
 
 
 def test_collect_signal_package_dispatches_one_manifest_verified_read() -> None:
@@ -48,7 +48,7 @@ def test_collect_signal_package_dispatches_one_manifest_verified_read() -> None:
 
     assert client.commands == [("get_layer_slice", {"layer": "earthquakes"})]
     assert package.producerCardId == "card_worldsignals_agent"
-    assert package.candidates[0].rawObservation["native"]["id"] == "source-result-1"
+    assert package.candidates[0].rawObservation["provider"]["id"] == "source-result-1"
 
 
 def test_collect_signal_package_refuses_write_before_dispatch() -> None:
@@ -286,7 +286,7 @@ def test_manifest_filters_and_exact_command_schema_are_bounded(monkeypatch) -> N
     assert keyword["tools"]["truncated"] is False
 
 
-def test_worldsignals_registry_uses_native_callable_without_assignment_side_effects() -> None:
+def test_worldsignals_registry_uses_provider_callable_without_assignment_side_effects() -> None:
     resolved = tr.DEFAULT_TOOL_REGISTRY.resolve_selected(["worldsignals.command"])
     assert len(resolved) == 1
     assert resolved[0].name == "worldsignals.command"

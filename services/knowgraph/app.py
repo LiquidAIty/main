@@ -60,12 +60,12 @@ class WebResearchIngestRequest(BaseModel):
 
 class JevReconciliationRequest(BaseModel):
     project_id: str
-    native_fact_uuids: list[str] = Field(default_factory=list, max_length=64)
+    graphiti_fact_uuids: list[str] = Field(default_factory=list, max_length=64)
 
 
-class NativeKnowDeleteRequest(BaseModel):
+class GraphitiFactDeleteRequest(BaseModel):
     project_id: str
-    native_id: str
+    graphiti_fact_uuid: str
     kind: str = "fact"
 
 
@@ -80,8 +80,8 @@ def _sanitize_filename(name: str) -> str:
     return safe or "upload.pdf"
 
 
-async def _delete_native_know(
-    payload: NativeKnowDeleteRequest,
+async def _delete_graphiti_fact(
+    payload: GraphitiFactDeleteRequest,
 ) -> dict[str, str]:
     from graphiti_core.driver.neo4j_driver import Neo4jDriver
     from graphiti_core.edges import EntityEdge
@@ -101,19 +101,19 @@ async def _delete_native_know(
         database=str(os.environ.get("NEO4J_DATABASE") or "neo4j").strip() or "neo4j",
     )
     try:
-        record = await EntityEdge.get_by_uuid(driver, payload.native_id)
+        record = await EntityEdge.get_by_uuid(driver, payload.graphiti_fact_uuid)
         if record.group_id != expected_group:
-            raise LookupError("knowgraph_native_record_not_found")
+            raise LookupError("knowgraph_graphiti_fact_not_found")
         await record.delete(driver)
-        return {"kind": payload.kind, "native_id": payload.native_id}
+        return {"kind": payload.kind, "graphiti_fact_uuid": payload.graphiti_fact_uuid}
     finally:
         await driver.close()
 
 
-@app.post("/delete_native")
-async def delete_native(request: Request, payload: NativeKnowDeleteRequest) -> JSONResponse:
+@app.post("/delete_fact")
+async def delete_fact(request: Request, payload: GraphitiFactDeleteRequest) -> JSONResponse:
     try:
-        result = await _delete_native_know(payload)
+        result = await _delete_graphiti_fact(payload)
         return JSONResponse(status_code=200, content={"ok": True, **result})
     except (LookupError, EdgeNotFoundError, NodeNotFoundError):
         return JSONResponse(
@@ -220,11 +220,11 @@ async def ingest_web_results(
 async def reconcile_existing_jev_annotations(
     payload: JevReconciliationRequest,
 ) -> JSONResponse:
-    """Explicitly repair existing native fact annotations without ingestion."""
+    """Explicitly repair existing Graphiti fact annotations without ingestion."""
     try:
         result = await reconcile_jev_annotations(
             payload.project_id,
-            native_fact_uuids=list(payload.native_fact_uuids),
+            graphiti_fact_uuids=list(payload.graphiti_fact_uuids),
         )
         return JSONResponse(status_code=200, content={"ok": True, **result})
     except ValueError as exc:

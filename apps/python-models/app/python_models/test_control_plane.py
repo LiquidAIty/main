@@ -236,11 +236,11 @@ def test_one_grounded_staging_path_loads_helper_or_mag_one_without_running(
             "cardRevisionId": f"revision-{target_id}", "cardRevision": 1,
             "cardRevisionSha256": "sha", "runtimeOwner": runtime["kind"],
             "cardIdentity": {"cardId": target_id, "title": target_id},
-            "resolvedNativeReads": ([{
-                "authority": "KnowGraph", "nativeId": "episode-1",
+            "resolvedGraphReads": ([{
+                "authority": "KnowGraph", "graphitiEpisodeId": "episode-1",
             }] if has_graph_data else []),
             "resolvedGraphProjection": {
-                "schemaVersion": "native-card-context.v1", "authority": "knowgraph",
+                "schemaVersion": "provider-card-context.v1", "authority": "knowgraph",
                 "projectId": "p",
                 "nodes": ([{"id": "episode-1"}] if has_graph_data else []),
                 "edges": [],
@@ -258,7 +258,7 @@ def test_one_grounded_staging_path_loads_helper_or_mag_one_without_running(
         "targetCardId": target_id,
         "mission": "  Research one bounded public question.\nKeep citations.  ",
         "dataAnchors": [{
-            "authority": "KnowGraph", "nativeId": "episode-1",
+            "authority": "KnowGraph", "graphitiEpisodeId": "episode-1",
             "reason": "Current sourced evidence", "priority": 0,
             "boundedExpansion": 1, "resultLimit": 8,
         }],
@@ -278,7 +278,7 @@ def test_one_grounded_staging_path_loads_helper_or_mag_one_without_running(
         "projectId": "p", "deckId": "deck_builder", "cardId": target_id,
         "assignment": "Research one bounded public question.\nKeep citations.",
         "dataAnchors": [{
-            "authority": "KnowGraph", "nativeId": "episode-1",
+            "authority": "KnowGraph", "graphitiEpisodeId": "episode-1",
             "reason": "Current sourced evidence", "priority": 0,
             "boundedExpansion": 1, "resultLimit": 8, "required": True,
         }],
@@ -302,7 +302,7 @@ def test_grounded_staging_requires_source_card_write_grant(monkeypatch, fake_bac
     with pytest.raises(cp.ControlPlaneError, match="write_mag_one_instructions_not_granted"):
         asyncio.run(cp.write_mag_one_instructions({
             "projectId": "p", "deckId": "d", "targetCardId": "worker",
-            "mission": "bounded", "dataAnchors": [{"nativeId": "one"}],
+            "mission": "bounded", "dataAnchors": [{"graphitiEpisodeId": "one"}],
             "_sourceCardId": "signals-card",
         }))
 
@@ -323,7 +323,7 @@ def test_grounded_staging_rejects_a_non_delegate_source_even_with_the_tool(monke
     with pytest.raises(cp.ControlPlaneError, match="grounded_staging_source_must_be_hermes_delegate"):
         asyncio.run(cp.write_mag_one_instructions({
             "projectId": "p", "deckId": "d", "targetCardId": "worker",
-            "mission": "bounded", "dataAnchors": [{"nativeId": "one"}],
+            "mission": "bounded", "dataAnchors": [{"graphitiEpisodeId": "one"}],
             "_sourceCardId": "signals-card",
         }))
 
@@ -474,7 +474,7 @@ class TestCardUpdateConfiguration:
             }, caller_card_id="builder-card"))
         assert fake_backend == {}
 
-    def test_card_script_update_preserves_source_and_records_unavailable_native_owner(
+    def test_card_script_update_preserves_source_and_records_unavailable_hermes_runner(
         self, fake_backend,
     ):
         source = '''CARD_SCRIPT = {
@@ -502,8 +502,8 @@ output.emit({"result": {}})
         assert saved["source"] == source
         assert saved["lastValidation"]["status"] == "valid"
         assert saved["author"] == {"kind": "agent-builder", "id": "builder-card"}
-        assert saved["nativeSupport"]["available"] is False
-        assert saved["nativeSupport"]["active"] is False
+        assert saved["hermesSupport"]["available"] is False
+        assert saved["hermesSupport"]["active"] is False
 
     def test_unrelated_edit_preserves_incomplete_legacy_provider_authority(self, fake_backend):
         result = asyncio.run(cp.card_update_configuration({
@@ -790,7 +790,7 @@ class TestUpsertWire:
 
 
 @pytest.mark.parametrize("profile", ["../escape", "has space", "Upper", "root", "a" * 65])
-def test_card_create_rejects_invalid_native_profile_names(fake_backend, profile):
+def test_card_create_rejects_invalid_hermes_profile_names(fake_backend, profile):
     with pytest.raises(cp.ControlPlaneError, match="card_create_profile_invalid"):
         asyncio.run(cp.card_create(create_args(runtime={"kind": "hermes", "mode": "delegate", "profile": profile}), caller_card_id="builder-card"))
     assert fake_backend == {}

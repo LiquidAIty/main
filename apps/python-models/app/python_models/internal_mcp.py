@@ -110,7 +110,7 @@ async def _call_read_tools_via_mcp_async(
     deadline_seconds: float | None = None,
     conversation_id: str = "",
 ) -> list[dict[str, Any]]:
-    # The MCP host owns the live native catalogs and is therefore the only
+    # The MCP host owns the live provider catalogs and is therefore the only
     # process that can classify a dynamically discovered operation correctly.
     # Its materializer-read principal rejects every operation whose live
     # definition is not read-only before dispatch.  Do not mirror that catalog

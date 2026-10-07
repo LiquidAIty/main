@@ -8,11 +8,11 @@ from app.python_models.signal_contracts import (
     SignalGeoPoint,
     SignalQuery,
     build_signal_query,
-    package_native_signal_result,
+    package_signal_result,
 )
 
 
-def test_native_result_is_unassessed_and_content_addressed() -> None:
+def test_provider_result_is_unassessed_and_content_addressed() -> None:
     query = build_signal_query(
         project_id="project-1",
         deck_id="deck-1",
@@ -25,11 +25,11 @@ def test_native_result_is_unassessed_and_content_addressed() -> None:
         domains=["geophysical"],
         limit=5,
     )
-    package = package_native_signal_result(
+    package = package_signal_result(
         query=query,
         producer_card_id="card_worldsignals_agent",
         producer_run_id="run-1",
-        result={"ok": True, "items": [{"id": "native-1", "magnitude": 4.2}]},
+        result={"ok": True, "items": [{"id": "source-1", "magnitude": 4.2}]},
         retrieved_at="2026-09-03T10:00:00+00:00",
     )
 
@@ -39,13 +39,13 @@ def test_native_result_is_unassessed_and_content_addressed() -> None:
     assert candidate.freshness == "unknown"
     assert candidate.domain == "geophysical"
     assert candidate.projectId == "project-1"
-    assert candidate.rawObservation["items"][0]["id"] == "native-1"
+    assert candidate.rawObservation["items"][0]["id"] == "source-1"
     assert candidate.agentHypothesis is None
-    assert candidate.source.nativeRef.startswith("worldsignals:get_layer_slice:sha256:")
+    assert candidate.source.sourceRef.startswith("worldsignals:get_layer_slice:sha256:")
     assert candidate.evidenceRefs[0].contentHash == candidate.source.contentHash
 
 
-def test_native_identity_is_stable_across_mapping_order() -> None:
+def test_source_identity_is_stable_across_mapping_order() -> None:
     first = build_signal_query(
         project_id="project-1",
         deck_id="deck-1",
@@ -68,14 +68,14 @@ def test_native_identity_is_stable_across_mapping_order() -> None:
     )
     assert first.queryId == second.queryId
 
-    one = package_native_signal_result(
+    one = package_signal_result(
         query=first,
         producer_card_id="card-a",
         producer_run_id="run-a",
         result={"ok": True, "count": 1},
         retrieved_at="2026-09-03T10:00:00+00:00",
     )
-    two = package_native_signal_result(
+    two = package_signal_result(
         query=second,
         producer_card_id="card-a",
         producer_run_id="run-a",
@@ -121,7 +121,7 @@ def test_assessment_is_a_separate_analyst_run_contract() -> None:
         observations=["The package contains one sourced observation."],
         inference="The observation deserves bounded follow-up.",
         evidenceRefs=[{
-            "sourceNativeRef": "worldsignals:what_changed:sha256:" + "a" * 64,
+            "sourceRef": "worldsignals:what_changed:sha256:" + "a" * 64,
             "contentHash": "sha256:" + "a" * 64,
         }],
         limitations=["One source result is not enough to confirm the claim."],

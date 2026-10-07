@@ -1,4 +1,4 @@
-"""Native Hermes tools backed by the authenticated saved Card runtime."""
+"""Hermes tools backed by the authenticated saved Card runtime."""
 
 from __future__ import annotations
 
@@ -36,7 +36,6 @@ OBSERVATION_RESPONSE_LIMIT_BYTES = 64 * 1024
 OBSERVATION_DELIVERY_TIMEOUT_SECONDS = 0.5
 OBSERVATION_BATCH_LIMIT = 1
 OBSERVATION_RETRY_LIMIT = 0
-_VISIBLE_CARD_TITLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", re.ASCII)
 _WORKER_AUTH_ENV = (
     "HERMES_KANBAN_TASK",
     "HERMES_KANBAN_RUN_ID",
@@ -56,6 +55,7 @@ _OBSERVATION_QUEUE_LAG_COUNT = 0
 _OBSERVATION_QUEUE_LAG_TOTAL_NS = 0
 _OBSERVATION_QUEUE_LAG_MAX_NS = 0
 _OBSERVATION_WORKER_STARTUP_NS: int | None = None
+_VISIBLE_CARD_TITLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", re.ASCII)
 
 
 def _json(value: Any) -> str:
@@ -329,7 +329,7 @@ def _observation_destination(session_id: Any) -> tuple[str, str, str] | None:
     if not bounded_session_id:
         return None
     if any(os.getenv(name, "").strip() for name in _WORKER_AUTH_ENV):
-        # Detached Magnetic workers have native task receipts but no Gateway Run
+        # Detached Magnetic workers have Hermes task receipts but no Gateway Run
         # session authority. Never misattribute their calls to the outer Run.
         return None
     host_url = os.getenv("CARD_TOOLS_HOST_URL", "").strip()
@@ -444,150 +444,10 @@ def _post_once(host_url: str, envelope: dict[str, str]) -> tuple[int, dict[str, 
         return int(response.status), value
 
 
-def _load_tools(config_path: Path | None = None) -> list[dict[str, Any]]:
-    path = config_path or Path(__file__).with_name("tools.json")
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or set(value) != {"tools"} or not isinstance(value["tools"], list):
-        raise ValueError("card_tools_configuration_invalid")
-    tools: list[dict[str, Any]] = []
-    names: set[str] = set()
-    for raw in value["tools"]:
-        if not isinstance(raw, dict) or set(raw) != {
-            "canonicalName", "hermesName", "description", "inputSchema",
-        }:
-            raise ValueError("card_tools_configuration_invalid")
-        canonical_name = raw["canonicalName"]
-        hermes_name = raw["hermesName"]
-        description = raw["description"]
-        schema = raw["inputSchema"]
-        if (
-            not isinstance(canonical_name, str) or not canonical_name
-            or not isinstance(hermes_name, str) or not hermes_name
-            or not isinstance(description, str)
-            or not isinstance(schema, dict)
-            or hermes_name in names
-        ):
-            raise ValueError("card_tools_configuration_invalid")
-        names.add(hermes_name)
-        tools.append({
-            "canonicalName": canonical_name,
-            "hermesName": hermes_name,
-            "description": description,
-            "inputSchema": schema,
-        })
-    return tools
-
-
-def _signed_envelope(secret: str, payload: str) -> dict[str, str]:
-    secret_bytes = secret.encode("utf-8")
-    return {
-        "keyId": hashlib.sha256(secret_bytes).hexdigest(),
-        "payload": payload,
-        "signature": hmac.new(
-            secret_bytes,
-            payload.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest(),
-    }
-
-
-def _worker_envelope(
-    hermes_name: str,
-    args: dict[str, Any],
-) -> tuple[dict[str, str] | None, str | None]:
-    """Build the detached native worker envelope, or report its exact env failure.
-
-    A dispatcher claim is an all-or-nothing capability.  Never fall back to the
-    persistent Gateway credential when only part of the native worker identity is
-    present, and never put that Gateway credential or a Bot Chat session id in the
-    worker payload.
-    """
-    values = {name: os.getenv(name, "").strip() for name in _WORKER_AUTH_ENV}
-    present = {name for name, value in values.items() if value}
-    if not present:
-        return None, None
-    if len(present) != len(_WORKER_AUTH_ENV):
-        return None, "card_tool_worker_identity_incomplete"
-    try:
-        source_run_id = int(values["HERMES_KANBAN_RUN_ID"])
-    except ValueError:
-        return None, "card_tool_worker_identity_invalid"
-    if source_run_id <= 0:
-        return None, "card_tool_worker_identity_invalid"
-    payload = _json({
-        "version": 2,
-        "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
-        "nonce": secrets.token_hex(16),
-        "sourceTaskId": values["HERMES_KANBAN_TASK"],
-        "sourceTaskRunId": source_run_id,
-        "sourceProfile": values["HERMES_PROFILE"],
-        "tool": hermes_name,
-        "arguments": args,
-    })
-    return _signed_envelope(values["HERMES_KANBAN_CLAIM_LOCK"], payload), None
-
-
-def _invoke(hermes_name: str, args: Any, *, task_id: str) -> str:
-    if os.getenv("CARD_TOOLS_MANAGED") != "1":
-        return _failure("managed_card_runtime_required")
-    if not isinstance(args, dict):
-        return _failure("card_tool_arguments_invalid")
-    host_url = os.getenv("CARD_TOOLS_HOST_URL", "").strip()
-    if not host_url:
-        return _failure("card_tool_host_url_missing")
-    worker_envelope, worker_error = _worker_envelope(hermes_name, args)
-    if worker_error:
-        return _failure(worker_error)
-    if worker_envelope is not None:
-        envelope = worker_envelope
-    else:
-        token = os.getenv("HERMES_DASHBOARD_SESSION_TOKEN", "")
-        if not token:
-            return _failure("card_tool_gateway_credential_missing")
-        if not task_id:
-            return _failure("card_tool_runtime_identity_missing")
-        payload = _json({
-            "version": 1,
-            "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
-            "nonce": secrets.token_hex(16),
-            "sourceStoredSessionId": task_id,
-            "tool": hermes_name,
-            "arguments": args,
-        })
-        envelope = _signed_envelope(token, payload)
-    try:
-        status, response = _post_once(host_url, envelope)
-    except Exception:
-        return _failure("card_tool_host_unavailable")
-    output = response.get("output")
-    if status != 200 or response.get("ok") is not True or not isinstance(output, str):
-        return _failure(str(response.get("error") or "card_tool_execution_failed"))
-    return output
-
-
-def _handler(hermes_name: str) -> Callable[..., str]:
-    def invoke(args: Any, **context: Any) -> str:
-        return _invoke(
-            hermes_name,
-            args,
-            # Gateway supplies its durable ``session_key`` as the turn task_id.
-            # ``session_id`` is the mutable AIAgent continuation identity and may
-            # rotate during compression while this turn is still dispatching.
-            task_id=str(context.get("task_id") or ""),
-        )
-
-    return invoke
-
-
 def _request_project_roster_payload(
     source_stored_session_id: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """Resolve the current Project roster through the signed Card-session seam.
-
-    The backend owns Project/deck/Card topology.  The plugin supplies only the exact
-    Hermes stored-session identity and never reads or unions profile-global config.
-    """
     if os.getenv("CARD_TOOLS_MANAGED") != "1" or not source_stored_session_id:
         raise ValueError("managed project session required")
     host_url = os.getenv("CARD_TOOLS_HOST_URL", "").strip()
@@ -670,7 +530,6 @@ def _request_project_target(
 
 
 def _visible_card_targets(source_stored_session_id: str | None) -> list[tuple[str, str]]:
-    """Return exact ``(visible title, stable profile)`` pairs for one Project session."""
     if not source_stored_session_id:
         return []
     try:
@@ -685,7 +544,6 @@ def _resolve_message_agent_target(
     session_id: str = "",
     **_context: Any,
 ) -> dict[str, Any]:
-    """Resolve one visible Card title through one authenticated Project session."""
     if not isinstance(target, str) or not session_id:
         raise ValueError("project roster request invalid")
     visible_target = target.strip()
@@ -704,7 +562,6 @@ def _resolve_message_agent_target(
 
 
 def _visible_card_targets_prompt(source_stored_session_id: str | None) -> str:
-    """Render only exact public Card addresses; stable runtime identities stay private."""
     targets = _visible_card_targets(source_stored_session_id)
     if not targets:
         return ""
@@ -713,6 +570,141 @@ def _visible_card_targets_prompt(source_stored_session_id: str | None) -> str:
         + "\n".join(f"- `@{title}`" for title, _stable_profile in targets)
     )
     return prompt if len(prompt) <= VISIBLE_CARD_TARGETS_MAX_CHARS else ""
+
+
+def _load_tools(config_path: Path | None = None) -> list[dict[str, Any]]:
+    path = config_path or Path(__file__).with_name("tools.json")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or set(value) != {"tools"} or not isinstance(value["tools"], list):
+        raise ValueError("card_tools_configuration_invalid")
+    tools: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for raw in value["tools"]:
+        if not isinstance(raw, dict) or set(raw) != {
+            "canonicalName", "hermesName", "description", "inputSchema",
+        }:
+            raise ValueError("card_tools_configuration_invalid")
+        canonical_name = raw["canonicalName"]
+        hermes_name = raw["hermesName"]
+        description = raw["description"]
+        schema = raw["inputSchema"]
+        if (
+            not isinstance(canonical_name, str) or not canonical_name
+            or not isinstance(hermes_name, str) or not hermes_name
+            or not isinstance(description, str)
+            or not isinstance(schema, dict)
+            or hermes_name in names
+        ):
+            raise ValueError("card_tools_configuration_invalid")
+        names.add(hermes_name)
+        tools.append({
+            "canonicalName": canonical_name,
+            "hermesName": hermes_name,
+            "description": description,
+            "inputSchema": schema,
+        })
+    return tools
+
+
+def _signed_envelope(secret: str, payload: str) -> dict[str, str]:
+    secret_bytes = secret.encode("utf-8")
+    return {
+        "keyId": hashlib.sha256(secret_bytes).hexdigest(),
+        "payload": payload,
+        "signature": hmac.new(
+            secret_bytes,
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest(),
+    }
+
+
+def _worker_envelope(
+    hermes_name: str,
+    args: dict[str, Any],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Build the detached Hermes worker envelope, or report its exact env failure.
+
+    A dispatcher claim is an all-or-nothing capability.  Never fall back to the
+    persistent Gateway credential when only part of the Hermes worker identity is
+    present, and never put that Gateway credential or a Bot Chat session id in the
+    worker payload.
+    """
+    values = {name: os.getenv(name, "").strip() for name in _WORKER_AUTH_ENV}
+    present = {name for name, value in values.items() if value}
+    if not present:
+        return None, None
+    if len(present) != len(_WORKER_AUTH_ENV):
+        return None, "card_tool_worker_identity_incomplete"
+    try:
+        source_run_id = int(values["HERMES_KANBAN_RUN_ID"])
+    except ValueError:
+        return None, "card_tool_worker_identity_invalid"
+    if source_run_id <= 0:
+        return None, "card_tool_worker_identity_invalid"
+    payload = _json({
+        "version": 2,
+        "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
+        "nonce": secrets.token_hex(16),
+        "sourceTaskId": values["HERMES_KANBAN_TASK"],
+        "sourceTaskRunId": source_run_id,
+        "sourceProfile": values["HERMES_PROFILE"],
+        "tool": hermes_name,
+        "arguments": args,
+    })
+    return _signed_envelope(values["HERMES_KANBAN_CLAIM_LOCK"], payload), None
+
+
+def _invoke(hermes_name: str, args: Any, *, task_id: str) -> str:
+    if os.getenv("CARD_TOOLS_MANAGED") != "1":
+        return _failure("managed_card_runtime_required")
+    if not isinstance(args, dict):
+        return _failure("card_tool_arguments_invalid")
+    host_url = os.getenv("CARD_TOOLS_HOST_URL", "").strip()
+    if not host_url:
+        return _failure("card_tool_host_url_missing")
+    worker_envelope, worker_error = _worker_envelope(hermes_name, args)
+    if worker_error:
+        return _failure(worker_error)
+    if worker_envelope is not None:
+        envelope = worker_envelope
+    else:
+        token = os.getenv("HERMES_DASHBOARD_SESSION_TOKEN", "")
+        if not token:
+            return _failure("card_tool_gateway_credential_missing")
+        if not task_id:
+            return _failure("card_tool_runtime_identity_missing")
+        payload = _json({
+            "version": 1,
+            "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
+            "nonce": secrets.token_hex(16),
+            "sourceStoredSessionId": task_id,
+            "tool": hermes_name,
+            "arguments": args,
+        })
+        envelope = _signed_envelope(token, payload)
+    try:
+        status, response = _post_once(host_url, envelope)
+    except Exception:
+        return _failure("card_tool_host_unavailable")
+    output = response.get("output")
+    if status != 200 or response.get("ok") is not True or not isinstance(output, str):
+        return _failure(str(response.get("error") or "card_tool_execution_failed"))
+    return output
+
+
+def _handler(hermes_name: str) -> Callable[..., str]:
+    def invoke(args: Any, **context: Any) -> str:
+        return _invoke(
+            hermes_name,
+            args,
+            # Gateway supplies its durable ``session_key`` as the turn task_id.
+            # ``session_id`` is the mutable AIAgent continuation identity and may
+            # rotate during compression while this turn is still dispatching.
+            task_id=str(context.get("task_id") or ""),
+        )
+
+    return invoke
 
 
 def register(ctx: Any) -> None:
@@ -728,10 +720,7 @@ def register(ctx: Any) -> None:
             handler=_handler(tool["hermesName"]),
             description=tool["description"],
         )
-    ctx.register_hook(
-        "resolve_message_agent_target",
-        _resolve_message_agent_target,
-    )
+    ctx.register_hook("resolve_message_agent_target", _resolve_message_agent_target)
     # Observer-only hooks capture fixed-size metadata and already-computed usage,
     # then perform one bounded put_nowait. Worker startup, JSON, pricing and HTTP
     # remain outside the Card's event path; raw request/tool bodies are ignored.

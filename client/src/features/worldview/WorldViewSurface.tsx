@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import scopedWorldViewStyles from 'virtual:worldview-native-css';
+import scopedWorldViewStyles from 'virtual:worldview-runtime-css';
 import inspectorOverrides from './worldviewInspector.css?raw';
 
 import GodsEyeSurface, {
@@ -417,7 +417,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
     };
   }, [cardId, projectId, sourceVersion]);
 
-  const handleNativeVisibility = (change: { layerId: string; enabled: boolean }) => {
+  const handleProviderVisibility = (change: { layerId: string; enabled: boolean }) => {
     if (!projectId || !sourceVersion) return;
     const existing = ownedLayerWritesRef.current.get(change.layerId);
     if (existing?.projectId === projectId) {
@@ -426,7 +426,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
     }
     const job = { projectId, queued: null as boolean | null };
     ownedLayerWritesRef.current.set(change.layerId, job);
-    const saveRequestId = `project-worldview-native-${++nextProjectWriteRef.current}`;
+    const saveRequestId = `project-worldview-runtime-${++nextProjectWriteRef.current}`;
     setPendingLayers((current) => ({
       ...current,
       [change.layerId]: {
@@ -509,7 +509,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
         }}
         onSelectionChange={setSelection}
         onLayerStateChange={setLayerState}
-        onLayerVisibilityChange={handleNativeVisibility}
+        onLayerVisibilityChange={handleProviderVisibility}
         onCommandResult={handleResult}
         onError={(error) => setSurfaceError(`${error.code}: ${error.message}`)}
       />

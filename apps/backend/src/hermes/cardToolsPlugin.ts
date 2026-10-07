@@ -326,7 +326,7 @@ function requireCardTools(
     new Set(pluginTools.map((tool) => tool.canonicalName)).size !== pluginTools.length
     || new Set(pluginTools.map((tool) => tool.hermesName)).size !== pluginTools.length
     || new Set(externalMcpTools.map((tool) => tool.canonicalName)).size !== externalMcpTools.length
-    || new Set(externalMcpTools.map((tool) => `${tool.connectionId}\0${tool.providerToolName}`)).size
+    || new Set(externalMcpTools.map((tool) => `${tool.connectionId}\0${tool.canonicalName}`)).size
       !== externalMcpTools.length
     || new Set(hermesSuppliedTools.map((tool) => tool.canonicalName)).size !== hermesSuppliedTools.length
     || new Set(hermesSuppliedTools.map((tool) => tool.hermesName)).size !== hermesSuppliedTools.length
@@ -634,7 +634,7 @@ export async function materializeHermesApplicationMcpServers(
       throw new Error(`hermes_application_mcp_connection_invalid:${tool.connectionId}`);
     }
     const names = byConnection.get(tool.connectionId) || [];
-    names.push(tool.providerToolName);
+    names.push(tool.canonicalName);
     byConnection.set(tool.connectionId, names);
   }
   if (!byConnection.size) return;
@@ -735,7 +735,7 @@ export async function removeHermesApplicationMcpServers(
 /**
  * Apply Python-resolved external MCP tools through stock Hermes profile and
  * tool configuration calls. This function does not decide authority: every
- * allowed {connectionId, providerToolName} pair already came from the saved Card.
+ * allowed {connectionId, canonicalName} pair already came from the saved Card.
  */
 export async function materializeHermesExternalMcpTools(
   request: HermesGatewayRequest,
@@ -798,10 +798,10 @@ export async function materializeHermesExternalMcpTools(
       }
       publishedNames.push(name);
     }
-    const grantedNames = [...new Set(grantedTools.map((tool) => tool.providerToolName))];
+    const grantedNames = [...new Set(grantedTools.map((tool) => tool.canonicalName))];
     const published = new Set(publishedNames);
     for (const tool of grantedTools) {
-      if (!published.has(tool.providerToolName)) {
+      if (!published.has(tool.canonicalName)) {
         unavailable[tool.canonicalName] = 'mcp_tool_not_published';
       }
     }
@@ -930,7 +930,7 @@ export function requireHermesCardToolsReadback(
       });
     const expectedTools = configuration.externalMcpTools
       .filter((tool) => tool.connectionId === connectionId)
-      .map((tool) => hermesExternalMcpToolName(connectionId, tool.providerToolName));
+      .map((tool) => hermesExternalMcpToolName(connectionId, tool.canonicalName));
     const expected = new Set(expectedTools);
     const extra = actual.filter((name) => !expected.has(name));
     if (extra.length) {
@@ -940,7 +940,7 @@ export function requireHermesCardToolsReadback(
     for (const tool of configuration.externalMcpTools.filter(
       (candidate) => candidate.connectionId === connectionId,
     )) {
-      const expectedName = hermesExternalMcpToolName(connectionId, tool.providerToolName);
+      const expectedName = hermesExternalMcpToolName(connectionId, tool.canonicalName);
       if (!actualNames.has(expectedName)) {
         unavailableToolReasons[tool.canonicalName] = 'external_mcp_tool_unavailable';
       }
@@ -949,8 +949,8 @@ export function requireHermesCardToolsReadback(
   return unavailableToolReasons;
 }
 
-export function hermesExternalMcpToolName(connectionId: string, providerToolName: string): string {
-  return `mcp__${mcpNameComponent(connectionId)}__${mcpNameComponent(providerToolName)}`;
+export function hermesExternalMcpToolName(connectionId: string, publishedToolName: string): string {
+  return `mcp__${mcpNameComponent(connectionId)}__${mcpNameComponent(publishedToolName)}`;
 }
 
 function mcpNameComponent(value: string): string {
@@ -1106,13 +1106,16 @@ export class HermesCardToolAuthority {
       || runtime.priorStoredSessionIds.has(sourceStoredSessionId);
     const registered = runtime.cardTools.pluginTools.find((entry) => entry.hermesName === tool);
     const argumentKeys = Object.keys(args);
+    const active = this.activeContext(runtime.state.sessionId);
     const projectRoster = tool === PROJECT_ROSTER_AUTHORITY_TOOL && (
       argumentKeys.length === 0
-      || (argumentKeys.length === 1 && argumentKeys[0] === 'target'
+      || (
+        argumentKeys.length === 1
+        && argumentKeys[0] === 'target'
         && typeof (args as Record<string, unknown>).target === 'string'
-        && Buffer.byteLength(String((args as Record<string, unknown>).target)) <= 256)
+        && Buffer.byteLength(String((args as Record<string, unknown>).target)) <= 256
+      )
     );
-    const active = this.activeContext(runtime.state.sessionId);
     const observation = tool === RUNTIME_OBSERVATION_AUTHORITY_TOOL
       && argumentKeys.sort().join('\0') === 'attempt';
     if (value.version !== 1
@@ -1132,7 +1135,9 @@ export class HermesCardToolAuthority {
       state: runtime.snapshot(),
       canonicalToolName: projectRoster
         ? PROJECT_ROSTER_AUTHORITY_TOOL
-        : observation ? RUNTIME_OBSERVATION_AUTHORITY_TOOL : registered!.canonicalName,
+        : observation
+          ? RUNTIME_OBSERVATION_AUTHORITY_TOOL
+          : registered!.canonicalName,
       cardTools: {
         cardRevisionId: runtime.cardTools.cardRevisionId,
         configurationFingerprint: runtime.cardTools.configurationFingerprint,
@@ -1329,11 +1334,20 @@ export async function acquireOptionalHermesCardTools(
     runtime.emitState();
     return resolved;
   } catch (error) {
-    if (cleanupConfiguration) await releaseOptionalHermesCardTools(
-      runtime,
-      cleanupConfiguration,
-      dependencies.removeApplicationServers ?? removeHermesApplicationMcpServers,
-    );
+    if (cleanupConfiguration) {
+      runtime.state.unavailableToolReasons = {
+        ...runtime.state.unavailableToolReasons,
+        ...Object.fromEntries(cleanupConfiguration.externalMcpTools.map((tool) => (
+          [tool.canonicalName, 'external_tool_acquisition_failed']
+        ))),
+      };
+      runtime.emitState();
+      await releaseOptionalHermesCardTools(
+        runtime,
+        cleanupConfiguration,
+        dependencies.removeApplicationServers ?? removeHermesApplicationMcpServers,
+      );
+    }
     console.warn(
       `[card-tools] optional tool acquisition failed card=${runtime.state.cardId}`,
       error instanceof Error ? error.message : String(error),

@@ -127,7 +127,7 @@ async function serve(
 }
 
 describe('authenticated WorldView presentation readiness', () => {
-  it('reports the supervised native-agent boundary without starting it', async () => {
+  it('reports the supervised subsystem-agent boundary without starting it', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response('<html/>', { status: 200 }));
     const base = await serve(fetcher);
     const response = await fetch(`${base}/readiness`);
@@ -137,7 +137,7 @@ describe('authenticated WorldView presentation readiness', () => {
     expect(body).toMatchObject({
       status: 'ready',
       lifecycle: { ownership: 'supervised-upstream', automaticStart: false },
-      nativeAgents: {
+      subsystemAgents: {
         realtimeVoice: {
           policy: 'user-initiated',
           active: null,

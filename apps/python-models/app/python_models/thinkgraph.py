@@ -1,6 +1,6 @@
 """ThinkGraph's product metadata; semantics are authored by its saved worker.
 
-The active backend remains Engraphis. These fields live on its native node,
+The active backend remains Engraphis. These fields live on its entity node,
 never in a second question store. Structural validation does not interpret prose.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class GraphReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     authority: Literal["thinkgraph", "knowgraph", "codegraph"]
-    nativeId: str = Field(min_length=1, max_length=300)
+    entityId: str = Field(min_length=1, max_length=300)
     projectId: str = Field(min_length=1, max_length=180)
 
 

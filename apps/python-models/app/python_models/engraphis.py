@@ -1,4 +1,4 @@
-"""ThinkGraph through Engraphis's public Python service and native MCP tools.
+"""ThinkGraph through Engraphis's public Python service and MCP tools.
 Python rails owns the service. Workspace binding comes from the authenticated
 project; neither tool callers nor the browser choose another database or tenant.
 """
@@ -320,7 +320,7 @@ def _text_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _native_time(value: Any) -> float:
+def _observation_time(value: Any) -> float:
     try:
         parsed = float(value)
     except (TypeError, ValueError, OverflowError):
@@ -330,7 +330,7 @@ def _native_time(value: Any) -> float:
 
 def _newest_think_key(item: dict[str, Any]) -> tuple[float, str]:
     return (
-        -_native_time(item.get("ingested_at", item.get("ingestedAt"))),
+        -_observation_time(item.get("ingested_at", item.get("ingestedAt"))),
         str(item.get("memory_id") or item.get("id") or ""),
     )
 
@@ -340,7 +340,7 @@ def _source_pair(payload: dict[str, Any]) -> dict[str, Any]:
         key: payload[key]
         for key in (
             "projectId", "deckId", "conversationId", "runId", "cardId",
-            "nativeSessionRef", "completedAt",
+            "hermesSessionId", "completedAt",
         )
         if payload.get(key)
     } | {
@@ -509,7 +509,7 @@ def _think_metadata(memory: Any) -> dict[str, Any] | None:
 
 
 def _public_think_metadata(value: Any) -> dict[str, Any]:
-    """Return native Think metadata without a retired per-Think judgment."""
+    """Return Engraphis Think metadata without a retired per-Think judgment."""
     metadata = deepcopy(value) if isinstance(value, dict) else {}
     metadata.pop("needs_evidence", None)
     return metadata
@@ -732,7 +732,7 @@ def _endpoint_thinks(
             if isinstance(structured, dict) else []
         )
         result.append({
-            "native_id": canonical_id,
+            "entity_id": canonical_id,
             "canonical_name": str(entity.get("name") or ""),
             "memory_id": memory.id,
             "title": memory.title,
@@ -766,10 +766,10 @@ def _projection_subject_directory(project: str) -> dict[str, Any] | None:
         return None
 
 
-def _focus_choice_id(authority: str, native_id: str) -> str:
-    """Identify one native subject inside a single read-only JevFocus Choice."""
+def _focus_choice_id(authority: str, entity_id: str) -> str:
+    """Identify one provider entity inside a single read-only JevFocus Choice."""
 
-    identity = f"{authority}\0{native_id}".encode("utf-8")
+    identity = f"{authority}\0{entity_id}".encode("utf-8")
     return f"focus_{hashlib.sha256(identity).hexdigest()[:24]}"
 
 
@@ -805,7 +805,7 @@ def _focus_exact_keys(
 def _validated_focus_request(
     payload: dict[str, Any],
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
-    """Validate the bounded client projection without reading either native graph."""
+    """Validate the bounded client projection without reading either provider graph."""
 
     if not isinstance(payload, dict):
         raise JevGraphError("invalid", "jev_focus_request_invalid")
@@ -821,10 +821,10 @@ def _validated_focus_request(
     center_value = payload.get("center")
     if not isinstance(center_value, dict):
         raise JevGraphError("invalid", "jev_focus_request_invalid")
-    _focus_exact_keys(center_value, {"visualId", "title", "nativeMembers"})
+    _focus_exact_keys(center_value, {"visualId", "title", "providerMembers"})
     center_visual_id = _focus_text(center_value.get("visualId"), maximum=512)
     center_title = _focus_text(center_value.get("title"), maximum=256)
-    raw_members = center_value.get("nativeMembers")
+    raw_members = center_value.get("providerMembers")
     if (
         not isinstance(raw_members, list)
         or not 1 <= len(raw_members) <= 16
@@ -836,20 +836,20 @@ def _validated_focus_request(
     for raw_member in raw_members:
         _focus_exact_keys(
             raw_member,
-            {"authority", "nativeId", "title"},
+            {"authority", "entityId", "title"},
             {"description"},
         )
         authority = _focus_text(raw_member.get("authority"), maximum=32)
-        native_id = _focus_text(raw_member.get("nativeId"), maximum=512)
+        entity_id = _focus_text(raw_member.get("entityId"), maximum=512)
         if authority not in {"ThinkGraph", "KnowGraph"}:
             raise JevGraphError("invalid", "jev_focus_request_invalid")
-        member_key = (authority, native_id)
+        member_key = (authority, entity_id)
         if member_key in center_member_keys:
             raise JevGraphError("invalid", "jev_focus_request_invalid")
         center_member_keys.add(member_key)
         member = {
             "authority": authority,
-            "nativeId": native_id,
+            "entityId": entity_id,
             "title": _focus_text(raw_member.get("title"), maximum=256),
         }
         if "description" in raw_member:
@@ -870,21 +870,21 @@ def _validated_focus_request(
         _focus_exact_keys(
             raw_candidate,
             {
-                "visualId", "authority", "nativeId", "title", "description",
+                "visualId", "authority", "entityId", "title", "description",
                 "incidentRelationships",
             },
         )
         visual_id = _focus_text(raw_candidate.get("visualId"), maximum=512)
         authority = _focus_text(raw_candidate.get("authority"), maximum=32)
-        native_id = _focus_text(raw_candidate.get("nativeId"), maximum=512)
+        entity_id = _focus_text(raw_candidate.get("entityId"), maximum=512)
         if (
             authority not in {"ThinkGraph", "KnowGraph"}
             or visual_id == center_visual_id
-            or (authority, native_id) in center_member_keys
-            or (authority, native_id) in candidate_keys
+            or (authority, entity_id) in center_member_keys
+            or (authority, entity_id) in candidate_keys
         ):
             raise JevGraphError("invalid", "jev_focus_request_invalid")
-        candidate_keys.add((authority, native_id))
+        candidate_keys.add((authority, entity_id))
         relationships = raw_candidate.get("incidentRelationships")
         if (
             not isinstance(relationships, list)
@@ -897,15 +897,15 @@ def _validated_focus_request(
             _focus_exact_keys(
                 relationship,
                 {
-                    "edgeId", "nativeEdgeId", "sourceVisualId", "sourceId",
+                    "edgeId", "relationshipId", "sourceVisualId", "sourceId",
                     "sourceTitle", "targetVisualId", "targetId", "targetTitle",
                     "predicate", "direction", "relationshipWeight",
                 },
             )
-            native_edge_id = _focus_text(
-                relationship.get("nativeEdgeId"), maximum=512,
+            relationship_id = _focus_text(
+                relationship.get("relationshipId"), maximum=512,
             )
-            relationship_key = (authority, native_edge_id)
+            relationship_key = (authority, relationship_id)
             if relationship_key in relationship_keys:
                 raise JevGraphError("invalid", "jev_focus_request_invalid")
             relationship_keys.add(relationship_key)
@@ -922,13 +922,13 @@ def _validated_focus_request(
                 source_visual_id == center_visual_id
                 and target_visual_id == visual_id
                 and (authority, source_id) in center_member_keys
-                and target_id == native_id
+                and target_id == entity_id
                 and direction == "outgoing"
             )
             incoming = (
                 source_visual_id == visual_id
                 and target_visual_id == center_visual_id
-                and source_id == native_id
+                and source_id == entity_id
                 and (authority, target_id) in center_member_keys
                 and direction == "incoming"
             )
@@ -943,7 +943,7 @@ def _validated_focus_request(
                     raise JevGraphError("invalid", "jev_focus_request_invalid")
             validated_relationships.append({
                 "edgeId": _focus_text(relationship.get("edgeId"), maximum=512),
-                "nativeEdgeId": native_edge_id,
+                "relationshipId": relationship_id,
                 "sourceVisualId": source_visual_id,
                 "sourceId": source_id,
                 "sourceTitle": _focus_text(
@@ -963,7 +963,7 @@ def _validated_focus_request(
         candidates.append({
             "visualId": visual_id,
             "authority": authority,
-            "nativeId": native_id,
+            "entityId": entity_id,
             "title": _focus_text(raw_candidate.get("title"), maximum=256),
             "description": _focus_description(raw_candidate.get("description")),
             "incidentRelationships": validated_relationships,
@@ -971,7 +971,7 @@ def _validated_focus_request(
     return source_revision, {
         "visualId": center_visual_id,
         "title": center_title,
-        "nativeMembers": center_members,
+        "providerMembers": center_members,
     }, candidates
 
 
@@ -1010,21 +1010,21 @@ def _validate_jev_focus_response(
 
 
 def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
-    """Run one read-only Choice over bounded connected native subjects."""
+    """Run one read-only Choice over bounded connected provider entities."""
 
     source_revision, center, candidates = _validated_focus_request(payload)
     options: list[dict[str, Any]] = []
     choice_ids: list[str] = []
     for candidate in candidates:
         choice_id = _focus_choice_id(
-            str(candidate["authority"]), str(candidate["nativeId"]),
+            str(candidate["authority"]), str(candidate["entityId"]),
         )
         choice_ids.append(choice_id)
         relationships = [{
-            "native_edge_id": relationship["nativeEdgeId"],
-            "source_native_id": relationship["sourceId"],
+            "relationship_id": relationship["relationshipId"],
+            "source_id": relationship["sourceId"],
             "source_title": relationship["sourceTitle"],
-            "target_native_id": relationship["targetId"],
+            "target_id": relationship["targetId"],
             "target_title": relationship["targetTitle"],
             "predicate": relationship["predicate"],
             "direction_from_center": relationship["direction"],
@@ -1032,7 +1032,7 @@ def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
         options.append({
             "choice_id": choice_id,
             "authority": candidate["authority"],
-            "native_id": candidate["nativeId"],
+            "entity_id": candidate["entityId"],
             "title": candidate["title"],
             "description": candidate["description"],
             "incident_relationships": relationships,
@@ -1045,7 +1045,7 @@ def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
         )
     criteria = {
         option["choice_id"]: (
-            "Rank this exact connected native subject by how useful its supplied stored "
+            "Rank this exact connected provider entity by how useful its supplied stored "
             "content and real incident relationships are for understanding the fixed center."
         )
         for option in options
@@ -1055,18 +1055,18 @@ def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
         "state": {
             "description": (
                 "One fixed user-selected graph subject and at most twelve directly connected "
-                "native subject candidates with bounded stored content and real relationships."
+                "provider entity candidates with bounded stored content and real relationships."
             ),
             "fixed_center": {
                 "visual_id": center["visualId"],
                 "title": center["title"],
-                "native_members": [{
+                "provider_members": [{
                     "authority": member["authority"],
-                    "native_id": member["nativeId"],
+                    "entity_id": member["entityId"],
                     "title": member["title"],
                     **({"description": member["description"]}
                        if "description" in member else {}),
-                } for member in center["nativeMembers"]],
+                } for member in center["providerMembers"]],
             },
             "connected_subject_options": options,
         },
@@ -1076,7 +1076,7 @@ def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
                 "instructions": (
                     "The user is exploring the fixed center. The center is not a candidate. "
                     "Rank the supplied connected subjects by how useful they are for "
-                    "understanding the center, using only their supplied native content and "
+                    "understanding the center, using only their supplied provider content and "
                     "real relationships. Prioritize direct explanatory relevance over generic "
                     "popularity, graph degree, on-screen distance, or persisted edge weights. "
                     "Retain contrary or qualifying context when useful. Return a full "
@@ -1119,7 +1119,7 @@ def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
         key=lambda index: (
             -distribution[choice_ids[index]],
             str(candidates[index]["authority"]),
-            str(candidates[index]["nativeId"]),
+            str(candidates[index]["entityId"]),
         ),
     )
     rank_by_index = {
@@ -1248,7 +1248,7 @@ class _SavedCardStructuredResult:
         return self.value
 
 
-def _native_structured_extractor(llm: Any) -> Any:
+def _engraphis_structured_extractor(llm: Any) -> Any:
     from engraphis.backends.extractor import StructuredLLMExtractor
 
     return StructuredLLMExtractor(llm)
@@ -1258,15 +1258,15 @@ def _llm_structured_contract(
     pair_text: str,
     context: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    extractor = _native_structured_extractor(
+    extractor = _engraphis_structured_extractor(
         _SavedCardStructuredResult({}, "schema-only")
     )
     context_text = json.dumps(context, ensure_ascii=False, sort_keys=True)
     prompt = extractor._build_prompt(pair_text, context_text)
     prompt += (
-        "\nUse native Engraphis structured extraction. Each returned Engraphis fact is "
+        "\nUse Engraphis structured extraction. Each returned Engraphis fact is "
         "one LiquidAIty Think. The fact's content is the Think body. Preserve each "
-        "fact's native title, content, memory type, importance, keywords, entities, "
+        "fact's title, content, memory type, importance, keywords, entities, "
         "and relationships. Extract the fewest independently reusable facts supported "
         "by the completed exchange. Preserve necessary context and uncertainty without "
         "repeating conversational setup or turning every reasoning clause into a relationship.\n"
@@ -1281,7 +1281,7 @@ def _extract_saved_card_facts(
     context: dict[str, Any],
     card_run: dict[str, str],
 ) -> list[Any]:
-    extractor = _native_structured_extractor(
+    extractor = _engraphis_structured_extractor(
         _SavedCardStructuredResult(
             _strict_card_json(value),
             card_run.get("resolvedModel") or card_run.get("profile") or "saved-card",
@@ -1352,7 +1352,7 @@ def _save_extracted_facts(
                 "card_revision_id": card_run["revisionId"],
                 "run_id": card_run["runId"],
                 "profile": card_run["profile"],
-                "native_session_ref": card_run["nativeSessionRef"],
+                "hermes_session_id": card_run["hermesSessionId"],
                 "resolved_model": card_run["resolvedModel"],
                 "completed_pair_reference": pair_reference,
                 "fact_index": fact_index,
@@ -1392,7 +1392,7 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     allowed = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
-        "nativeSessionRef", "completedAt", "userMessage", "mainResponse",
+        "hermesSessionId", "completedAt", "userMessage", "mainResponse",
         "sourceResponseFit",
     }
     if set(payload) - allowed:
@@ -1476,7 +1476,7 @@ def _validate_settle_payload(
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     completed_keys = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
-        "nativeSessionRef", "completedAt", "userMessage", "mainResponse",
+        "hermesSessionId", "completedAt", "userMessage", "mainResponse",
         "sourceResponseFit",
     }
     extras = {"pairReference", "structuredOutput", "cardRun"}
@@ -1495,7 +1495,7 @@ def _validate_settle_payload(
     if not isinstance(raw_run, dict):
         raise ValueError("thinkgraph_card_run_invalid")
     allowed_run = {
-        "runId", "cardId", "revisionId", "profile", "nativeSessionRef",
+        "runId", "cardId", "revisionId", "profile", "hermesSessionId",
         "resolvedModel",
     }
     if set(raw_run) - allowed_run:
@@ -1507,7 +1507,7 @@ def _validate_settle_payload(
 
 
 def settle_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
-    """Store the saved Card's native Engraphis facts through Engraphis itself."""
+    """Store the saved Card's Engraphis facts through Engraphis itself."""
     completed, pair_reference, card_output, card_run = _validate_settle_payload(payload)
     project = completed["projectId"]
     service = get_service()
@@ -1647,7 +1647,7 @@ async def _tool_catalog():
     return _registered_tool_catalog()
 
 
-def _native_tools_from_registrations() -> list[dict]:
+def _engraphis_tools_from_registrations() -> list[dict]:
     result = []
     for _, tool in _registered_tool_catalog().values():
         item = tool.model_dump(exclude_none=True)
@@ -1662,8 +1662,8 @@ def _native_tools_from_registrations() -> list[dict]:
     return result
 
 
-async def native_tools() -> list[dict]:
-    return _native_tools_from_registrations()
+async def engraphis_tools() -> list[dict]:
+    return _engraphis_tools_from_registrations()
 
 
 _OPERATION_DEFINITIONS: tuple[Any, ...] | None = None
@@ -1671,7 +1671,7 @@ _OPERATION_DEFINITIONS_LOCK = threading.Lock()
 
 
 def operation_definitions() -> list[Any]:
-    """Contribute native Engraphis contracts without routing through MCP discovery."""
+    """Contribute Engraphis contracts without routing through MCP discovery."""
 
     global _OPERATION_DEFINITIONS
     if _OPERATION_DEFINITIONS is not None:
@@ -1680,14 +1680,14 @@ def operation_definitions() -> list[Any]:
         if _OPERATION_DEFINITIONS is not None:
             return list(_OPERATION_DEFINITIONS)
         try:
-            native_contracts = _native_tools_from_registrations()
+            engraphis_contracts = _engraphis_tools_from_registrations()
         except BaseException as error:
             raise RuntimeError("engraphis_operation_definitions_unavailable") from error
 
         from app.python_models.tool_registry import OperationDefinition
 
         definitions = []
-        for item in native_contracts:
+        for item in engraphis_contracts:
             name = str(item.get("name") or "").strip()
             access = "read" if name in READ_TOOLS else "write" if name in WRITE_TOOLS else ""
             if not name or not access:
@@ -1715,7 +1715,7 @@ def operation_definitions() -> list[Any]:
 
 
 async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
-    # Native FastMCP synchronous tools execute on their caller's thread. Keep
+    # FastMCP synchronous tools execute on their caller's thread. Keep
     # embedding and SQLite work off Python rails' shared HTTP event loop.
     return await asyncio.to_thread(_invoke_tool_sync, project, name, arguments)
 
@@ -1870,9 +1870,9 @@ def _bounded_entity_projection(
     service: Any,
     *,
     project: str,
-    native_id: str,
+    entity_id: str,
 ) -> dict[str, Any]:
-    """Project one exact entity plus at most 24 direct native relationships."""
+    """Project one exact entity plus at most 24 direct Engraphis relationships."""
 
     store = service.store
     workspace = store.conn.execute(
@@ -1882,7 +1882,7 @@ def _bounded_entity_projection(
     snapshot = _bounded_graph_snapshot(
         store,
         workspace_id=workspace_id,
-        entity_ids=[native_id],
+        entity_ids=[entity_id],
         edge_limit=24,
         think_limit=0,
     ) if workspace_id else {
@@ -1894,12 +1894,12 @@ def _bounded_entity_projection(
             "think_source_limit_hit": False,
         },
     }
-    ordered_native_nodes = sorted(
+    ordered_entities = sorted(
         snapshot["nodes"],
         key=lambda node: (not bool(node.get("focus")), str(node.get("id") or "")),
     )
     latest_thinks: list[dict[str, Any]] = []
-    for node in ordered_native_nodes:
+    for node in ordered_entities:
         latest_thinks.extend(_endpoint_thinks(
             store,
             workspace_id=workspace_id,
@@ -1910,12 +1910,12 @@ def _bounded_entity_projection(
     latest_thinks = latest_thinks[:24]
     think_by_entity: dict[str, list[dict[str, Any]]] = {}
     for think in latest_thinks:
-        think_by_entity.setdefault(str(think["native_id"]), []).append(think)
+        think_by_entity.setdefault(str(think["entity_id"]), []).append(think)
 
     nodes: list[dict[str, Any]] = []
-    for native_node in ordered_native_nodes:
-        entity_id = str(native_node["id"])
-        title = str(native_node.get("name") or entity_id)
+    for engraphis_entity in ordered_entities:
+        entity_id = str(engraphis_entity["id"])
+        title = str(engraphis_entity.get("name") or entity_id)
         thinks = think_by_entity.get(entity_id, [])
         evidence = []
         for think in thinks:
@@ -1933,46 +1933,46 @@ def _bounded_entity_projection(
             })
         nodes.append({
             "id": entity_id,
-            "canonicalId": str(native_node.get("canonical_id") or entity_id),
+            "canonicalId": str(engraphis_entity.get("canonical_id") or entity_id),
             "canonicalName": title,
-            "entityKind": str(native_node.get("type") or "Concept"),
+            "entityKind": str(engraphis_entity.get("type") or "Concept"),
             "label": title,
             "title": title,
-            "type": str(native_node.get("type") or "Concept"),
+            "type": str(engraphis_entity.get("type") or "Concept"),
             "authority": "engraphis",
             "projectId": project,
             "member_ids": [entity_id],
-            "focus": bool(native_node.get("focus")),
+            "focus": bool(engraphis_entity.get("focus")),
             "mentionCount": len(evidence),
             "properties": {
-                "nodeType": str(native_node.get("type") or "Concept"),
-                "focus": bool(native_node.get("focus")),
+                "nodeType": str(engraphis_entity.get("type") or "Concept"),
+                "focus": bool(engraphis_entity.get("focus")),
                 "evidence": evidence,
             },
         })
 
     edges: list[dict[str, Any]] = []
-    for native_edge in snapshot["incident_edges"]:
-        strength_value = native_edge.get("relationship_strength")
+    for engraphis_relationship in snapshot["incident_edges"]:
+        strength_value = engraphis_relationship.get("relationship_strength")
         try:
             strength = float(strength_value)
         except (TypeError, ValueError, OverflowError):
             strength = None
         if strength is not None and not math.isfinite(strength):
             strength = None
-        relation = str(native_edge.get("relation") or "")
+        relation = str(engraphis_relationship.get("relation") or "")
         label = relation
         if strength is not None:
             label = f"{relation} · {strength:.2f}".replace(" 0.", " .")
         jev = {
-            "distribution": deepcopy(native_edge.get("distribution") or {}),
-            "label_confidence": native_edge.get("label_confidence"),
+            "distribution": deepcopy(engraphis_relationship.get("distribution") or {}),
+            "label_confidence": engraphis_relationship.get("label_confidence"),
             "relationship_strength": strength,
         }
         edge = {
-            "id": str(native_edge["id"]),
-            "source": str(native_edge["source_id"]),
-            "target": str(native_edge["target_id"]),
+            "id": str(engraphis_relationship["id"]),
+            "source": str(engraphis_relationship["source_id"]),
+            "target": str(engraphis_relationship["target_id"]),
             "predicate": relation,
             "relation": relation,
             "label": label,
@@ -1980,14 +1980,14 @@ def _bounded_entity_projection(
             "properties": {
                 "directed": True,
                 "relationship_strength": strength,
-                "label_confidence": native_edge.get("label_confidence"),
+                "label_confidence": engraphis_relationship.get("label_confidence"),
                 "jev": jev,
             },
         }
         if strength is not None:
             edge.update({
                 "relationship_strength": strength,
-                "label_confidence": native_edge.get("label_confidence"),
+                "label_confidence": engraphis_relationship.get("label_confidence"),
                 "strength": strength,
                 "spring_strength": 0.035 + (0.17 * strength),
                 "rest_length": max(14.0, min(34.0, 26.0 - (12.0 * strength))),
@@ -1997,7 +1997,7 @@ def _bounded_entity_projection(
     incomplete = bool(snapshot.get("incomplete")) or think_limit_hit
     truncated = bool(snapshot.get("truncated")) or think_limit_hit
     bounds = {
-        "scope": "direct-native-neighborhood",
+        "scope": "direct-engraphis-neighborhood",
         "neighborLimit": 24,
         "edgeLimit": 24,
         "thinkLimit": 24,
@@ -2040,14 +2040,14 @@ def _bounded_entity_projection(
     }
 
 
-def projection(project: str, native_id: str | None = None) -> dict:
+def projection(project: str, entity_id: str | None = None) -> dict:
     service = get_service()
     project = project_id(project)
-    if native_id:
+    if entity_id:
         return _bounded_entity_projection(
             service,
             project=project,
-            native_id=str(native_id),
+            entity_id=str(entity_id),
         )
     # Engraphis supplies the scene. This adapter only adds display field aliases
     # and resolves evidence IDs returned by the engine.
@@ -2058,18 +2058,18 @@ def projection(project: str, native_id: str | None = None) -> dict:
         for node in scene["nodes"]
         for member in node.get("member_ids", [node["id"]])
     ))
-    native_edges = {
+    engraphis_edges = {
         edge.id: edge for edge in service.store.neighbors(scene_member_ids)
     } if scene_member_ids else {}
     semantic_mass = {node["id"]: 0.0 for node in scene["nodes"]}
     for edge in scene["edges"]:
         edge_ids = edge.get("underlying_edge_ids") or [edge.get("id")]
         jev_edges = [
-            native_edges[edge_id]
+            engraphis_edges[edge_id]
             for edge_id in edge_ids
-            if edge_id in native_edges
-            and isinstance(native_edges[edge_id].provenance, dict)
-            and isinstance(native_edges[edge_id].provenance.get("jev"), dict)
+            if edge_id in engraphis_edges
+            and isinstance(engraphis_edges[edge_id].provenance, dict)
+            and isinstance(engraphis_edges[edge_id].provenance.get("jev"), dict)
         ]
         if not jev_edges:
             continue
@@ -2085,7 +2085,7 @@ def projection(project: str, native_id: str | None = None) -> dict:
         edge.update({
             "relation": chosen.relation,
             "label": f"{chosen.relation} · {probability_text}",
-            # The native renderer normally hides relation labels until a deep
+            # The renderer normally hides relation labels until a deep
             # zoom. ThinkGraph semantic edges are product content, so these
             # presentation hints keep the existing renderer contract while
             # making the Jev label and direction readable at the fitted view.
@@ -2144,7 +2144,7 @@ def projection(project: str, native_id: str | None = None) -> dict:
                     "validToRecordedAt": memory.get("valid_to_recorded_at"),
                     "ingestedAt": memory.get("ingested_at"),
                     "expiredAt": memory.get("expired_at")}
-                if native_id:
+                if entity_id:
                     # Full text belongs to selection, not the initial graph download.
                     supporting[mid]["content"] = memory["content"]
     nodes = []

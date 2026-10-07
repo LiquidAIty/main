@@ -1,9 +1,10 @@
 import { Router, type Response } from 'express';
 import {
-  agentTerminalManager,
+  cardRuntimeManager,
   resolveHermesBotRosterProjections,
   type HermesBotRosterProjection,
-} from '../hermes/agentTerminal';
+} from '../hermes/cardRuntimeManager';
+import { agentTerminalManager } from '../hermes/agentTerminal';
 import {
   cardToolAuthenticationFailureStage,
   PROJECT_ROSTER_AUTHORITY_TOOL,
@@ -41,7 +42,7 @@ type InternalCardToolRequest = {
 };
 
 type Dependencies = {
-  agentTerminalManager: CardToolManager;
+  cardRuntimeManager: CardToolManager;
   activeContext(sessionId: string): {
     runId: string;
     conversationId: string;
@@ -99,10 +100,10 @@ async function openProjectRosterTarget(
   const matches = loaded.deck.nodes.filter((card) => card.id === projection.cardId);
   if (matches.length !== 1) throw new Error('hermes_project_roster_target_missing');
   const card = matches[0];
-  if (
-    card.runtime.kind !== 'hermes'
-    || String(card.runtime.profile || '').trim() !== projection.profile
-  ) throw new Error('hermes_project_roster_target_stale');
+  if (card.runtime.kind !== 'hermes'
+    || String(card.runtime.profile || '').trim() !== projection.profile) {
+    throw new Error('hermes_project_roster_target_stale');
+  }
   const state = await agentTerminalManager.open(
     {
       userId: authenticated.owner.userId,
@@ -115,7 +116,7 @@ async function openProjectRosterTarget(
     loaded.deck,
     120,
     36,
-    { attachTui: false, botRosterProjection: projection },
+    { attachTui: false },
   );
   if (!state.storedSessionId) throw new Error('hermes_project_roster_session_missing');
   return state.storedSessionId;
@@ -170,7 +171,7 @@ function sendError(res: Response, error: unknown): void {
 
 export function createHermesCardToolsRouter(
   dependencies: Dependencies = {
-    agentTerminalManager,
+    cardRuntimeManager,
     activeContext: (sessionId) => cardTurnBridge.activeContext(sessionId),
     execute: executeInternalCardTool,
     observe: (request) => requestPythonRailsJson('/domain/runs/attempt', {
@@ -191,7 +192,7 @@ export function createHermesCardToolsRouter(
       const envelope = exactEnvelope(req.body);
       let authenticated: AuthenticatedCardToolRequest;
       try {
-        authenticated = await dependencies.agentTerminalManager.authenticateCardToolRequest(
+        authenticated = await dependencies.cardRuntimeManager.authenticateCardToolRequest(
           envelope.keyId,
           envelope.payload,
           envelope.signature,
@@ -228,10 +229,10 @@ export function createHermesCardToolsRouter(
         ));
         if (sources.length !== 1) routeError(409, 'hermes_project_roster_stale');
         const source = sources[0];
-        if (
-          source.cardRevisionId
-          && source.cardRevisionId !== authenticated!.cardTools.cardRevisionId
-        ) routeError(409, 'hermes_project_roster_stale');
+        if (source.cardRevisionId
+          && source.cardRevisionId !== authenticated!.cardTools.cardRevisionId) {
+          routeError(409, 'hermes_project_roster_stale');
+        }
         const byProfile = new Map(projections.map((entry) => [entry.profile, entry]));
         const targetProjections = source.roster.map((profile) => {
           const target = byProfile.get(profile);
@@ -246,10 +247,9 @@ export function createHermesCardToolsRouter(
         if (requested === undefined) {
           return res.json({ ok: true, output: JSON.stringify({ targets }) });
         }
-        if (typeof requested !== 'string') routeError(400, 'hermes_project_roster_target_invalid');
-        // The plugin removes the single optional user-facing `@` before signing.
-        // Resolve only that exact normalized title here so repeated prefixes cannot
-        // be stripped once in the plugin and again at the authority boundary.
+        if (typeof requested !== 'string') {
+          routeError(400, 'hermes_project_roster_target_invalid');
+        }
         const visible = requested.trim().toLocaleLowerCase('en-US');
         const matches = targetProjections.filter((target) => (
           target.title.toLocaleLowerCase('en-US') === visible

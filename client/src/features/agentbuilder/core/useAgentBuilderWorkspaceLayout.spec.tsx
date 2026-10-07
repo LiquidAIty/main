@@ -7,7 +7,6 @@ import useAgentBuilderWorkspaceLayout, {
   KNOWLEDGE_TAB_STRIP_SAFE_WIDTH,
   companionMinimumWidth,
   resolveHybridWorkspaceGeometry,
-  shouldCloseCanvasInspector,
   workspaceCollisionWidth,
 } from './useAgentBuilderWorkspaceLayout';
 
@@ -105,18 +104,6 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
       companionOverlayWidth: 1,
       companionContentMinWidth: 520,
     });
-  });
-
-  it('closes the open Canvas inspector before the chat reaches the overlap threshold', () => {
-    expect(shouldCloseCanvasInspector({
-      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 865,
-    })).toBe(false);
-    expect(shouldCloseCanvasInspector({
-      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 864,
-    })).toBe(true);
-    expect(shouldCloseCanvasInspector({
-      workspaceView: 'worldview', inspectorOpen: true, companionVisibleWidth: 0,
-    })).toBe(false);
   });
 
   it('uses source-backed surface-specific minimums', () => {

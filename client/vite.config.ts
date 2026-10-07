@@ -18,25 +18,25 @@ const cesiumPlugin = typeof cesiumPluginModule === 'function'
   ? cesiumPluginModule
   : cesiumPluginModule.default!;
 
-const WORLDVIEW_CSS_ID = 'virtual:worldview-native-css';
+const WORLDVIEW_CSS_ID = 'virtual:worldview-runtime-css';
 const WORLDVIEW_CSS_RESOLVED_ID = `\0${WORLDVIEW_CSS_ID}`;
-const WORLDVIEW_MOUNT_ID = 'virtual:worldview-native-mount';
+const WORLDVIEW_MOUNT_ID = 'virtual:worldview-runtime-mount';
 const WORLDVIEW_MOUNT_RESOLVED_ID = `\0${WORLDVIEW_MOUNT_ID}`;
-const WORLDVIEW_BUNDLED_MOUNT_ID = 'virtual:worldview-native-mount-bundled';
+const WORLDVIEW_BUNDLED_MOUNT_ID = 'virtual:worldview-runtime-mount-bundled';
 const WORLDVIEW_PUBLIC_MOUNT_URL = 'http://127.0.0.1:4174/src/app/mount.js';
 const WORLDVIEW_SELECTOR = '#worldview-native-root';
 
-export function worldviewNativeMountModuleSource(command: 'serve' | 'build'): string {
+export function worldviewRuntimeMountModuleSource(command: 'serve' | 'build'): string {
   const target = command === 'serve'
     ? WORLDVIEW_PUBLIC_MOUNT_URL
     : WORLDVIEW_BUNDLED_MOUNT_ID;
   const ignore = command === 'serve' ? '/* @vite-ignore */ ' : '';
-  return `export const importNativeWorldViewMount = () => import(${ignore}${JSON.stringify(target)});`;
+  return `export const importWorldViewMount = () => import(${ignore}${JSON.stringify(target)});`;
 }
 
-function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
+function worldviewRuntimeMountPlugin(command: 'serve' | 'build'): Plugin {
   return {
-    name: 'worldview-native-mount-module',
+    name: 'worldview-runtime-mount-module',
     resolveId(id) {
       if (id === WORLDVIEW_MOUNT_ID) return WORLDVIEW_MOUNT_RESOLVED_ID;
       if (id === WORLDVIEW_BUNDLED_MOUNT_ID) {
@@ -46,7 +46,7 @@ function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
     },
     load(id) {
       return id === WORLDVIEW_MOUNT_RESOLVED_ID
-        ? worldviewNativeMountModuleSource(command)
+        ? worldviewRuntimeMountModuleSource(command)
         : null;
     },
   };
@@ -100,9 +100,9 @@ function isInsideKeyframes(rule: { parent?: any }): boolean {
   return false;
 }
 
-function worldviewNativeCssPlugin(): Plugin {
+function worldviewRuntimeCssPlugin(): Plugin {
   return {
-    name: 'worldview-native-scoped-css',
+    name: 'worldview-runtime-scoped-css',
     resolveId(id) {
       return id === WORLDVIEW_CSS_ID ? WORLDVIEW_CSS_RESOLVED_ID : null;
     },
@@ -111,7 +111,7 @@ function worldviewNativeCssPlugin(): Plugin {
       const source = fs.readFileSync(worldviewStylePath, 'utf8')
         .replace(/url\(\s*(['"]?)\/(?!\/)/g, 'url($1/worldview-native/');
       const result = await postcss([{
-        postcssPlugin: 'worldview-native-root-scope',
+        postcssPlugin: 'worldview-runtime-root-scope',
         Rule(rule) {
           if (isInsideKeyframes(rule)) return;
           rule.selector = splitSelectors(rule.selector)
@@ -174,8 +174,8 @@ export default defineConfig(({ mode, command }) => {
     envDir: path.resolve(__dirname, '..'),
     plugins: [
       react(),
-      worldviewNativeCssPlugin(),
-      worldviewNativeMountPlugin(command),
+      worldviewRuntimeCssPlugin(),
+      worldviewRuntimeMountPlugin(command),
       cesiumPlugin({
         rebuildCesium: true,
         cesiumBuildRootPath: path.resolve(worldviewRoot, 'node_modules/cesium/Build'),
@@ -222,7 +222,7 @@ export default defineConfig(({ mode, command }) => {
           rewrite: (p) => p.replace(/^\/cesium-ion/, ''),
         },
         // Direct-mounted WorldView still uses the controlled fork's Vite
-        // provider middleware for its native data APIs and static models. It
+        // provider middleware for its data APIs and static models. It
         // renders in this React document; this prefix is transport, not an
         // iframe/runtime page boundary.
         '/worldview-native': {

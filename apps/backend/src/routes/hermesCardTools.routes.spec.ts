@@ -13,7 +13,7 @@ function dependencies() {
     },
     state: {
       sessionId: 'runtime-one', cardId: 'builder', profile: 'builder', pid: 1, gatewayPid: 1,
-      tuiPid: null, ptyId: null, nativeSessionId: 'native-one', storedSessionId: 'stored-one',
+      tuiPid: null, ptyId: null, hermesSessionId: 'hermes-one', storedSessionId: 'stored-one',
       hermesHome: 'profile-home', unavailableToolReasons: {}, status: 'running' as const,
       cols: 120, rows: 36,
     },
@@ -34,14 +34,14 @@ function dependencies() {
   };
   return {
     authenticated,
-    agentTerminalManager: {
+    cardRuntimeManager: {
       authenticateCardToolRequest: vi.fn().mockResolvedValue(authenticated),
     },
     activeContext: vi.fn().mockReturnValue(null),
     execute: vi.fn().mockResolvedValue({ ok: true, output: '{"ok":true}' }),
     observe: vi.fn().mockResolvedValue({ ok: true }),
     resolveProjectRosters: vi.fn().mockResolvedValue([]),
-    openProjectRosterTarget: vi.fn().mockResolvedValue('stored-target-conversation'),
+    openProjectRosterTarget: vi.fn().mockResolvedValue('stored-target'),
     isLoopbackSocketRequest: vi.fn().mockReturnValue(true),
   };
 }
@@ -77,7 +77,7 @@ describe('managed Hermes Card-tools host route', () => {
       status: 403,
       body: { error: 'hermes_card_tool_loopback_required' },
     });
-    expect(deps.agentTerminalManager.authenticateCardToolRequest).not.toHaveBeenCalled();
+    expect(deps.cardRuntimeManager.authenticateCardToolRequest).not.toHaveBeenCalled();
   });
 
   it('uses only authenticated runtime identity and does not fabricate a Run for a Bot turn', async () => {
@@ -87,7 +87,7 @@ describe('managed Hermes Card-tools host route', () => {
       status: 200,
       body: { ok: true, output: '{"ok":true}' },
     });
-    expect(deps.agentTerminalManager.authenticateCardToolRequest).toHaveBeenCalledWith(
+    expect(deps.cardRuntimeManager.authenticateCardToolRequest).toHaveBeenCalledWith(
       envelope.keyId,
       envelope.payload,
       envelope.signature,
@@ -138,6 +138,53 @@ describe('managed Hermes Card-tools host route', () => {
     expect(deps.execute).not.toHaveBeenCalled();
   });
 
+  it('resolves one Bot Mode target only from the source Card orange roster', async () => {
+    const deps = dependencies();
+    Object.assign(deps.authenticated, {
+      canonicalToolName: 'project_roster.resolve',
+      request: {
+        version: 1,
+        expiresAt: 1_000,
+        nonce: 'e'.repeat(32),
+        sourceStoredSessionId: 'stored-one',
+        tool: 'project_roster.resolve',
+        arguments: { target: 'Builder' },
+      },
+    });
+    const source = {
+      cardId: 'builder', cardRevisionId: 'revision-one', profile: 'builder',
+      title: 'Builder', botEnabled: true, roster: ['target-profile'],
+    };
+    const target = {
+      cardId: 'target-card', cardRevisionId: 'revision-target', profile: 'target-profile',
+      title: 'Target', botEnabled: false, roster: [],
+    };
+    deps.resolveProjectRosters.mockResolvedValue([source, target]);
+
+    await expect(post(deps)).resolves.toEqual({
+      status: 403,
+      body: { error: 'hermes_project_roster_target_forbidden' },
+    });
+    expect(deps.openProjectRosterTarget).not.toHaveBeenCalled();
+
+    (deps.authenticated.request as any).arguments.target = 'Target';
+    await expect(post(deps)).resolves.toEqual({
+      status: 200,
+      body: {
+        ok: true,
+        output: JSON.stringify({
+          targets: [{ title: 'Target', profile: 'target-profile' }],
+          resolved: { profile: 'target-profile', storedSessionId: 'stored-target' },
+        }),
+      },
+    });
+    expect(deps.openProjectRosterTarget).toHaveBeenCalledExactlyOnceWith(
+      deps.authenticated,
+      target,
+    );
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
   it('uses the verified outer Magnetic Run without fabricating a Bot Chat context', async () => {
     const deps = dependencies();
     Object.assign(deps.authenticated, {
@@ -172,96 +219,9 @@ describe('managed Hermes Card-tools host route', () => {
     }));
   });
 
-  it('returns only the signed session Project orange-flow roster', async () => {
-    const deps = dependencies();
-    deps.authenticated.canonicalToolName = 'project_roster.resolve';
-    deps.authenticated.request.tool = 'project_roster.resolve';
-    deps.resolveProjectRosters.mockResolvedValue([
-      {
-        cardId: 'builder', cardRevisionId: 'revision-one', profile: 'builder',
-        title: 'Builder', botEnabled: true, roster: ['knowgraph'],
-      },
-      {
-        cardId: 'knowgraph', cardRevisionId: 'revision-two', profile: 'knowgraph',
-        title: 'KnowGraph', botEnabled: true, roster: [],
-      },
-      {
-        cardId: 'magnetic', cardRevisionId: 'revision-three', profile: 'magnetic',
-        title: 'Magnetic', botEnabled: true, roster: [],
-      },
-    ]);
-
-    const response = await post(deps);
-
-    expect(response.status).toBe(200);
-    expect(JSON.parse((response.body as { output: string }).output)).toEqual({
-      targets: [{ title: 'KnowGraph', profile: 'knowgraph' }],
-    });
-    expect(deps.resolveProjectRosters).toHaveBeenCalledExactlyOnceWith(
-      'project-one', 'deck-one',
-    );
-    expect(deps.execute).not.toHaveBeenCalled();
-  });
-
-  it('binds an authorized visible target to its exact Project conversation session', async () => {
-    const deps = dependencies();
-    deps.authenticated.canonicalToolName = 'project_roster.resolve';
-    Object.assign(deps.authenticated.owner, { conversationId: 'conversation-one' });
-    deps.authenticated.request.tool = 'project_roster.resolve';
-    Object.assign(deps.authenticated.request.arguments, { target: 'KnowGraph' });
-    const source = {
-      cardId: 'builder', cardRevisionId: 'revision-one', profile: 'builder',
-      title: 'Builder', botEnabled: true, roster: ['knowgraph'],
-    };
-    const target = {
-      cardId: 'knowgraph', cardRevisionId: 'revision-two', profile: 'knowgraph',
-      title: 'KnowGraph', botEnabled: true, roster: [],
-    };
-    deps.resolveProjectRosters.mockResolvedValue([source, target]);
-
-    const response = await post(deps);
-
-    expect(response.status).toBe(200);
-    expect(JSON.parse((response.body as { output: string }).output)).toEqual({
-      targets: [{ title: 'KnowGraph', profile: 'knowgraph' }],
-      resolved: { profile: 'knowgraph', storedSessionId: 'stored-target-conversation' },
-    });
-    expect(deps.openProjectRosterTarget).toHaveBeenCalledExactlyOnceWith(
-      deps.authenticated,
-      target,
-    );
-    expect(deps.execute).not.toHaveBeenCalled();
-  });
-
-  it('does not normalize another address prefix at the signed authority boundary', async () => {
-    const deps = dependencies();
-    deps.authenticated.canonicalToolName = 'project_roster.resolve';
-    deps.authenticated.request.tool = 'project_roster.resolve';
-    Object.assign(deps.authenticated.request.arguments, { target: '@KnowGraph' });
-    deps.resolveProjectRosters.mockResolvedValue([
-      {
-        cardId: 'builder', cardRevisionId: 'revision-one', profile: 'builder',
-        title: 'Builder', botEnabled: true, roster: ['knowgraph'],
-      },
-      {
-        cardId: 'knowgraph', cardRevisionId: 'revision-two', profile: 'knowgraph',
-        title: 'KnowGraph', botEnabled: true, roster: [],
-      },
-    ]);
-
-    const response = await post(deps);
-
-    expect(response).toEqual({
-      status: 403,
-      body: { error: 'hermes_project_roster_target_forbidden' },
-    });
-    expect(deps.openProjectRosterTarget).not.toHaveBeenCalled();
-    expect(deps.execute).not.toHaveBeenCalled();
-  });
-
   it('maps every authentication rejection to one secret-free response', async () => {
     const deps = dependencies();
-    deps.agentTerminalManager.authenticateCardToolRequest.mockRejectedValue(
+    deps.cardRuntimeManager.authenticateCardToolRequest.mockRejectedValue(
       new Error('signature_invalid:do-not-leak'),
     );
 
@@ -275,7 +235,7 @@ describe('managed Hermes Card-tools host route', () => {
 
   it('logs only a fixed internal authentication stage while keeping the response generic', async () => {
     const deps = dependencies();
-    deps.agentTerminalManager.authenticateCardToolRequest.mockRejectedValue(
+    deps.cardRuntimeManager.authenticateCardToolRequest.mockRejectedValue(
       new Error('hermes_card_tool_authentication_failed:run_authorization'),
     );
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

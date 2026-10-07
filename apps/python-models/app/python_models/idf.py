@@ -3,7 +3,7 @@
 The serialized product contract is exactly four ordered sections: actual
 bounded graph data, stable saved-Card context, selected tools/grants, then the
 current dynamic context. Python rails writes one UTF-8 ``in.idf`` for a Run,
-reloads those exact bytes, and only then mechanically projects the native call.
+reloads those exact bytes, and only then mechanically projects the Hermes request.
 """
 
 from __future__ import annotations
@@ -645,18 +645,18 @@ def model_task(idf: Idf) -> str:
 
 
 def kanban_mission(idf: Idf) -> str:
-    """Project only the graph-first user body; saved prompt/tools travel natively."""
+    """Project only the graph-first user body; saved prompt/tools travel through Hermes."""
 
     return model_task(idf)
 
 
 def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
-    """Mechanically project native-runtime fields from reloaded IDF bytes.
+    """Mechanically project Hermes runtime fields from reloaded IDF bytes.
 
     Stable Card instructions remain in the retained IDF and the materialized
     Hermes ``SOUL.md``.  They are deliberately not projected into the turn
     request: doing so would create a second, ignored prompt input beside the
-    native profile authority.
+    Hermes profile authority.
     """
 
     idf = materialized.idf

@@ -45,14 +45,26 @@ class HermesRuntime(BaseModel):
     profile: RequiredRuntimeString
 
 
+class ModelRoutingProfile(BaseModel):
+    """Routing facts supplied by the configured model catalog."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    taskFit: RequiredRuntimeString
+    supportsTools: bool
+    inputModalities: list[RequiredRuntimeString]
+    reasoningEfforts: list[RequiredRuntimeString]
+
+
 class ModelOption(BaseModel):
-    """Configured model transport, supplied by its native/configuration owner."""
+    """Configured model transport supplied by the model catalog owner."""
     model_config = ConfigDict(extra="forbid", strict=True)
     provider: RequiredRuntimeString
     key: RequiredRuntimeString
     label: RequiredRuntimeString
     providerModelId: RequiredRuntimeString
     default: bool = False
+    contextWindow: int | None = Field(default=None, gt=0)
+    routingProfile: ModelRoutingProfile | None = None
 
 
 class CardSubagentModel(BaseModel):
@@ -66,7 +78,7 @@ class CardSubagentModel(BaseModel):
 
 CardSubagentType = Literal["none", "leaf", "recursive"]
 CardJevContextMode = Literal[
-    "inherited", "request_card", "conversation_window", "selected_native_context",
+    "inherited", "request_card", "conversation_window", "selected_graph_context",
 ]
 
 

@@ -426,7 +426,7 @@ export function createWorldviewRouter({
           ownership: 'supervised-upstream',
           automaticStart: false,
         },
-        nativeAgents: {
+        subsystemAgents: {
           realtimeVoice: {
             policy: 'user-initiated',
             active: null,
@@ -444,7 +444,7 @@ export function createWorldviewRouter({
           presentationOrigin: globeUrl.origin,
         },
         lifecycle: { ownership: 'supervised-upstream', automaticStart: false },
-        nativeAgents: {
+        subsystemAgents: {
           realtimeVoice: { policy: 'user-initiated', active: null },
         },
         diagnostics: error instanceof Error ? error.message : 'worldview_globe_unavailable',

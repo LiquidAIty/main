@@ -20,10 +20,10 @@ function reference(index: number, access: 'read' | 'write' = 'read'): ToolCatalo
     access,
     contracts: [{
       sourceId: 'cbm',
-      providerName: `tool_${String(index).padStart(5, '0')}`,
+      providerToolName: `tool_${String(index).padStart(5, '0')}`,
       connectionKind: 'external-mcp',
       available: true,
-      description: `Native tool ${index}`,
+      description: `Provider tool ${index}`,
       inputSchema: { type: 'object', properties: { index: { type: 'integer', const: index } } },
       annotations: { readOnlyHint: true },
     }],
@@ -31,7 +31,7 @@ function reference(index: number, access: 'read' | 'write' = 'read'): ToolCatalo
 }
 
 describe('IDD tool catalog lookup', () => {
-  it('searches already-materialized IDD references without changing native contracts', () => {
+  it('searches already-materialized IDD references without changing provider contracts', () => {
     const references = Array.from({ length: 10_000 }, (_, index) => reference(index));
     const catalog = indexToolCatalogReferences(references);
     const page = searchToolCatalogReferences(catalog, {

@@ -204,7 +204,7 @@ export type TradingEngineReadiness = {
     scheduler: string;
     diagnostics: string | null;
   };
-  nativeAgents?: {
+  subsystemAgents?: {
     enabled: boolean;
     authority: string;
     diagnostics: string | null;
@@ -428,7 +428,7 @@ function reconcileJob(job: TradeJob): TradeJob {
   };
 }
 
-/** Reconcile initial and streamed full snapshots by native IDs. Older events
+/** Reconcile initial and streamed full snapshots by stable record IDs. Older events
  * cannot replace a newer observation. */
 export function reconcileTradingState(
   current: TradingState | null,

@@ -6,7 +6,7 @@ from app.python_models import card_domain
 def root_row():
     return {"run_id": "root", "project_id": "p", "deck_id": "d", "card_id": "c", "title": "Saved name",
             "runtime_kind": "hermes", "runtime_mode": "delegate", "runtime_profile": "research",
-            "provider_thread_ref": "native-session", "state": "completed", "final_result": "Accepted result"}
+            "provider_thread_ref": "provider-session", "state": "completed", "final_result": "Accepted result"}
 
 
 class Cursor:
@@ -32,20 +32,20 @@ class Cursor:
 def test_terminal_reads_persisted_child_lineage_and_does_not_count_pending_capacity(monkeypatch):
     cursor = Cursor()
     monkeypatch.setattr(card_domain, "_age_rows", lambda *_args: [
-        {"parent_id": "root", "child_id": name, "native_id": f"native-{name}"}
+        {"parent_id": "root", "child_id": name, "hermes_child_id": f"hermes-{name}"}
         for name in ["running-child", "finished-child", "pending-child"]
-    ] + [{"parent_id": "sender", "child_id": "root", "native_id": None}])
+    ] + [{"parent_id": "sender", "child_id": "root", "hermes_child_id": None}])
     value = card_domain._read_run_terminal(cursor, root_row())
     assert value["activeChildren"] == 1
     assert value["parentRunIds"] == ["sender"]
-    assert value["children"][0]["nativeChildId"] == "native-running-child"
+    assert value["children"][0]["hermesChildId"] == "hermes-running-child"
     assert value["children"][0]["parentRunId"] == "root"
     assert value["children"][0]["cardName"] == "Saved name"
     assert "transcript" not in value
     assert all(query.strip().startswith("SELECT") for query, _ in cursor.statements)
 
 
-def test_card_reconnect_selects_a_root_not_a_newer_inherited_native_child(monkeypatch):
+def test_card_reconnect_selects_a_root_not_a_newer_inherited_hermes_child(monkeypatch):
     cursor = Cursor()
     cursor.fetchone = root_row
 
@@ -56,7 +56,7 @@ def test_card_reconnect_selects_a_root_not_a_newer_inherited_native_child(monkey
 
     monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
     monkeypatch.setattr(card_domain, "_resolve_project", lambda *_args: {"id": "p"})
-    monkeypatch.setattr(card_domain, "_age_rows", lambda *_args: [{"run_id": "native-child-run"}])
+    monkeypatch.setattr(card_domain, "_age_rows", lambda *_args: [{"run_id": "hermes-child-run"}])
     monkeypatch.setattr(
         card_domain,
         "_read_run_terminal",
@@ -67,6 +67,6 @@ def test_card_reconnect_selects_a_root_not_a_newer_inherited_native_child(monkey
         assert result["run"]["runId"] == "root"
         assert result["run"]["result"] == "Accepted result"
     selections = [(query, params) for query, params in cursor.statements if "SELECT run.*" in query]
-    assert selections[0][1] == ("p", "d", "c", ["native-child-run"])
+    assert selections[0][1] == ("p", "d", "c", ["hermes-child-run"])
     assert all("AND NOT (run.run_id = ANY" in query for query, _ in selections)
     assert all(query.strip().startswith(("SELECT", "SET TRANSACTION READ ONLY")) for query, _ in cursor.statements)

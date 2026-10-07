@@ -89,16 +89,12 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
         '-m', 'hermes_cli.main',
         '-p', 'agent-cli-proof', 'serve', '--host', '127.0.0.1', '--port', '0', '--isolated', '--skip-build',
       ],
-      tuiArgs: [
-        '-m', 'hermes_cli.main',
-        '-p', 'agent-cli-proof', '--tui', '--in', 'C:\\saved-workspace-real',
-        '--model', 'gpt-5.6-sol', '--provider', 'openai-codex',
-        '--reasoning', 'high', '--max-turns', '7', '--skills', 'saved-skill-a,saved-skill-b',
-      ],
     });
+    expect(launch).not.toHaveProperty('tuiArgs');
     expect(launch.env.HERMES_HOME).toBe('C:\\repo\\Hermes\\.hermes');
-    expect(launch.env.HERMES_TUI_DIR).toBe('C:\\repo\\Hermes\\ui-tui');
-    expect(launch.env.TERMINAL_CWD).toBe(launch.cwd);
+    expect(launch.env.HERMES_TUI_DIR).toBeUndefined();
+    expect(launch.env.TERMINAL_CWD).toBeUndefined();
+    expect(launch.env.TERM).toBeUndefined();
     expect(workspaceRoot.resolveProductChatWorkingDirectory).not.toHaveBeenCalled();
     expect(launch.env.HERMES_EPHEMERAL_SYSTEM_PROMPT).toBeUndefined();
     expect(launch.env.HERMES_AGENT_TERMINAL_CONFIG).toBeUndefined();
@@ -118,8 +114,8 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
   });
 
   it.each([
-    ['hermes executable', (target: string) => !target.endsWith('python.exe'), 'agent_terminal_hermes_executable_missing'],
-    ['profile', (target: string) => !target.endsWith('config.yaml'), 'agent_terminal_profile_missing'],
+    ['hermes executable', (target: string) => !target.endsWith('python.exe'), 'card_runtime_hermes_executable_missing'],
+    ['profile', (target: string) => !target.endsWith('config.yaml'), 'card_runtime_profile_missing'],
   ])('fails truthfully when the saved %s is unavailable', (_name, availability, error) => {
     hermesFs.existsSync.mockImplementation(availability);
     const card = savedCard();
@@ -147,8 +143,8 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
     const card = savedCard({ runtimeOptions: {
       ...savedCard().runtimeOptions, providerModelId: undefined,
     } });
-    expect(prepareAgentTerminal(owner, card, savedDeck(card), 'session-1').tuiArgs)
-      .toContain('saved-model-key');
+    expect(prepareAgentTerminal(owner, card, savedDeck(card), 'session-1').providerSelection.model)
+      .toBe('saved-model-key');
   });
 
   it('forwards only an explicitly saved hermes subagent type to profile materialization', () => {

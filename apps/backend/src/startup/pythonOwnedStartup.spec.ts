@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   deriveAutomaticHermesCardIds,
-  reconcileConnectedAgentTerminals,
-  requestConnectedAgentTerminalReconcile,
+  reconcileConnectedCardRuntimes,
+  requestConnectedCardRuntimeReconcile,
   runPythonOwnedStartupTasks,
 } from './pythonOwnedStartup';
 
@@ -79,7 +79,7 @@ describe('Python-owned backend startup', () => {
       runtimeOptions: {}, position: { x: 0, y: 0 } };
     const controller = { id: 'controller', templateId: 'template_worker', title: 'Controller',
       kind: 'agent', runtime: { kind: 'hermes', mode: 'delegate', profile: 'controller-profile' },
-      runtimeOptions: {}, position: { x: 1, y: 1 } };
+      runtimeOptions: { orchestrator: true }, position: { x: 1, y: 1 } };
     const connected = { id: 'worker', templateId: 'template_worker', title: 'Worker', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker-profile' }, position: { x: 2, y: 2 } };
     const builder = { id: 'builder', templateId: 'template_assist', title: 'Builder',
@@ -116,25 +116,15 @@ describe('Python-owned backend startup', () => {
       ] } as any;
 
     const botProfiles = [
-      { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
-        botEnabled: true, roster: ['builder-profile'] },
-      { cardId: 'controller', cardRevisionId: '', profile: 'controller-profile', title: 'Controller',
-        botEnabled: true, roster: [] },
-      { cardId: 'worker', cardRevisionId: '', profile: 'worker-profile', title: 'Worker',
-        botEnabled: true, roster: [] },
-      { cardId: 'builder', cardRevisionId: '', profile: 'builder-profile', title: 'Builder',
-        botEnabled: true, roster: [] },
-      { cardId: 'mag-worker-a', cardRevisionId: '', profile: 'mag-worker-a-profile', title: 'Mag worker A',
-        botEnabled: true, roster: [] },
-      { cardId: 'mag-worker-b', cardRevisionId: '', profile: 'mag-worker-b-profile', title: 'Mag worker B',
-        botEnabled: true, roster: [] },
-      { cardId: 'idle', cardRevisionId: '', profile: 'idle-profile', title: 'Idle',
-        botEnabled: true, roster: [] },
-      { cardId: 'disabled', cardRevisionId: '', profile: 'disabled-profile', title: 'Disabled',
-        botEnabled: false, roster: [] },
+      { cardId: 'main-card', profile: 'main-profile', botEnabled: true, roster: ['builder-profile'] },
+      { cardId: 'controller', profile: 'controller-profile', botEnabled: true, roster: ['worker-profile'] },
+      { cardId: 'worker', profile: 'worker-profile', botEnabled: false, roster: [] },
+      { cardId: 'builder', profile: 'builder-profile', botEnabled: false, roster: [] },
+      { cardId: 'idle', profile: 'idle-profile', botEnabled: false, roster: [] },
     ];
     expect([...deriveAutomaticHermesCardIds(deck, botProfiles)]).toEqual([
-      'builder', 'mag-one', 'mag-worker-a', 'mag-worker-b',
+      'main-card', 'builder', 'controller', 'worker',
+      'mag-one', 'mag-worker-a', 'mag-worker-b',
     ]);
     const disabledBusDeck = {
       ...deck,
@@ -148,7 +138,7 @@ describe('Python-owned backend startup', () => {
     expect(disabledBusDemand.has('mag-worker-b')).toBe(false);
   });
 
-  it('keeps a direct target demanded only while Main projects it in the roster', () => {
+  it('opens Main and the exact target selected by an enabled outbound orange wire', () => {
     const main = { id: 'main-card', templateId: 'controller', title: 'Main', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main-profile' },
       runtimeOptions: {}, position: { x: 0, y: 0 } };
@@ -157,14 +147,17 @@ describe('Python-owned backend startup', () => {
     const base = { id: 'deck', name: 'Deck', version: 1, promptTemplates: [],
       nodes: [main, target], edges: [] } as any;
 
-    const projection = (roster: string[]) => [
-      { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
-        botEnabled: true, roster },
-      { cardId: 'target', cardRevisionId: '', profile: 'target-profile', title: 'Target',
-        botEnabled: true, roster: [] },
-    ];
-    expect(deriveAutomaticHermesCardIds(base, projection(['target-profile'])).has('target')).toBe(true);
-    expect(deriveAutomaticHermesCardIds(base, projection([])).has('target')).toBe(false);
+    expect(deriveAutomaticHermesCardIds({
+      ...base,
+      edges: [{ id: 'main-target', source: 'main-card', target: 'target', edgeType: 'flow' }],
+    }, [
+      { cardId: 'main-card', profile: 'main-profile', botEnabled: true, roster: ['target-profile'] },
+      { cardId: 'target', profile: 'target-profile', botEnabled: false, roster: [] },
+    ])).toEqual(new Set(['main-card', 'target']));
+    expect(deriveAutomaticHermesCardIds(base, [
+      { cardId: 'main-card', profile: 'main-profile', botEnabled: true, roster: [] },
+      { cardId: 'target', profile: 'target-profile', botEnabled: false, roster: [] },
+    ])).toEqual(new Set(['main-card']));
   });
 
   it('passes exact Card identities and structural presentation workspaces to the existing manager', async () => {
@@ -196,7 +189,7 @@ describe('Python-owned backend startup', () => {
       status: 'running', cols: 120, rows: 36,
       })));
 
-    const states = await reconcileConnectedAgentTerminals({
+    const states = await reconcileConnectedCardRuntimes({
       listProjects: async () => [{ id: 'project', name: 'Project', code: null,
         status: 'active', project_type: 'agent', ownerUserId: 'owner' }],
       loadProject: async () => ({ decks: { deck }, meta: { decks: {} } }),
@@ -204,11 +197,11 @@ describe('Python-owned backend startup', () => {
         { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
           botEnabled: true, roster: ['worker-profile', 'builder-profile'] },
         { cardId: 'worker', cardRevisionId: '', profile: 'worker-profile', title: 'Worker',
-          botEnabled: true, roster: [] },
+          botEnabled: false, roster: [] },
         { cardId: 'builder', cardRevisionId: '', profile: 'builder-profile', title: 'Builder',
-          botEnabled: true, roster: [] },
+          botEnabled: false, roster: [] },
         { cardId: 'idle', cardRevisionId: '', profile: 'idle-profile', title: 'Idle',
-          botEnabled: true, roster: [] },
+          botEnabled: false, roster: [] },
       ],
       listCanonicalBindings: async () => [main, connected, builder, disconnected, magOne]
         .map((card) => ({
@@ -221,18 +214,24 @@ describe('Python-owned backend startup', () => {
       builderWorkingDirectory: () => 'C:\\repository',
     });
 
-    expect(states.map((state) => state.cardId)).toEqual(['worker', 'builder', 'mag-one']);
+    expect(states.map((state) => state.cardId)).toEqual([
+      'main-card', 'worker', 'builder', 'mag-one',
+    ]);
     const desired = reconcile.mock.calls[0][0];
     expect(desired.map((entry: any) => entry.owner)).toEqual([
+      { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'main-card', conversationId: 'main' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'worker' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'builder' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'mag-one' },
     ]);
-    expect(desired[0]).toMatchObject({ attachTui: true });
-    expect(desired[0]).not.toHaveProperty('workingDirectory');
-    expect(desired[1]).toMatchObject({ workingDirectory: 'C:\\repository', attachTui: true });
-    expect(desired[2]).toMatchObject({ attachTui: false });
-    expect(desired[2]).not.toHaveProperty('workingDirectory');
+    expect(desired[0].attachTui).toBe(false);
+    expect(desired[0].workingDirectory).toContain('LiquidAIty\\workspaces\\main');
+    expect(desired[1].attachTui).toBe(true);
+    expect(desired[1]).not.toHaveProperty('workingDirectory');
+    expect(desired[2].attachTui).toBe(true);
+    expect(desired[2].workingDirectory).toBe('C:\\repository');
+    expect(desired[3].attachTui).toBe(false);
+    expect(desired[3]).not.toHaveProperty('workingDirectory');
     const canonicalBindings = reconcile.mock.calls[0][2] as Array<{
       card: { id: string };
       owner: Record<string, unknown>;
@@ -244,7 +243,7 @@ describe('Python-owned backend startup', () => {
       .not.toHaveProperty('conversationId');
   });
 
-  it('keeps Main bot projection authoritative without terminal reconciliation', async () => {
+  it('opens one canonical headless Main runtime while keeping one authoritative Bot projection', async () => {
     const shared = {
       id: 'card_main_chat', templateId: 'template_main_chat', title: 'Main', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
@@ -260,7 +259,7 @@ describe('Python-owned backend startup', () => {
       _botProfiles?: any[],
     ) => []);
 
-    await reconcileConnectedAgentTerminals({
+    await reconcileConnectedCardRuntimes({
       // Deliberately reverse lexical order to prove the activation anchor is
       // deterministic rather than whichever Project was most recently updated.
       listProjects: async () => [
@@ -291,7 +290,17 @@ describe('Python-owned backend startup', () => {
     const reconcileCall = reconcile.mock.calls[0];
     expect(reconcileCall).toBeDefined();
     const desired = reconcileCall![0];
-    expect(desired).toEqual([]);
+    expect(desired).toHaveLength(2);
+    expect(desired[0].owner).toEqual({
+      userId: 'owner', projectId: 'project-a', deckId: 'deck-a',
+      cardId: 'card_main_chat', conversationId: 'main',
+    });
+    expect(desired[0].openAtReconcile).toBe(true);
+    expect(desired[1].owner).toEqual({
+      userId: 'owner', projectId: 'project-b', deckId: 'deck-b',
+      cardId: 'card_main_chat', conversationId: 'main',
+    });
+    expect(desired[1].openAtReconcile).toBe(false);
     const botProfiles = reconcileCall![2];
     expect(botProfiles).toHaveLength(1);
     expect(botProfiles![0].owner.projectId).toBe('project-a');
@@ -311,8 +320,8 @@ describe('Python-owned backend startup', () => {
       reconcile: reconcile as any,
     };
 
-    const first = requestConnectedAgentTerminalReconcile(dependencies);
-    const second = requestConnectedAgentTerminalReconcile(dependencies);
+    const first = requestConnectedCardRuntimeReconcile(dependencies);
+    const second = requestConnectedCardRuntimeReconcile(dependencies);
     await vi.waitFor(() => expect(reconcile).toHaveBeenCalledTimes(1));
     releaseFirst();
     await Promise.all([first, second]);

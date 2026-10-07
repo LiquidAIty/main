@@ -215,7 +215,7 @@ function persistedKnowGraphJev(properties: Record<string, unknown>): Record<stri
 
 export function portableKnowGraphFact(
   factUuid: string,
-  nativeRelationshipType: string,
+  graphitiRelationshipType: string,
   properties: Record<string, unknown>,
   source: { uuid: string; name: string },
   target: { uuid: string; name: string },
@@ -227,11 +227,11 @@ export function portableKnowGraphFact(
   return {
     ...properties,
     authority: 'know',
-    nativeStore: 'graphiti/neo4j',
+    graphitiStore: 'neo4j',
     portableKind: 'know',
-    nativeFactUuid: factUuid,
-    nativeRelationshipType,
-    nativeRelation: String(properties.name || nativeRelationshipType || 'Fact'),
+    graphitiFactUuid: factUuid,
+    graphitiRelationshipType,
+    graphitiRelation: String(properties.name || graphitiRelationshipType || 'Fact'),
     fact: String(properties.fact || ''),
     sourceEntity: source,
     targetEntity: target,
@@ -245,7 +245,7 @@ export function portableKnowGraphFact(
     ...(jev ? {
       jevCanonicalRelation: jev.winner,
       relationship_strength: jev.label_confidence,
-      jev: { nativeFactUuid: factUuid, ...jev },
+      jev: { graphitiFactUuid: factUuid, ...jev },
     } : {}),
   };
 }
@@ -294,7 +294,7 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
 
     // Graphiti namespaces project data with the canonical prefix defined by
     // services/knowgraph/graphiti_identity.py. Keep aliases for legacy data,
-    // but always include the namespace used by the live native importer.
+    // but always include the namespace used by the live Graphiti importer.
     if (/^[A-Za-z0-9_-]+$/.test(value) && !value.startsWith('liquidaity-')) {
       scopeIds.add(`liquidaity-${value}`);
     }
@@ -469,14 +469,14 @@ async function queryKnowGraphProject(projectId: string, limit: number): Promise<
       upsertNode(record.get('from_id'), record.get('from_labels'), record.get('from_props'));
       upsertNode(record.get('to_id'), record.get('to_labels'), record.get('to_props'));
 
-      const nativeRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
-      const nativeProperties = boundedKnowGraphProperties(record.get('rel_props'));
+      const graphitiRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
+      const graphitiProperties = boundedKnowGraphProperties(record.get('rel_props'));
       const sourceName = neoNodeLabel(fromId, boundedKnowGraphProperties(record.get('from_props')));
       const targetName = neoNodeLabel(toId, boundedKnowGraphProperties(record.get('to_props')));
       const properties = portableKnowGraphFact(
         relId,
-        nativeRelationshipType,
-        nativeProperties,
+        graphitiRelationshipType,
+        graphitiProperties,
         { uuid: fromId, name: sourceName },
         { uuid: toId, name: targetName },
       );
@@ -484,7 +484,7 @@ async function queryKnowGraphProject(projectId: string, limit: number): Promise<
         id: relId,
         from: fromId,
         to: toId,
-        type: String(properties.jevCanonicalRelation || properties.nativeRelation || nativeRelationshipType),
+        type: String(properties.jevCanonicalRelation || properties.graphitiRelation || graphitiRelationshipType),
         source: 'know',
         properties,
       });
@@ -618,14 +618,14 @@ async function queryKnowGraphExpand(
       upsertNode(record.get('from_id'), record.get('from_labels'), record.get('from_props'));
       upsertNode(record.get('to_id'), record.get('to_labels'), record.get('to_props'));
 
-      const nativeRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
-      const nativeProperties = boundedKnowGraphProperties(record.get('rel_props'));
+      const graphitiRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
+      const graphitiProperties = boundedKnowGraphProperties(record.get('rel_props'));
       const sourceName = neoNodeLabel(fromId, boundedKnowGraphProperties(record.get('from_props')));
       const targetName = neoNodeLabel(toId, boundedKnowGraphProperties(record.get('to_props')));
       const properties = portableKnowGraphFact(
         relId,
-        nativeRelationshipType,
-        nativeProperties,
+        graphitiRelationshipType,
+        graphitiProperties,
         { uuid: fromId, name: sourceName },
         { uuid: toId, name: targetName },
       );
@@ -633,7 +633,7 @@ async function queryKnowGraphExpand(
         id: relId,
         from: fromId,
         to: toId,
-        type: String(properties.jevCanonicalRelation || properties.nativeRelation || nativeRelationshipType),
+        type: String(properties.jevCanonicalRelation || properties.graphitiRelation || graphitiRelationshipType),
         source: 'know',
         properties,
       });
@@ -918,7 +918,7 @@ router.post('/reconcile-jev-annotations', async (req, res) => {
       });
     }
     const requestedProjectId = String(req.body?.project_id || '').trim();
-    const rawFactIds = req.body?.native_fact_uuids ?? [];
+    const rawFactIds = req.body?.graphiti_fact_uuids ?? [];
     if (
       !requestedProjectId
       || !Array.isArray(rawFactIds)
@@ -927,7 +927,7 @@ router.post('/reconcile-jev-annotations', async (req, res) => {
     ) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'project_id and at most 64 native_fact_uuids are required.' },
+        error: { message: 'project_id and at most 64 graphiti_fact_uuids are required.' },
       });
     }
     const projectId = await resolveAuthenticatedKnowGraphProjectId(
@@ -940,7 +940,7 @@ router.post('/reconcile-jev-annotations', async (req, res) => {
         error: { message: 'KnowGraph project not found for the authenticated user.' },
       });
     }
-    const nativeFactUuids = Array.from(new Set(
+    const graphitiFactUuids = Array.from(new Set(
       rawFactIds.map((value: string) => value.trim()),
     ));
     const response = await fetch(`${knowgraphBaseUrl()}/reconcile_jev_annotations`, {
@@ -948,7 +948,7 @@ router.post('/reconcile-jev-annotations', async (req, res) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         project_id: projectId,
-        native_fact_uuids: nativeFactUuids,
+        graphiti_fact_uuids: graphitiFactUuids,
       }),
       signal: AbortSignal.timeout(180_000),
     });
@@ -961,7 +961,7 @@ router.post('/reconcile-jev-annotations', async (req, res) => {
   }
 });
 
-router.post('/delete-native', async (req, res) => {
+router.post('/delete-fact', async (req, res) => {
   try {
     const userId = String((req as any).userId || '').trim();
     if (!userId) {
@@ -971,12 +971,12 @@ router.post('/delete-native', async (req, res) => {
       });
     }
     const requestedProjectId = String(req.body?.project_id || '').trim();
-    const nativeId = String(req.body?.native_id || '').trim();
+    const graphitiFactUuid = String(req.body?.graphiti_fact_uuid || '').trim();
     const kind = req.body?.kind === 'fact' ? 'fact' : '';
-    if (!requestedProjectId || !nativeId || !kind) {
+    if (!requestedProjectId || !graphitiFactUuid || !kind) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'project_id, native_id, and kind are required.' },
+        error: { message: 'project_id, graphiti_fact_uuid, and kind are required.' },
       });
     }
     const projectId = await resolveAuthenticatedKnowGraphProjectId(userId, requestedProjectId);
@@ -986,10 +986,10 @@ router.post('/delete-native', async (req, res) => {
         error: { message: 'KnowGraph project not found for the authenticated user.' },
       });
     }
-    const response = await fetch(`${knowgraphBaseUrl()}/delete_native`, {
+    const response = await fetch(`${knowgraphBaseUrl()}/delete_fact`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, native_id: nativeId, kind }),
+      body: JSON.stringify({ project_id: projectId, graphiti_fact_uuid: graphitiFactUuid, kind }),
       signal: AbortSignal.timeout(30_000),
     });
     return res.status(response.status).json(await readResponseDataSafe(response));

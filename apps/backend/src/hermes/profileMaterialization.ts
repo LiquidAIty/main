@@ -34,7 +34,12 @@ export async function configureHermesBotProfile(
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)
     || projection.cardId !== owner.cardId
     || projection.cardId !== card.id
-    || projection.profile !== profile) {
+    || projection.profile !== profile
+    || (projection.botEnabled === false && projection.roster.length > 0)
+    || projection.roster.some((name) => (
+      !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(name) || name === profile
+    ))
+    || new Set(projection.roster).size !== projection.roster.length) {
     throw new Error('hermes_bot_profile_identity_mismatch');
   }
   if (card._cardRevisionId && projection.cardRevisionId
@@ -54,29 +59,51 @@ export async function configureHermesBotProfile(
   const desired = projection.botEnabled
     ? { ...existing, title: String(card.title || card.id).trim() || card.id }
     : null;
-  const changed = projection.botEnabled
+  const uiMetaChanged = projection.botEnabled
     ? JSON.stringify(existing) !== JSON.stringify(desired)
     : Object.prototype.hasOwnProperty.call(uiMeta, 'hermes-bots');
-  if (changed) {
+  const described = object(await request<unknown>('profiles.describe', { name: profile }));
+  if (described.name !== profile) throw new Error('hermes_bot_profile_identity_invalid');
+  const existingRoster = described.bot_mode_roster;
+  if (existingRoster !== null && (
+    !Array.isArray(existingRoster)
+    || existingRoster.some((name) => typeof name !== 'string')
+  )) throw new Error('hermes_bot_profile_roster_invalid');
+  const desiredRoster = projection.botEnabled ? [...projection.roster] : [];
+  const rosterChanged = !Array.isArray(existingRoster)
+    || JSON.stringify(existingRoster) !== JSON.stringify(desiredRoster);
+  if (uiMetaChanged || rosterChanged) {
     const revisions = object(current.ui_meta_revisions);
     const revision = revisions['hermes-bots'];
-    if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
+    if (uiMetaChanged && revision != null
+      && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
       throw new Error('hermes_bot_profile_revision_invalid');
     }
     const configured = object(await request<unknown>('profiles.configure', {
       name: profile,
-      ui_meta: { 'hermes-bots': desired },
-      ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
+      ...(uiMetaChanged ? {
+        ui_meta: { 'hermes-bots': desired },
+        ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
+      } : {}),
+      ...(rosterChanged ? { bot_mode_roster: desiredRoster } : {}),
     }));
-    if (configured.ok !== true || object(configured.applied).ui_meta !== true) {
+    const applied = object(configured.applied);
+    if (configured.ok !== true
+      || (uiMetaChanged && applied.ui_meta !== true)
+      || (rosterChanged && applied.bot_mode_roster !== true)) {
       throw new Error('hermes_bot_profile_configuration_failed');
     }
   }
   const readback = await findProfile();
   const readbackMeta = object(object(readback.ui_meta)['hermes-bots']);
-  if (projection.botEnabled) {
+    if (projection.botEnabled) {
     if (readbackMeta.title !== desired?.title) throw new Error('hermes_bot_profile_readback_failed');
   } else if (Object.prototype.hasOwnProperty.call(object(readback.ui_meta), 'hermes-bots')) {
+    throw new Error('hermes_bot_profile_readback_failed');
+  }
+  const rosterReadback = object(await request<unknown>('profiles.describe', { name: profile }));
+  if (rosterReadback.name !== profile
+    || JSON.stringify(rosterReadback.bot_mode_roster) !== JSON.stringify(desiredRoster)) {
     throw new Error('hermes_bot_profile_readback_failed');
   }
 }

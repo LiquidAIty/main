@@ -88,7 +88,7 @@ describe('BuilderChat', () => {
     const onSubjectFocus = vi.fn();
     const targets = new Map(['Electron', 'Neutron', 'Rocket Lab'].map(name => [name, {
       canonicalName: name,
-      members: [{ authority: 'thinkgraph', nativeId: `native-${name}` }],
+      members: [{ authority: 'thinkgraph', entityId: `entity-${name}` }],
     }]));
     const subjectMatcher = {
       revisionKey: 'markdown-link-proof',
@@ -141,7 +141,7 @@ describe('BuilderChat', () => {
     expect(onSubjectFocus).toHaveBeenCalledWith(targets.get('Rocket Lab'));
   });
 
-  it('shows a quiet activity indicator while the native turn is connecting', () => {
+  it('shows a quiet activity indicator while the provider turn is connecting', () => {
     render(
       <BuilderChat
         connecting
@@ -192,7 +192,7 @@ describe('BuilderChat', () => {
     expect(onVoiceStop).toHaveBeenCalledOnce();
   });
 
-  it('shows native history rejoin and prevents a send until it completes', () => {
+  it('shows provider history rejoin and prevents a send until it completes', () => {
     const onSend = vi.fn();
     render(
       <BuilderChat
@@ -548,7 +548,7 @@ describe('BuilderChat', () => {
     expect(scroller.scrollTop).toBe(readerPosition);
   });
 
-  it('shows a native transport failure as status instead of assistant speech', () => {
+  it('shows a provider transport failure as status instead of assistant speech', () => {
     render(
       <BuilderChat
         messages={[]}
@@ -563,4 +563,5 @@ describe('BuilderChat', () => {
       .toBe('card_tools_unavailable:cbm.search_graph');
     expect(screen.queryAllByText('card_tools_unavailable:cbm.search_graph')).toHaveLength(1);
   });
+
 });

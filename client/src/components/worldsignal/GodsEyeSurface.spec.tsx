@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import GodsEyeSurface, { type GodsEyeBridge } from './GodsEyeSurface';
 
-const native = vi.hoisted(() => ({
+const runtime = vi.hoisted(() => ({
   load: vi.fn(),
   destroy: vi.fn(),
   attachInspectorControls: vi.fn(),
@@ -18,36 +18,36 @@ const native = vi.hoisted(() => ({
   getVisualReadiness: vi.fn(),
 }));
 
-vi.mock('./loadWorldViewNative', () => ({
-  loadWorldViewNative: native.load,
+vi.mock('./loadWorldViewRuntime', () => ({
+  loadWorldViewRuntime: runtime.load,
 }));
 
 const scope = { projectId: 'project-1', cardId: 'card-worldview' };
 
 function handle() {
   return {
-    destroy: native.destroy,
-    attachInspectorControls: native.attachInspectorControls,
-    selectInspectorTab: native.selectInspectorTab,
-    setLayerVisibility: native.setLayerVisibility,
-    setSatelliteParams: native.setSatelliteParams,
-    focusSelection: native.focusSelection,
-    getVisualReadiness: native.getVisualReadiness,
+    destroy: runtime.destroy,
+    attachInspectorControls: runtime.attachInspectorControls,
+    selectInspectorTab: runtime.selectInspectorTab,
+    setLayerVisibility: runtime.setLayerVisibility,
+    setSatelliteParams: runtime.setSatelliteParams,
+    focusSelection: runtime.focusSelection,
+    getVisualReadiness: runtime.getVisualReadiness,
   };
 }
 
 beforeEach(() => {
-  native.destroy.mockReset().mockResolvedValue(undefined);
-  native.detachInspectorControls.mockReset();
-  native.attachInspectorControls.mockReset().mockImplementation(() => ({
-    detach: native.detachInspectorControls,
+  runtime.destroy.mockReset().mockResolvedValue(undefined);
+  runtime.detachInspectorControls.mockReset();
+  runtime.attachInspectorControls.mockReset().mockImplementation(() => ({
+    detach: runtime.detachInspectorControls,
   }));
-  native.selectInspectorTab.mockReset().mockReturnValue(true);
-  native.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
-  native.setSatelliteParams.mockReset().mockReturnValue('satellite-params-1');
-  native.focusSelection.mockReset().mockReturnValue('focus-request-1');
-  native.getVisualReadiness.mockReset().mockReturnValue(null);
-  native.load.mockReset().mockResolvedValue(handle());
+  runtime.selectInspectorTab.mockReset().mockReturnValue(true);
+  runtime.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
+  runtime.setSatelliteParams.mockReset().mockReturnValue('satellite-params-1');
+  runtime.focusSelection.mockReset().mockReturnValue('focus-request-1');
+  runtime.getVisualReadiness.mockReset().mockReturnValue(null);
+  runtime.load.mockReset().mockResolvedValue(handle());
 });
 
 afterEach(() => {
@@ -55,11 +55,11 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('WorldView direct native mount', () => {
+describe('WorldView direct WorldView runtime mount', () => {
   it('mounts into the React-owned root without an iframe', async () => {
     render(<GodsEyeSurface {...scope} />);
-    await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
-    const [root, config] = native.load.mock.calls[0];
+    await waitFor(() => expect(runtime.load).toHaveBeenCalledTimes(1));
+    const [root, config] = runtime.load.mock.calls[0];
     expect(root).toBe(document.getElementById('worldview-native-root'));
     expect(config).toEqual(expect.objectContaining(scope));
     expect(document.querySelector('iframe')).toBeNull();
@@ -68,12 +68,12 @@ describe('WorldView direct native mount', () => {
     expect(screen.getByLabelText('WorldView globe').contains(root)).toBe(true);
   });
 
-  it('does not expose commands until the native lifecycle has settled', async () => {
+  it('does not expose commands until the WorldView lifecycle has settled', async () => {
     let resolveMount!: (value: ReturnType<typeof handle>) => void;
-    native.load.mockReturnValue(new Promise((resolve) => { resolveMount = resolve; }));
+    runtime.load.mockReturnValue(new Promise((resolve) => { resolveMount = resolve; }));
     const ref = createRef<GodsEyeBridge>();
     render(<GodsEyeSurface ref={ref} {...scope} />);
-    await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtime.load).toHaveBeenCalledTimes(1));
     expect(ref.current?.setLayerVisibility('earthquakes', true)).toBeNull();
     expect(ref.current?.setSatelliteParams({ catalog: 'dense' })).toBeNull();
     const host = document.createElement('div');
@@ -82,34 +82,34 @@ describe('WorldView direct native mount', () => {
 
     await act(async () => resolveMount(handle()));
     expect(ref.current?.attachInspectorControls(host)).toEqual({
-      detach: native.detachInspectorControls,
+      detach: runtime.detachInspectorControls,
     });
     expect(ref.current?.selectInspectorTab('view')).toBe(true);
-    expect(native.attachInspectorControls).toHaveBeenCalledExactlyOnceWith(host);
-    expect(native.selectInspectorTab).toHaveBeenCalledExactlyOnceWith('view');
+    expect(runtime.attachInspectorControls).toHaveBeenCalledExactlyOnceWith(host);
+    expect(runtime.selectInspectorTab).toHaveBeenCalledExactlyOnceWith('view');
     expect(ref.current?.setLayerVisibility('earthquakes', true, {
       exitIncompatibleContext: true,
     })).toBe('layer-request-1');
-    expect(native.setLayerVisibility).toHaveBeenCalledExactlyOnceWith(
+    expect(runtime.setLayerVisibility).toHaveBeenCalledExactlyOnceWith(
       'earthquakes',
       true,
       { exitIncompatibleContext: true },
     );
     expect(ref.current?.setSatelliteParams({ catalog: 'dense', showPoints: true, showOrbits: true }))
       .toBe('satellite-params-1');
-    expect(native.setSatelliteParams).toHaveBeenCalledExactlyOnceWith({
+    expect(runtime.setSatelliteParams).toHaveBeenCalledExactlyOnceWith({
       catalog: 'dense', showPoints: true, showOrbits: true,
     });
   });
 
   it('publishes readiness only after the mounted handle is command-ready', async () => {
     let resolveMount!: (value: ReturnType<typeof handle>) => void;
-    native.load.mockReturnValue(new Promise((resolve) => { resolveMount = resolve; }));
+    runtime.load.mockReturnValue(new Promise((resolve) => { resolveMount = resolve; }));
     const onReady = vi.fn();
     const ref = createRef<GodsEyeBridge>();
     render(<GodsEyeSurface ref={ref} {...scope} onReady={onReady} />);
-    await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
-    const callbacks = native.load.mock.calls[0][1].callbacks;
+    await waitFor(() => expect(runtime.load).toHaveBeenCalledTimes(1));
+    const callbacks = runtime.load.mock.calls[0][1].callbacks;
     act(() => callbacks.onReady('0.1.1'));
     expect(onReady).not.toHaveBeenCalled();
 
@@ -121,22 +121,22 @@ describe('WorldView direct native mount', () => {
     })).toBe('focus-request-1');
   });
 
-  it('destroys the native lifecycle on React unmount', async () => {
+  it('destroys the WorldView lifecycle on React unmount', async () => {
     const view = render(<GodsEyeSurface {...scope} />);
-    await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtime.load).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(document.getElementById('worldview-native-root')).toBeTruthy());
     view.unmount();
-    expect(native.destroy).toHaveBeenCalledTimes(1);
+    expect(runtime.destroy).toHaveBeenCalledTimes(1);
   });
 
   it('reports mount failure without substituting another runtime', async () => {
-    native.load.mockRejectedValue(new Error('webgl unavailable'));
+    runtime.load.mockRejectedValue(new Error('webgl unavailable'));
     const onError = vi.fn();
     render(<GodsEyeSurface {...scope} onError={onError} />);
     expect(await screen.findByText('WorldView could not start')).toBeTruthy();
     expect(screen.getByText('webgl unavailable')).toBeTruthy();
     expect(onError).toHaveBeenCalledWith({
-      code: 'worldview_native_mount_failed',
+      code: 'worldview_runtime_mount_failed',
       message: 'webgl unavailable',
     });
     expect(document.querySelector('iframe')).toBeNull();
@@ -144,8 +144,8 @@ describe('WorldView direct native mount', () => {
 
   it('shows visual fallback progress and fails honestly when no fallback frame arrives', async () => {
     render(<GodsEyeSurface {...scope} />);
-    await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
-    const callbacks = native.load.mock.calls[0][1].callbacks;
+    await waitFor(() => expect(runtime.load).toHaveBeenCalledTimes(1));
+    const callbacks = runtime.load.mock.calls[0][1].callbacks;
 
     act(() => callbacks.onVisualReadinessChange({
       phase: 'waiting-for-fallback-frame',

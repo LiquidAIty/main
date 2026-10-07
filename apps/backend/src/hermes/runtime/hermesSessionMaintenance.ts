@@ -4,7 +4,7 @@ const SETTLEMENT_TIMEOUT_MS = 5_000;
 
 export type SessionCompactionReceipt = {
   status: 'compressed' | 'aborted' | 'unavailable' | 'failed';
-  terminalSessionId: string;
+  runtimeSessionId: string;
   hermesSessionId: string;
   storedSessionId: string;
   profile: string;
@@ -33,16 +33,16 @@ function requestError(error: unknown): string {
   const code = typeof value.code === 'number' && Number.isSafeInteger(value.code)
     ? value.code
     : null;
-  if (code === 4009) return 'agent_terminal_context_compaction_hermes_session_busy';
-  if (code === -32601) return 'agent_terminal_context_compaction_hermes_method_unavailable';
+  if (code === 4009) return 'card_runtime_context_compaction_hermes_session_busy';
+  if (code === -32601) return 'card_runtime_context_compaction_hermes_method_unavailable';
   if (code !== null) {
-    return `agent_terminal_context_compaction_hermes_rpc_${code < 0 ? `negative_${Math.abs(code)}` : code}`;
+    return `card_runtime_context_compaction_hermes_rpc_${code < 0 ? `negative_${Math.abs(code)}` : code}`;
   }
   const message = typeof value.message === 'string' ? value.message.trim() : '';
   if (/^request timed out after \d+s: session\.compress$/i.test(message)) {
-    return 'agent_terminal_context_compaction_request_timeout';
+    return 'card_runtime_context_compaction_request_timeout';
   }
-  return 'agent_terminal_context_compaction_request_failed';
+  return 'card_runtime_context_compaction_request_failed';
 }
 
 export class HermesSessionMaintenance {
@@ -66,7 +66,7 @@ export class HermesSessionMaintenance {
     onReceipt?: (receipt: SessionCompactionReceipt) => void,
   ): Promise<SessionCompactionReceipt> {
     const base = (): Omit<SessionCompactionReceipt, 'status' | 'errorCode'> => ({
-      terminalSessionId: String(expected?.sessionId || ''),
+      runtimeSessionId: String(expected?.sessionId || ''),
       hermesSessionId: String(expected?.hermesSessionId || ''),
       storedSessionId: String(expected?.storedSessionId || ''),
       profile: String(expected?.profile || ''),
@@ -93,7 +93,7 @@ export class HermesSessionMaintenance {
       || (expected.completedHermesRunId !== null
         && (typeof expected.completedHermesRunId !== 'string'
           || !expected.completedHermesRunId.trim()))) {
-      return immediate('failed', 'agent_terminal_context_compaction_identity_invalid');
+      return immediate('failed', 'card_runtime_context_compaction_identity_invalid');
     }
     const identityMatches = () => (
       this.runtime.state.status === 'running'
@@ -107,39 +107,39 @@ export class HermesSessionMaintenance {
       && this.runtime.state.completedHermesRunId === expected.completedHermesRunId
     );
     if (!identityMatches()) {
-      return immediate('unavailable', 'agent_terminal_context_compaction_identity_changed');
+      return immediate('unavailable', 'card_runtime_context_compaction_identity_changed');
     }
     try {
       if (this.activeContext(this.runtime.state.sessionId) !== null) {
-        return immediate('unavailable', 'agent_terminal_context_compaction_run_active');
+        return immediate('unavailable', 'card_runtime_context_compaction_run_active');
       }
     } catch {
-      return immediate('unavailable', 'agent_terminal_context_compaction_run_state_unavailable');
+      return immediate('unavailable', 'card_runtime_context_compaction_run_state_unavailable');
     }
     const count = (value: unknown): number | null => (
       typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
     );
     const execute = async (): Promise<SessionCompactionReceipt> => {
       if (!identityMatches()) return {
-        ...base(), status: 'unavailable', errorCode: 'agent_terminal_context_compaction_identity_changed',
+        ...base(), status: 'unavailable', errorCode: 'card_runtime_context_compaction_identity_changed',
       };
       if (!await this.waitForSettlement()) return {
-        ...base(), status: 'unavailable', errorCode: 'agent_terminal_context_compaction_settlement_timeout',
+        ...base(), status: 'unavailable', errorCode: 'card_runtime_context_compaction_settlement_timeout',
       };
       if (!identityMatches()) return {
-        ...base(), status: 'unavailable', errorCode: 'agent_terminal_context_compaction_identity_changed',
+        ...base(), status: 'unavailable', errorCode: 'card_runtime_context_compaction_identity_changed',
       };
       try {
         if (this.activeContext(this.runtime.state.sessionId) !== null) return {
-          ...base(), status: 'unavailable', errorCode: 'agent_terminal_context_compaction_run_active',
+          ...base(), status: 'unavailable', errorCode: 'card_runtime_context_compaction_run_active',
         };
       } catch {
         return {
-          ...base(), status: 'unavailable', errorCode: 'agent_terminal_context_compaction_run_state_unavailable',
+          ...base(), status: 'unavailable', errorCode: 'card_runtime_context_compaction_run_state_unavailable',
         };
       }
       if (!turnMatches()) return {
-        ...base(), status: 'unavailable', errorCode: 'agent_terminal_context_compaction_turn_changed',
+        ...base(), status: 'unavailable', errorCode: 'card_runtime_context_compaction_turn_changed',
       };
       let result: unknown;
       try {
@@ -155,8 +155,8 @@ export class HermesSessionMaintenance {
           ...base(),
           status: 'failed',
           errorCode: identityMatches()
-            ? 'agent_terminal_context_compaction_result_invalid'
-            : 'agent_terminal_context_compaction_identity_changed',
+            ? 'card_runtime_context_compaction_result_invalid'
+            : 'card_runtime_context_compaction_identity_changed',
         };
       }
       const value = result as Record<string, unknown>;
@@ -168,7 +168,7 @@ export class HermesSessionMaintenance {
       if ((reportedHermes && reportedHermes !== expected.hermesSessionId)
         || (reportedStored && reportedStored !== expected.storedSessionId)) {
         return {
-          ...base(), status: 'failed', errorCode: 'agent_terminal_context_compaction_identity_changed',
+          ...base(), status: 'failed', errorCode: 'card_runtime_context_compaction_identity_changed',
         };
       }
       const measurements = {
@@ -182,29 +182,29 @@ export class HermesSessionMaintenance {
         return { ...base(), ...measurements, status: 'compressed', errorCode: null };
       }
       if (status === 'aborted') return {
-        ...base(), ...measurements, status: 'aborted', errorCode: 'agent_terminal_context_compaction_aborted',
+        ...base(), ...measurements, status: 'aborted', errorCode: 'card_runtime_context_compaction_aborted',
       };
       if (value.lock_held === true) return {
         ...base(), ...measurements, status: 'unavailable',
-        errorCode: 'agent_terminal_context_compaction_lock_held',
+        errorCode: 'card_runtime_context_compaction_lock_held',
       };
       if (status === 'pending') return {
         ...base(), ...measurements, status: 'unavailable',
-        errorCode: 'agent_terminal_context_compaction_pending',
+        errorCode: 'card_runtime_context_compaction_pending',
       };
       if (value.compressed === false) return {
         ...base(), ...measurements, status: 'unavailable',
-        errorCode: 'agent_terminal_context_compaction_unavailable',
+        errorCode: 'card_runtime_context_compaction_unavailable',
       };
       return {
         ...base(), ...measurements, status: 'failed',
-        errorCode: 'agent_terminal_context_compaction_result_invalid',
+        errorCode: 'card_runtime_context_compaction_result_invalid',
       };
     };
     const attempt = this.runtime.turnTail
       .then(execute, execute)
       .then(deliver, () => deliver({
-        ...base(), status: 'failed', errorCode: 'agent_terminal_context_compaction_request_failed',
+        ...base(), status: 'failed', errorCode: 'card_runtime_context_compaction_request_failed',
       }));
     this.runtime.turnTail = attempt.then(() => undefined, () => undefined);
     return attempt;

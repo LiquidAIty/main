@@ -6,7 +6,7 @@ export type RuntimeIdentity = {
   cardName: string;
   runId: string;
   parentRunId: string | null;
-  nativeChildId: string | null;
+  hermesChildId: string | null;
   taskId?: string | null;
   agentId?: string | null;
   sessionId?: string | null;
@@ -30,7 +30,7 @@ export type RuntimeEvent = RuntimeIdentity & {
 
 /**
  * Main-only semantic view of the saved Main Card's persistent Hermes Gateway event stream.
- * This is a projection of native events, not another transcript or event log.
+ * This is a projection of Hermes events, not another transcript or event log.
  */
 export type MainProjectionCategory =
   | 'conversation.input'
@@ -45,7 +45,7 @@ export type MainProjectionCategory =
 export type MainProjectionEvent = RuntimeEvent & {
   schemaVersion: 'liquidaity.main.projection.v1';
   category: MainProjectionCategory;
-  nativeTurnId: string | null;
+  hermesTurnId: string | null;
   operationId?: string | null;
   provider?: string | null;
   model?: string | null;
@@ -57,7 +57,7 @@ export type RuntimeConfiguration = {
   model: string | null;
   profile: string | null;
   grantedTools: string[] | null;
-  // null means the native adapter has not reported loading; not "no skills".
+  // null means the runtime adapter has not reported loading; not "no skills".
   loadedSkills: string[] | null;
 };
 
@@ -70,5 +70,5 @@ export type RuntimeObservation = RuntimeIdentity & {
   errorCode: string | null;
   errorSummary: string;
   configuration?: RuntimeConfiguration;
-  nativeTasks?: Record<string, unknown>[];
+  hermesTasks?: Record<string, unknown>[];
 };

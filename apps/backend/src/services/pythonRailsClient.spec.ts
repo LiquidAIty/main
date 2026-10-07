@@ -92,16 +92,16 @@ describe('pythonRailsClient', () => {
       ok: false,
       status: 500,
       statusText: 'Internal Server Error',
-      text: async () => JSON.stringify({ detail: 'native_failure' }),
+      text: async () => JSON.stringify({ detail: 'provider_failure' }),
     });
     vi.stubGlobal('fetch', fetchMock as any);
 
     await expect(
       requestPythonRailsJson('/magentic/execution/status', {
         method: 'POST',
-        body: JSON.stringify({ nativeRootId: 't_1' }),
+        body: JSON.stringify({ hermesRootId: 't_1' }),
       }),
-    ).rejects.toThrow('python_rails_http_500:native_failure');
+    ).rejects.toThrow('python_rails_http_500:provider_failure');
     expect(fetchMock).toHaveBeenCalledWith(
       'http://python-rails:8001/magentic/execution/status',
       expect.objectContaining({ method: 'POST' }),
@@ -120,7 +120,7 @@ describe('pythonRailsClient', () => {
     ).rejects.toThrow('PYTHON_RAILS_UNAVAILABLE');
   });
 
-  it('uses the native ThinkGraph neighborhood endpoint without fallback', async () => {
+  it('uses the Engraphis ThinkGraph neighborhood endpoint without fallback', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({

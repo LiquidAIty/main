@@ -20,7 +20,7 @@ const canonicalHostAvailable = Boolean(
 );
 
 describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated HTTP discovery + calls', () => {
-  it('keeps the idle catalog application-owned and free of native external providers', async () => {
+  it('keeps the idle catalog application-owned and free of external providers', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(expect.arrayContaining([
@@ -54,7 +54,7 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(names.some((name) => name.startsWith('graphiti.'))).toBe(false);
   }, 30_000);
 
-  it('late-binds only the native family granted to an authorized Builder turn', async () => {
+  it('late-binds only the provider family granted to an authorized Builder turn', async () => {
     const catalog = await listPythonAgentMcpCatalog({
       kind: 'card-runtime',
       projectId: 'project-one',
@@ -71,7 +71,7 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(search).toMatchObject({
       sourceId: 'cbm',
       namespace: 'cbm',
-      providerName: 'search_graph',
+      providerToolName: 'search_graph',
       connectionKind: 'external-mcp',
       inputSchema: expect.any(Object),
     });

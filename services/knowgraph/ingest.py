@@ -440,11 +440,11 @@ def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
 
 
-def _native_fact_signature(fact: dict[str, Any]) -> str:
+def _graphiti_fact_signature(fact: dict[str, Any]) -> str:
     semantic_identity = {
         "source": fact["sourceEntity"]["uuid"],
         "target": fact["targetEntity"]["uuid"],
-        "native_relation": fact["nativeRelation"],
+        "graphiti_relation": fact["graphitiRelation"],
         "fact": fact["fact"],
     }
     return _sha256_hex(json.dumps(semantic_identity, sort_keys=True, separators=(",", ":")))
@@ -480,7 +480,7 @@ def _graphiti_relationship_vocabulary_guidance(
     labels = [str(label) for label in vocabulary["labels"]]
     existing = str(guidance or "").strip()
     instruction = (
-        "For each native Graphiti relationship name, first prefer an exact predicate "
+        "For each Graphiti relationship name, first prefer an exact predicate "
         "from CURRENT_SHARED_PROJECT_RELATIONSHIP_VOCABULARY when it accurately fits. "
         "If none fits, propose one concise UPPER_SNAKE_CASE predicate: prefer one word, "
         "use two only when necessary, and never exceed three words. Do not invent a "
@@ -511,8 +511,8 @@ async def _call_knowgraph_jev(
         raise RuntimeError("knowgraph_jev_response_invalid")
     if any(not isinstance(item, dict) for item in results):
         raise RuntimeError("knowgraph_jev_response_invalid")
-    requested_ids = [str(fact.get("nativeFactUuid") or "") for fact in facts]
-    returned_ids = [str(item.get("nativeFactUuid") or "") for item in results]
+    requested_ids = [str(fact.get("graphitiFactUuid") or "") for fact in facts]
+    returned_ids = [str(item.get("graphitiFactUuid") or "") for item in results]
     if returned_ids != requested_ids or len(set(returned_ids)) != len(returned_ids):
         raise RuntimeError("knowgraph_jev_response_invalid")
     return results
@@ -529,7 +529,7 @@ async def _existing_jev_metadata(
         MATCH ()-[fact]->()
         WHERE toString(fact.uuid) IN $fact_ids
         RETURN toString(fact.uuid) AS uuid,
-               fact.jev_native_signature AS native_signature,
+               fact.jev_graphiti_signature AS graphiti_signature,
                fact.jev_relation_winner AS winner,
                fact.jev_relation_distribution_json AS distribution_json,
                fact.jev_label_confidence AS label_confidence,
@@ -625,7 +625,7 @@ def _validated_decision_metadata(decision: dict[str, Any]) -> dict[str, Any]:
 def _jev_annotation_is_current(
     metadata: dict[str, Any],
     *,
-    native_signature: str,
+    graphiti_signature: str,
     vocabulary: dict[str, Any],
 ) -> bool:
     try:
@@ -651,7 +651,7 @@ def _jev_annotation_is_current(
         stored_choices = set(validated["choice_options"])
         extra_choices = stored_choices - current_choices
         return (
-            metadata.get("native_signature") == native_signature
+            metadata.get("graphiti_signature") == graphiti_signature
             and metadata.get("question_schema_version")
             == KNOWGRAPH_JEV_QUESTION_SCHEMA_VERSION
             and metadata.get("requested_model") == KNOWGRAPH_JEV_MODEL
@@ -668,8 +668,8 @@ def _jev_annotation_is_current(
 
 async def _persist_jev_metadata(
     graphiti: Any,
-    native_fact_uuid: str,
-    native_signature: str,
+    graphiti_fact_uuid: str,
+    graphiti_signature: str,
     decision: dict[str, Any],
 ) -> dict[str, Any]:
     validated = _validated_decision_metadata(decision)
@@ -678,7 +678,7 @@ async def _persist_jev_metadata(
     result = await graphiti.driver.execute_query(
         """
         MATCH ()-[fact]->()
-        WHERE toString(fact.uuid) = $native_fact_uuid
+        WHERE toString(fact.uuid) = $graphiti_fact_uuid
         SET fact.jev_relation_winner = $winner,
               fact.jev_relation_distribution_json = $distribution_json,
               fact.jev_label_confidence = $label_confidence,
@@ -696,9 +696,9 @@ async def _persist_jev_metadata(
             fact.jev_vocabulary_after_hash = $vocabulary_after_hash,
               fact.jev_vocabulary_after_count = $vocabulary_after_count,
               fact.jev_choice_options_json = $choice_options_json,
-              fact.jev_native_signature = $native_signature
+              fact.jev_graphiti_signature = $graphiti_signature
         RETURN toString(fact.uuid) AS uuid,
-               fact.jev_native_signature AS native_signature,
+               fact.jev_graphiti_signature AS graphiti_signature,
                fact.jev_relation_winner AS winner,
                fact.jev_relation_distribution_json AS distribution_json,
                fact.jev_label_confidence AS label_confidence,
@@ -711,7 +711,7 @@ async def _persist_jev_metadata(
                fact.jev_vocabulary_count AS vocabulary_count,
                fact.jev_choice_options_json AS choice_options_json
         """,
-        native_fact_uuid=native_fact_uuid,
+        graphiti_fact_uuid=graphiti_fact_uuid,
         winner=winner,
         distribution_json=json.dumps(distribution, sort_keys=True, separators=(",", ":")),
         label_confidence=validated["label_confidence"],
@@ -747,10 +747,10 @@ async def _persist_jev_metadata(
         choice_options_json=json.dumps(
             validated["choice_options"], separators=(",", ":")
         ),
-        native_signature=native_signature,
+        graphiti_signature=graphiti_signature,
     )
     records = _records(result)
-    if len(records) != 1 or str(records[0].get("uuid") or "") != native_fact_uuid:
+    if len(records) != 1 or str(records[0].get("uuid") or "") != graphiti_fact_uuid:
         raise RuntimeError("knowgraph_jev_persist_readback_missing")
     return dict(records[0])
 
@@ -762,38 +762,38 @@ async def _reconcile_jev_facts(
     facts: list[dict[str, Any]],
     relationship_vocabulary: dict[str, Any],
 ) -> dict[str, Any]:
-    """Idempotently repair bounded Jev annotations on existing native facts."""
+    """Idempotently repair bounded Jev annotations on existing Graphiti facts."""
     deduplicated: list[dict[str, Any]] = []
     seen: set[str] = set()
     for fact in facts:
-        native_id = str(fact.get("nativeFactUuid") or "").strip()
-        if not native_id or native_id in seen:
+        graphiti_fact_id = str(fact.get("graphitiFactUuid") or "").strip()
+        if not graphiti_fact_id or graphiti_fact_id in seen:
             continue
-        seen.add(native_id)
+        seen.add(graphiti_fact_id)
         deduplicated.append(fact)
 
     existing = await _existing_jev_metadata(
         graphiti,
-        [str(fact["nativeFactUuid"]) for fact in deduplicated],
+        [str(fact["graphitiFactUuid"]) for fact in deduplicated],
     )
     changed: list[dict[str, Any]] = []
     skipped: list[str] = []
     for fact in deduplicated:
-        native_id = str(fact["nativeFactUuid"])
-        signature = _native_fact_signature(fact)
-        fact["_nativeSignature"] = signature
+        graphiti_fact_id = str(fact["graphitiFactUuid"])
+        signature = _graphiti_fact_signature(fact)
+        fact["_graphitiSignature"] = signature
         if _jev_annotation_is_current(
-            existing.get(native_id) or {},
-            native_signature=signature,
+            existing.get(graphiti_fact_id) or {},
+            graphiti_signature=signature,
             vocabulary=relationship_vocabulary,
         ):
-            skipped.append(native_id)
+            skipped.append(graphiti_fact_id)
         else:
             changed.append(fact)
 
     admitted = changed[:MAX_JEV_RECONCILIATION_FACTS]
     unfinished = [
-        str(fact["nativeFactUuid"])
+        str(fact["graphitiFactUuid"])
         for fact in changed[MAX_JEV_RECONCILIATION_FACTS:]
     ]
     decisions: list[dict[str, Any]] = []
@@ -804,7 +804,7 @@ async def _reconcile_jev_facts(
                 {
                     key: value
                     for key, value in fact.items()
-                    if key != "_nativeSignature"
+                    if key != "_graphitiSignature"
                 }
                 for fact in admitted
             ])
@@ -812,7 +812,7 @@ async def _reconcile_jev_facts(
             call_failure_reason = str(error).strip() or type(error).__name__
 
     by_id = {
-        str(decision.get("nativeFactUuid") or ""): decision
+        str(decision.get("graphitiFactUuid") or ""): decision
         for decision in decisions
     }
     attempted: list[str] = []
@@ -820,24 +820,24 @@ async def _reconcile_jev_facts(
     failed: list[str] = []
     failure_reasons: dict[str, str] = {}
     for fact in admitted:
-        native_id = str(fact["nativeFactUuid"])
+        graphiti_fact_id = str(fact["graphitiFactUuid"])
         if call_failure_reason:
-            attempted.append(native_id)
-            failed.append(native_id)
-            failure_reasons[native_id] = call_failure_reason
+            attempted.append(graphiti_fact_id)
+            failed.append(graphiti_fact_id)
+            failure_reasons[graphiti_fact_id] = call_failure_reason
             continue
-        decision = by_id.get(native_id) or {}
+        decision = by_id.get(graphiti_fact_id) or {}
         if decision.get("status") == "unfinished":
-            unfinished.append(native_id)
-            failure_reasons[native_id] = str(
+            unfinished.append(graphiti_fact_id)
+            failure_reasons[graphiti_fact_id] = str(
                 decision.get("failure_reason")
                 or "knowgraph_jev_deadline_exceeded"
             )
             continue
-        attempted.append(native_id)
+        attempted.append(graphiti_fact_id)
         if decision.get("status") != "success":
-            failed.append(native_id)
-            failure_reasons[native_id] = str(
+            failed.append(graphiti_fact_id)
+            failure_reasons[graphiti_fact_id] = str(
                 decision.get("failure_reason")
                 or "knowgraph_jev_result_invalid"
             )
@@ -845,23 +845,23 @@ async def _reconcile_jev_facts(
         try:
             persisted = await _persist_jev_metadata(
                 graphiti,
-                native_id,
-                str(fact["_nativeSignature"]),
+                graphiti_fact_id,
+                str(fact["_graphitiSignature"]),
                 decision,
             )
             if not _jev_annotation_is_current(
                 persisted,
-                native_signature=str(fact["_nativeSignature"]),
+                graphiti_signature=str(fact["_graphitiSignature"]),
                 vocabulary=relationship_vocabulary,
             ):
                 raise RuntimeError("knowgraph_jev_persist_readback_invalid")
         except Exception as error:
-            failed.append(native_id)
-            failure_reasons[native_id] = (
+            failed.append(graphiti_fact_id)
+            failure_reasons[graphiti_fact_id] = (
                 str(error).strip() or type(error).__name__
             )
             continue
-        succeeded.append(native_id)
+        succeeded.append(graphiti_fact_id)
 
     still_unsettled = list(dict.fromkeys([*failed, *unfinished]))
     if still_unsettled:
@@ -906,21 +906,21 @@ async def _settle_jev_smart_edges(
     }
     facts: list[dict[str, Any]] = []
     for edge in edges:
-        native_id = str(_edge_value(edge, "uuid") or "").strip()
+        graphiti_fact_id = str(_edge_value(edge, "uuid") or "").strip()
         source_id = str(_edge_value(edge, "source_node_uuid") or "").strip()
         target_id = str(_edge_value(edge, "target_node_uuid") or "").strip()
         statement = str(_edge_value(edge, "fact") or "").strip()
         if (
-            not native_id or not source_id or not target_id or not statement
+            not graphiti_fact_id or not source_id or not target_id or not statement
             or _edge_value(edge, "invalid_at") is not None
             or _edge_value(edge, "expired_at") is not None
         ):
             continue
         facts.append({
-            "nativeFactUuid": native_id,
+            "graphitiFactUuid": graphiti_fact_id,
             "sourceEntity": {"uuid": source_id, "name": names.get(source_id, "")},
             "targetEntity": {"uuid": target_id, "name": names.get(target_id, "")},
-            "nativeRelation": str(_edge_value(edge, "name") or ""),
+            "graphitiRelation": str(_edge_value(edge, "name") or ""),
             "fact": statement,
             "supportingEpisodeUuids": [
                 str(value) for value in (_edge_value(edge, "episodes") or []) if str(value)
@@ -949,7 +949,7 @@ async def _settle_jev_smart_edges(
         fact["nearbyFacts"] = [{
             key: other[key]
             for key in (
-                "nativeFactUuid", "sourceEntity", "targetEntity", "nativeRelation", "fact",
+                "graphitiFactUuid", "sourceEntity", "targetEntity", "graphitiRelation", "fact",
             )
         } for other in facts if other is not fact and (
             str(other["sourceEntity"]["uuid"]) in endpoints
@@ -968,11 +968,11 @@ async def _read_jev_reconciliation_facts(
     graphiti: Any,
     *,
     project_id: str,
-    native_fact_uuids: list[str] | None = None,
+    graphiti_fact_uuids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     requested = list(dict.fromkeys(
         str(value or "").strip()
-        for value in (native_fact_uuids or [])
+        for value in (graphiti_fact_uuids or [])
         if str(value or "").strip()
     ))
     if len(requested) > MAX_JEV_RECONCILIATION_FACTS:
@@ -997,7 +997,7 @@ async def _read_jev_reconciliation_facts(
           CASE
             WHEN fact.jev_relation_winner IS NULL
               OR fact.jev_relation_distribution_json IS NULL
-              OR fact.jev_native_signature IS NULL
+              OR fact.jev_graphiti_signature IS NULL
               OR fact.jev_question_schema_version <> $question_schema_version
               OR fact.jev_requested_model <> $requested_model
             THEN 0 ELSE 1
@@ -1019,14 +1019,14 @@ async def _read_jev_reconciliation_facts(
             if isinstance(record.get("properties"), dict)
             else {}
         )
-        native_id = str(record.get("uuid") or "").strip()
+        graphiti_fact_id = str(record.get("uuid") or "").strip()
         source_id = str(record.get("source_uuid") or "").strip()
         target_id = str(record.get("target_uuid") or "").strip()
         statement = str(properties.get("fact") or "").strip()
-        if not native_id or not source_id or not target_id or not statement:
+        if not graphiti_fact_id or not source_id or not target_id or not statement:
             continue
         facts.append({
-            "nativeFactUuid": native_id,
+            "graphitiFactUuid": graphiti_fact_id,
             "sourceEntity": {
                 "uuid": source_id,
                 "name": str(record.get("source_name") or ""),
@@ -1035,7 +1035,7 @@ async def _read_jev_reconciliation_facts(
                 "uuid": target_id,
                 "name": str(record.get("target_name") or ""),
             },
-            "nativeRelation": str(
+            "graphitiRelation": str(
                 properties.get("name") or properties.get("edge_type") or ""
             ),
             "fact": statement,
@@ -1057,13 +1057,13 @@ async def _read_jev_reconciliation_facts(
 async def reconcile_jev_annotations(
     project_id: str,
     *,
-    native_fact_uuids: list[str] | None = None,
+    graphiti_fact_uuids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Repair existing annotations without re-running Graphiti ingestion."""
     project_id = str(project_id or "").strip()
     if not project_id:
         raise ValueError("project_id is required")
-    requested = native_fact_uuids or []
+    requested = graphiti_fact_uuids or []
     if (
         not isinstance(requested, list)
         or any(not isinstance(value, str) or not value.strip() for value in requested)
@@ -1080,7 +1080,7 @@ async def reconcile_jev_annotations(
         facts = await _read_jev_reconciliation_facts(
             graphiti,
             project_id=project_id,
-            native_fact_uuids=requested,
+            graphiti_fact_uuids=requested,
         )
         reconciliation = await _reconcile_jev_facts(
             graphiti,

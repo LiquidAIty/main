@@ -1,6 +1,6 @@
-// Native runtime histories remain owned by their exact saved Card sessions.
+// Runtime histories remain owned by their exact saved Card sessions.
 // This store persists only the shared-chat projection of user-authored turns and
-// completed native replies so the UI can retain truthful cross-Card speaker
+// completed provider replies so the UI can retain truthful cross-Card speaker
 // identity. Python remains the sole owner of saved Card Runs and their IDFs.
 import { randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
@@ -169,7 +169,7 @@ function participantActivity(
 
 /**
  * Append one completed shared-chat turn. If this is the first projected turn,
- * the caller may supply the already-read native Main history as a one-time seed.
+ * the caller may supply the already-read Main history as a one-time seed.
  * The transaction locks the existing conversation row so speaker ordering and
  * sequence identities remain exact under concurrent requests.
  */
@@ -250,7 +250,7 @@ export async function appendSharedConversationTurn(input: {
 }
 
 /**
- * Append one completed native Card reply exactly once by provider message id.
+ * Append one completed Card reply exactly once by provider message id.
  * The existing conversation-row lock is the serialization owner, so concurrent
  * completion observers cannot allocate duplicate sequence numbers or messages.
  */

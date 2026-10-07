@@ -1,7 +1,7 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import express from 'express';
 import type { RequestHandler } from 'express';
 import cookieParser from 'cookie-parser';
@@ -84,6 +84,9 @@ const json = (body: unknown, sid = 'owner-session'): RequestInit => ({
 afterEach(() => vi.clearAllMocks());
 
 it('keeps the owned terminal boundary free of retired product terminology', () => {
+  const repoRoot = basename(process.cwd()).toLowerCase() === 'backend'
+    ? resolve(process.cwd(), '../..')
+    : process.cwd();
   const ownedPaths = [
     'apps/backend/src/hermes/agentTerminal.ts',
     'apps/backend/src/hermes/runtime/cardTurn.ts',
@@ -99,13 +102,18 @@ it('keeps the owned terminal boundary free of retired product terminology', () =
     'client/src/features/agentbuilder/console/agentTerminalClient.spec.ts',
     'client/src/features/agentbuilder/console/HarnessChatPanel.spec.tsx',
   ];
-  const prohibited = [
-    ['na', 'tive'].join(''),
-    ['liquid', 'aity'].join(''),
+  const productBrand = ['liquid', 'aity'].join('');
+  const dependencyOwnedTerms = [
+    'nativeRootId', 'nativeRunId', 'native_root_id', 'native_run_id',
   ];
   for (const file of ownedPaths) {
-    const source = readFileSync(resolve(process.cwd(), file), 'utf8');
-    for (const token of prohibited) expect(source.toLowerCase()).not.toContain(token);
+    const source = readFileSync(resolve(repoRoot, file), 'utf8');
+    const applicationTermsOnly = dependencyOwnedTerms.reduce(
+      (value, term) => value.replaceAll(term, ''),
+      source,
+    );
+    expect(applicationTermsOnly.toLowerCase()).not.toContain(['na', 'tive'].join(''));
+    expect(source.toLowerCase()).not.toContain(productBrand);
   }
 });
 

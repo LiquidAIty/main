@@ -3,16 +3,16 @@ import { Router } from 'express';
 import { getDeckDocument } from '../decks/store';
 import {
   hydrateHermesCardProfile,
-  invokeHermesNativeOperation,
-  type HermesNativeCardOperation,
-  type RequestHermesNative,
+  invokeHermesCardOperation,
+  type HermesCardOperation,
+  type RequestHermes,
 } from '../hermes/cardProfileProjection';
-import { agentTerminalManager } from '../hermes/agentTerminal';
+import { cardRuntimeManager } from '../hermes/cardRuntimeManager';
 import type { AgentCardInstance, DeckDocument } from '../types';
 
 type Dependencies = {
   getDeck: typeof getDeckDocument;
-  requestNative: RequestHermesNative;
+  requestHermes: RequestHermes;
 };
 
 function requiredText(value: unknown, error: string): string {
@@ -29,7 +29,7 @@ function objectValue(value: unknown, error: string): Record<string, unknown> {
 function exactFields(value: Record<string, unknown>, fields: string[]): void {
   const allowed = new Set(fields);
   const unknown = Object.keys(value).find((key) => !allowed.has(key));
-  if (unknown) throw new Error(`hermes_native_params_unknown_field:${unknown}`);
+  if (unknown) throw new Error(`hermes_profile_params_unknown_field:${unknown}`);
 }
 
 function stringList(value: unknown, error: string): string[] {
@@ -37,50 +37,50 @@ function stringList(value: unknown, error: string): string[] {
   return value;
 }
 
-function parseProfileConfigure(params: Record<string, unknown>): HermesNativeCardOperation {
+function parseProfileConfigure(params: Record<string, unknown>): HermesCardOperation {
   const keys = Object.keys(params);
   const singleString = ['description'].find((key) => keys.length === 1 && typeof params[key] === 'string');
   if (singleString) return { method: 'profiles.configure', params };
   if (keys.length === 2 && keys.includes('provider') && keys.includes('model')) {
-    requiredText(params.provider, 'hermes_native_provider_required');
-    requiredText(params.model, 'hermes_native_model_required');
+    requiredText(params.provider, 'hermes_provider_required');
+    requiredText(params.model, 'hermes_model_required');
     return { method: 'profiles.configure', params };
   }
   const listKey = ['disabled_skills', 'enabled_toolsets', 'enabled_mcp_servers']
     .find((key) => keys.length === 1 && keys[0] === key);
   if (listKey) {
-    stringList(params[listKey], 'hermes_native_values_must_be_string_list');
+    stringList(params[listKey], 'hermes_profile_values_must_be_string_list');
     return { method: 'profiles.configure', params };
   }
-  throw new Error('hermes_native_profile_operation_invalid');
+  throw new Error('hermes_profile_operation_invalid');
 }
 
-function parseNativeOperation(value: unknown): HermesNativeCardOperation {
-  const body = objectValue(value, 'hermes_native_request_must_be_object');
+function parseCardOperation(value: unknown): HermesCardOperation {
+  const body = objectValue(value, 'hermes_profile_request_must_be_object');
   exactFields(body, ['projectId', 'deckId', 'method', 'params']);
-  const method = requiredText(body.method, 'hermes_native_method_required');
-  const params = objectValue(body.params ?? {}, 'hermes_native_params_must_be_object');
+  const method = requiredText(body.method, 'hermes_method_required');
+  const params = objectValue(body.params ?? {}, 'hermes_params_must_be_object');
   if (method === 'profiles.configure') return parseProfileConfigure(params);
   if (method === 'learning.detail') {
     exactFields(params, ['id']);
-    return { method, params: { id: requiredText(params.id, 'hermes_native_learning_node_required') } };
+    return { method, params: { id: requiredText(params.id, 'hermes_learning_node_required') } };
   }
   if (method === 'learning.edit') {
     exactFields(params, ['id', 'content']);
-    if (typeof params.content !== 'string') throw new Error('hermes_native_learning_content_must_be_string');
+    if (typeof params.content !== 'string') throw new Error('hermes_learning_content_must_be_string');
     return {
       method,
       params: {
-        id: requiredText(params.id, 'hermes_native_learning_node_required'),
+        id: requiredText(params.id, 'hermes_learning_node_required'),
         content: params.content,
       },
     };
   }
   if (method === 'skills.manage') {
     exactFields(params, ['action', 'query', 'page', 'page_size']);
-    const action = requiredText(params.action, 'hermes_native_skills_action_required');
+    const action = requiredText(params.action, 'hermes_skills_action_required');
     if (!['list', 'search', 'install', 'browse', 'inspect'].includes(action)) {
-      throw new Error('hermes_native_skills_action_unsupported');
+      throw new Error('hermes_skills_action_unsupported');
     }
     return { method, params };
   }
@@ -99,7 +99,7 @@ function parseNativeOperation(value: unknown): HermesNativeCardOperation {
     exactFields(params, ['name']);
     return { method, params: { name: requiredText(params.name, 'mcp_server_name_required') } };
   }
-  throw new Error('hermes_native_method_unsupported');
+  throw new Error('hermes_method_unsupported');
 }
 
 async function resolveCard(
@@ -152,15 +152,15 @@ function safeMcpTestResult(value: unknown): Record<string, unknown> {
     credentialStatus: result.ok === true || result.oauth_tokens_present === true
       ? 'configured'
       : 'not_configured',
-    error: result.ok === true ? null : error || 'native MCP connection failed',
+    error: result.ok === true ? null : error || 'Hermes MCP connection failed',
   };
 }
 
 export function createHermesProfileRouter(deps: Dependencies = {
   getDeck: getDeckDocument,
-  requestNative: (method, params = {}, profile) => {
+  requestHermes: (method, params = {}, profile) => {
     const selectedProfile = String(profile || params.profile || params.name || '').trim();
-    return agentTerminalManager.requestProfile(selectedProfile, method, params);
+    return cardRuntimeManager.requestProfile(selectedProfile, method, params);
   },
 }) {
   const router = Router();
@@ -173,7 +173,7 @@ export function createHermesProfileRouter(deps: Dependencies = {
         req.query.deckId,
         req.params.cardId,
       );
-      const projection = await hydrateHermesCardProfile(card, deck, deps.requestNative);
+      const projection = await hydrateHermesCardProfile(card, deck, deps.requestHermes);
       return res.json({ ok: true, ...projection });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -181,7 +181,7 @@ export function createHermesProfileRouter(deps: Dependencies = {
     }
   });
 
-  router.post('/cards/:cardId/native', async (req, res) => {
+  router.post('/cards/:cardId/operations', async (req, res) => {
     try {
       const { deck, card } = await resolveCard(
         deps.getDeck,
@@ -189,8 +189,8 @@ export function createHermesProfileRouter(deps: Dependencies = {
         req.body?.deckId,
         req.params.cardId,
       );
-      const operation = parseNativeOperation(req.body);
-      const invoked = await invokeHermesNativeOperation(card, deck, operation, deps.requestNative);
+      const operation = parseCardOperation(req.body);
+      const invoked = await invokeHermesCardOperation(card, deck, operation, deps.requestHermes);
       const result = operation.method === 'mcp.servers.test'
         ? safeMcpTestResult(invoked.result)
         : invoked.result;

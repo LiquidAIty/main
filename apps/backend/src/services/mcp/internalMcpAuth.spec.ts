@@ -25,8 +25,8 @@ describe('internal MCP Card authentication', () => {
       callerRuntimeKind: 'hermes',
       callerRuntimeMode: 'main',
       grantedTools: ['canvas.inspect', 'canvas.inspect', 'run_mag_one'],
-      nativeChildId: 'native-child-1',
-      nativeRunId: 'native-run-1',
+      hermesChildId: 'hermes-child-1',
+      hermesRunId: 'hermes-run-1',
     }, env, 1000);
     const claims = verifyInternalMcpBearerForTest(token, env);
     expect(claims).toMatchObject({
@@ -39,8 +39,8 @@ describe('internal MCP Card authentication', () => {
         callerRuntimeKind: 'hermes',
         callerRuntimeMode: 'main',
         grantedTools: ['canvas.inspect', 'run_mag_one'],
-        nativeChildId: 'native-child-1',
-        nativeRunId: 'native-run-1',
+        hermesChildId: 'hermes-child-1',
+        hermesRunId: 'hermes-run-1',
       },
     });
   });
@@ -102,9 +102,9 @@ describe('internal MCP Card authentication', () => {
     kind: 'card-runtime' as const, projectId: 'project', deckId: 'deck',
     conversationId: 'conversation-1', parentRunId: 'persisted-run', callerCardId: 'saved-agent',
     callerRuntimeKind: 'hermes' as const, callerRuntimeMode: 'delegate' as const,
-    grantedTools: ['canvas.inspect'], nativeChildId: 'native-child', nativeRunId: 'native-run',
+    grantedTools: ['canvas.inspect'], hermesChildId: 'hermes-child', hermesRunId: 'hermes-run',
   };
-  it('signs a real Card Run with direct saved authority and native attribution', () => {
+  it('signs a real Card Run with direct saved authority and Hermes attribution', () => {
     const principal = verifyInternalMcpBearerForTest(createInternalMcpBearer(terminalRun, env), env).principal;
     expect(principal).toMatchObject(terminalRun);
   });

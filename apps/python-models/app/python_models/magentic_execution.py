@@ -19,7 +19,7 @@ class MagenticExecutionError(RuntimeError):
 
 _TEAM_CARD_ID = "card_team"
 _MAX_HANDOFF_SUMMARY_CHARS = 2_000
-_MAX_NATIVE_ID_CHARS = 512
+_MAX_HERMES_ID_CHARS = 512
 _WORKER_TOOL_AUTH_MAX_PAYLOAD_BYTES = 512 * 1024
 _WORKER_TOOL_AUTH_TTL_SECONDS = 300
 _WORKER_TOOL_AUTH_MAX_PROFILE_CHARS = 128
@@ -28,7 +28,7 @@ _WORKER_TOOL_AUTH_MAX_RUN_ID = (1 << 63) - 1
 _LOWER_HEX_64_RE = re.compile(r"^[a-f0-9]{64}$", re.ASCII)
 _LOWER_HEX_32_RE = re.compile(r"^[a-f0-9]{32}$", re.ASCII)
 _TASK_ID_RE = re.compile(r"^t_[A-Za-z0-9_-]+$", re.ASCII)
-_NATIVE_AUTHORITY_EVENT = "card_authority_bound"
+_HERMES_AUTHORITY_EVENT = "card_authority_bound"
 
 
 def _required_text(value: Any, field: str) -> str:
@@ -61,7 +61,7 @@ def _default_home_scope(hermes_home: Path) -> Iterator[None]:
         reset_hermes_home_override(token)
 
 
-def _native_model(provider: dict[str, Any], options: dict[str, Any]) -> tuple[str, str, str | None]:
+def _hermes_model(provider: dict[str, Any], options: dict[str, Any]) -> tuple[str, str, str | None]:
     saved_provider = _required_text(provider.get("provider"), "magentic_provider")
     access_mode = _required_text(provider.get("accessMode"), "magentic_access_mode")
     model = _required_text(
@@ -86,13 +86,13 @@ def _native_model(provider: dict[str, Any], options: dict[str, Any]) -> tuple[st
 def _ensure_orchestrator_identity(
     spec: dict[str, Any], workers: list[dict[str, Any]],
 ) -> tuple[str, str, str, str | None]:
-    native_identity = _required_text(spec.get("nativeIdentity"), "magentic_native_identity").lower()
+    hermes_profile = _required_text(spec.get("hermesProfile"), "magentic_hermes_profile").lower()
     instructions = spec.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         raise MagenticExecutionError("magentic_instructions_required")
     provider = spec.get("provider") if isinstance(spec.get("provider"), dict) else {}
     options = spec.get("runtimeOptions") if isinstance(spec.get("runtimeOptions"), dict) else {}
-    native_provider, model, openai_runtime = _native_model(provider, options)
+    hermes_provider, model, openai_runtime = _hermes_model(provider, options)
     _, hermes_home = _runtime_paths()
 
     with _default_home_scope(hermes_home):
@@ -110,10 +110,10 @@ def _ensure_orchestrator_identity(
                 return candidate if candidate.is_dir() else None
             return candidate if named_profile_is_live(candidate) else None
 
-        orchestrator_home = profile_home(native_identity)
+        orchestrator_home = profile_home(hermes_profile)
         if orchestrator_home is None:
             raise MagenticExecutionError(
-                f"magentic_orchestrator_native_identity_missing:{native_identity}"
+                f"magentic_orchestrator_profile_missing:{hermes_profile}"
             )
         missing = [
             _required_text(worker.get("profile"), "magentic_worker_identity")
@@ -122,7 +122,7 @@ def _ensure_orchestrator_identity(
         ]
         if missing:
             raise MagenticExecutionError(
-                f"magentic_worker_native_identity_missing:{','.join(missing)}"
+                f"magentic_worker_profile_missing:{','.join(missing)}"
             )
 
         from hermes_constants import reset_hermes_home_override, set_hermes_home_override
@@ -139,7 +139,7 @@ def _ensure_orchestrator_identity(
             except (OSError, UnicodeError):
                 soul = None
             if (
-                model_config.get("provider") != native_provider
+                model_config.get("provider") != hermes_provider
                 or model_config.get("default") != model
                 or "system_prompt" in agent_config
                 or soul != instructions
@@ -147,7 +147,7 @@ def _ensure_orchestrator_identity(
                 raise MagenticExecutionError("magentic_orchestrator_materialization_mismatch")
         finally:
             reset_hermes_home_override(token)
-    return native_identity, native_provider, model, openai_runtime
+    return hermes_profile, hermes_provider, model, openai_runtime
 
 
 def _task_db_path() -> Path:
@@ -276,7 +276,7 @@ def _worker_authorities(
     return authorities
 
 
-def _bind_native_worker_authorities(
+def _bind_hermes_worker_authorities(
     connection: Any,
     task_db: Any,
     root_id: str,
@@ -286,10 +286,10 @@ def _bind_native_worker_authorities(
     with task_db.write_txn(connection):
         rows = connection.execute(
             "SELECT payload FROM task_events WHERE task_id = ? AND kind = ? ORDER BY id",
-            (root_id, _NATIVE_AUTHORITY_EVENT),
+            (root_id, _HERMES_AUTHORITY_EVENT),
         ).fetchall()
         if not rows:
-            task_db._append_event(connection, root_id, _NATIVE_AUTHORITY_EVENT, expected)
+            task_db._append_event(connection, root_id, _HERMES_AUTHORITY_EVENT, expected)
             return
         if (
             len(rows) != 1
@@ -301,7 +301,7 @@ def _bind_native_worker_authorities(
 
 def _root_body(mission: str, worker_text: str) -> str:
     return (
-        "You are the saved Magnetic orchestrator for this Mag One mission. This native task is "
+        "You are the saved Magnetic orchestrator for this Mag One mission. This Hermes task is "
         "both the orchestration root and the final result task.\n\n"
         "Main and the user already approved this mission after upstream context engineering. "
         "Execute this mission as given; do not invent a replacement mission or another approval step.\n\n"
@@ -310,7 +310,7 @@ def _root_body(mission: str, worker_text: str) -> str:
         "Use only the listed saved profiles, and only when their work helps answer the mission. "
         "Do not discover, infer, create, or substitute another worker profile. Do not use "
         "auto-decomposition, triage, goal mode, delegate_task, or a separate synthesis task.\n\n"
-        "For each useful worker assignment, create one native task with initial_status=\"running\" "
+        "For each useful worker assignment, create one Hermes task with initial_status=\"running\" "
         "and an assignee from the list above. The task body must contain the bounded work request "
         "and require that saved worker to return its result directly through kanban_complete. "
         "Launch useful worker tasks independently; never make one worker wait for another. "
@@ -320,7 +320,7 @@ def _root_body(mission: str, worker_text: str) -> str:
         "Then end this attempt with kanban_block(kind=\"dependency\"); Hermes will keep this same "
         "root in todo while those parents are unfinished, then promote it to ready.\n\n"
         "Whenever Hermes runs this root again, inspect the parent handoffs already included in the "
-        "native worker context. Decide whether another bounded worker round is useful. If so, create "
+        "Hermes worker context. Decide whether another bounded worker round is useful. If so, create "
         "and link that round and dependency-block this same root again. When the evidence is enough, "
         "answer the original user directly and call kanban_complete on THIS root with the final answer "
         "as its summary. Never complete an intermediate decomposition and never create another task "
@@ -331,22 +331,22 @@ def _root_body(mission: str, worker_text: str) -> str:
 
 
 def _bind_outer_magentic_run(
-    run_id: str, native_root_id: str, native_status: str,
+    run_id: str, hermes_root_id: str, hermes_status: str,
 ) -> dict[str, Any]:
-    """Bind the outer PostgreSQL Run before the native root becomes dispatchable."""
+    """Bind the outer PostgreSQL Run before the Hermes root becomes dispatchable."""
 
     from app.python_models.card_domain import update_run_progress
 
     result = update_run_progress({
         "runId": run_id,
-        "nativeRootId": native_root_id,
-        "nativeStatus": native_status,
+        "hermesRootId": hermes_root_id,
+        "hermesStatus": hermes_status,
     })
     if (
         not isinstance(result, dict)
         or result.get("ok") is not True
         or result.get("runId") != run_id
-        or result.get("nativeRootId") != native_root_id
+        or result.get("hermesRootId") != hermes_root_id
         or result.get("updated") is not True
     ):
         raise MagenticExecutionError("magentic_outer_run_binding_failed")
@@ -407,18 +407,18 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
                 direct_team.get("runtimeOptions")
                 if isinstance(direct_team.get("runtimeOptions"), dict) else {}
             )
-            native_identity = worker_identities[0]
-            native_provider, native_model, openai_runtime = _native_model(
+            hermes_profile = worker_identities[0]
+            hermes_provider, hermes_model, openai_runtime = _hermes_model(
                 team_provider, team_options,
             )
         else:
-            native_identity, native_provider, native_model, openai_runtime = (
+            hermes_profile, hermes_provider, hermes_model, openai_runtime = (
                 _ensure_orchestrator_identity(spec, workers)
             )
-            allowed_assignees = [native_identity, *worker_identities]
+            allowed_assignees = [hermes_profile, *worker_identities]
             root_body = _root_body(mission, worker_text)
 
-        native_root_id = ""
+        hermes_root_id = ""
         try:
             if direct_team is not None:
                 try:
@@ -429,18 +429,18 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
                             connection,
                             title=f"Team {run_id}"[:200],
                             body=mission,
-                            assignee=native_identity,
-                            profile_home=hermes_home / "profiles" / native_identity,
+                            assignee=hermes_profile,
+                            profile_home=hermes_home / "profiles" / hermes_profile,
                             created_by=_required_text(
-                                spec.get("nativeIdentity"), "magentic_native_identity",
+                                spec.get("hermesProfile"), "magentic_hermes_profile",
                             ).lower(),
                             tenant=tenant,
                             workspace_kind="scratch",
                             project_id="",
                             idempotency_key=f"magentic:{run_id}:root",
-                            model_override=native_model,
-                            provider_override=native_provider,
-                            allowed_assignees=[native_identity],
+                            model_override=hermes_model,
+                            provider_override=hermes_provider,
+                            allowed_assignees=[hermes_profile],
                             session_id=notify_session_key,
                             initial_status="blocked",
                         )
@@ -448,46 +448,46 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
                     raise MagenticExecutionError(
                         f"magentic_team_root_invalid:{error}"
                     ) from error
-                native_root_id = root.id
+                hermes_root_id = root.id
             else:
-                native_root_id = task_db.create_task(
+                hermes_root_id = task_db.create_task(
                     connection,
                     title=f"Mag One {run_id}"[:200],
                     body=root_body,
-                    assignee=native_identity,
-                    created_by=native_identity,
+                    assignee=hermes_profile,
+                    created_by=hermes_profile,
                     tenant=tenant,
                     workspace_kind="scratch",
                     project_id="",
                     idempotency_key=f"magentic:{run_id}:root",
-                    model_override=native_model,
-                    provider_override=native_provider,
+                    model_override=hermes_model,
+                    provider_override=hermes_provider,
                     allowed_assignees=allowed_assignees,
                     session_id=notify_session_key,
                     initial_status="blocked",
                 )
-                root = task_db.get_task(connection, native_root_id)
+                root = task_db.get_task(connection, hermes_root_id)
                 if (
                     root is None
                     or root.allowed_assignees != allowed_assignees
-                    or root.assignee != native_identity
+                    or root.assignee != hermes_profile
                     or root.tenant != tenant
-                    or root.model_override != native_model
-                    or root.provider_override != native_provider
+                    or root.model_override != hermes_model
+                    or root.provider_override != hermes_provider
                     or root.body != root_body
                 ):
-                    raise MagenticExecutionError("magentic_native_root_readback_mismatch")
-            _bind_native_worker_authorities(
-                connection, task_db, native_root_id, worker_authorities,
+                    raise MagenticExecutionError("magentic_hermes_root_readback_mismatch")
+            _bind_hermes_worker_authorities(
+                connection, task_db, hermes_root_id, worker_authorities,
             )
-            _bind_outer_magentic_run(run_id, native_root_id, root.status)
+            _bind_outer_magentic_run(run_id, hermes_root_id, root.status)
 
             if notify_session_key:
                 from hermes_cli import kanban_db_notify
 
                 kanban_db_notify.add_notify_sub(
                     connection,
-                    task_id=native_root_id,
+                    task_id=hermes_root_id,
                     platform="tui",
                     chat_id=notify_session_key,
                     notifier_profile=notify_profile,
@@ -496,40 +496,40 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
                 if direct_team is not None:
                     from hermes_cli.kanban_team import activate_staged_team_root
 
-                    activated = activate_staged_team_root(connection, native_root_id)
+                    activated = activate_staged_team_root(connection, hermes_root_id)
                 else:
                     activated, _reason = task_db.promote_task(
                         connection,
-                        native_root_id,
+                        hermes_root_id,
                         actor="card_magentic",
                         reason="outer Magnetic Run authority bound",
                     )
                 if not activated:
-                    raise MagenticExecutionError("magentic_native_root_activation_failed")
-            root = task_db.get_task(connection, native_root_id)
+                    raise MagenticExecutionError("magentic_hermes_root_activation_failed")
+            root = task_db.get_task(connection, hermes_root_id)
             accepted_statuses = (
                 {"triage", "todo", "ready", "running"}
                 if direct_team is not None else {"todo", "ready", "running"}
             )
             if root is None or root.status not in accepted_statuses:
-                raise MagenticExecutionError("magentic_native_root_activation_failed")
+                raise MagenticExecutionError("magentic_hermes_root_activation_failed")
         except Exception:
             # A failed cross-store bind leaves the exact idempotent root blocked
             # and therefore unclaimable. Never delete here: another submit may
-            # have created or bound this same native root concurrently.
+            # have created or bound this same Hermes root concurrently.
             raise
     return {
         "ok": True,
         "runId": run_id,
-        "nativeRootId": native_root_id,
-        "nativeIdentity": native_identity,
-        "effectiveProvider": native_provider,
+        "hermesRootId": hermes_root_id,
+        "hermesProfile": hermes_profile,
+        "effectiveProvider": hermes_provider,
         "providerApiMode": openai_runtime,
-        "model": native_model,
+        "model": hermes_model,
         "tenant": tenant,
         "state": "running",
-        "nativeStatus": root.status,
-        "nativeNotification": bool(notify_session_key),
+        "hermesStatus": root.status,
+        "hermesNotification": bool(notify_session_key),
         "outerRunBound": True,
     }
 
@@ -590,7 +590,7 @@ def _strict_json_object(raw: str) -> dict[str, Any]:
     return parsed
 
 
-def _native_creation_authority(connection: Any, task_id: str) -> dict[str, Any]:
+def _hermes_creation_authority(connection: Any, task_id: str) -> dict[str, Any]:
     rows = connection.execute(
         "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'created' ORDER BY id",
         (task_id,),
@@ -608,10 +608,10 @@ def _exact_bounded_string(value: Any, limit: int) -> str | None:
     return value
 
 
-def _native_lineage_for_source(
+def _hermes_lineage_for_source(
     connection: Any, task_db: Any, source_task_id: str,
 ) -> tuple[Any, list[Any], list[dict[str, Any]]]:
-    """Follow only this task's immutable native creator receipts back to its root."""
+    """Follow only this task's immutable Hermes creator receipts back to its root."""
 
     lineage: list[Any] = []
     creations: list[dict[str, Any]] = []
@@ -624,13 +624,13 @@ def _native_lineage_for_source(
         task = task_db.get_task(connection, current_id)
         if task is None:
             _worker_tool_auth_failed()
-        creation = _native_creation_authority(connection, current_id)
+        creation = _hermes_creation_authority(connection, current_id)
         lineage.append(task)
         creations.append(creation)
         creator = creation.get("creator_task_id")
         if creator is None:
             break
-        creator_id = _exact_bounded_string(creator, _MAX_NATIVE_ID_CHARS)
+        creator_id = _exact_bounded_string(creator, _MAX_HERMES_ID_CHARS)
         if creator_id is None or not _TASK_ID_RE.fullmatch(creator_id):
             _worker_tool_auth_failed()
         current_id = creator_id
@@ -639,7 +639,7 @@ def _native_lineage_for_source(
     return lineage[0], lineage, creations
 
 
-def _native_team_decomposition(
+def _hermes_team_decomposition(
     connection: Any, root_id: str,
 ) -> tuple[list[str], str]:
     rows = connection.execute(
@@ -668,12 +668,12 @@ def _native_team_decomposition(
     return child_ids, root_assignee
 
 
-def _native_worker_authority(
+def _hermes_worker_authority(
     connection: Any, root_id: str, authority_profile: str,
 ) -> dict[str, str]:
     rows = connection.execute(
         "SELECT payload FROM task_events WHERE task_id = ? AND kind = ? ORDER BY id",
-        (root_id, _NATIVE_AUTHORITY_EVENT),
+        (root_id, _HERMES_AUTHORITY_EVENT),
     ).fetchall()
     if len(rows) != 1 or not isinstance(rows[0]["payload"], str):
         _worker_tool_auth_failed()
@@ -689,9 +689,9 @@ def _native_worker_authority(
     for candidate in workers:
         if not isinstance(candidate, dict) or set(candidate) != expected_keys:
             _worker_tool_auth_failed()
-        card_id = _exact_bounded_string(candidate.get("cardId"), _MAX_NATIVE_ID_CHARS)
+        card_id = _exact_bounded_string(candidate.get("cardId"), _MAX_HERMES_ID_CHARS)
         revision_id = _exact_bounded_string(
-            candidate.get("cardRevisionId"), _MAX_NATIVE_ID_CHARS,
+            candidate.get("cardRevisionId"), _MAX_HERMES_ID_CHARS,
         )
         profile = _exact_bounded_string(
             candidate.get("profile"), _WORKER_TOOL_AUTH_MAX_PROFILE_CHARS,
@@ -719,7 +719,7 @@ def _native_worker_authority(
     return matches[0]
 
 
-def _validate_standard_native_child(
+def _validate_standard_hermes_child(
     task: Any,
     creation: dict[str, Any],
     *,
@@ -776,7 +776,7 @@ def _read_outer_magentic_run(outer_run_id: str) -> dict[str, Any] | None:
 
 
 def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[str, Any]:
-    """Verify one v2 Card-tool request against its live native worker claim."""
+    """Verify one v2 Card-tool request against its live Hermes worker claim."""
 
     if not isinstance(envelope, dict) or set(envelope) != {"keyId", "payload", "signature"}:
         _worker_tool_auth_failed()
@@ -803,7 +803,7 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
     version = payload.get("version")
     expires_at = payload.get("expiresAt")
     nonce = payload.get("nonce")
-    source_task_id = _exact_bounded_string(payload.get("sourceTaskId"), _MAX_NATIVE_ID_CHARS)
+    source_task_id = _exact_bounded_string(payload.get("sourceTaskId"), _MAX_HERMES_ID_CHARS)
     source_task_run_id = payload.get("sourceTaskRunId")
     source_profile = _exact_bounded_string(
         payload.get("sourceProfile"), _WORKER_TOOL_AUTH_MAX_PROFILE_CHARS,
@@ -870,11 +870,11 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
             if not (key_matches and signature_matches):
                 _worker_tool_auth_failed()
 
-            root, lineage, creations = _native_lineage_for_source(
+            root, lineage, creations = _hermes_lineage_for_source(
                 connection, task_db, source_task_id,
             )
             allowed_assignees = root.allowed_assignees
-            root_creation = _native_creation_authority(connection, root.id)
+            root_creation = _hermes_creation_authority(connection, root.id)
             if (
                 not isinstance(allowed_assignees, list)
                 or not allowed_assignees
@@ -892,11 +892,11 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
                 or root_creation.get("workflow_template_id") != root.workflow_template_id
             ):
                 _worker_tool_auth_failed()
-            tenant = _exact_bounded_string(root.tenant, _MAX_NATIVE_ID_CHARS)
+            tenant = _exact_bounded_string(root.tenant, _MAX_HERMES_ID_CHARS)
             if tenant is None or not tenant.startswith("mag-one:"):
                 _worker_tool_auth_failed()
             outer_run_id = _exact_bounded_string(
-                tenant.removeprefix("mag-one:"), _MAX_NATIVE_ID_CHARS,
+                tenant.removeprefix("mag-one:"), _MAX_HERMES_ID_CHARS,
             )
             if outer_run_id is None:
                 _worker_tool_auth_failed()
@@ -921,7 +921,7 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
                     or root.current_step_key != TEAM_SYNTHESIS_STEP
                 ):
                     _worker_tool_auth_failed()
-                decomposed_ids, decomposition_assignee = _native_team_decomposition(
+                decomposed_ids, decomposition_assignee = _hermes_team_decomposition(
                     connection, root.id,
                 )
                 if decomposition_assignee != authority_profile:
@@ -943,7 +943,7 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
                     ):
                         _worker_tool_auth_failed()
                     for index in range(2, len(lineage)):
-                        _validate_standard_native_child(
+                        _validate_standard_hermes_child(
                             lineage[index], creations[index],
                             parent_id=lineage[index - 1].id,
                             root_tenant=tenant,
@@ -975,7 +975,7 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
                         or authority_creation.get("current_step_key") != TEAM_DECOMPOSITION_STEP
                     ):
                         _worker_tool_auth_failed()
-                    decomposed_ids, decomposition_assignee = _native_team_decomposition(
+                    decomposed_ids, decomposition_assignee = _hermes_team_decomposition(
                         connection, authority_task.id,
                     )
                     if decomposition_assignee != authority_profile:
@@ -997,24 +997,24 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
                         ):
                             _worker_tool_auth_failed()
                         for index in range(3, len(lineage)):
-                            _validate_standard_native_child(
+                            _validate_standard_hermes_child(
                                 lineage[index], creations[index],
                                 parent_id=lineage[index - 1].id,
                                 root_tenant=tenant,
                             )
                 else:
                     for index in range(1, len(lineage)):
-                        _validate_standard_native_child(
+                        _validate_standard_hermes_child(
                             lineage[index], creations[index],
                             parent_id=lineage[index - 1].id,
                             root_tenant=tenant,
                         )
                 if authority_profile not in allowed_assignees[1:]:
                     _worker_tool_auth_failed()
-            authority = _native_worker_authority(
+            authority = _hermes_worker_authority(
                 connection, root.id, authority_profile,
             )
-            native_root_id = root.id
+            hermes_root_id = root.id
     except MagenticExecutionError:
         raise
     except Exception:
@@ -1026,8 +1026,8 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
         _worker_tool_auth_failed()
     if not isinstance(outer_run, dict):
         _worker_tool_auth_failed()
-    project_id = _exact_bounded_string(outer_run.get("project_id"), _MAX_NATIVE_ID_CHARS)
-    deck_id = _exact_bounded_string(outer_run.get("deck_id"), _MAX_NATIVE_ID_CHARS)
+    project_id = _exact_bounded_string(outer_run.get("project_id"), _MAX_HERMES_ID_CHARS)
+    deck_id = _exact_bounded_string(outer_run.get("deck_id"), _MAX_HERMES_ID_CHARS)
     if (
         project_id is None
         or deck_id is None
@@ -1037,14 +1037,14 @@ def authenticate_magentic_worker_tool_request(envelope: dict[str, Any]) -> dict[
         or outer_run.get("runtime_mode") != "magentic_one"
         or outer_run.get("card_id") != "card_magentic"
         or outer_run.get("runtime_profile") != "card_magentic"
-        or outer_run.get("provider_thread_ref") != native_root_id
+        or outer_run.get("provider_thread_ref") != hermes_root_id
     ):
         _worker_tool_auth_failed()
     return {
         "projectId": project_id,
         "deckId": deck_id,
         "outerRunId": outer_run_id,
-        "nativeRootId": native_root_id,
+        "hermesRootId": hermes_root_id,
         "sourceTaskId": source_task_id,
         "sourceTaskRunId": source_task_run_id,
         "sourceProfile": source_profile,
@@ -1075,15 +1075,7 @@ def _bounded_redacted_text(value: Any, limit: int) -> str | None:
     return f"{redacted[:limit - 1]}…"
 
 
-def _exact_native_id(value: Any) -> str | None:
-    if not isinstance(value, str) or value != value.strip():
-        return None
-    if not value or len(value) > _MAX_NATIVE_ID_CHARS or not value.isprintable():
-        return None
-    return value
-
-
-def _native_attempt_evidence(_task: Any, latest_attempt: Any) -> dict[str, Any]:
+def _hermes_attempt_evidence(_task: Any, latest_attempt: Any) -> dict[str, Any]:
     summary = _bounded_redacted_text(
         latest_attempt.summary if latest_attempt is not None else None,
         _MAX_HANDOFF_SUMMARY_CHARS,
@@ -1094,22 +1086,22 @@ def _native_attempt_evidence(_task: Any, latest_attempt: Any) -> dict[str, Any]:
 
 
 def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
-    root_id = _required_text(payload.get("nativeRootId"), "native_root_id")
+    root_id = _required_text(payload.get("hermesRootId"), "hermes_root_id")
     db_path, task_db, task_db_connect = _task_store()
 
     with task_db_connect.connect_closing(db_path) as connection:
         root = task_db.get_task(connection, root_id)
         if root is None:
-            raise MagenticExecutionError("magentic_native_root_not_found")
+            raise MagenticExecutionError("magentic_hermes_root_not_found")
         task_ids = _execution_task_ids(connection, root_id)
         tasks = [task_db.get_task(connection, task_id) for task_id in task_ids]
         tasks = [task for task in tasks if task is not None]
         blocked = [task for task in tasks if task.status == "blocked"]
         latest_root_run = task_db.latest_run(connection, root_id)
-        native_tasks = []
+        hermes_tasks = []
         for task in tasks:
             latest_attempt = task_db.latest_run(connection, task.id)
-            native_tasks.append({
+            hermes_tasks.append({
                 "taskId": task.id,
                 "title": task.title,
                 "assignee": task.assignee,
@@ -1124,21 +1116,21 @@ def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
                 "resultAvailable": bool(
                     str(task_db.latest_summary(connection, task.id) or task.result or "").strip()
                 ),
-                **_native_attempt_evidence(task, latest_attempt),
+                **_hermes_attempt_evidence(task, latest_attempt),
             })
         response: dict[str, Any] = {
             "ok": True,
-            "nativeRootId": root_id,
+            "hermesRootId": root_id,
             "state": "running",
-            "nativeStatus": root.status,
-            "nativeIdentity": root.assignee,
+            "hermesStatus": root.status,
+            "hermesProfile": root.assignee,
             "effectiveProvider": root.provider_override,
             "providerApiMode": (
                 "codex_app_server" if root.provider_override == "openai-codex" else None
             ),
             "model": root.model_override,
-            "nativeRunId": latest_root_run.id if latest_root_run else None,
-            "nativeTasks": native_tasks,
+            "hermesRunId": latest_root_run.id if latest_root_run else None,
+            "hermesTasks": hermes_tasks,
         }
         if any(task.status == "archived" for task in tasks):
             return {**response, "state": "cancelled"}
@@ -1165,19 +1157,19 @@ def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def stop_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
-    root_id = _required_text(payload.get("nativeRootId"), "native_root_id")
+    root_id = _required_text(payload.get("hermesRootId"), "hermes_root_id")
     db_path, task_db, task_db_connect = _task_store()
 
     with task_db_connect.connect_closing(db_path) as connection:
         if task_db.get_task(connection, root_id) is None:
-            raise MagenticExecutionError("magentic_native_root_not_found")
+            raise MagenticExecutionError("magentic_hermes_root_not_found")
         task_ids = _execution_task_ids(connection, root_id)
         for task_id in reversed(task_ids):
             task_db.archive_task(connection, task_id)
         root = task_db.get_task(connection, root_id)
         return {
             "ok": True,
-            "nativeRootId": root_id,
+            "hermesRootId": root_id,
             "state": "cancelled",
-            "nativeStatus": root.status if root is not None else "archived",
+            "hermesStatus": root.status if root is not None else "archived",
         }

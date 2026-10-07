@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
-import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
 import {
   loadSessionHistory,
   type AddressableAgent,

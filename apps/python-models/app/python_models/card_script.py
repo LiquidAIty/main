@@ -44,7 +44,7 @@ class CardScript(BaseModel):
     paletteFingerprint: str = ""
     compiled: dict[str, Any] = Field(default_factory=dict)
     lastValidation: dict[str, Any] = Field(default_factory=dict)
-    nativeSupport: dict[str, Any] = Field(default_factory=dict)
+    hermesSupport: dict[str, Any] = Field(default_factory=dict)
     rollback: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -114,7 +114,7 @@ def generate_card_script_header(
     }
     header_hash = sha256(_canonical(identity).encode("utf-8")).hexdigest()
     lines = [
-        "# Generated from IDD + live native catalog + saved Card selection.",
+        "# Generated from IDD + live tool catalog + saved Card selection.",
         "# Read-only editor/compiler metadata. This file is not saved, executed, or sent to a model.",
         f"# hash: {header_hash}",
         "from enum import IntEnum",
@@ -434,7 +434,7 @@ def saved_script(
     selected_tools: list[str] | None = None,
     default_agent_tools: list[str] | None = None,
     palette_fingerprint: str = "",
-    native_available: bool = False,
+    hermes_available: bool = False,
 ) -> dict[str, Any]:
     """Normalize source and record honest activation/fallback state."""
 
@@ -479,18 +479,18 @@ def saved_script(
         status = "invalid"
     else:
         status = "valid"
-    active = bool(script.enabled and status == "valid" and native_available)
+    active = bool(script.enabled and status == "valid" and hermes_available)
     script.lastValidation = {
         "status": status,
         "executionTested": False,
         "errors": errors,
         "toolHandles": list(script.compiled.get("toolHandles") or []),
     }
-    script.nativeSupport = {
-        "available": native_available,
-        "executor": "hermes-native-python" if native_available else None,
+    script.hermesSupport = {
+        "available": hermes_available,
+        "executor": "hermes-python" if hermes_available else None,
         "active": active,
-        **({"reason": "card_script_native_bridge_unavailable"} if not native_available else {}),
+        **({"reason": "card_script_hermes_runner_unavailable"} if not hermes_available else {}),
     }
     return script.model_dump()
 
@@ -500,7 +500,7 @@ def script_presentation(
     *,
     selected_tools: list[str],
     default_agent_tools: list[str] | None = None,
-    native_available: bool = False,
+    hermes_available: bool = False,
 ) -> dict[str, Any]:
     """Choose Script or exact selected-MCP presentation without widening grants."""
 
@@ -508,9 +508,9 @@ def script_presentation(
         value or {},
         selected_tools=selected_tools,
         default_agent_tools=default_agent_tools,
-        native_available=native_available,
+        hermes_available=hermes_available,
     )
-    if script["nativeSupport"]["active"]:
+    if script["hermesSupport"]["active"]:
         return {
             "mode": "script",
             # A Script takes over only its literal handles. Other exact
@@ -523,8 +523,8 @@ def script_presentation(
     if script["enabled"]:
         if script["lastValidation"]["status"] != "valid":
             reason = "card_script_validation_failed"
-        elif not script["nativeSupport"]["available"]:
-            reason = "card_script_native_bridge_unavailable"
+        elif not script["hermesSupport"]["available"]:
+            reason = "card_script_hermes_runner_unavailable"
     return {
         "mode": "selected-mcp",
         "presentedTools": list(

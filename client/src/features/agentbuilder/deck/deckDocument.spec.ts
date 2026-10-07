@@ -82,6 +82,7 @@ describe('requested initial Card topology', () => {
       'graphiti.search_nodes',
       'graphiti.search_memory_facts',
       'graphiti.get_episodes',
+      'hermes:tool:memory',
     ]);
     expect(team?.runtimeOptions?.tools?.every((tool) => !tool.startsWith('cbm.'))).toBe(true);
     expect(INITIAL_AGENT_TEMPLATES.find((template) => template.id === 'template_team')

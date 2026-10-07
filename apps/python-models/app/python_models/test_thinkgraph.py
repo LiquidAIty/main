@@ -10,7 +10,7 @@ from app.python_models.thinkgraph import validate_cognition
 def question():
     return dict(nodeType="Question", memoryCategory="question", projectScope="project-one",
                 authoredBy="assistant", questionStatus="open", normalizedText="Which evidence distinguishes these alternatives?",
-                originRefs=[dict(authority="thinkgraph", nativeId="hypothesis", projectId="project-one")],
+                originRefs=[dict(authority="thinkgraph", entityId="hypothesis", projectId="project-one")],
                 provenance=["conversation:original-user-claim"])
 
 
@@ -36,7 +36,7 @@ def test_legacy_cognition_metadata_remains_readable(tmp_path, monkeypatch):
             "title": "Evidence for alternatives",
             "content": "Compare supporting and conflicting evidence before selecting an alternative.",
         })
-        native_id = saved["id"]
+        memory_id = saved["id"]
         # Existing cognition metadata remains readable even though the retired
         # cross-database Question/evidence writer is no longer live.
         legacy_cognition = validate_cognition({
@@ -44,7 +44,7 @@ def test_legacy_cognition_metadata_remains_readable(tmp_path, monkeypatch):
             "questionStatus": "contested",
             "answerRefs": [{
                 "authority": "knowgraph",
-                "nativeId": "existing-knowgraph-evidence",
+                "entityId": "existing-knowgraph-evidence",
                 "projectId": "project-one",
             }],
         }, "project-one")
@@ -54,34 +54,34 @@ def test_legacy_cognition_metadata_remains_readable(tmp_path, monkeypatch):
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
-        legacy = owner.store.get_memory(native_id)
+        legacy = owner.store.get_memory(memory_id)
         legacy.metadata = {"cognition": legacy_cognition}
         owner.store.add_memory(legacy)
-        native = engraphis.inspect("project-one", native_id)
-        stored = native["memory"]["metadata"]["cognition"]
+        inspection = engraphis.inspect("project-one", "engraphisMemoryId", memory_id)
+        stored = inspection["memory"]["metadata"]["cognition"]
         assert json.dumps(
             stored, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode() == expected_bytes
         assert stored["questionStatus"] == "contested"
         assert stored["answerRefs"] == [{
             "authority": "knowgraph",
-            "nativeId": "existing-knowgraph-evidence",
+            "entityId": "existing-knowgraph-evidence",
             "projectId": "project-one",
         }]
         assert stored["authoredBy"] == "assistant"
         assert stored["originRefs"] == question()["originRefs"]
         with pytest.raises(ValueError, match="thinkgraph_operation_unavailable"):
             engraphis.private_operation("project-one", "attach_answer", {
-                "nativeId": native_id,
+                "entityId": memory_id,
                 "evidence": {
                     "authority": "knowgraph",
-                    "nativeId": "retired-cross-graph-pointer",
+                    "entityId": "retired-cross-graph-pointer",
                     "projectId": "project-one",
                 },
                 "status": "answered",
             })
         after_rejected_write = engraphis.inspect(
-            "project-one", native_id
+            "project-one", "engraphisMemoryId", memory_id
         )["memory"]["metadata"]["cognition"]
         assert json.dumps(
             after_rejected_write,
@@ -90,9 +90,9 @@ def test_legacy_cognition_metadata_remains_readable(tmp_path, monkeypatch):
             separators=(",", ":"),
         ).encode() == expected_bytes
         # Ordinary metadata updates cannot discard cognition.
-        call("engraphis_update_memory", {"memory_id": native_id, "title": "Evidence for alternatives"})
+        call("engraphis_update_memory", {"memory_id": memory_id, "title": "Evidence for alternatives"})
         after_update = engraphis.inspect(
-            "project-one", native_id
+            "project-one", "engraphisMemoryId", memory_id
         )["memory"]["metadata"]["cognition"]
         assert json.dumps(
             after_update,
@@ -115,7 +115,7 @@ def test_structural_contract_does_not_guess_missing_authority(change, error):
         validate_cognition({**question(), **change}, "project-one")
 
 
-def test_native_relationship_projection_does_not_invent_strength_or_authorship(tmp_path, monkeypatch):
+def test_engraphis_relationship_projection_does_not_invent_strength_or_authorship(tmp_path, monkeypatch):
     from engraphis.service import MemoryService
     from engraphis.mcp_server import set_service
     owner = MemoryService.create(str(tmp_path / "links.sqlite"), embed_model="hash",

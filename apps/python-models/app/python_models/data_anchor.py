@@ -1,7 +1,7 @@
-"""Read-only native graph Data Anchor resolution before model dispatch.
+"""Read-only provider graph Data Anchor resolution before model dispatch.
 
-The resolver opens native authorities in read-only mode and returns current
-objects plus stable native identities. It never writes, recalls embeddings,
+The resolver opens provider authorities in read-only mode and returns current
+objects plus exact provider identifiers. It never writes, recalls embeddings,
 copies a graph, or turns a reference into synthetic data.
 """
 
@@ -195,6 +195,8 @@ def _read_knowgraph_subject_directory(
     if len(count_rows) != 1:
         raise DataAnchorError("subject_directory_knowgraph_count_invalid")
     raw_count = count_rows[0].get("count")
+    # Apache AGE agtype exposes the literal external method `to_native`; translate
+    # its value immediately and never project that dependency term outward.
     if hasattr(raw_count, "to_native"):
         raw_count = raw_count.to_native()
     if hasattr(raw_count, "toNumber"):
@@ -229,7 +231,7 @@ def build_canonical_subject_directory(
     think_reader: Callable[[str], dict[str, Any]] | None = None,
     know_reader: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Read every current subject header from both native graph authorities."""
+    """Read every current subject header from both graph authorities."""
 
     started = time.perf_counter()
     if think_reader is None:
@@ -265,7 +267,7 @@ def append_canonical_subject_directory(
 
 
 def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
-    """Interactive native reads through the same app-owned MCP hydration seam."""
+    """Interactive provider reads through the same app-owned MCP hydration seam."""
     from app.python_models.card_domain import load_deck
     name = str(payload.get("name") or "")
     if name not in {"list_projects", "index_status", "trace_path", "graph"}:
@@ -282,9 +284,9 @@ def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
         return _read_codegraph_projection(deck["projectId"], deck_id, card_id, arguments)
     if name == "trace_path":
         arguments.update(depth=1, limit=100, include_tests=False)
-    # This product read surface consumes stable native identities. Request the
+    # This product read surface consumes exact CBM qualified names. Request the
     # official machine-readable representation here instead of changing the
-    # native CBM catalog or the default behavior of ordinary cbm.* calls.
+    # CBM catalog or the default behavior of ordinary cbm.* calls.
     arguments["format"] = "json"
     try:
         result = call_read_tools_via_mcp(
@@ -304,8 +306,8 @@ def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _cbm_table(result: dict[str, Any], columns: list[str]) -> list[list[str]]:
     """Decode the official query_graph JSON table without parsing prose."""
-    native_columns = result.get("columns")
-    if native_columns != columns:
+    returned_columns = result.get("columns")
+    if returned_columns != columns:
         raise DataAnchorError("codegraph_query_format_invalid")
 
     rows: list[Any] = list(result.get("rows") or [])
@@ -438,7 +440,7 @@ def read_thinkgraph_exact(
         if id_field not in {"engraphisEntityId", "engraphisMemoryId"}:
             raise DataAnchorError("data_anchor_engraphis_reference_unsupported")
         if engraphis_reader is not None:
-            native = engraphis_reader(project_id, id_field, identifier)
+            engraphis_record = engraphis_reader(project_id, id_field, identifier)
         else:
             # This resolver also runs inside MCP for selected-Card handoffs. Only
             # Python rails may own Engraphis; never instantiate it in this process.
@@ -454,14 +456,14 @@ def read_thinkgraph_exact(
                 headers={"Content-Type": "application/json"}, method="POST",
             )
             with urlopen(request, timeout=30) as response:
-                native = json.load(response)
+                engraphis_record = json.load(response)
     except HTTPError as error:
         if error.code == 409:
             return None
         raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
     except Exception as error:
         raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
-    entity = native.get("entity")
+    entity = engraphis_record.get("entity")
     if isinstance(entity, dict):
         evidence = entity.get("evidence", [])
         thinks = [
@@ -501,9 +503,9 @@ def read_thinkgraph_exact(
             "metadata": {"thinks": bounded_thinks, "evidence": bounded_evidence},
             "provenance": {"engine": "engraphis", "memberIds": entity["member_ids"]},
             "asOf": "current", "readOperation": "graph_entity",
-            "relationshipEvidence": [{"nodes": [{"nativeId": r["other_id"], "title": r["other_label"]} for r in relations],
-                "relationships": [{"nativeId": r["id"], "sourceNativeId": r["source"],
-                    "targetNativeId": r["target"], "type": r["relation"]} for r in relations]}] if relations else [],
+            "relationshipEvidence": [{"nodes": [{"id": r["other_id"], "title": r["other_label"]} for r in relations],
+                "relationships": [{"id": r["id"], "sourceId": r["source"],
+                    "targetId": r["target"], "type": r["relation"]} for r in relations]}] if relations else [],
             "resultLimit": result_limit, "truncated": len(body) > _ANCHOR_BODY_LIMIT
                 or len(thinks) + len(residual_evidence) > (
                     len(bounded_thinks) + len(bounded_evidence)
@@ -511,15 +513,15 @@ def read_thinkgraph_exact(
                 or any(entity.get("truncation", {}).values())
                 or bounded_expansion > 0 and len(entity.get("relations", [])) > len(relations),
         }
-    row = native.get("memory")
+    row = engraphis_record.get("memory")
     if not isinstance(row, dict):
         return None
-    links = native.get("relationships", []) if bounded_expansion else []
+    links = engraphis_record.get("relationships", []) if bounded_expansion else []
     links = links[:max(0, result_limit - 1)]
     neighbors = {link["b"] if link["a"] == row["id"] else link["a"] for link in links}
     relationships = [{
-        "nativeId": json.dumps([link["a"], link["b"], link["relation"]], separators=(",", ":")),
-        "sourceNativeId": link["a"], "targetNativeId": link["b"], "type": link["relation"],
+        "id": json.dumps([link["a"], link["b"], link["relation"]], separators=(",", ":")),
+        "sourceId": link["a"], "targetId": link["b"], "type": link["relation"],
         "properties": {"reason": link.get("reason", ""), "layer": link.get("layer")},
     } for link in links]
     return {
@@ -539,13 +541,13 @@ def read_thinkgraph_exact(
         "metadata": row.get("metadata", {}), "provenance": row.get("provenance", {}),
         "asOf": "current", "readOperation": "engraphis_get_memory",
         "relationshipEvidence": [{
-            "nodes": [{"nativeId": link["id"], "title": link["title"]}
-                      for link in native.get("links", []) if link["id"] in neighbors],
+            "nodes": [{"id": link["id"], "title": link["title"]}
+                      for link in engraphis_record.get("links", []) if link["id"] in neighbors],
             "relationships": relationships,
         }] if relationships else [],
         "resultLimit": result_limit,
         "truncated": len(str(row.get("content", ""))) > _ANCHOR_BODY_LIMIT
-            or bounded_expansion > 0 and len(native.get("relationships", [])) > len(links),
+            or bounded_expansion > 0 and len(engraphis_record.get("relationships", [])) > len(links),
     }
 
 
@@ -559,12 +561,12 @@ def _neo4j_rows(result: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _without_native_embedding_vectors(value: Any) -> Any:
-    """Remove Graphiti's derived vector payloads from model-facing native reads."""
+def _without_graphiti_embedding_vectors(value: Any) -> Any:
+    """Remove Graphiti's derived vector payloads from model-facing reads."""
 
     if isinstance(value, dict):
         return {
-            key: _without_native_embedding_vectors(item)
+            key: _without_graphiti_embedding_vectors(item)
             for key, item in value.items()
             if not (
                 str(key).lower().endswith("_embedding")
@@ -572,7 +574,7 @@ def _without_native_embedding_vectors(value: Any) -> Any:
             )
         }
     if isinstance(value, list):
-        return [_without_native_embedding_vectors(item) for item in value]
+        return [_without_graphiti_embedding_vectors(item) for item in value]
     return value
 
 
@@ -639,15 +641,15 @@ def read_knowgraph_episodes_exact(
 
     hydrated: dict[str, dict[str, Any]] = {}
     for row in rows:
-        native_id = str(row.get("uuid") or "").strip()
-        if not native_id or native_id not in requested:
+        episode_id = str(row.get("uuid") or "").strip()
+        if not episode_id or episode_id not in requested:
             continue
-        properties = _without_native_embedding_vectors(
+        properties = _without_graphiti_embedding_vectors(
             _json_safe(row.get("properties") if isinstance(row.get("properties"), dict) else {})
         )
         content = str(properties.get("content") or "")
         source = {
-            "uuid": native_id,
+            "uuid": episode_id,
             **{
                 key: properties.get(key)
                 for key in (
@@ -662,12 +664,12 @@ def read_knowgraph_episodes_exact(
             "content_preview": content[:_KNOWGRAPH_EPISODE_PREVIEW_CHARS],
             "content_truncated": len(content) > _KNOWGRAPH_EPISODE_PREVIEW_CHARS,
         }
-        hydrated[native_id] = source
-    return [hydrated[native_id] for native_id in requested if native_id in hydrated]
+        hydrated[episode_id] = source
+    return [hydrated[episode_id] for episode_id in requested if episode_id in hydrated]
 
 
 def _portable_know(
-    native_id: str,
+    graphiti_fact_uuid: str,
     properties: dict[str, Any],
     *,
     source_id: str,
@@ -676,17 +678,17 @@ def _portable_know(
     target_name: str = "",
     episodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Project one native Graphiti fact without creating another stored object."""
+    """Project one Graphiti fact without creating another stored object."""
     episode_ids = _episode_ids(properties)
     invalid_at = properties.get("invalid_at")
     expired_at = properties.get("expired_at")
-    jev = _persisted_knowgraph_jev(native_id, properties)
+    jev = _persisted_knowgraph_jev(graphiti_fact_uuid, properties)
     return {
         "portableKind": "know",
-        "nativeFactUuid": native_id,
+        "graphitiFactUuid": graphiti_fact_uuid,
         "sourceEntity": {"uuid": source_id, **({"name": source_name} if source_name else {})},
         "targetEntity": {"uuid": target_id, **({"name": target_name} if target_name else {})},
-        "nativeRelation": str(properties.get("name") or properties.get("edge_type") or "Fact"),
+        "graphitiRelation": str(properties.get("name") or properties.get("edge_type") or "Fact"),
         "fact": str(properties.get("fact") or ""),
         "supportingEpisodeUuids": episode_ids,
         "supportingEpisodes": list(episodes or []),
@@ -705,10 +707,10 @@ def _portable_know(
 
 
 def _persisted_knowgraph_jev(
-    native_id: str,
+    graphiti_fact_uuid: str,
     properties: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Read already-settled Jev metadata from the native Graphiti relationship."""
+    """Read already-settled Jev metadata from the Graphiti relationship."""
     winner = str(properties.get("jev_relation_winner") or "").strip()
     serialized = properties.get("jev_relation_distribution_json")
     if not winner or serialized in (None, ""):
@@ -758,7 +760,7 @@ def _persisted_knowgraph_jev(
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
     return {
-        "nativeFactUuid": native_id,
+        "graphitiFactUuid": graphiti_fact_uuid,
         "status": "success",
         "winner": winner,
         "distribution": distribution,
@@ -802,13 +804,13 @@ def read_knowgraph_exact(
             center_rows = _neo4j_rows(session.run(
                 """
                 MATCH (n)
-                WHERE (elementId(n) = $nativeId OR toString(n.uuid) = $nativeId)
+                WHERE (elementId(n) = $graphitiId OR toString(n.uuid) = $graphitiId)
                   AND toString(n.group_id) IN $scopeIds
-                RETURN coalesce(toString(n.uuid), elementId(n)) AS nativeId,
+                RETURN coalesce(toString(n.uuid), elementId(n)) AS graphitiId,
                        labels(n) AS labels, properties(n) AS properties
                 LIMIT 1
                 """,
-                nativeId=identifier,
+                graphitiId=identifier,
                 scopeIds=scope_ids,
             ))
             relationship_center = False
@@ -816,34 +818,34 @@ def read_knowgraph_exact(
                 center_rows = _neo4j_rows(session.run(
                     """
                     MATCH (a)-[r]->(b)
-                    WHERE (elementId(r) = $nativeId OR toString(r.uuid) = $nativeId)
+                    WHERE (elementId(r) = $graphitiId OR toString(r.uuid) = $graphitiId)
                       AND toString(a.group_id) IN $scopeIds
                       AND toString(b.group_id) IN $scopeIds
                       AND toString(r.group_id) IN $scopeIds
-                    RETURN coalesce(toString(r.uuid), elementId(r)) AS nativeId,
+                    RETURN coalesce(toString(r.uuid), elementId(r)) AS graphitiId,
                            [type(r)] AS labels, properties(r) AS properties,
-                           coalesce(toString(a.uuid), elementId(a)) AS sourceNativeId,
-                           coalesce(toString(b.uuid), elementId(b)) AS targetNativeId,
-                           [{nativeId: coalesce(toString(a.uuid), elementId(a)),
+                           coalesce(toString(a.uuid), elementId(a)) AS sourceGraphitiId,
+                           coalesce(toString(b.uuid), elementId(b)) AS targetGraphitiId,
+                           [{graphitiId: coalesce(toString(a.uuid), elementId(a)),
                              labels: labels(a), properties: properties(a)},
-                            {nativeId: coalesce(toString(b.uuid), elementId(b)),
+                            {graphitiId: coalesce(toString(b.uuid), elementId(b)),
                              labels: labels(b), properties: properties(b)}] AS endpointNodes
                     LIMIT 1
                     """,
-                    nativeId=identifier,
+                    graphitiId=identifier,
                     scopeIds=scope_ids,
                 ))
                 relationship_center = bool(center_rows)
             if not center_rows:
                 return None
 
-            center = _without_native_embedding_vectors(_json_safe(center_rows[0]))
+            center = _without_graphiti_embedding_vectors(_json_safe(center_rows[0]))
             paths: list[dict[str, Any]] = []
             if bounded_expansion and not relationship_center:
-                paths = _without_native_embedding_vectors(_neo4j_rows(session.run(
+                paths = _without_graphiti_embedding_vectors(_neo4j_rows(session.run(
                     f"""
                     MATCH (center)
-                    WHERE (elementId(center) = $nativeId OR toString(center.uuid) = $nativeId)
+                    WHERE (elementId(center) = $graphitiId OR toString(center.uuid) = $graphitiId)
                       AND toString(center.group_id) IN $scopeIds
                     MATCH path=(center)-[*1..{bounded_expansion}]-(other)
                     WHERE ALL(node IN nodes(path)
@@ -851,16 +853,16 @@ def read_knowgraph_exact(
                       AND ALL(rel IN relationships(path)
                               WHERE toString(rel.group_id) IN $scopeIds)
                     RETURN [node IN nodes(path) | {{
-                               nativeId: coalesce(toString(node.uuid), elementId(node)),
+                               id: coalesce(toString(node.uuid), elementId(node)),
                                labels: labels(node), properties: properties(node)}}] AS nodes,
                            [rel IN relationships(path) | {{
-                               nativeId: coalesce(toString(rel.uuid), elementId(rel)),
+                               id: coalesce(toString(rel.uuid), elementId(rel)),
                                type: type(rel), properties: properties(rel),
-                               sourceNativeId: coalesce(toString(startNode(rel).uuid), elementId(startNode(rel))),
-                               targetNativeId: coalesce(toString(endNode(rel).uuid), elementId(endNode(rel)))}}] AS relationships
+                               sourceId: coalesce(toString(startNode(rel).uuid), elementId(startNode(rel))),
+                               targetId: coalesce(toString(endNode(rel).uuid), elementId(endNode(rel)))}}] AS relationships
                     LIMIT $limit
                     """,
-                    nativeId=identifier,
+                    graphitiId=identifier,
                     scopeIds=scope_ids,
                     limit=result_limit,
                 )))
@@ -887,7 +889,7 @@ def read_knowgraph_exact(
         if isinstance(source_endpoint.get("properties"), dict) else {}
     target_properties = target_endpoint.get("properties") \
         if isinstance(target_endpoint.get("properties"), dict) else {}
-    identifier = str(center.get("nativeId") or identifier)
+    identifier = str(center.get("graphitiId") or identifier)
     resolved_id_field = (
         "graphitiRelationshipId" if relationship_center
         else "graphitiEpisodeId" if "Episodic" in labels
@@ -898,8 +900,8 @@ def read_knowgraph_exact(
     portable_know = _portable_know(
         identifier,
         properties,
-        source_id=str(center.get("sourceNativeId") or ""),
-        target_id=str(center.get("targetNativeId") or ""),
+        source_id=str(center.get("sourceGraphitiId") or ""),
+        target_id=str(center.get("targetGraphitiId") or ""),
         source_name=str(source_properties.get("name") or ""),
         target_name=str(target_properties.get("name") or ""),
         episodes=episodes,
@@ -921,8 +923,8 @@ def read_knowgraph_exact(
         )[:_ANCHOR_BODY_LIMIT],
         "properties": properties,
         "endpointNodes": endpoint_nodes,
-        "sourceNativeId": str(center.get("sourceNativeId") or ""),
-        "targetNativeId": str(center.get("targetNativeId") or ""),
+        "sourceId": str(center.get("sourceGraphitiId") or ""),
+        "targetId": str(center.get("targetGraphitiId") or ""),
         **({"know": portable_know, "jev": portable_know.get("jev")}
            if portable_know is not None else {}),
         "relationshipEvidence": neighborhood,
@@ -1040,7 +1042,7 @@ def read_codegraph_exact(
 
 
 def _codegraph_trace_records(value: Any) -> list[dict[str, Any]]:
-    """Normalize native CBM JSON trace rows without interpreting their meaning."""
+    """Normalize CBM JSON trace rows without interpreting their meaning."""
     if isinstance(value, list):
         return [dict(item) for item in value if isinstance(item, dict)]
     if not isinstance(value, dict):
@@ -1116,10 +1118,10 @@ def _knowgraph_node_record(
     centered: bool,
     result_index: int,
 ) -> dict[str, Any] | None:
-    native_id = str(item.get("uuid") or item.get("nativeId") or "").strip()
-    if not native_id:
+    graphiti_id = str(item.get("uuid") or item.get("graphitiId") or "").strip()
+    if not graphiti_id:
         return None
-    name = str(item.get("name") or item.get("title") or native_id).strip()
+    name = str(item.get("name") or item.get("title") or graphiti_id).strip()
     aliases = _string_values(item.get("aliases"))
     exact_alias = query.casefold() in {name.casefold(), *(alias.casefold() for alias in aliases)}
     labels = _string_values(item.get("labels") or item.get("entity_types"))
@@ -1127,7 +1129,7 @@ def _knowgraph_node_record(
     episode_ids = _episode_ids(item)
     return {
         "graphSystem": "graphiti",
-        "graphitiEntityId": native_id,
+        "graphitiEntityId": graphiti_id,
         "recordKind": "entity",
         "type": labels[0] if labels else str(item.get("type") or "Entity"),
         "title": name,
@@ -1153,8 +1155,8 @@ def _knowgraph_fact_record(
     centered: bool,
     result_index: int,
 ) -> dict[str, Any] | None:
-    native_id = str(item.get("uuid") or item.get("nativeId") or "").strip()
-    if not native_id:
+    graphiti_id = str(item.get("uuid") or item.get("graphitiId") or "").strip()
+    if not graphiti_id:
         return None
     source_id = str(item.get("source_node_uuid") or "").strip()
     target_id = str(item.get("target_node_uuid") or "").strip()
@@ -1164,15 +1166,15 @@ def _knowgraph_fact_record(
     invalid_at = str(item.get("invalid_at") or "").strip()
     return {
         "graphSystem": "graphiti",
-        "graphitiRelationshipId": native_id,
+        "graphitiRelationshipId": graphiti_id,
         "recordKind": "relationship",
         "portableKind": "know",
         "type": str(item.get("name") or item.get("edge_type") or "Fact"),
-        "title": str(item.get("fact") or item.get("name") or native_id)[:500],
+        "title": str(item.get("fact") or item.get("name") or graphiti_id)[:500],
         "content": json.dumps(properties, ensure_ascii=False, separators=(",", ":"))[:_ANCHOR_BODY_LIMIT],
         "properties": properties,
         "know": _portable_know(
-            native_id,
+            graphiti_id,
             properties,
             source_id=source_id,
             target_id=target_id,
@@ -1570,7 +1572,7 @@ def _projection_node(
         "canonicalId": provider_id,
         "label": label,
         "title": label,
-        "type": safe_labels[0] if safe_labels else str(safe_properties.get("type") or "NativeObject"),
+        "type": safe_labels[0] if safe_labels else str(safe_properties.get("type") or "GraphObject"),
         "labels": safe_labels,
         "graphSystem": graph_system,
         "mentionCount": 1,
@@ -1596,7 +1598,7 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
     edges: dict[str, dict[str, Any]] = {}
 
     def add_node(item: dict[str, Any], *, fallback_title: str = "") -> None:
-        item_id = str(item.get("nativeId") or item.get("uuid") or "").strip()
+        item_id = str(item.get("id") or item.get("graphitiId") or item.get("uuid") or "").strip()
         if not item_id or item_id in nodes:
             return
         nodes[item_id] = _projection_node(
@@ -1609,15 +1611,15 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
         )
 
     def add_edge(item: dict[str, Any]) -> None:
-        edge_id = str(item.get("nativeId") or item.get("uuid") or "").strip()
+        edge_id = str(item.get("id") or item.get("graphitiId") or item.get("uuid") or "").strip()
         source = str(
-            item.get("sourceNativeId")
+            item.get("sourceId")
             or item.get("sourceNodeUuid")
             or item.get("source_node_uuid")
             or ""
         ).strip()
         target = str(
-            item.get("targetNativeId")
+            item.get("targetId")
             or item.get("targetNodeUuid")
             or item.get("target_node_uuid")
             or ""
@@ -1640,8 +1642,8 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
             if isinstance(endpoint, dict):
                 add_node(endpoint)
         evidence = record.get("relationshipEvidence") or []
-        source_id = str(record.get("sourceNativeId") or "").strip()
-        target_id = str(record.get("targetNativeId") or "").strip()
+        source_id = str(record.get("sourceId") or "").strip()
+        target_id = str(record.get("targetId") or "").strip()
         if isinstance(evidence, list) and evidence and isinstance(evidence[0], dict):
             source_id = source_id or str(evidence[0].get("sourceNodeUuid") or "").strip()
             target_id = target_id or str(evidence[0].get("targetNodeUuid") or "").strip()
@@ -1654,9 +1656,9 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
             if jev.get("status") == "success" and jev.get("winner"):
                 edge_properties["jevCanonicalRelation"] = jev["winner"]
         add_edge({
-            "nativeId": provider_id,
-            "sourceNativeId": source_id,
-            "targetNativeId": target_id,
+            "id": provider_id,
+            "sourceId": source_id,
+            "targetId": target_id,
             "type": (
                 jev.get("winner")
                 if jev.get("status") == "success" and jev.get("winner")
@@ -1668,7 +1670,7 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
         "engraphisEntityId", "graphitiEntityId", "cbmQualifiedName",
     }:
         add_node({
-            "nativeId": provider_id,
+            "id": provider_id,
             "labels": [record.get("type")] if record.get("type") else [],
             "properties": record.get("properties") or record.get("metadata") or {},
             "title": record.get("title"),

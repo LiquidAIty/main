@@ -199,6 +199,7 @@ describe('Main / Hermes / graph authority topology', () => {
       'mag_one.describe_connected_agents',
     ]));
     expect(mainTools).not.toContain('card.run_assistant_agent');
+    expect(mainTools).not.toContain('hermes:tool:message_agent');
     expect(mainTools).not.toContain('web_search');
     expect(knowgraphTools).toEqual([
       'canvas.inspect',
@@ -271,7 +272,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.runtimeOptions?.providerModelId).toBe('gpt-5.6-sol');
     expect(main?.runtimeOptions?.toolsets ?? []).toEqual([]);
     expect(main?.prompt).toContain('persistent user-facing front door and system orchestrator');
-    expect(main?.prompt).toContain('through message_agent by its exact saved visible name');
+    expect(main?.prompt).toContain('only through Bot Mode and the exact permitted profile roster');
     expect(main?.prompt).toContain('a wire grants outbound authority but never starts work');
     expect(main?.prompt).toContain('Do not copy the conversation or Main memory into another Card');
     expect(main?.prompt).toContain('Invoke run_mag_one only once for the exact approved mission');
@@ -393,25 +394,24 @@ describe('Main / Hermes / graph authority topology', () => {
       new URL('../components/knowledge/KnowledgeGraphFramework.tsx', import.meta.url),
       'utf8',
     );
-    const nativeSurface = readFileSync(
-      new URL('../components/knowledge/NativeAuthorityGraphSurface.tsx', import.meta.url),
+    const knowledgeSurface = readFileSync(
+      new URL('../components/knowledge/KnowledgeAuthorityGraphSurface.tsx', import.meta.url),
       'utf8',
     );
     expect(source).not.toContain('resolveCbmProjectName');
     expect(source).not.toContain('knowledgeGraphKind');
-    expect(framework).toContain('<NativeJoinedGraphSurface');
+    expect(framework).toContain('<JoinedKnowledgeGraphSurface');
     expect(framework).not.toContain('Knowledge graph view');
     expect(framework).not.toContain('graph-kind-codegraph');
     expect(framework).not.toContain('onReadContextualNode');
     expect(framework).not.toContain('onUseContextualNodeRead');
     expect(source).not.toContain('handleUseContextualNodeRead');
-    expect(source).not.toContain('handleUseAttentionNode');
     for (const forbiddenForeground of [
       'Reread contents',
       '<strong>For:</strong>',
       'Use selected in chat',
     ]) {
-      expect(nativeSurface).not.toContain(forbiddenForeground);
+      expect(knowledgeSurface).not.toContain(forbiddenForeground);
     }
   });
 

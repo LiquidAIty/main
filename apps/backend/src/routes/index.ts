@@ -25,7 +25,7 @@ const router = Router();
 
 // Mount auth routes (no middleware needed for auth itself)
 router.use('/auth', auth);
-// Native Card terminals require an existing authenticated session; never create guests.
+// Card terminals require an existing authenticated session; never create guests.
 router.use('/agent-terminals', agentTerminalRoutes);
 
 // Mount children exactly once. Preserve existing concrete paths.

@@ -6,7 +6,7 @@ duplicate, empty-name, or schema-missing tools. There is no fallback,
 substitution, guessing, auto-selection, or tool invention.
 
 The real tool callables (``tool_current_datetime``, ``tool_calculator``) live
-here. Native runtimes receive only the exact saved selection projected from
+here. Provider runtimes receive only the exact saved selection projected from
 this registry.
 """
 
@@ -73,11 +73,11 @@ class OperationDefinition:
     def __post_init__(self) -> None:
         if not self.canonical_id.strip():
             raise RuntimeError("operation_id_empty")
-        native_external = (
+        provider_external = (
             self.publishers == frozenset({"external-mcp"})
             and self.external_source_id != "main_mcp"
         )
-        if not self.description.strip() and not native_external:
+        if not self.description.strip() and not provider_external:
             raise RuntimeError(f"operation_description_missing:{self.canonical_id}")
         if self.parameters_schema.get("type") != "object":
             raise RuntimeError(f"operation_parameters_invalid:{self.canonical_id}")
@@ -155,7 +155,7 @@ def _worldsignals_package_context_required(
 ) -> dict[str, Any]:
     """Typed packages require trusted Card/Run identity from the MCP host.
 
-    Keeping the public arguments in this callable preserves the accurate native
+    Keeping the public arguments in this callable preserves the accurate provider
     schema, while an unscoped invocation fails closed instead of accepting
     model-authored scope identifiers.
     """
@@ -322,7 +322,7 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
                 "canonicalId": canonical_id, "kind": kind, "namespace": namespace,
                 "sourceIds": [], "displayName": canonical_id,
                 "shortDescription": raw.get("description", ""),
-                "availability": "disabled", "publication": "native",
+                "availability": "disabled", "publication": "provider",
                 "access": "read" if (annotations or {}).get("readOnlyHint") is True else "write",
                 "contracts": [],
             }
@@ -476,7 +476,7 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class ToolRegistry:
-    """Resolves only explicitly selected native tool specifications."""
+    """Resolves only explicitly selected provider tool specifications."""
 
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
@@ -547,7 +547,7 @@ class ToolRegistry:
         return spec
 
     def resolve_selected(self, selected_names: list[str]) -> list[ToolSpec]:
-        """Resolve exactly the selected set; public/native reads grant nothing."""
+        """Resolve exactly the selected set; public/provider reads grant nothing."""
         selected: list[str] = []
         seen_selected: set[str] = set()
         for name in selected_names or []:
@@ -643,7 +643,7 @@ def build_default_tool_registry() -> ToolRegistry:
             ToolSpec(
                 name="worldsignals.package",
                 description=(
-                    "Run one live WorldSignals command only when its native manifest classifies it "
+                    "Run one live WorldSignals command only when its manifest classifies it "
                     "as read-only, then return one provenance-bound signal.package.v1 envelope. "
                     "Project, deck, Card, and Run scope are injected by the authenticated runtime; "
                     "the caller cannot supply or widen them."
@@ -971,7 +971,7 @@ _DISCOVERED_EXTERNAL_OPERATIONS_LOCK = threading.RLock()
 
 
 def _static_operation_definitions() -> tuple[OperationDefinition, ...]:
-    """Assemble code-owned operations once; native MCP catalogs stay external."""
+    """Assemble code-owned operations once; provider MCP catalogs stay external."""
 
     global _OPERATION_DEFINITIONS
     if _OPERATION_DEFINITIONS is not None:
@@ -1003,9 +1003,9 @@ def replace_discovered_external_operations(
     source_id: str,
     definitions: list[OperationDefinition] | tuple[OperationDefinition, ...],
 ) -> None:
-    """Atomically replace one native owner's live catalog contribution.
+    """Atomically replace one provider owner's live catalog contribution.
 
-    The native MCP server supplies exact identities, schemas, descriptions and
+    The provider MCP server supplies exact identities, schemas, descriptions and
     effect annotations. LiquidAIty validates that metadata but never copies a
     version-specific operation list into source.
     """
@@ -1057,7 +1057,7 @@ def replace_discovered_external_operations(
 
 
 def operation_definitions() -> tuple[OperationDefinition, ...]:
-    """Return code-owned operations plus current native MCP discoveries."""
+    """Return code-owned operations plus current provider MCP discoveries."""
 
     static_definitions = _static_operation_definitions()
     with _DISCOVERED_EXTERNAL_OPERATIONS_LOCK:
@@ -1156,7 +1156,7 @@ def _publisher_manifest(
 
 
 def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
-    """Derived compatibility view for the native Hermes plugin publisher."""
+    """Derived view for the Hermes plugin publisher."""
 
     return _publisher_manifest("internal-plugin", registry=registry)
 

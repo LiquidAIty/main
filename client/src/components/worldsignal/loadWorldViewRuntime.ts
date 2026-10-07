@@ -1,10 +1,10 @@
-import nativeDocument from '../../../../worldsignal/gods-eye-view-main/index.html?raw';
-import scopedStyles from 'virtual:worldview-native-css';
-import { importNativeWorldViewMount as importRuntimeWorldViewMount } from 'virtual:worldview-native-mount';
+import worldViewDocument from '../../../../worldsignal/gods-eye-view-main/index.html?raw';
+import scopedStyles from 'virtual:worldview-runtime-css';
+import { importWorldViewMount as importRuntimeWorldViewMount } from 'virtual:worldview-runtime-mount';
 
-export type NativeWorldViewCallbacks = {
+export type WorldViewRuntimeCallbacks = {
   onReady?: (sourceVersion: string) => void;
-  onVisualReadinessChange?: (state: NativeWorldViewVisualReadiness) => void;
+  onVisualReadinessChange?: (state: WorldViewVisualReadiness) => void;
   onSelectionChange?: (selection: unknown) => void;
   onLayerStateChange?: (state: unknown) => void;
   onLayerVisibilityChange?: (change: { layerId: string; enabled: boolean }) => void;
@@ -12,7 +12,7 @@ export type NativeWorldViewCallbacks = {
   onError?: (error: { code: string; message: string }) => void;
 };
 
-export type NativeWorldViewVisualPhase =
+export type WorldViewVisualPhase =
   | 'waiting-for-size'
   | 'waiting-for-frame'
   | 'waiting-for-photoreal-content'
@@ -20,8 +20,8 @@ export type NativeWorldViewVisualPhase =
   | 'ready'
   | 'unavailable';
 
-export type NativeWorldViewVisualReadiness = {
-  phase: NativeWorldViewVisualPhase;
+export type WorldViewVisualReadiness = {
+  phase: WorldViewVisualPhase;
   canvas: {
     cssWidth: number;
     cssHeight: number;
@@ -47,7 +47,7 @@ export const WORLDVIEW_CANVAS_SIZE_DEADLINE_MS = 5_000;
 export const WORLDVIEW_FIRST_CONTENT_DEADLINE_MS = 8_000;
 export const WORLDVIEW_RENDER_FRAME_DEADLINE_MS = 5_000;
 
-export type NativeWorldViewMount = {
+export type WorldViewMount = {
   attachInspectorControls: (host: HTMLElement) => { detach: () => void };
   selectInspectorTab: (tab: string) => boolean;
   setLayerVisibility: (
@@ -68,47 +68,47 @@ export type NativeWorldViewMount = {
     options?: { disabledLayerIds?: string[]; signal?: AbortSignal },
   ) => Promise<unknown>;
   prepareRunImages: () => Promise<Array<Record<string, unknown>>>;
-  getVisualReadiness: () => NativeWorldViewVisualReadiness;
+  getVisualReadiness: () => WorldViewVisualReadiness;
   destroy: () => Promise<void>;
 };
 
-type NativeWorldViewMountModule = {
+type WorldViewMountModule = {
   mountWorldView: (
     root: HTMLElement,
     config: Record<string, unknown>,
-  ) => Promise<NativeRuntimeMount>;
+  ) => Promise<WorldViewRuntimeMount>;
 };
 
-type NativeWorldViewImportOptions = {
+type WorldViewImportOptions = {
   dev?: boolean;
-  moduleImporter?: () => Promise<NativeWorldViewMountModule>;
+  moduleImporter?: () => Promise<WorldViewMountModule>;
   fetcher?: typeof fetch;
   attempts?: number;
   retryDelayMs?: number;
 };
 
 /** Public module doorway owned by the supervised WorldView service. */
-export const WORLDVIEW_NATIVE_MOUNT_MODULE_URL =
+export const WORLDVIEW_MOUNT_MODULE_URL =
   'http://127.0.0.1:4174/src/app/mount.js';
 
 const delay = (milliseconds: number) => milliseconds <= 0
   ? Promise.resolve()
   : new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-async function waitForPublicNativeModule({
+async function waitForPublicRuntimeModule({
   fetcher,
   attempts,
   retryDelayMs,
-}: Required<Pick<NativeWorldViewImportOptions, 'fetcher' | 'attempts' | 'retryDelayMs'>>) {
+}: Required<Pick<WorldViewImportOptions, 'fetcher' | 'attempts' | 'retryDelayMs'>>) {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const response = await fetcher(WORLDVIEW_NATIVE_MOUNT_MODULE_URL, {
+      const response = await fetcher(WORLDVIEW_MOUNT_MODULE_URL, {
         method: 'HEAD',
         cache: 'no-store',
       });
       if (response.ok) return;
-      lastError = new Error(`worldview_native_module_http_${response.status}`);
+      lastError = new Error(`worldview_runtime_module_http_${response.status}`);
     } catch (error) {
       lastError = error;
     }
@@ -116,42 +116,42 @@ async function waitForPublicNativeModule({
   }
   throw lastError instanceof Error
     ? lastError
-    : new Error('worldview_native_module_unavailable');
+    : new Error('worldview_runtime_module_unavailable');
 }
 
 /** Dev uses the supervised module server; builds keep the bundled module graph. */
-export async function importNativeWorldViewMount({
+export async function importWorldViewMount({
   dev = import.meta.env.DEV,
   moduleImporter = importRuntimeWorldViewMount,
   fetcher = fetch,
   attempts = 8,
   retryDelayMs = 250,
-}: NativeWorldViewImportOptions = {}): Promise<NativeWorldViewMountModule> {
-  if (dev) await waitForPublicNativeModule({ fetcher, attempts, retryDelayMs });
+}: WorldViewImportOptions = {}): Promise<WorldViewMountModule> {
+  if (dev) await waitForPublicRuntimeModule({ fetcher, attempts, retryDelayMs });
   return moduleImporter();
 }
 
-type NativeEventLike = {
+type RuntimeEventLike = {
   addEventListener?: (listener: (...args: any[]) => void) => (() => void) | void;
   removeEventListener?: (listener: (...args: any[]) => void) => void;
 };
 
-type NativeRuntimeMount = Omit<NativeWorldViewMount, 'getVisualReadiness'> & {
+type WorldViewRuntimeMount = Omit<WorldViewMount, 'getVisualReadiness'> & {
   getComponents?: () => {
     scene?: {
       viewer?: {
         scene?: {
           canvas?: HTMLCanvasElement;
-          postRender?: NativeEventLike;
-          renderError?: NativeEventLike;
+          postRender?: RuntimeEventLike;
+          renderError?: RuntimeEventLike;
           requestRender?: () => void;
         };
       };
       tileset?: {
         tilesLoaded?: boolean;
-        tileFailed?: NativeEventLike;
-        tileVisible?: NativeEventLike;
-        initialTilesLoaded?: NativeEventLike;
+        tileFailed?: RuntimeEventLike;
+        tileVisible?: RuntimeEventLike;
+        initialTilesLoaded?: RuntimeEventLike;
       } | null;
       mapStackController?: {
         getState?: () => { activeId?: unknown };
@@ -163,12 +163,12 @@ type NativeRuntimeMount = Omit<NativeWorldViewMount, 'getVisualReadiness'> & {
 
 type VisualReadinessObserver = {
   dispose: () => void;
-  getState: () => NativeWorldViewVisualReadiness;
+  getState: () => WorldViewVisualReadiness;
 };
 
 function cloneVisualReadiness(
-  state: NativeWorldViewVisualReadiness,
-): NativeWorldViewVisualReadiness {
+  state: WorldViewVisualReadiness,
+): WorldViewVisualReadiness {
   return {
     ...state,
     canvas: { ...state.canvas },
@@ -177,7 +177,7 @@ function cloneVisualReadiness(
   };
 }
 
-function eventCleanup(event: NativeEventLike | undefined, listener: (...args: any[]) => void) {
+function eventCleanup(event: RuntimeEventLike | undefined, listener: (...args: any[]) => void) {
   if (!event?.addEventListener) return () => {};
   const remove = event.addEventListener(listener);
   if (typeof remove === 'function') return remove;
@@ -196,10 +196,10 @@ function isPhotorealStack(stackId: string | null): boolean {
   return stackId === 'photoreal' || stackId === 'photorealistic';
 }
 
-/** Observe pixels through the native handle without becoming another viewer or saved-setting owner. */
-export function observeNativeWorldViewVisualReadiness(
-  mounted: NativeRuntimeMount,
-  onChange?: (state: NativeWorldViewVisualReadiness) => void,
+/** Observe pixels through the WorldView handle without becoming another viewer or saved-setting owner. */
+export function observeWorldViewVisualReadiness(
+  mounted: WorldViewRuntimeMount,
+  onChange?: (state: WorldViewVisualReadiness) => void,
 ): VisualReadinessObserver {
   let disposed = false;
   let sizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -208,7 +208,7 @@ export function observeNativeWorldViewVisualReadiness(
   let contentNeedsRenderedFrame = false;
   let fallbackPromise: Promise<void> | null = null;
   const cleanups: Array<() => void> = [];
-  let state: NativeWorldViewVisualReadiness = {
+  let state: WorldViewVisualReadiness = {
     phase: 'waiting-for-size',
     canvas: { cssWidth: 0, cssHeight: 0, backingWidth: 0, backingHeight: 0, valid: false },
     firstPostRender: false,
@@ -223,7 +223,7 @@ export function observeNativeWorldViewVisualReadiness(
   const emit = () => {
     if (!disposed) onChange?.(cloneVisualReadiness(state));
   };
-  const update = (patch: Partial<NativeWorldViewVisualReadiness>) => {
+  const update = (patch: Partial<WorldViewVisualReadiness>) => {
     state = { ...state, ...patch };
     emit();
   };
@@ -241,7 +241,7 @@ export function observeNativeWorldViewVisualReadiness(
     update({ phase: 'unavailable', error: { code, message } });
   };
 
-  let components: ReturnType<NonNullable<NativeRuntimeMount['getComponents']>> | undefined;
+  let components: ReturnType<NonNullable<WorldViewRuntimeMount['getComponents']>> | undefined;
   try {
     components = mounted.getComponents?.();
   } catch (error) {
@@ -308,7 +308,7 @@ export function observeNativeWorldViewVisualReadiness(
   };
 
   const triggerFallback = (
-    reason: NonNullable<NativeWorldViewVisualReadiness['fallback']['reason']>,
+    reason: NonNullable<WorldViewVisualReadiness['fallback']['reason']>,
     message: string,
   ) => {
     if (disposed || state.fallback.attempted || fallbackPromise) return;
@@ -410,7 +410,7 @@ export function observeNativeWorldViewVisualReadiness(
     const activeMapStackId = readStackId();
     update({ firstPostRender: true, activeMapStackId });
     if (!canvasValid) return;
-    // The native mount can finish its first photoreal load before this
+    // The WorldView mount can finish its first photoreal load before this
     // application observer attaches. The authoritative tilesLoaded flag is
     // therefore also a content milestone, but a frame observed by this
     // wrapper is still required before visual readiness is claimed.
@@ -495,24 +495,24 @@ export function observeNativeWorldViewVisualReadiness(
   };
 }
 
-/** Load the controlled native fork only when the WorldView surface is shown. */
-export async function loadWorldViewNative(
+/** Load the controlled WorldView fork only when its surface is shown. */
+export async function loadWorldViewRuntime(
   root: HTMLElement,
   config: {
     projectId: string;
     cardId: string;
-    callbacks: NativeWorldViewCallbacks;
+    callbacks: WorldViewRuntimeCallbacks;
   },
-): Promise<NativeWorldViewMount> {
-  const { mountWorldView } = await importNativeWorldViewMount();
+): Promise<WorldViewMount> {
+  const { mountWorldView } = await importWorldViewMount();
   const mounted = await mountWorldView(root, {
     ...config,
-    documentMarkup: nativeDocument,
+    documentMarkup: worldViewDocument,
     scopedStyles,
     runtimeBaseUrl: '/worldview-native/',
     sourceVersion: '0.1.1',
-  }) as NativeRuntimeMount;
-  const visualReadiness = observeNativeWorldViewVisualReadiness(
+  }) as WorldViewRuntimeMount;
+  const visualReadiness = observeWorldViewVisualReadiness(
     mounted,
     config.callbacks.onVisualReadinessChange,
   );

@@ -3,7 +3,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
 import useAgentBuilderKnowledgeGraphs, {
   withSettlementHeat,
 } from './useAgentBuilderKnowledgeGraphs';

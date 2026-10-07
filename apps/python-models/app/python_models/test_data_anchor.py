@@ -11,7 +11,7 @@ def test_codegraph_ui_reads_saved_scope_and_rejects_effects(monkeypatch):
     calls = []
     def read(**kwargs):
         calls.append(kwargs)
-        return [{"projects": [{"name": "native-project"}]}]
+        return [{"projects": [{"name": "cbm-project"}]}]
     monkeypatch.setattr(data_anchor, "call_read_tools_via_mcp", read)
     scope = {"projectId": "p", "deckId": "d", "cardId": "saved-main"}
     assert data_anchor.read_codegraph_tool({**scope, "name": "list_projects"})["projects"]
@@ -52,19 +52,19 @@ from app.python_models import engraphis, data_anchor
 
 
 def test_codegraph_projection_preserves_returned_ids_direction_and_type(monkeypatch):
-    prefix = "C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderGraphAttention."
-    source, target = prefix + "overlayAuthoritativeGraphAttention", prefix + "retain"
+    prefix = "C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderKnowledgeGraphs."
+    source, target = prefix + "withSettlementHeat", prefix + "observeThinkGraphRevision"
     node_columns = ["a.qualified_name", "a.name", "a.label", "id(a)"]
     edge_columns = [
         *node_columns,
         "b.qualified_name", "b.name", "b.label", "id(b)", "id(r)", "type(r)",
     ]
     nodes = {"columns": node_columns, "rows": [[
-        source, "overlayAuthoritativeGraphAttention", "Function", 2130,
+        source, "withSettlementHeat", "Function", 2130,
     ]], "total": 1}
     edges = {"columns": edge_columns, "rows": [[
-        source, "overlayAuthoritativeGraphAttention", "Function", 2130,
-        target, "retain", "Function", 2131, 17367, "CALLS",
+        source, "withSettlementHeat", "Function", 2130,
+        target, "observeThinkGraphRevision", "Function", 2131, 17367, "CALLS",
     ]], "total": 1}
     observed = []
     def read(**kwargs):
@@ -102,18 +102,18 @@ def test_codegraph_empty_and_changed_wire_format_do_not_create_records(monkeypat
 
 
 @pytest.fixture
-def native_graph(tmp_path, monkeypatch):
+def engraphis_graph(tmp_path, monkeypatch):
     import io
     import json
     from urllib.error import HTTPError
     from engraphis.service import MemoryService
-    # Native persistence/relationship fixture; hash embedding is not semantic proof.
+    # Engraphis persistence/relationship fixture; hash embedding is not semantic proof.
     service = MemoryService.create(str(tmp_path / "memory.sqlite"), embed_model="hash",
                                    extractor="none", graph_extractor="none")
     monkeypatch.setattr(engraphis, "_service", service)
-    first = service.remember("Current native graph content", workspace="project-1", title="Current fact")["id"]
-    second = service.remember("Project-scoped native engine content", workspace="project-1", title="Native memory")["id"]
-    service.link(first, second, workspace="project-1", relation="supports", reason="Retained native evidence")
+    first = service.remember("Current Engraphis graph content", workspace="project-1", title="Current fact")["id"]
+    second = service.remember("Project-scoped Engraphis engine content", workspace="project-1", title="Engraphis memory")["id"]
+    service.link(first, second, workspace="project-1", relation="supports", reason="Retained Engraphis evidence")
     def read(request, **kwargs):
         assert request.full_url.endswith("/thinkgraph/operation")
         payload = json.loads(request.data)
@@ -128,37 +128,37 @@ def native_graph(tmp_path, monkeypatch):
     service.close()
 
 
-def test_exact_thinkgraph_read_is_project_scoped_and_read_only(native_graph) -> None:
-    service, first, _ = native_graph
+def test_exact_thinkgraph_read_is_project_scoped_and_read_only(engraphis_graph) -> None:
+    service, first, _ = engraphis_graph
     before = service.store.conn.total_changes
     record = read_thinkgraph_exact("project-1", "engraphisMemoryId", first)
 
     assert record is not None
     assert record["engraphisMemoryId"] == first
-    assert record["content"] == "Current native graph content"
+    assert record["content"] == "Current Engraphis graph content"
     assert read_thinkgraph_exact(
         "other-project", "engraphisMemoryId", first,
     ) is None
     assert service.store.conn.total_changes == before
 
 
-def test_exact_thinkgraph_read_accepts_project_scoped_native_engraphis_id(native_graph) -> None:
-    _, _, second = native_graph
+def test_exact_thinkgraph_read_accepts_project_scoped_engraphis_id(engraphis_graph) -> None:
+    _, _, second = engraphis_graph
     record = read_thinkgraph_exact("project-1", "engraphisMemoryId", second)
 
     assert record is not None
     assert record["engraphisMemoryId"] == second
     assert record["recordId"] == second
-    assert record["content"] == "Project-scoped native engine content"
+    assert record["content"] == "Project-scoped Engraphis engine content"
 
 
-def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
+def test_think_handoff_prefers_self_contained_thinks_and_keeps_engraphis_evidence(
     monkeypatch,
 ) -> None:
     import io
     import json
 
-    native = {
+    provider_payload = {
         "entity": {
             "canonical_id": "entity-one",
             "type": "person_or_concept",
@@ -175,7 +175,7 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
                 },
                 {
                     "memory_id": "mem_other",
-                    "excerpt": "Other native evidence.",
+                    "excerpt": "Other Engraphis evidence.",
                     "metadata": {"provenance": {"source": "test"}},
                 },
             ],
@@ -184,7 +184,7 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
     monkeypatch.setattr(
         data_anchor,
         "urlopen",
-        lambda *_args, **_kwargs: io.BytesIO(json.dumps(native).encode()),
+        lambda *_args, **_kwargs: io.BytesIO(json.dumps(provider_payload).encode()),
     )
 
     record = read_thinkgraph_exact(
@@ -201,8 +201,8 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
     ]
 
 
-def test_required_anchor_materializes_real_data_and_stable_reference(native_graph) -> None:
-    _, first, _ = native_graph
+def test_required_anchor_materializes_real_data_and_stable_reference(engraphis_graph) -> None:
+    _, first, _ = engraphis_graph
     seed, references = resolve_data_anchors(
         "project-1",
         [{
@@ -213,18 +213,18 @@ def test_required_anchor_materializes_real_data_and_stable_reference(native_grap
         }],
     )
 
-    assert "Current native graph content" in seed
+    assert "Current Engraphis graph content" in seed
     assert "Selection reason (guidance, not verified fact)" in seed
     assert "Verified provider content" in seed
     assert references[0]["engraphisMemoryId"] == first
     assert references[0]["label"] == "Current fact"
     assert references[0]["selectionScope"] == {"boundedExpansion": 0}
     assert references[0]["materializedContentBytes"] == len(
-        "Current native graph content".encode("utf-8")
+        "Current Engraphis graph content".encode("utf-8")
     )
 
 
-def test_exact_repeated_native_payload_is_rendered_once_without_losing_distinct_records(
+def test_exact_repeated_provider_payload_is_rendered_once_without_losing_distinct_records(
     monkeypatch,
 ) -> None:
     shared_metadata = {"thinkgraph_origin": {
@@ -275,8 +275,8 @@ class _FakeNeo4jResult:
         return self._rows
 
 
-def test_thinkgraph_memory_reference_does_not_materialize_memory_nodes(native_graph):
-    service, first, second = native_graph
+def test_thinkgraph_memory_reference_does_not_materialize_memory_nodes(engraphis_graph):
+    service, first, second = engraphis_graph
     before = service.store.conn.total_changes
     projection = empty_graph_projection("project-1")
     text, refs = resolve_data_anchors("project-1", [{
@@ -379,7 +379,7 @@ def test_subject_directory_rejects_incomplete_count_mismatch_and_duplicate(
         )
 
 
-def test_subject_directory_rejects_duplicate_authority_native_identity() -> None:
+def test_subject_directory_rejects_duplicate_authority_provider_identity() -> None:
     duplicate = _subject("ThinkGraph", 1)
     with pytest.raises(DataAnchorError, match="subject_duplicate"):
         assemble_canonical_subject_directory(
@@ -431,18 +431,18 @@ def test_subject_directory_rejects_combined_context_over_existing_limit() -> Non
         append_canonical_subject_directory("x" * data_anchor._GRAPH_SEED_LIMIT, directory)
 
 
-def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance() -> None:
+def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance() -> None:
     driver = _FakeNeo4jDriver([[{
-        "nativeId": "entity-1",
+        "graphitiId": "entity-1",
         "labels": ["Entity"],
         "properties": {
             "name": "Bounded entity",
             "group_id": "liquidaity-project-1",
-            "source": "native-test",
+            "source": "graphiti-test",
             "name_embedding": [0.1] * 4096,
         },
     }], [{
-        "nodes": [{"nativeId": "entity-1", "labels": ["Entity"], "properties": {
+        "nodes": [{"graphitiId": "entity-1", "labels": ["Entity"], "properties": {
             "name_embedding": [0.1] * 4096,
         }}],
         "relationships": [],
@@ -459,7 +459,7 @@ def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance()
     assert record is not None
     assert record["graphitiEntityId"] == "entity-1"
     assert record["provenance"]["group_id"] == "liquidaity-project-1"
-    assert record["relationshipEvidence"][0]["nodes"][0]["nativeId"] == "entity-1"
+    assert record["relationshipEvidence"][0]["nodes"][0]["graphitiId"] == "entity-1"
     assert "name_embedding" not in record["properties"]
     assert "name_embedding" not in record["relationshipEvidence"][0]["nodes"][0]["properties"]
     assert driver.closed is True
@@ -498,7 +498,7 @@ def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
 
 def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None:
     driver = _FakeNeo4jDriver([[], [{
-        "nativeId": "fact-1",
+        "graphitiId": "fact-1",
         "labels": ["RELATES_TO"],
         "properties": {
             "name": "partners with",
@@ -517,11 +517,11 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
             "jev_ontology_version": "jev.semantic-relationships.v1",
             "jev_ontology_hash": "hash-1",
         },
-        "sourceNativeId": "entity-a",
-        "targetNativeId": "entity-b",
+        "sourceGraphitiId": "entity-a",
+        "targetGraphitiId": "entity-b",
         "endpointNodes": [
-            {"nativeId": "entity-a", "labels": ["Entity"], "properties": {"name": "Alpha"}},
-            {"nativeId": "entity-b", "labels": ["Entity"], "properties": {"name": "Beta"}},
+            {"graphitiId": "entity-a", "labels": ["Entity"], "properties": {"name": "Alpha"}},
+            {"graphitiId": "entity-b", "labels": ["Entity"], "properties": {"name": "Beta"}},
         ],
     }]])
     episode = {
@@ -541,10 +541,10 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
     assert record["graphitiRelationshipId"] == "fact-1"
     assert record["know"] == {
         "portableKind": "know",
-        "nativeFactUuid": "fact-1",
+        "graphitiFactUuid": "fact-1",
         "sourceEntity": {"uuid": "entity-a", "name": "Alpha"},
         "targetEntity": {"uuid": "entity-b", "name": "Beta"},
-        "nativeRelation": "partners with",
+        "graphitiRelation": "partners with",
         "fact": "Alpha partners with Beta.",
         "supportingEpisodeUuids": ["episode-1"],
         "supportingEpisodes": [episode],
@@ -557,7 +557,7 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
         "jevCanonicalRelation": "ASSOCIATED_WITH",
         "relationship_strength": 1.0,
         "jev": {
-            "nativeFactUuid": "fact-1",
+            "graphitiFactUuid": "fact-1",
             "status": "success",
             "winner": "ASSOCIATED_WITH",
             "distribution": {"ASSOCIATED_WITH": 1.0},
@@ -574,9 +574,9 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
     assert record["provenance"]["episodes"] == [episode]
 
 
-def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malformed() -> None:
+def test_knowgraph_exact_fact_preserves_graphiti_fact_when_jev_readback_is_malformed() -> None:
     driver = _FakeNeo4jDriver([[], [{
-        "nativeId": "fact-malformed",
+        "graphitiId": "fact-malformed",
         "labels": ["RELATES_TO"],
         "properties": {
             "name": "supports",
@@ -585,15 +585,15 @@ def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malform
             "episodes": ["episode-1"],
             "jev_relation_winner": "PROVIDES",
             # A persisted Jev annotation is optional enrichment. This malformed
-            # distribution must not erase or reinterpret the native Graphiti fact.
+            # distribution must not erase or reinterpret the Graphiti fact.
             "jev_relation_distribution_json": json.dumps({"ASSOCIATED_WITH": 1.0}),
             "jev_label_confidence": 1.0,
         },
-        "sourceNativeId": "entity-a",
-        "targetNativeId": "entity-b",
+        "sourceGraphitiId": "entity-a",
+        "targetGraphitiId": "entity-b",
         "endpointNodes": [
-            {"nativeId": "entity-a", "labels": ["Entity"], "properties": {"name": "Alpha"}},
-            {"nativeId": "entity-b", "labels": ["Entity"], "properties": {"name": "Beta"}},
+            {"graphitiId": "entity-a", "labels": ["Entity"], "properties": {"name": "Alpha"}},
+            {"graphitiId": "entity-b", "labels": ["Entity"], "properties": {"name": "Beta"}},
         ],
     }]])
     episode = {"uuid": "episode-1", "source_url": "https://example.test/source"}
@@ -609,8 +609,8 @@ def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malform
 
     assert record is not None
     assert record["graphitiRelationshipId"] == "fact-malformed"
-    assert record["know"]["nativeFactUuid"] == "fact-malformed"
-    assert record["know"]["nativeRelation"] == "supports"
+    assert record["know"]["graphitiFactUuid"] == "fact-malformed"
+    assert record["know"]["graphitiRelation"] == "supports"
     assert record["know"]["fact"] == "Alpha supports Beta."
     assert record["know"]["sourceEntity"] == {"uuid": "entity-a", "name": "Alpha"}
     assert record["know"]["targetEntity"] == {"uuid": "entity-b", "name": "Beta"}
@@ -621,7 +621,7 @@ def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malform
     assert driver.closed is True
 
 
-def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
+def test_provider_projection_contains_only_ids_returned_in_model_bound_graph_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record = {
@@ -634,14 +634,14 @@ def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
         "properties": {"name": "Alpha"},
         "relationshipEvidence": [{
             "nodes": [
-                {"nativeId": "entity-1", "labels": ["Entity"], "properties": {"name": "Alpha"}},
-                {"nativeId": "entity-2", "labels": ["Entity"], "properties": {"name": "Beta"}},
+                {"graphitiId": "entity-1", "labels": ["Entity"], "properties": {"name": "Alpha"}},
+                {"graphitiId": "entity-2", "labels": ["Entity"], "properties": {"name": "Beta"}},
             ],
             "relationships": [{
-                "nativeId": "fact-1",
+                "graphitiId": "fact-1",
                 "type": "SUPPORTS",
-                "sourceNativeId": "entity-1",
-                "targetNativeId": "entity-2",
+                    "sourceId": "entity-1",
+                    "targetId": "entity-2",
                 "properties": {"source": "primary"},
             }],
         }],
@@ -672,7 +672,7 @@ def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
     assert [(edge["id"], edge["source"], edge["target"]) for edge in projection["edges"]] == [
         ("fact-1", "entity-1", "entity-2"),
     ]
-    assert all(native_id in seed for native_id in ("entity-1", "entity-2", "fact-1"))
+    assert all(graphiti_id in seed for graphiti_id in ("entity-1", "entity-2", "fact-1"))
     assert references[0]["graphitiEntityId"] == "entity-1"
 
 
@@ -716,7 +716,7 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
     assert all(arguments["format"] == "json" for _, arguments in observed["calls"])
 
 
-def test_codegraph_exact_read_normalizes_native_grouped_trace_json() -> None:
+def test_codegraph_exact_read_normalizes_provider_grouped_trace_json() -> None:
     def reader(**_kwargs):
         return [
             {"project": "C-Projects-LiquidAIty-main", "status": "ready"},
@@ -848,7 +848,7 @@ def test_optional_hybrid_search_returns_honest_empty_context(monkeypatch) -> Non
         )
 
 
-def test_missing_required_anchor_fails_before_provider(native_graph, monkeypatch) -> None:
+def test_missing_required_anchor_fails_before_provider(engraphis_graph, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.python_models.data_anchor.read_knowgraph_exact",
         lambda *_args, **_kwargs: None,

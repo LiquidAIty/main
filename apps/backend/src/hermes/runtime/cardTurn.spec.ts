@@ -59,6 +59,39 @@ describe('Gateway Card Run receipt binding', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it('stages a Main Run through the headless Card runtime', () => {
+    const { execution, request } = fixture();
+    const mainOwner = { ...owner, cardId: 'card_main_chat' };
+    const base = prepared();
+    const value = prepared({
+      hermesTransport: {
+        ...base.hermesTransport,
+        cardIdentity: { cardId: mainOwner.cardId, title: 'Main' },
+        request: {
+          ...base.hermesTransport.request,
+          runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+        },
+      },
+    });
+
+    expect(execution.stage(
+      mainOwner,
+      'runtime-main',
+      'main',
+      value,
+      'conversation-main',
+    )).toEqual(expect.objectContaining({
+      runId: 'prepared-run',
+      message: 'Reloaded canonical IDF request',
+    }));
+    expect(execution.activeContext('runtime-main')).toEqual({
+      runId: 'prepared-run',
+      conversationId: 'conversation-main',
+      authorizedCanonicalTools: [],
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('retains the exact bounded image records from the materialized Hermes request', () => {
     const { execution } = fixture();
     const images = [{
@@ -79,8 +112,8 @@ describe('Gateway Card Run receipt binding', () => {
 
   it('rejects invalid identity, authority, provider, and retired operation fields before staging', () => {
     const cases: Array<[typeof owner, unknown, string]> = [
-      [{ ...owner, cardId: 'other' }, prepared(), 'agent_terminal_staged_run_identity_mismatch'],
-      [owner, prepared({ cardRevisionSha256: 'not-a-hash' }), 'agent_terminal_staged_run_identity_mismatch'],
+      [{ ...owner, cardId: 'other' }, prepared(), 'card_runtime_staged_run_identity_mismatch'],
+      [owner, prepared({ cardRevisionSha256: 'not-a-hash' }), 'card_runtime_staged_run_identity_mismatch'],
       [owner, prepared({
         hermesTransport: {
           ...prepared().hermesTransport,
@@ -89,7 +122,7 @@ describe('Gateway Card Run receipt binding', () => {
             runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
           },
         },
-      }), 'agent_terminal_staged_run_invalid'],
+      }), 'card_runtime_staged_run_identity_mismatch'],
       [owner, prepared({
         hermesTransport: {
           ...prepared().hermesTransport,
@@ -133,8 +166,8 @@ describe('Gateway Card Run receipt binding', () => {
         type: 'message.complete',
         session_id: 'hermes-session',
         payload: {
-          provider_thread_id: 'hermes-root',
-          provider_turn_id: 'hermes-turn',
+          nativeRootId: 'hermes-root',
+          nativeRunId: 'hermes-turn',
           actualProvider: 'openai-codex',
           actualModel: 'saved-model',
           exposedTools: ['hermes-session-tool'],
@@ -241,7 +274,7 @@ describe('Gateway Card Run receipt binding', () => {
     const { execution, request } = fixture();
     execution.stage(owner, 'terminal-signal', 'signal', prepared());
     expect(() => execution.stage(owner, 'terminal-signal', 'signal', prepared({ runId: 'other' })))
-      .toThrow('agent_terminal_turn_already_running');
+      .toThrow('card_runtime_turn_already_running');
 
     await expect(execution.cancelStaged('terminal-signal', 'gateway_submit_failed')).resolves.toBe(true);
     await expect(execution.cancelStaged('terminal-signal', 'duplicate')).resolves.toBe(false);

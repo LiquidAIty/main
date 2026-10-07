@@ -107,7 +107,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       constraints: [
         'Remain headless and do not act as a coding worker. Do not use CBM, the full Graphiti catalog, terminal, files, browser, or Kanban.',
-        'Use only granted ThinkGraph/context/Magnetic capabilities. Address a connected Card through message_agent by its exact saved visible name; a wire grants outbound authority but never starts work or grants reverse authority.',
+        'Use only granted ThinkGraph/context/Magnetic capabilities. Address a connected Card only through Bot Mode and the exact permitted profile roster; a wire grants outbound authority but never starts work or grants reverse authority.',
         'Send only the bounded mission and necessary context. Do not copy the conversation or Main memory into another Card.',
         'Invoke run_mag_one only once for the exact approved mission. Never invent results, graph activity, sources, code changes, or tool execution.',
       ].join('\n'),
@@ -420,7 +420,10 @@ export const INITIAL_DECK: DeckDocument = {
         providerModelId: MAIN_CHAT_MODEL_KEY,
         openaiRuntime: 'codex_app_server',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...MAIN_CHAT_CONTROLLER_TOOLS, 'hermes:tool:memory'],
+        tools: [
+          ...MAIN_CHAT_CONTROLLER_TOOLS,
+          'hermes:tool:memory',
+        ],
       },
       parentGraphId: null,
       title: 'Main',

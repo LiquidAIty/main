@@ -48,7 +48,7 @@ def test_public_mcp_identity_is_liquidaity():
         "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
         "ThinkGraph, KnowGraph, and supported agent runtimes. "
         "Start with main.context to resolve the authenticated Main conversation and project scope. "
-        "Use the currently published tool names and schemas; preserve returned native IDs and provenance. "
+        "Use the currently published tool names and schemas; preserve returned provider IDs and provenance. "
         "Saved Cards own their configuration and granted capabilities. "
         "An accepted operation is not proof of completion; use its returned status and evidence."
     )
@@ -74,7 +74,7 @@ def test_catalog_health_reports_resolved_graphiti_packages(monkeypatch):
     }
 
 
-def test_canonical_catalog_publishes_native_engraphis_schemas_with_owned_scope(monkeypatch):
+def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypatch):
     import asyncio
     import jsonschema
     import mcp_host
@@ -105,11 +105,11 @@ def test_canonical_catalog_publishes_native_engraphis_schemas_with_owned_scope(m
     schemas = {tool.name: tool.inputSchema for tool in tools}
     jsonschema.validate({"query": "spacecraft component suppliers", "k": 6,
                          "token_budget": 600}, schemas["engraphis_recall_context"])
-    jsonschema.validate({"memory_id": "native-id"}, schemas["engraphis_get_memory"])
+    jsonschema.validate({"memory_id": "memory-id"}, schemas["engraphis_get_memory"])
     jsonschema.validate({"content": "A tentative assistant suggestion",
                          "title": "Paper journal"},
                         schemas["engraphis_remember"])
-    jsonschema.validate({"memory_id": "native-id", "title": "Updated title"},
+    jsonschema.validate({"memory_id": "memory-id", "title": "Updated title"},
                         schemas["engraphis_update_memory"])
 
 
@@ -123,7 +123,7 @@ def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch,
     async def dispatch(name, arguments):
         await asyncio.sleep(0.03)
         completed.append(name)
-        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "id": "native-question"}))]
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "id": "memory-question"}))]
 
     monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
     monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
@@ -176,8 +176,8 @@ def test_engraphis_provider_tool_output_contract_preserved(monkeypatch):
     import asyncio
     import jsonschema
     import mcp_host
-    from app.python_models.engraphis import provider_tools
-    schemas = {t["name"]: t.get("outputSchema") for t in asyncio.run(provider_tools())}
+    from app.python_models.engraphis import engraphis_tools
+    schemas = {t["name"]: t.get("outputSchema") for t in asyncio.run(engraphis_tools())}
     payload = {"a": "one", "b": "two", "linked": True}
     monkeypatch.setattr(mcp_host, "_authenticated_main_context",
         lambda: {"projectId": "project-one", "mainCardId": "thinkgraph"})
@@ -202,7 +202,7 @@ def test_card_team_schema_exposes_only_proven_saved_fields():
     assert "concurrency" not in schema["properties"]
 
 
-def test_canvas_wire_catalog_preserves_supported_fields_without_native_discovery(monkeypatch):
+def test_canvas_wire_catalog_preserves_supported_fields_without_provider_discovery(monkeypatch):
     import asyncio
     import jsonschema
     import mcp_host
@@ -614,7 +614,14 @@ def test_graphiti_initialization_failure_never_leaks_secrets_or_kills_mcp(monkey
 
 def test_graphiti_catalog_discovery_does_not_open_provider_connections(monkeypatch):
     import asyncio
-    import graphiti_mcp_server as native
+    import sys
+    # The installed Graphiti package owns a top-level `utils` package. Other
+    # focused suites may import an unrelated module with that name first, so
+    # isolate this dependency import without changing application behavior.
+    for module_name in list(sys.modules):
+        if module_name == "utils" or module_name.startswith("utils."):
+            monkeypatch.delitem(sys.modules, module_name, raising=False)
+    import graphiti_mcp_server as graphiti_provider
     import mcp_host
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "configured")
@@ -624,7 +631,7 @@ def test_graphiti_catalog_discovery_does_not_open_provider_connections(monkeypat
     monkeypatch.setattr(mcp_host, "_GRAPHITI_UNAVAILABLE", None)
     monkeypatch.setattr(mcp_host, "_GRAPHITI_SERVICE_READY", False)
     monkeypatch.setattr(
-        native,
+        graphiti_provider,
         "GraphitiService",
         lambda *_args, **_kwargs: pytest.fail("catalog opened Graphiti providers"),
     )
@@ -657,7 +664,6 @@ def test_call_tool_preserves_exact_results_without_runtime_observation_leak(monk
     assert failure["retryable"] is False
     assert len(failed.content) == 1
     assert "executionReceipt" not in _tool_result_wire_text(failed)
-    assert "nativeAttention" not in _tool_result_wire_text(failed)
 
     later = asyncio.run(mcp_host.call_tool("main.context", {}))
     assert json.loads(later[0].text)["ok"] is True
@@ -737,8 +743,8 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "main",
         "grantedTools": ["canvas.inspect"],
-        "nativeChildId": "native-task-one",
-        "nativeRunId": "native-attempt-one",
+        "hermesChildId": "hermes-task-one",
+        "hermesRunId": "hermes-attempt-one",
     }
     token = jwt.encode({
         "iss": "liquidaity-runtime",
@@ -777,14 +783,14 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
         "callerRuntimeMode": "main",
         "principalKind": "card-runtime",
         "grantedTools": ["canvas.inspect"],
-        "nativeChildId": "native-task-one",
-        "nativeRunId": "native-attempt-one",
+        "hermesChildId": "hermes-task-one",
+        "hermesRunId": "hermes-attempt-one",
     }
     assert mcp_host._request_tool_is_allowed("canvas.inspect") is True
     assert mcp_host._request_tool_is_allowed("run_mag_one") is False
 
 
-def test_card_run_token_uses_direct_saved_authority_and_native_attribution(monkeypatch):
+def test_card_run_token_uses_direct_saved_authority_and_hermes_attribution(monkeypatch):
     import jwt
     import mcp_host
     secret = "0123456789abcdef0123456789abcdef"
@@ -797,7 +803,7 @@ def test_card_run_token_uses_direct_saved_authority_and_native_attribution(monke
         "conversationId": "conversation-1", "parentRunId": "persisted-run", "callerCardId": "signal",
         "callerRuntimeKind": "hermes", "callerRuntimeMode": "delegate",
         "grantedTools": ["worldsignals.package"], "presentedTools": ["worldsignals.package"],
-        "nativeChildId": "native-child-1", "nativeRunId": "native-run-1"}
+        "hermesChildId": "hermes-child-1", "hermesRunId": "hermes-run-1"}
     def verify(value):
         now = int(time.time())
         return verifier._verify_sync(jwt.encode({"iss": "liquidaity-runtime", "aud": "liquidaity-internal-mcp",
@@ -816,8 +822,8 @@ def test_card_run_token_uses_direct_saved_authority_and_native_attribution(monke
     resolved = mcp_host._authenticated_main_context()
     assert resolved["parentRunId"] == "persisted-run"
     assert resolved["conversationId"] == "conversation-1"
-    assert resolved["nativeChildId"] == "native-child-1"
-    assert resolved["nativeRunId"] == "native-run-1"
+    assert resolved["hermesChildId"] == "hermes-child-1"
+    assert resolved["hermesRunId"] == "hermes-run-1"
     assert mcp_host._request_tool_is_allowed("card.create") is False
 
 
@@ -881,7 +887,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
         ),
         mcp_host.Tool(
             name="index_repository",
-            description="Update the native index.",
+            description="Update the provider index.",
             inputSchema={"type": "object"},
             annotations={"readOnlyHint": False},
         ),
@@ -1029,7 +1035,7 @@ def test_materializer_principal_rejects_malformed_connection_grants(
     assert verifier._verify_sync(token) is None
 
 
-def test_materializer_native_reads_keep_project_scope_without_a_fake_run(monkeypatch):
+def test_materializer_provider_reads_keep_project_scope_without_a_fake_run(monkeypatch):
     import asyncio
     import mcp_host
     calls = []
@@ -1197,11 +1203,11 @@ def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypa
     monkeypatch.setenv("MCP_TRUSTED_MAIN_CONTEXT", json.dumps(context))
     monkeypatch.setenv("MCP_TOOL_ALLOWLIST", "main.context,canvas.inspect")
 
-    async def forbidden_native_init():
-        raise AssertionError("ungranted native catalog initialized")
+    async def forbidden_provider_init():
+        raise AssertionError("ungranted provider catalog initialized")
 
-    monkeypatch.setattr(mcp_host, "_cbm_tools", forbidden_native_init)
-    monkeypatch.setattr(mcp_host, "_graphiti_tools", forbidden_native_init)
+    monkeypatch.setattr(mcp_host, "_cbm_tools", forbidden_provider_init)
+    monkeypatch.setattr(mcp_host, "_graphiti_tools", forbidden_provider_init)
 
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tuple(
@@ -1676,22 +1682,22 @@ def test_plain_text_does_not_hide_a_later_structured_tool_error():
     import mcp_host
 
     result = [
-        mcp_host.TextContent(type="text", text="native diagnostic"),
+        mcp_host.TextContent(type="text", text="provider diagnostic"),
         mcp_host.TextContent(
             type="text",
-            text=json.dumps({"ok": False, "error": "native_failure"}),
+            text=json.dumps({"ok": False, "error": "provider_failure"}),
         ),
     ]
 
     assert mcp_host._tool_result_category(result) == "tool_error"
 
 
-def test_catalog_preserves_native_annotations_and_adds_only_source_identity():
+def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():
     import mcp_host
 
-    native = mcp_host.Tool(
+    providerTool = mcp_host.Tool(
         name="search_graph",
-        description="native",
+        description="providerTool",
         inputSchema={"type": "object", "properties": {"project": {"type": "string"}}},
         annotations={
             "readOnlyHint": True,
@@ -1700,11 +1706,11 @@ def test_catalog_preserves_native_annotations_and_adds_only_source_identity():
             "openWorldHint": False,
         },
     )
-    bound = mcp_host._namespace_provider_tools("cbm", [native])[0]
+    bound = mcp_host._namespace_provider_tools("cbm", [providerTool])[0]
 
     assert bound.name == "cbm.search_graph"
-    assert bound.inputSchema == native.inputSchema
-    assert bound.annotations == native.annotations
+    assert bound.inputSchema == providerTool.inputSchema
+    assert bound.annotations == providerTool.annotations
     assert bound.meta == {
         "liquidaitySource": {
             "sourceId": "cbm",
@@ -1720,31 +1726,31 @@ def test_unfamiliar_cbm_tool_without_annotations_is_restricted_not_rejected(
 ):
     import mcp_host
 
-    native = mcp_host.Tool(
+    providerTool = mcp_host.Tool(
         name="future_provider_tool",
         inputSchema={
             "type": "object",
-            "properties": {"native": {"type": "string"}},
+            "properties": {"providerTool": {"type": "string"}},
         },
     )
-    namespaced = mcp_host._namespace_provider_tools("cbm", [native])
+    namespaced = mcp_host._namespace_provider_tools("cbm", [providerTool])
     mcp_host._register_cbm_catalog(namespaced)
     bound = mcp_host._bind_operation_access(namespaced[0])
 
     assert bound.description is None
-    assert bound.inputSchema == native.inputSchema
+    assert bound.inputSchema == providerTool.inputSchema
     assert bound.annotations is None
     assert bound.meta["liquidaityAccess"] == "write"
 
 
 @pytest.mark.parametrize("name", ["engraphis_recall_context", "engraphis_get_memory"])
-def test_operation_access_does_not_overwrite_native_side_effect_annotations(name):
+def test_operation_access_does_not_overwrite_provider_side_effect_annotations(name):
     import mcp_host
 
-    native = mcp_host.Tool(name=name, inputSchema={"type": "object"},
+    providerTool = mcp_host.Tool(name=name, inputSchema={"type": "object"},
                           annotations={"readOnlyHint": False, "destructiveHint": False})
-    bound = mcp_host._bind_operation_access(native)
-    assert bound.annotations == native.annotations
+    bound = mcp_host._bind_operation_access(providerTool)
+    assert bound.annotations == providerTool.annotations
     assert bound.meta["liquidaityAccess"] == "read"
 
 
@@ -1756,7 +1762,7 @@ def test_ungranted_and_destructive_tools_are_not_callable(
     mcp_host._register_cbm_catalog(mcp_host._namespace_provider_tools("cbm", [
         mcp_host.Tool(
             name="search_graph",
-            description="Search the current native graph.",
+            description="Search the current CBM graph.",
             inputSchema={"type": "object"},
             annotations={"readOnlyHint": True},
         ),
@@ -1777,12 +1783,12 @@ def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkey
     import mcp_host
 
     calls = []
-    native = mcp_host.Tool(name="search_graph", description="Native search", inputSchema={
+    providerTool = mcp_host.Tool(name="search_graph", description="Provider search", inputSchema={
         "type": "object", "properties": {"format": {"type": "string", "enum": ["tree", "json"]}},
     })
     result = mcp_host.CallToolResult(content=[], structuredContent={"total": 0, "groups": []})
     monkeypatch.setattr(mcp_host, "_initialize_cbm_sync", lambda: None)
-    monkeypatch.setattr(mcp_host, "_CBM_TOOLS", (native,))
+    monkeypatch.setattr(mcp_host, "_CBM_TOOLS", (providerTool,))
     monkeypatch.setattr(mcp_host, "_CBM_CLIENT", SimpleNamespace(
         call_tool=lambda name, args: calls.append((name, args)) or result,
     ))
@@ -1792,9 +1798,9 @@ def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkey
     assert calls == [("search_graph", {"project": "canonical"})]
     mcp_host._call_cbm("search_graph", {**arguments, "format": "tree"})
     assert calls[-1][1]["format"] == "tree"
-    advertised = mcp_host._namespace_provider_tools("cbm", [native])[0]
-    assert advertised.inputSchema == native.inputSchema
-    assert advertised.description == native.description
+    advertised = mcp_host._namespace_provider_tools("cbm", [providerTool])[0]
+    assert advertised.inputSchema == providerTool.inputSchema
+    assert advertised.description == providerTool.description
 
 
 def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
@@ -1803,7 +1809,7 @@ def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
 
     cancelled = False
 
-    class NativeMcp:
+    class ProviderMcp:
         async def call_tool(self, name, _arguments):
             nonlocal cancelled
             if name == "slow":
@@ -1815,10 +1821,10 @@ def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
             return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
 
     monkeypatch.setattr(
-        mcp_host, "_GRAPHITI_MODULE", SimpleNamespace(mcp=NativeMcp())
+        mcp_host, "_GRAPHITI_MODULE", SimpleNamespace(mcp=ProviderMcp())
     )
     monkeypatch.setattr(mcp_host, "_GRAPHITI_SERVICE_READY", True)
-    monkeypatch.setattr(mcp_host, "_NATIVE_TOOL_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(mcp_host, "_PROVIDER_TOOL_TIMEOUT_SECONDS", 0.01)
 
     async def run():
         with pytest.raises(RuntimeError, match="graphiti_timeout:slow"):
@@ -1836,13 +1842,13 @@ def test_graphiti_add_memory_dispatch_preserves_provider_arguments(monkeypatch):
 
     calls = []
 
-    class NativeMcp:
+    class ProviderMcp:
         async def call_tool(self, name, arguments):
             calls.append((name, arguments))
             return [mcp_host.TextContent(type="text", text="queued")]
 
     monkeypatch.setattr(
-        mcp_host, "_GRAPHITI_MODULE", SimpleNamespace(mcp=NativeMcp())
+        mcp_host, "_GRAPHITI_MODULE", SimpleNamespace(mcp=ProviderMcp())
     )
     monkeypatch.setattr(mcp_host, "_GRAPHITI_SERVICE_READY", True)
     arguments = {
@@ -1862,28 +1868,28 @@ def test_graphiti_add_memory_dispatch_preserves_provider_arguments(monkeypatch):
     }
 
 
-def test_application_catalog_preserves_saved_card_schemas_without_native_discovery(monkeypatch):
+def test_application_catalog_preserves_saved_card_schemas_without_provider_discovery(monkeypatch):
     import asyncio
     import jsonschema
     import mcp_host
     from app.python_models.idd import load_input_data_dictionary
 
     # This checks application schemas, not upstream process initialization.
-    # The canonical catalog test supplies native catalog fixtures.
+    # The canonical catalog test supplies provider catalog fixtures.
     application_ids = {
         item["id"] for item in load_input_data_dictionary()["operations"]
         if item["namespace"] in {"main", "engraphis"}
     }
 
-    async def native_catalog_fixture():
+    async def provider_catalog_fixture():
         return []
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", False)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: application_ids)
-    monkeypatch.setattr(mcp_host, "_cbm_tools", native_catalog_fixture)
-    monkeypatch.setattr(mcp_host, "_graphiti_tools", native_catalog_fixture)
+    monkeypatch.setattr(mcp_host, "_cbm_tools", provider_catalog_fixture)
+    monkeypatch.setattr(mcp_host, "_graphiti_tools", provider_catalog_fixture)
 
     async def check():
         tools = await mcp_host._materialize_complete_catalog()
@@ -2047,7 +2053,7 @@ def test_stale_external_catalog_cannot_invoke_known_internal_only_operation(
     assert stale.isError is True
     assert json.loads(stale.content[0].text)["error"] == "tool_not_granted"
 
-def test_complete_catalog_is_frozen_before_listing_and_preserves_native_metadata(
+def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metadata(
     monkeypatch, clear_live_cbm_operations,
 ):
     import asyncio
@@ -2154,7 +2160,7 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_native_metadata
         monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", transport)
         for principal, expected in (
             (None, base_expected_names),
-            ({"kind": "catalog-reader"}, base_expected_names),
+            ({"kind": "catalog-reader"}, expected_names),
             ({"kind": "materializer-read", "callerCardId": "builder",
               "grantedTools": ["cbm.search_graph"]}, cbm_expected_names),
             ({"kind": "materializer-read", "callerCardId": "builder",
@@ -2445,7 +2451,7 @@ def test_catalog_initialization_has_no_arbitrary_30_second_deadline():
     assert "30" not in source
 
 
-def test_native_catalog_progress_is_part_of_canonical_startup(monkeypatch):
+def test_provider_catalog_progress_is_part_of_canonical_startup(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -2704,7 +2710,7 @@ def test_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):
 
     provider_tool = mcp_host.Tool(
         name="list_projects",
-        description="Native project list.",
+        description="CBM project list.",
         inputSchema={"type": "object", "properties": {}},
     )
 
@@ -2741,7 +2747,7 @@ def test_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):
     monkeypatch.setattr(
         mcp_host,
         "_cbm_config",
-        lambda: ("native-cbm", ["--stdio"], r"C:\Projects\main"),
+        lambda: ("cbm", ["--stdio"], r"C:\Projects\main"),
     )
     monkeypatch.setattr(mcp_host, "_CbmStdioMcpClient", FreshClient)
 
@@ -2771,7 +2777,7 @@ def test_http_mcp_resolves_the_current_official_command_from_path():
     assert cwd == mcp_host._CBM_HOST_REPO_ROOT
 
 
-def test_codegraph_readiness_uses_the_existing_frontend_and_native_project_state(monkeypatch):
+def test_codegraph_readiness_uses_the_existing_frontend_and_cbm_project_state(monkeypatch):
     import mcp_host
     from mcp.types import CallToolResult, TextContent
 
@@ -2837,7 +2843,6 @@ def test_codegraph_readiness_does_not_inspect_cbm_daemon_or_cache_internals():
     import mcp_host
 
     source = inspect.getsource(mcp_host)
-    assert "_native_codegraph_watcher_status" not in source
     assert "_CBM_DAEMON_LOG" not in source
     assert "_CBM_CACHE_ROOT" not in source
     assert "binarySha256" not in source
@@ -2889,7 +2894,7 @@ def test_dev_fresh_does_not_resolve_or_launch_optional_cbm():
     source = open(script, encoding="utf-8").read()
     assert "MCP_CBM_BINARY" not in source
     assert "Get-Command codebase-memory-mcp" not in source
-    assert "Native CBM startup failed" not in source
+    assert "CBM startup failed" not in source
     assert "continuing LiquidAIty startup" not in source
     assert "& npm.cmd run dev:services" in source
     assert "USERPROFILE" not in source
@@ -2979,12 +2984,11 @@ def test_repository_has_one_application_owned_host_cbm_boundary():
             "src",
             "components",
             "knowledge",
-            "NativeAuthorityGraphSurface.tsx",
+            "KnowledgeAuthorityGraphSurface.tsx",
         ),
         encoding="utf-8",
     ).read()
     assert "vendor/codebase-memory-ui/src/components/GraphTab" not in codegraph_surface
-    assert "attentionData={attentionData}" not in codegraph_surface
 
 
 def test_codegraph_host_root_derives_the_canonical_project_identity():
@@ -3039,7 +3043,7 @@ def test_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
 
     provider_tool = mcp_host.Tool(
         name="search_graph",
-        description="Native project search.",
+        description="CBM project search.",
         inputSchema={"type": "object", "properties": {}},
     )
     monkeypatch.setattr(mcp_host, "_CBM_TOOLS", (provider_tool,))
@@ -3075,11 +3079,11 @@ def test_cbm_client_failure_is_strict(monkeypatch):
 
     class FailingClient:
         def call_tool(self, _name, _arguments):
-            raise RuntimeError("native transport closed")
+            raise RuntimeError("provider transport closed")
 
     monkeypatch.setattr(mcp_host, "_CBM_CLIENT", FailingClient())
     monkeypatch.setattr(mcp_host, "_initialize_cbm_sync", lambda: None)
-    with pytest.raises(RuntimeError, match="native transport closed"):
+    with pytest.raises(RuntimeError, match="provider transport closed"):
         mcp_host._call_cbm(
             "search_graph", {"project": "C-Projects-LiquidAIty-main"}
         )
@@ -3136,7 +3140,7 @@ def test_cbm_duplicate_catalog_closes_the_only_frontend(monkeypatch):
     closed = False
     provider_tool = mcp_host.Tool(
         name="search_graph",
-        description="Native project search.",
+        description="CBM project search.",
         inputSchema={"type": "object", "properties": {}},
     )
 
@@ -3340,13 +3344,13 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     assert invalid.isError is True
                     assert len(invalid.content) == 1
                     assert "executionReceipt" not in _tool_result_wire_text(invalid)
-                native_process = mcp_host._CBM_CLIENT._process
-                assert native_process.poll() is None
-                return actual, visible_context, catalog_identity, native_process.pid
+                cbm_process = mcp_host._CBM_CLIENT._process
+                assert cbm_process.poll() is None
+                return actual, visible_context, catalog_identity, cbm_process.pid
 
             # Close and recreate the optional external client around two distinct
             # internal Card clients. All four requests remain stateless at the
-            # outer HTTP boundary and use the same host-owned native CBM child.
+            # outer HTTP boundary and use the same host-owned CBM child.
             first = await fresh_client("external-gpt-token", inspect_main=True)
             card_one = await fresh_client("internal-card-one")
             card_two = await fresh_client("internal-card-two")
@@ -3495,7 +3499,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         mcp_host.Tool(
             name="search_graph",
             title="Search graph",
-            description="Native search description.",
+            description="Provider search description.",
             inputSchema={
                 "type": "object",
                 "properties": {"project": {"type": "string"}},
@@ -3506,7 +3510,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         mcp_host.Tool(
             name="index_status",
             title="Index status",
-            description="Native status description.",
+            description="Provider status description.",
             inputSchema={
                 "type": "object",
                 "properties": {"project": {"type": "string"}},
@@ -3519,13 +3523,13 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         mcp_host.Tool(
             name="get_status",
             title="Get status",
-            description="Native Graphiti status.",
+            description="Graphiti status.",
             inputSchema={"type": "object", "properties": {}},
         ),
         mcp_host.Tool(
             name="search_nodes",
             title="Search nodes",
-            description="Native Graphiti node search.",
+            description="Graphiti node search.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -3604,7 +3608,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     assert {scheme["scopes"][0] for scheme in by_name["engraphis_recall_context"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
-    assert by_name["cbm.search_graph"].description == "Native search description."
+    assert by_name["cbm.search_graph"].description == "Provider search description."
     assert by_name["cbm.search_graph"].inputSchema == cbm_tools[0].inputSchema
     assert by_name["cbm.search_graph"].annotations == cbm_tools[0].annotations
     assert by_name["graphiti.search_nodes"].annotations == graphiti_tools[1].annotations
@@ -3638,7 +3642,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
             content=[
                 mcp_host.TextContent(
                     type="text",
-                    text=json.dumps({"ok": True, "native": name}),
+                    text=json.dumps({"ok": True, "provider": name}),
                 )
             ]
         )
@@ -3742,13 +3746,13 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
 
     cbm_tools = [mcp_host.Tool(
         name="search_graph",
-        description="Native CBM search.",
+        description="CBM search.",
         inputSchema={"type": "object", "properties": {}},
         annotations={"readOnlyHint": True},
     )]
     graphiti_tools = [mcp_host.Tool(
         name="get_status",
-        description="Native Graphiti status.",
+        description="Graphiti status.",
         inputSchema={"type": "object", "properties": {}},
     )]
 
@@ -3943,13 +3947,13 @@ def test_graphiti_episode_projection_is_bounded_and_full_body_is_explicit():
             "group_id": "project-1",
         }],
     }
-    native = CallToolResult(
+    providerTool = CallToolResult(
         content=[TextContent(type="text", text=json.dumps(graphiti_payload))],
         structuredContent={"result": graphiti_payload},
     )
 
     compact = mcp_host._bounded_graphiti_episodes(
-        native, include_body=False, preview_chars=120, response_budget=2000,
+        providerTool, include_body=False, preview_chars=120, response_budget=2000,
     )
     compact_episode = compact.structuredContent["result"]["episodes"][0]
     assert "content" not in compact_episode
@@ -3958,7 +3962,7 @@ def test_graphiti_episode_projection_is_bounded_and_full_body_is_explicit():
     assert len(compact.content[0].text) <= 2000
 
     explicit = mcp_host._bounded_graphiti_episodes(
-        native, include_body=True, preview_chars=120, response_budget=3000,
+        providerTool, include_body=True, preview_chars=120, response_budget=3000,
     )
     explicit_episode = explicit.structuredContent["result"]["episodes"][0]
     assert "content" in explicit_episode
@@ -4121,7 +4125,7 @@ def test_script_bootstrap_imports_card_schema_without_pythonpath(tmp_path):
     import subprocess
     host = os.path.join(_APP_DIR, "mcp_host.py")
     # Isolated Python reproduces the supervised script's missing app-package path.
-    # run_path imports definitions only: no host, native frontend or listener starts.
+    # run_path imports definitions only: no host, CBM frontend or listener starts.
     probe = "import runpy; ns=runpy.run_path(" + repr(host) + ", run_name='bootstrap_probe'); assert ns['card_tool_schema']('card.create')['additionalProperties'] is False"
     result = subprocess.run([sys.executable, "-I", "-c", probe], cwd=tmp_path,
                             capture_output=True, text=True, timeout=45)

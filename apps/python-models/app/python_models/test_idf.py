@@ -147,7 +147,7 @@ def test_empty_graph_section_is_valid_and_idf_is_graph_first() -> None:
     assert load_idf_bytes(materialized.idf_bytes) == materialized
 
 
-def test_native_projection_preserves_exact_user_task_whitespace() -> None:
+def test_idf_projection_preserves_exact_user_task_whitespace() -> None:
     exact = "  @builder Reply exactly BUILDER_DIRECT_OK  "
     materialized = _idf(task=exact)
     assert materialized.idf.dynamicContext.task == exact
@@ -198,7 +198,7 @@ def test_worldview_turn_context_is_retained_once_and_projected_for_hermes() -> N
 def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -> None:
     presentation = {
         "mode": "selected-mcp",
-        "fallbackReason": "card_script_native_bridge_unavailable",
+        "fallbackReason": "card_script_hermes_runner_unavailable",
     }
     materialized = _idf(capabilities={
         "presentedTools": ["codegraph.search_graph"],
@@ -213,7 +213,7 @@ def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -
 
 
 def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
-    graph = "### CodeGraph\nVerified native content."
+    graph = "### CodeGraph\nVerified provider content."
     materialized = _idf(graph_context=graph)
     records = {record.kind: record for record in materialized.idf.actualGraphData.records}
     assert records["selection"].cbmQualifiedName == "project.module.materialize_idf"
@@ -244,8 +244,8 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     assert summary["estimatedGraphContextTokens"] > 0
 
 
-def test_selected_native_record_is_not_serialized_again_in_structured_section() -> None:
-    graph = "Verified native properties: " + ("x" * 4_000)
+def test_selected_graph_record_is_not_serialized_again_in_structured_section() -> None:
+    graph = "Verified provider properties: " + ("x" * 4_000)
     baseline = _idf(graph_context=graph, projection_payload_chars=4_000)
     compact = _idf(
         graph_context=graph, materialized_record_sha256="a" * 64,

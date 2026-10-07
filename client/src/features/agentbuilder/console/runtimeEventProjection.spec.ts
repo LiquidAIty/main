@@ -12,7 +12,7 @@ const identity = {
   cardName: 'Saved Card',
   runId: 'r',
   parentRunId: null,
-  nativeChildId: null,
+      hermesChildId: null,
 };
 
 const model: CardTerminalEvent = {
@@ -34,7 +34,7 @@ describe('runtime event projection', () => {
   it('preserves worker and task identities while ordering concurrent events', () => {
     const first = {
       ...model,
-      id: 'native-1',
+      id: 'provider-1',
       taskId: 't_a',
       agentId: 'attempt-1',
       text: 'Worker A',

@@ -2,7 +2,7 @@
 
 The vocabulary describes only the directed semantic relationship A -> B.
 Think/Know authority, provenance, temporal content, and pipeline control outcomes
-remain owned by their native graph paths and are intentionally absent here.
+remain owned by their provider graph paths and are intentionally absent here.
 """
 from __future__ import annotations
 

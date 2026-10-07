@@ -3,13 +3,13 @@ import type {
   GraphProjectionNode,
   GraphProjectionV1,
   JoinedGraphPresentation,
-} from '../knowledge/NativeAuthorityGraphSurface';
+} from '../knowledge/KnowledgeAuthorityGraphSurface';
 
 export type CanonicalSubjectAuthority = 'thinkgraph' | 'knowgraph';
 
 export type CanonicalSubjectFocusMember = {
   authority: CanonicalSubjectAuthority;
-  nativeId: string;
+  entityId: string;
   entityKind: string;
 };
 
@@ -182,15 +182,15 @@ function exactSubjectRecords(
     const authority: CanonicalSubjectAuthority | null = subject?.authority === 'ThinkGraph'
       ? 'thinkgraph' : subject?.authority === 'KnowGraph' ? 'knowgraph' : null;
     if (!authority
-      || typeof subject.nativeId !== 'string' || !subject.nativeId
+      || typeof subject.entityId !== 'string' || !subject.entityId
       || typeof subject.canonicalName !== 'string' || !subject.canonicalName
       || typeof subject.entityKind !== 'string' || !subject.entityKind
-      || seenIds[authority].has(subject.nativeId)
+      || seenIds[authority].has(subject.entityId)
       || seenNames[authority].has(subject.canonicalName)) return null;
-    seenIds[authority].add(subject.nativeId);
+    seenIds[authority].add(subject.entityId);
     seenNames[authority].add(subject.canonicalName);
     counts[authority] += 1;
-    const node = nodesByAuthority[authority].get(subject.nativeId);
+    const node = nodesByAuthority[authority].get(subject.entityId);
     if (!node
       || node.canonicalName !== subject.canonicalName
       || node.label !== subject.canonicalName
@@ -200,7 +200,7 @@ function exactSubjectRecords(
       || node.memoryType !== undefined) continue;
     records.push({
       authority,
-      nativeId: subject.nativeId,
+      entityId: subject.entityId,
       canonicalName: subject.canonicalName,
       entityKind: subject.entityKind,
       node,
@@ -236,8 +236,8 @@ function buildTargets(
       directorySha256: directory.sha256,
       canonicalName,
       view: named.length === 2 ? 'all' : named[0].authority,
-      members: named.map(({ authority, nativeId, entityKind }) => ({
-        authority, nativeId, entityKind,
+      members: named.map(({ authority, entityId, entityKind }) => ({
+        authority, entityId, entityKind,
       })),
     });
   }
@@ -351,12 +351,12 @@ function exactFocusNode(
   const authorityName = member.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph';
   const headers = directory.subjects.filter(subject => (
     subject.authority === authorityName
-    && subject.nativeId === member.nativeId
+    && subject.entityId === member.entityId
     && subject.canonicalName === request.canonicalName
     && subject.entityKind === member.entityKind
   ));
   if (headers.length !== 1) return null;
-  const nodes = projection.nodes.filter(node => node.id === member.nativeId);
+  const nodes = projection.nodes.filter(node => node.id === member.entityId);
   if (nodes.length !== 1) return null;
   const node = nodes[0];
   return node.canonicalName === request.canonicalName
@@ -369,7 +369,7 @@ function exactFocusNode(
     : null;
 }
 
-/** Resolve hidden click metadata against the graph's current native presentation. */
+/** Resolve hidden click metadata against the graph's current provider presentation. */
 export function resolveCanonicalSubjectFocusVisualId({
   authority,
   projection,
@@ -392,16 +392,16 @@ export function resolveCanonicalSubjectFocusVisualId({
   if (request.members.length === 1 && joinedPresentation) {
     const member = request.members[0];
     if (request.view !== member.authority) return null;
-    const nativeProjection = joinedPresentation.nativeProjections[member.authority];
-    if (!exactFocusNode(nativeProjection, directory, request, member)) return null;
-    const visualId = joinedPresentation.visualNodeIdByNativeMember.get(
-      `${member.authority}:${member.nativeId}`,
+    const providerProjection = joinedPresentation.providerProjections[member.authority];
+    if (!exactFocusNode(providerProjection, directory, request, member)) return null;
+    const visualId = joinedPresentation.visualNodeIdByProviderMember.get(
+      `${member.authority}:${member.entityId}`,
     );
     if (!visualId) return null;
     const variants = joinedPresentation.nodeVariants.get(visualId) || [];
     return variants.length === 1
       && variants[0].authority === member.authority
-      && variants[0].node.id === member.nativeId
+      && variants[0].node.id === member.entityId
       && projection.nodes.some(node => node.id === visualId)
       ? visualId
       : null;
@@ -413,16 +413,16 @@ export function resolveCanonicalSubjectFocusVisualId({
   const authorities = new Set(request.members.map(member => member.authority));
   if (authorities.size !== 2) return null;
   const visualIds = request.members.map(member => {
-    const nativeProjection = joinedPresentation.nativeProjections[member.authority];
-    if (!exactFocusNode(nativeProjection, directory, request, member)) return null;
-    return joinedPresentation.visualNodeIdByNativeMember.get(
-      `${member.authority}:${member.nativeId}`,
+    const providerProjection = joinedPresentation.providerProjections[member.authority];
+    if (!exactFocusNode(providerProjection, directory, request, member)) return null;
+    return joinedPresentation.visualNodeIdByProviderMember.get(
+      `${member.authority}:${member.entityId}`,
     ) || null;
   });
   if (!visualIds[0] || visualIds[0] !== visualIds[1]) return null;
   const variants = joinedPresentation.nodeVariants.get(visualIds[0]) || [];
   if (variants.length !== 2 || request.members.some(member => !variants.some(variant => (
-    variant.authority === member.authority && variant.node.id === member.nativeId
+    variant.authority === member.authority && variant.node.id === member.entityId
   )))) return null;
   return projection.nodes.some(node => node.id === visualIds[0]) ? visualIds[0] : null;
 }

@@ -425,21 +425,23 @@ upstream forks or first-party runtime source, not general cleanup targets. Prefe
 protocol, configuration, hook, or existing adapter boundary. A justified vendor edit must record its
 exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback.
 
-For Hermes, the exact nine retained local extensions are recorded in
-`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Direct-agent delivery remains upstream-owned; its roster entry
-changes only execution-scoped local target and exact-session authority. The Mag One entry changes only assignment authority
+For Hermes, the retained local extensions are recorded in
+`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Direct-agent delivery is upstream-owned. Saved orange
+topology is materialized into each permitted source profile's `bot_mode.roster`; the application does
+not resolve, proxy, retry, or select a destination session for an individual `message_agent` call.
+The Mag One entry changes only assignment authority
 inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. The invocation-local
-Card-routing entry narrows only Card-managed tools, uses native one-turn model switching, restores both
+Card-routing entry narrows only Card-managed tools, uses Hermes one-turn model switching, restores both
 surfaces, and emits observable execution receipts on the existing completion event. Upstream ACP is not a
 LiquidAIty runtime boundary. No other Hermes customization is silently accepted by this document.
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.3` at `73521a8e375a867fae14ec0579f2dfb47aa0017e` | `Hermes/hermes_cli/plugins.py::resolve_message_agent_target`; `Hermes/tools/bot_mode_probe.py::is_bot_chat_title`; `Hermes/tools/bot_mode_dm.py::_resolved_message_agent_roster`, `_start_delivery`; `Hermes/tools/bot_live_delivery.py::find_canonical_live_owner` | Replace the rejected profile-global Project roster with one signed source-session resolver at the native delivery boundary. It resolves only an existing saved Card/profile and pins live or cold delivery to that target's exact stored Project conversation. Orange `flow` is the only target authority; blue Magnetic membership is untouched. With no resolver hook, stock Hermes title, roster, relay, peer, Team, delivery, and receipt behavior remains unchanged. The existing Card-tools HMAC/session seam is the available extension boundary; profile config cannot represent concurrent Projects safely. | Focused Card-tools, native Bot delivery/live-owner, backend route, terminal, and TypeScript typecheck suites cover refusal, exact session selection, and stock fallback. Fork cost is four small generic Hermes seams plus focused tests. Roll back these symbols and the Card-tools resolver together; remove the divergence when upstream exposes an equivalent exact-session target resolver or when saved-Card direct messaging is retired. |
+| `NousResearch/hermes-agent` `0.21.3` at `73521a8e375a867fae14ec0579f2dfb47aa0017e` | `Hermes/hermes_cli/plugins.py::resolve_message_agent_target`; `Hermes/tools/bot_mode_probe.py::is_bot_chat_title`; `Hermes/tools/bot_mode_dm.py::_resolved_message_agent_roster`, `_start_delivery`; `Hermes/tools/bot_live_delivery.py::find_canonical_live_owner` | These generic optional resolver seams remain in the controlled fork, but the application no longer registers or calls them. Active delivery is stock Hermes `message_agent`: Hermes validates the materialized `bot_mode.roster`, chooses the target profile's canonical Bot Chat, and owns delivery, busy handling, retry, idempotency, acknowledgement, and completion. Orange `flow` is the only application-supplied roster authority; blue Magnetic membership is untouched. | Application residue tests prove no resolver hook or Project-roster pseudo-tool is published. Stock Hermes Bot tests cover roster refusal, canonical delivery, relay, retry, and completion. The dormant vendor seam is removable in a separate upstream-sync change; it is not an application fallback. |
 
-The existing Hermes app-server adapter also preserves native vision input:
+The existing Hermes app-server adapter also preserves provider vision input:
 `Hermes/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
-native/text image policy, and
+image/text policy, and
 `Hermes/agent/transports/codex_app_server_session.py::_coerce_turn_input_items,run_turn`
 projects attached pixels into the documented typed App Server input union. Text
 projection remains only for input-echo attribution. The pinned upstream base is

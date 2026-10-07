@@ -19,9 +19,9 @@ function focusRequest() {
     center: {
       visualId: 'visual-center',
       title: 'Center',
-      nativeMembers: [{
+      providerMembers: [{
         authority: 'ThinkGraph',
-        nativeId: 'center-think',
+        entityId: 'center-think',
         title: 'Center',
         description: 'Stored center Think.',
       }],
@@ -29,12 +29,12 @@ function focusRequest() {
     candidates: [{
       visualId: 'visual-neighbor',
       authority: 'ThinkGraph',
-      nativeId: 'neighbor-think',
+      entityId: 'neighbor-think',
       title: 'Neighbor',
       description: null,
       incidentRelationships: [{
         edgeId: 'visual-edge-one',
-        nativeEdgeId: 'native-edge-one',
+        relationshipId: 'relationship-one',
         sourceVisualId: 'visual-center',
         sourceId: 'center-think',
         sourceTitle: 'Center',
@@ -68,7 +68,7 @@ async function serve(
 }
 
 describe('bounded JevFocus transport', () => {
-  it('forwards the exact versioned native-subject request to Python rails', async () => {
+  it('forwards the exact versioned provider-subject request to Python rails', async () => {
     const result = {
       schemaVersion: 'jev-focus.v1',
       sourceRevision: 'combined-projection:17',

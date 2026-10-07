@@ -55,7 +55,7 @@ afterEach(async () => {
   mounted = null;
   root.remove();
   host.remove();
-  document.head.querySelectorAll('link[data-worldview-native-font]').forEach((link) => link.remove());
+  document.head.querySelectorAll('link[data-worldview-runtime-font]').forEach((link) => link.remove());
 });
 
 describe('WorldView Inspector control attachment', () => {

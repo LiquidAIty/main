@@ -27,7 +27,7 @@ def _execution_payload() -> dict[str, Any]:
         "orchestrator": {
             "cardId": "card_magentic",
             "cardRevisionId": "mag-one-revision",
-            "nativeIdentity": "card_magentic",
+            "hermesProfile": "card_magentic",
             "instructions": "Coordinate the connected Cards.",
             "provider": {
                 "provider": "openai",
@@ -129,7 +129,7 @@ def test_worker_scope_rejects_project_capabilities_not_owned_by_the_saved_card()
 
 
 @pytest.fixture
-def native_task_store(tmp_path, monkeypatch):
+def hermes_task_store(tmp_path, monkeypatch):
     magentic_execution._runtime_paths()
     from hermes_cli import kanban_db_connect as task_db_connect
 
@@ -164,10 +164,10 @@ def _stub_retained_input(monkeypatch, *, mission: str | None = None) -> dict[str
     monkeypatch.setattr(
         magentic_execution,
         "_bind_outer_magentic_run",
-        lambda run_id, native_root_id, _status: {
+        lambda run_id, hermes_root_id, _status: {
             "ok": True,
             "runId": run_id,
-            "nativeRootId": native_root_id,
+            "hermesRootId": hermes_root_id,
             "updated": True,
         },
     )
@@ -253,7 +253,7 @@ def test_orchestrator_identity_rejects_duplicate_or_mismatched_prompt_authority(
 
 
 def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
@@ -272,23 +272,23 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
         "run_id": "run-one",
         "card_id": "card_magentic",
     }
-    assert second["nativeRootId"] == first["nativeRootId"]
+    assert second["hermesRootId"] == first["hermesRootId"]
     assert first == {
         "ok": True,
         "runId": "run-one",
-        "nativeRootId": first["nativeRootId"],
-        "nativeIdentity": "card_magentic",
+        "hermesRootId": first["hermesRootId"],
+        "hermesProfile": "card_magentic",
         "effectiveProvider": "openai-codex",
         "providerApiMode": "codex_app_server",
         "model": "gpt-5.6-sol",
         "tenant": "mag-one:run-one",
         "state": "running",
-        "nativeStatus": "ready",
-        "nativeNotification": True,
+        "hermesStatus": "ready",
+        "hermesNotification": True,
         "outerRunBound": True,
     }
-    with task_db_connect.connect_closing(native_task_store) as connection:
-        root = task_db.get_task(connection, first["nativeRootId"])
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
+        root = task_db.get_task(connection, first["hermesRootId"])
         assert root is not None
         assert root.allowed_assignees == ["card_magentic", "worker-a", "worker-b"]
         assert root.assignee == "card_magentic"
@@ -317,11 +317,11 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
         ).fetchone()["count"] == 1
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (first["nativeRootId"], magentic_execution._NATIVE_AUTHORITY_EVENT),
+            (first["hermesRootId"], magentic_execution._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
         subscription = connection.execute(
             "SELECT platform, chat_id, notifier_profile FROM kanban_notify_subs WHERE task_id = ?",
-            (first["nativeRootId"],),
+            (first["hermesRootId"],),
         ).fetchone()
         assert dict(subscription) == {
             "platform": "tui",
@@ -331,7 +331,7 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
 
 
 def test_team_only_bypasses_magnetic_model_and_uses_the_same_team_root(
-    native_task_store, tmp_path, monkeypatch,
+    hermes_task_store, tmp_path, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
     from hermes_cli.kanban_team import TEAM_DECOMPOSITION_STEP, TEAM_WORKFLOW_ID
@@ -374,19 +374,19 @@ def test_team_only_bypasses_magnetic_model_and_uses_the_same_team_root(
     assert result == {
         "ok": True,
         "runId": "run-one",
-        "nativeRootId": result["nativeRootId"],
-        "nativeIdentity": "team",
+        "hermesRootId": result["hermesRootId"],
+        "hermesProfile": "team",
         "effectiveProvider": "openai-codex",
         "providerApiMode": "codex_app_server",
         "model": "gpt-5.6-terra",
         "tenant": "mag-one:run-one",
         "state": "running",
-        "nativeStatus": "triage",
-        "nativeNotification": True,
+        "hermesStatus": "triage",
+        "hermesNotification": True,
         "outerRunBound": True,
     }
-    with task_db_connect.connect_closing(native_task_store) as connection:
-        root = task_db.get_task(connection, result["nativeRootId"])
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
+        root = task_db.get_task(connection, result["hermesRootId"])
         assert root is not None
         assert root.assignee == "team"
         assert root.created_by == "card_magentic"
@@ -408,7 +408,7 @@ def test_team_only_bypasses_magnetic_model_and_uses_the_same_team_root(
 
 
 def test_submit_rejoin_rejects_changed_immutable_worker_authority(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
 
@@ -424,19 +424,19 @@ def test_submit_rejoin_rejects_changed_immutable_worker_authority(
     ):
         magentic_execution.submit_magentic_execution(changed)
 
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM tasks WHERE idempotency_key = ?",
             ("magentic:run-one:root",),
         ).fetchone()["count"] == 1
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (first["nativeRootId"], magentic_execution._NATIVE_AUTHORITY_EVENT),
+            (first["hermesRootId"], magentic_execution._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
 
 
 def test_submit_preserves_an_unbound_staged_root_for_exact_retry(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
 
@@ -454,7 +454,7 @@ def test_submit_preserves_an_unbound_staged_root_for_exact_retry(
         match="magentic_outer_run_binding_failed",
     ):
         magentic_execution.submit_magentic_execution(_execution_payload())
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         staged = connection.execute(
             "SELECT id, status, current_run_id FROM tasks WHERE idempotency_key = ?",
             ("magentic:run-one:root",),
@@ -464,12 +464,12 @@ def test_submit_preserves_an_unbound_staged_root_for_exact_retry(
         assert staged["current_run_id"] is None
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (staged["id"], magentic_execution._NATIVE_AUTHORITY_EVENT),
+            (staged["id"], magentic_execution._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
 
 
 def test_submit_preserves_a_bound_staged_root_when_activation_fails_for_retry(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
@@ -479,10 +479,10 @@ def test_submit_preserves_a_bound_staged_root_when_activation_fails_for_retry(
 
     with pytest.raises(
         magentic_execution.MagenticExecutionError,
-        match="magentic_native_root_activation_failed",
+        match="magentic_hermes_root_activation_failed",
     ):
         magentic_execution.submit_magentic_execution(_execution_payload())
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         staged = connection.execute(
             "SELECT id, status FROM tasks WHERE idempotency_key = ?",
             ("magentic:run-one:root",),
@@ -490,13 +490,13 @@ def test_submit_preserves_a_bound_staged_root_when_activation_fails_for_retry(
         assert staged is not None and staged["status"] == "blocked"
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (staged["id"], magentic_execution._NATIVE_AUTHORITY_EVENT),
+            (staged["id"], magentic_execution._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
 
     monkeypatch.setattr(task_db, "promote_task", promote_task)
     retried = magentic_execution.submit_magentic_execution(_execution_payload())
-    assert retried["nativeRootId"] == staged["id"]
-    assert retried["nativeStatus"] == "ready"
+    assert retried["hermesRootId"] == staged["id"]
+    assert retried["hermesStatus"] == "ready"
 
 
 def test_team_marker_cannot_be_applied_to_another_worker(monkeypatch) -> None:
@@ -512,7 +512,7 @@ def test_team_marker_cannot_be_applied_to_another_worker(monkeypatch) -> None:
 
 
 def test_submit_rejects_transport_mission_that_differs_from_reloaded_idf(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     _stub_retained_input(monkeypatch, mission="Mission held by retained bytes.")
 
@@ -527,7 +527,7 @@ def _submit_root(monkeypatch) -> str:
     _stub_retained_input(monkeypatch)
     return magentic_execution.submit_magentic_execution(
         _execution_payload(),
-    )["nativeRootId"]
+    )["hermesRootId"]
 
 
 def _signed_worker_envelope(secret: str, payload: dict[str, Any]) -> dict[str, str]:
@@ -540,13 +540,13 @@ def _signed_worker_envelope(secret: str, payload: dict[str, Any]) -> dict[str, s
     }
 
 
-def _claimed_worker_auth_case(native_task_store, monkeypatch) -> dict[str, Any]:
+def _claimed_worker_auth_case(hermes_task_store, monkeypatch) -> dict[str, Any]:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     now = 2_000_000_000
     monkeypatch.setattr(magentic_execution.time, "time", lambda: now)
     root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         worker_id = task_db.create_task(
             connection,
             title="Authenticated worker tool task",
@@ -599,7 +599,7 @@ def _claimed_worker_auth_case(native_task_store, monkeypatch) -> dict[str, Any]:
 
 
 def _claimed_direct_team_auth_case(
-    native_task_store, monkeypatch, *, decomposed_worker: bool = False,
+    hermes_task_store, monkeypatch, *, decomposed_worker: bool = False,
     profile: str = "team",
 ) -> dict[str, Any]:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
@@ -608,7 +608,7 @@ def _claimed_direct_team_auth_case(
 
     now = 2_000_000_000
     monkeypatch.setattr(magentic_execution.time, "time", lambda: now)
-    hermes_root = native_task_store.parent / "Hermes"
+    hermes_root = hermes_task_store.parent / "Hermes"
     hermes_home = hermes_root / ".hermes"
     profile_home = hermes_home / "profiles" / profile
     profile_home.mkdir(parents=True)
@@ -627,11 +627,11 @@ def _claimed_direct_team_auth_case(
     monkeypatch.setattr(
         magentic_execution, "_runtime_paths", lambda: (hermes_root, hermes_home),
     )
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         root = create_team_root(
             connection,
             title="Authenticated direct Team root",
-            body="Use the native Team workflow.",
+            body="Use the Hermes Team workflow.",
             assignee=profile,
             profile_home=profile_home,
             created_by="card_magentic",
@@ -641,7 +641,7 @@ def _claimed_direct_team_auth_case(
             initial_status="running",
         )
         root_id = root.id
-        magentic_execution._bind_native_worker_authorities(
+        magentic_execution._bind_hermes_worker_authorities(
             connection,
             task_db,
             root_id,
@@ -657,7 +657,7 @@ def _claimed_direct_team_auth_case(
             root_id,
             root_assignee=profile,
             children=[{
-                "title": "Native decomposed Team worker",
+                "title": "Hermes decomposed Team worker",
                 "body": "Complete the bounded worker task.",
                 "assignee": profile,
             }],
@@ -676,7 +676,7 @@ def _claimed_direct_team_auth_case(
             assert task_db.complete_task(
                 connection,
                 child_id,
-                summary="Native Team worker completed.",
+                summary="Hermes Team worker completed.",
                 expected_run_id=child.current_run_id,
             )
             task_db.recompute_ready(connection)
@@ -723,10 +723,10 @@ def _claimed_direct_team_auth_case(
     }
 
 
-def test_worker_tool_auth_accepts_only_the_live_native_claim_and_redacts_auth_material(
-    native_task_store, monkeypatch,
+def test_worker_tool_auth_accepts_only_the_live_hermes_claim_and_redacts_auth_material(
+    hermes_task_store, monkeypatch,
 ) -> None:
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     result = magentic_execution.authenticate_magentic_worker_tool_request(
         _signed_worker_envelope(case["secret"], case["payload"]),
     )
@@ -735,7 +735,7 @@ def test_worker_tool_auth_accepts_only_the_live_native_claim_and_redacts_auth_ma
         "projectId": "project-one",
         "deckId": "deck-one",
         "outerRunId": "run-one",
-        "nativeRootId": case["rootId"],
+        "hermesRootId": case["rootId"],
         "sourceTaskId": case["workerId"],
         "sourceTaskRunId": case["sourceRunId"],
         "sourceProfile": "worker-a",
@@ -756,12 +756,12 @@ def test_worker_tool_auth_accepts_only_the_live_native_claim_and_redacts_auth_ma
 
 
 def test_worker_tool_auth_rejects_a_sibling_from_the_same_dispatcher(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
-    worker_a = _claimed_worker_auth_case(native_task_store, monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    worker_a = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         worker_b_id = task_db.create_task(
             connection,
             title="Sibling worker tool task",
@@ -803,11 +803,11 @@ def test_worker_tool_auth_rejects_a_sibling_from_the_same_dispatcher(
     ("decomposed_worker", "profile"),
     [(False, "team"), (True, "team"), (True, "alternate-team")],
 )
-def test_worker_tool_auth_accepts_the_exact_direct_team_native_execution(
-    native_task_store, monkeypatch, decomposed_worker: bool, profile: str,
+def test_worker_tool_auth_accepts_the_exact_direct_team_hermes_execution(
+    hermes_task_store, monkeypatch, decomposed_worker: bool, profile: str,
 ) -> None:
     case = _claimed_direct_team_auth_case(
-        native_task_store, monkeypatch,
+        hermes_task_store, monkeypatch,
         decomposed_worker=decomposed_worker,
         profile=profile,
     )
@@ -818,7 +818,7 @@ def test_worker_tool_auth_accepts_the_exact_direct_team_native_execution(
         "projectId": "project-one",
         "deckId": "deck-one",
         "outerRunId": "run-one",
-        "nativeRootId": case["rootId"],
+        "hermesRootId": case["rootId"],
         "sourceTaskId": case["sourceTaskId"],
         "sourceTaskRunId": case["sourceRunId"],
         "sourceProfile": profile,
@@ -842,13 +842,13 @@ def test_worker_tool_auth_accepts_the_exact_direct_team_native_execution(
     ],
 )
 def test_worker_tool_auth_rejects_a_widened_direct_team_root(
-    native_task_store, monkeypatch, column: str, value: str,
+    hermes_task_store, monkeypatch, column: str, value: str,
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
 
-    case = _claimed_direct_team_auth_case(native_task_store, monkeypatch)
+    case = _claimed_direct_team_auth_case(hermes_task_store, monkeypatch)
     assert column in {"created_by", "allowed_assignees", "tenant"}
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         connection.execute(
             f"UPDATE tasks SET {column} = ? WHERE id = ?",
             (value, case["rootId"]),
@@ -868,13 +868,13 @@ def test_worker_tool_auth_rejects_a_widened_direct_team_root(
     ("target", "offset"),
     [("task", 0), ("run", 0), ("run", 301)],
 )
-def test_worker_tool_auth_rejects_expired_or_inconsistent_native_leases(
-    native_task_store, monkeypatch, target: str, offset: int,
+def test_worker_tool_auth_rejects_expired_or_inconsistent_hermes_leases(
+    hermes_task_store, monkeypatch, target: str, offset: int,
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         if target == "task":
             connection.execute(
                 "UPDATE tasks SET claim_expires = ? WHERE id = ?",
@@ -895,13 +895,13 @@ def test_worker_tool_auth_rejects_expired_or_inconsistent_native_leases(
         )
 
 
-def test_worker_tool_auth_ignores_unrelated_malformed_native_events(
-    native_task_store, monkeypatch,
+def test_worker_tool_auth_ignores_unrelated_malformed_hermes_events(
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         unrelated = task_db.create_task(
             connection, title="Unrelated task", assignee="worker-b",
             created_by="unrelated", tenant="another-tenant", initial_status="blocked",
@@ -920,12 +920,12 @@ def test_worker_tool_auth_ignores_unrelated_malformed_native_events(
 
 @pytest.mark.parametrize("creator_task_id", ["t_missing_parent", "self"])
 def test_worker_tool_auth_rejects_missing_or_cyclic_creator_lineage(
-    native_task_store, monkeypatch, creator_task_id: str,
+    hermes_task_store, monkeypatch, creator_task_id: str,
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         row = connection.execute(
             "SELECT id, payload FROM task_events WHERE task_id = ? AND kind = 'created'",
             (case["workerId"],),
@@ -946,13 +946,13 @@ def test_worker_tool_auth_rejects_missing_or_cyclic_creator_lineage(
 
 
 def test_worker_tool_auth_rejects_tenant_discontinuity_inside_the_creator_chain(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     grandchild_secret = "dispatcher:grandchild:claim"
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         middle_id = task_db.create_task(
             connection, title="Wrong-tenant middle", assignee="worker-a",
             created_by="worker-a", creator_task_id=case["workerId"],
@@ -980,12 +980,12 @@ def test_worker_tool_auth_rejects_tenant_discontinuity_inside_the_creator_chain(
 
 
 def test_worker_tool_auth_rejects_terminal_root_and_orchestrator_descendant(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         connection.execute(
             "UPDATE tasks SET status = 'done' WHERE id = ?", (case["rootId"],),
         )
@@ -996,7 +996,7 @@ def test_worker_tool_auth_rejects_terminal_root_and_orchestrator_descendant(
         )
 
     root_secret = "dispatcher:forbidden-orchestrator-child"
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         connection.execute(
             "UPDATE tasks SET status = 'ready' WHERE id = ?", (case["rootId"],),
         )
@@ -1038,10 +1038,10 @@ def test_worker_tool_auth_rejects_terminal_root_and_orchestrator_descendant(
         ("arguments", []),
     ],
 )
-def test_worker_tool_auth_rejects_invalid_v2_payload_or_native_claim_identity(
-    native_task_store, monkeypatch, field: str, value: Any,
+def test_worker_tool_auth_rejects_invalid_v2_payload_or_hermes_claim_identity(
+    hermes_task_store, monkeypatch, field: str, value: Any,
 ) -> None:
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     payload = {**case["payload"], field: value}
     with pytest.raises(
         magentic_execution.MagenticExecutionError,
@@ -1053,9 +1053,9 @@ def test_worker_tool_auth_rejects_invalid_v2_payload_or_native_claim_identity(
 
 
 def test_worker_tool_auth_rejects_noncanonical_envelopes_and_signatures(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     valid = _signed_worker_envelope(case["secret"], case["payload"])
     invalid_envelopes = [
         {**valid, "extra": "not-allowed"},
@@ -1076,13 +1076,13 @@ def test_worker_tool_auth_rejects_noncanonical_envelopes_and_signatures(
 
 
 def test_worker_tool_auth_rejects_an_ended_claim_and_the_root_task_itself(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     envelope = _signed_worker_envelope(case["secret"], case["payload"])
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         assert task_db.complete_task(
             connection,
             case["workerId"],
@@ -1093,7 +1093,7 @@ def test_worker_tool_auth_rejects_an_ended_claim_and_the_root_task_itself(
         magentic_execution.authenticate_magentic_worker_tool_request(envelope)
 
     root_secret = "dispatcher:magnetic-root"
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         root = task_db.claim_task(connection, case["rootId"], claimer=root_secret)
         assert root is not None
         root_payload = {
@@ -1109,13 +1109,13 @@ def test_worker_tool_auth_rejects_an_ended_claim_and_the_root_task_itself(
 
 
 def test_worker_tool_auth_rejects_a_mismatched_live_run_claim_or_widened_source_scope(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     envelope = _signed_worker_envelope(case["secret"], case["payload"])
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         connection.execute(
             "UPDATE task_runs SET claim_lock = ? WHERE id = ?",
             ("different-live-claim", case["sourceRunId"]),
@@ -1124,9 +1124,9 @@ def test_worker_tool_auth_rejects_a_mismatched_live_run_claim_or_widened_source_
     with pytest.raises(magentic_execution.MagenticExecutionError):
         magentic_execution.authenticate_magentic_worker_tool_request(envelope)
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     envelope = _signed_worker_envelope(case["secret"], case["payload"])
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         connection.execute(
             "UPDATE tasks SET allowed_assignees = ? WHERE id = ?",
             ('["worker-a","worker-b"]', case["workerId"]),
@@ -1145,15 +1145,15 @@ def test_worker_tool_auth_rejects_a_mismatched_live_run_claim_or_widened_source_
         ("assignee", "worker-a"),
     ],
 )
-def test_worker_tool_auth_rejects_wrong_native_lineage_authority(
-    native_task_store, monkeypatch, root_mutation: tuple[str, str],
+def test_worker_tool_auth_rejects_wrong_hermes_lineage_authority(
+    hermes_task_store, monkeypatch, root_mutation: tuple[str, str],
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
 
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     column, value = root_mutation
     assert column in {"tenant", "allowed_assignees", "assignee"}
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         connection.execute(f"UPDATE tasks SET {column} = ? WHERE id = ?", (value, case["rootId"]))
         connection.commit()
     with pytest.raises(magentic_execution.MagenticExecutionError):
@@ -1177,9 +1177,9 @@ def test_worker_tool_auth_rejects_wrong_native_lineage_authority(
     ],
 )
 def test_worker_tool_auth_rejects_a_nonmatching_outer_run(
-    native_task_store, monkeypatch, field: str, value: str,
+    hermes_task_store, monkeypatch, field: str, value: str,
 ) -> None:
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     outer_run = {**case["outerRun"], field: value}
     monkeypatch.setattr(
         magentic_execution,
@@ -1193,9 +1193,9 @@ def test_worker_tool_auth_rejects_a_nonmatching_outer_run(
 
 
 def test_worker_tool_auth_rejects_a_missing_outer_run(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
-    case = _claimed_worker_auth_case(native_task_store, monkeypatch)
+    case = _claimed_worker_auth_case(hermes_task_store, monkeypatch)
     monkeypatch.setattr(magentic_execution, "_read_outer_magentic_run", lambda _run_id: None)
     with pytest.raises(magentic_execution.MagenticExecutionError):
         magentic_execution.authenticate_magentic_worker_tool_request(
@@ -1210,7 +1210,7 @@ def test_worker_tool_auth_route_returns_only_the_verified_proof(monkeypatch) -> 
         "projectId": "project-one",
         "deckId": "deck-one",
         "outerRunId": "run-one",
-        "nativeRootId": "t_root",
+        "hermesRootId": "t_root",
         "sourceTaskId": "t_worker",
         "sourceTaskRunId": 23,
         "sourceProfile": "worker-a",
@@ -1243,13 +1243,13 @@ def test_worker_tool_auth_route_returns_only_the_verified_proof(monkeypatch) -> 
     assert getattr(caught.value, "detail", None) == "magentic_worker_tool_authentication_failed"
 
 
-def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_result(
-    native_task_store, monkeypatch,
+def test_same_root_waits_on_hermes_dependencies_then_returns_its_own_final_result(
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         first_attempt = task_db.claim_task(connection, root_id, claimer="dispatcher:first")
         assert first_attempt is not None
         first_run_id = first_attempt.current_run_id
@@ -1277,11 +1277,11 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
         )
         assert task_db.get_task(connection, root_id).status == "todo"
 
-    waiting = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
+    waiting = magentic_execution.read_magentic_execution({"hermesRootId": root_id})
     assert waiting["state"] == "running"
-    assert waiting["nativeStatus"] == "todo"
-    assert waiting["nativeRunId"] == first_run_id
-    assert waiting["nativeTasks"] == [
+    assert waiting["hermesStatus"] == "todo"
+    assert waiting["hermesRunId"] == first_run_id
+    assert waiting["hermesTasks"] == [
         {
             "taskId": root_id,
             "title": "Mag One run-one",
@@ -1291,8 +1291,8 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
             "latestAttempt": {
                 "runId": first_run_id,
                 "status": "blocked",
-                "startedAt": waiting["nativeTasks"][0]["latestAttempt"]["startedAt"],
-                "endedAt": waiting["nativeTasks"][0]["latestAttempt"]["endedAt"],
+                "startedAt": waiting["hermesTasks"][0]["latestAttempt"]["startedAt"],
+                "endedAt": waiting["hermesTasks"][0]["latestAttempt"]["endedAt"],
             },
             "resultAvailable": True,
             "handoffSummary": "Waiting for the selected workers.",
@@ -1319,7 +1319,7 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
         },
     ]
 
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         assert task_db.complete_task(
             connection, worker_a, summary="Worker A result", result="Worker A result",
         )
@@ -1340,15 +1340,15 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
             expected_run_id=second_run_id,
         )
 
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
+    status = magentic_execution.read_magentic_execution({"hermesRootId": root_id})
     assert status["state"] == "completed"
-    assert status["nativeStatus"] == "done"
-    assert status["nativeRootId"] == root_id
-    assert status["nativeRunId"] == second_run_id
+    assert status["hermesStatus"] == "done"
+    assert status["hermesRootId"] == root_id
+    assert status["hermesRunId"] == second_run_id
     assert status["finalResult"] == "The real synthesized answer."
     assert status["effectiveProvider"] == "openai-codex"
     assert status["model"] == "gpt-5.6-sol"
-    assert status["nativeTasks"][0] == {
+    assert status["hermesTasks"][0] == {
         "taskId": root_id,
         "title": "Mag One run-one",
         "assignee": "card_magentic",
@@ -1357,13 +1357,13 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
         "latestAttempt": {
             "runId": second_run_id,
             "status": "done",
-            "startedAt": status["nativeTasks"][0]["latestAttempt"]["startedAt"],
-            "endedAt": status["nativeTasks"][0]["latestAttempt"]["endedAt"],
+            "startedAt": status["hermesTasks"][0]["latestAttempt"]["startedAt"],
+            "endedAt": status["hermesTasks"][0]["latestAttempt"]["endedAt"],
         },
         "resultAvailable": True,
         "handoffSummary": "The real synthesized answer.",
     }
-    assert [task["resultAvailable"] for task in status["nativeTasks"]] == [True, True, True]
+    assert [task["resultAvailable"] for task in status["hermesTasks"]] == [True, True, True]
     assert "finalTaskId" not in status
     assert "tasksTotal" not in status
     assert "tasksCompleted" not in status
@@ -1371,12 +1371,12 @@ def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_resul
 
 
 def test_status_does_not_project_detached_worker_session_metadata(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         worker_id = task_db.create_task(
             connection,
             title="Worker task",
@@ -1395,8 +1395,8 @@ def test_status_does_not_project_detached_worker_session_metadata(
             metadata={"worker_session_id": 7},
         )
 
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
-    worker = next(task for task in status["nativeTasks"] if task["taskId"] == worker_id)
+    status = magentic_execution.read_magentic_execution({"hermesRootId": root_id})
+    worker = next(task for task in status["hermesTasks"] if task["taskId"] == worker_id)
     assert worker["handoffSummary"] == "Bounded handoff."
     assert "workerSessionId" not in worker
     assert "toolReceipts" not in worker
@@ -1404,27 +1404,27 @@ def test_status_does_not_project_detached_worker_session_metadata(
 
 
 def test_completed_root_without_its_own_result_fails_closed(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         assert task_db.complete_task(connection, root_id)
 
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
+    status = magentic_execution.read_magentic_execution({"hermesRootId": root_id})
     assert status["state"] == "failed"
-    assert status["nativeStatus"] == "done"
+    assert status["hermesStatus"] == "done"
     assert status["error"] == "magentic_final_result_missing"
 
 
-def test_native_allowed_assignees_reject_an_unwired_profile(
-    native_task_store, monkeypatch,
+def test_hermes_allowed_assignees_reject_an_unwired_profile(
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         with pytest.raises(ValueError, match="outside this execution's allowed assignees"):
             task_db.create_task(
                 connection, title="Ungrantable task", assignee="worker-c",
@@ -1434,12 +1434,12 @@ def test_native_allowed_assignees_reject_an_unwired_profile(
 
 
 def test_stop_archives_only_the_exact_execution_creator_tree(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         child_id = task_db.create_task(
             connection, title="Worker task", assignee="worker-a", creator_task_id=root_id,
         )
@@ -1447,17 +1447,17 @@ def test_stop_archives_only_the_exact_execution_creator_tree(
             connection, title="Nested task", assignee="worker-a", creator_task_id=child_id,
         )
         unrelated_id = task_db.create_task(
-            connection, title="Unrelated native task", assignee="unrelated",
+            connection, title="Unrelated Hermes task", assignee="unrelated",
         )
 
-    stopped = magentic_execution.stop_magentic_execution({"nativeRootId": root_id})
+    stopped = magentic_execution.stop_magentic_execution({"hermesRootId": root_id})
     assert stopped == {
         "ok": True,
-        "nativeRootId": root_id,
+        "hermesRootId": root_id,
         "state": "cancelled",
-        "nativeStatus": "archived",
+        "hermesStatus": "archived",
     }
-    with task_db_connect.connect_closing(native_task_store) as connection:
+    with task_db_connect.connect_closing(hermes_task_store) as connection:
         assert task_db.get_task(connection, root_id).status == "archived"
         assert task_db.get_task(connection, child_id).status == "archived"
         assert task_db.get_task(connection, nested_id).status == "archived"
@@ -1465,7 +1465,7 @@ def test_stop_archives_only_the_exact_execution_creator_tree(
 
 
 def test_status_and_stop_resolve_the_task_store_before_importing_hermes(
-    native_task_store, monkeypatch,
+    hermes_task_store, monkeypatch,
 ) -> None:
     root_id = _submit_root(monkeypatch)
     original_import = builtins.__import__
@@ -1474,7 +1474,7 @@ def test_status_and_stop_resolve_the_task_store_before_importing_hermes(
     def cold_task_path():
         nonlocal path_resolved
         path_resolved = True
-        return native_task_store
+        return hermes_task_store
 
     def guarded_import(name, *args, **kwargs):
         if name == "hermes_cli" or name.startswith("hermes_cli."):
@@ -1484,10 +1484,10 @@ def test_status_and_stop_resolve_the_task_store_before_importing_hermes(
     monkeypatch.setattr(magentic_execution, "_task_db_path", cold_task_path)
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
-    assert status["nativeRootId"] == root_id
-    assert len(status["nativeTasks"]) == 1
+    status = magentic_execution.read_magentic_execution({"hermesRootId": root_id})
+    assert status["hermesRootId"] == root_id
+    assert len(status["hermesTasks"]) == 1
 
     path_resolved = False
-    stopped = magentic_execution.stop_magentic_execution({"nativeRootId": root_id})
+    stopped = magentic_execution.stop_magentic_execution({"hermesRootId": root_id})
     assert stopped["state"] == "cancelled"

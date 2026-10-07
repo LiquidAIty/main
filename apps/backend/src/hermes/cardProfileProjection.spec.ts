@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentCardInstance, DeckDocument } from '../types';
 import {
   hydrateHermesCardProfile,
-  invokeHermesNativeOperation,
+  invokeHermesCardOperation,
   projectHermesCardBinding,
 } from './cardProfileProjection';
 
@@ -41,23 +41,23 @@ const card: AgentCardInstance = {
 
 const deck: Pick<DeckDocument, 'workspaceRoot'> = { workspaceRoot: 'C:/Projects/LiquidAIty/main' };
 
-function native() {
+function profileState() {
   return {
     name: 'liquidaity-main',
-    description: 'Native profile description',
-    soul: 'Native SOUL instructions',
-    model: { provider: 'openai-codex', default: 'gpt-native' },
-    skills: [{ name: 'native-research', enabled: true }],
-    toolsets: [{ name: 'native-web', enabled: true }],
+    description: 'Hermes profile description',
+    soul: 'Hermes SOUL instructions',
+    model: { provider: 'openai-codex', default: 'gpt-hermes' },
+    skills: [{ name: 'hermes-research', enabled: true }],
+    toolsets: [{ name: 'hermes-web', enabled: true }],
     toolsets_pinned: true,
     mcp_servers: [{ name: 'liquidaity', enabled: true }],
   };
 }
 
-function nativeRequest() {
+function hermesRequest() {
   return vi.fn(async (method: string) => {
     if (method === 'profiles.configure') return { ok: true, applied: { description: true } };
-    if (method === 'profiles.describe') return native();
+    if (method === 'profiles.describe') return profileState();
     if (method === 'mcp.servers.list') return { servers: [{ name: 'liquidaity', transport: 'http', auth: 'header' }] };
     if (method === 'learning.frames') return {
       count: 1,
@@ -72,21 +72,21 @@ function nativeRequest() {
         category: 'skill',
         color: '#123456',
         nodes: [{
-          id: 'skill:native-research',
+          id: 'skill:hermes-research',
           glyph: 'S',
-          label: 'native-research',
-          fullLabel: 'Native Research',
+          label: 'hermes-research',
+          fullLabel: 'Hermes Research',
           meta: 'skill',
           body: 'Research procedure',
           style: 'green',
         }],
       }],
     };
-    throw new Error(`unexpected_native_method:${method}`);
+    throw new Error(`unexpected_hermes_method:${method}`);
   });
 }
 
-describe('Hermes Card native profile binding', () => {
+describe('Hermes Card profile binding', () => {
   it('projects only the existing profile binding', () => {
     const binding = projectHermesCardBinding(card, deck);
     expect(binding).toEqual({
@@ -96,21 +96,21 @@ describe('Hermes Card native profile binding', () => {
     expect(JSON.stringify(binding)).not.toMatch(/prompt|role|soul|description|model|skills|toolsets|mcpConnectionIds/i);
   });
 
-  it('reads the native owners without comparing or synchronizing Card fields', async () => {
-    const request = nativeRequest();
+  it('reads the Hermes owners without comparing or synchronizing Card fields', async () => {
+    const request = hermesRequest();
     const result = await hydrateHermesCardProfile(card, deck, request as never);
 
     expect(request).toHaveBeenCalledTimes(3);
     expect(request).toHaveBeenNthCalledWith(1, 'profiles.describe', { name: 'liquidaity-main' });
     expect(request).toHaveBeenNthCalledWith(2, 'mcp.servers.list', { profile: 'liquidaity-main' });
     expect(request).toHaveBeenNthCalledWith(3, 'learning.frames', { cols: 60, rows: 18, frames: 2 }, 'liquidaity-main');
-    expect(result.nativeApply).toBe('run_start');
-    expect(result.cardSaveMutatesNative).toBe(false);
+    expect(result.profileApply).toBe('run_start');
+    expect(result.cardSaveMutatesProfile).toBe(false);
     expect(result.desired.subagentModel?.providerModelId).toBe('gpt-5.6-luna');
-    expect(result.native).toMatchObject({
-      description: 'Native profile description',
-      soul: 'Native SOUL instructions',
-      model: { provider: 'openai-codex', default: 'gpt-native' },
+    expect(result.profile).toMatchObject({
+      description: 'Hermes profile description',
+      soul: 'Hermes SOUL instructions',
+      model: { provider: 'openai-codex', default: 'gpt-hermes' },
       learning: {
         count: 1,
         summary: ['1 learned item', '1 skill'],
@@ -121,46 +121,46 @@ describe('Hermes Card native profile binding', () => {
           memories: 0,
           total: 1,
           nodes: [{
-            id: 'skill:native-research',
+            id: 'skill:hermes-research',
             body: 'Research procedure',
             style: 'green',
           }],
         }],
       },
     });
-    expect(result.native).not.toHaveProperty('backgroundReview');
-    expect(result.native).not.toHaveProperty('subagentModel');
-    expect(result.native).not.toHaveProperty('memory');
-    expect(result.native).not.toHaveProperty('honcho');
-    expect(result.native.learning).not.toHaveProperty('graph');
+    expect(result.profile).not.toHaveProperty('backgroundReview');
+    expect(result.profile).not.toHaveProperty('subagentModel');
+    expect(result.profile).not.toHaveProperty('memory');
+    expect(result.profile).not.toHaveProperty('honcho');
+    expect(result.profile.learning).not.toHaveProperty('graph');
     expect(result).not.toHaveProperty('subagentModelMaterialization');
     expect(result).not.toHaveProperty('drift');
     expect(result).not.toHaveProperty('fingerprint');
-    expect(result.native.mcpServers[0]).not.toHaveProperty('headers');
-    expect(result.native.mcpServers[0]).not.toHaveProperty('env');
+    expect(result.profile.mcpServers[0]).not.toHaveProperty('headers');
+    expect(result.profile.mcpServers[0]).not.toHaveProperty('env');
   });
 
-  it('delegates exactly one native operation and then returns its exact readback', async () => {
-    const request = nativeRequest();
-    const result = await invokeHermesNativeOperation(
+  it('delegates exactly one Hermes operation and then returns its exact readback', async () => {
+    const request = hermesRequest();
+    const result = await invokeHermesCardOperation(
       card,
       deck,
-      { method: 'profiles.configure', params: { description: 'New native description' } },
+      { method: 'profiles.configure', params: { description: 'New Hermes description' } },
       request as never,
     );
 
     expect(request).toHaveBeenCalledTimes(4);
     expect(request).toHaveBeenNthCalledWith(1, 'profiles.configure', {
       name: 'liquidaity-main',
-      description: 'New native description',
+      description: 'New Hermes description',
     });
     expect(result.readback.binding.profile).toBe('liquidaity-main');
-    expect(result.readback.cardSaveMutatesNative).toBe(false);
+    expect(result.readback.cardSaveMutatesProfile).toBe(false);
     expect(card.prompt).toBe('Card-to-Card contract only');
   });
 
-  it('Card Prompt and role changes cannot alter the native read request or readback', async () => {
-    const request = nativeRequest();
+  it('Card Prompt and role changes cannot alter the Hermes read request or readback', async () => {
+    const request = hermesRequest();
     const changed = {
       ...card,
       role: 'Changed Card role',
@@ -169,8 +169,8 @@ describe('Hermes Card native profile binding', () => {
     const result = await hydrateHermesCardProfile(changed, deck, request as never);
 
     expect(request).toHaveBeenCalledWith('profiles.describe', { name: 'liquidaity-main' });
-    expect(result.native.description).toBe('Native profile description');
-    expect(result.native.soul).toBe('Native SOUL instructions');
+    expect(result.profile.description).toBe('Hermes profile description');
+    expect(result.profile.soul).toBe('Hermes SOUL instructions');
   });
 
 });

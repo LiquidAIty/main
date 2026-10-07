@@ -26,9 +26,7 @@ import WorldViewSurface from '../features/worldview/WorldViewSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
-import useAgentBuilderWorkspaceLayout, {
-  shouldCloseCanvasInspector,
-} from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
+import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
@@ -236,7 +234,7 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
   return card.id;
 }
 // The launch surface renders one mixed human graph. ThinkGraph and KnowGraph
-// remain separate native authorities; CodeGraph remains agent-facing through CBM.
+// remain separate provider authorities; CodeGraph remains agent-facing through CBM.
 const PROJECTS_API = '/api/projects';
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -363,15 +361,6 @@ export default function AgentBuilder(): React.ReactElement {
   const registerCardLeave = useCallback((save: (() => Promise<boolean>) | null) => {
     cardLeaveRef.current = save;
   }, []);
-
-  useEffect(() => {
-    if (!shouldCloseCanvasInspector({
-      workspaceView,
-      inspectorOpen: inspectorDrawerOpen,
-      companionVisibleWidth,
-    })) return;
-    setInspectorDrawerOpen(false);
-  }, [companionVisibleWidth, inspectorDrawerOpen, setInspectorDrawerOpen, workspaceView]);
 
   const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
   const mainCardId = useMemo(

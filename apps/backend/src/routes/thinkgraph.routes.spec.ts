@@ -38,8 +38,8 @@ afterEach(() => {
   mocks.fetchThinkGraphNeighborhood.mockReset();
 });
 
-describe('ThinkGraph native read transport', () => {
-  it('passes one exact native memory identity to the Engraphis neighborhood reader', async () => {
+describe('ThinkGraph Engraphis read transport', () => {
+  it('passes one exact Engraphis memory identity to the Engraphis neighborhood reader', async () => {
     mocks.fetchThinkGraphNeighborhood.mockResolvedValue({
       centerId: 'mem-1',
       nodes: [{ id: 'mem-1' }, { id: 'mem-2' }],
@@ -56,7 +56,7 @@ describe('ThinkGraph native read transport', () => {
     }
   });
 
-  it('rejects an expansion without both native identities', async () => {
+  it('rejects an expansion without both Engraphis identities', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/neighborhood?projectId=project-1`);

@@ -18,7 +18,7 @@ def live_cbm_operations():
     definitions = [
         OperationDefinition(
             canonical_id="cbm.search_graph",
-            description="Live native CBM read.",
+            description="Live CBM read.",
             parameters_schema={"type": "object", "properties": {}},
             handler=lambda **_arguments: None,
             available=True,
@@ -29,7 +29,7 @@ def live_cbm_operations():
         ),
         OperationDefinition(
             canonical_id="cbm.current_write",
-            description="Live native CBM restricted operation.",
+            description="Live CBM restricted operation.",
             parameters_schema={"type": "object", "properties": {}},
             handler=lambda **_arguments: None,
             available=True,
@@ -85,8 +85,8 @@ output.emit({"agent": {"run": False}, "query": query})
 
 def test_unknown_future_objects_remain_absent_until_declared() -> None:
     palette = materialize_card_editor([])
-    assert "future_native" not in palette["objects"]
-    assert "future_native" not in template_objects(palette, "template_assist")
+    assert "future_provider" not in palette["objects"]
+    assert "future_provider" not in template_objects(palette, "template_assist")
 
 
 def test_runtime_errors_remain_at_the_executable_contract() -> None:
@@ -105,7 +105,7 @@ def test_invalid_script_is_saved_but_degrades_to_exact_selected_mcp_tools() -> N
     assert script["version"] == 2
     assert script["lastValidation"]["status"] == "invalid"
     assert script["lastValidation"]["errors"][0].startswith("card_script_syntax_invalid")
-    assert script["nativeSupport"]["available"] is False
+    assert script["hermesSupport"]["available"] is False
     presentation = script_presentation(
         {"enabled": True, "source": "return InvocationPreparation()"},
         selected_tools=["calculator"],
@@ -115,7 +115,7 @@ def test_invalid_script_is_saved_but_degrades_to_exact_selected_mcp_tools() -> N
     assert presentation["fallbackReason"] == "card_script_validation_failed"
 
 
-def test_valid_enabled_script_stays_on_exact_selected_tools_without_native_executor() -> None:
+def test_valid_enabled_script_stays_on_exact_selected_tools_without_hermes_executor() -> None:
     source = '''CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {"type": "object", "properties": {}},
@@ -134,13 +134,13 @@ output.emit({"result": {}})
     assert presentation["presentedTools"] == [
         "cbm.search_graph", "graphiti.get_status",
     ]
-    assert presentation["fallbackReason"] == "card_script_native_bridge_unavailable"
+    assert presentation["fallbackReason"] == "card_script_hermes_runner_unavailable"
     assert presentation["script"]["lastValidation"]["status"] == "valid"
-    assert presentation["script"]["nativeSupport"] == {
+    assert presentation["script"]["hermesSupport"] == {
         "available": False,
         "executor": None,
         "active": False,
-        "reason": "card_script_native_bridge_unavailable",
+        "reason": "card_script_hermes_runner_unavailable",
     }
 
 
@@ -166,11 +166,11 @@ output.emit({"context": context, "agent": {"run": True, "prompt": input.mission}
     presentation = script_presentation(
         {"enabled": True, "source": source},
         selected_tools=["engraphis_recall_context"],
-        native_available=True,
+        hermes_available=True,
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == []
-    assert presentation["script"]["nativeSupport"]["active"] is True
+    assert presentation["script"]["hermesSupport"]["active"] is True
     with pytest.raises(ValueError, match="card_script_tool_not_selected:engraphis_recall_context"):
         compile_card_script(source, selected_tools=["graphiti.get_status"])
 
@@ -189,7 +189,7 @@ output.emit({"agent": {"run": False}})
     presentation = script_presentation(
         {"enabled": True, "source": source},
         selected_tools=["engraphis_recall_context", "graphiti.get_status"],
-        native_available=True,
+        hermes_available=True,
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == ["graphiti.get_status"]
@@ -226,7 +226,7 @@ output.emit({"agent": {"run": True}})
     assert compiled["agentToolIds"] == ["graphiti.get_status", "engraphis_recall_context"]
     presentation = script_presentation(
         {"enabled": True, "source": source}, selected_tools=selected,
-        native_available=True,
+        hermes_available=True,
     )
     assert presentation["presentedTools"] == [
         "graphiti.get_status", "engraphis_recall_context",
@@ -252,7 +252,7 @@ output.emit({"agent": {"run": False}})
         {"enabled": True, "source": source},
         selected_tools=["cbm.search_graph", "engraphis_remember", "web_search"],
         default_agent_tools=["engraphis_remember"],
-        native_available=True,
+        hermes_available=True,
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == ["engraphis_remember"]
@@ -336,7 +336,7 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     assert materialized["catalogs"]["configured-models"][0]["key"] == "provider/model"
     fields = {field["name"]: field for field in materialized["fields"]}
     assert fields["modelKey"]["catalog"] == "configured-models"
-    assert fields["tools"]["catalog"] == "native-tools"
+    assert fields["tools"]["catalog"] == "tools"
     assert "runtimeKind" not in fields
     assert "runtimeMode" not in fields
     assert fields["temperature"]["minimum"] == 0.0
@@ -357,15 +357,29 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
 
 def test_human_and_builder_options_resolve_the_same_idd_without_sending_the_full_palette(monkeypatch):
     from app.python_models import idd
-    models = [{"provider": "native-provider", "key": "current-model", "label": "Current model",
-               "providerModelId": "native-model", "default": False}]
+    models = [{
+        "provider": "catalog-provider",
+        "key": "current-model",
+        "label": "Current model",
+        "providerModelId": "catalog-model",
+        "default": False,
+        "contextWindow": 1_050_000,
+        "routingProfile": {
+            "taskFit": "Configured model routing facts.",
+            "supportsTools": True,
+            "inputModalities": ["text", "image"],
+            "reasoningEfforts": ["low", "high"],
+        },
+    }]
     palette = materialize_card_editor(models)
 
     options = materialize_runtime_options(models)
     assert options == {key: palette[key] for key in ("fields", "catalogs")}
     assert set(options) == {"fields", "catalogs"}
     fields = {field["name"]: field for field in options["fields"]}
-    assert fields["provider"]["options"] == [{"value": "native-provider", "label": "native-provider"}]
+    assert fields["provider"]["options"] == [{"value": "catalog-provider", "label": "catalog-provider"}]
+    assert options["catalogs"]["configured-models"][0]["contextWindow"] == 1_050_000
+    assert options["catalogs"]["configured-models"][0]["routingProfile"]["supportsTools"] is True
     assert "runtimeKind" not in fields
     assert "runtimeMode" not in fields
     assert materialize_runtime_options([])["catalogs"] == {"configured-models": []}
@@ -409,7 +423,7 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
         "sourceId": "cbm",
         "providerToolName": "search_graph",
         "connectionKind": "external-mcp",
-        "description": "Native search description.",
+        "description": "Provider search description.",
         "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
         "outputSchema": {"type": "object"},
         "annotations": annotations,
@@ -428,7 +442,7 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
         "providerToolName": "search_graph",
         "connectionKind": "external-mcp",
         "available": True,
-        "description": "Native search description.",
+        "description": "Provider search description.",
         "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
         "outputSchema": {"type": "object"},
         "annotations": annotations,
@@ -436,7 +450,7 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
     }]
 
 
-def test_native_side_effect_annotations_do_not_redefine_idd_read_availability():
+def test_provider_side_effect_annotations_do_not_redefine_idd_read_availability():
     from app.python_models.tool_registry import readable_tool_ids
 
     references = materialize_tool_catalog([{
@@ -464,7 +478,7 @@ def test_engraphis_tools_are_bounded_and_codegraph_stays_with_cbm():
     assert not any(name.startswith("cbm.") for name in external_mcp_tool_ids())
 
 
-def test_live_cbm_permissions_come_from_native_discovery(live_cbm_operations) -> None:
+def test_live_cbm_permissions_come_from_provider_discovery(live_cbm_operations) -> None:
     dictionary = load_input_data_dictionary()
     tool_names = {
         tool["id"] for tool in dictionary["operations"]
