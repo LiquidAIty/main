@@ -43,10 +43,10 @@ READ_TOOLS = frozenset({
     "engraphis_discover_actions",
     "engraphis_execute_read",
     "engraphis_get_memory",
-    "engraphis_recall_context",
 })
 WRITE_TOOLS = frozenset({
     "engraphis_execute_action",
+    "engraphis_recall_context",
     "engraphis_remember",
     "engraphis_session",
     "engraphis_update_memory",
@@ -2493,8 +2493,6 @@ def _engraphis_tools_from_registrations() -> list[dict]:
         if "workspace" in schema.get("required", []):
             schema["required"].remove("workspace")
         schema["additionalProperties"] = False
-        if tool.name == "engraphis_recall_context":
-            item["annotations"].update(readOnlyHint=True, idempotentHint=True)
         result.append(item)
     return result
 

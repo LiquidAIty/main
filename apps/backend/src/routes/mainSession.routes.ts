@@ -78,10 +78,33 @@ type DynamicToolDefinition = {
 
 type SavedSpecialistOperation = 'thinkgraph.reason' | 'knowgraph.research';
 
+type ThinkGraphRevisionEvent = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  originatingRunId: string;
+  stage: 'settled';
+  revision: string;
+  changedNodeIds: string[];
+  changedEdgeIds: string[];
+  affectedNodeIds: string[];
+  newMainSubjects: Array<Record<string, unknown>>;
+};
+
+type ThinkGraphLifecycleFailure = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  originatingRunId: string;
+  stage: 'prepare' | 'thinkgraph_card' | 'settle';
+  error: string;
+};
+
 const SPECIALIST_TARGETS: Record<SavedSpecialistOperation, string> = {
   'thinkgraph.reason': 'card_thinkgraph',
   'knowgraph.research': 'card_knowgraph',
 };
+const thinkGraphStreams = new Map<string, Set<Response>>();
 
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)

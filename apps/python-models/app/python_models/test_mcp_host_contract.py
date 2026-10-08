@@ -1835,8 +1835,11 @@ def test_unfamiliar_cbm_tool_is_not_added_to_the_curated_card_catalog(
     assert operation_definition("cbm.future_provider_tool") is None
 
 
-@pytest.mark.parametrize("name", ["engraphis_recall_context", "engraphis_get_memory"])
-def test_operation_access_requires_exact_canonical_annotations(name):
+@pytest.mark.parametrize("name,expected_access", [
+    ("engraphis_recall_context", "write"),
+    ("engraphis_get_memory", "read"),
+])
+def test_operation_access_requires_exact_canonical_annotations(name, expected_access):
     import mcp_host
     from app.python_models.tool_registry import operation_definition
 
@@ -1846,7 +1849,7 @@ def test_operation_access_requires_exact_canonical_annotations(name):
                           annotations=definition.annotations)
     bound = mcp_host._bind_operation_access(providerTool)
     assert bound.annotations.model_dump(by_alias=True, exclude_none=True) == definition.annotations
-    assert bound.meta["liquidaityAccess"] == "read"
+    assert bound.meta["liquidaityAccess"] == expected_access
     mismatched = dict(definition.annotations)
     mismatched["readOnlyHint"] = not mismatched["readOnlyHint"]
     with pytest.raises(RuntimeError, match=f"mcp_tool_annotation_mismatch:{name}:readOnlyHint"):

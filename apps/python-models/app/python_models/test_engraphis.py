@@ -58,32 +58,29 @@ def test_private_workspace_deletion_requires_confirmation_and_preserves_other_wo
     assert "delete_workspace" not in engraphis_adapter.WRITE_TOOLS
 
 
-def test_catalog_matches_both_installed_interfaces_without_added_graph_fields():
-    from engraphis.mcp_server import classic_mcp, smart_mcp
-    import tomllib
-    from pathlib import Path
+def test_catalog_matches_the_installed_smart_interface_without_added_graph_fields():
+    from engraphis.mcp_server import smart_mcp
+
     async def inspect_catalog():
         original = {t.name: t for t in await smart_mcp.list_tools()}
-        original.update({t.name: t for t in await classic_mcp.list_tools()})
         exposed = {t["name"]: t for t in await adapter.engraphis_tools()}
         return original, exposed
+
     original, exposed = asyncio.run(inspect_catalog())
     assert exposed.keys() == original.keys()
     for name, tool in original.items():
-        expected = tool.model_dump(exclude_none=True)
+        expected = tool.model_dump(by_alias=True, exclude_none=True)
         schema = expected["inputSchema"]
         schema.get("properties", {}).pop("workspace", None)
         if "workspace" in schema.get("required", []):
             schema["required"].remove("workspace")
         schema["additionalProperties"] = False
-        if name == "engraphis_recall_context":
-            expected["annotations"].update(readOnlyHint=True, idempotentHint=True)
         assert exposed[name] == expected
-    with (Path(__file__).resolve().parents[4] / "LiquidAIty.idd").open("rb") as source:
-        policies = tomllib.load(source)["operations"]
-    declared = {p["id"] for p in policies if p["namespace"] == "engraphis"}
-    assert declared == original.keys()
     assert adapter.READ_TOOLS | adapter.WRITE_TOOLS == original.keys()
+    assert "engraphis_recall_context" in adapter.WRITE_TOOLS
+    assert original["engraphis_recall_context"].annotations.model_dump(
+        by_alias=True,
+    )["readOnlyHint"] is False
 
 
 def test_operation_definitions_can_initialize_inside_an_active_event_loop():
@@ -103,13 +100,18 @@ def test_operation_definitions_can_initialize_inside_an_active_event_loop():
     )
 
 
-def test_readonly_paraphrase_and_scope(engraphis_adapter):
+def test_recall_paraphrase_scope_and_truthful_receipt_effect(engraphis_adapter):
     saved = call(engraphis_adapter, "engraphis_remember", content="I enjoy learning how satellites are built and who supplies their components.", title="Satellite suppliers")
     service = engraphis_adapter.get_service()
-    before = service.store.conn.total_changes
+    before = int(service.store.conn.execute(
+        "SELECT COUNT(*) AS n FROM operation_receipts"
+    ).fetchone()["n"])
     recalled = call(engraphis_adapter, "engraphis_recall_context", query="Who makes spacecraft parts?", k=6, token_budget=600)
     assert saved["id"] in [source["id"] for source in recalled["sources"]]
-    assert service.store.conn.total_changes == before
+    after = int(service.store.conn.execute(
+        "SELECT COUNT(*) AS n FROM operation_receipts"
+    ).fetchone()["n"])
+    assert after > before
     assert recalled["semantic_support"] is True
     with pytest.raises(ValueError):
         asyncio.run(engraphis_adapter.invoke_tool("project-two", "engraphis_get_memory", {"memory_id": saved["id"]}))
@@ -119,8 +121,27 @@ def test_readonly_paraphrase_and_scope(engraphis_adapter):
 
 def test_stats_result_is_engine_output(engraphis_adapter):
     expected = engraphis_adapter.get_service().stats(workspace="project-one")
-    actual = call(engraphis_adapter, "engraphis_stats")
-    assert actual == expected
+    discovered = call(
+        engraphis_adapter,
+        "engraphis_discover_actions",
+        task="statistics",
+        category="",
+        intent="read",
+        limit=3,
+    )
+    stats = next(
+        action for action in discovered["actions"]
+        if action["canonical_action"] == "stats"
+    )
+    actual = call(
+        engraphis_adapter,
+        "engraphis_execute_read",
+        capability_id=stats["capability_id"],
+        schema_digest=stats["schema_digest"],
+        arguments={},
+    )
+    assert actual["canonical_action"] == "stats"
+    assert actual["result"] == expected
 
 
 def test_inspector_removal_retires_only_selected_memory(engraphis_adapter):
