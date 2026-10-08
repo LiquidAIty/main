@@ -24,25 +24,40 @@ must not import it, launch it, read its profile state, or use it as a fallback.
 Purpose: present one saved Card's exact effective tool schemas to Hermes's
 existing Codex App Server thread and return each `item/tool/call` through the
 authenticated LiquidAIty MCP dispatcher. No alternate App Server, provider,
-login, thread owner, or tool executor is introduced.
+login, thread owner, or tool executor is introduced. The existing turn interrupt
+also cancels and awaits an in-flight Dynamic Tool MCP request so its HTTP and MCP
+contexts close before the Codex turn unwinds.
+
+### Vendored change record
+
+- **VENDORED PROJECT:** `HermesLatest`, at the upstream baseline recorded above.
+- **PURPOSE:** make the already-approved Codex Dynamic Tool transport honor the existing exact turn interrupt while an MCP request is in flight.
+- **EXTERNAL ALTERNATIVE CHECK:** application-only cancellation cannot unblock the synchronous Codex server-request handler; the transport must receive the session's existing interrupt event.
+- **FILES AND SYMBOLS:** `agent/transports/codex_app_server_session.py::_handle_dynamic_tool_call`; `agent/transports/dynamic_tools_mcp.py::_call` and `build_dynamic_tool_executor`; their two focused test modules.
+- **UPSTREAM BEHAVIOR PRESERVED:** normal Dynamic Tool validation, exactly-once response caching, MCP result projection, turn interruption, and every non-Dynamic-Tool request path remain unchanged.
+- **CONTRACTS:** executor callables receive one additional internal `threading.Event`; no Gateway RPC or generated contract changes.
+- **TESTS:** focused session propagation plus in-flight MCP cancellation/context-closure tests.
+- **FORK COST:** two small transport hunks and one focused test module must be reconciled on an upstream refresh.
+- **ROLLBACK:** revert these cancellation hunks and their tests, then keep saved-specialist Dynamic Tools disabled because Stop would no longer cancel their in-flight work.
 
 ### New files
 
 | File | Symbols | Purpose |
 | --- | --- | --- |
-| `agent/transports/dynamic_tools_mcp.py` | `build_dynamic_tool_executor` and its bounded HTTP callback helpers | Sends one authenticated Dynamic Tool call to the existing LiquidAIty MCP endpoint and mechanically returns the MCP result. |
+| `agent/transports/dynamic_tools_mcp.py` | `build_dynamic_tool_executor`, `_call`, and its bounded HTTP callback helpers | Sends one authenticated Dynamic Tool call to the existing LiquidAIty MCP endpoint, races the exact session interrupt, closes the active HTTP/MCP contexts on cancellation, and mechanically returns the real MCP result or `dynamic_tool_cancelled`. |
 
 ### Compatibility hunks in upstream files
 
 | File | Symbols / hunk | Why required |
 | --- | --- | --- |
 | `agent/codex_runtime.py` | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session` | Reads the already-authorized Card definitions, fingerprints them for thread reuse, and supplies the callback to the existing Codex runtime. |
-| `agent/transports/codex_app_server_session.py` | constructor Dynamic Tool validation, `dynamic_tools_fingerprint`, `ensure_started`, `_handle_server_request`, `_handle_dynamic_tool_call`, event projection | Advertises only `experimentalApi` when tools are present, sends exact `dynamicTools`, validates thread/turn/schema/call IDs, executes once, and answers the original JSON-RPC request. No other App Server behavior is changed. |
+| `agent/transports/codex_app_server_session.py` | constructor Dynamic Tool validation, `dynamic_tools_fingerprint`, `ensure_started`, `_handle_server_request`, `_handle_dynamic_tool_call`, event projection | Advertises only `experimentalApi` when tools are present, sends exact `dynamicTools`, validates thread/turn/schema/call IDs, executes once, passes the existing session interrupt event into that exact call, and answers the original JSON-RPC request. No other App Server behavior is changed. |
 | `tui_gateway/contracts/prompt_voice.py` | `DynamicToolDefinition`; `PromptSubmitParams.dynamic_tools`, `tool_endpoint`, `tool_authorization` | Declares the exact turn transport fields. |
 | `tui_gateway/methods_prompt.py` | Dynamic Tool triple validation and forwarding | Rejects partial configuration and passes the exact definitions/authorization into the accepted turn. |
 | `tui_gateway/prompt_turn.py` | Dynamic Tool turn binding | Binds the accepted definitions to the existing agent turn without changing saved profile authority. |
 | `tui_gateway/session_auto_continue.py` | queued-envelope Dynamic Tool fields | Preserves the same accepted definition set when Hermes itself queues a busy-session turn. |
-| `tests/agent/transports/test_codex_app_server_session.py` | `test_dynamic_tool_binding_preserves_exact_schema_and_executes_once` | Proves experimental handshake, exact schema projection, request scoping, argument validation, conflict rejection, and exactly-once callback behavior. |
+| `tests/agent/transports/test_codex_app_server_session.py` | Dynamic Tool binding and interrupt tests | Proves experimental handshake, exact schema projection, request scoping, argument validation, conflict rejection, exactly-once callback behavior, and propagation of the existing interrupt event into a blocked executor. |
+| `tests/agent/transports/test_dynamic_tools_mcp.py` | in-flight cancellation test | Proves an interrupted MCP call is cancelled and its ClientSession, stream, and HTTP contexts all close before the result returns. |
 
 ## Integration patch 2: saved orange-roster scoping for Bot Mode
 
@@ -95,7 +110,8 @@ matching `prompt.submission.started` event and ignores unrelated completions.
 ## Integration patch 4: Card profile fields and profile-scoped learning selection
 
 Purpose: let the existing LiquidAIty Card/profile adapter configure only the
-Card-owned Hermes profile fields and read them back, while leaving Hermes-owned
+Card-owned Hermes profile fields, including an explicit empty toolset selection,
+and read them back, while leaving Hermes-owned
 learning, memory, unknown profile keys, execution, and session state intact.
 One Card remains one reusable profile; Projects create sessions against that
 profile rather than cloning it.
@@ -105,10 +121,12 @@ profile rather than cloning it.
 | File | Symbols / hunk | Why required |
 | --- | --- | --- |
 | `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` | `ProfileModelPin.openai_runtime`, `ProfileDelegationSettings`, profile describe/configure delegation and task-mode fields | Declares the existing profile configuration values that saved Cards actually own and need to read back. |
-| `tui_gateway/methods_profiles.py` | `_profile_delegation_settings`, `_configure_model`, `_configure_card_execution`, describe/configure integration | Writes only declared Card-owned fields into the selected profile and preserves every unrelated config key and profile file. |
+| `tui_gateway/methods_profiles.py` | `_profile_delegation_settings`, `_configure_model`, `_configure_card_execution`, `_save_toolset_pin`, describe/configure integration | Writes only declared Card-owned fields into the selected profile, preserves an explicit empty `platform_toolsets.cli` pin, and preserves every unrelated config key and profile file. |
+| `tui_gateway/server.py` | `_load_enabled_toolsets` explicit-empty profile pin | Keeps `platform_toolsets.cli: []` distinct from a missing key so a Card can select no ordinary Hermes toolsets; missing, nonempty, environment-pin, session-fold-in, and Kanban-worker paths retain their existing behavior. |
 | `tui_gateway/contracts/tools_mcp_plugins.py` | profile on learning frame/node requests | Makes learning reads and edits address the exact saved Card profile instead of an ambient profile. |
 | `tui_gateway/methods_tools.py` | profile-scoped learning RPC forwarding | Delegates the request to Hermes's existing learning implementation for that profile; it does not add another learning store. |
 | `tests/tui_gateway/test_profiles_bot_roster.py` | Card execution/profile preservation proof | Proves model runtime, delegation and Team mode read back while unknown and Hermes-owned state survives configuration. |
+| `tests/tui_gateway/test_profiles_toolset_pin.py`, `tests/tui_gateway/test_tui_gateway_server.py` | empty/missing/nonempty toolset-selection proof | Proves an explicit empty profile pin survives save/readback and reaches the runtime as `[]`, while missing and nonempty selections retain Hermes behavior. |
 
 ## Generated contract artifacts
 
@@ -211,6 +229,7 @@ Run from the LiquidAIty repository root:
 $env:PYTHONPATH = "C:\Projects\LiquidAIty\main\HermesLatest"
 apps\python-models\.venv\Scripts\python.exe -m pytest `
   HermesLatest/tests/agent/transports/test_codex_app_server_session.py `
+  HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py `
   HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py `
   HermesLatest/tests/tui_gateway/test_auto_continue.py `
   HermesLatest/tests/tui_gateway/contracts/test_generated.py `
@@ -241,5 +260,5 @@ results must therefore be reported separately from upstream-script parity.
    LiquidAIty adapter and real-product proof.
 7. Update the pinned revision only after the clean apply-check and focused
    proof pass.
-8. Keep `oldHermes` comparison-only until the owner separately authorizes its
-   deletion.
+8. Keep `oldHermes` comparison-only until its authorized filesystem deletion
+   can complete; Git history remains the long-term comparison source.

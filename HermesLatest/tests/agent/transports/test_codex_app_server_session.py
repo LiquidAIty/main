@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -148,8 +149,8 @@ def test_dynamic_tool_binding_preserves_exact_schema_and_executes_once():
         },
     }
 
-    def execute(name, arguments, call_id):
-        calls.append((name, arguments, call_id))
+    def execute(name, arguments, call_id, interrupt_event):
+        calls.append((name, arguments, call_id, interrupt_event.is_set()))
         return {
             "success": True,
             "contentItems": [{"type": "inputText", "text": "result"}],
@@ -207,7 +208,7 @@ def test_dynamic_tool_binding_preserves_exact_schema_and_executes_once():
     result = session.run_turn("Use the selected tool.", turn_timeout=2)
 
     assert result.error is None
-    assert calls == [("selected", {"query": "current evidence"}, "call-1")]
+    assert calls == [("selected", {"query": "current evidence"}, "call-1", False)]
     responses = dict(client.responses)
     assert responses["first"] == responses["retry"]
     assert all(
@@ -230,6 +231,66 @@ def test_dynamic_tool_binding_preserves_exact_schema_and_executes_once():
             "model": "saved-model",
         },
     )
+
+
+def test_dynamic_tool_interrupt_reaches_the_blocked_executor_and_unwinds_turn():
+    client = FakeClient()
+    entered = threading.Event()
+    observed_interrupt = threading.Event()
+    tool = {
+        "type": "function",
+        "name": "selected",
+        "canonicalName": "graphiti.search_nodes",
+        "description": "Search the granted graph.",
+        "inputSchema": {"type": "object", "properties": {}},
+    }
+
+    def execute(_name, _arguments, _call_id, interrupt_event):
+        entered.set()
+        assert interrupt_event.wait(timeout=2)
+        observed_interrupt.set()
+        return {
+            "success": False,
+            "contentItems": [{
+                "type": "inputText",
+                "text": '{"error":"dynamic_tool_cancelled"}',
+            }],
+        }
+
+    session = make_session(client, dynamic_tools=[tool], tool_executor=execute)
+    client.queue_server_request(
+        "item/tool/call",
+        request_id="blocked",
+        threadId="thread-fake-001",
+        turnId="turn-fake-001",
+        callId="call-1",
+        tool="selected",
+        arguments={},
+    )
+
+    def interrupt() -> None:
+        assert entered.wait(timeout=2)
+        session.request_interrupt()
+
+    interrupter = threading.Thread(target=interrupt, daemon=True)
+    interrupter.start()
+    result = session.run_turn("Use the selected tool.", turn_timeout=2)
+    interrupter.join(timeout=2)
+
+    assert result.interrupted is True
+    assert result.error is None
+    assert observed_interrupt.is_set()
+    assert dict(client.responses)["blocked"] == {
+        "success": False,
+        "contentItems": [{
+            "type": "inputText",
+            "text": '{"error":"dynamic_tool_cancelled"}',
+        }],
+    }
+    assert (
+        "turn/interrupt",
+        {"threadId": "thread-fake-001", "turnId": "turn-fake-001"},
+    ) in client.requests
 
 
 # ---- choice mapping ----

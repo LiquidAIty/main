@@ -1,52 +1,46 @@
 import { describe, expect, it } from 'vitest';
 import {
   indexLiveToolCatalog,
-  resolveScriptToolReferences,
+  resolveScriptToolDefinitions,
   resolveToolCatalogDefinitions,
-  searchToolCatalogReferences,
-  type ToolCatalogReference,
+  searchToolCatalogDefinitions,
+  type ToolCatalogDefinition,
 } from './toolCatalogProjection';
 
-function reference(index: number, access: 'read' | 'write' = 'read'): ToolCatalogReference {
+function definition(index: number, access: 'read' | 'write' = 'read'): ToolCatalogDefinition {
   const canonicalId = `cbm.tool_${String(index).padStart(5, '0')}`;
   return {
     canonicalId,
-    kind: 'tool',
+    provider: 'cbm',
+    providerToolName: `tool_${String(index).padStart(5, '0')}`,
     namespace: 'cbm',
-    sourceIds: ['cbm'],
-    dispatcherOwner: 'app.mcp_host._call_cbm',
+    publications: ['card-runtime', 'external-mcp'],
     displayName: `Tool ${index}`,
-    shortDescription: `Read repository slice ${index}`,
-    availability: 'available',
-    access,
-    publication: 'external-mcp',
+    description: `Read repository slice ${index}`,
+    available: true,
     grantEligible: true,
-    contracts: [{
-      sourceId: 'cbm',
-      providerToolName: `tool_${String(index).padStart(5, '0')}`,
-      connectionKind: 'external-mcp',
-      publication: 'external-mcp',
-      available: true,
-      grantEligible: true,
-      description: `Provider tool ${index}`,
-      inputSchema: { type: 'object', properties: { index: { type: 'integer', const: index } } },
-      canonicalInputSchema: {
-        type: 'object', properties: { index: { type: 'integer', const: index } },
-      },
-      serverInjectedArguments: [],
-      dispatcherContextArguments: [],
-      dispatcherOwner: 'app.mcp_host._call_cbm',
-      authenticatedProjection: true,
-      annotations: { readOnlyHint: true },
-    }],
+    access,
+    inputSchema: { type: 'object', properties: { index: { type: 'integer', const: index } } },
+    canonicalInputSchema: {
+      type: 'object', properties: { index: { type: 'integer', const: index } },
+    },
+    serverInjectedArguments: [],
+    dispatcherContextArguments: [],
+    dispatcherOwner: 'app.mcp_host._call_cbm',
+    annotations: {
+      readOnlyHint: access === 'read',
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
   };
 }
 
 describe('live tool catalog lookup', () => {
-  it('searches normalized live references without changing provider contracts', () => {
-    const references = Array.from({ length: 10_000 }, (_, index) => reference(index));
-    const catalog = indexLiveToolCatalog(references);
-    const page = searchToolCatalogReferences(catalog, {
+  it('searches flat live definitions without changing their provider-owned fields', () => {
+    const definitions = Array.from({ length: 10_000 }, (_, index) => definition(index));
+    const catalog = indexLiveToolCatalog(definitions);
+    const page = searchToolCatalogDefinitions(catalog, {
       query: 'repository slice',
       offset: 200,
       limit: 25,
@@ -61,22 +55,22 @@ describe('live tool catalog lookup', () => {
       'cbm.tool_00003',
     ]);
     expect(page.unresolvedSelectedIds).toEqual(['missing.tool']);
-    expect(resolveToolCatalogDefinitions(catalog, ['cbm.tool_00003'])[0].contracts[0])
-      .toEqual(references[3].contracts[0]);
+    expect(resolveToolCatalogDefinitions(catalog, ['cbm.tool_00003'])[0])
+      .toEqual(definitions[3]);
   });
 
   it('rejects duplicate canonical identities instead of merging or classifying them', () => {
-    expect(() => indexLiveToolCatalog([reference(1), reference(1)]))
+    expect(() => indexLiveToolCatalog([definition(1), definition(1)]))
       .toThrow('tool_catalog_duplicate_id:cbm.tool_00001');
   });
 
   it('paginates the Card Tools plane over write/effect operations only', () => {
     const catalog = indexLiveToolCatalog([
-      reference(1, 'read'),
-      reference(2, 'write'),
-      reference(3, 'write'),
+      definition(1, 'read'),
+      definition(2, 'write'),
+      definition(3, 'write'),
     ]);
-    const page = searchToolCatalogReferences(catalog, {
+    const page = searchToolCatalogDefinitions(catalog, {
       access: 'write',
       selectedIds: ['cbm.tool_00001', 'cbm.tool_00002'],
     });
@@ -92,16 +86,22 @@ describe('live tool catalog lookup', () => {
   });
 
   it('derives Script handles only from explicit saved tool grants', () => {
-    const disabledRead = { ...reference(2, 'read'), availability: 'disabled' as const };
+    const disabledRead = { ...definition(2, 'read'), available: false };
+    const externalOnly = {
+      ...definition(3, 'read'),
+      publications: ['external-mcp'] as Array<'card-runtime' | 'external-mcp'>,
+    };
     const catalog = indexLiveToolCatalog([
-      reference(1, 'read'),
+      definition(1, 'read'),
       disabledRead,
-      reference(3, 'write'),
-      reference(4, 'write'),
+      externalOnly,
+      definition(4, 'write'),
     ]);
 
-    expect(resolveScriptToolReferences(catalog, {
-      selectedIds: ['cbm.tool_00001', 'cbm.tool_00002', 'cbm.tool_00004'],
+    expect(resolveScriptToolDefinitions(catalog, {
+      selectedIds: [
+        'cbm.tool_00001', 'cbm.tool_00002', 'cbm.tool_00003', 'cbm.tool_00004',
+      ],
     }).map((item) => item.canonicalId)).toEqual([
       'cbm.tool_00001',
       'cbm.tool_00004',
@@ -109,8 +109,8 @@ describe('live tool catalog lookup', () => {
   });
 
   it('rejects an unknown saved Script handle instead of silently dropping it', () => {
-    const catalog = indexLiveToolCatalog([reference(1)]);
-    expect(() => resolveScriptToolReferences(catalog, {
+    const catalog = indexLiveToolCatalog([definition(1)]);
+    expect(() => resolveScriptToolDefinitions(catalog, {
       selectedIds: ['missing.tool'],
     })).toThrow('tool_catalog_selected_id_unknown:missing.tool');
   });

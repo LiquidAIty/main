@@ -222,7 +222,9 @@ class CodexAppServerSession:
         developer_instructions: Optional[str] = None, resume_thread_id: Optional[str] = None,
         history_seed: Optional[str] = None,
         dynamic_tools: Optional[list[dict[str, Any]]] = None,
-        tool_executor: Optional[Callable[[str, dict[str, Any], str], dict[str, Any]]] = None,
+        tool_executor: Optional[
+            Callable[[str, dict[str, Any], str, threading.Event], dict[str, Any]]
+        ] = None,
     ) -> None:
         self._cwd = cwd or os.getcwd()
         self._codex_bin = codex_bin
@@ -821,7 +823,12 @@ class CodexAppServerSession:
                 })
             return
         try:
-            response = self._tool_executor(name, arguments, call_id)
+            response = self._tool_executor(
+                name,
+                arguments,
+                call_id,
+                self._interrupt_event,
+            )
             if (
                 not isinstance(response, dict)
                 or not isinstance(response.get("success"), bool)

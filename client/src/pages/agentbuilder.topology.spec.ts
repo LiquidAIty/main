@@ -187,14 +187,19 @@ describe('Main / Hermes / graph authority topology', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const knowgraphTools = byId.get('card_knowgraph')?.runtimeOptions?.tools ?? [];
-    expect(mainTools).toEqual(expect.arrayContaining([
-      'engraphis_remember',
+    expect(mainTools).toEqual([
+      'canvas.inspect',
+      'engraphis_recall_context',
+      'graphiti.search_memory_facts',
+      'graphiti.search_nodes',
+      'graphiti.get_episodes',
+      'cbm.search_graph',
+      'cbm.trace_path',
       'run_mag_one',
       'worldview.set_capability',
-    ]));
+    ]);
     expect(mainTools).not.toEqual(expect.arrayContaining([
-      'engraphis_recall_context',
-      'canvas.inspect',
+      'engraphis_remember',
       'agentgraph.inspect',
       'mag_one.describe_connected_agents',
     ]));
@@ -202,19 +207,13 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(mainTools).not.toContain('hermes:tool:message_agent');
     expect(mainTools).not.toContain('web_search');
     expect(knowgraphTools).toEqual([
-      'canvas.inspect',
       'engraphis_get_memory',
-      'graphiti.get_entity_edge',
-      'graphiti.get_episode_entities',
-      'graphiti.get_episodes',
-      'graphiti.get_status',
       'graphiti.search_memory_facts',
       'graphiti.search_nodes',
+      'graphiti.get_episodes',
+      'graphiti.get_episode_entities',
       'graphiti.add_memory',
-      'graphiti.add_triplet',
-      'write_mag_one_instructions',
       'card.load_graph_references',
-      'hermes:tool:memory',
     ]);
     expect(knowgraphTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
     expect(byId.has('card_research_agent')).toBe(false);
@@ -276,7 +275,8 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.prompt).toContain('a wire grants outbound authority but never starts work');
     expect(main?.prompt).toContain('Do not copy the conversation or Main memory into another Card');
     expect(main?.prompt).toContain('Invoke run_mag_one only once for the exact approved mission');
-    expect(main?.prompt).toContain('Do not use CBM, the full Graphiti catalog, terminal, files, browser, or Kanban');
+    expect(main?.prompt).toContain('Use only the granted bounded CBM search and trace capabilities');
+    expect(main?.prompt).toContain('do not use terminal, files, browser, code execution, or Kanban');
 
     expect(agentBuilder).toMatchObject({
       title: 'Builder',
@@ -286,10 +286,11 @@ describe('Main / Hermes / graph authority topology', () => {
         skills: ['agent-builder-inspection'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
         tools: [
-          'canvas.inspect', 'card.create', 'card.update_configuration',
-          'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
-          'cbm.check_index_coverage', 'cbm.detect_changes', 'cbm.search_code', 'cbm.query_graph',
-          'hermes:tool:memory',
+          'canvas.inspect', 'card.create', 'card.update_configuration', 'canvas.upsert_wire',
+          'cbm.search_graph', 'cbm.search_code', 'cbm.trace_path', 'cbm.get_code_snippet',
+          'cbm.check_index_coverage', 'engraphis_recall_context', 'graphiti.search_memory_facts',
+          'graphiti.search_nodes', 'graphiti.get_episodes', 'write_mag_one_instructions',
+          'thinkgraph.reason', 'knowgraph.research',
         ],
       },
     });
@@ -313,13 +314,15 @@ describe('Main / Hermes / graph authority topology', () => {
         providerModelId: 'gpt-5.6-luna',
         tools: [
           'engraphis_recall_context', 'engraphis_get_memory', 'engraphis_remember',
-          'engraphis_update_memory', 'engraphis_correct', 'engraphis_link', 'engraphis_ingest',
+          'engraphis_discover_actions', 'engraphis_execute_read',
         ],
       },
     });
     expect(thinkgraph?.runtimeOptions?.skills ?? []).toEqual([]);
     expect(thinkgraph?.runtimeOptions?.toolsets ?? []).toEqual([]);
-    expect(thinkgraph?.prompt).toContain('Maintain Engraphis project reasoning for focused material from Main');
+    expect(thinkgraph?.prompt).toContain(
+      'Maintain Engraphis project reasoning and answer focused historical-reasoning requests from Main',
+    );
     expect(thinkgraph?.prompt).toContain('Do not browse the web, write KnowGraph');
     expect(thinkgraph?.prompt).toContain('Keep ThinkGraph and KnowGraph separate');
     expect(thinkgraph?.prompt).not.toMatch(/delegate_task|Graph Agent|Steward|Stuart|Team/);
@@ -342,7 +345,6 @@ describe('Main / Hermes / graph authority topology', () => {
     });
     expect(team?.runtimeOptions).not.toHaveProperty('subagentType');
     expect(team?.runtimeOptions?.tools).toEqual(expect.arrayContaining([
-      'hermes:tool:memory',
       'canvas.inspect',
       'engraphis_get_memory',
       'graphiti.search_nodes',
@@ -360,23 +362,24 @@ describe('Main / Hermes / graph authority topology', () => {
 
     expect(knowgraph?.runtimeOptions?.tools).not.toContain('run_mag_one');
     expect(knowgraph?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
-    expect(knowgraph?.runtimeOptions?.tools).toEqual(expect.arrayContaining([
-      'canvas.inspect',
+    expect(knowgraph?.runtimeOptions?.tools).toEqual([
       'engraphis_get_memory',
-      'graphiti.search_nodes',
       'graphiti.search_memory_facts',
+      'graphiti.search_nodes',
       'graphiti.get_episodes',
+      'graphiti.get_episode_entities',
       'graphiti.add_memory',
-      'graphiti.add_triplet',
-    ]));
-    expect(knowgraph?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
-    expect(knowgraph?.runtimeOptions?.tools).toContain('hermes:tool:memory');
+      'card.load_graph_references',
+    ]);
     expect(knowgraph?.runtimeOptions?.skills).toEqual(['grounded-citations']);
     expect(knowgraph?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
     expect(knowgraph?.runtimeOptions?.subagentType).toBe('none');
     expect(knowgraph?.prompt).toContain('Do not use CBM or become a coding worker');
     expect(knowgraph?.prompt).toContain('Do not initiate another saved Card');
-    expect(knowgraph?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only to stage');
+    expect(knowgraph?.prompt).toContain(
+      'Use card.load_graph_references only to hand exact persisted graph references',
+    );
+    expect(knowgraph?.prompt).toContain('Builder alone stages Magnetic instructions');
     expect(knowgraph?.prompt).toContain('Inspect supplied graph data before researching');
     expect(knowgraph?.prompt).toContain('do not search ThinkGraph');
     expect(knowgraph?.prompt).toContain('Preserve sources, URLs, dates, entities, relationships, contradictions, Graphiti record IDs, and uncertainty');

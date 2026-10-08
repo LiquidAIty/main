@@ -227,52 +227,44 @@ def materialize_card_editor(
             raise IddValidationError("builder_tool_catalog_entry_invalid")
         canonical_id = str(reference.get("canonicalId") or "").strip()
         namespace = str(reference.get("namespace") or "").strip()
-        source_ids = reference.get("sourceIds")
-        contracts = reference.get("contracts")
+        provider = str(reference.get("provider") or "").strip()
+        provider_tool_name = str(reference.get("providerToolName") or "").strip()
+        publications = reference.get("publications")
         access = reference.get("access")
-        publication = reference.get("publication")
         grant_eligible = reference.get("grantEligible")
-        availability = reference.get("availability")
+        available = reference.get("available")
+        schema = reference.get("inputSchema")
         if (
             not canonical_id
-            or reference.get("kind") != "tool"
             or not namespace
-            or not isinstance(source_ids, list)
-            or not source_ids
-            or any(not isinstance(value, str) or not value for value in source_ids)
-            or not isinstance(contracts, list)
-            or not contracts
+            or not provider
+            or not provider_tool_name
+            or not isinstance(publications, list)
+            or not publications
+            or any(value not in {"card-runtime", "external-mcp"} for value in publications)
             or access not in {"read", "write"}
-            or publication not in {"private-runtime", "external-mcp"}
             or not isinstance(grant_eligible, bool)
-            or availability not in {"available", "disabled"}
+            or not isinstance(available, bool)
+            or not isinstance(schema, dict)
+            or schema.get("type") != "object"
         ):
             raise IddValidationError("builder_tool_catalog_entry_invalid")
-        available_contracts = [
-            contract for contract in contracts
-            if isinstance(contract, dict) and contract.get("available") is not False
-        ]
-        contract = (available_contracts or contracts)[0]
-        schema = contract.get("inputSchema") if isinstance(contract, dict) else None
-        if not isinstance(schema, dict) or schema.get("type") != "object":
-            raise IddValidationError(
-                f"builder_tool_catalog_schema_invalid:{canonical_id}"
-            )
-        available = availability == "available" and grant_eligible
+        selectable = available and grant_eligible
         diagnostics = [] if grant_eligible else ["tool_not_grant_eligible"]
-        owner = source_ids[0]
         add(
-            canonical_id, "tool", owner, owner, schema, available, diagnostics,
+            canonical_id, "tool", provider, provider, schema, selectable, diagnostics,
         )
         options[canonical_id].update({
             "title": str(reference.get("displayName") or canonical_id),
-            "description": str(reference.get("shortDescription") or ""),
+            "description": str(reference.get("description") or ""),
             "namespace": namespace,
-            "sourceIds": list(source_ids),
+            "provider": provider,
+            "providerToolName": provider_tool_name,
             "access": access,
-            "publication": publication,
+            "publications": list(publications),
             "grantEligible": grant_eligible,
-            "contracts": deepcopy(contracts),
+            "inputSchema": deepcopy(schema),
+            "outputSchema": deepcopy(reference.get("outputSchema")),
         })
     for identity in sorted(selected - options.keys()):
         add(identity, "unresolved", "unknown", "saved-card", {}, False, ["saved_selection_stale"])

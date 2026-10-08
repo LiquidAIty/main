@@ -7,16 +7,18 @@ from app.python_models.tool_registry import (
     ToolCatalogError,
     ToolRegistry,
     build_default_tool_registry,
-    external_mcp_manifest,
     graphiti_operation_policy,
+    materialize_live_tool_catalog,
+    materialize_live_tool_catalog_with_failures,
+    operation_catalog_descriptor,
     operation_definition,
     operation_definitions,
-    project_server_injected_schema,
+    provider_tool_catalog_descriptor,
     replace_discovered_external_operations,
-    normalize_live_tool_catalog,
+    static_tool_catalog,
     tool_calculator,
     tool_current_datetime,
-    tool_manifest,
+    validate_live_tool_catalog,
     web_search_tool,
 )
 from app.python_models.orchestration_contracts import ToolSpec
@@ -101,87 +103,69 @@ def test_duplicate_registry_identity_is_rejected():
         registry.register(spec, lambda: "two")
 
 
-def test_manifest_is_registry_backed_no_duplicate_entries():
-    manifest = tool_manifest()
-    ids = [m["name"] for m in manifest]
-    assert ids == sorted(set(ids))  # one entry per registered tool, deduped
+def test_catalog_is_definition_backed_with_no_duplicate_entries():
+    catalog = static_tool_catalog()
+    ids = [item["canonicalId"] for item in catalog]
+    assert ids == sorted(set(ids))
     assert "retrieve_knowgraph_context" not in ids
+    assert "current_datetime" in ids
+    assert "web_search" not in ids
 
 
-def test_manifest_publishes_only_factual_private_runtime_contracts():
-    manifest = {entry["name"]: entry for entry in tool_manifest()}
-    calculator = manifest["calculator"]
-    assert calculator["kind"] == "tool"
-    assert calculator["sourceId"] == "python_runtime"
+def test_catalog_publishes_one_factual_flat_definition():
+    catalog = {entry["canonicalId"]: entry for entry in static_tool_catalog()}
+    calculator = catalog["calculator"]
+    assert calculator["provider"] == "python_runtime"
     assert calculator["namespace"] == "python"
     assert calculator["providerToolName"] == "calculator"
-    assert calculator["connectionKind"] == "private-runtime"
-    assert calculator["enabled"] is True
+    assert calculator["publications"] == ["card-runtime"]
+    assert calculator["available"] is True
     assert calculator["inputSchema"]["type"] == "object"
     assert calculator["outputSchema"]
-    assert "capability" not in calculator
-    assert "agentCompatibility" not in calculator
+    assert "contracts" not in calculator
+    assert "sourceIds" not in calculator
 
 
 def test_every_code_owned_publisher_contract_has_complete_effect_metadata():
     required_hints = {
         "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
     }
-    for item in [*tool_manifest(), *external_mcp_manifest()]:
-        assert item["title"]
+    for item in static_tool_catalog():
+        assert item["displayName"]
         assert item["description"]
         assert item["inputSchema"]["type"] == "object"
-        assert required_hints.issubset(item["annotations"]), item["name"]
+        assert required_hints.issubset(item["annotations"]), item["canonicalId"]
         assert item["annotations"]["readOnlyHint"] is (item["access"] == "read")
 
 
 def test_live_catalog_preserves_title_security_and_effect_metadata():
-    source = next(item for item in external_mcp_manifest() if item["name"] == "run_mag_one")
-    source["securitySchemes"] = [{"type": "oauth2", "scopes": ["liquidaity.main"]}]
-    reference = next(
-        item for item in normalize_live_tool_catalog([source])
-        if item["canonicalId"] == "run_mag_one"
-    )
-    assert reference["displayName"] == "Mag One"
-    contract = reference["contracts"][0]
-    assert contract["title"] == source["title"]
-    assert contract["description"] == source["description"]
-    assert contract["inputSchema"] == source["inputSchema"]
-    assert contract["annotations"] == source["annotations"]
-    assert contract["securitySchemes"] == source["securitySchemes"]
+    definition = operation_definition("run_mag_one")
+    assert definition is not None
+    descriptor = operation_catalog_descriptor(definition)
+    assert descriptor["displayName"] == "Mag One"
+    assert descriptor["description"] == definition.description
+    assert descriptor["annotations"] == definition.annotations
+    assert descriptor["provider"] == "main_mcp"
+    assert descriptor["publications"] == ["card-runtime", "external-mcp"]
 
 
-def test_authenticated_projection_may_remove_server_owned_schema_fields_only_per_contract():
-    private = next(item for item in tool_manifest() if item["name"] == "canvas.inspect")
-    public = next(item for item in external_mcp_manifest() if item["name"] == "canvas.inspect")
-    public["inputSchema"] = project_server_injected_schema(
-        public["canonicalInputSchema"],
-        frozenset(public["serverInjectedArguments"]),
-    )
-    public["authenticatedProjection"] = True
+def test_authenticated_projection_may_remove_only_declared_server_owned_fields():
+    definition = operation_definition("canvas.inspect")
+    assert definition is not None
+    reference = operation_catalog_descriptor(definition)
+    assert "projectId" in reference["canonicalInputSchema"]["properties"]
+    assert "projectId" not in reference["inputSchema"]["properties"]
+    assert reference["serverInjectedArguments"] == ["deckId", "projectId"]
 
-    reference = normalize_live_tool_catalog([private, public])[0]
-
-    assert reference["canonicalId"] == "canvas.inspect"
-    assert len(reference["contracts"]) == 2
-    by_kind = {contract["connectionKind"]: contract for contract in reference["contracts"]}
-    assert "projectId" in by_kind["private-runtime"]["inputSchema"]["properties"]
-    assert "projectId" not in by_kind["external-mcp"]["inputSchema"]["properties"]
-    assert by_kind["external-mcp"]["serverInjectedArguments"] == ["deckId", "projectId"]
-
-    malformed = deepcopy(public)
+    malformed = deepcopy(reference)
     malformed["inputSchema"]["properties"]["includeCatalog"]["type"] = "string"
     with pytest.raises(ToolCatalogError, match="tool_catalog_schema_projection_mismatch:canvas.inspect"):
-        normalize_live_tool_catalog([private, malformed])
-
-    public["description"] = "Drifted operation metadata."
-    with pytest.raises(ToolCatalogError, match="tool_catalog_definition_mismatch:canvas.inspect"):
-        normalize_live_tool_catalog([private, public])
+        validate_live_tool_catalog([malformed])
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
-    manifest = tool_manifest()
-    blob = json.dumps(manifest).lower()
+    catalog = static_tool_catalog()
+    blob = json.dumps(catalog).lower()
     for forbidden in ["bolt://", "neo4j_uri", "12434", "services/knowgraph", "bearer "]:
         assert forbidden not in blob
 
@@ -198,7 +182,7 @@ def test_manifest_exposes_no_secrets_endpoints_or_db_config():
             for index, child in enumerate(value):
                 collect_sensitive_keys(child, f"{path}[{index}]")
 
-    collect_sensitive_keys(manifest)
+    collect_sensitive_keys(catalog)
     assert sensitive_keys == []
 
 
@@ -207,35 +191,49 @@ def test_canonical_operation_ids_and_publisher_views_are_unique_and_permitted():
     ids = [definition.canonical_id for definition in definitions]
     assert len(ids) == len(set(ids))
     by_id = {definition.canonical_id: definition for definition in definitions}
-    internal = tool_manifest()
-    external = external_mcp_manifest()
-    assert len(internal) == len({item["name"] for item in internal})
-    assert len(external) == len({item["name"] for item in external})
-    assert all("internal-plugin" in by_id[item["name"]].publishers for item in internal)
-    assert all(
-        "external-mcp" in by_id[item["name"]].publishers
-        and by_id[item["name"]].external_source_id == "main_mcp"
-        for item in external
-    )
+    catalog = static_tool_catalog()
+    assert len(catalog) == len({item["canonicalId"] for item in catalog})
+    for item in catalog:
+        definition = by_id[item["canonicalId"]]
+        expected_publications = []
+        if definition.publishers & {"internal-plugin", "internal-runtime"}:
+            expected_publications.append("card-runtime")
+        if "external-mcp" in definition.publishers:
+            expected_publications.append("external-mcp")
+        assert item["publications"] == expected_publications
+        assert item["provider"] == definition.external_source_id
+        assert item["providerToolName"] == definition.canonical_id
+        assert item["dispatcherOwner"] == definition.dispatcher_owner
+        assert item["canonicalInputSchema"] == {
+            **definition.parameters_schema,
+            "additionalProperties": definition.parameters_schema.get(
+                "additionalProperties", False
+            ),
+        }
 
 
 def test_calculator_is_one_internal_operation_and_is_not_republished_by_mcp():
-    assert sum(item["name"] == "calculator" for item in tool_manifest()) == 1
-    assert all(item["name"] != "calculator" for item in external_mcp_manifest())
     definition = operation_definition("calculator")
     assert definition is not None
     assert definition.publishers == frozenset({"internal-plugin"})
+    calculator = [
+        item for item in static_tool_catalog()
+        if item["canonicalId"] == "calculator"
+    ]
+    assert len(calculator) == 1
+    assert calculator[0]["provider"] == "python_runtime"
+    assert calculator[0]["publications"] == ["card-runtime"]
 
 
 def test_engraphis_is_internal_while_cbm_comes_only_from_live_discovery():
-    internal_names = [item["name"] for item in tool_manifest()]
-    assert internal_names.count("engraphis_recall_context") == 1
-    assert internal_names.count("engraphis_get_memory") == 1
+    code_owned_names = [item["canonicalId"] for item in static_tool_catalog()]
+    assert code_owned_names.count("engraphis_recall_context") == 1
+    assert code_owned_names.count("engraphis_get_memory") == 1
     assert operation_definition("cbm.unfamiliar_current_tool") is None
     assert operation_definition("graphiti.search_nodes") is None
     assert graphiti_operation_policy("graphiti.search_nodes")["access"] == "read"
-    assert "cbm.search_graph" not in internal_names
-    assert "graphiti.search_nodes" not in internal_names
+    assert "cbm.search_graph" not in code_owned_names
+    assert "graphiti.search_nodes" not in code_owned_names
 
     definition = OperationDefinition(
         canonical_id="cbm.unfamiliar_current_tool",
@@ -263,34 +261,38 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
     before = tuple(
         (item.canonical_id, item.publishers, id(item.handler)) for item in definitions
     )
-    normalize_live_tool_catalog([
-        *tool_manifest(),
-        *external_mcp_manifest(),
-        {
-            "name": "cbm.search_graph",
-            "providerToolName": "search_graph",
-            "sourceId": "cbm",
-            "namespace": "cbm",
-            "connectionKind": "external-mcp",
-            "publication": "external-mcp",
-            "description": "CBM search.",
-            "title": "Search CodeGraph",
-            "access": "read",
-            "available": True,
-            "grantEligible": True,
-            "inputSchema": {"type": "object", "properties": {}},
-            "canonicalInputSchema": {"type": "object", "properties": {}},
-            "serverInjectedArguments": [],
-            "dispatcherContextArguments": [],
-            "dispatcherOwner": "app.mcp_host._call_cbm",
-            "annotations": {
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": False,
-            },
+    provider = {
+        "name": "cbm.search_graph",
+        "providerToolName": "search_graph",
+        "sourceId": "cbm",
+        "namespace": "cbm",
+        "connectionKind": "external-mcp",
+        "publication": "external-mcp",
+        "description": "CBM search.",
+        "title": "Search repository structure",
+        "access": "read",
+        "available": True,
+        "grantEligible": True,
+        "inputSchema": {"type": "object", "properties": {}},
+        "canonicalInputSchema": {"type": "object", "properties": {}},
+        "serverInjectedArguments": [],
+        "dispatcherContextArguments": [],
+        "dispatcherOwner": "app.mcp_host._call_cbm",
+        "authenticatedProjection": True,
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
         },
-    ])
+    }
+    catalog = materialize_live_tool_catalog([provider])
+    projected = next(
+        item for item in catalog if item["canonicalId"] == "cbm.search_graph"
+    )
+    assert projected["provider"] == "cbm"
+    assert projected["providerToolName"] == "search_graph"
+    assert projected["dispatcherOwner"] == "app.mcp_host._call_cbm"
     after = tuple(
         (item.canonical_id, item.publishers, id(item.handler))
         for item in operation_definitions()
@@ -304,14 +306,44 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
         "load_input_data_dictionary",
         lambda: (_ for _ in ()).throw(AssertionError("runtime_loaded_idd")),
     )
-    assert normalize_live_tool_catalog(tool_manifest())
+    assert materialize_live_tool_catalog([])
 
 
 def test_combined_publisher_contracts_have_no_duplicate_discovery_tuple():
-    references = normalize_live_tool_catalog([*tool_manifest(), *external_mcp_manifest()])
+    provider = {
+        "name": "cbm.search_graph",
+        "providerToolName": "search_graph",
+        "sourceId": "cbm",
+        "namespace": "cbm",
+        "connectionKind": "external-mcp",
+        "publication": "external-mcp",
+        "description": "CBM search.",
+        "title": "Search repository structure",
+        "access": "read",
+        "available": True,
+        "grantEligible": True,
+        "inputSchema": {"type": "object", "properties": {}},
+        "canonicalInputSchema": {"type": "object", "properties": {}},
+        "serverInjectedArguments": [],
+        "dispatcherContextArguments": [],
+        "dispatcherOwner": "app.mcp_host._call_cbm",
+        "authenticatedProjection": True,
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    }
+    references = materialize_live_tool_catalog([provider])
     tuples = [
-        (reference["canonicalId"], contract["sourceId"], contract["providerToolName"])
-        for reference in references
-        for contract in reference["contracts"]
+        (item["canonicalId"], item["provider"], item["providerToolName"])
+        for item in references
     ]
     assert len(tuples) == len(set(tuples))
+
+    with pytest.raises(ToolCatalogError, match="tool_catalog_duplicate_id"):
+        validate_live_tool_catalog([
+            provider_tool_catalog_descriptor(provider),
+            provider_tool_catalog_descriptor(provider),
+        ])

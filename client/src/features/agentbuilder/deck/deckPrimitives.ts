@@ -41,25 +41,34 @@ export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions[
 // ADR mutation, and project deletion stay outside ordinary Card grants.
 export const CODEBASE_MEMORY_TOOLS = [
   'cbm.search_graph',
+  'cbm.search_code',
   'cbm.trace_path',
   'cbm.get_code_snippet',
   'cbm.check_index_coverage',
-  'cbm.detect_changes',
 ] as const;
 // Builder seed selections. Runtime availability and saved grants remain authoritative.
 export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   'canvas.inspect',
   'card.create',
   'card.update_configuration',
+  'canvas.upsert_wire',
   ...CODEBASE_MEMORY_TOOLS,
-  'cbm.search_code',
-  'cbm.query_graph',
+  'engraphis_recall_context',
+  'graphiti.search_memory_facts',
+  'graphiti.search_nodes',
+  'graphiti.get_episodes',
+  'write_mag_one_instructions',
+  'thinkgraph.reason',
+  'knowgraph.research',
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'canvas.inspect',
   'engraphis_recall_context',
-  'engraphis_get_memory',
-  'engraphis_remember',
+  'graphiti.search_memory_facts',
+  'graphiti.search_nodes',
+  'graphiti.get_episodes',
+  'cbm.search_graph',
+  'cbm.trace_path',
   'run_mag_one',
   'worldview.set_capability',
 ] as const;
@@ -67,23 +76,16 @@ export const THINKGRAPH_CARD_TOOLS = [
   'engraphis_recall_context',
   'engraphis_get_memory',
   'engraphis_remember',
-  'engraphis_update_memory',
-  'engraphis_correct',
-  'engraphis_link',
-  'engraphis_ingest',
+  'engraphis_discover_actions',
+  'engraphis_execute_read',
 ] as const;
-export const HERMES_CARD_TOOLS = [
-  'canvas.inspect',
+export const KNOWGRAPH_CARD_TOOLS = [
   'engraphis_get_memory',
-  'graphiti.get_entity_edge',
-  'graphiti.get_episode_entities',
-  'graphiti.get_episodes',
-  'graphiti.get_status',
   'graphiti.search_memory_facts',
   'graphiti.search_nodes',
+  'graphiti.get_episodes',
+  'graphiti.get_episode_entities',
   'graphiti.add_memory',
-  'graphiti.add_triplet',
-  'write_mag_one_instructions',
   'card.load_graph_references',
 ] as const;
 

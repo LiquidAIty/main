@@ -14,7 +14,13 @@ export type HermesCardProfileView = {
     soul: string;
     model: { provider: string; default: string };
     skills: Array<{ name: string; enabled: boolean }>;
-    toolsets: Array<{ name: string; label?: string; enabled: boolean; tool_count?: number }>;
+    toolsets: Array<{
+      name: string;
+      label?: string;
+      description?: string;
+      enabled: boolean;
+      tool_count?: number;
+    }>;
     toolsetsPinned: boolean;
     mcpServers: HermesMcpServerView[];
     learning: {

@@ -249,11 +249,11 @@ def test_generated_python_header_is_complete_read_only_and_grant_aware() -> None
     catalog = [
         {
             "canonicalId": "cbm.search_graph", "access": "read",
-            "availability": "available", "contracts": [{"inputSchema": {"type": "object"}}],
+            "available": True, "inputSchema": {"type": "object"},
         },
         {
             "canonicalId": "cbm.delete_project", "access": "write",
-            "availability": "available", "contracts": [{"inputSchema": {"type": "object"}}],
+            "available": True, "inputSchema": {"type": "object"},
         },
     ]
     header = generate_card_script_header(
@@ -404,32 +404,17 @@ def test_builder_projects_live_catalog_option_and_marks_stale_selection():
     }
     option = {
         "canonicalId": "external.search",
-        "kind": "tool",
         "namespace": "external",
-        "sourceIds": ["example"],
+        "provider": "example",
+        "providerToolName": "search",
+        "publications": ["card-runtime", "external-mcp"],
         "displayName": "Search example",
-        "shortDescription": "Read one current example result.",
-        "availability": "available",
+        "description": "Read one current example result.",
+        "available": True,
         "access": "read",
-        "publication": "external-mcp",
         "grantEligible": True,
-        "contracts": [{
-            "sourceId": "example",
-            "providerToolName": "search",
-            "connectionKind": "external-mcp",
-            "publication": "external-mcp",
-            "available": True,
-            "grantEligible": True,
-            "title": "Search example",
-            "description": "Read one current example result.",
-            "inputSchema": schema,
-            "annotations": {
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": True,
-            },
-        }],
+        "inputSchema": schema,
+        "outputSchema": {"type": "object"},
     }
     palette = materialize_card_editor(
         [], catalog_options=[option],
@@ -440,7 +425,9 @@ def test_builder_projects_live_catalog_option_and_marks_stale_selection():
     assert by_id["external.search"]["selected"] is True
     assert by_id["external.search"]["effective"] is False
     assert by_id["external.search"]["access"] == "read"
-    assert by_id["external.search"]["publication"] == "external-mcp"
+    assert by_id["external.search"]["publications"] == [
+        "card-runtime", "external-mcp",
+    ]
     assert by_id["external.search"]["grantEligible"] is True
     assert by_id["removed.tool"]["availability"] == "unavailable"
     assert by_id["removed.tool"]["diagnostics"] == ["saved_selection_stale"]

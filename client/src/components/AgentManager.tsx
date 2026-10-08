@@ -127,12 +127,12 @@ export type DisplayedToolRow = ToolDescriptor & {
 
 export type InputDictionaryToolReference = {
   canonicalId: string;
-  kind?: 'tool' | 'agent';
-  sourceIds: string[];
+  provider: string;
+  providerToolName: string;
   namespace?: string;
   displayName?: string;
-  shortDescription?: string;
-  availability: 'available' | 'disabled';
+  description?: string;
+  available: boolean;
   access: 'read' | 'write';
 };
 
@@ -153,11 +153,9 @@ export function buildInputDictionarySelectedRows(
 ): DisplayedToolRow[] {
   const known = selectedReferences.map((reference) => ({
       name: reference.canonicalId,
-      kind: reference.kind,
-      sourceIds: reference.sourceIds,
       title: reference.displayName || reference.canonicalId,
-      description: reference.shortDescription,
-      availability: reference.availability,
+      description: reference.description,
+      availability: reference.available ? 'available' as const : 'disabled' as const,
     }));
   const knownNames = new Set(known.map((reference) => reference.name));
   return [
@@ -1037,6 +1035,7 @@ export function AgentManager({
     && maxTurnsField,
   );
   const savedToolNames = parseListText(toolsText);
+  const savedHermesToolsetNames = parseListText(toolsetsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
     toolDictionaryPage.selectedKnownReferences,
     toolDictionaryPage.unresolvedSelectedIds,
@@ -1945,16 +1944,16 @@ export function AgentManager({
                   <input
                     type="checkbox"
                     checked={savedToolNames.includes(tool.canonicalId)}
-                    disabled={tool.availability !== 'available'}
+                    disabled={!tool.available}
                     onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
                     aria-label={`Include ${tool.displayName || tool.canonicalId}`}
                   />
                   <span>
-                    <span title={tool.shortDescription} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
+                    <span title={tool.description} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
                       {tool.displayName || tool.canonicalId}
                     </span>
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
-                      {tool.availability !== 'available' ? ' · Unavailable in current catalog' : ''}
+                      {!tool.available ? ' · Unavailable in current catalog' : ''}
                     </span>
                   </span>
                 </label>
@@ -1989,6 +1988,85 @@ export function AgentManager({
                 Next
               </button>
             </div>
+          ) : null}
+          {runtimeKind === 'hermes' ? (
+            <section
+              aria-label="Hermes capabilities"
+              data-testid="hermes-toolsets"
+              style={{
+                display: 'grid',
+                gap: 8,
+                padding: '10px 12px',
+                border: '1px solid #3A4A4F',
+                borderRadius: 8,
+              }}
+            >
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+                Hermes capabilities
+              </div>
+              <div style={{ color: '#80969F', fontSize: 10.5 }}>
+                Hermes toolsets saved on this Card. These are not MCP tools.
+              </div>
+              {hermesProfileStatus === 'failed' ? (
+                <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
+                  {hermesProfileError || 'Hermes capabilities unavailable. Saved selections are unchanged.'}
+                </div>
+              ) : hermesProfileState ? (
+                hermesProfileState.profile.toolsets.length ? (
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {hermesProfileState.profile.toolsets.map((toolset) => {
+                      const label = toolset.label || toolset.name;
+                      return (
+                        <label
+                          key={toolset.name}
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '18px 1fr',
+                            gap: 8,
+                            alignItems: 'start',
+                            padding: '7px 8px',
+                            border: '1px solid #344542',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            aria-label={`Enable Hermes ${label}`}
+                            checked={savedHermesToolsetNames.includes(toolset.name)}
+                            onChange={(event) => {
+                              setToolsetsText(toggleSavedToolAssignment(
+                                savedHermesToolsetNames,
+                                toolset.name,
+                                event.target.checked,
+                              ).join('\n'));
+                              markDraftDirty();
+                            }}
+                          />
+                          <span>
+                            <span title={toolset.description} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
+                              {label}{label !== toolset.name ? ` · ${toolset.name}` : ''}
+                            </span>
+                            <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
+                              {typeof toolset.tool_count === 'number' ? `${toolset.tool_count} tools · ` : ''}
+                              Profile readback: {toolset.enabled ? 'enabled' : 'disabled'}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ color: '#80969F', fontSize: 11 }}>
+                    No Hermes toolsets are available for this profile.
+                  </div>
+                )
+              ) : (
+                <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
+                  Loading Hermes capabilities…
+                </div>
+              )}
+            </section>
           ) : null}
           {renderSectionBody('Script')}
           <section

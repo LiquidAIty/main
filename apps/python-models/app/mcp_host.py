@@ -87,9 +87,9 @@ from app.python_models.provider_config import ensure_env_loaded
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
     OperationDefinition,
-    external_mcp_manifest,
     project_server_injected_schema,
     replace_discovered_external_operations,
+    static_tool_catalog,
     tool_access,
 )
 from mcp import Client, StdioServerParameters
@@ -171,6 +171,8 @@ _CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _CBM_STARTUP_TIMEOUT_SECONDS = 35.0
 _CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
+_SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS = 540.0
+_SPECIALIST_CARD_TOOL_TIMEOUT_SECONDS = 570.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
 
 
@@ -895,14 +897,39 @@ _PROVIDER_PREFIXES = {
     "cbm": "cbm.",
     "graphiti": "graphiti.",
 }
+_CARD_CATALOG_PROVIDER_TOOL_NAMES = {
+    "cbm": frozenset({
+        "check_index_coverage",
+        "detect_changes",
+        "get_architecture",
+        "get_code_snippet",
+        "get_graph_schema",
+        "query_graph",
+        "search_code",
+        "search_graph",
+        "trace_path",
+    }),
+    "graphiti": frozenset({
+        "add_memory",
+        "get_entity_edge",
+        "get_episode_entities",
+        "get_episodes",
+        "search_memory_facts",
+        "search_nodes",
+        "summarize_saga",
+    }),
+}
 _GRAPHITI_SERVER_INJECTED_ARGUMENTS = frozenset({"group_id", "group_ids"})
 
 
 def _namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
-    """Add the established public routing prefix while preserving provider tools."""
+    """Project the deliberate model-facing provider subset with its routing prefix."""
     prefix = _PROVIDER_PREFIXES[provider]
+    exposed_names = _CARD_CATALOG_PROVIDER_TOOL_NAMES[provider]
     result: list[Tool] = []
     for tool in tools:
+        if tool.name not in exposed_names:
+            continue
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         provider_tool_name = tool.name
         payload["name"] = prefix + provider_tool_name
@@ -1036,13 +1063,18 @@ def _register_graphiti_catalog(tools: list[Tool]) -> None:
     replace_discovered_external_operations("graphiti", definitions)
 
 
-def _bind_repo_tool_source(tool: Tool) -> Tool:
+def _bind_repo_tool_source(
+    tool: Tool,
+    *,
+    source_id: str = "main_mcp",
+    provider_tool_name: str | None = None,
+) -> Tool:
     """Attach factual connection identity to a repo-owned MCP declaration."""
     payload = tool.model_dump(by_alias=True, exclude_none=True)
     meta = dict(payload.get("_meta") or {})
     meta["liquidaitySource"] = {
-        "sourceId": "main_mcp",
-        "providerToolName": tool.name,
+        "sourceId": source_id,
+        "providerToolName": provider_tool_name or tool.name,
         "connectionKind": "external-mcp",
     }
     payload["_meta"] = meta
@@ -1200,15 +1232,16 @@ async def _initialize_graphiti() -> None:
 
     graphiti_module_ref: Any | None = None
     try:
-        import graphiti_mcp_server as graphiti_module
+        def load_catalog() -> tuple[Any, tuple[Tool, ...]]:
+            # Importing Graphiti loads its provider modules and can take several
+            # seconds on Windows. Keep that work with the already-threaded
+            # descriptor read so the MCP listener and health routes remain
+            # responsive while the provider catalog is initializing.
+            import graphiti_mcp_server as graphiti_module
 
-        graphiti_module_ref = graphiti_module
-        tools = tuple(
-            await asyncio.to_thread(
-                asyncio.run,
-                graphiti_module_ref.mcp.list_tools(),
-            )
-        )
+            return graphiti_module, tuple(asyncio.run(graphiti_module.mcp.list_tools()))
+
+        graphiti_module_ref, tools = await asyncio.to_thread(load_catalog)
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)):
             raise RuntimeError("graphiti_duplicate_tool_name")
@@ -1828,6 +1861,7 @@ def _backend_bridge_timeout_seconds(path: str) -> float:
 _BACKEND_ROUTES = {
     "external_main_context": "/api/main/context",
     "external_main_chat": "/api/main/chat",
+    "saved_specialist_card": "/api/main/session/internal/specialists",
     "worldview_action": "/api/worldview/internal/actions",
 }
 
@@ -2037,6 +2071,39 @@ class Auth0TokenVerifier:
 async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
     text = await asyncio.to_thread(_bridge_sync, path, payload)
     return [TextContent(type="text", text=text)]
+
+
+async def _saved_specialist_card_bridge(payload: dict[str, Any]) -> dict[str, Any]:
+    """Await one saved specialist Run through cancellable loopback HTTP."""
+
+    if len(INTERNAL_MCP_SECRET) < 32:
+        raise RuntimeError("internal_mcp_secret_missing")
+    import httpx2
+
+    async with httpx2.AsyncClient(
+        headers={
+            "Content-Type": "application/json",
+            "X-LiquidAIty-Internal-MCP-Secret": INTERNAL_MCP_SECRET,
+        },
+        timeout=httpx2.Timeout(_SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS),
+        trust_env=False,
+    ) as client:
+        response = await client.post(
+            f"{BACKEND}{_BACKEND_ROUTES['saved_specialist_card']}",
+            json=payload,
+        )
+        try:
+            result = response.json()
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("saved_specialist_backend_result_invalid") from error
+    if not isinstance(result, dict):
+        raise RuntimeError("saved_specialist_backend_result_invalid")
+    if response.status_code >= 400 and not result.get("error"):
+        result = {
+            "ok": False,
+            "error": f"saved_specialist_backend_http_{response.status_code}",
+        }
+    return result
 
 
 def _grounded_data_anchors_schema() -> dict[str, Any]:
@@ -2274,6 +2341,58 @@ def _application_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="thinkgraph.reason",
+            title="Reason with ThinkGraph",
+            annotations={
+                "title": "Reason with ThinkGraph",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": False,
+            },
+            description=(
+                "Ask the one enabled saved ThinkGraph Card to reason over bounded project "
+                "history through its normal saved Hermes Run. The authenticated Card runtime "
+                "supplies source and Project identity; the caller supplies only the request "
+                "and optional exact data anchors. Returns the actual target result and Run IDs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string", "minLength": 1, "maxLength": 20000},
+                    "dataAnchors": _grounded_data_anchors_schema(),
+                },
+                "required": ["request"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
+            name="knowgraph.research",
+            title="Research with KnowGraph",
+            annotations={
+                "title": "Research with KnowGraph",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": True,
+            },
+            description=(
+                "Ask the one enabled saved KnowGraph Card to perform bounded sourced research "
+                "through its normal saved Hermes Run. The authenticated Card runtime supplies "
+                "source and Project identity; the caller supplies only the request and optional "
+                "exact data anchors. Returns the actual target result and Run IDs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string", "minLength": 1, "maxLength": 20000},
+                    "dataAnchors": _grounded_data_anchors_schema(),
+                },
+                "required": ["request"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
             name="write_mag_one_instructions",
             title="Stage Magnetic instructions for review",
             annotations={
@@ -2434,6 +2553,8 @@ _APPLICATION_OPERATION_ACCESS = {
     "worldview.action": "write",
     "agentgraph.inspect": "read",
     "run_mag_one": "write",
+    "thinkgraph.reason": "write",
+    "knowgraph.research": "write",
     "write_mag_one_instructions": "write",
     "card.load_graph_references": "write",
     "canvas.inspect": "read",
@@ -2459,6 +2580,12 @@ _DISPATCHER_CONTEXT_ARGUMENTS_BY_TOOL = {
     }),
     "card.update_configuration": frozenset({"projectId", "deckId"}),
     "run_mag_one": frozenset({"projectId", "deckId", "conversationId"}),
+    "thinkgraph.reason": frozenset({
+        "projectId", "deckId", "conversationId", "_sourceCardId", "_sourceRunId",
+    }),
+    "knowgraph.research": frozenset({
+        "projectId", "deckId", "conversationId", "_sourceCardId", "_sourceRunId",
+    }),
     "trading.accept_assignment": frozenset({"projectId", "deckId", "_sourceRunId"}),
     "trading.get_state": frozenset({"projectId", "deckId", "_sourceRunId"}),
     "trading.record_decision": frozenset({"projectId", "deckId", "_sourceRunId"}),
@@ -2500,7 +2627,9 @@ def application_operation_definitions() -> list[OperationDefinition]:
             available=True,
             publishers=(
                 frozenset({"internal-plugin"})
-                if tool.name == "worldview.action"
+                if tool.name in {
+                    "worldview.action", "thinkgraph.reason", "knowgraph.research",
+                }
                 else frozenset({"internal-plugin", "external-mcp"})
             ),
             access=access,
@@ -2517,6 +2646,7 @@ def application_operation_definitions() -> list[OperationDefinition]:
                 or tool.name
             ),
             annotations=copy.deepcopy(payload.get("annotations") or {}),
+            grant_eligible=tool.name != "main.context",
             server_injected_arguments=_APPLICATION_SERVER_INJECTED_ARGUMENTS.get(
                 tool.name, frozenset()
             ),
@@ -2535,16 +2665,22 @@ def application_operation_definitions() -> list[OperationDefinition]:
 async def _materialize_complete_catalog() -> list[Tool]:
     global _LATEST_CATALOG_DIAGNOSTIC
 
-    external_descriptors = await asyncio.to_thread(external_mcp_manifest)
+    external_descriptors = [
+        descriptor for descriptor in await asyncio.to_thread(static_tool_catalog)
+        if "external-mcp" in descriptor["publications"]
+    ]
     tools = [
         _bind_repo_tool_source(Tool(
-            name=descriptor["name"],
-            title=descriptor.get("title"),
+            name=descriptor["canonicalId"],
+            title=descriptor.get("displayName"),
             description=descriptor["description"],
             inputSchema=copy.deepcopy(descriptor["inputSchema"]),
             outputSchema=copy.deepcopy(descriptor.get("outputSchema")),
             annotations=copy.deepcopy(descriptor.get("annotations")),
-        ))
+        ),
+            source_id=descriptor["provider"],
+            provider_tool_name=descriptor["providerToolName"],
+        )
         for descriptor in external_descriptors
     ]
     for tool in tools:
@@ -2977,6 +3113,14 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "run_mag_one": {
         "projectId", "deckId", "conversationId", "input", "dataAnchors",
     },
+    "thinkgraph.reason": {
+        "projectId", "deckId", "conversationId", "request", "dataAnchors",
+        "_sourceCardId", "_sourceRunId",
+    },
+    "knowgraph.research": {
+        "projectId", "deckId", "conversationId", "request", "dataAnchors",
+        "_sourceCardId", "_sourceRunId",
+    },
     "write_mag_one_instructions": {
         "projectId", "deckId", "conversationId", "targetCardId", "mission",
         "dataAnchors", "_sourceCardId",
@@ -3130,9 +3274,15 @@ async def _dispatch_tool(
                     args[field] = str(context[field])
             if name == "worldview.action":
                 args["parentRunId"] = str(context.get("parentRunId") or "")
-            if name in {"write_mag_one_instructions", "card.load_graph_references", "worldsignals.package"}:
+            if name in {
+                "write_mag_one_instructions", "card.load_graph_references", "worldsignals.package",
+                "thinkgraph.reason", "knowgraph.research",
+            }:
                 args["_sourceCardId"] = str(context["mainCardId"])
-            if name in {"card.load_graph_references", "worldsignals.package"}:
+            if name in {
+                "card.load_graph_references", "worldsignals.package",
+                "thinkgraph.reason", "knowgraph.research",
+            }:
                 args["_sourceRunId"] = str(context["parentRunId"])
             if name.startswith("trading."):
                 args["_sourceRunId"] = str(context["parentRunId"])
@@ -3178,6 +3328,38 @@ async def _dispatch_tool(
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
+    if name in {"thinkgraph.reason", "knowgraph.research"}:
+        if context is None or context.get("principalKind") != "card-runtime":
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "ok": False,
+                        "error": "authenticated_card_context_required",
+                    }),
+                )],
+                isError=True,
+            )
+        result = await _saved_specialist_card_bridge({
+            "operation": name,
+            "request": str(args.get("request") or ""),
+            "dataAnchors": (
+                args.get("dataAnchors")
+                if isinstance(args.get("dataAnchors"), list)
+                else []
+            ),
+            "projectId": str(args.get("projectId") or ""),
+            "deckId": str(args.get("deckId") or ""),
+            "conversationId": str(args.get("conversationId") or ""),
+            "sourceCardId": str(args.get("_sourceCardId") or ""),
+            "sourceRunId": str(args.get("_sourceRunId") or ""),
+        })
+        result_text = json.dumps(result, ensure_ascii=False)
+        return CallToolResult(
+            content=[TextContent(type="text", text=result_text)],
+            structuredContent=result,
+            isError=result.get("ok") is False or bool(result.get("error")),
+        )
     if name.startswith("engraphis_"):
         if context is None or not str(context.get("projectId") or "").strip():
             return [TextContent(
@@ -3567,6 +3749,8 @@ def _without_model_visible_runtime_observation(result: Any) -> Any:
 
 
 def _mcp_tool_timeout_seconds(name: str) -> float:
+    if name in {"thinkgraph.reason", "knowgraph.research"}:
+        return _SPECIALIST_CARD_TOOL_TIMEOUT_SECONDS
     if name in {"engraphis_remember", "engraphis_update_memory", "engraphis_correct", "engraphis_ingest"}:
         # Preserve the existing semantic-write allowance through both transports.
         # Ingest includes the extractor's 135-second account transport before storage.

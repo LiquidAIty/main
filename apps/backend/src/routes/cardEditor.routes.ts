@@ -4,7 +4,12 @@ import { getDeckDocument } from '../decks/store';
 import { getProjectCard } from '../services/agentBuilderStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import { indexLiveToolCatalog, resolveScriptToolReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
+import {
+  indexLiveToolCatalog,
+  resolveScriptToolDefinitions,
+  searchToolCatalogDefinitions,
+  type ToolCatalogDefinition,
+} from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 
 const router = Router();
@@ -73,23 +78,15 @@ function commaSeparatedIds(value: unknown): string[] {
 
 export async function loadLiveToolCatalog() {
   const canonicalMcpTools = await listPythonAgentMcpCatalog();
-  const privateRuntimeManifest = await requestPythonRailsJson('/tools/manifest', {
-    method: 'GET',
-  }) as { tools?: unknown };
-  if (!Array.isArray(privateRuntimeManifest?.tools)) {
-    throw new Error('python_runtime_tool_manifest_invalid');
-  }
-  const materialized = await requestPythonRailsJson('/tools/catalog/normalize', {
+  const materialized = await requestPythonRailsJson('/tools/catalog/definitions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      tools: [...canonicalMcpTools, ...privateRuntimeManifest.tools],
-    }),
+    body: JSON.stringify({ providerTools: canonicalMcpTools }),
   }) as { references?: unknown };
   if (!Array.isArray(materialized?.references)) {
     throw new Error('live_tool_catalog_invalid');
   }
-  return indexLiveToolCatalog(materialized.references as ToolCatalogReference[]);
+  return indexLiveToolCatalog(materialized.references as ToolCatalogDefinition[]);
 }
 
 async function cardCatalogOptions(projectId: string, deckId: string, cardId: string) {
@@ -233,7 +230,7 @@ iddRoutes.get('/tools', async (req, res) => {
     const selectedIds = commaSeparatedIds(req.query.selectedIds);
     return res.json({
       ok: true,
-      ...searchToolCatalogReferences(catalog, {
+      ...searchToolCatalogDefinitions(catalog, {
         query: typeof req.query.query === 'string' ? req.query.query : undefined,
         namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
         access: req.query.access === 'read' || req.query.access === 'write'
@@ -263,21 +260,14 @@ iddRoutes.get('/tools', async (req, res) => {
   }
 });
 
-function scriptPaletteFingerprint(references: ToolCatalogReference[]): string {
-  return createHash('sha256').update(JSON.stringify(
-    references.map((reference) => ({
-      canonicalId: reference.canonicalId,
-      access: reference.access,
-      availability: reference.availability,
-      contracts: reference.contracts,
-    })),
-  )).digest('hex');
+function scriptPaletteFingerprint(definitions: ToolCatalogDefinition[]): string {
+  return createHash('sha256').update(JSON.stringify(definitions)).digest('hex');
 }
 
 iddRoutes.get('/script-tools', async (req, res) => {
   try {
     const catalog = await loadLiveToolCatalog();
-    const references = resolveScriptToolReferences(catalog, {
+    const references = resolveScriptToolDefinitions(catalog, {
       selectedIds: commaSeparatedIds(req.query.selectedIds),
     });
     const referenceIds = new Set(references.map((reference) => reference.canonicalId));
@@ -313,7 +303,7 @@ router.post('/script/validate', async (req, res) => {
       ? body.selectedTools.map((value: unknown) => String(value))
       : [];
     const catalog = await loadLiveToolCatalog();
-    const references = resolveScriptToolReferences(catalog, {
+    const references = resolveScriptToolDefinitions(catalog, {
       selectedIds: selectedToolIds,
     });
     const referenceIds = new Set(references.map((reference) => reference.canonicalId));

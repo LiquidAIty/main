@@ -154,7 +154,7 @@ def _external_tool(name: str, *, read_only: bool) -> dict:
         "name": name,
         "providerToolName": provider_name,
         "kind": "tool",
-        "sourceId": f"{namespace}_mcp",
+        "sourceId": namespace,
         "namespace": namespace,
         "connectionKind": "external-mcp",
         "publication": "external-mcp",
@@ -781,18 +781,13 @@ def test_no_script_preserves_saved_presentation_without_narrowing_effective_gran
 
 
 def test_published_catalog_failure_keeps_the_model_turn_and_surfaces_the_error(monkeypatch):
-    from app.python_models.tool_registry import external_mcp_manifest
-
     loaded = _destination_fixture(monkeypatch)
     card = loaded["deck"]["nodes"][1]
     card["runtimeOptions"]["tools"] = ["canvas.inspect"]
-    published = next(
-        item for item in external_mcp_manifest()
-        if item["name"] == "canvas.inspect"
-    )
-    published["description"] = "Conflicting published description."
     payload = _destination_payload("hermes")
-    payload["discoveredTools"] = [published]
+    payload["discoveredToolFailures"] = {
+        "canvas.inspect": "tool_catalog_definition_invalid:canvas.inspect",
+    }
 
     prepared = card_domain._prepare_invocation(payload)
 
@@ -801,9 +796,9 @@ def test_published_catalog_failure_keeps_the_model_turn_and_surfaces_the_error(m
     assert config["presentedTools"] == []
     assert config["unavailableTools"] == ["canvas.inspect"]
     assert config["unavailableToolReasons"] == {
-        "canvas.inspect": "tool_catalog_definition_mismatch:canvas.inspect",
+        "canvas.inspect": "tool_catalog_definition_invalid:canvas.inspect",
     }
-    assert config["toolCatalogFailure"] == "tool_catalog_definition_mismatch:canvas.inspect"
+    assert config["toolCatalogFailure"] == "tool_catalog_definition_invalid:canvas.inspect"
 
 
 def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
@@ -4536,22 +4531,18 @@ def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
         selectedToolsAndGrants=SimpleNamespace(toolDefinitions=[{
             "canonicalId": "records.read",
             "displayName": "Record read",
-            "shortDescription": "Read one provider record.",
-            "effects": ["read"],
-            "contracts": [{
-                "sourceId": "python_runtime",
-                "connectionKind": "private-runtime",
-                "providerToolName": "records.read",
-                "description": "Read one provider record.",
-                "inputSchema": {"type": "object", "properties": {}},
-                "effects": ["read"],
-                "credential": "tool-secret",
-            }],
+            "description": "Read one provider record.",
+            "provider": "python_runtime",
+            "providerToolName": "records.read",
+            "publications": ["card-runtime"],
+            "access": "read",
+            "annotations": {"readOnlyHint": True},
+            "inputSchema": {"type": "object", "properties": {}},
+            "credential": "tool-secret",
             "configurationFingerprint": "tool-fingerprint",
         }, {
             "canonicalId": "records.write",
-            "shortDescription": "Unexposed tool.",
-            "contracts": [],
+            "description": "Unexposed tool.",
         }]),
     ))
 
@@ -4567,16 +4558,13 @@ def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
         "presented_tool_contracts": [{
             "canonicalId": "records.read",
             "displayName": "Record read",
-            "shortDescription": "Read one provider record.",
-            "effects": ["read"],
-            "contracts": [{
-                "sourceId": "python_runtime",
-                "connectionKind": "private-runtime",
-                "providerToolName": "records.read",
-                "description": "Read one provider record.",
-                "inputSchema": {"type": "object", "properties": {}},
-                "effects": ["read"],
-            }],
+            "description": "Read one provider record.",
+            "provider": "python_runtime",
+            "providerToolName": "records.read",
+            "publications": ["card-runtime"],
+            "access": "read",
+            "annotations": {"readOnlyHint": True},
+            "inputSchema": {"type": "object", "properties": {}},
         }],
     }
     serialized = json.dumps(projected, sort_keys=True)

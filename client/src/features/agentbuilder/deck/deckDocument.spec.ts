@@ -69,6 +69,11 @@ describe('requested initial Card topology', () => {
     for (const id of ['card_main_chat', 'builder', 'card_thinkgraph', 'card_knowgraph', 'card_team']) {
       expect(INITIAL_DECK.nodes.find(card => card.id === id)?.parentGraphId).toBeNull();
     }
+    expect(INITIAL_DECK.nodes.every((card) =>
+      !(card.runtimeOptions?.tools ?? []).includes('hermes:tool:memory'),
+    )).toBe(true);
+    expect(INITIAL_DECK.nodes.find((card) => card.id === 'card_magentic')
+      ?.runtimeOptions?.tools ?? []).toEqual([]);
     expect(INITIAL_DECK.version).toBe(10);
   });
 
@@ -82,7 +87,6 @@ describe('requested initial Card topology', () => {
       'graphiti.search_nodes',
       'graphiti.search_memory_facts',
       'graphiti.get_episodes',
-      'hermes:tool:memory',
     ]);
     expect(team?.runtimeOptions?.tools?.every((tool) => !tool.startsWith('cbm.'))).toBe(true);
     expect(INITIAL_AGENT_TEMPLATES.find((template) => template.id === 'template_team')
@@ -112,6 +116,26 @@ describe('requested initial Card topology', () => {
     expect(knowGraph?.prompt).toContain(
       'Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake',
     );
+  });
+
+  it('seeds only Builder with the two fixed saved-specialist tools', () => {
+    const specialistTools = ['thinkgraph.reason', 'knowgraph.research'];
+    const builder = INITIAL_DECK.nodes.find((card) => card.id === 'builder');
+    expect(builder?.runtimeOptions?.tools).toEqual(expect.arrayContaining(specialistTools));
+    for (const card of INITIAL_DECK.nodes.filter((node) => node.id !== 'builder')) {
+      expect(card.runtimeOptions?.tools ?? []).not.toEqual(
+        expect.arrayContaining(specialistTools),
+      );
+    }
+    const thinkGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_thinkgraph');
+    expect(thinkGraph?.runtimeOptions?.tools).toEqual(expect.arrayContaining([
+      'engraphis_recall_context',
+      'engraphis_get_memory',
+      'engraphis_remember',
+      'engraphis_discover_actions',
+      'engraphis_execute_read',
+    ]));
+    expect(thinkGraph?.runtimeOptions?.tools).not.toContain('engraphis_execute_action');
   });
 });
 

@@ -29,15 +29,15 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | --- | --- | --- |
 | Saved Card and deck state | `apps/python-models/app/python_models/card_domain.py` | Saved identity, revision, runtime binding, profile, provider/model, prompt, grants, topology, and Run state |
 | Canonical Run input | `apps/python-models/app/python_models/idf.py::materialize_idf` | One UTF-8 `in.idf`, written and reread before execution |
-| Card Python Script | `apps/python-models/app/python_models/card_script.py` plus the existing Card editor transport | Saved Card-owned source, structural compilation, live selected-tool validation, honest native availability, and retained receipt identity; no TypeScript executor |
+| Card Python Script | `apps/python-models/app/python_models/card_script.py` plus the existing Card editor transport | Saved Card-owned source, structural compilation, live selected-tool validation, honest provider availability, and retained receipt identity; no TypeScript executor |
 | Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, and no semantic routing |
-| Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, process/session lifecycle, native event delivery, and Python-rails calls |
-| Hermes Card process/session | `apps/backend/src/hermes/agentTerminal.ts` | One profile-scoped native Gateway, durable native session, and optional native TUI attachment |
-| Hermes Run receipt | `apps/backend/src/hermes/agentTerminalExecution.ts` | Bind one already-materialized saved Run to one Gateway turn and persist its native completion |
+| Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; it does not own Hermes processes or sessions |
+| Hermes Card session adapter | `apps/backend/src/routes/mainSession.routes.ts::cardSession` and `apps/backend/src/services/hermesGateway.ts` | Reuse the shipped Hermes Gateway client, materialize one saved Card profile, and resolve or create the exact Project conversation session |
+| Hermes Run receipt | `apps/backend/src/routes/mainSession.routes.ts::{prepareRun,submitTurn,finishRun}` plus Python rails Run records | Correlate one already-materialized saved Run with one Hermes submission and persist the observed completion or failure |
 | Hermes profile application | `apps/backend/src/hermes/profileMaterialization.ts` | Apply the exact saved parent model, selected skills, and desired native subagent model before a turn |
-| Hermes runtime | `Hermes/` | Native inference, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
+| Hermes runtime | `HermesLatest/` | Hermes inference, profiles, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
 | Mag One execution | `apps/python-models/app/python_models/magentic_execution.py` | Headless structured submit, status/rejoin, stop, and final-result observation against Hermes' existing SQLite task/dependency runtime |
-| Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, native availability, deterministic validation, and execution; transports do not duplicate these owners |
+| Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, provider availability, deterministic validation, and execution; transports do not duplicate these owners |
 | Official MCP host | `apps/python-models/app/mcp_host.py` | External OAuth publication and native external-tool federation; current internal callers remain until the approved Hermes-plugin boundary replaces that use |
 | CodeGraph | Native Codebase Memory through the official MCP host | Repository structure and source relationships; CBM is the sole graph writer |
 | ThinkGraph | Engraphis through `engraphis.py` and `thinkgraph.py` | Project reasoning, canonical entities, append-only temporal episodic Thinks, native structured incidence, and the sole persistent ThinkGraph store; Jev owns durable semantic edge admission/classification |
@@ -250,29 +250,27 @@ A lower tier never proves a higher one.
 
 ## Controlled imported and vendored roots
 
-`Hermes/`, `worldsignal/`, `Kronos-main/`, and other imported systems are controlled
+`HermesLatest/`, `EngraphisLatest/`, `worldsignal/`, `Kronos-main/`, and other imported systems are controlled
 upstream forks or first-party runtime source, not general cleanup targets. Prefer a public API,
 protocol, configuration, hook, or existing adapter boundary. A justified vendor edit must record its
 exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback.
 
 For Hermes, the retained local extensions are recorded in
-`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Direct-agent delivery is upstream-owned. Saved orange
-topology is materialized into each permitted source profile's `bot_mode.roster`; the application does
-not resolve, proxy, retry, or select a destination session for an individual `message_agent` call.
-The Mag One entry changes only assignment authority
-inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. The invocation-local
-Card-routing entry narrows only Card-managed tools, uses Hermes one-turn model switching, restores both
-surfaces, and emits observable execution receipts on the existing completion event. Upstream ACP is not a
-LiquidAIty runtime boundary. No other Hermes customization is silently accepted by this document.
+`HermesLatest/LIQUIDAITY_PATCHES.md`. Direct-agent delivery remains Hermes-owned. Saved orange
+topology is supplied only to the addressed Project session as its Bot roster; the reusable profile is
+not rewritten with Project topology, and the application does not resolve, retry, or select an
+individual `message_agent` destination. Magnetic changes only assignment authority inside one
+explicitly bounded creator tree and leaves ordinary tasks unrestricted. Upstream ACP is not a
+LiquidAIty execution boundary. No other Hermes customization is accepted by this document.
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.3` at `73521a8e375a867fae14ec0579f2dfb47aa0017e` | `Hermes/hermes_cli/plugins.py::resolve_message_agent_target`; `Hermes/tools/bot_mode_probe.py::is_bot_chat_title`; `Hermes/tools/bot_mode_dm.py::_resolved_message_agent_roster`, `_start_delivery`; `Hermes/tools/bot_live_delivery.py::find_canonical_live_owner` | These generic optional resolver seams remain in the controlled fork, but the application no longer registers or calls them. Active delivery is stock Hermes `message_agent`: Hermes validates the materialized `bot_mode.roster`, chooses the target profile's canonical Bot Chat, and owns delivery, busy handling, retry, idempotency, acknowledgement, and completion. Orange `flow` is the only application-supplied roster authority; blue Magnetic membership is untouched. | Application residue tests prove no resolver hook or Project-roster pseudo-tool is published. Stock Hermes Bot tests cover roster refusal, canonical delivery, relay, retry, and completion. The dormant vendor seam is removable in a separate upstream-sync change; it is not an application fallback. |
+| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The six bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Experimental Codex App Server Dynamic Tools, session-scoped Bot roster enforcement, exact-submission correlation, Card-owned profile fields and profile-scoped learning selection, AutoTeam/Team TaskGraph, and Magnetic assignment ceiling/lineage. Hermes retains execution, session, Bot delivery, learning, queue, task-ledger, and PTY ownership. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, IDD tool authority, and alternate Codex App Server paths. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
-`Hermes/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
+`HermesLatest/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
 image/text policy, and
-`Hermes/agent/transports/codex_app_server_session.py::_coerce_turn_input_items,run_turn`
+`HermesLatest/agent/transports/codex_app_server_session.py::_coerce_turn_input_items,run_turn`
 projects attached pixels into the documented typed App Server input union. Text
 projection remains only for input-echo attribution. The pinned upstream base is
 the Hermes version above; the existing public `turn/start` protocol is the
@@ -280,7 +278,7 @@ extension boundary. Focused Gateway-routing and app-server-session tests cover
 image-byte preservation and unchanged explicit text routing. Fork cost is one
 bounded protocol projection and removal of one forced-text branch; rollback
 restores those two hunks together without changing saved Cards or histories.
-The full contract is recorded under entry 4 of `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+The complete current overlay contract is recorded in `HermesLatest/LIQUIDAITY_PATCHES.md`.
 
 The controlled upstream globe import has this bounded local divergence:
 
@@ -304,27 +302,15 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 
 ## Current proof limits
 
-- The ACP removal and Gateway consolidation are pushed source; the smaller residue deletions remain
-  current working-tree source. Neither is loaded-process proof.
-- The retained Team path still needs real Gateway input, native worker activity, synthesis, and returned
-  output through the same saved Run.
-- Native profile-scoped Bot roster source, focused tests, typechecks, and backend build are complete in the
-  current working tree. The canonical stack loaded the saved roster endpoint successfully, then the existing
-  Gateway client boundary failed before any Card session because
-  `Hermes/apps/shared/src/json-rpc-gateway.ts` imports a non-existent sibling
-  `json-rpc-channel.js` while only `json-rpc-channel.ts` is present. MCP readiness independently remained
-  `503` because its one native CBM frontend could not attach to the already-active daemon within 30 seconds.
-  Neither unrelated boundary was changed in this Bot pass. Ordinary Main, one real orange-connected Card Bot
-  message/reply, unwired-profile live refusal, and no-alternate-machinery runtime inspection therefore remain
-  unproven.
-- Stable saved Card tool grants are enforced as the live Hermes registry surface through the native plugin.
-  Main's selected `engraphis_recall_context` completed through Python rails in the canonical stack. Focused
-  catalog tests prove publisher separation; external CBM/Graphiti live invocation remains outstanding.
-- Native subagent configuration and actual child provider/model require a real child receipt; saved or
-  projected selections alone are not execution proof.
-- Mag One, graph attention, external MCP selection, and visual behavior retain their own acceptance
-  boundaries.
-- WorldView Phase 1 source, focused tests, client typecheck, production builds, controlled
-  loaded preview, persisted selected-Project execution, and Jeremiah's visual acceptance remain
-  separate proof tiers. ShadowBroker/provider integration is not part of that proof and is not
-  assumed as the next architecture.
+- Source, focused tests, typechecks, a loaded service, a real saved-Card turn, an external MCP call,
+  and owner visual acceptance remain separate proof tiers.
+- The MCP v2, Engraphis Smart-9, Graphiti, Card-grant, Hermes Dynamic Tool, Gateway, and profile changes
+  require one coordinated loaded-stack acceptance after all static gates pass; the preceding process
+  snapshot used older source and is not evidence for this revision.
+- Team and Magnetic preparation must resolve through HermesLatest. Team execution and an actual Mag One
+  mission remain separate user-authorized acceptance; this repair does not launch a Magnetic mission.
+- Actual child provider/model, Bot delivery, graph attention, external-provider calls, terminal attachment,
+  and exact Run/Stop correlation require their own observed receipts. Saved or projected configuration is
+  not execution proof.
+- Voice is outside the current acceptance pass and remains standard Hermes behavior. WorldView, trading,
+  and broader graph semantics retain their existing independent acceptance boundaries.

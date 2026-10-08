@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  CanonicalSubjectHeader,
   GraphProjectionV1,
   JoinedGraphPresentation,
 } from '../knowledge/KnowledgeAuthorityGraphSurface';
@@ -13,52 +14,64 @@ function projections({
   projectId = 'project-1',
   knowProjectId = projectId,
   subjects = [
-    ['ThinkGraph', 'think-rocket', 'Rocket Lab', 'person_or_concept'],
-    ['KnowGraph', 'know-rocket', 'Rocket Lab', 'Organization'],
-    ['ThinkGraph', 'think-rocket-name', 'Rocket', 'person_or_concept'],
-    ['KnowGraph', 'know-electron', 'Electron', 'Product'],
+    { engraphisEntityId: 'think-rocket', canonicalName: 'Rocket Lab', entityKind: 'person_or_concept' },
+    { graphitiEntityId: 'know-rocket', canonicalName: 'Rocket Lab', entityKind: 'Organization' },
+    { engraphisEntityId: 'think-rocket-name', canonicalName: 'Rocket', entityKind: 'person_or_concept' },
+    { graphitiEntityId: 'know-electron', canonicalName: 'Electron', entityKind: 'Product' },
   ],
   nodes,
 }: {
   projectId?: string;
   knowProjectId?: string;
-  subjects?: string[][];
+  subjects?: Array<Record<string, string>>;
   nodes?: Partial<Record<'thinkgraph' | 'knowgraph', GraphProjectionV1['nodes']>>;
 } = {}) {
-  const headers = subjects.map(([authority, entityId, canonicalName, entityKind]) => ({
-    authority: authority as 'ThinkGraph' | 'KnowGraph', entityId, canonicalName, entityKind,
-  }));
-  const makeNodes = (authority: 'ThinkGraph' | 'KnowGraph') => headers
-    .filter(subject => subject.authority === authority)
-    .map(subject => ({
-      id: subject.entityId,
+  const headers = subjects as unknown as CanonicalSubjectHeader[];
+  const lookup = (subject: Record<string, string>) => {
+    const hasEngraphis = Object.prototype.hasOwnProperty.call(subject, 'engraphisEntityId');
+    const hasGraphiti = Object.prototype.hasOwnProperty.call(subject, 'graphitiEntityId');
+    if (hasEngraphis === hasGraphiti) return null;
+    return hasEngraphis
+      ? { authority: 'thinkgraph' as const, entityId: subject.engraphisEntityId }
+      : { authority: 'knowgraph' as const, entityId: subject.graphitiEntityId };
+  };
+  const makeNodes = (authority: 'thinkgraph' | 'knowgraph') => subjects
+    .flatMap(subject => {
+      const identity = lookup(subject);
+      return identity?.authority === authority ? [{ subject, identity }] : [];
+    })
+    .map(({ subject, identity }) => ({
+      id: identity.entityId,
       label: subject.canonicalName,
       canonicalName: subject.canonicalName,
       entityKind: subject.entityKind,
-      projectId: authority === 'ThinkGraph' ? projectId : knowProjectId,
+      projectId: authority === 'thinkgraph' ? projectId : knowProjectId,
     }));
   const directory = {
-    schemaVersion: 'cross-graph-subject-directory.v1' as const,
+    schemaVersion: 'graph-subject-directory' as const,
     projectId,
     complete: true as const,
     counts: {
-      ThinkGraph: headers.filter(subject => subject.authority === 'ThinkGraph').length,
-      KnowGraph: headers.filter(subject => subject.authority === 'KnowGraph').length,
+      engraphis: subjects.filter(subject => lookup(subject)?.authority === 'thinkgraph').length,
+      graphiti: subjects.filter(subject => lookup(subject)?.authority === 'knowgraph').length,
       total: headers.length,
     },
-    revisions: { ThinkGraph: 'think-r1', KnowGraph: 'know-r1' },
+    revisions: { engraphis: 'think-r1', graphiti: 'know-r1' },
     subjects: headers,
     sha256: 'a'.repeat(64),
+    bytes: 512,
+    estimatedTokens: 128,
+    readDurationMs: 1.25,
   };
   return {
     thinkgraph: {
       schemaVersion: 'thinkgraph.engraphis.v1', projectId,
-      nodes: nodes?.thinkgraph || makeNodes('ThinkGraph'), edges: [],
+      nodes: nodes?.thinkgraph || makeNodes('thinkgraph'), edges: [],
       canonicalSubjectDirectory: directory,
     },
     knowgraph: {
       schemaVersion: 'knowgraph.graphiti.v1', projectId: knowProjectId,
-      nodes: nodes?.knowgraph || makeNodes('KnowGraph'), edges: [],
+      nodes: nodes?.knowgraph || makeNodes('knowgraph'), edges: [],
     },
   } satisfies Record<'thinkgraph' | 'knowgraph', GraphProjectionV1>;
 }
@@ -93,8 +106,8 @@ describe('canonical subject chat links', () => {
   it('leaves an authority-ambiguous canonical name plain', () => {
     const matcher = createCanonicalSubjectMatcher(projections({
       subjects: [
-        ['ThinkGraph', 'think-a', 'Shared', 'person_or_concept'],
-        ['ThinkGraph', 'think-b', 'Shared', 'person_or_concept'],
+        { engraphisEntityId: 'think-a', canonicalName: 'Shared', entityKind: 'person_or_concept' },
+        { engraphisEntityId: 'think-b', canonicalName: 'Shared', entityKind: 'person_or_concept' },
       ],
     }));
     expect(matcher).toBeNull();
@@ -107,9 +120,43 @@ describe('canonical subject chat links', () => {
     expect(linkedNames(matcher.segmentMessage('assistant', 'Rocket Lab'))).toEqual([]);
   });
 
+  it('does not link an exact name when its hidden provider id no longer finds that node', () => {
+    const current = projections();
+    const directory = current.thinkgraph.canonicalSubjectDirectory!;
+    directory.subjects[0] = {
+      engraphisEntityId: 'stale-think-rocket',
+      canonicalName: 'Rocket Lab',
+      entityKind: 'person_or_concept',
+    };
+
+    const matcher = createCanonicalSubjectMatcher(current)!;
+    expect(linkedNames(matcher.segmentMessage('assistant', 'Rocket Lab builds Electron.')))
+      .toEqual(['Electron']);
+  });
+
+  it.each([
+    {
+      engraphisEntityId: 'think-invalid', graphitiEntityId: 'know-invalid',
+      canonicalName: 'Invalid', entityKind: 'person_or_concept',
+    },
+    { canonicalName: 'Invalid', entityKind: 'person_or_concept' },
+  ])('fails closed for a dual or missing provider-id row', malformed => {
+    const current = projections();
+    current.thinkgraph.canonicalSubjectDirectory = {
+      ...current.thinkgraph.canonicalSubjectDirectory!,
+      counts: { engraphis: 1, graphiti: 0, total: 1 },
+      subjects: [malformed as unknown as CanonicalSubjectHeader],
+    };
+    expect(createCanonicalSubjectMatcher(current)).toBeNull();
+  });
+
   it('returns raw text segments so React escapes labels without HTML rewriting', () => {
     const current = projections({
-      subjects: [['ThinkGraph', 'think-html', 'A <B> & C', 'person_or_concept']],
+      subjects: [{
+        engraphisEntityId: 'think-html',
+        canonicalName: 'A <B> & C',
+        entityKind: 'person_or_concept',
+      }],
     });
     const matcher = createCanonicalSubjectMatcher(current)!;
     const text = 'About A <B> & C today.';
@@ -195,6 +242,20 @@ describe('canonical subject chat links', () => {
       joinedPresentation,
       directory,
       request: { ...rocket, directorySha256: 'b'.repeat(64), requestId: 3 },
+    })).toBeNull();
+    expect(resolveCanonicalSubjectFocusVisualId({
+      authority: 'joined',
+      projection: joinedPresentation.projection,
+      joinedPresentation,
+      directory: {
+        ...directory,
+        counts: { engraphis: 1, graphiti: 0, total: 1 },
+        subjects: [{
+          engraphisEntityId: 'think-invalid', graphitiEntityId: 'know-invalid',
+          canonicalName: 'Rocket Lab', entityKind: 'person_or_concept',
+        } as unknown as CanonicalSubjectHeader],
+      },
+      request: { ...rocket, requestId: 4 },
     })).toBeNull();
   });
 });

@@ -59,6 +59,7 @@ import {
   observationTimeLabel,
   responsiveRepelForce,
   sourceLinks,
+  type CanonicalSubjectHeader,
   type GraphProjectionV1,
 } from './KnowledgeAuthorityGraphSurface';
 import KnowledgeGraphFramework from './KnowledgeGraphFramework';
@@ -100,30 +101,31 @@ describe('knowledge authority graph surfaces', () => {
       Boolean(node.canonicalName) && node.type !== 'Episodic'
     ));
     const directory = {
-      schemaVersion: 'cross-graph-subject-directory.v1' as const,
+      schemaVersion: 'graph-subject-directory' as const,
       projectId: think.projectId,
       complete: true as const,
       counts: {
-        ThinkGraph: thinkSubjects.length,
-        KnowGraph: knowSubjects.length,
+        engraphis: thinkSubjects.length,
+        graphiti: knowSubjects.length,
         total: thinkSubjects.length + knowSubjects.length,
       },
-      revisions: { ThinkGraph: 'think-current', KnowGraph: 'know-current' },
+      revisions: { engraphis: 'think-current', graphiti: 'know-current' },
       subjects: [
         ...thinkSubjects.map(node => ({
-          authority: 'ThinkGraph' as const,
-          entityId: node.id,
+          engraphisEntityId: node.id,
           canonicalName: node.canonicalName,
           entityKind: node.entityKind,
         })),
         ...knowSubjects.map(node => ({
-          authority: 'KnowGraph' as const,
-          entityId: node.id,
+          graphitiEntityId: node.id,
           canonicalName: node.canonicalName,
           entityKind: node.entityKind,
         })),
       ],
       sha256: 'a'.repeat(64),
+      bytes: 512,
+      estimatedTokens: 128,
+      readDurationMs: 1.25,
     };
     return {
       thinkgraph: {
@@ -202,7 +204,7 @@ describe('knowledge authority graph surfaces', () => {
     ]);
   });
 
-  it('groups one exact authoritative subject per authority while retaining provider evidence and edges', () => {
+  it('renders one exact-name joined node with both real authority edges and provider evidence', () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -256,6 +258,11 @@ describe('knowledge authority graph surfaces', () => {
       .toEqual([
         ['thinkgraph:same-edge', 'thinkgraph', 'DEPENDS_ON'],
         ['knowgraph:same-edge', 'knowgraph', 'SUPPORTS'],
+      ]);
+    expect(presentation.projection.edges.map(edge => [edge.layer, edge.source, edge.target]))
+      .toEqual([
+        ['thinkgraph', sharedVisualId, 'thinkgraph:think-target'],
+        ['knowgraph', sharedVisualId, 'knowgraph:know-target'],
       ]);
     expect(presentation.projection.edges[0].properties?.providerSemanticLayer).toBe('causal');
     expect(presentation.projection.edges[1].properties?.providerSemanticLayer).toBe('semantic');
@@ -344,6 +351,47 @@ describe('knowledge authority graph surfaces', () => {
       .toBe('thinkgraph:think-trimmed');
     expect(trimmed.visualNodeIdByProviderMember.get('knowgraph:know-trimmed'))
       .toBe('knowgraph:know-trimmed');
+  });
+
+  it('fails closed when provider lookup ids mismatch or a directory row has dual or no ids', () => {
+    const think = {
+      ...empty('thinkgraph'),
+      nodes: [{ id: 'think-shared', label: 'Shared', properties: {} }],
+    };
+    const know = {
+      ...empty('knowgraph'),
+      nodes: [{ id: 'know-shared', label: 'Shared', properties: {} }],
+    };
+    const mismatched = currentProjections(think, know);
+    mismatched.thinkgraph.canonicalSubjectDirectory!.subjects[0] = {
+      engraphisEntityId: 'stale-think-shared',
+      canonicalName: 'Shared',
+      entityKind: 'person_or_concept',
+    };
+    const mismatchedPresentation = composeProviderThinkKnowPresentation(
+      mismatched.thinkgraph, mismatched.knowgraph,
+    );
+    expect(mismatchedPresentation.projection.nodes).toHaveLength(2);
+    expect(mismatchedPresentation.visualNodeIdByProviderMember.get('thinkgraph:think-shared'))
+      .not.toBe(mismatchedPresentation.visualNodeIdByProviderMember.get('knowgraph:know-shared'));
+
+    for (const malformed of [
+      {
+        engraphisEntityId: 'think-shared', graphitiEntityId: 'know-shared',
+        canonicalName: 'Shared', entityKind: 'person_or_concept',
+      },
+      { canonicalName: 'Shared', entityKind: 'person_or_concept' },
+    ]) {
+      const current = currentProjections(think, know);
+      current.thinkgraph.canonicalSubjectDirectory!.subjects[0] = (
+        malformed as unknown as CanonicalSubjectHeader
+      );
+      const presentation = composeProviderThinkKnowPresentation(
+        current.thinkgraph, current.knowgraph,
+      );
+      expect(presentation.projection.nodes).toHaveLength(2);
+      expect(presentation.projection.canonicalSubjectDirectory).toBeUndefined();
+    }
   });
 
   it('keeps ambiguous and cross-Project subjects separate while joining exact names across provider kinds', () => {

@@ -19,8 +19,10 @@ import {
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import {
   internalMcpAuthorization,
+  internalMcpBridgeSecretAuthorized,
   resolveInternalMcpUrl,
 } from '../services/mcp/internalMcpAuth';
+import { isLoopbackSocketRequest } from '../security/requestAccess';
 import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
   resolveProductChatWorkingDirectory,
@@ -74,6 +76,13 @@ type DynamicToolDefinition = {
   input_schema: Record<string, unknown>;
 };
 
+type SavedSpecialistOperation = 'thinkgraph.reason' | 'knowgraph.research';
+
+const SPECIALIST_TARGETS: Record<SavedSpecialistOperation, string> = {
+  'thinkgraph.reason': 'card_thinkgraph',
+  'knowgraph.research': 'card_knowgraph',
+};
+
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
@@ -86,18 +95,45 @@ function exactStrings(value: unknown): string[] {
     : [];
 }
 
+function requireSpecialistConfiguration(
+  operation: SavedSpecialistOperation,
+  target: AddressableCard,
+): void {
+  if (target.card.runtime.kind !== 'hermes' || target.card.runtime.mode !== 'delegate') {
+    throw new Error('saved_specialist_runtime_invalid');
+  }
+  const runtimeOptions = record(target.card.runtimeOptions);
+  const tools = new Set(exactStrings(runtimeOptions.tools));
+  if (operation === 'thinkgraph.reason') {
+    if (!tools.has('engraphis_recall_context')) {
+      throw new Error('thinkgraph_recall_grant_required');
+    }
+    return;
+  }
+  const skills = new Set(exactStrings(runtimeOptions.skills));
+  const toolsets = new Set(exactStrings(runtimeOptions.toolsets));
+  if (!toolsets.has('web')) throw new Error('knowgraph_web_toolset_required');
+  if (!skills.has('grounded-citations')) {
+    throw new Error('knowgraph_grounded_citations_skill_required');
+  }
+  if (!tools.has('graphiti.add_memory')) {
+    throw new Error('knowgraph_add_memory_grant_required');
+  }
+}
+
 function dynamicToolDefinitions(value: unknown): DynamicToolDefinition[] {
   if (!Array.isArray(value)) return [];
   const seenNames = new Set<string>();
   return value.map(record).map((definition, index) => {
     const canonicalName = String(definition.canonicalId || '').trim();
-    const contracts = Array.isArray(definition.contracts)
-      ? definition.contracts.map(record).filter((contract) => contract.available !== false)
-      : [];
-    const contract = contracts.find((item) => item.connectionKind === 'external-mcp')
-      || contracts.find((item) => item.connectionKind === 'private-runtime');
-    const inputSchema = record(contract?.inputSchema);
-    if (!canonicalName || !contract || !Object.keys(inputSchema).length) {
+    const publications = exactStrings(definition.publications);
+    const inputSchema = record(definition.inputSchema);
+    if (
+      !canonicalName
+      || definition.available !== true
+      || !publications.some((item) => item === 'card-runtime' || item === 'external-mcp')
+      || !Object.keys(inputSchema).length
+    ) {
       throw new Error(`dynamic_tool_contract_unavailable:${canonicalName || index}`);
     }
     const stem = canonicalName.replace(/[^A-Za-z0-9_]/g, '_').replace(/^_+/, '').slice(0, 72)
@@ -110,7 +146,7 @@ function dynamicToolDefinitions(value: unknown): DynamicToolDefinition[] {
       type: 'function' as const,
       name,
       canonical_name: canonicalName,
-      description: String(contract.description || definition.shortDescription || ''),
+      description: String(definition.description || ''),
       input_schema: inputSchema,
     };
   });
@@ -353,8 +389,11 @@ async function prepareRun(args: {
   priorMessages: ConversationMessage[];
   dataAnchors: unknown[];
   images: unknown[];
+  runId?: string;
+  originatingRunId?: string;
+  onAccepted?(runId: string): void;
 }): Promise<PreparedRun> {
-  const runId = `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  const runId = args.runId || `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const toolCatalog = await readPythonAgentMcpCatalog();
   const payload = {
     projectId: args.projectId,
@@ -372,6 +411,7 @@ async function prepareRun(args: {
     discoveredToolCatalogState: toolCatalog.state,
     unavailableToolCatalogFamilies: toolCatalog.unavailableFamilies,
     discoveredToolFailures: toolCatalog.toolFailures,
+    ...(args.originatingRunId ? { originatingRunId: args.originatingRunId } : {}),
   };
   const direct = args.target.card.id !== args.main.card.id;
   const prepared = record(await requestPythonRailsJson(
@@ -384,6 +424,7 @@ async function prepareRun(args: {
         : { ...payload, message: args.message }),
     },
   ));
+  args.onAccepted?.(runId);
   const transport = record(prepared.hermesTransport);
   const request = record(transport.request);
   if (
@@ -435,21 +476,61 @@ async function submitTurn(args: {
   toolEndpoint: string;
   toolAuthorization: string;
   onEvent(event: HermesGatewayEvent): void;
+  signal?: AbortSignal;
+  interrupt?(): Promise<void>;
+  onSubmissionIssued?(): void;
 }): Promise<{ text: string; event: HermesGatewayEvent; toolCalls: number }> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let interruptionStarted = false;
     let toolCalls = 0;
     let submitStatus = '';
     let ownTurnStarted = false;
+    let submitRequested = false;
+    let submitSettled = false;
+    let pendingInterruptError: Error | null = null;
+    let timer: ReturnType<typeof setTimeout>;
+    let detach: () => void = () => undefined;
+    const onAbort = () => fail(new Error('hermes_turn_cancelled'), true);
     const finish = (error?: Error, value?: { text: string; event: HermesGatewayEvent }) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       detach();
+      args.signal?.removeEventListener('abort', onAbort);
       if (error) reject(error);
       else resolve({ ...value!, toolCalls });
     };
-    const detach = args.client.onEvent((event) => {
+    const beginInterrupt = (error: Error) => {
+      if (settled) return;
+      if (!args.interrupt) {
+        finish(error);
+        return;
+      }
+      if (interruptionStarted) return;
+      interruptionStarted = true;
+      void args.interrupt().then(
+        () => finish(error),
+        (interruptError) => finish(new Error(
+          `hermes_target_interrupt_failed:${interruptError instanceof Error
+            ? interruptError.message
+          : String(interruptError)}`,
+        )),
+      );
+    };
+    const fail = (error: Error, interrupt: boolean) => {
+      if (settled) return;
+      if (!interrupt || !args.interrupt) {
+        finish(error);
+        return;
+      }
+      if (submitRequested && !submitSettled) {
+        pendingInterruptError ||= error;
+        return;
+      }
+      beginInterrupt(error);
+    };
+    detach = args.client.onEvent((event) => {
       if (event.session_id !== args.binding.sessionId) return;
       const eventSubmissionId = String(event.payload?.submission_id || '');
       if (event.type === 'prompt.submission.started') {
@@ -461,20 +542,26 @@ async function submitTurn(args: {
       args.onEvent(event);
       if (event.type === 'tool.start') toolCalls += 1;
       if (event.type === 'error') {
-        finish(new Error(String(event.payload?.message || 'hermes_turn_failed')));
+        fail(new Error(String(event.payload?.message || 'hermes_turn_failed')), false);
         return;
       }
       if (event.type !== 'message.complete') return;
       const status = String(event.payload?.status || 'complete');
       const text = String(event.payload?.text || '');
       if (['error', 'failed'].includes(status)) {
-        finish(new Error(String(event.payload?.error || text || 'hermes_turn_failed')));
+        fail(new Error(String(event.payload?.error || text || 'hermes_turn_failed')), false);
         return;
       }
       finish(undefined, { text, event });
     });
-    const timer = setTimeout(() => finish(new Error('hermes_turn_timeout')), 30 * 60_000);
+    timer = setTimeout(() => fail(new Error('hermes_turn_timeout'), true), 30 * 60_000);
     timer.unref?.();
+    args.signal?.addEventListener('abort', onAbort, { once: true });
+    if (args.signal?.aborted) {
+      onAbort();
+      return;
+    }
+    submitRequested = true;
     void args.client.request<Record<string, unknown>>('prompt.submit', {
       session_id: args.binding.sessionId,
       profile: args.profile,
@@ -487,11 +574,24 @@ async function submitTurn(args: {
         tool_authorization: args.toolAuthorization,
       } : {}),
     }).then((submitted) => {
+      submitSettled = true;
+      args.onSubmissionIssued?.();
+      if (pendingInterruptError) {
+        beginInterrupt(pendingInterruptError);
+        return;
+      }
       submitStatus = String(submitted.status || 'streaming');
       if (!['streaming', 'queued'].includes(submitStatus)) {
-        finish(new Error(`hermes_submit_status_unsupported:${submitStatus || 'missing'}`));
+        fail(new Error(`hermes_submit_status_unsupported:${submitStatus || 'missing'}`), true);
       }
-    }).catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
+    }).catch((error) => {
+      submitSettled = true;
+      args.onSubmissionIssued?.();
+      beginInterrupt(
+        pendingInterruptError
+        || (error instanceof Error ? error : new Error(String(error))),
+      );
+    });
   });
 }
 
@@ -539,6 +639,267 @@ async function finishRun(args: {
     }),
   });
 }
+
+async function failAcceptedRun(
+  runId: string,
+  error: unknown,
+  binding?: SessionBinding | null,
+): Promise<void> {
+  await requestPythonRailsJson('/domain/runs/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      runId,
+      state: 'failed',
+      errorCode: 'hermes_turn_failed',
+      errorSummary: error instanceof Error ? error.message : String(error),
+      ...(binding?.storedSessionId ? { hermesSessionRef: binding.storedSessionId } : {}),
+    }),
+  });
+}
+
+async function interruptSubmission(
+  client: HermesGatewayClient,
+  binding: SessionBinding,
+  submissionId: string,
+): Promise<void> {
+  const interrupted = record(await client.request('session.interrupt', {
+    session_id: binding.sessionId,
+    expected_submission_id: submissionId,
+  }));
+  if (interrupted.status !== 'interrupted') {
+    throw new Error('hermes_target_submission_not_active');
+  }
+}
+
+export function createMainSessionInternalRouter(): Router {
+  const router = Router();
+  router.post('/internal/specialists', async (req, res) => {
+    if (!isLoopbackSocketRequest(req)
+      || !internalMcpBridgeSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
+      return res.status(403).json({ ok: false, error: 'saved_specialist_authorization_required' });
+    }
+    const body = record(req.body);
+    const operation = String(body.operation || '') as SavedSpecialistOperation;
+    const request = String(body.request || '');
+    const projectId = String(body.projectId || '').trim();
+    const deckId = String(body.deckId || '').trim();
+    const conversationId = String(body.conversationId || '').trim();
+    const sourceCardId = String(body.sourceCardId || '').trim();
+    const sourceRunId = String(body.sourceRunId || '').trim();
+    const dataAnchors = body.dataAnchors === undefined ? [] : body.dataAnchors;
+    const allowedKeys = new Set([
+      'operation', 'request', 'dataAnchors', 'projectId', 'deckId',
+      'conversationId', 'sourceCardId', 'sourceRunId',
+    ]);
+    if (
+      !(operation in SPECIALIST_TARGETS)
+      || !request.trim()
+      || request.length > 20_000
+      || !projectId
+      || !deckId
+      || !conversationId
+      || !sourceCardId
+      || !sourceRunId
+      || !Array.isArray(dataAnchors)
+      || dataAnchors.length > 16
+      || dataAnchors.some((value) => !Object.keys(record(value)).length)
+      || Object.keys(body).some((key) => !allowedKeys.has(key))
+    ) {
+      return res.status(400).json({ ok: false, error: 'saved_specialist_request_invalid' });
+    }
+
+    let authority: SharedChatAuthority;
+    let source: AddressableCard;
+    let target: AddressableCard;
+    let ownerUserId: string;
+    try {
+      const project = await getProjectCard(projectId);
+      ownerUserId = String(project?.ownerUserId || '').trim();
+      if (!ownerUserId) throw new Error('saved_specialist_project_unavailable');
+      authority = await sharedChatAuthority(projectId, deckId);
+      const sources = authority.cards.filter((card) => card.card.id === sourceCardId);
+      const targets = authority.cards.filter(
+        (card) => card.card.id === SPECIALIST_TARGETS[operation],
+      );
+      if (sources.length !== 1) throw new Error('saved_specialist_source_card_unavailable');
+      if (targets.length !== 1) throw new Error('saved_specialist_target_card_unavailable');
+      source = sources[0];
+      target = targets[0];
+      if (source.card.id === target.card.id) throw new Error('saved_specialist_self_call_rejected');
+      requireSpecialistConfiguration(operation, target);
+      const sourceRead = record(await requestPythonRailsJson('/domain/runs/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          deckId,
+          conversationId,
+          runId: sourceRunId,
+        }),
+      }));
+      const sourceRun = record(sourceRead.run);
+      if (
+        String(sourceRun.runId || '') !== sourceRunId
+        || String(sourceRun.projectId || '') !== projectId
+        || String(sourceRun.deckId || '') !== deckId
+        || String(sourceRun.conversationId || '') !== conversationId
+        || String(sourceRun.cardId || '') !== sourceCardId
+        || String(sourceRun.state || '') !== 'running'
+      ) {
+        throw new Error('saved_specialist_source_run_unavailable');
+      }
+    } catch (error) {
+      return res.status(409).json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'saved_specialist_authority_unavailable',
+      });
+    }
+
+    const childRunId = `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    const abortController = new AbortController();
+    let client: HermesGatewayClient | null = null;
+    let binding: SessionBinding | null = null;
+    let run: PreparedRun | null = null;
+    let runAccepted = false;
+    let settlementAttempted = false;
+    let submissionIssued = false;
+    let interruptPromise: Promise<void> | null = null;
+    let responseFinished = false;
+    const interruptTarget = (): Promise<void> => {
+      if (!client || !binding || !submissionIssued) return Promise.resolve();
+      if (!interruptPromise) {
+        interruptPromise = interruptSubmission(client, binding, childRunId);
+      }
+      return interruptPromise;
+    };
+    const abortRequest = () => {
+      if (!responseFinished && !res.writableEnded) {
+        abortController.abort();
+      }
+    };
+    req.once('aborted', abortRequest);
+    res.once('close', abortRequest);
+
+    const settle = async (
+      result?: { text: string; event: HermesGatewayEvent; toolCalls: number },
+      error?: unknown,
+    ): Promise<void> => {
+      if (!runAccepted || settlementAttempted) return;
+      settlementAttempted = true;
+      if (run && binding) {
+        await finishRun({ run, binding, result, error });
+      } else {
+        await failAcceptedRun(childRunId, error || new Error('saved_specialist_preparation_failed'), binding);
+      }
+    };
+
+    try {
+      run = await prepareRun({
+        projectId,
+        deckId,
+        conversationId,
+        message: request,
+        target,
+        main: authority.main,
+        priorMessages: [],
+        dataAnchors,
+        images: [],
+        runId: childRunId,
+        originatingRunId: sourceRunId,
+        onAccepted: () => { runAccepted = true; },
+      });
+      if (abortController.signal.aborted) throw new Error('saved_specialist_cancelled');
+      const requiredTargetTool = operation === 'thinkgraph.reason'
+        ? 'engraphis_recall_context'
+        : 'graphiti.add_memory';
+      if (!exactStrings(run.request.enabledTools).includes(requiredTargetTool)) {
+        throw new Error('saved_specialist_required_tool_unavailable');
+      }
+      client = await hermesGateway();
+      binding = await cardSession(client, authority, target, {
+        userId: ownerUserId,
+        projectId,
+        deckId,
+        conversationId,
+      });
+      if (abortController.signal.aborted) throw new Error('saved_specialist_cancelled');
+      const dynamicTools = dynamicToolDefinitions(run.request.toolDefinitions);
+      const runtime = record(run.request.runtime);
+      if (runtime.kind !== 'hermes' || runtime.mode !== 'delegate') {
+        throw new Error('saved_specialist_runtime_identity_mismatch');
+      }
+      const toolAuthorization = internalMcpAuthorization({
+        kind: 'card-runtime',
+        projectId,
+        deckId,
+        conversationId,
+        parentRunId: childRunId,
+        callerCardId: target.card.id,
+        callerRuntimeKind: 'hermes',
+        callerRuntimeMode: 'delegate',
+        grantedTools: exactStrings(run.request.enabledTools),
+        presentedTools: dynamicTools.map((tool) => tool.canonical_name),
+      });
+      const result = await submitTurn({
+        client,
+        binding,
+        profile: target.profile,
+        text: String(run.request.message),
+        submissionId: childRunId,
+        dynamicTools,
+        toolEndpoint: resolveInternalMcpUrl(),
+        toolAuthorization,
+        signal: abortController.signal,
+        interrupt: interruptTarget,
+        onSubmissionIssued: () => { submissionIssued = true; },
+        onEvent: () => undefined,
+      });
+      if (!result.text.trim()) throw new Error('hermes_empty_response');
+      await settle(result);
+      responseFinished = true;
+      return res.json({
+        ok: true,
+        status: 'completed',
+        operation,
+        targetCardId: target.card.id,
+        targetRunId: childRunId,
+        targetCardRevisionId: target.cardRevisionId,
+        result: result.text,
+      });
+    } catch (caught) {
+      let error: unknown = caught;
+      try {
+        await settle(undefined, caught);
+      } catch (settlementError) {
+        error = new Error(
+          `saved_specialist_run_settlement_failed:${settlementError instanceof Error
+            ? settlementError.message
+            : String(settlementError)}`,
+        );
+      }
+      if (!res.destroyed && !res.writableEnded) {
+        responseFinished = true;
+        return res.status(502).json({
+          ok: false,
+          status: 'failed',
+          operation,
+          targetCardId: target.card.id,
+          targetRunId: childRunId,
+          error: error instanceof Error ? error.message : 'saved_specialist_execution_failed',
+        });
+      }
+      return undefined;
+    } finally {
+      responseFinished = true;
+      req.off('aborted', abortRequest);
+      res.off('close', abortRequest);
+    }
+  });
+  return router;
+}
+
+export const mainSessionInternalRoutes = createMainSessionInternalRouter();
 
 mainSessionRoutes.post('/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();

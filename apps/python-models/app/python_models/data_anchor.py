@@ -38,7 +38,6 @@ _KNOWGRAPH_RESULT_LIMIT = 24
 _KNOWGRAPH_EPISODE_LIMIT = 50
 _KNOWGRAPH_EPISODE_PREVIEW_CHARS = 1_000
 _CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
-_SUBJECT_DIRECTORY_SCHEMA_VERSION = "provider-subject-directory.v2"
 
 
 class DataAnchorError(ValueError):
@@ -132,7 +131,7 @@ def assemble_canonical_subject_directory(
         "total": len(subjects),
     }
     identity = {
-        "schemaVersion": _SUBJECT_DIRECTORY_SCHEMA_VERSION,
+        "schemaVersion": "graph-subject-directory",
         "projectId": project_id,
         "complete": True,
         "counts": counts,

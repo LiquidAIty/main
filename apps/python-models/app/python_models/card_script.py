@@ -106,8 +106,9 @@ def generate_card_script_header(
             {
                 "canonicalId": name,
                 "access": catalog_by_id[name].get("access"),
-                "availability": catalog_by_id[name].get("availability"),
-                "contracts": catalog_by_id[name].get("contracts", []),
+                "available": catalog_by_id[name].get("available"),
+                "inputSchema": catalog_by_id[name].get("inputSchema"),
+                "outputSchema": catalog_by_id[name].get("outputSchema"),
             }
             for name in sorted(catalog_by_id)
         ],
@@ -175,7 +176,7 @@ def generate_card_script_header(
             granted = canonical_id in selected
             handle_type = "SelectedToolHandle" if granted else "UngrantedToolHandle"
             access = str(item.get("access") or "read").upper()
-            availability = str(item.get("availability") or "disabled").upper()
+            availability = "AVAILABLE" if item.get("available") is True else "DISABLED"
             state = "AGENT" if canonical_id in default_agent else "OFF" if granted else "UNGRANTED"
             lines.append(
                 f"    {_python_identifier(leaf)}: {handle_type}  # {canonical_id} | {access} | {availability} | {state}"
@@ -186,7 +187,9 @@ def generate_card_script_header(
                 "canonicalId": canonical_id,
                 "selected": granted,
                 "access": str(item.get("access") or "read"),
-                "availability": str(item.get("availability") or "disabled"),
+                "availability": (
+                    "available" if item.get("available") is True else "disabled"
+                ),
             }
         lines.append("")
     lines.append("class ToolControls(Protocol):")

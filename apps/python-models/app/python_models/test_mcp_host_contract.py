@@ -82,9 +82,14 @@ def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypa
     import asyncio
     import jsonschema
     import mcp_host
-    from app.python_models.engraphis import READ_TOOLS, WRITE_TOOLS
-
-    names = READ_TOOLS | WRITE_TOOLS
+    names = {
+        "engraphis_recall_context",
+        "engraphis_get_memory",
+        "engraphis_remember",
+        "engraphis_discover_actions",
+        "engraphis_execute_read",
+        "engraphis_execute_action",
+    }
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_host, "_cbm_tools", lambda: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(mcp_host, "_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
@@ -112,15 +117,18 @@ def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypa
     jsonschema.validate({"content": "A tentative assistant suggestion",
                          "importance": 0.3},
                         schemas["engraphis_remember"])
-    jsonschema.validate({"memory_id": "memory-id", "title": "Updated title"},
-                        schemas["engraphis_update_memory"])
+    assert {
+        "engraphis_update_memory",
+        "engraphis_conflict_review",
+        "engraphis_session",
+    }.isdisjoint(schemas)
 
 
-@pytest.mark.parametrize("operation", ["engraphis_remember", "engraphis_ingest"])
-def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch, operation):
+def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch):
     import asyncio
     import mcp_host
 
+    operation = "engraphis_remember"
     completed = []
 
     async def dispatch(name, arguments):
@@ -215,15 +223,25 @@ def test_canvas_wire_catalog_preserves_supported_fields_without_provider_discove
     monkeypatch.setattr(mcp_host, "_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
     schema = next(tool.input_schema for tool in tools if tool.name == 'canvas.upsert_wire')
+    wire_tool = next(tool for tool in tools if tool.name == 'canvas.upsert_wire')
     assert 'main.context' in {tool.name for tool in tools}
     for edge_type in ('flow', 'magentic_option'):
-        jsonschema.validate({'projectId': 'p', 'deckId': 'd', 'op': 'upsert', 'wire': {
+        value = {'op': 'upsert', 'wire': {
             'id': 'wire', 'source': 'a', 'target': 'b', 'edgeType': edge_type,
             'sourceHandle': None, 'targetHandle': 'port', 'enabled': False,
             'label': 'Existing presentation',
-        }}, schema)
+        }}
+        jsonschema.validate(value, schema)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({'projectId': 'p', 'deckId': 'd', **value}, schema)
     assert schema['properties']['wire']['properties']['edgeType']['enum'] == [
         'flow', 'magentic_option',
+    ]
+    assert {'projectId', 'deckId'} <= set(
+        wire_tool.meta['liquidaitySource']['canonicalInputSchema']['properties']
+    )
+    assert wire_tool.meta['liquidaitySource']['serverInjectedArguments'] == [
+        'deckId', 'projectId',
     ]
 
 
@@ -358,6 +376,22 @@ def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
     assert json.loads(forged[0].text) == {
         "ok": False,
         "error": "caller_identity_rejected: projectId",
+    }
+
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "req_source",
+        "mainCardId": "card_main_chat",
+    })
+    external_main = asyncio.run(mcp_host._dispatch_tool("knowgraph.research", {
+        "request": "not a Card-runtime call",
+    }))
+    assert external_main.is_error is True
+    assert json.loads(external_main.content[0].text) == {
+        "ok": False,
+        "error": "authenticated_card_context_required",
     }
     assert len(calls) == 1
 
@@ -1655,10 +1689,12 @@ def test_long_running_provider_tools_use_their_owned_timeouts(monkeypatch):
 
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_repository") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("run_mag_one") == 300.0
+    assert mcp_host._SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS == 540.0
+    assert mcp_host._mcp_tool_timeout_seconds("thinkgraph.reason") == 570.0
+    assert mcp_host._mcp_tool_timeout_seconds("knowgraph.research") == 570.0
     assert mcp_host._mcp_tool_timeout_seconds("engraphis_remember") == 190.0
-    assert mcp_host._mcp_tool_timeout_seconds("engraphis_ingest") == 190.0
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_status") == 30.0
-    assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
+    assert mcp_host._mcp_tool_timeout_seconds("graphiti.search_nodes") == 30.0
 
 
 def test_removed_generic_card_bridge_has_no_route_or_long_running_policy(monkeypatch):
@@ -1780,7 +1816,7 @@ def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():
     }
 
 
-def test_unfamiliar_cbm_tool_without_annotations_is_restricted_not_rejected(
+def test_unfamiliar_cbm_tool_is_not_added_to_the_curated_card_catalog(
     clear_live_cbm_operations,
 ):
     import mcp_host
@@ -1794,17 +1830,9 @@ def test_unfamiliar_cbm_tool_without_annotations_is_restricted_not_rejected(
     )
     namespaced = mcp_host._namespace_provider_tools("cbm", [providerTool])
     mcp_host._register_cbm_catalog(namespaced)
-    bound = mcp_host._bind_operation_access(namespaced[0])
-
-    assert bound.description is None
-    assert bound.input_schema == providerTool.input_schema
-    assert bound.annotations.model_dump(by_alias=True, exclude_none=True) == {
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    }
-    assert bound.meta["liquidaityAccess"] == "write"
+    assert namespaced == []
+    from app.python_models.tool_registry import operation_definition
+    assert operation_definition("cbm.future_provider_tool") is None
 
 
 @pytest.mark.parametrize("name", ["engraphis_recall_context", "engraphis_get_memory"])
@@ -2023,8 +2051,6 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
             )
         ]
         assert by_name["card.create"].input_schema["required"] == [
-            "projectId",
-            "deckId",
             "expectedRevision",
             "templateId",
             "title",
@@ -2035,7 +2061,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
         ]
         assert by_name["card.create"].input_schema["additionalProperties"] is False
         assert set(by_name["card.create"].input_schema["properties"]) == {
-            "projectId", "deckId", "expectedRevision", "templateId", "title",
+            "expectedRevision", "templateId", "title",
             "role", "prompt", "runtime", "model", "tools", "skills",
             "toolsets", "mcpConnectionIds", "subagentType", "subagentModel",
             "openaiRuntime", "position",
@@ -2070,7 +2096,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
             "reasoningEffort", "temperature", "maxTokens",
         }
         assert by_name["card.update_configuration"].input_schema["required"] == [
-            "projectId", "deckId", "cardId", "expectedRevision", "expectedCardRevisionId", "updates",
+            "cardId", "expectedRevision", "expectedCardRevisionId", "updates",
         ]
         assert by_name["card.update_configuration"].input_schema[
             "properties"
@@ -2089,8 +2115,18 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
         assert "worldsignals.package" not in by_name
         assert by_name
         assert len(tools) == len(by_name)
-        from app.python_models.tool_registry import external_mcp_manifest
-        assert set(by_name) == {item["name"] for item in external_mcp_manifest()}
+        for name in ("card.create", "card.update_configuration"):
+            source = by_name[name].meta["liquidaitySource"]
+            assert {"projectId", "deckId"} <= set(
+                source["canonicalInputSchema"]["properties"]
+            )
+            assert source["serverInjectedArguments"] == ["deckId", "projectId"]
+        expected = {
+            item["canonicalId"]
+            for item in mcp_host.static_tool_catalog()
+            if "external-mcp" in item["publications"]
+        }
+        assert set(by_name) == expected
         return {name: tool.model_dump() for name, tool in by_name.items()}
 
     catalog = asyncio.run(check())
@@ -2100,18 +2136,165 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
 def test_only_externally_permitted_operations_are_in_the_mcp_catalog(monkeypatch):
     import asyncio
     import mcp_host
-    from app.python_models.tool_registry import external_mcp_manifest
 
     monkeypatch.setattr(mcp_host, "_cbm_tools", lambda: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(mcp_host, "_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
     names = {tool.name for tool in tools}
-    assert names == {item["name"] for item in external_mcp_manifest()}
+    assert names == {
+        item["canonicalId"]
+        for item in mcp_host.static_tool_catalog()
+        if "external-mcp" in item["publications"]
+    }
     assert "card.run_assistant_agent" not in names
     assert "card.run_agent" not in names
     assert "calculator" not in names
     assert "delegate_task" not in names
     assert len(tools) == len(names)
+
+
+def test_saved_specialist_tools_are_card_runtime_only_write_operations():
+    import mcp_host
+
+    definitions = {
+        item.canonical_id: item
+        for item in mcp_host.application_operation_definitions()
+    }
+    expected_titles = {
+        "thinkgraph.reason": "Reason with ThinkGraph",
+        "knowgraph.research": "Research with KnowGraph",
+    }
+    for name, title in expected_titles.items():
+        definition = definitions[name]
+        assert definition.title == title
+        assert definition.publishers == frozenset({"internal-plugin"})
+        assert definition.access == "write"
+        assert definition.grant_eligible is True
+        assert set(definition.parameters_schema["properties"]) == {
+            "request", "dataAnchors",
+        }
+        assert definition.parameters_schema["required"] == ["request"]
+        assert definition.parameters_schema["properties"]["request"] == {
+            "type": "string", "minLength": 1, "maxLength": 20000,
+        }
+        assert definition.dispatcher_context_arguments == frozenset({
+            "projectId", "deckId", "conversationId", "_sourceCardId", "_sourceRunId",
+        })
+
+    catalog = {
+        item["canonicalId"]: item
+        for item in mcp_host.static_tool_catalog()
+    }
+    for name in expected_titles:
+        assert catalog[name]["publications"] == ["card-runtime"]
+
+
+def test_saved_specialist_dispatch_injects_exact_authenticated_card_scope(monkeypatch):
+    import asyncio
+    import json
+    import mcp_host
+
+    calls = []
+
+    async def bridge(payload):
+        calls.append(payload)
+        return {
+            "ok": True,
+            "status": "completed",
+            "operation": payload["operation"],
+            "targetCardId": "card_thinkgraph",
+            "targetRunId": "req_target",
+            "targetCardRevisionId": "revision-thinkgraph",
+            "result": "grounded result",
+        }
+
+    monkeypatch.setattr(mcp_host, "_saved_specialist_card_bridge", bridge)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "req_source",
+        "mainCardId": "builder",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate",
+        "principalKind": "card-runtime",
+    })
+
+    result = asyncio.run(mcp_host._dispatch_tool("thinkgraph.reason", {
+        "request": "How did this design evolve?",
+        "dataAnchors": [],
+    }))
+
+    assert result.is_error is False
+    assert json.loads(result.content[0].text) == {
+        "ok": True,
+        "status": "completed",
+        "operation": "thinkgraph.reason",
+        "targetCardId": "card_thinkgraph",
+        "targetRunId": "req_target",
+        "targetCardRevisionId": "revision-thinkgraph",
+        "result": "grounded result",
+    }
+    assert calls == [{
+        "operation": "thinkgraph.reason",
+        "request": "How did this design evolve?",
+        "dataAnchors": [],
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "sourceCardId": "builder",
+        "sourceRunId": "req_source",
+    }]
+
+    forged = asyncio.run(mcp_host._dispatch_tool("thinkgraph.reason", {
+        "request": "forged",
+        "projectId": "other-project",
+    }))
+    assert json.loads(forged[0].text) == {
+        "ok": False,
+        "error": "caller_identity_rejected: projectId",
+    }
+
+
+def test_saved_specialist_bridge_cancellation_closes_async_http(monkeypatch):
+    import asyncio
+    import httpx2
+    import mcp_host
+
+    entered = asyncio.Event()
+    closed = []
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            closed.append(True)
+
+        async def post(self, *_args, **_kwargs):
+            entered.set()
+            await asyncio.Future()
+
+    monkeypatch.setattr(httpx2, "AsyncClient", Client)
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", "s" * 32)
+
+    async def scenario():
+        task = asyncio.create_task(mcp_host._saved_specialist_card_bridge({
+            "operation": "thinkgraph.reason",
+        }))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        raise AssertionError("specialist bridge ignored cancellation")
+
+    asyncio.run(scenario())
+    assert closed == [True]
 
 
 def test_stale_external_catalog_cannot_invoke_known_internal_only_operation(
@@ -2165,9 +2348,11 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
     )
 
     declarations = operation_definitions()
-    from app.python_models.tool_registry import external_mcp_manifest
-    from app.python_models.engraphis import READ_TOOLS, WRITE_TOOLS
-    base_expected_names = {item["name"] for item in external_mcp_manifest()}
+    base_expected_names = {
+        item["canonicalId"]
+        for item in mcp_host.static_tool_catalog()
+        if "external-mcp" in item["publications"]
+    }
     expected_names = set(base_expected_names)
 
     def provider_tool(
@@ -2220,10 +2405,7 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
         provider_tool("cbm.search_graph", "search_graph", read_only=True),
         provider_tool("cbm.unfamiliar_current_tool", "unfamiliar_current_tool", read_only=None),
     ]
-    expected_names.update({
-        "cbm.search_graph",
-        "cbm.unfamiliar_current_tool",
-    })
+    expected_names.add("cbm.search_graph")
     for canonical_name in (
         "graphiti.add_memory",
         "graphiti.clear_graph",
@@ -2238,7 +2420,8 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
             read_only=policy["access"] == "read",
             annotations_override=policy["annotations"],
         ))
-        expected_names.add(canonical_name)
+        if canonical_name in {"graphiti.add_memory", "graphiti.search_nodes"}:
+            expected_names.add(canonical_name)
 
     async def cbm_tools():
         return by_namespace["cbm"]
@@ -2263,9 +2446,11 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
     monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: pytest.fail("catalog consulted an allowlist"))
     cbm_expected_names = base_expected_names | {
         f"cbm.{tool.name}" for tool in by_namespace["cbm"]
+        if tool.name in mcp_host._CARD_CATALOG_PROVIDER_TOOL_NAMES["cbm"]
     }
     graphiti_expected_names = base_expected_names | {
         f"graphiti.{tool.name}" for tool in by_namespace["graphiti"]
+        if tool.name in mcp_host._CARD_CATALOG_PROVIDER_TOOL_NAMES["graphiti"]
     }
     for transport in ("streamable-http", "stdio"):
         monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", transport)
@@ -2300,7 +2485,10 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
         }]
     for namespace, fixtures in by_namespace.items():
         for fixture in fixtures:
-            tool = canonical_by_name[f"{namespace}.{fixture.name}"]
+            canonical_name = f"{namespace}.{fixture.name}"
+            if canonical_name not in canonical_by_name:
+                continue
+            tool = canonical_by_name[canonical_name]
             assert tool.title == fixture.title
             assert tool.description == fixture.description
             assert tool.output_schema == fixture.output_schema
@@ -2310,27 +2498,21 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
             assert tool.annotations.model_dump(by_alias=True, exclude_none=True) == expected_annotations
             assert tool.meta["canonicalFixture"] == fixture.meta["canonicalFixture"]
             assert tool.input_schema["properties"]["probe"] == {"type": "string"}
-    assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
+    assert "web_search" not in canonical_by_name
     assert canonical_by_name["cbm.search_graph"].meta["liquidaityAccess"] == "read"
-    assert canonical_by_name["cbm.unfamiliar_current_tool"].meta[
-        "liquidaityAccess"
-    ] == "write"
-    assert canonical_by_name["cbm.unfamiliar_current_tool"].description == (
-        "Canonical description for cbm.unfamiliar_current_tool."
-    )
-    assert canonical_by_name["cbm.unfamiliar_current_tool"].input_schema[
-        "properties"
-    ]["probe"] == {"type": "string"}
+    assert "cbm.unfamiliar_current_tool" not in canonical_by_name
+    assert "graphiti.clear_graph" not in canonical_by_name
+    assert "graphiti.get_status" not in canonical_by_name
     assert "questionEvidence" not in canonical_by_name[
         "graphiti.add_memory"
     ].input_schema["properties"]
     assert {
         "cbm.search_graph",
-        "cbm.unfamiliar_current_tool",
         "engraphis_recall_context",
         "engraphis_get_memory",
         "engraphis_remember",
-        "graphiti.clear_graph",
+        "graphiti.add_memory",
+        "graphiti.search_nodes",
     }.issubset({tool.name for tool in canonical})
 
 
@@ -3428,24 +3610,25 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                         mode=mode,
                         read_timeout_seconds=60,
                     ) as session:
-                            listed_tools = (
-                                await session.list_tools(cache_mode="refresh")
-                            ).tools
-                            actual = sorted(tool.name for tool in listed_tools)
-                            catalog_identity = mcp_host._catalog_identity(listed_tools)
-                            cbm_result = await session.call_tool("cbm.search_graph", {
-                                "project": mcp_host._CBM_PROJECT,
-                                "query": "MCP session lifecycle",
-                                "limit": 1,
-                                "format": "json",
-                            })
-                            assert cbm_result.is_error is not True
-                            cbm_payload = json.loads(cbm_result.content[0].text)
-                            visible_context = None
-                            if inspect_main:
-                                result = await session.call_tool("main.context", {})
-                                visible_context = json.loads(result.content[0].text)["context"]
-                                invalid = await session.call_tool("not_a_real_tool", {})
+                        listed_tools = (
+                            await session.list_tools(cache_mode="refresh")
+                        ).tools
+                        actual = sorted(tool.name for tool in listed_tools)
+                        catalog_identity = mcp_host._catalog_identity(listed_tools)
+                        cbm_result = await session.call_tool("cbm.search_graph", {
+                            "project": mcp_host._CBM_PROJECT,
+                            "query": "MCP session lifecycle",
+                            "limit": 1,
+                            "format": "json",
+                        })
+                        assert cbm_result.is_error is not True
+                        cbm_payload = json.loads(cbm_result.content[0].text)
+                        visible_context = None
+                        if inspect_main:
+                            result = await session.call_tool("main.context", {})
+                            visible_context = json.loads(result.content[0].text)["context"]
+                            invalid = await session.call_tool("not_a_real_tool", {})
+                        protocol_version = session.protocol_version
                 assert response_session_ids
                 assert all(value is None for value in response_session_ids)
                 assert isinstance(cbm_payload, dict)
@@ -3461,7 +3644,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     visible_context,
                     catalog_identity,
                     id(mcp_host._CBM_CLIENT),
-                    session.protocol_version,
+                    protocol_version,
                 )
 
             # Close and recreate the optional external client around two distinct
@@ -3489,13 +3672,20 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 "canvas.inspect",
                 "agentgraph.inspect",
                 "cbm.search_graph",
-                "graphiti.get_status",
+                "graphiti.search_nodes",
                 "engraphis_recall_context",
                 "write_mag_one_instructions",
             }.issubset(first_catalog)
-            assert len([name for name in first_catalog if name.startswith("engraphis_")]) == 9
-            assert "engraphis_discover_actions" in first_catalog
-            assert "engraphis_stats" not in first_catalog
+            assert {
+                name for name in first_catalog if name.startswith("engraphis_")
+            } == {
+                "engraphis_recall_context",
+                "engraphis_get_memory",
+                "engraphis_remember",
+                "engraphis_discover_actions",
+                "engraphis_execute_read",
+                "engraphis_execute_action",
+            }
             assert "cbm.search_graph" in card_one[0]
             assert not any(name.startswith("graphiti.") for name in card_one[0])
             assert not any(name.startswith("liquidaity.") for name in first_catalog)
@@ -3761,7 +3951,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     assert "projectId" not in by_name["engraphis_remember"].input_schema["properties"]
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
-    assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
+    assert "cbm.search_graph" in by_name
+    assert "cbm.index_status" not in by_name
     assert by_name["cbm.search_graph"].meta["liquidaitySource"] == {
         "sourceId": "cbm",
         "namespace": "cbm",
@@ -3777,11 +3968,12 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         "dispatcherOwner": "app.mcp_host._call_cbm",
         "authenticatedProjection": True,
     }
-    assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
+    assert "graphiti.search_nodes" in by_name
+    assert "graphiti.get_status" not in by_name
     assert "run_mag_one" in by_name
     assert {scheme["scopes"][0] for scheme in by_name["engraphis_recall_context"].model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]} == {"liquidaity.main"}
-    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["graphiti.search_nodes"].model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Provider search description."
     assert by_name["cbm.search_graph"].input_schema == cbm_tools[0].input_schema
     assert by_name["cbm.search_graph"].annotations.model_dump(by_alias=True, exclude_none=True) == {
@@ -3806,7 +3998,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         "graphiti.search_nodes",
     }.issubset(main_names)
     assert {
-        "engraphis_recall_context", "graphiti.get_status",
+        "engraphis_recall_context", "graphiti.search_nodes",
         "card.create", "card.update_configuration", "canvas.upsert_wire",
     }.issubset(main_names)
     active_scopes[:] = ["main"]
@@ -3935,9 +4127,16 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
         annotations={"readOnlyHint": True},
     )]
     graphiti_tools = [mcp_host.Tool(
-        name="get_status",
-        description="Graphiti status.",
-        inputSchema={"type": "object", "properties": {}},
+        name="search_nodes",
+        description="Graphiti node search.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "group_ids": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["query"],
+        },
     )]
 
     monkeypatch.setattr(mcp_host, "get_access_token", access_token)
@@ -3956,7 +4155,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
     asyncio.run(mcp_host._initialize_catalog_once())
     frozen = list(mcp_host._CATALOG_TOOLS or ())
     frozen_names = {tool.name for tool in frozen}
-    assert {"cbm.search_graph", "graphiti.get_status"}.issubset(frozen_names)
+    assert {"cbm.search_graph", "graphiti.search_nodes"}.issubset(frozen_names)
     canonical = asyncio.run(mcp_host.list_tools())
     canonical_names = {tool.name for tool in canonical}
     assert canonical
@@ -3969,7 +4168,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
     assert len(authenticated) == len(frozen)
     assert {tool.name for tool in authenticated} == frozen_names
     assert canonical_names < frozen_names
-    assert {"cbm.search_graph", "graphiti.get_status"}.issubset(
+    assert {"cbm.search_graph", "graphiti.search_nodes"}.issubset(
         {tool.name for tool in authenticated}
     )
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))

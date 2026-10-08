@@ -345,9 +345,20 @@ def test_complete_subject_directory_keeps_all_37_plus_11_headers_without_truncat
         read_duration_ms=12.3456,
     )
 
+    assert directory["schemaVersion"] == "graph-subject-directory"
     assert directory["complete"] is True
     assert directory["counts"] == {"engraphis": 37, "graphiti": 11, "total": 48}
+    assert directory["revisions"] == {
+        "engraphis": "think-r1", "graphiti": "know-r1",
+    }
     assert len(directory["subjects"]) == 48
+    assert all(
+        set(subject) in (
+            {"engraphisEntityId", "canonicalName", "entityKind"},
+            {"graphitiEntityId", "canonicalName", "entityKind"},
+        )
+        for subject in directory["subjects"]
+    )
     assert directory["bytes"] > 0
     assert directory["estimatedTokens"] == (directory["bytes"] + 3) // 4
     assert directory["bytes"] < data_anchor._GRAPH_SEED_LIMIT
@@ -386,6 +397,33 @@ def test_subject_directory_rejects_duplicate_authority_provider_identity() -> No
             "project-1",
             {"complete": True, "count": 2, "revision": "think-r1",
              "subjects": [duplicate, dict(duplicate)]},
+            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+        )
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {
+            "engraphisEntityId": "think-001",
+            "graphitiEntityId": "know-001",
+            "canonicalName": "Dual identity",
+            "entityKind": "person_or_concept",
+        },
+        {
+            "canonicalName": "Missing identity",
+            "entityKind": "person_or_concept",
+        },
+    ],
+)
+def test_subject_directory_rejects_dual_or_missing_provider_id(
+    malformed: dict[str, str],
+) -> None:
+    with pytest.raises(DataAnchorError, match="subject_invalid"):
+        assemble_canonical_subject_directory(
+            "project-1",
+            {"complete": True, "count": 1, "revision": "think-r1",
+             "subjects": [malformed]},
             {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
         )
 

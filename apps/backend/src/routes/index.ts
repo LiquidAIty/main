@@ -13,7 +13,7 @@ import config from './config.routes';
 import tradingRoutes from './trading.routes';
 import worldviewRoutes, { worldviewInternalRoutes } from './worldview.routes';
 import graphRoutes from './graph.routes';
-import mainSessionRoutes from './mainSession.routes';
+import mainSessionRoutes, { mainSessionInternalRoutes } from './mainSession.routes';
 import agentTerminalRoutes from './agentTerminal.routes';
 import externalMainRoutes from './externalMain.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
@@ -27,6 +27,7 @@ router.use('/health', health);
 // The official Python MCP host calls these process-secret endpoints. Mount the
 // bridge before browser auth so it cannot be converted into a local-user session.
 router.use('/worldview', worldviewInternalRoutes);
+router.use('/main/session', mainSessionInternalRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor);
 router.use('/main/session', authMiddleware, mainSessionRoutes);

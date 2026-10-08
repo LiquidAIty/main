@@ -51,6 +51,74 @@ type SubjectRecord = CanonicalSubjectFocusMember & {
   node: GraphProjectionNode;
 };
 
+export function readCanonicalSubjectProviderPointer(
+  subject: unknown,
+): { authority: CanonicalSubjectAuthority; entityId: string } | null {
+  if (!subject || typeof subject !== 'object' || Array.isArray(subject)) return null;
+  const record = subject as Record<string, unknown>;
+  const hasEngraphisId = Object.prototype.hasOwnProperty.call(record, 'engraphisEntityId');
+  const hasGraphitiId = Object.prototype.hasOwnProperty.call(record, 'graphitiEntityId');
+  if (hasEngraphisId === hasGraphitiId) return null;
+  const idField = hasEngraphisId ? 'engraphisEntityId' : 'graphitiEntityId';
+  const expectedFields = new Set([idField, 'canonicalName', 'entityKind']);
+  if (Object.keys(record).length !== expectedFields.size
+    || Object.keys(record).some(field => !expectedFields.has(field))) return null;
+  const entityId = record[idField];
+  if (typeof entityId !== 'string' || !entityId.trim()
+    || typeof record.canonicalName !== 'string' || !record.canonicalName.trim()
+    || typeof record.entityKind !== 'string' || !record.entityKind.trim()) return null;
+  return {
+    authority: hasEngraphisId ? 'thinkgraph' : 'knowgraph',
+    entityId,
+  };
+}
+
+export function isCanonicalSubjectDirectory(value: unknown): value is CanonicalSubjectDirectory {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const directory = value as Record<string, any>;
+  const counts = directory.counts;
+  const revisions = directory.revisions;
+  if (directory.schemaVersion !== 'graph-subject-directory'
+    || directory.complete !== true
+    || typeof directory.projectId !== 'string' || !directory.projectId
+    || !counts || typeof counts !== 'object' || Array.isArray(counts)
+    || Object.keys(counts).sort().join(':') !== 'engraphis:graphiti:total'
+    || !Number.isSafeInteger(counts.engraphis) || counts.engraphis < 0
+    || !Number.isSafeInteger(counts.graphiti) || counts.graphiti < 0
+    || !Number.isSafeInteger(counts.total) || counts.total < 0
+    || !revisions || typeof revisions !== 'object' || Array.isArray(revisions)
+    || Object.keys(revisions).sort().join(':') !== 'engraphis:graphiti'
+    || typeof revisions.engraphis !== 'string' || !revisions.engraphis
+    || typeof revisions.graphiti !== 'string' || !revisions.graphiti
+    || typeof directory.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(directory.sha256)
+    || !Number.isSafeInteger(directory.bytes) || directory.bytes < 1
+    || !Number.isSafeInteger(directory.estimatedTokens) || directory.estimatedTokens < 1
+    || !Number.isFinite(directory.readDurationMs) || directory.readDurationMs < 0
+    || !Array.isArray(directory.subjects)
+    || counts.total !== directory.subjects.length) return false;
+
+  const seenIds: Record<CanonicalSubjectAuthority, Set<string>> = {
+    thinkgraph: new Set(), knowgraph: new Set(),
+  };
+  const seenNames: Record<CanonicalSubjectAuthority, Set<string>> = {
+    thinkgraph: new Set(), knowgraph: new Set(),
+  };
+  const observed = { thinkgraph: 0, knowgraph: 0 };
+  for (const subject of directory.subjects) {
+    const pointer = readCanonicalSubjectProviderPointer(subject);
+    const record = subject as Record<string, unknown>;
+    if (!pointer
+      || seenIds[pointer.authority].has(pointer.entityId)
+      || seenNames[pointer.authority].has(String(record.canonicalName))) return false;
+    seenIds[pointer.authority].add(pointer.entityId);
+    seenNames[pointer.authority].add(String(record.canonicalName));
+    observed[pointer.authority] += 1;
+  }
+  return observed.thinkgraph === counts.engraphis
+    && observed.knowgraph === counts.graphiti
+    && observed.thinkgraph + observed.knowgraph === counts.total;
+}
+
 const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
 
 function isWordCharacter(value: string | undefined): boolean {
@@ -145,20 +213,9 @@ function validDirectory(
   projections: Record<CanonicalSubjectAuthority, GraphProjectionV1>,
 ): CanonicalSubjectDirectory | null {
   const directory = projections.thinkgraph.canonicalSubjectDirectory;
-  if (!directory
-    || directory.schemaVersion !== 'cross-graph-subject-directory.v1'
-    || directory.complete !== true
-    || !directory.projectId
+  if (!isCanonicalSubjectDirectory(directory)
     || projections.thinkgraph.projectId !== directory.projectId
-    || projections.knowgraph.projectId !== directory.projectId
-    || typeof directory.revisions?.ThinkGraph !== 'string'
-    || !directory.revisions.ThinkGraph
-    || typeof directory.revisions?.KnowGraph !== 'string'
-    || !directory.revisions.KnowGraph
-    || typeof directory.sha256 !== 'string'
-    || !/^[0-9a-f]{64}$/.test(directory.sha256)
-    || !Array.isArray(directory.subjects)
-    || directory.counts?.total !== directory.subjects.length) return null;
+    || projections.knowgraph.projectId !== directory.projectId) return null;
   return directory;
 }
 
@@ -170,27 +227,11 @@ function exactSubjectRecords(
     thinkgraph: new Map(projections.thinkgraph.nodes.map(node => [node.id, node])),
     knowgraph: new Map(projections.knowgraph.nodes.map(node => [node.id, node])),
   };
-  const seenIds: Record<CanonicalSubjectAuthority, Set<string>> = {
-    thinkgraph: new Set(), knowgraph: new Set(),
-  };
-  const seenNames: Record<CanonicalSubjectAuthority, Set<string>> = {
-    thinkgraph: new Set(), knowgraph: new Set(),
-  };
-  const counts = { thinkgraph: 0, knowgraph: 0 };
   const records: SubjectRecord[] = [];
   for (const subject of directory.subjects) {
-    const authority: CanonicalSubjectAuthority | null = subject?.authority === 'ThinkGraph'
-      ? 'thinkgraph' : subject?.authority === 'KnowGraph' ? 'knowgraph' : null;
-    if (!authority
-      || typeof subject.entityId !== 'string' || !subject.entityId
-      || typeof subject.canonicalName !== 'string' || !subject.canonicalName
-      || typeof subject.entityKind !== 'string' || !subject.entityKind
-      || seenIds[authority].has(subject.entityId)
-      || seenNames[authority].has(subject.canonicalName)) return null;
-    seenIds[authority].add(subject.entityId);
-    seenNames[authority].add(subject.canonicalName);
-    counts[authority] += 1;
-    const node = nodesByAuthority[authority].get(subject.entityId);
+    const pointer = readCanonicalSubjectProviderPointer(subject);
+    if (!pointer) return null;
+    const node = nodesByAuthority[pointer.authority].get(pointer.entityId);
     if (!node
       || node.canonicalName !== subject.canonicalName
       || node.label !== subject.canonicalName
@@ -199,16 +240,13 @@ function exactSubjectRecords(
       || node.episodeId !== undefined
       || node.memoryType !== undefined) continue;
     records.push({
-      authority,
-      entityId: subject.entityId,
+      authority: pointer.authority,
+      entityId: pointer.entityId,
       canonicalName: subject.canonicalName,
       entityKind: subject.entityKind,
       node,
     });
   }
-  if (counts.thinkgraph !== directory.counts.ThinkGraph
-    || counts.knowgraph !== directory.counts.KnowGraph
-    || counts.thinkgraph + counts.knowgraph !== directory.counts.total) return null;
   return records;
 }
 
@@ -332,8 +370,8 @@ export function createCanonicalSubjectMatcher(
   return {
     revisionKey: [
       directory.projectId,
-      directory.revisions.ThinkGraph,
-      directory.revisions.KnowGraph,
+      directory.revisions.engraphis,
+      directory.revisions.graphiti,
       directory.sha256,
     ].join(':'),
     segmentMessage: (role, text) => role === 'assistant' && targets.length
@@ -348,13 +386,13 @@ function exactFocusNode(
   request: CanonicalSubjectFocusRequest,
   member: CanonicalSubjectFocusMember,
 ): GraphProjectionNode | null {
-  const authorityName = member.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph';
-  const headers = directory.subjects.filter(subject => (
-    subject.authority === authorityName
-    && subject.entityId === member.entityId
-    && subject.canonicalName === request.canonicalName
-    && subject.entityKind === member.entityKind
-  ));
+  const headers = directory.subjects.filter(subject => {
+    const pointer = readCanonicalSubjectProviderPointer(subject);
+    return pointer?.authority === member.authority
+      && pointer.entityId === member.entityId
+      && subject.canonicalName === request.canonicalName
+      && subject.entityKind === member.entityKind;
+  });
   if (headers.length !== 1) return null;
   const nodes = projection.nodes.filter(node => node.id === member.entityId);
   if (nodes.length !== 1) return null;
@@ -383,7 +421,7 @@ export function resolveCanonicalSubjectFocusVisualId({
   directory?: CanonicalSubjectDirectory | null;
   request: CanonicalSubjectFocusRequest;
 }): string | null {
-  if (!directory
+  if (!isCanonicalSubjectDirectory(directory)
     || request.projectId !== directory.projectId
     || request.directorySha256 !== directory.sha256
     || projection.projectId !== request.projectId

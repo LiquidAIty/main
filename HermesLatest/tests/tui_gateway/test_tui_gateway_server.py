@@ -2365,6 +2365,34 @@ def test_load_enabled_toolsets_folds_project_into_focus_posture(monkeypatch):
     assert server._load_enabled_toolsets("tui") == ["coding", "figma", "project"]
 
 
+@pytest.mark.parametrize(
+    ("cfg", "coding_selection", "expected_exact", "expected_members"),
+    [
+        ({"platform_toolsets": {"cli": []}}, ["coding"], [], set()),
+        ({}, ["coding"], ["coding", "project"], set()),
+        ({"platform_toolsets": {"cli": ["memory"]}}, ["coding"], ["coding", "project"], set()),
+        ({"platform_toolsets": {"cli": ["memory"]}}, None, None, {"memory", "project"}),
+    ],
+)
+def test_load_enabled_toolsets_distinguishes_empty_missing_and_nonempty_profile_pins(
+    monkeypatch, cfg, coding_selection, expected_exact, expected_members
+):
+    monkeypatch.delenv("HERMES_TUI_TOOLSETS", raising=False)
+
+    import agent.coding_context as cc
+    import hermes_cli.config as config_mod
+
+    monkeypatch.setattr(cc, "coding_selection", lambda **_: coding_selection)
+    monkeypatch.setattr(config_mod, "load_config", lambda: cfg)
+
+    result = server._load_enabled_toolsets("tui")
+    if expected_exact is not None:
+        assert result == expected_exact
+    else:
+        assert result is not None
+        assert expected_members <= set(result)
+
+
 def test_load_enabled_toolsets_rejects_disabled_mcp_env(monkeypatch, capsys):
     monkeypatch.setenv("HERMES_TUI_TOOLSETS", "mcp-off")
     monkeypatch.setitem(

@@ -1,43 +1,28 @@
-export type ProviderToolContract = {
-  sourceId: string;
+export type ToolCatalogDefinition = {
+  canonicalId: string;
+  provider: string;
   providerToolName: string;
-  connectionKind: string;
-  publication: 'private-runtime' | 'external-mcp';
+  namespace: string;
+  publications: Array<'card-runtime' | 'external-mcp'>;
+  displayName: string;
+  description: string;
   available: boolean;
   grantEligible: boolean;
-  title?: string;
-  description: string;
+  access: 'read' | 'write';
   inputSchema: Record<string, unknown>;
   canonicalInputSchema: Record<string, unknown>;
   serverInjectedArguments: string[];
   dispatcherContextArguments: string[];
   dispatcherOwner: string;
-  authenticatedProjection: boolean;
+  annotations: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
-  annotations?: Record<string, unknown>;
-  securitySchemes?: Record<string, unknown>[];
-};
-
-export type ToolCatalogReference = {
-  canonicalId: string;
-  kind: 'tool' | 'agent';
-  namespace: string;
-  sourceIds: string[];
-  dispatcherOwner: string;
-  displayName: string;
-  shortDescription: string;
-  availability: 'available' | 'disabled';
-  access: 'read' | 'write';
-  publication: 'private-runtime' | 'external-mcp';
-  grantEligible: boolean;
-  contracts: ProviderToolContract[];
   requiredCallerRuntimeKind?: 'hermes';
   requiredCallerRuntimeMode?: 'main' | 'delegate' | 'magentic_one';
 };
 
 export type ToolCatalogIndex = {
-  references: ToolCatalogReference[];
-  definitionsById: ReadonlyMap<string, ToolCatalogReference>;
+  references: ToolCatalogDefinition[];
+  definitionsById: ReadonlyMap<string, ToolCatalogDefinition>;
 };
 
 export type ToolCatalogSearch = {
@@ -63,24 +48,24 @@ function asText(value: unknown): string {
 /** Index already-normalized live catalog references for lookup only. No metadata is
  * inferred, merged, scored, or classified in TypeScript. */
 export function indexLiveToolCatalog(
-  references: readonly ToolCatalogReference[],
+  definitions: readonly ToolCatalogDefinition[],
 ): ToolCatalogIndex {
-  const definitionsById = new Map<string, ToolCatalogReference>();
-  for (const reference of references) {
-    const canonicalId = asText(reference.canonicalId);
+  const definitionsById = new Map<string, ToolCatalogDefinition>();
+  for (const definition of definitions) {
+    const canonicalId = asText(definition.canonicalId);
     if (!canonicalId) throw new Error('tool_catalog_id_missing');
     if (definitionsById.has(canonicalId)) {
       throw new Error(`tool_catalog_duplicate_id:${canonicalId}`);
     }
-    definitionsById.set(canonicalId, reference);
+    definitionsById.set(canonicalId, definition);
   }
-  return { references: [...references], definitionsById };
+  return { references: [...definitions], definitionsById };
 }
 
 export function resolveToolCatalogDefinitions(
   catalog: ToolCatalogIndex,
   selectedIds: readonly string[],
-): ToolCatalogReference[] {
+): ToolCatalogDefinition[] {
   const seen = new Set<string>();
   return selectedIds.map((rawId) => {
     const id = asText(rawId);
@@ -93,7 +78,7 @@ export function resolveToolCatalogDefinitions(
   });
 }
 
-export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: ToolCatalogSearch) {
+export function searchToolCatalogDefinitions(catalog: ToolCatalogIndex, search: ToolCatalogSearch) {
   const query = asText(search.query).toLowerCase();
   const namespace = asText(search.namespace).toLowerCase();
   const access = search.access;
@@ -109,9 +94,10 @@ export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: T
       reference.canonicalId,
       reference.namespace,
       reference.displayName,
-      reference.shortDescription,
-      ...reference.sourceIds,
-      ...reference.contracts.map((contract) => contract.providerToolName),
+      reference.description,
+      reference.provider,
+      reference.providerToolName,
+      ...reference.publications,
     ].join('\n').toLowerCase();
     return query.split(/\s+/).every((term) => haystack.includes(term));
   });
@@ -137,15 +123,17 @@ export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: T
 
 /** Resolve the exact executable/autocomplete surface from the live catalog and
  * saved Tools-tab policy used by Run materialization. */
-export function resolveScriptToolReferences(
+export function resolveScriptToolDefinitions(
   catalog: ToolCatalogIndex,
   selection: ScriptToolSelection,
-): ToolCatalogReference[] {
+): ToolCatalogDefinition[] {
   const selectedIds = selection.selectedIds.map(asText).filter(Boolean);
   const unresolved = selectedIds.find((id) => !catalog.definitionsById.has(id));
   if (unresolved) throw new Error(`tool_catalog_selected_id_unknown:${unresolved}`);
   return resolveToolCatalogDefinitions(catalog, selectedIds)
     .filter((reference) => (
-      reference.availability === 'available' && reference.grantEligible
+      reference.available
+      && reference.grantEligible
+      && reference.publications.includes('card-runtime')
     ));
 }

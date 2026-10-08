@@ -55,8 +55,7 @@ from app.python_models.magentic_execution import (
 )
 from app.python_models.tool_registry import (
     ToolCatalogError,
-    normalize_live_tool_catalog,
-    tool_manifest,
+    materialize_live_tool_catalog,
 )
 from app.python_models.trading_runtime import (
     TradingRuntimeError,
@@ -402,12 +401,6 @@ def trading_lifecycle_backtest(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.get("/tools/manifest")
-def tools_manifest():
-    """Expose factual live contracts from the private Python tool registry."""
-    return {"tools": tool_manifest()}
-
-
 @app.post("/idd/card-editor/materialize")
 def idd_card_editor_materialize(payload: dict[str, Any]):
     """Materialize current model choices through the one literal IDD."""
@@ -429,11 +422,15 @@ def card_editor_options(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
-@app.post("/tools/catalog/normalize")
-def tools_catalog_normalize(payload: dict[str, Any]):
-    """Normalize current provider contracts without loading Builder IDD data."""
+@app.post("/tools/catalog/definitions")
+def tools_catalog_definitions(payload: dict[str, Any]):
+    """Project code-owned definitions plus current live provider contracts."""
     try:
-        return {"references": normalize_live_tool_catalog(payload.get("tools"))}
+        return {
+            "references": materialize_live_tool_catalog(
+                payload.get("providerTools")
+            )
+        }
     except ToolCatalogError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 

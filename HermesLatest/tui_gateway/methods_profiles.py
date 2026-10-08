@@ -659,14 +659,18 @@ def _clean_names(values) -> set:
 
 def _save_toolset_pin(cfg, enabled, save_config) -> None:
     """Pin ``platform_toolsets.cli``: the key ``_load_enabled_toolsets`` reads and ``hermes tools`` writes.
-    An empty selection clears the pin so the platform default applies again."""
+    An empty selection is an explicit pin to no toolsets; only a missing key requests the platform default."""
     from hermes_cli.tools_config import _save_platform_tools
 
     wanted = _clean_names(enabled)
     if wanted:
         _save_platform_tools(cfg, "cli", wanted)
-    elif isinstance(cfg.get("platform_toolsets"), dict):
-        cfg["platform_toolsets"].pop("cli", None)
+    else:
+        platform_toolsets = cfg.get("platform_toolsets")
+        if not isinstance(platform_toolsets, dict):
+            platform_toolsets = {}
+            cfg["platform_toolsets"] = platform_toolsets
+        platform_toolsets["cli"] = []
     save_config(cfg)
 
 
@@ -722,7 +726,7 @@ def _canonical_bot_roster(profile_dir, values) -> list[str]:
 
 def _configure_cfg_sections(profile_dir, params, applied) -> None:
     """Apply ``disabled_skills`` / ``enabled_toolsets`` / ``enabled_mcp_servers`` (replace
-    semantics; empty toolsets clears the pin). An undefined MCP server is copied from the LAUNCH
+    semantics; empty toolsets pins no toolsets). An undefined MCP server is copied from the LAUNCH
     catalog (unknown names skipped); credentials stay in .env/auth."""
     want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
     launch_mcp = {}

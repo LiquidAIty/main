@@ -94,13 +94,15 @@ describe('agentbuilder authoring flow', () => {
       modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
       skills: ['agent-builder-inspection'],
       toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
-      tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'cbm.search_graph',
-        'cbm.trace_path', 'cbm.get_code_snippet', 'cbm.check_index_coverage', 'cbm.detect_changes',
-        'cbm.search_code', 'cbm.query_graph', 'hermes:tool:memory'],
+      tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'canvas.upsert_wire',
+        'cbm.search_graph', 'cbm.search_code', 'cbm.trace_path', 'cbm.get_code_snippet',
+        'cbm.check_index_coverage', 'engraphis_recall_context', 'graphiti.search_memory_facts',
+        'graphiti.search_nodes', 'graphiti.get_episodes', 'write_mag_one_instructions',
+        'thinkgraph.reason', 'knowgraph.research'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');
     expect(INITIAL_DECK.nodes
-      .filter((node) => node.id !== 'builder')
+      .filter((node) => !['builder', 'card_main_chat'].includes(node.id))
       .every((node) => (node.runtimeOptions?.tools || [])
         .every((tool) => !tool.startsWith('cbm.')))).toBe(true);
     expect(INITIAL_AGENT_TEMPLATES.every((template) => (template.tools || [])

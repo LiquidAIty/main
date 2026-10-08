@@ -625,7 +625,11 @@ describe('AgentManager active builder config', () => {
     fetchMock.mockImplementation(async (input) => {
       if (String(input).startsWith('/api/idd/tools?')) {
         return { ok: true, json: async () => ({ ok: true,
-          references: [{ canonicalId: 'web_search', displayName: 'Web search', access: 'read', availability: 'available' }],
+          references: [{
+            canonicalId: 'web_search', provider: 'python_runtime',
+            providerToolName: 'web_search', displayName: 'Web search',
+            access: 'read', available: true,
+          }],
           selectedKnownReferences: [], unresolvedSelectedIds: ['calculator'], total: 1 }) };
       }
       return fallback(input);
@@ -646,6 +650,70 @@ describe('AgentManager active builder config', () => {
     await leaveEditor();
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
     expect(onSave.mock.calls[0][0].tools).toEqual(['calculator', 'web_search']);
+  });
+
+  it('selects Hermes toolsets through the saved Card configuration and shows profile readback', async () => {
+    const fetchMock = mockEditorFetch();
+    const fallback = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).startsWith('/api/hermes-profile/cards/')) {
+        return { ok: true, json: async () => ({
+          ok: true,
+          profile: {
+            name: 'saved-profile',
+            description: '',
+            soul: 'Saved prompt',
+            model: { provider: 'openai-codex', default: 'removed-model' },
+            skills: [],
+            toolsets: [
+              {
+                name: 'web',
+                label: 'Web',
+                description: 'Search and read web sources.',
+                enabled: true,
+                tool_count: 3,
+              },
+              {
+                name: 'terminal',
+                label: 'Terminal',
+                description: 'Run terminal commands.',
+                enabled: false,
+                tool_count: 2,
+              },
+            ],
+            toolsetsPinned: true,
+            mcpServers: [],
+            learning: { count: 0, summary: [], buckets: [] },
+          },
+          binding: { profile: 'saved-profile', mode: 'delegate' },
+        }) };
+      }
+      return fallback(input, init);
+    });
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      activeTab: 'Tools',
+      cardId: 'card-one',
+      projectId: 'p',
+      deckId: 'd',
+      localConfig: { ...savedConfig, toolsets: ['web'] },
+      onSaveLocalConfig: onSave,
+    }));
+
+    const web = await screen.findByRole<HTMLInputElement>('checkbox', { name: 'Enable Hermes Web' });
+    const terminal = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Enable Hermes Terminal' });
+    expect(web.checked).toBe(true);
+    expect(terminal.checked).toBe(false);
+    expect(screen.getByTestId('hermes-toolsets').textContent).toContain('Web · web');
+    expect(screen.getByTestId('hermes-toolsets').textContent).toContain('3 tools · Profile readback: enabled');
+    expect(screen.getByTestId('hermes-toolsets').textContent).toContain('2 tools · Profile readback: disabled');
+
+    fireEvent.click(terminal);
+    await leaveEditor();
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][0].toolsets).toEqual(['web', 'terminal']);
+    expect(fetchMock.mock.calls.some(([, request]) => request?.method === 'POST')).toBe(false);
   });
 
   it.each([false, true])('restores prompt sections and preserves untouched fields (edit: %s)', async (edit) => {
@@ -937,7 +1005,7 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).not.toContain("['Invocation', 'Prompt', 'Knowledge', 'Capabilities', 'Runtime']");
   });
 
-  it('keeps saved grants editable and profile state read-only without a second tool surface', () => {
+  it('keeps saved grants editable and profile state read-only on the existing Tools surface', () => {
     const source = readFileSync(AGENT_MANAGER_SOURCE, 'utf8');
     const profileClient = readFileSync(HERMES_CARD_PROFILE_SOURCE, 'utf8');
 
@@ -946,7 +1014,7 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('data-testid="main-honcho-status"');
     expect(source).toContain('data-testid="effective-hermes-runtime"');
     expect(source).toContain('aria-label="Card skill grants"');
-    expect(source).not.toContain('aria-label="Hermes capabilities"');
+    expect(source).toContain('aria-label="Hermes capabilities"');
     expect(source).not.toContain('One Hermes toolset ID per line');
     expect(source).not.toContain('Effective Hermes toolsets');
     expect(source.indexOf("renderSectionBody('Script')")).toBeLessThan(
@@ -986,7 +1054,7 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('/api/config/models');
     expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Card skill grants');
-    expect(source).not.toContain('aria-label="Hermes capabilities"');
+    expect(source).toContain('aria-label="Hermes capabilities"');
     expect(source).not.toContain('One Hermes toolset ID per line');
     expect(source).not.toContain('Effective Hermes toolsets');
     expect(source).toContain('External MCP connection references');
@@ -1090,10 +1158,11 @@ describe('AgentManager active builder config', () => {
   it('projects selected dictionary entries separately from a bounded 10k-entry page', () => {
     const allReferences = Array.from({ length: 10_000 }, (_, index) => ({
       canonicalId: `catalog.tool.${index}`,
+      provider: 'catalog',
+      providerToolName: `tool.${index}`,
       namespace: 'catalog',
       displayName: `Tool ${index}`,
-      sourceIds: ['catalog'],
-      availability: 'available' as const,
+      available: true,
       access: 'write' as const,
     }));
     const page = allReferences.slice(4_000, 4_100);
@@ -1115,8 +1184,9 @@ describe('AgentManager active builder config', () => {
       buildInputDictionarySelectedRows(
         [{
           canonicalId: 'retired.tool',
-          sourceIds: ['main_mcp'],
-          availability: 'disabled',
+          provider: 'main_mcp',
+          providerToolName: 'retired.tool',
+          available: false,
           access: 'write',
         }],
         [],
@@ -1134,10 +1204,10 @@ describe('AgentManager active builder config', () => {
       buildInputDictionarySelectedRows(
         [{
           canonicalId: 'card.update_configuration',
-          kind: 'tool',
-          sourceIds: ['python_runtime'],
+          provider: 'python_runtime',
+          providerToolName: 'card.update_configuration',
           displayName: 'Update Card configuration',
-          availability: 'available',
+          available: true,
           access: 'write',
         }],
         [],
@@ -1145,8 +1215,6 @@ describe('AgentManager active builder config', () => {
     ).toEqual([
       expect.objectContaining({
         name: 'card.update_configuration',
-        kind: 'tool',
-        sourceIds: ['python_runtime'],
         availability: 'available',
       }),
     ]);

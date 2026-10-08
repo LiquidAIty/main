@@ -3,6 +3,7 @@
 Invariant: whatever ``_save_toolset_pin`` writes, ``_load_enabled_toolsets`` (via ``_get_platform_tools(cfg, "cli")``)
 reads back as the enabled set, and ``_describe_toolsets`` reports the same pin. Before the fix the writer used a
 ``tools.enabled_toolsets`` key that nothing reads, so a pin of ``[web]`` still produced the full default set.
+An explicit empty pin means no toolsets; only an absent pin means the platform default.
 """
 
 import pytest
@@ -37,12 +38,22 @@ def test_toolset_pin_round_trips_a_then_b_then_a(second):
     assert pinned == {"web"}
 
 
-def test_empty_pin_clears_the_pin_and_falls_back_to_the_platform_default():
+def test_empty_pin_round_trips_as_an_explicit_empty_selection():
     from hermes_cli.tools_config import _get_platform_tools
 
     cfg: dict = {}
-    _pin_and_resolve(cfg, ["web"])
     _save_toolset_pin(cfg, [], save_config=lambda _c: None)
+    toolsets, pinned = _describe_toolsets(cfg)
+    assert cfg["platform_toolsets"]["cli"] == []
+    assert pinned == set()
+    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)) == set()
+    assert not any(row["enabled"] for row in toolsets)
+
+
+def test_missing_pin_still_uses_the_platform_default():
+    from hermes_cli.tools_config import _get_platform_tools
+
+    cfg: dict = {}
     _toolsets, pinned = _describe_toolsets(cfg)
     assert pinned is None
-    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)) != {"web"}
+    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False))

@@ -16,12 +16,10 @@ type CardScript = NonNullable<AgentCardRuntimeOptions['script']>;
 type ScriptToolReference = {
   canonicalId: string;
   access: 'read' | 'write';
-  availability: 'available' | 'disabled';
-  shortDescription?: string;
-  contracts: Array<{
-    inputSchema: Record<string, unknown>;
-    outputSchema?: Record<string, unknown>;
-  }>;
+  available: boolean;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 };
 
 type CardScriptHeader = {
@@ -392,10 +390,9 @@ function releaseHeaderModel(headerHash: string | null): void {
 }
 
 function schemaText(reference: ScriptToolReference): string {
-  const contract = reference.contracts[0];
   return JSON.stringify({
-    input: contract?.inputSchema || { type: 'object', properties: {} },
-    output: contract?.outputSchema || null,
+    input: reference.inputSchema || { type: 'object', properties: {} },
+    output: reference.outputSchema || null,
   }, null, 2);
 }
 
@@ -641,7 +638,7 @@ export function CardScriptEditor({
               kind: monaco.languages.CompletionItemKind.Function,
               detail: `${reference.access} · selected Card tool`,
               documentation: {
-                value: `**${reference.canonicalId}**\n\n${reference.shortDescription || ''}\n\n\`\`\`json\n${schemaText(reference)}\n\`\`\``,
+                value: `**${reference.canonicalId}**\n\n${reference.description || ''}\n\n\`\`\`json\n${schemaText(reference)}\n\`\`\``,
               },
               insertText: handleMatch ? reference.canonicalId : `tools.call("${reference.canonicalId}", **\${1:{}})`,
               insertTextRules: handleMatch
@@ -744,7 +741,7 @@ export function CardScriptEditor({
               activeSignature: 0,
               signatures: [{
                 label: `tools.call("${reference.canonicalId}", arguments: dict)`,
-                documentation: `${reference.access} · ${reference.shortDescription || 'selected Card tool'}\n\n${schemaText(reference)}`,
+                documentation: `${reference.access} · ${reference.description || 'selected Card tool'}\n\n${schemaText(reference)}`,
                 parameters: [
                   { label: `"${reference.canonicalId}"`, documentation: 'Canonical selected tool ID.' },
                   { label: 'arguments: dict', documentation: 'Arguments validated against the live tool schema.' },

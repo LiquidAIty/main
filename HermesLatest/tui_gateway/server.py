@@ -1909,11 +1909,24 @@ def _resolve_explicit_toolsets(explicit: list[str], validate_toolset) -> list[st
 def _load_enabled_toolsets(platform: str | None = None) -> list[str] | None:
     """The agent's toolsets for this session (None = all): an explicit HERMES_TUI_TOOLSETS pin; else the
     coding posture (coding_context collapses to coding toolset + enabled MCP servers in a code workspace);
-    else the configured CLI toolsets. Client-surface toolsets fold in here — only this surface can answer them."""
+    else the configured CLI toolsets. A configured empty CLI list means none, while a missing key retains
+    Hermes's defaults. Client-surface toolsets fold in here — only this surface can answer them."""
     session_platform = platform or _resolve_session_platform()
     explicit = [item.strip() for item in os.environ.get("HERMES_TUI_TOOLSETS", "").split(",") if item.strip()]
     fallback_notice = None
+    cfg = None
     if not explicit:
+        # Card profile materialization uses an explicit empty list to deny every ordinary toolset. It must
+        # win before coding/surface posture can broaden the selection; a missing key keeps the stock path.
+        with contextlib.suppress(Exception):
+            from hermes_cli.config import load_config
+            from hermes_cli.tools_config import _coerce_platform_toolsets_value
+            cfg = load_config() or {}
+            platform_toolsets = cfg.get("platform_toolsets")
+            if isinstance(platform_toolsets, dict) and "cli" in platform_toolsets:
+                pinned = _coerce_platform_toolsets_value(platform_toolsets["cli"], "cli")
+                if isinstance(pinned, list) and not pinned:
+                    return []
         with contextlib.suppress(Exception):
             from agent.coding_context import coding_selection
             selection = coding_selection(platform=session_platform)
@@ -1931,8 +1944,15 @@ def _load_enabled_toolsets(platform: str | None = None) -> list[str] | None:
         fallback_notice = "[tui] no valid HERMES_TUI_TOOLSETS entries; using configured CLI toolsets"
     try:
         from hermes_cli.config import load_config
-        from hermes_cli.tools_config import _get_platform_tools
-        cfg = load_config()
+        from hermes_cli.tools_config import _coerce_platform_toolsets_value, _get_platform_tools
+        cfg = cfg if cfg is not None else (load_config() or {})
+        platform_toolsets = cfg.get("platform_toolsets")
+        if isinstance(platform_toolsets, dict) and "cli" in platform_toolsets:
+            pinned = _coerce_platform_toolsets_value(platform_toolsets["cli"], "cli")
+            if isinstance(pinned, list) and not pinned:
+                if fallback_notice is not None:
+                    _tui_notice(fallback_notice)
+                return []
         # include_default_mcp_servers=True is the runtime variant (the agent must be able to call
         # default MCP servers); the config-editing variant would silently drop MCP tools from the TUI.
         # Passing ``False`` here is the config-editing variant — used when we need to persist a toolset list

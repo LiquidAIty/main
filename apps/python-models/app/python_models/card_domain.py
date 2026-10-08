@@ -23,8 +23,8 @@ from psycopg.rows import dict_row
 
 from app.python_models.tool_registry import (
     ToolCatalogError,
-    normalize_live_tool_catalog,
-    normalize_live_tool_catalog_with_failures,
+    materialize_live_tool_catalog,
+    materialize_live_tool_catalog_with_failures,
     tool_access,
 )
 from pydantic import TypeAdapter, ValidationError
@@ -70,7 +70,6 @@ from app.python_models.project_worldview import (
     ProjectWorldviewError,
     resolve_project_worldview,
 )
-from app.python_models.tool_registry import tool_manifest
 
 
 class CardDomainError(ValueError):
@@ -447,24 +446,16 @@ def _validated_card_jev_context(value: Any) -> dict[str, str]:
 def _tool_jev_candidate(definition: dict[str, Any]) -> dict[str, Any]:
     """Expose the exact authorized tool contract, not only its display label."""
 
-    contracts = [
-        {
-            key: contract.get(key)
-            for key in (
-                "sourceId", "connectionKind", "providerToolName", "description",
-                "inputSchema", "effects",
-            )
-            if contract.get(key) is not None
-        }
-        for contract in definition.get("contracts", [])
-        if isinstance(contract, dict) and contract.get("available") is not False
-    ]
     return {
         "canonical_id": str(definition.get("canonicalId") or ""),
         "display_name": str(definition.get("displayName") or ""),
-        "description": str(definition.get("shortDescription") or ""),
-        "effects": definition.get("effects"),
-        "contracts": contracts,
+        "description": str(definition.get("description") or ""),
+        "provider": str(definition.get("provider") or ""),
+        "provider_tool_name": str(definition.get("providerToolName") or ""),
+        "publications": list(definition.get("publications") or []),
+        "access": definition.get("access"),
+        "annotations": definition.get("annotations"),
+        "input_schema": definition.get("inputSchema"),
     }
 
 
@@ -3010,10 +3001,9 @@ def _prepare_invocation(
         )
     ):
         raise CardDomainError("discovered_tool_failures_invalid")
-    catalog, normalized_failures = normalize_live_tool_catalog_with_failures([
-        *tool_manifest(),
-        *discovered_tools,
-    ])
+    catalog, normalized_failures = materialize_live_tool_catalog_with_failures(
+        discovered_tools
+    )
     tool_catalog_failures = {
         **{str(name): str(reason) for name, reason in raw_discovered_failures.items()},
         **normalized_failures,
@@ -3069,11 +3059,9 @@ def _prepare_invocation(
     selected_mcp_connections = set(call_config["mcpConnectionIds"])
     connection_granted_tools = [
         item["canonicalId"] for item in catalog
-        if any(
-            isinstance(contract, dict)
-            and contract.get("connectionKind") == "external-mcp"
-            and str(contract.get("sourceId") or "") in selected_mcp_connections
-            for contract in item.get("contracts", [])
+        if (
+            "external-mcp" in item.get("publications", [])
+            and str(item.get("provider") or "") in selected_mcp_connections
         )
     ]
     # An individual saved tool is its own grant. A saved MCP connection is the
@@ -3095,11 +3083,7 @@ def _prepare_invocation(
                 )
                 else "capability_unavailable"
             )
-        available_contracts = [
-            contract for contract in definition.get("contracts", [])
-            if isinstance(contract, dict) and contract.get("available") is not False
-        ]
-        if definition.get("availability") != "available":
+        if definition.get("available") is not True:
             return (
                 "catalog_unavailable"
                 if catalog_state == "unavailable"
@@ -3107,17 +3091,9 @@ def _prepare_invocation(
             )
         if runtime.get("kind") != "hermes":
             return None
-        if any(
-            contract.get("sourceId") == "python_runtime"
-            and contract.get("connectionKind") == "private-runtime"
-            for contract in available_contracts
-        ):
-            return None
-        external_contracts = [
-            contract for contract in available_contracts
-            if contract.get("connectionKind") == "external-mcp"
-        ]
-        if external_contracts:
+        if set(definition.get("publications") or []) & {
+            "card-runtime", "external-mcp",
+        }:
             return None
         return "hermes_capability_owner_unsupported"
 
@@ -3728,7 +3704,7 @@ def describe_magentic_agents(
     if not unavailable_families <= _OPTIONAL_TOOL_CATALOG_FAMILIES:
         raise CardDomainError("unavailable_tool_catalog_family_invalid")
     known_tools = {
-        item["canonicalId"] for item in normalize_live_tool_catalog(tool_manifest())
+        item["canonicalId"] for item in materialize_live_tool_catalog([])
     } | discovered_names
     for edge in loaded["deck"]["edges"]:
         if (edge["edgeType"] != "magentic_option" or edge.get("enabled") is False
@@ -5450,25 +5426,15 @@ def _request_fulfillment_model_input(
         canonical_id = str(raw.get("canonicalId") or "")
         if canonical_id not in exposed:
             continue
-        contracts = []
-        for value in raw.get("contracts") or []:
-            if not isinstance(value, dict):
-                continue
-            contracts.append({
-                key: value.get(key)
-                for key in (
-                    "sourceId", "connectionKind", "providerToolName", "description",
-                    "inputSchema", "effects",
-                )
-                if value.get(key) is not None
-            })
         tool_contracts.append({
             key: raw.get(key)
             for key in (
-                "canonicalId", "displayName", "shortDescription", "effects",
+                "canonicalId", "displayName", "description", "provider",
+                "providerToolName", "publications", "access", "annotations",
+                "inputSchema",
             )
             if raw.get(key) is not None
-        } | {"contracts": contracts})
+        })
     return {
         "saved_instructions": idf.stableSavedCardContext.instructions,
         "output_requirements": idf.stableSavedCardContext.outputRequirements,
