@@ -1,0 +1,929 @@
+"""Core interface contracts and record types.
+
+Define interfaces *before* implementations. Concrete backends — vector index,
+embedder, reranker, graph store, LLM — implement these Protocols, so swapping
+``sqlite-vec`` for Qdrant, a local embedder for an API, or a Python scorer for a
+Rust one is a configuration change rather than a refactor.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Iterable, Literal, Optional, Protocol, runtime_checkable
+
+import numpy as np
+
+
+# ── Enums ────────────────────────────────────────────────────────────────────
+
+class MemoryType(str, Enum):
+    """The four memory types, each with a distinct lifecycle (§5.2)."""
+    WORKING = "working"        # transient state for the current step/session
+    EPISODIC = "episodic"      # what happened — events, decisions, failures
+    SEMANTIC = "semantic"      # de-contextualized facts, preferences, conventions
+    PROCEDURAL = "procedural"  # reusable skills / playbooks / recipes
+
+
+class Scope(str, Enum):
+    """Visibility/ownership level, narrowest → broadest (§5.1)."""
+    SESSION = "session"
+    REPO = "repo"
+    WORKSPACE = "workspace"
+    USER = "user"
+
+
+class GraphLayer(str, Enum):
+    """Logical graph overlays kept inside the same local SQLite database."""
+    TEMPORAL = "temporal"
+    ENTITY = "entity"
+    CAUSAL = "causal"
+    SEMANTIC = "semantic"
+
+
+def _finite_timestamp(value: Optional[float], name: str) -> Optional[float]:
+    """Normalize public temporal anchors and reject SQLite's non-finite values."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite timestamp")
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a finite timestamp") from exc
+    if not math.isfinite(timestamp):
+        raise ValueError(f"{name} must be a finite timestamp")
+    return timestamp
+
+
+def _finite_number(value: float, name: str) -> float:
+    """Normalize persisted numeric values without admitting booleans or infinities."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number")
+    return number
+
+_MODIFIED_HLC_RE = re.compile(
+    r"^(?P<physical>[0-9A-F]{12}):(?P<logical>[0-9A-F]{8}):"
+    r"(?P<node>dev_[0-9A-HJKMNPQRSTVWXYZ]{26})$"
+)
+MAX_HLC_PHYSICAL_MS = (1 << 48) - 1
+MAX_HLC_LOGICAL = (1 << 32) - 1
+
+
+def parse_modified_hlc(value: str, *, allow_empty: bool = False) -> tuple[int, int, str]:
+    """Parse the canonical descriptive-state HLC.
+
+    The fixed-width hexadecimal prefix makes canonical strings lexicographically
+    sortable.  An empty value is reserved for rows created before the HLC schema.
+    """
+    if allow_empty and value == "":
+        return (0, 0, "")
+    if not isinstance(value, str):
+        raise ValueError("modified_hlc must be a canonical HLC string")
+    match = _MODIFIED_HLC_RE.fullmatch(value)
+    if match is None:
+        raise ValueError("modified_hlc must be a canonical HLC string")
+    return (
+        int(match.group("physical"), 16),
+        int(match.group("logical"), 16),
+        match.group("node"),
+    )
+
+
+def format_modified_hlc(physical_ms: int, logical: int, node_id: str) -> str:
+    """Serialize one bounded HLC tuple into its stable total-order representation."""
+    if (
+        isinstance(physical_ms, bool)
+        or not isinstance(physical_ms, int)
+        or not 0 <= physical_ms <= MAX_HLC_PHYSICAL_MS
+    ):
+        raise ValueError("modified_hlc physical time is outside the 48-bit domain")
+    if (
+        isinstance(logical, bool)
+        or not isinstance(logical, int)
+        or not 0 <= logical <= MAX_HLC_LOGICAL
+    ):
+        raise ValueError("modified_hlc logical counter is outside the 32-bit domain")
+    candidate = f"{physical_ms:012X}:{logical:08X}:{node_id}"
+    parse_modified_hlc(candidate)
+    return candidate
+
+
+def advance_modified_hlc(
+    current: str,
+    *,
+    observed: str = "",
+    node_id: str,
+    now_ms: int,
+) -> str:
+    """Advance a hybrid logical clock despite wall-clock rollback or a remote lead."""
+    current_physical, current_logical, _ = parse_modified_hlc(
+        current, allow_empty=True
+    )
+    observed_physical, observed_logical, _ = parse_modified_hlc(
+        observed, allow_empty=True
+    )
+    if (
+        isinstance(now_ms, bool)
+        or not isinstance(now_ms, int)
+        or not 0 <= now_ms <= MAX_HLC_PHYSICAL_MS
+    ):
+        raise ValueError("modified_hlc current time is outside the 48-bit domain")
+    physical = max(now_ms, current_physical, observed_physical)
+    if physical == current_physical == observed_physical:
+        logical = max(current_logical, observed_logical) + 1
+    elif physical == current_physical:
+        logical = current_logical + 1
+    elif physical == observed_physical:
+        logical = observed_logical + 1
+    else:
+        logical = 0
+    if logical > MAX_HLC_LOGICAL:
+        if physical >= MAX_HLC_PHYSICAL_MS:
+            raise OverflowError("modified_hlc exhausted its representable domain")
+        physical += 1
+        logical = 0
+    return format_modified_hlc(physical, logical, node_id)
+
+
+def normalize_modified_hlc(value: str, *, allow_empty: bool = False) -> str:
+    """Validate and return one already-canonical descriptive-state HLC."""
+    parse_modified_hlc(value, allow_empty=allow_empty)
+    return value
+
+
+
+# ── Records ──────────────────────────────────────────────────────────────────
+
+@dataclass
+class MemoryRecord:
+    """The atomic memory note (§5.3). Bi-temporal, typed, scoped, provenanced."""
+    id: str
+    content: str
+    mtype: MemoryType = MemoryType.SEMANTIC
+    scope: Scope = Scope.REPO
+    workspace_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    session_id: Optional[str] = None
+    title: str = ""
+    summary: str = ""
+    keywords: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    importance: float = 0.0          # 0..1, salience scored at creation
+    surprise: float = 1.0            # novelty weight (1 + |prediction error|)
+    stability: float = 1.0           # Ebbinghaus S; bounded reinforcement growth
+    access_count: int = 0            # successful reinforcement-event count
+    last_access: Optional[float] = None
+    valid_from: Optional[float] = None   # world-time: when the fact became true
+    valid_to: Optional[float] = None     # world-time: when it stopped being true
+    ingested_at: Optional[float] = None  # system-time: when we learned it
+    expired_at: Optional[float] = None   # system-time: when we retired it
+    subject_key: str = ""                # stable optional claim subject
+    claim_kind: str = ""                 # optional claim predicate/category
+    pinned: bool = False
+    sensitivity: str = "normal"          # normal | sensitive | secret
+    provenance: dict[str, Any] = field(default_factory=dict)
+    embedding: Optional[np.ndarray] = None
+    valid_to_recorded_at: Optional[float] = None  # when valid_to was learned
+    # Keep additions after the established positional fields; callers may construct
+    # records positionally even though keyword construction is preferred.
+    pinned_at: Optional[float] = None     # system-time when a pin last became effective
+    unpinned_at: Optional[float] = None   # system-time when an unpin became effective
+    confidence: float = 1.0          # 0..1, extraction/model confidence (scoring multiplier)
+    modified_hlc: str = ""            # monotonic version of descriptive/LWW fields
+
+    def __post_init__(self) -> None:
+        for name in (
+            "last_access",
+            "valid_from",
+            "valid_to",
+            "ingested_at",
+            "expired_at",
+            "valid_to_recorded_at",
+            "pinned_at",
+            "unpinned_at",
+        ):
+            setattr(self, name, _finite_timestamp(getattr(self, name), name))
+        self.modified_hlc = normalize_modified_hlc(
+            self.modified_hlc, allow_empty=True
+        )
+        try:
+            c = float(self.confidence)
+        except (TypeError, ValueError, OverflowError):
+            c = 1.0
+        if not math.isfinite(c):
+            c = 1.0
+        self.confidence = max(0.0, min(1.0, c))
+
+
+@dataclass
+class SearchFilter:
+    """Scope + temporal filter applied to every read (§7.1)."""
+    workspace_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    session_id: Optional[str] = None
+    scopes: Optional[list[Scope]] = None
+    mtypes: Optional[list[MemoryType]] = None
+    graph_layers: Optional[list[GraphLayer]] = None
+    # ``as_of`` remains a compatibility alias for the world-time ``valid_at``
+    # anchor.  New callers can independently select what was true and what
+    # had been learned at that time.
+    as_of: Optional[float] = None
+    # Contextual recall sees broader scopes as ancestors: a repo read can see that
+    # repo plus workspace/user memories, and a session read can additionally see its
+    # exact session.  Storage/governance queries stay exact unless they opt in.
+    include_ancestors: bool = False
+    # Appended after every 1.x field so positional construction remains compatible.
+    valid_at: Optional[float] = None
+    known_at: Optional[float] = None
+    modified_since: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        self.as_of = _finite_timestamp(self.as_of, "as_of")
+        self.valid_at = _finite_timestamp(self.valid_at, "valid_at")
+        self.known_at = _finite_timestamp(self.known_at, "known_at")
+        self.modified_since = _finite_timestamp(self.modified_since, "modified_since")
+        if self.as_of is not None and self.valid_at is not None:
+            if self.as_of != self.valid_at:
+                raise ValueError("as_of and valid_at must match when both are supplied")
+        # Keep legacy backends that read ``as_of`` correct as callers move to
+        # the less ambiguous ``valid_at`` name.
+        self.valid_at = self.valid_at if self.valid_at is not None else self.as_of
+        self.as_of = self.valid_at
+
+    @property
+    def historical(self) -> bool:
+        """Whether either time axis was explicitly anchored by the caller."""
+        return self.valid_at is not None or self.known_at is not None
+
+
+@dataclass
+class Candidate:
+    """A retrieval candidate with its fused score and originating arm."""
+    id: str
+    score: float
+    arm: str = ""                    # semantic | lexical | graph | fused
+    record: Optional[MemoryRecord] = None
+
+
+@dataclass
+class PackedChunk:
+    """One source excerpt selected by a context-packing implementation."""
+    id: str
+    excerpt: str
+    tokens: int
+    truncated: bool = False
+    reason: str = ""
+    attribution: str = ""            # complete ownership label when context spans scopes
+    # Source-bound literal that an action/edit contract must copy exactly.
+    # Kept optional so legacy callers and positional construction remain compatible.
+    exact_value: Optional[dict[str, Any]] = None
+    # Coverage packing preserves the source title through its final render pass.
+    # Appended after the established fields so legacy positional construction stays valid.
+    title: str = ""
+    # Optional source-bound coordinates for an evidence unit.  These are offsets into
+    # the original memory content, never offsets into the rendered prompt.
+    source_span: Optional[tuple[int, int]] = None
+    # Stable identity for the unit represented by this chunk.  The memory id is the
+    # conservative fallback when a caller has not supplied a finer-grained unit id.
+    evidence_unit_id: str = ""
+    # Bounded, typed evidence metadata used by opt-in readers/action validators.
+    # It is deliberately optional so legacy packers and positional callers remain valid.
+    evidence_unit: Optional[dict[str, Any]] = None
+
+
+@dataclass
+class ContextUsage:
+    """Token accounting emitted by a context-packing implementation."""
+    budget_tokens: int
+    context_tokens: int
+    source_tokens: int
+    saved_tokens: int
+    savings_ratio: float
+    packed_count: int
+    omitted_count: int
+    token_counter: str = "estimate_tokens"
+    omission_reasons: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PlannedQuery:
+    """One bounded retrieval query emitted by a ``QueryPlanner``.
+
+    ``priority`` is one-based: lower values contribute more weight during rank
+    fusion. ``mtypes`` narrows only this query; the caller's scope, temporal, and
+    trust filters remain mandatory for every planned query.
+    """
+    text: str
+    priority: int = 1
+    profile: str = "balanced"
+    mtypes: tuple[MemoryType, ...] = ()
+
+
+@dataclass(frozen=True)
+class RetrievalPlan:
+    """A bounded, inspectable plan for one recall request."""
+    queries: tuple[PlannedQuery, ...]
+    mtype_limits: dict[MemoryType, int] = field(default_factory=dict)
+    reason_codes: tuple[str, ...] = ()
+
+
+@dataclass
+class Node:
+    """A knowledge-graph node (entity or concept)."""
+    id: str
+    name: str
+    ntype: str = ""
+    workspace_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    canonical_id: Optional[str] = None   # cross-repo entity resolution
+
+
+@dataclass
+class Edge:
+    """A bi-temporal knowledge-graph edge (§8.3)."""
+    id: str
+    src: str
+    dst: str
+    relation: str
+    layer: Optional[GraphLayer] = None
+    weight: float = 1.0
+    workspace_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    valid_from: Optional[float] = None
+    valid_to: Optional[float] = None
+    ingested_at: Optional[float] = None
+    expired_at: Optional[float] = None
+    provenance: dict[str, Any] = field(default_factory=dict)
+    valid_to_recorded_at: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        self.weight = _finite_number(self.weight, "weight")
+        for name in (
+            "valid_from",
+            "valid_to",
+            "ingested_at",
+            "expired_at",
+            "valid_to_recorded_at",
+        ):
+            setattr(self, name, _finite_timestamp(getattr(self, name), name))
+        if (
+            self.valid_from is not None
+            and self.valid_to is not None
+            and self.valid_to < self.valid_from
+        ):
+            raise ValueError("edge valid_to cannot predate valid_from")
+
+
+@dataclass
+class ExtractedFact:
+    """One distilled, self-contained fact produced by an ``Extractor`` (§8.2).
+
+    ``mtype``/``importance``/``keywords`` are *hints* — the write path may override
+    them; ``content`` is the only required field. ``metadata`` is optional structured
+    extraction payload (entities/relations/confidence, etc.) and is merged into the
+    stored memory metadata by the ingest path.
+    """
+    content: str
+    title: str = ""
+    mtype: Optional[MemoryType] = None
+    importance: float = 0.0
+    keywords: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FactSpec:
+    """One fact in a batch submitted to ``MemoryEngine.remember_many``.
+
+    Mirrors ``ExtractedFact`` plus the durable claim identity fields
+    (``subject_key``/``claim_kind``) and an optional per-fact ``provenance``
+    dict. Batch siblings that share a non-empty ``subject_key`` or a
+    ``provenance.source`` are wired together with evidence-labeled edges after
+    insertion ("no shared source, no edge").
+    """
+    content: str
+    title: str = ""
+    mtype: Optional[MemoryType] = None
+    importance: float = 0.0
+    keywords: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    subject_key: str = ""
+    claim_kind: str = ""
+    valid_from: Optional[float] = None
+    provenance: Optional[dict[str, Any]] = None
+    # Citeable sibling-evidence origin declared by the caller (e.g. "subagent-7").
+    # Only an explicitly declared source participates in batch edge wiring; the
+    # engine's default provenance never counts as shared evidence.
+    evidence_source: Optional[str] = None
+
+
+@dataclass
+class RetentionDecision:
+    """Optional host/LLM supervision signal for a new memory.
+
+    ``retain=False`` never hard-deletes or silently drops a write. The engine records
+    the recommendation and applies a short-lived stability preset so normal local
+    retention/consolidation policy can make the eventual governed decision.
+    """
+    label: str = "normal"
+    retain: bool = True
+    importance: Optional[float] = None
+    stability: Optional[float] = None
+    reason: str = ""
+
+
+
+@dataclass
+class ResourceDocument:
+    """Text and provenance extracted from a local file/media resource."""
+    text: str
+    title: str = ""
+    kind: str = "document"
+    media_type: str = "text/plain"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SchemaSnapshot:
+    """Portable database-schema graph produced by an optional introspector."""
+    title: str
+    text: str
+    entities: list[dict[str, Any]] = field(default_factory=list)
+    relations: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RelocationDependencies:
+    """Bounded canonical evidence used to discover a move's complete component."""
+    memories: list[dict] = field(default_factory=list)
+    links: list[dict] = field(default_factory=list)
+    edges: list[dict] = field(default_factory=list)
+    supports: list[dict] = field(default_factory=list)
+    command_links: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class RelocationHistory:
+    """Selected memories' durable commands, attachments, and graph incidences."""
+    commands: list[dict] = field(default_factory=list)
+    command_sources: dict[tuple[str, str], list[dict]] = field(default_factory=dict)
+    attachments: dict[str, list[dict]] = field(default_factory=dict)
+    incidences: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class RelocationSessionHistory:
+    session: Optional[dict] = None
+    jobs: list[dict] = field(default_factory=list)
+    source_vaults: list[dict] = field(default_factory=list)
+    events: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class MovePlan:
+    """Detached reviewed component shared by relocation policy and persistence."""
+    source_id: str
+    target_id: str
+    requested_ids: list[str]
+    records: list[MemoryRecord] = field(default_factory=list)
+    blockers: list[dict] = field(default_factory=list)
+    repos: list[dict] = field(default_factory=list)
+    sessions: list[dict] = field(default_factory=list)
+    events: list[dict] = field(default_factory=list)
+    commands: list[dict] = field(default_factory=list)
+    command_sources: list[dict] = field(default_factory=list)
+    entities: list[dict] = field(default_factory=list)
+    edges: list[dict] = field(default_factory=list)
+    incidences: list[dict] = field(default_factory=list)
+    preview_token: str = ""
+
+    def block(self, code: str, message: str) -> None:
+        if not any(item["code"] == code for item in self.blockers):
+            self.blockers.append({"code": code, "message": message})
+
+    def public(self, source: str, target: str) -> dict:
+        return {
+            "source": source, "target": target,
+            "requested_ids": self.requested_ids,
+            "memory_ids": [record.id for record in self.records],
+            "count": len(self.records),
+            "related_count": len(self.records) - len(self.requested_ids),
+            "memories": [{"id": record.id, "title": record.title or record.content[:88],
+                          "related": record.id not in self.requested_ids}
+                         for record in self.records],
+            "sessions": len(self.sessions), "graph_edges": len(self.edges),
+            "repos": [row["name"] for row in self.repos],
+            "blockers": self.blockers, "can_move": not self.blockers,
+            "preview_token": self.preview_token if not self.blockers else "",
+        }
+
+
+# ── Protocols ────────────────────────────────────────────────────────────────
+
+@runtime_checkable
+class RelocationStore(Protocol):
+    """Domain operations for lossless relocation, with no database connection API.
+
+    Reads return detached canonical values in deterministic order, including closed
+    history. Each collection must refuse rather than truncate above ``limit``.
+    The caller owns a consistent snapshot for planning and a writer transaction
+    for revalidation/application. ``apply_memory_move`` must not commit either.
+    Authorization and preview-token validation remain the caller's responsibility.
+    """
+    def get_memory(self, memory_id: str) -> Optional[MemoryRecord]: ...
+    def relocation_dependencies(self, workspace_id: str, *, limit: int
+                                ) -> RelocationDependencies: ...
+    def relocation_history(self, memory_ids: list[str], *, limit: int
+                           ) -> RelocationHistory: ...
+    def relocation_session_history(self, session_id: str, *, limit: int
+                                   ) -> RelocationSessionHistory: ...
+    def relocation_workspace_events(self, workspace_id: str, *, limit: int) -> list[dict]: ...
+    def relocation_entity(self, entity_id: str) -> Optional[dict]: ...
+    def relocation_repo(self, repo_id: str) -> Optional[dict]: ...
+    def relocation_repo_named(self, workspace_id: str, name: str) -> Optional[dict]: ...
+    def relocation_entity_named(self, workspace_id: str, repo_id: Optional[str],
+                                name: str, etype: Optional[str]) -> Optional[dict]: ...
+    def relocation_canonical_entity(self, workspace_id: str, repo_id: Optional[str],
+                                    normalized_name: str, etype: Optional[str]
+                                    ) -> Optional[dict]: ...
+    def relocation_edge_conflict(self, workspace_id: str, repo_id: Optional[str],
+                                 src: str, dst: str, relation: str, layer: Optional[str]
+                                 ) -> Optional[dict]: ...
+    def relocation_claim_conflict(self, workspace_id: str, repo_id: Optional[str],
+                                  record: MemoryRecord) -> Optional[dict]: ...
+    def relocation_operation_exists(self, workspace_id: str, operation_id: str) -> bool: ...
+    def relocation_ownership(self, source_id: str, target_id: str, *, limit: int
+                             ) -> list[dict]: ...
+    def apply_memory_move(self, plan: MovePlan, *, actor: str) -> None: ...
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """Turns text or code into dense vectors. Default local; API optional."""
+    @property
+    def dim(self) -> int: ...
+    @property
+    def supports_semantic_search(self) -> bool: ...
+    @property
+    def embedding_mode(self) -> str: ...
+    def embed(self, texts: list[str], *, kind: Literal["text", "code"] = "text") -> np.ndarray: ...
+
+
+def embedding_space_fingerprint(embedder: Any) -> str:
+    """Return the durable identity of one persisted embedding vector space.
+
+    embedding_identity names the backend family while embedding_version identifies
+    its configured model/mapping. Dimension is part of the space even when a backend
+    already includes it in its version. An empty result means the adapter is not safe
+    to use with persisted vectors because upgrades cannot be distinguished from the
+    stored mapping.
+    """
+    identity = str(getattr(embedder, "embedding_identity", "") or "").strip()
+    version = str(getattr(embedder, "embedding_version", "") or "").strip()
+    try:
+        dimension = int(getattr(embedder, "dim"))
+    except (TypeError, ValueError, AttributeError):
+        return ""
+    if not identity or not version or dimension <= 0:
+        return ""
+    canonical = json.dumps(
+        {"dimension": dimension, "identity": identity, "version": version},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return "emb:v1:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def embedder_capabilities(embedder: Any) -> dict[str, Any]:
+    """Return public retrieval capabilities for an embedder.
+
+    Semantic retrieval is opt-in: an embedder that does not explicitly advertise it is
+    treated as degraded.  This prevents a feature-hashing fallback (or an incomplete
+    third-party adapter) from being presented as a semantic model merely because it
+    produces vectors.  The returned shape is transport-safe and is included in recall
+    and grounded-answer responses.
+    """
+    semantic_support = bool(getattr(embedder, "supports_semantic_search", False))
+    mode = str(getattr(embedder, "embedding_mode", "") or "").strip().casefold()
+    if not mode:
+        mode = "semantic" if semantic_support else "unknown"
+    degraded_mode = not semantic_support
+    reason = ""
+    if degraded_mode:
+        reason = str(getattr(embedder, "semantic_support_reason", "") or "").strip()
+        if not reason:
+            reason = (
+                "embedding backend did not declare semantic capability; semantic "
+                "vector retrieval is disabled"
+            )
+    return {
+        "degraded_mode": degraded_mode,
+        "semantic_support": semantic_support,
+        "embedding_mode": mode,
+        "degraded_reason": reason,
+        "vector_search_ready": semantic_support,
+    }
+
+
+@runtime_checkable
+class VectorIndex(Protocol):
+    """Approximate nearest-neighbour index over embeddings (§6.2).
+
+    ``commit=False`` keeps derived-index writes inside a caller-owned transaction;
+    existing callers retain the historical committing default.
+
+    An index whose complete search state is the canonical Store's ``mem_vectors``
+    table may expose ``shares_store_vector_table = True``. Core write paths use
+    :func:`vector_index_requires_sync` to avoid writing that same row twice. The
+    optimization is accepted only when the index and caller share the identical Store
+    object; unknown and separately-backed indexes retain the historical explicit sync.
+
+    A separate table on the same Store connection may instead expose
+    ``shares_store_transaction = True``. Its explicit sync then remains inside the
+    canonical transaction rather than being deferred as an external side effect.
+
+    Independently persisted adapters should expose a stable ``index_identity``
+    unique to the physical index (never credentials). Canonical mutations queue
+    durable, content-free repair work for it. Pending or unidentified indexes
+    use canonical exact search until completeness is established.
+    """
+    def upsert(self, ids: list[str], vecs: np.ndarray, meta: Optional[list[dict]] = None,
+               *, commit: bool = True) -> None: ...
+    def search(self, vec: np.ndarray, k: int, *, filter: Optional[SearchFilter] = None) -> list[tuple[str, float]]: ...
+    def delete(self, ids: list[str], *, commit: bool = True) -> None: ...
+
+
+def vector_index_requires_sync(index: Optional[VectorIndex], store: object) -> bool:
+    """Return whether a Store vector mutation must also update ``index``.
+
+    Third-party indexes default to ``True`` so the optional capability is
+    backward-compatible. A backend can skip the post-Store write only by explicitly
+    declaring that it searches the same Store table and by exposing that exact Store
+    instance. The identity check prevents a miswired store-backed index from silently
+    missing updates.
+    """
+    if index is None:
+        return False
+    return not (
+        getattr(index, "shares_store_vector_table", False) is True
+        and getattr(index, "store", None) is store
+    )
+
+
+def vector_index_shares_store_transaction(
+    index: Optional[VectorIndex], store: object,
+) -> bool:
+    """Whether explicit index writes participate in the Store's transaction."""
+    return bool(
+        index is not None
+        and getattr(index, "shares_store_transaction", False) is True
+        and getattr(index, "store", None) is store
+    )
+
+
+@runtime_checkable
+class LexicalIndex(Protocol):
+    """BM25 / full-text arm of hybrid retrieval (§7.1)."""
+    def search(self, query: str, k: int, *, filter: Optional[SearchFilter] = None) -> list[tuple[str, float]]: ...
+
+
+@runtime_checkable
+class GraphReader(Protocol):
+    """Read-only bi-temporal graph traversal."""
+    def neighbors(self, node_ids: list[str], *, at: Optional[float] = None,
+                  layers: Optional[list["GraphLayer"]] = None,
+                  flt: Optional[SearchFilter] = None,
+                  limit: Optional[int] = None,
+                  prompt_only: bool = False) -> list[Edge]: ...
+
+
+@runtime_checkable
+class GraphWriter(Protocol):
+    """Durable graph mutation, independent from retrieval and ranking."""
+    def upsert_entity(self, node: Node, *, commit: bool = True) -> str: ...
+    def upsert_edge(self, edge: Edge, *, commit: bool = True) -> str: ...
+    def invalidate_edge(self, edge_id: str, at: Optional[float] = None, *,
+                        commit: bool = True) -> None: ...
+
+
+@runtime_checkable
+class Reranker(Protocol):
+    """Cross-encoder reranking of fused candidates (§7.1 stage 4)."""
+    def rerank(self, query: str, candidates: list[Candidate], k: int) -> list[Candidate]: ...
+
+
+@runtime_checkable
+class ContextPacker(Protocol):
+    """Choose budgeted, explainable source excerpts for an agent context."""
+    def pack(self, query: str, candidates: list[Candidate], token_budget: int
+             ) -> tuple[str, list[PackedChunk], ContextUsage]: ...
+    def count_tokens(self, text: str) -> int: ...
+
+
+@runtime_checkable
+class RetrievalPolicy(Protocol):
+    """Select a named retrieval profile without coupling core to a backend."""
+    def profile(self, query: str) -> str: ...
+
+
+@runtime_checkable
+class CandidateDepthPolicy(Protocol):
+    """Select a bounded per-arm candidate depth for one recall request."""
+    def candidate_depth(self, query: str, *, k: int, ceiling: int,
+                        profile: str, mode: str) -> tuple[int, str]: ...
+
+
+@dataclass(frozen=True)
+class GraphTraversalPlan:
+    """Inspectable, bounded layer preferences for one graph-retrieval query.
+
+    Layer values are soft multipliers, never permissions: ``SearchFilter`` remains
+    the only mechanism allowed to include or exclude graph layers, scope, temporal
+    visibility, or trust-sensitive records.  An empty tuple means uniform weights
+    and is deliberately equivalent to the historical PPR behavior.
+    """
+    intent: str = "uniform"
+    layer_weights: tuple[tuple[GraphLayer, float], ...] = ()
+    reason_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Canonicalize policy output before it can affect graph ranking.
+
+        Policies are injected extension code.  Keeping their data contract finite,
+        typed, and duplicate-free makes failure fall back to uniform traversal
+        rather than letting malformed weights turn into an availability issue or
+        a non-deterministic first-match choice.
+        """
+        normalized = []
+        seen = set()
+        for entry in self.layer_weights:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise ValueError("graph traversal layer_weights must be (layer, weight) pairs")
+            raw_layer, raw_weight = entry
+            layer = GraphLayer(raw_layer)
+            if layer in seen:
+                raise ValueError("graph traversal layer_weights may not repeat a layer")
+            try:
+                weight = float(raw_weight)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("graph traversal weights must be finite numbers") from exc
+            if not math.isfinite(weight):
+                raise ValueError("graph traversal weights must be finite numbers")
+            seen.add(layer)
+            normalized.append((layer, weight))
+        reason_codes = (
+            (self.reason_codes,)
+            if isinstance(self.reason_codes, str)
+            else tuple(str(code) for code in self.reason_codes)
+        )
+        object.__setattr__(self, "intent", str(self.intent or "uniform"))
+        object.__setattr__(self, "layer_weights", tuple(normalized))
+        object.__setattr__(self, "reason_codes", reason_codes)
+
+    def multiplier(self, layer: GraphLayer) -> float:
+        """Return a safe non-zero multiplier for ``layer``.
+
+        The bounds retain weak reachability through non-preferred layers and stop
+        injected policies from turning a local graph edge into an unbounded score
+        amplification mechanism.
+        """
+        for candidate, value in self.layer_weights:
+            if candidate == layer:
+                try:
+                    numeric = float(value)
+                    if not math.isfinite(numeric):
+                        return 1.0
+                    return min(4.0, max(0.25, numeric))
+                except (TypeError, ValueError):
+                    return 1.0
+        return 1.0
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "intent": self.intent,
+            "layer_weights": {
+                layer.value: self.multiplier(layer)
+                for layer in GraphLayer
+            },
+            "reason_codes": list(self.reason_codes),
+        }
+
+
+@runtime_checkable
+class GraphTraversalPolicy(Protocol):
+    """Choose soft graph-layer weights without coupling core to an LLM backend."""
+    def plan(self, query: str, *, filter: Optional[SearchFilter] = None) -> GraphTraversalPlan: ...
+
+
+@runtime_checkable
+class QueryPlanner(Protocol):
+    """Produce a retrieval plan without coupling core to an LLM backend."""
+    def plan(self, query: str, *, filter: Optional[SearchFilter] = None,
+             timeout_s: Optional[float] = None) -> RetrievalPlan: ...
+
+
+@runtime_checkable
+class AdvisoryQueryPlanner(QueryPlanner, Protocol):
+    """Optionally prioritize bounded planner routes with an advisory decision.
+
+    This capability is separate from ``QueryPlanner`` so existing injected
+    planners remain source-compatible and local planning never requires Jev.
+    Implementations must preserve the original query and retrieval filters, and
+    treat remote consent and data classification as per-call inputs.
+    """
+
+    local_identity: str
+    advisory_identity: str
+
+    def plan_with_advisory(
+        self,
+        query: str,
+        *,
+        filter: Optional[SearchFilter] = None,
+        timeout_s: Optional[float] = None,
+        allow_remote: bool = False,
+        data_classification: str = "internal",
+    ) -> RetrievalPlan: ...
+
+
+@runtime_checkable
+class LLM(Protocol):
+    """External or local model for synthesis and structured extraction (§8.2)."""
+    def complete(self, messages: list[dict], **kw: Any) -> str: ...
+    def extract_json(self, prompt: str, schema: dict, **kw: Any) -> Any: ...
+
+
+@runtime_checkable
+class Extractor(Protocol):
+    """Distills raw text into discrete memory-worthy facts before storage (§8.2).
+
+    The offline default is a no-op passthrough (the caller's text is stored as-is,
+    exactly today's behaviour); an LLM-backed implementation can be swapped in by
+    configuration — never a hard dependency of ``core/`` (AGENTS.md §3.8).
+    """
+    def extract(self, text: str, *, context: str = "") -> list[ExtractedFact]: ...
+
+
+@runtime_checkable
+class RetentionSupervisor(Protocol):
+    """Optional host-controlled importance/retention classifier."""
+    def decide(self, content: str, *, title: str = "", mtype: MemoryType,
+               metadata: Optional[dict] = None) -> RetentionDecision: ...
+
+
+@runtime_checkable
+class ResourceExtractor(Protocol):
+    """Turns local document/media bytes into text without changing memory semantics."""
+    def extract_bytes(self, name: str, data: bytes) -> ResourceDocument: ...
+    def extract_path(self, path: str) -> ResourceDocument: ...
+
+
+@runtime_checkable
+class SchemaIntrospector(Protocol):
+    """Reads a live database catalog and returns a transport-neutral schema graph."""
+    def inspect(self, dsn: str, *, schemas: Optional[list[str]] = None) -> SchemaSnapshot: ...
+
+
+@runtime_checkable
+class SyncTransport(Protocol):
+    """Moves opaque sync bundles between devices (cloud-sync layer, core/sync.py).
+
+    Deliberately dumb: it stores and retrieves named byte blobs and knows nothing
+    about memory semantics, so a shared folder (Dropbox/iCloud/Syncthing/git), an
+    object store, or a managed relay are interchangeable behind these three calls —
+    same interface-first swap as ``VectorIndex``/``Embedder``.
+    A transport may encrypt ``data`` in ``push`` and decrypt in ``pull``; the sync
+    engine treats every pulled bundle as untrusted regardless.
+    """
+    def push(self, name: str, data: bytes) -> None: ...
+    def pull(self) -> Iterable[tuple[str, bytes]]: ...
+    def list_names(self) -> list[str]: ...
+
+
+@runtime_checkable
+class CodeIndexer(Protocol):
+    """Extracts code symbols and edges from source files (§3.8).
+
+    Two concrete backends ship in ``engraphis.backends.codegraph``:
+    ``TreeSitterSymbolIndexer`` (AST-based, optional dependency) and
+    ``RegexSymbolIndexer`` (dependency-free fallback).  ``CompositeSymbolIndexer``
+    routes per-language to the best available backend.
+    """
+    def supports(self, lang: str) -> bool: ...
+    def index_file(self, file_path: str, content: str, lang: str) -> Any: ...
+
+
+# Interface contracts only; concrete implementations live in engraphis.backends.

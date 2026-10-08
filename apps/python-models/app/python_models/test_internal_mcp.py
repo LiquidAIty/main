@@ -23,7 +23,7 @@ def test_query_graph_text_transport_does_not_relax_other_tool_results():
 def test_preload_rejects_nonlocal_transport_before_constructing_client(monkeypatch, url):
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", "0" * 32)
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_URL", url)
-    monkeypatch.setattr(internal_mcp.httpx, "AsyncClient", lambda **_: pytest.fail("invalid transport constructed"))
+    monkeypatch.setattr(internal_mcp.httpx2, "AsyncClient", lambda **_: pytest.fail("invalid transport constructed"))
     with pytest.raises(RuntimeError, match="internal_mcp_url_"):
         internal_mcp.call_read_tools_via_mcp(
             project_id="p", deck_id="d", card_id="main",
@@ -85,13 +85,13 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
         async def __aexit__(self, *_args):
             return None
 
-    @asynccontextmanager
-    async def transport(_url, *, http_client):
+    def transport(_url, *, http_client):
         assert isinstance(http_client, HttpClient)
-        yield object(), object(), lambda: None
+        return "official-transport"
 
-    class Session:
-        def __init__(self, *_args):
+    class OfficialClient:
+        def __init__(self, server, **_kwargs):
+            assert server == "official-transport"
             observed["sessions"] += 1
 
         async def __aenter__(self):
@@ -100,24 +100,21 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
         async def __aexit__(self, *_args):
             return None
 
-        async def initialize(self):
-            return None
-
-        async def call_tool(self, name, arguments):
+        async def call_tool(self, name, arguments, **_kwargs):
             observed["calls"].append((name, arguments))
             if name == "cbm.index_repository":
                 return SimpleNamespace(
                     content=[SimpleNamespace(text='{"error":"tool_not_granted"}')],
-                    isError=True,
+                    is_error=True,
                 )
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"ok":true}')],
-                isError=False,
+                is_error=False,
             )
 
-    monkeypatch.setattr(internal_mcp.httpx, "AsyncClient", HttpClient)
+    monkeypatch.setattr(internal_mcp.httpx2, "AsyncClient", HttpClient)
     monkeypatch.setattr(internal_mcp, "streamable_http_client", transport)
-    monkeypatch.setattr(internal_mcp, "ClientSession", Session)
+    monkeypatch.setattr(internal_mcp, "Client", OfficialClient)
 
     results = internal_mcp.call_read_tools_via_mcp(
         project_id="project-1",
@@ -164,25 +161,17 @@ def test_preload_deadline_preserves_successful_reads_and_cancels_slow_source(mon
         async def __aexit__(self, *_args):
             pass
 
-    @asynccontextmanager
-    async def transport(*_args, **_kwargs):
-        yield None, None, None
+    def transport(*_args, **_kwargs):
+        return "official-transport"
 
-    class Session:
-        def __init__(self, *_args):
-            pass
+    class OfficialClient:
+        def __init__(self, server, **_kwargs):
+            assert server == "official-transport"
         async def __aenter__(self):
             return self
         async def __aexit__(self, *_args):
             pass
-        async def initialize(self):
-            pass
-        async def call_tool(self, *_args):
-            raise AssertionError("preload must not request the tool catalog")
-        async def send_request(self, request, response_type):
-            assert response_type is internal_mcp.mcp_types.CallToolResult
-            assert request.root.method == "tools/call"
-            name = request.root.params.name
+        async def call_tool(self, name, _arguments, **_kwargs):
             if name == "graphiti.search_memory_facts":
                 try:
                     await asyncio.sleep(20)
@@ -190,11 +179,14 @@ def test_preload_deadline_preserves_successful_reads_and_cancels_slow_source(mon
                     cancelled.append(name)
             if name == "cbm.search_graph":
                 raise RuntimeError("source unavailable")
-            return SimpleNamespace(content=[SimpleNamespace(text='{"nodes":[{"id":"decision-1"}]}')], isError=False)
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"nodes":[{"id":"decision-1"}]}')],
+                is_error=False,
+            )
 
     monkeypatch.setattr(internal_mcp, "streamable_http_client", transport)
-    monkeypatch.setattr(internal_mcp, "ClientSession", Session)
-    monkeypatch.setattr(internal_mcp.httpx, "AsyncClient", HttpClient)
+    monkeypatch.setattr(internal_mcp, "Client", OfficialClient)
+    monkeypatch.setattr(internal_mcp.httpx2, "AsyncClient", HttpClient)
     started = time.monotonic()
     results = internal_mcp.call_read_tools_via_mcp(
         project_id="p", deck_id="d", card_id="main", conversation_id="conversation-1",

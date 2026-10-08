@@ -2,10 +2,17 @@ export type ProviderToolContract = {
   sourceId: string;
   providerToolName: string;
   connectionKind: string;
+  publication: 'private-runtime' | 'external-mcp';
   available: boolean;
+  grantEligible: boolean;
   title?: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  canonicalInputSchema: Record<string, unknown>;
+  serverInjectedArguments: string[];
+  dispatcherContextArguments: string[];
+  dispatcherOwner: string;
+  authenticatedProjection: boolean;
   outputSchema?: Record<string, unknown>;
   annotations?: Record<string, unknown>;
   securitySchemes?: Record<string, unknown>[];
@@ -16,10 +23,13 @@ export type ToolCatalogReference = {
   kind: 'tool' | 'agent';
   namespace: string;
   sourceIds: string[];
+  dispatcherOwner: string;
   displayName: string;
   shortDescription: string;
   availability: 'available' | 'disabled';
   access: 'read' | 'write';
+  publication: 'private-runtime' | 'external-mcp';
+  grantEligible: boolean;
   contracts: ProviderToolContract[];
   requiredCallerRuntimeKind?: 'hermes';
   requiredCallerRuntimeMode?: 'main' | 'delegate' | 'magentic_one';
@@ -50,9 +60,9 @@ function asText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-/** Index already-materialized IDD references for lookup only. No metadata is
+/** Index already-normalized live catalog references for lookup only. No metadata is
  * inferred, merged, scored, or classified in TypeScript. */
-export function indexToolCatalogReferences(
+export function indexLiveToolCatalog(
   references: readonly ToolCatalogReference[],
 ): ToolCatalogIndex {
   const definitionsById = new Map<string, ToolCatalogReference>();
@@ -125,8 +135,8 @@ export function searchToolCatalogReferences(catalog: ToolCatalogIndex, search: T
   };
 }
 
-/** Resolve the exact executable/autocomplete surface from the same IDD-backed
- * catalog and saved Tools-tab policy used by Run materialization. */
+/** Resolve the exact executable/autocomplete surface from the live catalog and
+ * saved Tools-tab policy used by Run materialization. */
 export function resolveScriptToolReferences(
   catalog: ToolCatalogIndex,
   selection: ScriptToolSelection,
@@ -135,5 +145,7 @@ export function resolveScriptToolReferences(
   const unresolved = selectedIds.find((id) => !catalog.definitionsById.has(id));
   if (unresolved) throw new Error(`tool_catalog_selected_id_unknown:${unresolved}`);
   return resolveToolCatalogDefinitions(catalog, selectedIds)
-    .filter((reference) => reference.availability === 'available');
+    .filter((reference) => (
+      reference.availability === 'available' && reference.grantEligible
+    ));
 }

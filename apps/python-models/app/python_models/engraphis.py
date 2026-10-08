@@ -34,8 +34,19 @@ from .jev_validation import (
 DATABASE = Path(__file__).resolve().parents[4] / "db" / "thinkgraph.sqlite"
 MODEL = "local:sentence-transformers/all-MiniLM-L6-v2"
 MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
-READ_TOOLS = frozenset(['engraphis_code_impact', 'engraphis_code_path', 'engraphis_conflict_review', 'engraphis_context_savings', 'engraphis_discover_actions', 'engraphis_execute_read', 'engraphis_export_code_graph', 'engraphis_export_receipts', 'engraphis_get_memory', 'engraphis_recall_context', 'engraphis_recall_proactive', 'engraphis_receipts', 'engraphis_search_code', 'engraphis_stats', 'engraphis_timeline', 'engraphis_verify_receipts', 'engraphis_why'])
-WRITE_TOOLS = frozenset(['engraphis_answer', 'engraphis_check_update', 'engraphis_consolidate', 'engraphis_correct', 'engraphis_end_session', 'engraphis_execute_action', 'engraphis_forget', 'engraphis_index_repo', 'engraphis_ingest', 'engraphis_ingest_postgres_schema', 'engraphis_link', 'engraphis_link_symbol', 'engraphis_pin', 'engraphis_proactive_context', 'engraphis_promote', 'engraphis_recall', 'engraphis_recall_grounded', 'engraphis_record_event', 'engraphis_remember', 'engraphis_remember_many', 'engraphis_retire', 'engraphis_secure_erase', 'engraphis_session', 'engraphis_start_session', 'engraphis_update_memory'])
+READ_TOOLS = frozenset({
+    "engraphis_conflict_review",
+    "engraphis_discover_actions",
+    "engraphis_execute_read",
+    "engraphis_get_memory",
+    "engraphis_recall_context",
+})
+WRITE_TOOLS = frozenset({
+    "engraphis_execute_action",
+    "engraphis_remember",
+    "engraphis_session",
+    "engraphis_update_memory",
+})
 _service = None
 _lock = threading.RLock()
 _intake_lock = threading.RLock()
@@ -1613,16 +1624,17 @@ def settle_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _registered_tool_catalog():
-    """Project FastMCP's static registrations without entering an event loop.
+    """Project Engraphis's compact Smart MCP registrations without an event loop.
 
-    FastMCP.list_tools() is an async wrapper around the synchronous registered
+    MCPServer.list_tools() is an async wrapper around the synchronous registered
     ToolManager.  Operation metadata is also needed by synchronous authorization
     code that may already be running inside an MCP event loop, so nesting
-    asyncio.run() there is invalid.  Build the same public MCP Tool models from
-    the pinned FastMCP registrations instead.
+    asyncio.run() there is invalid. Build the same public MCP Tool models from
+    the current Smart registrations instead of publishing the 39-tool Classic
+    compatibility surface alongside them.
     """
 
-    from engraphis.mcp_server import classic_mcp, smart_mcp
+    from engraphis.mcp_server import smart_mcp
     from mcp.types import Tool as McpTool
 
     def public_tools(server):
@@ -1637,10 +1649,7 @@ def _registered_tool_catalog():
             _meta=tool.meta,
         ) for tool in server._tool_manager.list_tools()]
 
-    catalog = {tool.name: (smart_mcp, tool) for tool in public_tools(smart_mcp)}
-    # The individually named interface keeps the full argument set for shared names.
-    catalog.update({tool.name: (classic_mcp, tool) for tool in public_tools(classic_mcp)})
-    return catalog
+    return {tool.name: (smart_mcp, tool) for tool in public_tools(smart_mcp)}
 
 
 async def _tool_catalog():
@@ -1650,7 +1659,7 @@ async def _tool_catalog():
 def _engraphis_tools_from_registrations() -> list[dict]:
     result = []
     for _, tool in _registered_tool_catalog().values():
-        item = tool.model_dump(exclude_none=True)
+        item = tool.model_dump(by_alias=True, exclude_none=True)
         schema = item["inputSchema"]
         schema.get("properties", {}).pop("workspace", None)
         if "workspace" in schema.get("required", []):
@@ -1740,7 +1749,7 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
         raise ValueError("thinkgraph_scope_is_owned_by_project")
     server, tool = catalog[name]
     arguments = dict(arguments)
-    if "workspace" in tool.inputSchema.get("properties", {}):
+    if "workspace" in tool.input_schema.get("properties", {}):
         arguments["workspace"] = project
     if name in {"engraphis_execute_read", "engraphis_execute_action"}:
         from engraphis.mcp_server import _resolve_capability
@@ -1765,7 +1774,7 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
         return _apply_response_budget(result, max_response_tokens)
     response = await server.call_tool(name, arguments)
     content = response.content if hasattr(response, "content") else response[0] if isinstance(response, tuple) else response
-    if getattr(response, "isError", False):
+    if getattr(response, "is_error", False):
         raise ValueError(" ".join(getattr(block, "text", "") for block in content))
     for block in content:
         if getattr(block, "type", None) == "text":

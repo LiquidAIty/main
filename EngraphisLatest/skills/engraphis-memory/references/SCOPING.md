@@ -1,0 +1,137 @@
+# Scoping: `workspace → repo → session → memory`
+
+Scoping is the highest-leverage decision in Engraphis. Every write sets a scope; every read is
+filtered by one. Get it right and memories surface exactly when useful; get it wrong and they
+either appear in unrelated work or never come back. Scope is a work-context boundary, not a
+human identity boundary.
+
+## Two orthogonal axes: don't conflate them
+
+| Axis | Question it answers | Values | Set by |
+|---|---|---|---|
+| **scope** | *Where does this apply?* | `session` · `repo` · `workspace` | `scope=` on `remember` |
+| **type** (`mtype`) | *What kind of thing is this?* | `working` · `episodic` · `semantic` · `procedural` | `mtype=` on `remember` |
+
+A convention is `mtype="semantic"` and probably `scope="repo"`. A personal preference has no
+safe memory scope yet: `user` is reserved until memories carry an immutable owner identity. Type
+is covered in [CONVENTIONS.md](CONVENTIONS.md); this file is about scope.
+
+## The hierarchy
+
+```
+workspace            org or product        ("acme")          : every write belongs to one
+  └─ repo            a repository          ("backend")       : omit only for workspace-wide facts
+       └─ session    one unit of work      (session_id)      : from engraphis_session(action="start")
+            └─ memory                                         : the fact itself
+```
+
+Names are **stable identifiers**, not prose. Reuse the exact same `workspace`/`repo` strings every
+time: recall filters match on them literally. Pick the repository's canonical name for `repo`
+(what you'd `git clone`), and a durable org/product name for `workspace`.
+
+## Choose the workspace for this work
+
+Use an explicit user or project workspace choice when one is provided. Session starts can omit
+`workspace` to use the saved mapping for their `repo`, with `default` as the fallback. Routine
+remember and recall calls first resolve an omitted workspace from an authorized supplied
+`session_id`, then the saved repo mapping. Without either, writes use `default`; recall with a
+repo but no mapping also uses `default`. Local recall with no workspace, repo, or session retains
+its broad search behavior.
+
+Explicit workspace values, including `"default"`, win over saved mappings. A workspace or repo
+that conflicts with a supplied session is rejected. Invalid or unauthorized sessions never
+fall back. Starting a session does not create a server-global current workspace: retain the
+returned `session_id` and pass it on later calls. The session response names the destination.
+
+Use the dashboard's connection setup to save a repo-to-workspace mapping and copy project
+instructions, or discover the corresponding project-routing capability. Authenticated callers
+have separate saved mappings; standalone local clients share the local mapping. The dashboard
+workspace selector alone does not change an agent's arguments. A changed mapping affects future
+calls that use it, while existing sessions keep their original destination.
+
+Use stable workspace names by client, product, or area of work. The four memory types describe
+the memory, not its routing: changing `mtype` never moves it to another workspace. Reorganize
+existing records through an explicit, previewed move rather than changing routing and assuming
+past memories moved too. See the repo's `docs/WORKSPACE_ORGANIZATION.md` for the full workflow.
+
+## What each scope means
+
+- **`session`**: visible only within one session. Transient working state ("currently editing the
+  auth refactor on branch X"). Ends with the session.
+- **`repo`**: the default, and the right answer most of the time. Facts true for one repository:
+  conventions, decisions, bug fixes. Requires a `repo`.
+- **`workspace`**: true across every repo in the org/product: shared standards, cross-repo
+  architecture, team norms. Set `repo=None`.
+- **`user`**: reserved and rejected for new writes. Memories do not yet persist an owner identity,
+  so `user` cannot provide per-human isolation or follow one person across workspaces. Historical
+  `user` rows remain workspace-bound for compatibility and must not be treated as private.
+
+## Choose the narrowest scope that stays reusable
+
+Ask: *where would I want this to resurface?* Then scope there, no wider.
+
+- A fix for a quirk in `backend` only → `scope="repo"`.
+- "The whole org uses trunk-based dev" → `scope="workspace"`.
+- Personal preferences → do not persist until owner-bound user scope exists.
+- "I'm mid-way through step 3 of this task" → `scope="session"` (or just an `open_thread`).
+
+Over-scoping (everything `workspace`) pollutes recall in unrelated repos. Under-scoping (everything
+`session`) means nothing survives the task. When unsure between `repo` and `workspace`, start at
+`repo`. Promoting later is cheap; retracting a leaked fact is not.
+
+## Sessions and handoff
+
+A session groups a task's memories and enables resume. On the default Smart MCP surface:
+
+1. `engraphis_session(action="start", workspace, repo, agent, goal)` returns `session_id`, `reused`, and a
+   `bootstrap` carrying the previous same-user/agent session's `summary` + `open_threads` for this
+   repo.
+2. Pass `session_id` to direct `engraphis_remember` during the task. For an episodic event, first
+   discover the record-event capability and pass that same `session_id` to its returned executor.
+3. `engraphis_session(action="end", session_id, summary, outcome, open_threads)`: `open_threads` are the
+   unresolved items; they auto-surface for the next same-user/agent session in this repo.
+
+`engraphis_start_session` and `engraphis_end_session` are the corresponding Classic-only names
+for pinned legacy integrations.
+
+Starting is idempotent per exact `(workspace, repo, authenticated user, agent, goal)` identity.
+Different users, agents, or goals automatically open separate sessions. `reused=true` therefore
+means a retry found the same active task. Use `force_new=true` only to branch a second session when
+every identity field matches; use this escape hatch deliberately because parallel duplicate task
+sessions make ownership and handoff ambiguous.
+
+An authenticated host integration must bind both a stable non-empty user `id` and an ownership
+`email`. A malformed non-`None` principal is rejected; it never collapses into an anonymous or
+legacy owner. `None` is reserved for trusted standalone/system operation with no user boundary.
+
+Use sessions for any multi-step task. `open_threads` is how the next agent avoids re-discovering
+where you stopped.
+
+## Promotion (widening scope)
+
+A learning often starts narrow (a session observation) and proves durable. Promote the existing
+memory with `engraphis_promote(memory_id, target_scope, workspace, repo?, reason?)`:
+
+- Session note that turns out to be a real repo convention → `target_scope="repo"`.
+- Repo fact that turns out to hold org-wide → `target_scope="workspace"`.
+
+Promotion must be strictly wider. Engraphis writes/deduplicates the wider record first, then
+bi-temporally closes the narrow source and links them with `promotes`; pinning, sensitivity,
+provenance, and learned stability are inherited. Automatic promotion is not assumed: promote
+deliberately when evidence shows the learning applies more broadly.
+
+Promotion to `user` and new `user`-scope writes are not supported: current records have no
+immutable owner identity and remain workspace-bound. Use `repo`, `workspace`, or `session`;
+never label shared workspace storage as a private personal scope.
+
+## Reads are scoped too
+
+`engraphis_recall` is hierarchy-aware. A repo context sees that repo plus its workspace ancestors;
+a session context sees that exact session plus its repo/workspace ancestors. Other sessions never
+leak into repo/workspace recall. Historical `user` rows can still appear as workspace ancestors
+for compatibility; they are not owner-isolated. Routine MCP calls can resolve the workspace from
+their session or repo mapping as described above. If recall returns no results and a `note` says
+the workspace/repo is unknown, you simply have not written there yet. An unknown `session_id`
+is an error when `workspace` is omitted. With an explicit workspace, an unknown session returns
+no memories and a `note`, without broadening the search. Unauthorized sessions and conflicts
+between a known session and the supplied workspace or repo remain errors.

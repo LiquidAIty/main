@@ -331,7 +331,11 @@ async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
+async def canvas_inspect(
+    args: dict[str, Any],
+    *,
+    caller_card_id: str = "",
+) -> dict[str, Any]:
     _require(args, "projectId", "deckId")
     from app.python_models.tool_registry import readable_tool_ids, tool_access, writable_tool_ids, tool_publication
 
@@ -393,6 +397,8 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
         result["selectedCard"] = selected
         result["workspaceRoot"] = deck.get("workspaceRoot")
     if args.get("includeCatalog") is True:
+        if caller_card_id != "builder":
+            raise ControlPlaneError("builder_idd_projection_requires_builder")
         if not selected_id:
             raise ControlPlaneError("cardId_required_for_catalog")
         catalog = await asyncio.to_thread(_backend_json, "GET", "/api/idd/card-editor?" + urlencode({
@@ -768,8 +774,7 @@ async def card_update_configuration(
         except ValueError as error:
             raise ControlPlaneError(str(error)) from error
     if "script" in updates:
-        from app.python_models.card_script import saved_script
-        from app.python_models.idd import IddValidationError
+        from app.python_models.card_script import CardScriptValidationError, saved_script
         if not isinstance(updates["script"], dict):
             raise ControlPlaneError("card_script_configuration_invalid")
         try:
@@ -780,7 +785,7 @@ async def card_update_configuration(
                     "id": caller_card_id,
                 },
             }, hermes_available=False)}
-        except IddValidationError as error:
+        except CardScriptValidationError as error:
             raise ControlPlaneError(str(error)) from error
     if (
         "reasoningEffort" in updates

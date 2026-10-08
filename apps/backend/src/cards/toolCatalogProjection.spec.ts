@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  indexToolCatalogReferences,
+  indexLiveToolCatalog,
   resolveScriptToolReferences,
   resolveToolCatalogDefinitions,
   searchToolCatalogReferences,
@@ -14,26 +14,38 @@ function reference(index: number, access: 'read' | 'write' = 'read'): ToolCatalo
     kind: 'tool',
     namespace: 'cbm',
     sourceIds: ['cbm'],
+    dispatcherOwner: 'app.mcp_host._call_cbm',
     displayName: `Tool ${index}`,
     shortDescription: `Read repository slice ${index}`,
     availability: 'available',
     access,
+    publication: 'external-mcp',
+    grantEligible: true,
     contracts: [{
       sourceId: 'cbm',
       providerToolName: `tool_${String(index).padStart(5, '0')}`,
       connectionKind: 'external-mcp',
+      publication: 'external-mcp',
       available: true,
+      grantEligible: true,
       description: `Provider tool ${index}`,
       inputSchema: { type: 'object', properties: { index: { type: 'integer', const: index } } },
+      canonicalInputSchema: {
+        type: 'object', properties: { index: { type: 'integer', const: index } },
+      },
+      serverInjectedArguments: [],
+      dispatcherContextArguments: [],
+      dispatcherOwner: 'app.mcp_host._call_cbm',
+      authenticatedProjection: true,
       annotations: { readOnlyHint: true },
     }],
   };
 }
 
-describe('IDD tool catalog lookup', () => {
-  it('searches already-materialized IDD references without changing provider contracts', () => {
+describe('live tool catalog lookup', () => {
+  it('searches normalized live references without changing provider contracts', () => {
     const references = Array.from({ length: 10_000 }, (_, index) => reference(index));
-    const catalog = indexToolCatalogReferences(references);
+    const catalog = indexLiveToolCatalog(references);
     const page = searchToolCatalogReferences(catalog, {
       query: 'repository slice',
       offset: 200,
@@ -53,13 +65,13 @@ describe('IDD tool catalog lookup', () => {
       .toEqual(references[3].contracts[0]);
   });
 
-  it('rejects duplicate IDD identities instead of merging or classifying them', () => {
-    expect(() => indexToolCatalogReferences([reference(1), reference(1)]))
+  it('rejects duplicate canonical identities instead of merging or classifying them', () => {
+    expect(() => indexLiveToolCatalog([reference(1), reference(1)]))
       .toThrow('tool_catalog_duplicate_id:cbm.tool_00001');
   });
 
   it('paginates the Card Tools plane over write/effect operations only', () => {
-    const catalog = indexToolCatalogReferences([
+    const catalog = indexLiveToolCatalog([
       reference(1, 'read'),
       reference(2, 'write'),
       reference(3, 'write'),
@@ -81,7 +93,7 @@ describe('IDD tool catalog lookup', () => {
 
   it('derives Script handles only from explicit saved tool grants', () => {
     const disabledRead = { ...reference(2, 'read'), availability: 'disabled' as const };
-    const catalog = indexToolCatalogReferences([
+    const catalog = indexLiveToolCatalog([
       reference(1, 'read'),
       disabledRead,
       reference(3, 'write'),
@@ -97,7 +109,7 @@ describe('IDD tool catalog lookup', () => {
   });
 
   it('rejects an unknown saved Script handle instead of silently dropping it', () => {
-    const catalog = indexToolCatalogReferences([reference(1)]);
+    const catalog = indexLiveToolCatalog([reference(1)]);
     expect(() => resolveScriptToolReferences(catalog, {
       selectedIds: ['missing.tool'],
     })).toThrow('tool_catalog_selected_id_unknown:missing.tool');

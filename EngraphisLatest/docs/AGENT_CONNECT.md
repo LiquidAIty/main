@@ -1,0 +1,174 @@
+# Agent Connect
+
+The public Engraphis dashboard is a single-user local application. It does not mount Team
+accounts, invitations, roles, seats, organization audit, or per-member token administration.
+Those capabilities live in **Engraphis Team Cloud**.
+
+## Local agents remain free
+
+For one person on one machine, run the local MCP server. No hosted account is required:
+
+```bash
+pip install "engraphis[mcp]"
+engraphis-init
+claude mcp add engraphis -- engraphis-mcp
+```
+
+The local server exposes the same memory semantics while keeping the database on your machine.
+It is Smart MCP by default: agents use the nine compact routine tools and discover/execute advanced
+capabilities automatically when needed. There is no profile choice or manual escalation. If a
+legacy client pins direct tool names, configure `engraphis-mcp-classic` instead.
+Use `ENGRAPHIS_API_TOKEN` only when protecting a local HTTP surface; it is not a Team identity or
+seat credential.
+
+## Local MCP over HTTP
+
+For a local MCP client that requires HTTP rather than stdio, install the same `mcp` extra and run
+the packaged loopback server:
+
+```bash
+pip install "engraphis[mcp]"
+engraphis-mcp-http                 # Smart MCP at http://127.0.0.1:8711/mcp
+# equivalent: engraphis mcp-http
+```
+
+`--transport sse` selects the legacy SSE transport. `--host` deliberately accepts loopback
+addresses only: the standalone MCPServer transport does not carry the dashboard's authentication
+middleware. Do not expose it through a LAN address or proxy. For a remote deployment, install
+`engraphis[all]`, set a strong `ENGRAPHIS_API_TOKEN`, terminate TLS, and use the dashboard's
+authenticated `/mcp` endpoint instead.
+
+Use `engraphis-mcp-http --classic` only for an existing integration that requires the 36 direct
+tool names. New integrations should keep the nine-tool Smart default.
+
+Engraphis documents and tests generic MCP transports; it does not claim client-specific support
+unless that client has a maintained setup guide and integration test.
+
+## Host-owned conversation history
+
+An SDK or HTTP host that already owns the conversation transcript can call
+`POST /api/adaptive-context`. It accepts `query`, `history`, scope, and token-budget fields and
+returns either a bounded history slice or grounded retrieved context. This is deliberately an
+HTTP API, not an MCP tool: models should not receive or call it. Smart MCP does not require native
+deferred `tool_search`; a client that explicitly supports that OpenAI feature may use it as an
+additional optimization, never as a requirement.
+
+## Connect through Team Cloud
+
+Use the official hosted dashboard when several people or remote agents need one managed
+organization:
+
+1. The organization owner starts Team or purchases a subscription in Engraphis Cloud.
+2. The owner invites named members and assigns roles in the hosted dashboard.
+3. An organization owner or admin generates a one-time **connect token** (`engr_ct_…`) for
+   their own connected machine. The account portal shows the exact command to run.
+4. That owner or admin runs the command on the machine being connected (see below).
+5. The hosted service rechecks organization membership, role, scopes, entitlement version, and
+   workspace binding on every request.
+
+Members consume named seats; devices do not. Disabling a member or releasing their seat revokes
+their hosted access without distributing an account-wide license key.
+
+The hosted onboarding flow provides the exact endpoint and client snippet for the member's
+organization. Do not substitute the URL of a public self-hosted image: that image intentionally
+has no Team identity backend.
+
+## Connect a machine: `engraphis connect`
+
+Copy the command from your account portal and run it on the machine you are connecting:
+
+```bash
+engraphis connect --token engr_ct_...
+```
+
+Before redeeming a short-lived token, you can validate the configured control/compute endpoints
+and the private session-file path without reading, sending, or storing any credential:
+
+```bash
+engraphis connect --preflight --control-url https://api.engraphis.com
+```
+
+This local preflight validates endpoint safety and DNS resolution plus session-file storage. It
+does not make an authenticated request and cannot verify private-service membership, billing,
+token validity, seats, roles, or workspace access; redeeming the portal-issued token remains the
+real integration step.
+
+That redeems the token against `POST /v1/devices/connect` on the control plane and writes the
+owner-only session file `~/.engraphis/cloud_session.json` (mode `0600`). The dashboard, the MCP
+server, and Cloud Sync all read that file, so no environment secret is needed afterwards. The
+saved control and compute URLs are bound to that rotating credential family: later environment
+changes cannot redirect its bearer credentials. Reconnect with a fresh portal token to change
+either endpoint. Rerun `engraphis connect` on every machine you want connected.
+
+Useful options:
+
+| Option | Effect |
+| --- | --- |
+| `--token -` | Read the token from stdin, so it never enters shell history. |
+| `--preflight` | Validate endpoints and session storage without a token or control-plane HTTP request. |
+| `--workspace WS_ID` | Bind this device to a single workspace. |
+| `--label TEXT` | Name this installation in your account portal. |
+| `--device-name TEXT` | Override the device name (defaults to the hostname). |
+| `--control-url URL` | Select the control plane for a new connection/preflight; reconnect to change a saved credential family's endpoint. |
+| `--compute-url URL` | Select managed compute for a new connection (also `ENGRAPHIS_CLOUD_COMPUTE_URL`); reconnect to change it later. |
+| `--json` | Print a redacted, machine-readable summary. |
+
+The summary accepts only bounded, printable metadata from the documented response shape.
+Credentials, malformed nested values, and terminal-control text are never echoed to terminal or
+JSON output.
+
+The same command is installed as `engraphis-connect`, matching the other `engraphis-*` scripts.
+
+Connect tokens are **single-use and short-lived**. The service answers every refusal, whether expired,
+already redeemed, or never valid, with the same `401`, so the client reports all three
+possibilities and the fix is always the same: generate a new token in the account portal. A `402`
+means the subscription itself has lapsed; fix billing rather than the token.
+
+Because the token is single-use, the client checks that it can actually write the session file
+*before* redeeming it. If the state directory is not writable, or `cloud_session.json` has been
+replaced by a symlink, a hard link, or a directory, the command fails immediately, names the path
+to fix, and sends nothing. Your token is untouched, so you can correct the path and rerun the
+same command rather than issuing a new token.
+
+The token is a credential. It is sent in the request body and nowhere else; it is never
+printed, never logged, and never written to disk. What *is* written is the rotating refresh
+credential the service returns, which is why the session file is owner-only.
+
+The command also mints a stable per-installation identity at `~/.engraphis/client_identity.json`
+(random ULIDs, not a hardware fingerprint) so reconnecting the same machine updates the existing
+installation instead of registering a new device every time. Both files honour
+`ENGRAPHIS_STATE_DIR`; a distinct state directory is a distinct installation.
+
+## Credential lifecycle
+
+Hosted access uses short-lived access tokens plus rotating refresh credentials. A refresh family
+has an absolute lifetime and rotation never extends it. Only credential hashes are stored by the
+service; the raw replacement is returned once and must be kept in an owner-only local state file
+or secrets manager.
+
+Customer-side environment variables are documented in [`.env.example`](../.env.example). Values
+come from the process environment or the owner-private `~/.engraphis/config.env`; an explicit
+`ENGRAPHIS_ENV_FILE` must be an absolute owner-private regular file. Engraphis never searches the
+working directory for `.env`. Prefer the `~/.engraphis/cloud_session.json` that
+`engraphis connect --token` writes over long-lived environment secrets: it holds a rotating
+credential, is owner-only, and keeps its bound endpoints and replacement credential up to date.
+Environment secrets are for non-interactive deployments that cannot run the connect command.
+
+## Trial and grace
+
+The no-card trial starts after email confirmation and lasts **7 active days for Pro or 14 active days for Team**.
+`workspace_write_grace` is a private-control-plane account-continuity state capped at **24
+hours**. It never extends the trial, hosted agent access, Team membership, seats, Cloud Sync, or
+managed compute, and it does not restrict the free local MCP server.
+
+## Security notes
+
+- Use only the HTTPS endpoint shown by the official hosted dashboard.
+- Never put refresh credentials, access tokens, or account keys in a repository or support log.
+- Bind every hosted credential to the intended organization and workspace.
+- Give automation the minimum scopes it needs and revoke unused devices.
+- Keep local and hosted responsibilities clear: the public client transports authorized
+  requests; the private control plane owns identity, seats, policy, and revocation.
+
+See [Licensing](LICENSING.md) for the source/service boundary and [Cloud Sync](SYNC.md) for the
+relay client contract.

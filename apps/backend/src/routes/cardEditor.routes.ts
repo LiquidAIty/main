@@ -1,13 +1,62 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { createHash } from 'crypto';
 import { getDeckDocument } from '../decks/store';
+import { getProjectCard } from '../services/agentBuilderStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import { indexToolCatalogReferences, resolveScriptToolReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
+import { indexLiveToolCatalog, resolveScriptToolReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 
 const router = Router();
 export const iddRoutes = Router();
+
+function objectValue(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, any>
+    : {};
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function elapsedMilliseconds(run: Record<string, any>): number | null {
+  const start = Date.parse(String(run.startedAt || run.acceptedAt || ''));
+  const end = Date.parse(String(run.finishedAt || ''));
+  if (!Number.isFinite(start)) return null;
+  return Math.max(0, (Number.isFinite(end) ? end : Date.now()) - start);
+}
+
+function runDashboardProjection(run: Record<string, any> | undefined) {
+  if (!run) return null;
+  const tokenValues = [
+    run.inputTokens,
+    run.outputTokens,
+    run.cachedTokens,
+    run.reasoningTokens,
+  ].map(finiteNumber);
+  const totalTokens = tokenValues.some((value) => value !== null)
+    ? tokenValues.reduce<number>((sum, value) => sum + (value || 0), 0)
+    : null;
+  const costUsd = finiteNumber(run.costUsd);
+  return {
+    state: String(run.state || ''),
+    acceptedAt: typeof run.acceptedAt === 'string' ? run.acceptedAt : null,
+    model: typeof run.model === 'string' ? run.model : null,
+    elapsedMs: elapsedMilliseconds(run),
+    totalTokens,
+    costUsd,
+    costStatus: costUsd === null ? 'unavailable' : 'estimated',
+    toolCallCount: finiteNumber(run.toolCallCount),
+  };
+}
+
+async function authorizeCardProject(req: Request, projectId: string): Promise<boolean> {
+  const userId = String((req as Request & { userId?: string }).userId || '').trim();
+  if (!userId) return false;
+  const project = await getProjectCard(projectId, userId);
+  return Boolean(project && project.ownerUserId === userId);
+}
 
 function safeToolCatalogFailureReason(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error || '');
@@ -22,7 +71,7 @@ function commaSeparatedIds(value: unknown): string[] {
     : [];
 }
 
-export async function loadInputDictionaryToolCatalog() {
+export async function loadLiveToolCatalog() {
   const canonicalMcpTools = await listPythonAgentMcpCatalog();
   const privateRuntimeManifest = await requestPythonRailsJson('/tools/manifest', {
     method: 'GET',
@@ -30,7 +79,7 @@ export async function loadInputDictionaryToolCatalog() {
   if (!Array.isArray(privateRuntimeManifest?.tools)) {
     throw new Error('python_runtime_tool_manifest_invalid');
   }
-  const materialized = await requestPythonRailsJson('/idd/tools/materialize', {
+  const materialized = await requestPythonRailsJson('/tools/catalog/normalize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -38,9 +87,9 @@ export async function loadInputDictionaryToolCatalog() {
     }),
   }) as { references?: unknown };
   if (!Array.isArray(materialized?.references)) {
-    throw new Error('input_data_dictionary_tool_catalog_invalid');
+    throw new Error('live_tool_catalog_invalid');
   }
-  return indexToolCatalogReferences(materialized.references as ToolCatalogReference[]);
+  return indexLiveToolCatalog(materialized.references as ToolCatalogReference[]);
 }
 
 async function cardCatalogOptions(projectId: string, deckId: string, cardId: string) {
@@ -55,12 +104,11 @@ async function cardCatalogOptions(projectId: string, deckId: string, cardId: str
     ...(saved.mcpConnectionIds || []).map((name) => 'mcp:' + name),
     ...(saved.provider && saved.modelKey ? ['model:' + saved.provider + ':' + saved.modelKey] : []),
   ].filter((value): value is string => typeof value === 'string' && Boolean(value));
-  const catalog = await listPythonAgentMcpCatalog();
-  const options: Array<Record<string, unknown>> = catalog.map((tool: any) => ({
-    id: tool.name, kind: 'tool', owner: tool.sourceId, source: tool.sourceId,
-    schema: tool.inputSchema, available: tool.available !== false,
-  }));
-  return { catalogOptions: options, selectedIds: [...new Set(selectedIds)] };
+  const catalog = await loadLiveToolCatalog();
+  return {
+    catalogOptions: catalog.references,
+    selectedIds: [...new Set(selectedIds)],
+  };
 }
 
 router.get('/options', async (_req, res) => {
@@ -78,6 +126,69 @@ router.get('/options', async (_req, res) => {
     return res.json({ ok: true, fields: options.fields, catalogs: options.catalogs });
   } catch {
     return res.status(503).json({ ok: false, error: 'runtime_options_unavailable' });
+  }
+});
+
+router.post('/run', async (req, res) => {
+  const action = String(req.body?.action || '').trim();
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || '').trim();
+  const cardId = String(req.body?.cardId || '').trim();
+  if (!projectId || !deckId || !cardId) {
+    return res.status(400).json({ ok: false, error: 'card_run_identity_incomplete' });
+  }
+  if (!['history', 'status'].includes(action)) {
+    return res.status(400).json({ ok: false, error: 'card_run_read_action_required' });
+  }
+  if (action === 'status' && req.body?.inspectOnly !== true) {
+    return res.status(400).json({ ok: false, error: 'card_run_status_must_be_inspect_only' });
+  }
+  try {
+    if (!(await authorizeCardProject(req, projectId))) {
+      return res.status(403).json({ ok: false, error: 'card_run_project_access_denied' });
+    }
+    const rawLimit = action === 'history' ? Number(req.body?.limit || 1) : 1;
+    const limit = Number.isSafeInteger(rawLimit) ? Math.max(1, Math.min(20, rawLimit)) : 1;
+    const history = objectValue(await requestPythonRailsJson('/domain/runs/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, deckId, cardId, limit }),
+    }));
+    const runs = Array.isArray(history.runs) ? history.runs.map(objectValue) : [];
+    const latest = runs[0];
+    if (action === 'history') {
+      return res.json({
+        ok: true,
+        result: { cardId, latest: runDashboardProjection(latest) },
+      });
+    }
+    if (!latest) return res.json({ ok: true, result: null });
+    const hermesRootId = String(latest.hermesRootId || '').trim();
+    if (String(latest.runtimeMode || '') === 'magentic_one' && hermesRootId) {
+      const magnetic = objectValue(await requestPythonRailsJson('/magentic/execution/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hermesRootId }),
+      }));
+      return res.json({
+        ok: true,
+        result: { ...magnetic, runId: String(latest.runId || ''), cardId },
+      });
+    }
+    return res.json({
+      ok: true,
+      result: {
+        cardId,
+        runId: String(latest.runId || ''),
+        state: String(latest.state || ''),
+        activeWorkers: finiteNumber(latest.activeWorkers) || 0,
+      },
+    });
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_run_read_failed',
+    });
   }
 });
 
@@ -118,7 +229,7 @@ iddRoutes.get('/card-editor', async (req, res) => {
 
 iddRoutes.get('/tools', async (req, res) => {
   try {
-    const catalog = await loadInputDictionaryToolCatalog();
+    const catalog = await loadLiveToolCatalog();
     const selectedIds = commaSeparatedIds(req.query.selectedIds);
     return res.json({
       ok: true,
@@ -138,7 +249,7 @@ iddRoutes.get('/tools', async (req, res) => {
     console.warn(`[idd-tools] catalog unavailable reason=${reason}`);
     return res.status(503).json({
       ok: false,
-      error: 'input_data_dictionary_tool_catalog_unavailable',
+      error: 'builder_tool_projection_unavailable',
       reason,
       references: [],
       selectedKnownReferences: [],
@@ -165,7 +276,7 @@ function scriptPaletteFingerprint(references: ToolCatalogReference[]): string {
 
 iddRoutes.get('/script-tools', async (req, res) => {
   try {
-    const catalog = await loadInputDictionaryToolCatalog();
+    const catalog = await loadLiveToolCatalog();
     const references = resolveScriptToolReferences(catalog, {
       selectedIds: commaSeparatedIds(req.query.selectedIds),
     });
@@ -201,7 +312,7 @@ router.post('/script/validate', async (req, res) => {
     const selectedToolIds: string[] = Array.isArray(body.selectedTools)
       ? body.selectedTools.map((value: unknown) => String(value))
       : [];
-    const catalog = await loadInputDictionaryToolCatalog();
+    const catalog = await loadLiveToolCatalog();
     const references = resolveScriptToolReferences(catalog, {
       selectedIds: selectedToolIds,
     });

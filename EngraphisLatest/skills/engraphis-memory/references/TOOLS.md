@@ -1,0 +1,792 @@
+# Engraphis MCP tools: reference
+
+The Classic server registers 39 direct tools and the Smart gateway registers nine; two names
+overlap, for 46 distinct public tool names. Parameters are `name (type, default)`: no default
+means required. Every tool returns a JSON string; on failure it returns `"Error: <reason>"`
+instead of raising.
+Governance tools (`retire`/`pin`/`correct`/`link`) verify the memory actually belongs to the
+`workspace`/`repo` you pass **before** changing anything, so you can't touch memories outside a
+scope you were already given.
+
+Group index: [Write](#write) · [Recall and read](#recall-and-read) · [History](#history-bi-temporal) · [Governance](#governance) ·
+[Code](#code) · [Sessions](#sessions) · [Smart gateway](#smart-gateway) · [Ops](#ops).
+
+---
+
+## Write
+
+### `engraphis_remember`
+Store a memory so it can be recalled later, across turns, sessions, and repos.
+
+- `content (str)`: the fact/decision/convention/procedure.
+- `workspace (str, None)`: top-level scope (org/product), e.g. `"acme"`. Omitted inherits an
+  authorized supplied session, then a saved repo mapping, then `"default"`. Explicit values
+  override mappings; a workspace/repo mismatch with a supplied session is rejected.
+- `repo (str, None)`: repository scope; omit for workspace-wide facts.
+- `session_id (str, None)`: from `engraphis_start_session`, if this belongs to a session.
+- `mtype (str, "semantic")`: `semantic` | `episodic` | `procedural` | `working`. See CONVENTIONS.
+- `scope (str, None)`: `session` | `repo` | `workspace`; `user` is reserved and rejected until
+  memories carry an immutable owner identity. Omitted preserves the compatible default (`repo`
+  when `repo` or a repo-backed `session_id` is present, otherwise `workspace`). Session
+  visibility must be explicit. See SCOPING.
+- `title (str, "")`: optional short title.
+- `importance (float, 0.0)`: `0..1`; higher resists decay.
+- `keywords (list[str], None)`: optional, aids lexical recall.
+- `dedupe (bool, True)`: check against similar existing memories first: an exact restatement
+  **reinforces** the existing one (`op:"noop"`); a keyed or strongly evidenced update
+  **supersedes** the old one (`op:"invalidate"`, old closed not deleted); an uncertain neighbor
+  returns `op:"relate"` and keeps both. Set `False` only for intentionally repeated episodic
+  log entries.
+- `source (str, "agent")`: content origin. Web, import, sync, and other external origins remain
+  untrusted even if `trusted=true`.
+- `trusted (bool, true)`: local-agent confidence label; it cannot elevate an external origin.
+- `kind (str, None)`: optional artifact kind such as `plan`, `diff`, `review`, or `task_summary`.
+- `retention_class (str, None)`: optional host classification: `ephemeral` | `normal` |
+  `critical`; advisory and bounded, never a silent discard.
+- `retention_reason (str, "")`: short content-free rationale for that classification.
+- `valid_from (float, None)`: optional Unix timestamp for when the fact became true in
+  world time; omit to use ingestion time.
+- `subject_key (str, "")`: optional stable claim subject, such as `api.rate_limit`.
+- `claim_kind (str, "")`: optional predicate/category, such as `configured_value`. A matching
+  subject and compatible kind make supersession deterministic; uncertain neighbors remain live.
+- `exact_value (str, None)`: optional literal that must occur verbatim in the source content;
+  use this when a downstream edit or tool argument must preserve an exact value.
+- `exact_value_type (str, "literal")`: `literal` | `string` | `identifier` | `path` | `number` |
+  `date` | `enum` | `json`. Ambiguous repeated values require a source span through the
+  Python/service API.
+
+Returns `{id, workspace, workspace_source, repo, scope, mtype, stored:true, op}` where
+`workspace_source` is `explicit` | `session` | `project` | `default`, and `op` is `add` | `noop` |
+`invalidate` (with `superseded:[old_id,…]`) | `relate` (with `related_to`; both claims remain) |
+`quarantined` (retained for governance review but excluded from normal recall, with content-free
+`policy` and `reasons` codes).
+
+> Prefer `dedupe=True` (default). It is what keeps the store contradiction-free without an LLM.
+
+### `engraphis_remember_many`
+Store a batch of facts from parallel agents (fan-out sub-agents, a research sweep, a review
+council) in one atomic, deduplicated write, instead of many separate `remember` calls.
+
+- `facts (list[dict])`: each item needs `content` and optionally `title`, `mtype`,
+  `importance` (0..1), `keywords`, `metadata`, `subject_key`, `claim_kind`,
+  `valid_from` (Unix timestamp), `exact_value`, `exact_value_type`, and `evidence_source`
+  (a declared citeable origin for the fact, e.g. `"subagent-7"`; defaults to none).
+- `workspace (str, "default")`, `repo (str, None)`, `session_id (str, None)`.
+- `mtype (str, "semantic")`: default type for items without their own.
+- `scope (str, None)`: same visibility rules as `engraphis_remember`.
+- `source (str, "agent")`, `trusted (bool, true)`: one provenance for the whole batch.
+
+The whole batch lands in one transaction (all-or-nothing); each fact is also resolved against
+the siblings already resolved earlier in the batch, so duplicates reinforce and keyed claims
+supersede within the batch. Afterwards, siblings that share a non-empty `subject_key` or the
+same declared `evidence_source` get `related` graph edges labeled with that evidence: facts
+with no declared evidence stay unwired ("no shared source, no edge"). Returns
+`{workspace, repo, scope, stored:true, total, ops:[…], results:[{id, op}, …]}` with one entry
+per input fact, in order.
+
+### `engraphis_record_event`
+Append one raw occurrence to the append-only event ledger. Event rows are not memories: they are
+not recalled, deduplicated, reinforced, or consolidated as memories.
+
+- `kind (str)`: stable event category, e.g. `decision`, `bug`, `fix`, `tried_and_failed`.
+- `content (str)`: what happened.
+- `workspace (str, "default")`, `repo (str, None)`, `session_id (str, None)`.
+
+Returns `{id, kind}`. Choose this when each occurrence matters; use `remember` when the outcome
+must itself be recalled, and promote a recurring pattern through `engraphis_consolidate`.
+
+---
+
+## Recall and read
+
+### `engraphis_recall_context`  *(recommended for agent prompts)*
+Return one hard-budget packed context plus compact source identities, without repeating full memory
+bodies already represented in `context`.
+
+- `query (str)`; `workspace (str, None)`; `repo (str, None)`; `session_id (str, None)`;
+  `mtypes (list[str], None)`; `k (int, 50)`.
+- `token_budget (int, 1024)`: hard packed-context budget, `0..32768`.
+- `format (str, "full")`: `full` or compatibility alias `gist`; both return the same budgeted, cited evidence with complete conditions and code whitespace. `gist` adds a format marker without another summary or an extra savings claim.
+- `retrieval_profile (str, "balanced")`: `balanced` is the default legacy hybrid; `auto` is
+  explicit opt-in, with `fast`, `lexical`, `graph`, and `code` available for deliberate routing. The
+  specialized graph/code profiles prioritize their named evidence while retaining supporting
+  arms; diagnostics preserves both normalized and profile-adjusted scores.
+- `fast` keeps vector and lexical recall while skipping graph traversal: an explicit
+  small-vault profile. The full valid set is `balanced`, `auto`, `fast`, `lexical`, `graph`,
+  `code` (`core/retrieval_policy.py`).
+- `candidate_depth (str, "fixed")`: `fixed` preserves the historical 50-candidate pool;
+  opt-in `adaptive` uses a deterministic profile-aware smaller pool for routine lexical/balanced
+  queries while retaining wider graph/code pools. Responses report the requested and used depth.
+- `packing_mode (str, "legacy")`: `legacy` preserves the established one-candidate-at-a-time
+  packer; opt-in `coverage` reserves complete evidence units across sources before expanding them.
+- `retrieval_recipe (str, "default")`: `default` preserves historical settings; opt-in
+  `conversation` starts at `k=20` / 1,500 tokens and `long_session` at `k=10` / 4,096 tokens
+  when the caller leaves depth and budget at their defaults. Explicit caller values win.
+- `valid_at (float, None)`: what was true in world time; `known_at (float, None)`: what
+  Engraphis had learned in system time; `as_of (float, None)` is the `valid_at` compatibility
+  alias and must match when both are supplied.
+- `diagnostics (bool, false)`: include the per-arm retrieval trace.
+- `planning (str, "off")`: `off` preserves the single-query path; `auto` materializes the
+  original query plus at most two planner routes, with strict per-route and cumulative bounds.
+- `jev_assisted (bool, false)`: opt in to Jev prioritizing a route generated by the local
+  deterministic planner. Requires `planning="auto"`; scope, time, type, and trust filters remain
+  unchanged. Remote route selection requires explicit BYOK; managed `query_planning` fails closed
+  before credential refresh or network requests and keeps deterministic order with a visible fallback.
+- `allow_remote (bool, false)` and `data_classification (str, None)`: per-call consent for a Jev
+  request; remote use requires `true` plus `public` or `internal`. The provider receives the query
+  and bounded routes, not retrieved memory bodies. Uncertain or failed requests use deterministic
+  route order. Keep both controls unset for local-only behavior.
+- `mtype_limits (dict[str,int], None)`: optional post-rerank maxima by memory type. Limits drop
+  lower-ranked results; they never boost relevance.
+- `max_response_tokens (int, None)`: optional serialized-response cap `2..1000000`; truncation
+  removes packed context from the end while preserving source references.
+
+Returns `{query, count, context, sources, packed_sources, usage, valid_at, known_at, historical,
+retrieval_profile, response_mode, receipt}`. `usage` always names `budget_tokens`,
+`context_tokens`, `source_tokens`, `saved_tokens`, `savings_ratio`, `packed_count`,
+`omitted_count`, and `token_counter`.
+
+With no explicit workspace, a supplied authorized session provides its workspace/repo; otherwise
+the supplied repo uses its saved mapping or `"default"`. Explicit mismatches with a session are
+errors. Local calls without any workspace, repo, or session retain broad recall.
+
+### `engraphis_recall`
+Retrieve the memories most relevant to a query (hybrid vector + lexical + graph, fused + reranked).
+It is the full-response compatibility surface; prefer `engraphis_recall_context` for a prompt.
+
+- `query (str)`: natural language, e.g. `"how do we handle auth?"`.
+- `workspace (str, None)`: restrict to this workspace.
+- `repo (str, None)`: restrict to this repo; an omitted workspace uses its saved mapping or
+  `"default"` when unmapped.
+- `session_id (str, None)`: exact authorized session context; an omitted workspace/repo inherits
+  from it. Includes repo/workspace ancestors while excluding every other session. Explicit
+  mismatches and invalid/unauthorized sessions are errors, never fallback requests.
+- `mtypes (list[str], None)`: restrict to these memory types.
+- `k (int, 8)`: max results, `1..50`.
+- `token_budget (int, None)`: hard packed-context budget; omitted uses the engine default.
+- `retrieval_profile (str, "balanced")`: `balanced` default; `auto` only when explicitly set;
+  `fast`, `lexical`, `graph`, and `code` are deliberate alternatives whose named arm is
+  prioritized (`fast` keeps vector + lexical and skips graph traversal).
+- `candidate_depth (str, "fixed")`: `fixed` preserves the historical candidate pool; opt-in
+  `adaptive` is a deterministic profile-aware depth experiment. The response records the
+  requested mode, actual depth, and reason.
+- `packing_mode (str, "legacy")`: `legacy` preserves the established packer; opt-in `coverage`
+  spreads complete evidence units across sources.
+- `retrieval_recipe (str, "default")`: `default` preserves historical settings; opt-in
+  `conversation` starts at `k=20` / 1,500 tokens and `long_session` at `k=10` / 4,096 tokens
+  when depth and budget are left at their historical defaults.
+- `response_mode (str, "full")`: `full` preserves legacy memory bodies; `compact` omits bodies
+  already represented in `context`.
+- `valid_at (float, None)`, `known_at (float, None)`; `as_of (float, None)` is the compatible
+  `valid_at` alias and conflicts unless it matches `valid_at` exactly.
+- `diagnostics (bool, false)`: include `retrieval_trace` with raw/normalized/fusion/rerank data.
+- `planning (str, "off")`: `off` preserves single-query recall; `auto` enables bounded planning.
+- `jev_assisted (bool, false)`: opt in to Jev prioritizing one alternate route from the local
+  deterministic planner. Requires `planning="auto"` and explicit BYOK; Jev cannot change retrieval
+  filters. Managed `query_planning` fails closed before credential refresh or network requests and
+  keeps deterministic order with a visible fallback.
+- `allow_remote (bool, false)` and `data_classification (str, None)`: per-call consent for a Jev
+  request; remote use requires `true` plus `public` or `internal`. The provider receives the query
+  and bounded routes, not recalled memories. Uncertain or failed requests keep deterministic order.
+- `mtype_limits (dict[str,int], None)`: optional post-rerank maxima by memory type.
+- `max_response_tokens (int, None)`: optional serialized-response cap `2..1000000`; truncation
+  removes packed context and memory bodies from the end while preserving source references.
+
+Returns `{query, count, context, memories:[{id, title, content, scope, mtype, repo_id, score,
+arm, retention, provenance}], packed_sources, usage, valid_at, known_at, historical,
+retrieval_profile, response_mode}`. `usage` contains the strict token fields listed above.
+`count:0` with a `note` means that workspace/repo isn't known yet: not an error.
+Successful calls append a privacy-safe operation receipt but do not reinforce weak neighbors just
+because they were returned. Grounded recall reinforces cited evidence; explicit-use Python callers
+can opt into reinforcement. The MCP tool remains stateful and non-idempotent because of its receipt.
+
+### `engraphis_recall_grounded`
+Answer a question **strictly from** stored memories, with `[n]` citations, or **abstain** when
+nothing in scope supports it. Use when you want a grounded, non-hallucinated answer and would
+rather get "insufficient evidence" than a guess. The default answer is deterministic and
+extractive; optional LLM synthesis is accepted only when its claims remain cited.
+
+- `query (str)`: the question, e.g. `"which auth scheme did we standardise on?"`.
+- `workspace (str, None)`, `repo (str, None)`, `session_id (str, None)`,
+  `mtypes (list[str], None)`, `k (int, 8)`.
+- `valid_at (float, None)`, `known_at (float, None)`; `as_of (float, None)` remains the
+  compatibility `valid_at` alias and must match if both are supplied.
+- `token_budget (int, None)`; `retrieval_profile (str, "balanced")`; `candidate_depth (str,
+  "fixed")`; `response_mode (str, "full" | "compact")`; `diagnostics (bool, false)`.
+- `planning (str, "off")`; `mtype_limits (dict[str,int], None)`;
+  `max_response_tokens (int, None)`: optional serialized-response cap `2..1000000`.
+- `min_support (float, None)`: absolute support floor `0..1`; raise it to demand stronger
+  evidence before answering.
+- `synthesize (bool, false)`: ask a configured LLM for cited prose; falls back safely.
+
+Returns `{query, grounded, abstained, answer, support, reason, synthesized, citations:[{n, id,
+title, content, score, support, provenance}]}`. When `grounded` is false, `answer` is empty and
+`reason` says why (insufficient evidence, or unknown workspace/repo).
+Resolved calls append a privacy-safe receipt, including abstentions, and cited memories are
+reinforced. This surface is stateful and non-idempotent.
+
+### `engraphis_answer`
+Backward-compatible grounded-answer alias with the same state effects. Prefer
+`engraphis_recall_grounded` for new configs; keep using this only if an existing agent already
+references it.
+
+- `query (str)`; `workspace (str, "default")`; `repo (str, None)`; `k (int, 8)`;
+  `min_support (float, 0.25)`; `synthesize (bool, false)`.
+- `as_of (float, None)`: compatibility `valid_at` alias for a point-in-time answer;
+  `valid_at (float, None)` is the world-time anchor; the two must match if both are
+  supplied. `known_at (float, None)` anchors system time.
+- `token_budget (int, None)`; `retrieval_profile (str, "balanced")`: `balanced`, `auto`,
+  `fast`, `lexical`, `graph`, or `code`;
+  `candidate_depth (str, "fixed")`; `response_mode (str, "full")`;
+  `diagnostics (bool, false)`; `planning (str, "off")`;
+  `mtype_limits (dict[str,int], None)`; `max_response_tokens (int, None)`.
+
+### `engraphis_recall_proactive`
+Conscious recall with **no query**: high-importance, recent, well-reinforced memories. Use at the
+start of a task to load context before you know what to ask.
+
+- `workspace (str)`, `repo (str, None)`, `k (int, 10)`.
+
+Returns `{memories:[…], last_session:{summary, open_threads, outcome}}`. When `repo` is given,
+`last_session` is the authenticated caller's most recent *ended* session for that repo (or `{}`
+if none); standalone trusted callers retain the unfiltered local handoff behavior.
+
+### `engraphis_proactive_context`
+Build a task-aware context packet from proactive recall, optional current agent state, and the
+last-session handoff. Use at task start when an agent needs ready-to-use, cited context rather
+than the raw queryless memory list.
+
+- `workspace (str)`, `repo (str, None)`, `task (str, "")`, `agent_state (str, "")`,
+  `k (int, 10)`, `synthesize (bool, false)`, `token_budget (int, None)`,
+  `response_mode (str, "full")`: use `compact` for one packed context packet.
+
+Returns `{context_summary, suggested_memories, citations, suggested_queries, last_session,
+grounded, synthesized, reason}`.
+When `task` or `agent_state` is non-empty, its task-specific recall appends a privacy-safe receipt
+without reinforcing memories, so the MCP tool is conservatively stateful and non-idempotent.
+
+
+---
+
+## History (bi-temporal)
+
+### `engraphis_why`
+Surface the current answer **and** what it superseded. Use for "why is it like this" / "what did
+we used to do"; it looks past the live view into history, which plain recall does not.
+
+- `query (str)`, `workspace (str)`, `repo (str, None)`, `k (int, 5)`.
+
+Returns `{query, answer:[…live…], supersedes:[…what they replaced…]}`.
+
+### `engraphis_timeline`
+Every version of a fact in chronological order, including superseded ones.
+
+- `query (str)`, `workspace (str)`, `repo (str, None)`, `limit (int, 20)`.
+
+Returns `{query, history:[{…memory fields…, valid_from, valid_to}]}`, oldest first.
+
+---
+
+## Governance
+All five preserve history (bi-temporal close, never a hard delete) and are audited. All verify
+ownership against the `workspace`/`repo` you pass.
+
+### `engraphis_correct`  *(preferred fix)*
+Replace a memory's content without losing history: old content is closed, the correction is stored
+as a new memory that records what it corrected, so the audit trail and `engraphis_why` still work.
+
+- `memory_id (str)`, `new_content (str)`, `workspace (str)`, `repo (str, None)`, `reason (str, "")`.
+- `exact_value (str, None)`, `exact_value_type (str, "literal")`,
+  `exact_value_span ([start,end], None)`: explicitly bind a literal in the corrected content;
+  integer character offsets select one occurrence when it is repeated.
+- `clear_exact_value (bool, false)`: remove the binding; cannot be combined with a replacement.
+
+Changed content clears the previous binding unless a replacement is supplied, even if the old
+literal still occurs (for example, "BETA, not ALPHA"). Unchanged content preserves a valid binding
+unless explicitly cleared. Neither operation changes the predecessor's content or binding.
+
+Returns `{id, superseded:[old_id], reason}`. Prefer this over retire-then-remember.
+
+### `engraphis_retire`
+Retire a memory: it stops appearing in recall, history preserved.
+
+- `memory_id (str)`, `workspace (str)`, `repo (str, None)`, `reason (str, "")`,
+  `confirmed (bool, false)`: explicit local-operator confirmation, must be true; retirement
+  closes history and every request is audited, including retries.
+
+Returns `{id, status:"retired", reason}`. Use `correct` instead when you have replacement content.
+
+### `engraphis_secure_erase`
+Irreversibly remove one accidentally stored credential from local persistence. It deletes the
+memory plus its local FTS/vector/ANN and derived graph/link rows, performs SQLite secure-delete,
+WAL checkpoint, and VACUUM, and scans recognised local SQLite recovery backups. It cannot erase
+exports, snapshots, remote peers, unknown backups, or content already read by an agent; rotate the
+credential. This is destructive and intentionally does not preserve history.
+
+- `memory_id (str)`, `workspace (str)`, `repo (str, None)`,
+  `confirmed (bool, false)`: explicit local-operator confirmation, must be true; this
+  irreversibly destroys the memory, its history, and local indexed derivatives. Rotate the
+  credential first.
+
+Returns `{id, status:"securely_erased", maintenance, recognised_backups_erased,
+backup_limitations}`. The `vector_index_cleanup` result must be `deleted` before an injected
+external vector backend can be considered remediated.
+
+### `engraphis_forget` *(deprecated)*
+Compatibility alias for `engraphis_retire`. It retains the old `status:"forgotten"` result for
+existing clients, but new integrations must use `engraphis_retire`.
+
+- `memory_id (str)`, `workspace (str)`, `repo (str, None)`, `reason (str, "")`,
+  `confirmed (bool, false)`: explicit local-operator confirmation, must be true, as for
+  `engraphis_retire`.
+
+### `engraphis_promote`
+Widen a live memory's visibility without editing it in place. The wider record is stored first;
+the narrow source is then bi-temporally closed and linked, with provenance, pinning, sensitivity,
+and learned stability inherited.
+
+- `memory_id (str)`, `target_scope (str)`, `workspace (str)`, `repo (str, None)`,
+  `reason (str, "")`.
+
+`target_scope` must be strictly wider: session → repo/workspace or repo → workspace. User-scope
+promotion is not yet supported because records remain workspace-bound. Returns
+`{id, promoted_from, from_scope, scope, op, reason, receipt}`.
+
+### `engraphis_pin`
+Exempt a memory from automatic decay/pruning for durable conventions and identity facts.
+
+- `memory_id (str)`, `workspace (str)`, `repo (str, None)`, `pinned (bool, True)`.
+
+Returns `{id, pinned}`.
+
+### `engraphis_link`
+Explicitly connect two memories (A-MEM-style) when a plain recall wouldn't surface the relation.
+
+- `a (str)`, `b (str)`, `workspace (str)`, `repo (str, None)`, `relation (str, "related")`:
+  e.g. `caused_by`, `fixed_by`.
+- `layer (str, None)`: `temporal` | `entity` | `causal` | `semantic`; omitted means infer
+  from `relation`.
+- `reason (str, "")`: optional rationale/context for why the relationship exists; persisted
+  with the link and shown by inspection/graph APIs.
+
+Returns `{a, b, relation, layer, reason, linked:true, receipt}`.
+
+---
+
+## Code
+
+### `engraphis_index_repo`
+Incrementally parse a repository into the code-symbol graph: modules/files, functions, classes,
+methods, variables, docstrings/comments, definitions, calls, imports, inheritance, and
+implementation edges. AST via tree-sitter when available, dependency-free regex fallback
+otherwise. Existing memories that mention symbols are linked into the same traversal graph.
+
+- `workspace (str)`, `repo (str)`, `root_path (str)`: local path to the repo root,
+  `languages (list[str], None)`: omit to index every supported language found.
+
+Returns `{files_indexed, files_unchanged, files_removed, symbols, edges, code_memory_links,
+backend}`. Re-indexing hashes files, skips unchanged content, and removes deleted files only after
+a complete scan. Reads local files at `root_path`; nothing is sent anywhere.
+
+### `engraphis_search_code`
+Find definitions by name, with their callers: structural search that costs far fewer tokens than
+grepping or dumping files, and answers "what calls this / what breaks if I change it".
+
+- `query (str)`: symbol or partial name, `workspace (str)`, `repo (str)` (must be indexed first),
+  `limit (int, 20)`.
+- `valid_at (float, None)`, `known_at (float, None)`; `as_of (float, None)` is the compatible
+  `valid_at` alias and must match when both are supplied.
+
+Returns `{query, symbols:[{name, fqname, kind, file, span, signature, docstring,
+called_by:[…], linked_memories:[…]}]}` at the requested world/system-time point.
+
+### `engraphis_code_path`
+Find the shortest path across definitions, calls, imports, aliases, and code↔memory links.
+
+- `source (str)`, `target (str)`: symbol, file, or memory id.
+- `workspace (str)`, `repo (str)`, `max_depth (int, 8)`.
+- `valid_at (float, None)`, `known_at (float, None)`; `as_of (float, None)` is the compatible
+  `valid_at` alias.
+
+Returns `{found, source, target, hops, path, edges}` with direction and provenance fields.
+
+### `engraphis_code_impact`
+Estimate commit/PR impact from repo-relative changed files.
+
+- `changed_files (list[str])`, `workspace (str)`, `repo (str)`.
+- `valid_at (float, None)`, `known_at (float, None)`; `as_of (float, None)` is the compatible
+  `valid_at` alias.
+
+Returns risk score/level, touched symbols, inbound edges, dependent files, linked memories,
+communities affected, hotspots, and potential conflict zones.
+
+### `engraphis_export_code_graph`
+Return portable `graph.json` data plus a human-readable Markdown report and self-contained HTML.
+
+- `workspace (str)`, `repo (str)`.
+- `valid_at (float, None)`, `known_at (float, None)`; `as_of (float, None)` is the compatible
+  `valid_at` alias.
+
+Returns `{graph, report_markdown, graph_html, valid_at, known_at, historical}`. Historical code
+reads are pure reads and never reinforce memories.
+
+### `engraphis_link_symbol`
+Manually create a link between a code symbol and a memory. Use when automatic indexing misses a
+relationship you know about -- for example, linking a deployment function to the incident memory it
+resolved, or connecting a config constant to the decision that set its value. Idempotent: repeating
+the same call returns the existing link without duplication.
+
+- `symbol_id (str)`: symbol ID, short name, or fully-qualified name from an indexed repo.
+- `memory_id (str)`: memory ID to link to the symbol.
+- `workspace (str)`: workspace the repo belongs to.
+- `repo (str)`: indexed repo containing the symbol.
+- `relation (str, "mentions")`: relationship type (e.g. `mentions`, `implements`, `fixes`).
+- `confidence (float, 1.0)`: link confidence `0..1`.
+- `reason (str, "")`: optional reason or context for this link.
+
+Returns `{link_id, symbol_id, memory_id, relation, workspace, repo}`.
+
+---
+
+## Sessions
+
+### `engraphis_start_session`
+Open a session to group this work's memories and enable cross-session resume.
+
+- `workspace (str, None)`, `repo (str, None)`, `agent (str, "")` (e.g. `"claude-code"`),
+  `goal (str, "")`, `force_new (bool, false)`,
+  `resume_from_session_id (str, None)` for an explicit cross-agent handoff.
+
+An explicit workspace wins; otherwise the saved mapping for `repo` is used, then `"default"`.
+The result reports `workspace_source` as `explicit`, `project`, or `default`.
+
+By default this is idempotent per exact `(workspace, repo, authenticated user, agent, goal)` task
+identity. Different users, agents, or goals automatically open distinct sessions. An exact retry
+returns the same active session with `reused:true`. Use `force_new=true` only to branch a second
+session when every identity field matches. A new session returns `reused:false` plus
+`{session_id, workspace, repo, goal, status:"active", bootstrap:{summary, open_threads, outcome}}`.
+If a previous same-user/agent session in this repo ended with a summary/open threads, `bootstrap`
+carries them so you resume without crossing an identity boundary. Pass `session_id` to `remember`
+and `end_session`.
+
+`resume_from_session_id` selects one exact ended session. It must belong to the same authenticated
+user and exact resolved workspace/repo. Missing, active, deleted, or unauthorized sources fail
+closed; the tool never substitutes a different or recent session. The returned bootstrap is bounded
+to 512 regex-counted content tokens, at most six open threads, and per-field character limits.
+`handoff_source` includes source start/end times in UTC. Sessions have no automatic age expiry, and
+those timestamps do not guarantee freshness.
+
+Authenticated host adapters must provide a stable non-empty user `id` and ownership `email` when
+binding request context. Malformed non-`None` principals fail closed; only `None` selects trusted
+standalone/system mode. Ownerless legacy sessions are not exposed to authenticated callers.
+
+### `engraphis_end_session`
+Close a session with a summary/outcome so the next one picks up the thread.
+
+- `session_id (str)`, `summary (str, "")`, `outcome (str, "")` (e.g. `shipped`, `blocked`),
+  `open_threads (list[str], None)`: surfaced for the next same-user/agent session in this repo.
+
+Returns `{session_id, status:"summarized", summary, open_threads}`.
+
+---
+
+### `engraphis_ingest`
+Store raw, undistilled text (transcripts, notes, logs). With `ENGRAPHIS_EXTRACTOR=llm`
+configured server-side, the text is first distilled into discrete typed facts, each stored
+with the same conflict resolution and evolution as `remember`. Without an extractor it
+behaves exactly like `remember` (passthrough). Prefer `remember` when you already have one
+crisp fact.
+
+- `content (str, required)`; `workspace (str, required)`; `repo (str, None)`;
+  `session_id (str, None)`; `mtype (str, "semantic")`: default type for unclassified facts;
+  `scope (str, None)`: omitted defaults to repo for repo/session context, otherwise workspace.
+
+Returns `{workspace, repo, count, extracted, facts: [{id, op, superseded?}]}`.
+
+### `engraphis_ingest_postgres_schema`
+Inspect a live PostgreSQL catalog into schema memories plus typed database/schema/table/column/
+constraint graph nodes. The DSN is used for the connection only and is never stored or returned.
+
+- `dsn (str)`, `workspace (str)`, `repo (str, None)`, `schemas (list[str], None)`.
+
+### `engraphis_consolidate`
+One sleep-time consolidation sweep: recurring episodic memories on the same subject become a
+single durable semantic digest (linked to sources via `consolidates` links), and fully-decayed
+transient memories are bi-temporally closed, audited, recoverable, and exempt when pinned.
+`dry_run=true` is the pure default. Live deterministic retries skip already-consolidated
+sources, but structured results may cite only part of a large cluster and let an identical later
+call process the remainder, so the public tool is conservatively non-idempotent. Call it at
+session end or on a schedule (`python -m scripts.consolidate` is the cron-able equivalent).
+
+With `profiles=true` it also rolls every live memory mentioning an entity into one durable
+semantic *profile* digest, a per-subject knowledge profile linked via `profiles` that grows with use.
+
+- `workspace (str, required)`; `repo (str, None)`; `dry_run (bool, true)`;
+  `profiles (bool, false)`; `structured (bool, false)`. `confirmed (bool, false)` must be
+  true for a real (non-dry-run) sweep, which archives and distills governed state; dry runs
+  need no confirmation.
+
+Returns `{clusters_found, digests_created, archived, skipped_already_consolidated, compaction, dry_run}`.
+The `compaction` field is the context tokens the sweep saved (before → after). With `profiles=true` a
+`profiles` block is added (`entities_considered, profiles_created, skipped_existing, compaction`).
+
+## Smart gateway
+
+These nine tools are the default Smart MCP surface. The seven tools below expose session,
+discovery, execution, inspection, update, and review operations that are not part of the classic
+direct-tool inventory above. Discovery returns the exact capability schema; executors reject stale
+or mismatched schemas and enforce the declared side-effect boundary.
+
+The two overlapping names deliberately have smaller Smart schemas than their Classic sections
+above. Smart `engraphis_remember` accepts only `content`, `workspace`, `repo`, `session_id`,
+`mtype`, `importance`, `subject_key`, `claim_kind`, `exact_value`, and `exact_value_type`;
+safe provenance is fixed internally. Exact values must occur uniquely and verbatim in
+the supplied content; the service validates their type and preserves source offsets.
+Smart `engraphis_recall_context` accepts only `query`, `workspace`, `repo`, `session_id`, `k`,
+`token_budget`, `packing_mode`, `retrieval_recipe`, `format`, and optional Jev controls
+`allow_remote` and `data_classification`; advanced planning/profile controls are discoverable rather
+than routine. Setting `allow_remote=true` with a `public` or `internal` classification both opts in
+to bounded route selection and grants consent for that call only. Defaults stay deterministic/local.
+Remote route selection requires explicit BYOK. Managed and `auto` do not admit `query_planning`
+or silently select BYOK; unsupported managed planning retains deterministic local order.
+
+### `engraphis_session`
+Start or resume a session, or end it with a next-session handoff.
+
+- `action (str, "start")`: `start` or `end`.
+- `workspace (str, None)`, `repo (str, None)`, `agent (str, "")`, `goal (str, "")`.
+- `session_id (str, "")`: required when `action="end"`; on `action="start"`, optionally selects
+  an exact ended cross-agent handoff from the same authenticated user and exact workspace/repo.
+  An unavailable or mismatched source fails closed without fallback.
+- `summary (str, "")`, `outcome (str, "")`, `open_threads (list[str], None)`: end-session handoff.
+- `force_new (bool, false)`: start a new session instead of reusing an exact active task.
+- `token_budget (int, 512)`: bounded goal context, `0..32768`.
+
+Returns a bounded session/bootstrap or end-session handoff response. An explicit cross-agent
+resume returns the selected source ID and UTC timestamps, with no automatic age expiry or freshness
+guarantee. Starts use an explicit
+workspace, then the saved repo mapping, then `"default"`, and report `workspace_source` with
+the resolved `workspace` and `repo`. Keep using the returned `session_id` on remember and recall
+calls; there is no server-global current session.
+
+### `engraphis_discover_actions`
+Return the exact schemas needed for a small set of matching advanced capabilities.
+
+- `task (str)`: describe the needed capability without pasting memory content.
+- `category (str, "")`: optional `memory`, `governance`, `code`, `audit`, or `ops` filter.
+- `intent (str, "any")`: `any` | `read` | `write` | `admin` | `destructive`.
+- `limit (int, 1)`: ranked actions to return, `1..3`.
+
+Returns `{actions:[{capability_id, schema_digest, ...}]}` or an empty action list.
+
+### `engraphis_execute_read`
+Execute only a discovered action that is truthfully read-only and idempotent.
+
+- `capability_id (str)`, `schema_digest (str)`: exact values returned by `discover_actions`.
+- `arguments (dict)`: arguments matching the discovered schema.
+
+Returns a bounded action result; stale, mismatched, or stateful capabilities are rejected.
+
+### `engraphis_execute_action`
+Execute a discovered write, administrative, or destructive-capable action safely.
+
+- `capability_id (str)`, `schema_digest (str)`: exact values returned by `discover_actions`.
+- `arguments (dict)`: arguments matching the discovered schema.
+
+Returns a bounded action result with the canonical action identity and execution receipt when
+applicable. Never invent capability IDs or arguments.
+
+### `engraphis_get_memory`
+Read one governed memory record without reinforcing it.
+
+- `memory_id (str)`, `workspace (str, "default")`, `repo (str, None)`.
+
+Returns the scoped record only when it is prompt-eligible; pending or quarantined content returns a
+governance error rather than exposing untrusted text.
+
+### `engraphis_update_memory`
+Edit safe memory metadata fields while preserving the governed content-correction path.
+
+- `memory_id (str)`, `workspace (str, "default")`, `repo (str, None)`.
+- `title (str, None)`, `mtype (str, None)`, `importance (float, None)`: at least one is required;
+  `mtype` is `working` | `episodic` | `semantic` | `procedural`, and `importance` is `0..1`.
+- `actor (str, "user")`: audit actor label.
+
+Content, provenance, trust, and sensitivity are not editable through this tool; use
+`engraphis_correct` for content changes.
+
+### `engraphis_conflict_review`
+List pending, quarantined, or conflicting memories for a reviewer.
+
+- `workspace (str, "default")`, `repo (str, None)`, `limit (int, 50)`: `1..100`.
+
+Returns scoped review records without exposing pending/quarantined bodies to an agent.
+
+## Ops
+
+### `engraphis_list_workspaces`
+List workspaces visible to the current caller so an agent can select a destination.
+
+No parameters. Returns `{workspaces:[...]}` using the normal workspace-list records. This is
+read-only and available through Smart discovery's read executor.
+
+### `engraphis_get_workspace_routing`
+Read the current caller's saved workspace destination for an exact repo name.
+
+- `repo (str)`: stable project identifier supplied on the agent's MCP calls.
+
+Returns `{repo, workspace, configured, source}`. A saved mapping returns `configured:true` and
+`source:"project"`; an unmapped repo returns `workspace:null`, `configured:false`, and
+`source:"default"`. This is read-only; it does not create the fallback workspace.
+
+### `engraphis_set_workspace_routing`
+Save or remove the current caller's repo-to-workspace association.
+
+- `workspace (str)`, `repo (str)`, `enabled (bool, true)`.
+
+Returns the same routing shape as `engraphis_get_workspace_routing`. Use `enabled:false` to
+remove the association for that destination. The destination must be accessible. Mappings live
+in the shared database and are scoped to the authenticated caller or standalone local context.
+Explicit workspace arguments and supplied sessions retain precedence over the saved mapping.
+Use Smart discovery and the action executor to change routing; this is not a read action.
+
+### `engraphis_receipts`
+List content-free, SHA-256-chained operation receipts for a workspace.
+
+- `workspace (str)`, `limit (int, 100)`.
+
+### `engraphis_context_savings`
+Aggregate the content-free token-usage fields already stored in operation receipts. Results cover
+all visible workspaces by default, or one workspace and optional repo, and are kept separate by
+token-counter identity so unlike tokenizers are never added together. No prompt, answer, or
+memory content is returned.
+
+- `workspace (str, None)`; omit for all visible workspaces; `repo (str, None)`;
+  `from_ts (float, None)` inclusive;
+  `to_ts (float, None)` exclusive; `release_version (str, None)`;
+  `format (str, None)`: `json` or `csv`; `group_by (str, None)`: `workspace`, `repo`, `agent`,
+  or `day`.
+
+Returns receipt coverage counts plus `by_token_counter` totals for source, context, saved, budget,
+packed, and omitted tokens, with savings ratios, per-operation breakdowns, and receipt-chain
+validity. Treat an invalid-chain aggregate as local diagnostics, not auditable evidence.
+
+### `engraphis_verify_receipts`
+Recompute hashes and validate chain order plus the independently stored local head/count anchor.
+Optionally pass a previously exported `expected_head` / `expected_count` for verification against
+an anchor kept outside the database. Returns `{valid, count, head, anchored, errors}`.
+
+- `workspace (str)`; `expected_head (str, None)`; `expected_count (int, None)`.
+
+### `engraphis_export_receipts`
+Return the receipt-only export bundle plus verification result; raw memory/query contents and
+actor/workspace names are excluded.
+
+- `workspace (str)`.
+
+### `engraphis_stats`
+Memory counts (overall or for one workspace): handy for onboarding/health checks.
+
+- `workspace (str, None)`.
+
+Returns `{workspace, memories, total_rows, by_type, workspaces, sessions, schema_version,
+prompt_eligibility, embedding}`. `memories` counts live rows; `total_rows` also includes
+superseded history.
+
+### `engraphis_check_update`
+Report whether a newer Engraphis release is available, so an agent can proactively remind the
+user to upgrade. Cached for 24 hours by default and fail-silent; `ENGRAPHIS_UPDATE_CACHE`
+accepts a TTL in seconds and falls back to 24 hours for invalid values. Update checks are
+OFF unless `ENGRAPHIS_UPDATE_CHECK` is set to an affirmative value; `=0` keeps them off. The
+default GitHub source is overridable via
+`ENGRAPHIS_UPDATE_URL`; the outbound client accepts HTTPS and rejects private/reserved destinations.
+
+- `force (bool, false)`: bypass the 24-hour cache and re-check the release source now.
+
+Returns `{enabled, current, latest, update_available, url, notice}`.
+
+### `engraphis_decide`
+Advisory command, contradiction, support, completion, or custom checks. The default backend
+is local. Selecting `managed` uses the saved Engraphis Cloud session when configured;
+`auto` selects only managed access, and `byok` explicitly selects a personal TypeSafe key.
+Managed Jev is currently `not_yet_available` pending release acceptance and
+service-capacity qualification; client configuration does not enable it. After
+enablement, every legitimate Pro user and each eligible Team named seat, including paid
+viewers, with an active paid, trial, or test entitlement receives managed Jev at no
+additional customer charge and without a personal provider key.
+
+Each individual receives all three independent rolling limits: **100 evaluated questions per rolling hour, 1,000 per rolling five hours, and 2,000 per rolling 24 hours**. Usage is per
+person, not pooled across a Team and not monthly. Each evaluated question counts once;
+if a batch is evaluated, every question counts. A `guard_command` review evaluates two
+questions, and each other supported workflow evaluates one. Admitted attempts that fail
+or are interrupted remain counted. No overage is charged. The account portal reports
+that member's remaining usage across all three windows; usage returns as earlier
+questions leave each rolling window.
+
+The existing production fleet guard remains 100 questions per day across the service. It
+conflicts with the per-person rolling caps and may pause or reject requests earlier, so
+resolve capacity and the fleet guard before launch. No latency, accuracy, or cost-saving
+guarantee is established by configuration or a successful health check. Smart discovery
+uses `engraphis_execute_action` because a remote request may consume allowance.
+
+Managed access admits only `guard_command`, `classify_contradiction`, `verify_support`, and
+`verify_completion`, with the concrete context below and fixed question schemas. A purpose label
+does not authorize arbitrary questions. Managed `custom` and `query_planning` fail closed before
+credential refresh or network requests; custom remote questions and experimental route selection
+require explicit BYOK. Neither managed nor `auto` silently switches to a personal provider key.
+Paid Pro users and paid Team named seats, including viewers, receive the included managed
+workflows after service enablement. Command review evaluates two questions; the other three
+workflows evaluate one each. Admitted failures remain counted. Release acceptance, service
+capacity, provider terms, and live quality evaluation remain gates; synthetic fixtures do not
+demonstrate model accuracy.
+
+Authorized viewers can use direct Classic advisory decisions without gaining memory writes or
+administration. The generic Smart stateful executor still requires admin, and the private hosted
+Team tool catalog is unchanged. The managed transport accepts an optional `request_key` for an
+explicit retry: duplicate admitted keys return 409 without a second provider call or use increment.
+There is no stored answer replay or automatic retry; the MCP tool does not expose this parameter.
+
+- `kind (str, "guard_command")`: one of `'guard_command'`, `'classify_contradiction'`, `'verify_support'`, `'verify_completion'`, or `'custom'`.
+- `state (str, "")`: nonblank shell command, candidate fact, or evidence text; required except when `custom` supplies `question`.
+- `query (str, "")`: nonblank query required for support verification.
+- `existing_content (str, "")`: nonblank existing memory required for contradiction checks.
+- `goal (str, "")`: nonblank task goal required for completion verification.
+- `recent_actions (str, "")`: optional summary of recent actions for completion verification.
+- `question (str, "")`: custom question for `'custom'` decisions.
+- `options (list[str], None)`: discrete choice alternatives.
+- `offline_mode (bool, false)`: when true, forces deterministic local heuristics without external API calls.
+- `allow_remote (bool, false)`: explicitly permits this call's supplied text to leave the device;
+  backend selection alone never authorizes a request.
+- `data_classification (str, "internal")`: remote input must be `public` or `internal`;
+  secret classification and known secret patterns are rejected before credential refresh.
+
+Every result includes `kind`, `backend`, `is_fallback`, `advisory_only`, `decision_status`,
+`confidence`, and `confidence_source`. Remote results also include the pinned `model`.
+The kind adds `allow_auto`/`escalate_to_user`/`safety_probability`/`category`, `verdict`,
+`supported`/`probability`, `is_complete`/`completion_probability`, or `selected`/`probability`.
+Missing required inputs return `invalid_request` before backend lookup with unknown/null
+conclusions. `custom` accepts `state` or `question`; other kinds need `state` and their
+required context above. Uncertain support/completion stays null. Fallback results include
+`fallback_reason`, null confidence, and unmeasured heuristic labels. All command checks,
+including successful remote answers, return `allow_auto=false` and `escalate_to_user=true`. Noul confidence is derived decisiveness, not measured calibration. Decisions do
+not replace executable verification, authorization, or user approval. Local command labels are
+coarse: only one simple inspection command, without chaining, pipes, substitution or file
+redirection, is `read_only`; recognized destructive, history-rewriting, exfiltrating or
+credential-file commands are `destructive_or_leak`; anything else is `state_change`.
+
+---
+
+## Quick decision guide
+
+- Learned a durable fact → `remember`. Raw thing that happened → `record_event`.
+- Need prompt context and have a question → `recall_context`. Need full legacy memory bodies →
+  `recall`. Need raw context and don't yet → `recall_proactive`. Need a task-ready packet →
+  `proactive_context`.
+- "Why?" / "since when?" → `why` / `timeline`, not `recall`, which only sees the live view.
+- Fact is wrong → `correct` (keeps the chain). Fact is obsolete with no replacement → `retire`.
+- Fact applies more broadly than first believed → `promote` (widens without duplicate recall).
+- Must never fade → `pin`. Two facts belong together → `link`.
+- Working in code → `index_repo`, then `search_code`; use `code_path`/`code_impact` for structural
+  questions and PR triage.
+- Multi-step task → wrap in `start_session` … `end_session`.
+- Have a blob, not a fact → `ingest`. Memory getting noisy → `consolidate` (dry-run first).

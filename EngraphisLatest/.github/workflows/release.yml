@@ -1,0 +1,1315 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*.*"
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing tag to repair on PyPI and GitHub"
+        required: false
+        type: string
+      waive_v176_qualification:
+        description: "Owner-authorized one-time qualification waiver; valid only for v1.7.6"
+        required: false
+        type: boolean
+        default: false
+      waive_v178_qualification:
+        description: "Owner-authorized qualification waiver for the retained v1.7.8 candidate only"
+        required: false
+        type: boolean
+        default: false
+      waive_v179_qualification:
+        description: "Owner-approved waiver for the retained v1.7.9 candidate at c6871b9b only"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+      PIP_BUILD_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install release gate and the production dependency set (without SQLCipher)
+        run: >-
+          python -m pip install --upgrade
+          pip setuptools wheel build twine pip-audit cyclonedx-bom ".[all,test]"
+
+      - name: Require tag and package version to match
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$GITHUB_REF_NAME" = "v$actual"
+          test "$expected" = "$actual"
+
+      - name: Require release tag commit to be on protected main
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Full release gate
+        run: |
+          if [ -d website ]; then python scripts/check_commercial_manifest.py --website-root website; else python scripts/check_commercial_manifest.py; fi
+          python scripts/externalize_dashboard_assets.py
+          ruff check .
+          pyright
+          python -c "import fastapi, httpx, mcp, multipart, pydantic, uvicorn"
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/ -q -rs --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/test_public_research_boundary.py -q --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/test_compact_recall.py tests/test_eval_performance.py -q --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/test_eval_harness.py tests/test_benchmark_evidence.py -q --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+          python -m eval.harness --dataset eval/datasets/sample.jsonl --k 5
+          python -m eval.harness --dataset eval/datasets/codemem.jsonl --k 5
+          python -m eval.ablation
+          python -m eval.reinforcement
+          python -m eval.adversarial_memory_security
+          python -m pip_audit --local --skip-editable
+
+      - name: Capture the exact build environment and Python SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir build-environment-evidence
+          python -m pip list --format=freeze \
+            | LC_ALL=C sort -f > build-environment-evidence/environment.lock
+          package_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          cyclonedx-py environment --output-reproducible --of JSON \
+            --pyproject pyproject.toml \
+            -o "build-environment-evidence/engraphis-${package_version}.cdx.json"
+
+      - name: Build source and universal wheel distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python -m build --outdir dist
+          python scripts/normalize_sdist.py dist/*.tar.gz
+          python scripts/verify_distribution_contents.py dist/*
+      - name: Validate distributions
+        run: python -m twine check dist/*
+
+      - name: Smoke installed wheel and source distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist_dir="$PWD/dist"
+          index=0
+          for artifact in "$dist_dir"/*.whl "$dist_dir"/*.tar.gz; do
+            index=$((index + 1))
+            venv="$RUNNER_TEMP/engraphis-artifact-smoke-$index"
+            python -m venv --system-site-packages "$venv"
+            "$venv/bin/python" -m pip install --force-reinstall --no-deps "$artifact"
+            (
+              cd "$RUNNER_TEMP"
+              "$venv/bin/python" - <<'PY'
+          import pathlib
+          import sys
+
+          import engraphis
+          from engraphis.core.engine import MemoryEngine
+
+          package = pathlib.Path(engraphis.__file__).resolve()
+          assert pathlib.Path(sys.prefix).resolve() in package.parents, package
+          engine = MemoryEngine.create(":memory:")
+          workspace_id = engine.store.get_or_create_workspace("artifact-smoke")
+          memory_id = engine.remember(
+              "The artifact smoke marker is indigo.",
+              workspace_id=workspace_id,
+              resolve_conflicts=False,
+          )
+          result = engine.recall("artifact smoke marker", workspace_id=workspace_id, k=3)
+          assert any(chunk["id"] == memory_id for chunk in result.chunks)
+          engine.store.close()
+          PY
+              "$venv/bin/python" -m scripts.smoke_entry_points --timeout 20
+            )
+          done
+
+      - name: Store distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-package-distributions
+          path: dist/
+
+
+      - name: Store exact build environment evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build-environment-evidence
+          path: build-environment-evidence/
+
+  reproducibility-build:
+    name: Independent distribution builder ${{ matrix.builder }}
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    strategy:
+      fail-fast: false
+      matrix:
+        builder: ["a", "b"]
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+      PIP_BUILD_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Build in isolated pinned environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip setuptools wheel build
+          mkdir -p reproducibility/dist
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA" 2>/dev/null || echo "${SOURCE_DATE_EPOCH:-$(date +%s)}")"
+          python -m build --outdir reproducibility/dist
+          python scripts/normalize_sdist.py reproducibility/dist/*.tar.gz
+          python -m pip freeze --all --exclude-editable \
+            | LC_ALL=C sort > reproducibility/environment.lock
+          python scripts/verify_distribution_contents.py reproducibility/dist/*
+      - name: Store independent builder output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: reproducibility-builder-${{ matrix.builder }}
+          path: reproducibility/
+
+  reproducibility-check:
+    name: Compare independent distribution builders
+    needs: [build, reproducibility-build]
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download primary distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: primary/
+      - name: Download builder A
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: reproducibility-builder-a
+          path: builder-a/
+      - name: Download builder B
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: reproducibility-builder-b
+          path: builder-b/
+      - name: Compare independent distribution builders
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir reproducibility-evidence
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          image = "github-hosted:ubuntu-latest/python-3.11"
+
+          def digest(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          def artifact_map(directory):
+              return {
+                  path.name: digest(path)
+                  for path in sorted(directory.iterdir())
+                  if path.name.endswith((".whl", ".tar.gz"))
+              }
+
+          def toolchain(lock):
+              selected = {"build", "pip", "setuptools", "wheel"}
+              packages = {
+                  line.split("==", 1)[0].lower(): line.split("==", 1)[1]
+                  for line in lock.read_text(encoding="utf-8").splitlines()
+                  if "==" in line
+              }
+              assert selected <= packages.keys()
+              return {name: packages[name] for name in sorted(selected)}
+
+          primary = artifact_map(Path("primary"))
+          builders = []
+          environment_digests = set()
+          for name in ("a", "b"):
+              root = Path(f"builder-{name}")
+              artifacts = artifact_map(root / "dist")
+              lock = root / "environment.lock"
+              assert artifacts == primary
+              environment_digests.add(digest(lock))
+              builders.append({
+                  "name": name,
+                  "image": image,
+                  "python": "3.11",
+                  "environment_lock_sha256": digest(lock),
+                  "toolchain": toolchain(lock),
+                  "artifacts": artifacts,
+              })
+          assert len(environment_digests) == 1
+          report = {
+              "format": "engraphis-independent-reproducibility/v1",
+              "builders": builders,
+          }
+          Path("reproducibility-evidence/reproducibility.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Store independent reproducibility evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: independent-reproducibility
+          path: reproducibility-evidence/
+
+  python-matrix:
+    name: Python ${{ matrix.python-version }} release gate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install version-appropriate gate
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          if [ "${{ matrix.python-version }}" = "3.9" ]; then
+            python -m pip install numpy "pytest<9" ruff
+          else
+            python -m pip install -e ".[test]"
+          fi
+      - name: Unit, lint, and retrieval gates
+        run: |
+          ruff check .
+          if [ "${{ matrix.python-version }}" != "3.9" ]; then
+            python -c "import fastapi, httpx, mcp, multipart, pydantic, uvicorn"
+          fi
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/ -q -rs --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+          python -m eval.harness --dataset eval/datasets/sample.jsonl --k 5
+          python -m eval.harness --dataset eval/datasets/codemem.jsonl --k 5
+          python -m eval.ablation
+          python -m eval.reinforcement
+          python -m eval.adversarial_memory_security
+
+  artifact-core-py39:
+    name: Python 3.9 installed release artifacts
+    needs: build
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.9"
+      - name: Download exact release distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Install, verify, and smoke wheel and source distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          index=0
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            index=$((index + 1))
+            venv="$RUNNER_TEMP/engraphis-release-py39-artifact-$index"
+            python -m venv "$venv"
+            "$venv/bin/python" -m pip install --disable-pip-version-check "$artifact"
+            "$venv/bin/python" -m pip check
+            (
+              cd "$RUNNER_TEMP"
+              "$venv/bin/python" - <<'PY'
+          import pathlib
+          import sys
+
+          import engraphis
+          from engraphis.core.engine import MemoryEngine
+
+          package = pathlib.Path(engraphis.__file__).resolve()
+          assert pathlib.Path(sys.prefix).resolve() in package.parents, package
+          engine = MemoryEngine.create(":memory:")
+          workspace_id = engine.store.get_or_create_workspace("release-py39-artifact")
+          memory_id = engine.remember(
+              "The release Python 3.9 artifact marker is indigo.",
+              workspace_id=workspace_id,
+              resolve_conflicts=False,
+          )
+          result = engine.recall("release Python 3.9 artifact marker", workspace_id=workspace_id, k=3)
+          assert any(chunk["id"] == memory_id for chunk in result.chunks)
+          engine.store.close()
+          PY
+              "$venv/bin/engraphis" --help
+              "$venv/bin/engraphis" --version
+              "$venv/bin/engraphis-cli" --help
+            )
+          done
+
+
+  installed-artifact-platform-smoke:
+    name: Installed wheel journey (${{ matrix.os }}, ${{ matrix.profile }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        profile: [base, mcp, server]
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+      PIP_BUILD_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Download exact release distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Install and exercise the downloaded wheel on supported platforms
+        env:
+          ENGRAPHIS_SMOKE_PROFILE: ${{ matrix.profile }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          environment = Path(os.environ["RUNNER_TEMP"]) / "engraphis-platform-wheel-smoke"
+          subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
+          executable = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1
+          profile = os.environ["ENGRAPHIS_SMOKE_PROFILE"]
+          requirement = str(wheels[0].resolve()) + ("" if profile == "base" else f"[{profile}]")
+          subprocess.run(
+              [str(executable), "-m", "pip", "install", "--disable-pip-version-check",
+               requirement],
+              check=True,
+          )
+          subprocess.run([str(executable), "-m", "pip", "check"], check=True)
+          subprocess.run(
+              [str(executable), "-m", "scripts.smoke_entry_points", "--timeout", "20"],
+              cwd=os.environ["RUNNER_TEMP"],
+              check=True,
+          )
+          if profile != "base":
+              evidence = Path(os.environ["RUNNER_TEMP"])
+              (evidence / "installed-environment.lock").write_text(subprocess.check_output(
+                  [str(executable), "-m", "pip", "freeze", "--all"], text=True,
+              ), encoding="utf-8")
+              (evidence / "installed-artifact.json").write_text(json.dumps({
+                  "profile": profile, "wheel": wheels[0].name,
+                  "wheel_sha256": hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
+              }), encoding="utf-8")
+              subprocess.run(
+                  [str(executable), "-m", "scripts.smoke_installed_product", "--surface", profile,
+                   "--output", str(Path(os.environ["RUNNER_TEMP"]) / "installed-journey.json")],
+                  cwd=os.environ["RUNNER_TEMP"],
+                  check=True,
+              )
+          PY
+      - name: Retain installed journey evidence
+        if: matrix.profile != 'base'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: installed-journey-${{ matrix.os }}-${{ matrix.profile }}
+          path: |
+            ${{ runner.temp }}/installed-journey.json
+            ${{ runner.temp }}/installed-environment.lock
+            ${{ runner.temp }}/installed-artifact.json
+          if-no-files-found: error
+
+  encryption:
+    name: Encryption driver release gate (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install encryption integration gate
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,encryption]"
+      - name: Encryption at-rest integration tests
+        run: |
+          python -c "import sqlcipher3; print(sqlcipher3.__file__)"
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}" python -m pytest -o addopts="" tests/test_encrypted_store.py -q -rs --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+
+  browser-accessibility:
+    name: Browser accessibility release gate
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Install browser gate
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" "uvicorn[standard]>=0.29"
+          npm ci --ignore-scripts --omit=optional
+          # The Playwright project runs dedicated Firefox and WebKit smoke
+          # projects as well as Chromium. Install every browser exercised by
+          # the release gate so a clean runner cannot fail for a missing
+          # executable after the Chromium-only install succeeds.
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Audit the root browser dependency lock
+        run: npm audit --audit-level=high
+      - name: Playwright desktop/mobile, keyboard, CSP, console, and axe checks
+        run: npm run test:e2e
+
+  pi-extension:
+    name: Pi extension release gate
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: integrations/pi/npm-shrinkwrap.json
+      - name: Install the tagged Smart MCP server
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+      - name: Verify the publishable Pi package and live bridge
+        working-directory: integrations/pi
+        env:
+          ENGRAPHIS_PI_TEST_COMMAND: engraphis-mcp
+        run: |
+          npm ci --ignore-scripts
+          npm run verify
+          npm run test:integration
+          npm audit --omit=dev
+
+  docker-smoke:
+    name: Production image release gate
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+      - name: Reject unauthenticated LAN Compose overlay
+        run: |
+          if env -u ENGRAPHIS_API_TOKEN docker compose -f docker-compose.yml -f docker-compose.lan.yml config --quiet; then
+            echo "LAN overlay must require ENGRAPHIS_API_TOKEN"
+            exit 1
+          fi
+      - name: Validate token-protected LAN Compose overlay
+        env:
+          ENGRAPHIS_API_TOKEN: ci-lan-overlay-token
+        run: docker compose -f docker-compose.yml -f docker-compose.lan.yml config --quiet
+      - name: Build production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir container-evidence
+          docker buildx build --pull --load \
+            --metadata-file container-evidence/build-metadata.json \
+            -t engraphis:release .
+      - name: Record immutable production image digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          metadata = Path("container-evidence/build-metadata.json")
+          digest = json.loads(metadata.read_text(encoding="utf-8")).get(
+              "containerimage.digest",
+          )
+          assert isinstance(digest, str)
+          assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+          Path("container-evidence/image.digest").write_text(
+              digest + "\n", encoding="utf-8",
+          )
+          metadata.unlink()
+          PY
+      - name: Generate whole-image SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: engraphis:release
+          format: cyclonedx-json
+          output-file: container-evidence/engraphis-container.cdx.json
+          upload-artifact: false
+      - name: Bind whole-image SBOM to immutable digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("container-evidence/engraphis-container.cdx.json")
+          digest = Path("container-evidence/image.digest").read_text(encoding="utf-8").strip()
+          document = json.loads(path.read_text(encoding="utf-8"))
+          metadata = document.setdefault("metadata", {})
+          component = metadata.setdefault(
+              "component", {"type": "container", "name": "engraphis:release"},
+          )
+          properties = [
+              item for item in component.get("properties", [])
+              if item.get("name") != "engraphis:image-digest"
+          ]
+          properties.append({"name": "engraphis:image-digest", "value": digest})
+          component["properties"] = properties
+          path.write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Scan whole production image
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: engraphis:release
+          # Keep the scanner version aligned with the public evidence schema
+          # and its fail-closed validation in scripts/release_evidence.py.
+          grype-version: v0.110.0
+          fail-build: false
+          severity-cutoff: high
+          only-fixed: true
+          output-format: json
+          output-file: container-evidence/grype.json
+      - name: Enforce grype severity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import json, sys
+          data = json.load(open('container-evidence/grype.json'))
+          matches = [m for m in data.get('matches', [])
+                     if m.get('vulnerability', {}).get('severity', '') in ('High', 'Critical')]
+          for m in matches:
+              v = m['vulnerability']
+              a = m.get('artifact', {})
+              fix = v.get('fix', {})
+              print(f\"{v['id']}  {v['severity']}  {a.get('name','?')}  {a.get('version','?')}  fix={fix.get('versions','none')}  ns={v.get('namespace','?')}\")
+          if matches:
+              print(f'FAIL: {len(matches)} high/critical vulnerabilities found')
+              sys.exit(1)
+          print('PASS: no high/critical vulnerabilities')
+          "
+      - name: Verify production image OCR runtime
+        run: >-
+          docker run --rm --entrypoint sh engraphis:release -c
+          'python -c "import PIL, pytesseract" && command -v tesseract >/dev/null &&
+          tesseract --version | head -n 1'
+      - name: Audit production image dependencies
+        # The runtime image deliberately has no pip. Audit its exact installed
+        # distributions from the runner instead of reintroducing a build tool to the
+        # production image only for this check.
+        shell: bash
+        run: |
+          set -euo pipefail
+          audit_dir="$(mktemp -d)"
+          container="engraphis-release-audit-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$audit_dir"
+          }
+          trap cleanup EXIT
+          python -m pip install --disable-pip-version-check --no-cache-dir pip-audit==2.10.1
+          docker create --name "$container" engraphis:release >/dev/null
+          site_packages=$(docker run --rm engraphis:release python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+          docker cp "$container:$site_packages/." "$audit_dir"
+          python scripts/pin_installed_audit_requirements.py "$audit_dir" > "$RUNNER_TEMP/published-audit-requirements.txt"
+          python -m pip_audit --vulnerability-service osv --path "$audit_dir"
+          python -m pip_audit --vulnerability-service pypi --no-deps --disable-pip -r "$RUNNER_TEMP/published-audit-requirements.txt"
+      - name: Run customer-mode readiness smoke
+        shell: bash
+        run: |
+          docker run -d --name engraphis-release -p 8700:8700 \
+            -e ENGRAPHIS_EMBED_MODEL= \
+            -e ENGRAPHIS_LOOP_INTERVAL=0 \
+            -e ENGRAPHIS_HOST=0.0.0.0 \
+            engraphis:release
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8700/api/ready; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs engraphis-release
+          exit 1
+      - name: Store whole-image evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: production-image-evidence
+          path: container-evidence/
+      - name: Teardown
+        if: always()
+        run: docker rm -f engraphis-release || true
+
+  code-security:
+    name: CodeQL ${{ matrix.language }} release gate
+    if: >-
+      github.event_name == 'push' ||
+      inputs.release_tag == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: "false"
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python", "javascript-typescript"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+      - name: Analyze complete source tree
+        id: analyze
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        with:
+          output: codeql-results
+          upload: never
+      - name: Require clean CodeQL results
+        run: python scripts/check_codeql_sarif.py "${{ steps.analyze.outputs.sarif-output }}"
+
+  release-evidence:
+    name: Generate public release evidence
+    needs: [build, reproducibility-check, python-matrix, artifact-core-py39, installed-artifact-platform-smoke, encryption, browser-accessibility, pi-extension, docker-smoke, code-security]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Download exact build environment evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: build-environment-evidence
+          path: release-evidence/
+      - name: Download whole-image evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: production-image-evidence
+          path: release-evidence/
+      - name: Download independent reproducibility evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: independent-reproducibility
+          path: release-evidence/
+      - name: Download complete installed journey evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: installed-journey-*
+          path: installed-journey-inputs/
+      - name: Generate evidence from captured release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sbom="release-evidence/engraphis-${GITHUB_REF_NAME#v}.cdx.json"
+          python scripts/release_evidence.py --dist dist --commit "$GITHUB_SHA" \
+            --tag "$GITHUB_REF_NAME" \
+            --sbom "$sbom" \
+            --environment-lock release-evidence/environment.lock \
+            --image-sbom release-evidence/engraphis-container.cdx.json \
+            --image-digest "$(tr -d '\r\n' < release-evidence/image.digest)" \
+            --image-scan release-evidence/grype.json \
+            --reproducibility release-evidence/reproducibility.json \
+            --installed-journeys installed-journey-inputs \
+            --verified-check ruff \
+            --verified-check pyright-core-backends \
+            --verified-check codeql \
+            --verified-check pytest \
+            --verified-check reproducible-distributions \
+            --verified-check installed-artifact-smoke \
+            --verified-check installed-artifact-smoke-py39 \
+            --verified-check installed-artifact-platform-smoke \
+            --verified-check privacy-boundary \
+            --verified-check token-efficiency \
+            --verified-check benchmark-schema-evidence \
+            --verified-check encryption-at-rest \
+            --verified-check browser-e2e \
+            --verified-check pi-extension \
+            --verified-check dependency-audit \
+            --verified-check browser-dependency-audit \
+            --verified-check container-smoke \
+            --verified-check retrieval-sample \
+            --verified-check retrieval-codemem \
+            --verified-check retrieval-ablation \
+            --verified-check reinforcement-state-transition \
+            --verified-check adversarial-memory-security \
+            --output release-evidence/release-evidence.json
+      - name: Store public release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: public-release-evidence
+          path: release-evidence/
+
+  publish:
+    name: Publish to PyPI
+    needs: release-evidence
+    environment: release-qualification
+    # Manual dispatch is intentionally build/check-only. Publication requires a pushed
+    # semver tag, whose value was matched to pyproject.toml in the build job above.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Verify any previously published subset
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist dist
+          --version "${GITHUB_REF_NAME#v}" --allow-subset
+
+      # The trusted publisher may write a receipt beside the distributions.  Preserve
+      # the exact set that passed validation so the post-publish check cannot be
+      # affected by that implementation detail.
+      - name: Freeze verified distribution set
+        shell: bash
+        run: |
+          mkdir verified-dist
+          cp dist/*.whl dist/*.tar.gz verified-dist/
+
+      - name: Require signed full-product qualification before PyPI publication
+        env:
+          ENGRAPHIS_RELEASE_QUALIFICATION: ${{ secrets.ENGRAPHIS_RELEASE_QUALIFICATION }}
+          ENGRAPHIS_RELEASE_VERIFY_KEY: ${{ secrets.ENGRAPHIS_RELEASE_VERIFY_KEY }}
+          ENGRAPHIS_RELEASE_CANDIDATE_ID: ${{ secrets.ENGRAPHIS_RELEASE_CANDIDATE_ID }}
+          ENGRAPHIS_RELEASE_LEDGER_SHA256: ${{ secrets.ENGRAPHIS_RELEASE_LEDGER_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "cryptography==50.0.0"
+          python -m scripts.verify_release_qualification --dist dist \
+            --commit "$GITHUB_SHA" --tag "$GITHUB_REF_NAME"
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+        with:
+          skip-existing: true
+
+      - name: Require the exact complete PyPI file set
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist verified-dist
+          --version "${GITHUB_REF_NAME#v}" --retries 18 --delay 10
+
+  github-release:
+    name: Publish GitHub Release
+    # Share one publication lock with repairs, including runs on other refs.
+    concurrency:
+      group: engraphis-github-release-publication
+      cancel-in-progress: false
+      queue: max
+    needs: publish
+    environment: release-qualification
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Download public release evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: public-release-evidence
+          path: release-evidence/
+
+      - name: Require signed full-product qualification before GitHub publication
+        env:
+          ENGRAPHIS_RELEASE_QUALIFICATION: ${{ secrets.ENGRAPHIS_RELEASE_QUALIFICATION }}
+          ENGRAPHIS_RELEASE_VERIFY_KEY: ${{ secrets.ENGRAPHIS_RELEASE_VERIFY_KEY }}
+          ENGRAPHIS_RELEASE_CANDIDATE_ID: ${{ secrets.ENGRAPHIS_RELEASE_CANDIDATE_ID }}
+          ENGRAPHIS_RELEASE_LEDGER_SHA256: ${{ secrets.ENGRAPHIS_RELEASE_LEDGER_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "cryptography==50.0.0"
+          python -m scripts.verify_release_qualification --dist dist \
+            --commit "$GITHUB_SHA" --tag "$GITHUB_REF_NAME"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
+            # A previous partial attempt may have created the release before every
+            # canonical package asset uploaded. Reconcile same-named assets from the
+            # exact aggregate that passed the publish gate.
+            gh release upload "$GITHUB_REF_NAME" dist/* release-evidence/* \
+              --repo "$GH_REPO" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* release-evidence/* \
+              --repo "$GH_REPO" \
+              --verify-tag \
+              --generate-notes \
+              --title "Engraphis ${GITHUB_REF_NAME#v}" \
+              --latest
+          fi
+
+  github-release-repair:
+    name: Repair GitHub Release
+    # Hold the lock from the Latest lookup through all GitHub release writes.
+    concurrency:
+      group: engraphis-github-release-publication
+      cancel-in-progress: false
+      queue: max
+    environment: release-qualification
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Enforce and record the release-specific qualification waiver
+        if: inputs.waive_v176_qualification || inputs.waive_v178_qualification || inputs.waive_v179_qualification
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          WAIVE_V176: ${{ inputs.waive_v176_qualification }}
+          WAIVE_V178: ${{ inputs.waive_v178_qualification }}
+          WAIVE_V179: ${{ inputs.waive_v179_qualification }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$WAIVE_V176:$WAIVE_V178:${WAIVE_V179:-false}:$RELEASE_TAG" in
+            true:false:false:v1.7.6|false:true:false:v1.7.8|false:false:true:v1.7.9) ;;
+            *) printf 'Waiver must select exactly one authorized release.\n' >&2; exit 1 ;;
+          esac
+          {
+            printf '# Release qualification waiver\n\n'
+            printf 'Tag: `%s`\n' "$RELEASE_TAG"
+            printf 'Triggered by: `%s`\n' "$GH_ACTOR"
+            printf 'Workflow run: %s\n\n' "$GH_RUN_URL"
+            printf 'The owner explicitly waived full-product qualification for this repair. No unverified release gate is represented as passed.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Download published distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
+          tag_ref="$(gh api "repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}")"
+          object_type="$(jq -r '.object.type' <<<"$tag_ref")"
+          tag_sha="$(jq -r '.object.sha' <<<"$tag_ref")"
+          # Annotated tags point at tag objects rather than commits. Peel a bounded
+          # chain explicitly so a same-named branch can never supply the repair SHA.
+          for _ in {1..8}; do
+            if [ "$object_type" = "commit" ]; then
+              break
+            fi
+            test "$object_type" = "tag"
+            tag_object="$(gh api "repos/${GH_REPO}/git/tags/${tag_sha}")"
+            object_type="$(jq -r '.object.type' <<<"$tag_object")"
+            tag_sha="$(jq -r '.object.sha' <<<"$tag_object")"
+          done
+          test "$object_type" = "commit"
+          runs="$(gh run list \
+            --repo "$GH_REPO" \
+            --workflow release.yml \
+            --branch "$RELEASE_TAG" \
+            --event push \
+            --limit 20 \
+            --json databaseId,headBranch,headSha,event,createdAt)"
+          printf '%s\n' "$runs" > "$RUNNER_TEMP/release-runs.json"
+          python - "$RUNNER_TEMP/release-runs.json" "$RELEASE_TAG" "$tag_sha" \
+            > "$RUNNER_TEMP/release-run-candidates" <<'PY'
+          import json
+          import sys
+
+          from scripts.release_evidence import repair_run_candidates
+
+          path, tag, commit = sys.argv[1:]
+          runs = json.loads(open(path, encoding="utf-8").read())
+          for run_id in repair_run_candidates(runs, tag, commit):
+              print(run_id)
+          PY
+
+          selected_run=""
+          while IFS= read -r candidate; do
+            test -n "$candidate" || continue
+            if ! jobs="$(gh run view "$candidate" --repo "$GH_REPO" --json jobs)"; then
+              continue
+            fi
+            test "$(jq '[.jobs[] | select(.name == "Build distributions" and
+                                          .conclusion == "success")] | length' \
+              <<<"$jobs")" -eq 1 || continue
+            test "$(jq '[.jobs[] | select(.name == "Publish to PyPI" and
+                                          (.conclusion == "success" or
+                                           .conclusion == "failure"))] | length' \
+              <<<"$jobs")" -eq 1 || continue
+            test "$(jq '[.jobs[] | select(.name == "Generate public release evidence" and
+                                          .conclusion == "success")] | length' \
+              <<<"$jobs")" -eq 1 || continue
+
+            rm -rf candidate-dist candidate-evidence
+            if ! gh run download "$candidate" \
+              --repo "$GH_REPO" \
+              --name python-package-distributions \
+              --dir candidate-dist; then
+              continue
+            fi
+            if ! gh run download "$candidate" \
+              --repo "$GH_REPO" \
+              --name public-release-evidence \
+              --dir candidate-evidence; then
+              continue
+            fi
+            if python - "$RELEASE_TAG" "$tag_sha" <<'PY'; then
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.release_evidence import installed_bundle_records
+
+          tag, commit = sys.argv[1:]
+          evidence_root = Path("candidate-evidence")
+          with (evidence_root / "release-evidence.json").open(encoding="utf-8") as handle:
+              evidence = json.load(handle)
+          assert evidence.get("format") == "engraphis-release-evidence/3"
+          assert evidence.get("package", {}).get("version") == tag.removeprefix("v")
+          assert evidence.get("tag") == tag
+          assert evidence.get("commit") == commit
+          assert evidence.get("provenance", {}).get("source") == {
+              "tag": tag, "commit": commit,
+          }
+          expected = {
+              item["filename"]: item["sha256"]
+              for item in evidence.get("artifacts", [])
+          }
+          actual = {
+              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in Path("candidate-dist").iterdir()
+              if path.is_file() and path.name.endswith((".whl", ".tar.gz"))
+          }
+          assert expected == actual
+          records = [
+              evidence["sbom"],
+              evidence["environment_lock"],
+              evidence["reproducibility"],
+              evidence["container"]["sbom"],
+              evidence["container"]["vulnerability_scan"],
+          ]
+          if "installed_journeys" in evidence:
+              records.extend(installed_bundle_records(evidence["installed_journeys"], actual))
+          for record in records:
+              path = evidence_root / Path(record["path"]).name
+              assert path.is_file()
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == record["sha256"]
+          PY
+              rm -rf dist release-evidence
+              mv candidate-dist dist
+              mv candidate-evidence release-evidence
+              selected_run="$candidate"
+              break
+            fi
+          done < "$RUNNER_TEMP/release-run-candidates"
+          test -n "$selected_run"
+          printf 'ENGRAPHIS_REPAIR_COMMIT=%s\n' "$tag_sha" >> "$GITHUB_ENV"
+
+      - name: Verify any previously published subset
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist dist
+          --version "${RELEASE_TAG#v}" --allow-subset
+
+      # gh-action-pypi-publish can leave its receipt in dist.  Keep the approved
+      # artifact set separate for the exact immutable-PyPI verification below.
+      - name: Freeze verified distribution set
+        shell: bash
+        run: |
+          mkdir verified-dist
+          cp dist/*.whl dist/*.tar.gz verified-dist/
+
+      - name: Require signed full-product qualification before PyPI repair
+        if: ${{ !inputs.waive_v176_qualification && !inputs.waive_v178_qualification && !inputs.waive_v179_qualification }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ENGRAPHIS_RELEASE_QUALIFICATION: ${{ secrets.ENGRAPHIS_RELEASE_QUALIFICATION }}
+          ENGRAPHIS_RELEASE_VERIFY_KEY: ${{ secrets.ENGRAPHIS_RELEASE_VERIFY_KEY }}
+          ENGRAPHIS_RELEASE_CANDIDATE_ID: ${{ secrets.ENGRAPHIS_RELEASE_CANDIDATE_ID }}
+          ENGRAPHIS_RELEASE_LEDGER_SHA256: ${{ secrets.ENGRAPHIS_RELEASE_LEDGER_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "cryptography==50.0.0"
+          python -m scripts.verify_release_qualification --dist dist \
+            --commit "$ENGRAPHIS_REPAIR_COMMIT" --tag "$RELEASE_TAG"
+
+      - name: Disclose the qualification waiver before PyPI repair
+        if: inputs.waive_v176_qualification || inputs.waive_v178_qualification || inputs.waive_v179_qualification
+        env:
+          WAIVE_V176: ${{ inputs.waive_v176_qualification }}
+          WAIVE_V178: ${{ inputs.waive_v178_qualification }}
+          WAIVE_V179: ${{ inputs.waive_v179_qualification }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Each exception covers one retained candidate, not future reuse of its tag.
+          case "$WAIVE_V176:$WAIVE_V178:${WAIVE_V179:-false}:$RELEASE_TAG:$ENGRAPHIS_REPAIR_COMMIT" in
+            true:false:false:v1.7.6:6a441a75c8dd159607fa3933da83f600864b9146|\
+            false:true:false:v1.7.8:dce68e1602e580cd51b71e26db2ab04238df7df4|\
+            false:false:true:v1.7.9:c6871b9bf506eec6cebe96beee1ac252429a7b99) ;;
+            *) printf 'Waiver does not match an authorized source candidate.\n' >&2; exit 1 ;;
+          esac
+          {
+            printf '## Release qualification\n\n'
+            printf 'The owner waived full-product qualification for this release. Mandatory full-product gates are not represented as passed.\n\n'
+            printf 'Source commit: `%s`\n\n' "$ENGRAPHIS_REPAIR_COMMIT"
+            printf 'Waiver record: %s\n' "$GH_RUN_URL"
+          } > "$RUNNER_TEMP/release-waiver.md"
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json body --jq .body \
+              > "$RUNNER_TEMP/release-notes-existing.md"
+            {
+              cat "$RUNNER_TEMP/release-notes-existing.md"
+              printf '\n\n'
+              cat "$RUNNER_TEMP/release-waiver.md"
+            } > "$RUNNER_TEMP/release-notes.md"
+            gh release edit "$RELEASE_TAG" --repo "$GH_REPO" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            # The public notice survives a later PyPI or verification failure. Assets
+            # and latest-release promotion still wait for successful publication.
+            gh release create "$RELEASE_TAG" --repo "$GH_REPO" --verify-tag \
+              --generate-notes --notes-file "$RUNNER_TEMP/release-waiver.md" \
+              --title "Engraphis ${RELEASE_TAG#v}" --latest=false
+          fi
+          # Editing notes on an existing draft does not make the notice public.
+          test "$(gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json isDraft --jq .isDraft)" = "false"
+
+      - name: Publish only missing verified distributions
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+        with:
+          skip-existing: true
+
+      - name: Require the exact complete PyPI file set
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: >-
+          python scripts/verify_release_artifacts.py --dist verified-dist
+          --version "${RELEASE_TAG#v}" --retries 18 --delay 10
+
+      - name: Require signed full-product qualification before GitHub repair
+        if: ${{ !inputs.waive_v176_qualification && !inputs.waive_v178_qualification && !inputs.waive_v179_qualification }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ENGRAPHIS_RELEASE_QUALIFICATION: ${{ secrets.ENGRAPHIS_RELEASE_QUALIFICATION }}
+          ENGRAPHIS_RELEASE_VERIFY_KEY: ${{ secrets.ENGRAPHIS_RELEASE_VERIFY_KEY }}
+          ENGRAPHIS_RELEASE_CANDIDATE_ID: ${{ secrets.ENGRAPHIS_RELEASE_CANDIDATE_ID }}
+          ENGRAPHIS_RELEASE_LEDGER_SHA256: ${{ secrets.ENGRAPHIS_RELEASE_LEDGER_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m scripts.verify_release_qualification --dist verified-dist \
+            --commit "$ENGRAPHIS_REPAIR_COMMIT" --tag "$RELEASE_TAG"
+
+      - name: Repair GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          WAIVE_QUALIFICATION: ${{ inputs.waive_v176_qualification || inputs.waive_v178_qualification || inputs.waive_v179_qualification }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes_args=()
+          latest_args=(--latest)
+          promote_latest=true
+          can_promote_latest() {
+            python - "$RELEASE_TAG" "$1" <<'PY'
+          import re
+          import sys
+
+          def version(tag):
+              if re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag) is None:
+                  raise SystemExit("Latest release comparison requires stable version tags")
+              return tuple(map(int, tag[1:].split(".")))
+
+          print("true" if version(sys.argv[1]) >= version(sys.argv[2]) else "false")
+          PY
+          }
+          if [ "$WAIVE_QUALIFICATION" = "true" ]; then
+            # A retained older repair must not displace a newer public Latest.
+            # The candidate comparison uses the existing public release history;
+            # failed lookups or unknown tag formats stop before any release write.
+            current_latest="$(gh release view --repo "$GH_REPO" --json tagName --jq .tagName)"
+            promote_latest="$(can_promote_latest "$current_latest")"
+            latest_args=(--latest=false)
+            if [ "$promote_latest" = "true" ]; then latest_args=(--latest); fi
+            {
+              printf '## Release qualification\n\n'
+              printf 'The owner waived full-product qualification for this release. Mandatory full-product gates are not represented as passed.\n\n'
+              printf 'Waiver record: %s\n' "$GH_RUN_URL"
+            } > "$RUNNER_TEMP/release-waiver.md"
+            notes_args=(--notes-file "$RUNNER_TEMP/release-waiver.md")
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            if [ "$WAIVE_QUALIFICATION" = "true" ]; then
+              gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json body --jq .body \
+                > "$RUNNER_TEMP/release-notes-existing.md"
+              {
+                cat "$RUNNER_TEMP/release-notes-existing.md"
+                printf '\n\n'
+                cat "$RUNNER_TEMP/release-waiver.md"
+              } > "$RUNNER_TEMP/release-notes.md"
+              gh release edit "$RELEASE_TAG" --repo "$GH_REPO" \
+                --notes-file "$RUNNER_TEMP/release-notes.md"
+            fi
+            gh release upload "$RELEASE_TAG" verified-dist/* release-evidence/* \
+              --repo "$GH_REPO" \
+              --clobber
+            if [ "$WAIVE_QUALIFICATION" = "true" ] && [ "$promote_latest" = "true" ]; then
+              # Another publisher may have advanced Latest during asset upload.
+              # Recheck immediately before promotion; this narrows the race but
+              # does not provide an atomic lease across external publishers.
+              current_latest="$(gh release view --repo "$GH_REPO" --json tagName --jq .tagName)"
+              promote_latest="$(can_promote_latest "$current_latest")"
+              if [ "$promote_latest" = "true" ]; then
+                gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --latest
+              fi
+            fi
+          else
+            gh release create "$RELEASE_TAG" verified-dist/* release-evidence/* \
+              --repo "$GH_REPO" \
+              --verify-tag \
+              --generate-notes \
+              "${notes_args[@]}" \
+              --title "Engraphis ${RELEASE_TAG#v}" \
+              "${latest_args[@]}"
+          fi

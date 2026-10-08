@@ -10,7 +10,7 @@ description: Evaluate and adapt an external repository, archive, or open-source 
 @status draft
 @requires codegraph_first_navigation
 
-Turn a useful external project into the smallest native LiquidAIty product capability. The goal is not
+Turn a useful external project into the smallest first-class LiquidAIty product capability. The goal is not
 to preserve the imported project's architecture. The goal is to preserve its useful behavior while
 keeping one LiquidAIty authority for Cards, Runs, IDF, graphs, tools, and runtime ownership.
 
@@ -192,7 +192,7 @@ state, and repeatable Runs—not merely because the upstream calls itself an age
 Complete and prove one boundary before expanding to the next:
 
 1. **Source understanding:** provenance, license, entrypoints, data/state, tests, and capability matrix.
-2. **Smallest adapter:** one useful native operation through the chosen existing owner, with no Card yet
+2. **Smallest adapter:** one useful operation through the chosen existing owner, with no Card yet
    if a Card adds no value.
 3. **Provider-free contract proof:** schemas, authorization, honest unavailable/failure behavior, and no
    hidden fallback.

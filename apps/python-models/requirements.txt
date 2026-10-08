@@ -1,30 +1,29 @@
-# Smallest resolver-verified pair compatible with mcp 1.28.1:
-# FastAPI 0.108.0 permits AnyIO 4 and MCP requires Uvicorn >=0.31.1.
-fastapi==0.108.0
-uvicorn[standard]==0.31.1
-pydantic==2.12.5
+# Current application server generation shared with Engraphis and MCP SDK v2.
+fastapi>=0.133.1,<1
+starlette>=1.3.1,<2
+uvicorn[standard]>=0.31.1
+pydantic>=2.12,<3
 pytest==8.4.2
 python-dotenv==1.2.2
 # Direct provider transport for Jev Decisions.
-httpx==0.28.1
-# The current Graphiti MCP package requires the official Python MCP SDK v1
-# (`mcp>=1.27.2,<2`). Keep the tested v1 SDK explicit while this host uses its
-# supported stateless Streamable HTTP mode.
-mcp==1.28.1
-# Official Graphiti MCP server and temporal graph engine. During pre-launch
-# development the deliberate environment rebuild follows upstream main; health
-# reports the exact resolved versions. The proven launch build will be pinned.
+httpx>=0.25,<1
+httpx2>=2.10
+# Official MCP Python SDK v2 owns protocol negotiation and legacy-client
+# compatibility. Pre-launch follows the supported stable major.
+mcp>=2,<3
+# Official Graphiti MCP server and temporal graph engine. Pre-launch follows
+# upstream main so provider schemas and behavior stay current together.
 mcp-server @ git+https://github.com/getzep/graphiti.git#subdirectory=mcp_server
 # Graphiti's minimum SDK uses the existing httpx transport. OpenAI 3 switches
 # to httpx2/truststore, which recurses with Windows pip-system-certs injection.
 openai==2.41.0
-python-multipart==0.0.32
+python-multipart>=0.0.31
 # Auth0 access-token verification for the public MCP resource server.
 PyJWT[crypto]==2.13.0
 # Python-owned AgentGraph assignments and run records use the same PostgreSQL store.
 psycopg[binary]==3.3.4
 # Deterministic trading lifecycle/backtest machinery beneath Hermes Cards.
-# Stable PyPI release verified against the current Python 3.11 / MCP v1 graph.
+# Stable PyPI release verified against the current Python 3.11 dependency graph.
 lumibot==4.4.56
 # Avoid an unsatisfiable newest-transitive pair: polygon 1.16.3 requires
 # certifi<2026 while ccxt 4.5.77 pins certifi==2026.6.17. This is the newest
@@ -34,5 +33,6 @@ ccxt==4.5.64
 # Bound resolver search across Databento's paired Python and platform releases.
 databento==0.86.0
 # ThinkGraph Python engine; local semantic model, no dashboard/server extras.
-engraphis==1.7.4
+# Use the current upstream source plus the bounded SDK-v2 MCP port in this tree.
+-e ./EngraphisLatest
 sentence-transformers==5.7.0

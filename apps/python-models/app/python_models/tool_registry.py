@@ -20,11 +20,9 @@ import re
 import inspect
 import threading
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
-
-from app.python_models.idd import IddValidationError
 
 from app.python_models.web_search import web_search
 from app.python_models.orchestration_contracts import ToolSpec
@@ -55,6 +53,10 @@ _OPERATION_PUBLISHERS = frozenset({
 })
 
 
+class ToolCatalogError(ValueError):
+    """Secret-safe structural error in one authoritative live tool catalog."""
+
+
 @dataclass(frozen=True)
 class OperationDefinition:
     """One canonical operation independent of any publisher transport."""
@@ -72,6 +74,10 @@ class OperationDefinition:
     required_caller_runtime: tuple[str, str] | None = None
     title: str | None = None
     annotations: dict[str, Any] | None = None
+    grant_eligible: bool = True
+    server_injected_arguments: frozenset[str] = frozenset()
+    dispatcher_context_arguments: frozenset[str] = frozenset()
+    dispatcher_owner: str = ""
 
     def __post_init__(self) -> None:
         if not self.canonical_id.strip():
@@ -104,10 +110,72 @@ class OperationDefinition:
                     raise RuntimeError(
                         f"operation_annotation_invalid:{self.canonical_id}:{key}"
                     )
+        if not isinstance(self.grant_eligible, bool):
+            raise RuntimeError(
+                f"operation_grant_eligibility_invalid:{self.canonical_id}"
+            )
+        properties = self.parameters_schema.get("properties", {})
+        if (
+            not isinstance(self.server_injected_arguments, frozenset)
+            or any(not isinstance(field, str) or not field for field in self.server_injected_arguments)
+            or not self.server_injected_arguments <= set(properties)
+        ):
+            raise RuntimeError(
+                f"operation_server_injected_arguments_invalid:{self.canonical_id}"
+            )
+        if (
+            not isinstance(self.dispatcher_context_arguments, frozenset)
+            or any(
+                not isinstance(field, str) or not field
+                for field in self.dispatcher_context_arguments
+            )
+            or not self.server_injected_arguments <= self.dispatcher_context_arguments
+        ):
+            raise RuntimeError(
+                f"operation_dispatcher_context_arguments_invalid:{self.canonical_id}"
+            )
+        if not self.dispatcher_owner:
+            owner = ".".join(filter(None, (
+                getattr(self.handler, "__module__", ""),
+                getattr(self.handler, "__qualname__", ""),
+            )))
+            if not owner:
+                raise RuntimeError(f"operation_dispatcher_owner_missing:{self.canonical_id}")
+            object.__setattr__(self, "dispatcher_owner", owner)
 
 
-def _external_operation_unavailable(**_arguments: Any) -> Any:
-    raise RuntimeError("external_operation_requires_mcp_owner")
+def project_server_injected_schema(
+    canonical_schema: dict[str, Any],
+    server_injected_arguments: frozenset[str] | set[str] | list[str] | tuple[str, ...],
+) -> dict[str, Any]:
+    """Remove only explicitly declared server-injected top-level arguments."""
+
+    if not isinstance(canonical_schema, dict) or canonical_schema.get("type") != "object":
+        raise ToolCatalogError("tool_catalog_canonical_schema_invalid")
+    declared = tuple(server_injected_arguments)
+    if (
+        any(not isinstance(field, str) or not field for field in declared)
+        or len(declared) != len(set(declared))
+    ):
+        raise ToolCatalogError("tool_catalog_server_injected_arguments_invalid")
+    projected = deepcopy(canonical_schema)
+    properties = projected.get("properties")
+    canonical_properties = canonical_schema.get("properties")
+    if not isinstance(properties, dict) or not isinstance(canonical_properties, dict):
+        if declared:
+            raise ToolCatalogError("tool_catalog_server_injected_argument_unknown")
+        return projected
+    unknown = sorted(set(declared) - set(canonical_properties))
+    if unknown:
+        raise ToolCatalogError(
+            "tool_catalog_server_injected_argument_unknown:" + ",".join(unknown)
+        )
+    for field in declared:
+        properties.pop(field, None)
+    required = projected.get("required")
+    if isinstance(required, list):
+        projected["required"] = [field for field in required if field not in declared]
+    return projected
 
 
 _GRAPHITI_READ_OPERATIONS = frozenset({
@@ -129,39 +197,26 @@ _GRAPHITI_WRITE_OPERATIONS = frozenset({
 })
 
 
-def _external_operation_definitions() -> list[OperationDefinition]:
-    """Known saved external identities; live MCP discovery supplies exact schemas."""
+def graphiti_operation_policy(canonical_id: str) -> dict[str, Any] | None:
+    """Explicit effects for Graphiti operations whose provider omits annotations."""
 
-    definitions: list[OperationDefinition] = []
-    for source_id, reads, writes in (
-        ("graphiti", _GRAPHITI_READ_OPERATIONS, _GRAPHITI_WRITE_OPERATIONS),
-    ):
-        for canonical_id in sorted(reads | writes):
-            read_only = canonical_id in reads
-            destructive = canonical_id in {
-                "graphiti.clear_graph",
-                "graphiti.delete_entity_edge",
-                "graphiti.delete_episode",
-            }
-            definitions.append(OperationDefinition(
-                canonical_id=canonical_id,
-                description=f"{canonical_id} from its configured {source_id} MCP owner.",
-                parameters_schema={"type": "object", "properties": {}},
-                handler=_external_operation_unavailable,
-                available=False,
-                publishers=frozenset({"external-mcp"}),
-                access="read" if canonical_id in reads else "write",
-                namespace=source_id,
-                external_source_id=source_id,
-                title=canonical_id,
-                annotations={
-                    "readOnlyHint": read_only,
-                    "destructiveHint": destructive,
-                    "idempotentHint": read_only or destructive,
-                    "openWorldHint": False,
-                },
-            ))
-    return definitions
+    if canonical_id not in _GRAPHITI_READ_OPERATIONS | _GRAPHITI_WRITE_OPERATIONS:
+        return None
+    read_only = canonical_id in _GRAPHITI_READ_OPERATIONS
+    destructive = canonical_id in {
+        "graphiti.clear_graph",
+        "graphiti.delete_entity_edge",
+        "graphiti.delete_episode",
+    }
+    return {
+        "access": "read" if read_only else "write",
+        "annotations": {
+            "readOnlyHint": read_only,
+            "destructiveHint": destructive,
+            "idempotentHint": read_only or destructive,
+            "openWorldHint": False,
+        },
+    }
 
 
 async def _trading_context_required(**_arguments: Any) -> dict[str, Any]:
@@ -188,37 +243,6 @@ def _worldsignals_package_context_required(
 
     del command, reason, arguments, domains, sourceRefs, maxAgeSeconds, limit
     raise RuntimeError("worldsignals_package_card_context_required")
-
-
-def _operation_references() -> dict[str, dict[str, Any]]:
-    references: dict[str, dict[str, Any]] = {}
-    for definition in operation_definitions():
-        source_ids = []
-        if "internal-plugin" in definition.publishers:
-            source_ids.append("python_runtime")
-        if "external-mcp" in definition.publishers:
-            source_ids.append(definition.external_source_id)
-        reference: dict[str, Any] = {
-            "canonicalId": definition.canonical_id,
-            "kind": "tool",
-            "namespace": definition.namespace,
-            "sourceIds": list(dict.fromkeys(source_ids)),
-            "displayName": definition.title or definition.canonical_id,
-            "shortDescription": definition.description,
-            "availability": "disabled",
-            "access": definition.access,
-            "publication": (
-                "external-mcp"
-                if "external-mcp" in definition.publishers
-                else "private-runtime"
-            ),
-            "contracts": [],
-        }
-        if definition.required_caller_runtime is not None:
-            reference["requiredCallerRuntimeKind"] = definition.required_caller_runtime[0]
-            reference["requiredCallerRuntimeMode"] = definition.required_caller_runtime[1]
-        references[definition.canonical_id] = reference
-    return references
 
 
 def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
@@ -272,107 +296,241 @@ def writable_tool_ids() -> frozenset[str]:
     )
 
 
-def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
-    """Combine startup effect metadata with factual live provider contracts.
+def normalize_live_tool_catalog(descriptors: Any) -> list[dict[str, Any]]:
+    """Normalize current provider descriptors without consulting IDD.
 
-    Discovery contributes only provider contract data and current availability.
-    The function does not infer risk, compatibility, runtime ownership, graph
-    meaning, or card assignability from tool names or descriptions.
+    Python registries and connected MCP providers supply complete contracts.
+    Multiple transports may publish one canonical operation, but their stable
+    metadata and schemas must agree exactly. This function groups those factual
+    contracts; it does not invent operations, aliases, access, or availability.
     """
-    if not isinstance(discovered, list):
-        raise IddValidationError("idd_tool_discovery_invalid")
-    references = _operation_references()
+
+    if not isinstance(descriptors, list):
+        raise ToolCatalogError("tool_catalog_invalid")
+    references: dict[str, dict[str, Any]] = {}
+    signatures: dict[str, str] = {}
     seen_contracts: set[tuple[str, str, str]] = set()
-    for raw in discovered:
+    required_annotations = {
+        "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
+    }
+    for raw in descriptors:
         if not isinstance(raw, dict):
-            raise IddValidationError("idd_tool_discovery_entry_invalid")
-        canonical_id = raw.get("name")
-        source_id = raw.get("sourceId")
-        provider_tool_name = raw.get("providerToolName")
-        namespace = raw.get("namespace")
-        connection_kind = raw.get("connectionKind")
+            raise ToolCatalogError("tool_catalog_entry_invalid")
+        canonical_id = str(raw.get("name") or "").strip()
+        source_id = str(raw.get("sourceId") or "").strip()
+        provider_tool_name = str(raw.get("providerToolName") or "").strip()
+        namespace = str(raw.get("namespace") or "").strip()
+        connection_kind = str(raw.get("connectionKind") or "").strip()
+        publication = str(raw.get("publication") or "").strip()
+        access = str(raw.get("access") or "").strip()
+        title = str(raw.get("title") or canonical_id).strip()
+        description = raw.get("description", "")
         input_schema = raw.get("inputSchema")
-        if (
-            not isinstance(canonical_id, str)
-            or not canonical_id
-            or not isinstance(source_id, str)
-            or not source_id
-            or not isinstance(provider_tool_name, str)
-            or not provider_tool_name
-            or not isinstance(namespace, str)
-            or not namespace
-            or not isinstance(connection_kind, str)
-            or not connection_kind
-            or not isinstance(input_schema, dict)
-        ):
-            raise IddValidationError("idd_tool_discovery_contract_invalid")
+        canonical_input_schema = raw.get("canonicalInputSchema", input_schema)
+        server_injected_raw = raw.get("serverInjectedArguments", [])
+        dispatcher_context_raw = raw.get("dispatcherContextArguments", [])
+        dispatcher_owner = str(raw.get("dispatcherOwner") or "").strip()
+        authenticated_projection = raw.get("authenticatedProjection", False)
         output_schema = raw.get("outputSchema")
-        title = raw.get("title")
         annotations = raw.get("annotations")
         security_schemes = raw.get("securitySchemes")
+        available = raw.get("available", raw.get("enabled", True)) is not False
+        grant_eligible = raw.get("grantEligible", True)
+        caller_kind = raw.get("requiredCallerRuntimeKind")
+        caller_mode = raw.get("requiredCallerRuntimeMode")
+        kind = raw.get("kind", "tool")
+        expected_publication = {
+            "private-runtime": "private-runtime",
+            "external-mcp": "external-mcp",
+        }.get(connection_kind)
+        if (
+            not canonical_id
+            or not source_id
+            or not provider_tool_name
+            or not namespace
+            or expected_publication is None
+            or publication != expected_publication
+            or access not in {"read", "write"}
+            or not title
+            or not isinstance(description, str)
+            or not isinstance(input_schema, dict)
+            or input_schema.get("type") != "object"
+            or not isinstance(canonical_input_schema, dict)
+            or canonical_input_schema.get("type") != "object"
+            or not isinstance(server_injected_raw, list)
+            or not isinstance(dispatcher_context_raw, list)
+            or not dispatcher_owner
+            or not isinstance(authenticated_projection, bool)
+            or kind != "tool"
+            or not isinstance(grant_eligible, bool)
+        ):
+            raise ToolCatalogError("tool_catalog_contract_invalid")
         if output_schema is not None and not isinstance(output_schema, dict):
-            raise IddValidationError("idd_tool_discovery_output_schema_invalid")
-        if title is not None and (not isinstance(title, str) or not title.strip()):
-            raise IddValidationError("idd_tool_discovery_title_invalid")
-        if annotations is not None and not isinstance(annotations, dict):
-            raise IddValidationError("idd_tool_discovery_annotations_invalid")
+            raise ToolCatalogError(f"tool_catalog_output_schema_invalid:{canonical_id}")
+        if not isinstance(annotations, dict) or not required_annotations.issubset(annotations):
+            raise ToolCatalogError(f"tool_catalog_annotations_invalid:{canonical_id}")
+        if annotations.get("readOnlyHint") is not (access == "read"):
+            raise ToolCatalogError(f"tool_catalog_access_mismatch:{canonical_id}")
+        if any(
+            not isinstance(field, str) or not field
+            for field in server_injected_raw
+        ) or len(server_injected_raw) != len(set(server_injected_raw)):
+            raise ToolCatalogError(
+                f"tool_catalog_server_injected_arguments_invalid:{canonical_id}"
+            )
+        server_injected_arguments = frozenset(server_injected_raw)
+        if any(
+            not isinstance(field, str) or not field
+            for field in dispatcher_context_raw
+        ) or len(dispatcher_context_raw) != len(set(dispatcher_context_raw)):
+            raise ToolCatalogError(
+                f"tool_catalog_dispatcher_context_arguments_invalid:{canonical_id}"
+            )
+        dispatcher_context_arguments = frozenset(dispatcher_context_raw)
+        if not server_injected_arguments <= dispatcher_context_arguments:
+            raise ToolCatalogError(
+                f"tool_catalog_dispatcher_context_projection_invalid:{canonical_id}"
+            )
+        projected_input_schema = project_server_injected_schema(
+            canonical_input_schema,
+            server_injected_arguments,
+        )
+        expected_input_schema = (
+            projected_input_schema
+            if connection_kind == "external-mcp" and authenticated_projection
+            else canonical_input_schema
+        )
+        if connection_kind == "private-runtime" and authenticated_projection:
+            raise ToolCatalogError(
+                f"tool_catalog_projection_transport_invalid:{canonical_id}"
+            )
+        if input_schema != expected_input_schema:
+            raise ToolCatalogError(
+                f"tool_catalog_schema_projection_mismatch:{canonical_id}"
+            )
         if security_schemes is not None and (
             not isinstance(security_schemes, list)
             or not all(isinstance(item, dict) for item in security_schemes)
         ):
-            raise IddValidationError("idd_tool_discovery_security_invalid")
-        kind = raw.get("kind", "tool")
-        if kind not in {"tool", "agent"}:
-            raise IddValidationError("idd_tool_discovery_kind_invalid")
-        available = raw.get("available", raw.get("enabled", True)) is not False
+            raise ToolCatalogError(f"tool_catalog_security_invalid:{canonical_id}")
+        if bool(caller_kind) != bool(caller_mode):
+            raise ToolCatalogError(f"tool_catalog_caller_scope_invalid:{canonical_id}")
+        if caller_kind is not None and (
+            caller_kind != "hermes"
+            or caller_mode not in {"main", "delegate", "magentic_one"}
+        ):
+            raise ToolCatalogError(f"tool_catalog_caller_scope_invalid:{canonical_id}")
+
+        canonical_metadata = {
+            "kind": "tool",
+            "namespace": namespace,
+            "displayName": title,
+            "shortDescription": description,
+            "access": access,
+            "canonicalInputSchema": canonical_input_schema,
+            "outputSchema": output_schema,
+            "serverInjectedArguments": sorted(server_injected_arguments),
+            "dispatcherContextArguments": sorted(dispatcher_context_arguments),
+            "dispatcherOwner": dispatcher_owner,
+            "annotations": annotations,
+            "grantEligible": grant_eligible,
+            "requiredCallerRuntimeKind": caller_kind,
+            "requiredCallerRuntimeMode": caller_mode,
+        }
+        # Every contract carries the same complete canonical schema.  An
+        # external contract may differ only by the deterministic removal of
+        # its explicitly declared server-injected top-level arguments.
+        signature = json.dumps(
+            canonical_metadata, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        if canonical_id in signatures and signatures[canonical_id] != signature:
+            raise ToolCatalogError(f"tool_catalog_definition_mismatch:{canonical_id}")
+        signatures[canonical_id] = signature
         contract_key = (canonical_id, source_id, provider_tool_name)
         if contract_key in seen_contracts:
-            raise IddValidationError("idd_tool_discovery_duplicate")
+            raise ToolCatalogError(f"tool_catalog_duplicate_contract:{canonical_id}")
         seen_contracts.add(contract_key)
         contract: dict[str, Any] = {
             "sourceId": source_id,
             "providerToolName": provider_tool_name,
             "connectionKind": connection_kind,
+            "publication": publication,
             "available": available,
-            "description": raw.get("description", ""),
+            "grantEligible": grant_eligible,
+            "title": title,
+            "description": description,
             "inputSchema": deepcopy(input_schema),
+            "canonicalInputSchema": deepcopy(canonical_input_schema),
+            "serverInjectedArguments": sorted(server_injected_arguments),
+            "dispatcherContextArguments": sorted(dispatcher_context_arguments),
+            "dispatcherOwner": dispatcher_owner,
+            "authenticatedProjection": authenticated_projection,
+            "annotations": deepcopy(annotations),
         }
-        if title is not None:
-            contract["title"] = title
         if output_schema is not None:
             contract["outputSchema"] = deepcopy(output_schema)
-        if annotations is not None:
-            contract["annotations"] = deepcopy(annotations)
         if security_schemes is not None:
             contract["securitySchemes"] = deepcopy(security_schemes)
-        reference = references.get(canonical_id)
-        if reference is None:
-            if raw.get("owner") == "LiquidAIty":
-                raise IddValidationError("liquidaity_effect_unclassified")
-            reference = {
-                "canonicalId": canonical_id, "kind": kind, "namespace": namespace,
-                "sourceIds": [], "displayName": title or canonical_id,
-                "shortDescription": raw.get("description", ""),
-                "availability": "disabled", "publication": "provider",
-                "access": "read" if (annotations or {}).get("readOnlyHint") is True else "write",
-                "contracts": [],
-            }
-            references[canonical_id] = reference
-        read_only_hint = annotations.get("readOnlyHint") if annotations is not None else None
-        if read_only_hint is not None and not isinstance(read_only_hint, bool):
-            raise IddValidationError(f"idd_tool_annotations_invalid:{canonical_id}")
+        reference = references.setdefault(canonical_id, {
+            "canonicalId": canonical_id,
+            "kind": "tool",
+            "namespace": namespace,
+            "sourceIds": [],
+            "dispatcherOwner": dispatcher_owner,
+            "displayName": title,
+            "shortDescription": description,
+            "availability": "disabled",
+            "publication": "private-runtime",
+            "access": access,
+            "grantEligible": grant_eligible,
+            "contracts": [],
+            **(
+                {
+                    "requiredCallerRuntimeKind": caller_kind,
+                    "requiredCallerRuntimeMode": caller_mode,
+                }
+                if caller_kind is not None else {}
+            ),
+        })
         if source_id not in reference["sourceIds"]:
             reference["sourceIds"].append(source_id)
         reference["contracts"].append(contract)
-        if title:
-            reference["displayName"] = title
-        reference["shortDescription"] = raw.get("description", reference["shortDescription"])
-        if available and reference["publication"] != "private-admin":
+        if publication == "external-mcp":
+            reference["publication"] = "external-mcp"
+        if available:
             reference["availability"] = "available"
-    return [
-        deepcopy(references[key])
-        for key in sorted(references)
-    ]
+    return [deepcopy(references[key]) for key in sorted(references)]
+
+
+def normalize_live_tool_catalog_with_failures(
+    descriptors: Any,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Validate each canonical tool boundary independently.
+
+    A malformed or conflicting tool is excluded with its exact structural
+    reason while unrelated valid tools remain available. Release/catalog gates
+    continue to use :func:`normalize_live_tool_catalog` and fail on any defect.
+    """
+
+    if not isinstance(descriptors, list):
+        raise ToolCatalogError("tool_catalog_invalid")
+    groups: dict[str, list[Any]] = {}
+    for index, raw in enumerate(descriptors):
+        canonical_id = (
+            str(raw.get("name") or "").strip()
+            if isinstance(raw, dict) else ""
+        )
+        key = canonical_id or f"catalog-entry-{index}"
+        groups.setdefault(key, []).append(raw)
+    references: list[dict[str, Any]] = []
+    failures: dict[str, str] = {}
+    for canonical_id in sorted(groups):
+        try:
+            references.extend(normalize_live_tool_catalog(groups[canonical_id]))
+        except ToolCatalogError as error:
+            failures[canonical_id] = str(error)
+    return references, failures
 
 _SAFE_BIN_OPS: dict[type[ast.AST], Callable[[Any, Any], Any]] = {
     ast.Add: operator.add,
@@ -1102,7 +1260,19 @@ def _static_operation_definitions() -> tuple[OperationDefinition, ...]:
             *DEFAULT_TOOL_REGISTRY.operation_definitions(),
             *mcp_host.application_operation_definitions(),
             *engraphis.operation_definitions(),
-            *_external_operation_definitions(),
+        ]
+        contributed = [
+            replace(
+                definition,
+                dispatcher_context_arguments=mcp_host.dispatcher_context_arguments_for(
+                    definition.canonical_id
+                ),
+            )
+            if (
+                not definition.dispatcher_context_arguments
+                and mcp_host.dispatcher_context_arguments_for(definition.canonical_id)
+            ) else definition
+            for definition in contributed
         ]
         by_id: dict[str, OperationDefinition] = {}
         for definition in contributed:
@@ -1200,41 +1370,6 @@ def operation_definition(name: str) -> OperationDefinition | None:
     )
 
 
-def operation_catalog_metadata() -> list[dict[str, Any]]:
-    """Builder-facing metadata derived from canonical operation definitions."""
-
-    result: list[dict[str, Any]] = []
-    for definition in operation_definitions():
-        source_ids = []
-        if "internal-plugin" in definition.publishers:
-            source_ids.append("python_runtime")
-        if "external-mcp" in definition.publishers:
-            source_ids.append(definition.external_source_id)
-        item: dict[str, Any] = {
-            "id": definition.canonical_id,
-            "access": definition.access,
-            "publication": (
-                "external-mcp"
-                if "external-mcp" in definition.publishers
-                else "private-runtime"
-            ),
-            "sourceIds": list(dict.fromkeys(source_ids)),
-            "namespace": definition.namespace,
-            "kind": "tool",
-            "title": definition.title or definition.canonical_id,
-            "description": definition.description,
-            "inputSchema": deepcopy(definition.parameters_schema),
-            "annotations": deepcopy(definition.annotations or {}),
-        }
-        if definition.output_schema is not None:
-            item["outputSchema"] = deepcopy(definition.output_schema)
-        if definition.required_caller_runtime is not None:
-            item["callerKind"] = definition.required_caller_runtime[0]
-            item["callerMode"] = definition.required_caller_runtime[1]
-        result.append(item)
-    return result
-
-
 def _publisher_manifest(
     publisher: str,
     *,
@@ -1261,6 +1396,12 @@ def _publisher_manifest(
             raise RuntimeError(
                 f"operation_annotations_missing:{definition.canonical_id}:{missing}"
             )
+        canonical_input_schema = deepcopy(definition.parameters_schema)
+        canonical_input_schema.setdefault("additionalProperties", False)
+        connection_kind = (
+            "private-runtime" if publisher == "internal-plugin" else "external-mcp"
+        )
+        input_schema = deepcopy(canonical_input_schema)
         manifest.append({
             "name": definition.canonical_id,
             "title": definition.title or definition.canonical_id,
@@ -1268,14 +1409,27 @@ def _publisher_manifest(
             "kind": "tool",
             "sourceId": source_id,
             "namespace": definition.namespace,
-            "connectionKind": (
-                "private-runtime" if publisher == "internal-plugin" else "external-mcp"
-            ),
+            "connectionKind": connection_kind,
+            "publication": connection_kind,
             "description": definition.description,
             "enabled": definition.available,
+            "available": definition.available,
+            "grantEligible": definition.grant_eligible,
             "access": definition.access,
             "annotations": annotations,
-            "inputSchema": deepcopy(definition.parameters_schema),
+            "inputSchema": input_schema,
+            "canonicalInputSchema": canonical_input_schema,
+            "serverInjectedArguments": sorted(definition.server_injected_arguments),
+            "dispatcherContextArguments": sorted(definition.dispatcher_context_arguments),
+            "dispatcherOwner": definition.dispatcher_owner,
+            "authenticatedProjection": False,
+            **(
+                {
+                    "requiredCallerRuntimeKind": definition.required_caller_runtime[0],
+                    "requiredCallerRuntimeMode": definition.required_caller_runtime[1],
+                }
+                if definition.required_caller_runtime is not None else {}
+            ),
             **(
                 {"outputSchema": deepcopy(definition.output_schema)}
                 if definition.output_schema is not None

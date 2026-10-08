@@ -40,11 +40,16 @@ import type {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const identity = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' };
+const identity = {
+  projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'main',
+};
 const session = (status: AgentTerminalSession['status'] = 'running'): AgentTerminalSession => ({
   sessionId: 'session-1', cardId: identity.cardId, profile: 'builder', pid: 42, ptyId: 'pty-1',
   status, cols: 80, rows: 24,
+  websocketUrl: 'ws://127.0.0.1:9119/api/pty?ticket=builder-ticket',
 });
+
+const terminalStream = () => ({ close: vi.fn(), write: vi.fn(), resize: vi.fn() });
 
 let host: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -82,17 +87,18 @@ function deferred<T>() {
 
 describe('AgentTerminalPanel', () => {
   it('attaches the dedicated under-chat Builder presentation to Builder\'s Hermes PTY stream', async () => {
-    const builderIdentity = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' };
-    let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
+    const builderIdentity = {
+      projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'main',
+    };
+    let handlers: Parameters<AgentTerminalClient['stream']>[1] | undefined;
     const client: AgentTerminalClient = {
       open: vi.fn(async () => ({
         ...session(), cardId: 'builder', profile: 'builder', pid: 4242, ptyId: 'builder-pty',
       })),
-      stream: vi.fn((_identity, _sessionId, _after, candidate) => {
+      stream: vi.fn((_session, candidate) => {
         handlers = candidate;
-        return { close: vi.fn() };
+        return terminalStream();
       }),
-      resize: vi.fn(async () => undefined),
     };
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -129,14 +135,13 @@ describe('AgentTerminalPanel', () => {
   });
 
   it('opens one saved Builder session and writes only its raw PTY output to xterm', async () => {
-    let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
+    let handlers: Parameters<AgentTerminalClient['stream']>[1] | undefined;
     const client: AgentTerminalClient = {
       open: vi.fn(async () => session()),
-      stream: vi.fn((_identity, _sessionId, _after, candidate) => {
+      stream: vi.fn((_session, candidate) => {
         handlers = candidate;
-        return { close: vi.fn() };
+        return terminalStream();
       }),
-      resize: vi.fn(async () => undefined),
     };
     await render(client);
 
@@ -158,15 +163,14 @@ describe('AgentTerminalPanel', () => {
   });
 
   it('keeps the same stream through interruption and automatically rebinds a missing TUI', async () => {
-    let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
+    let handlers: Parameters<AgentTerminalClient['stream']>[1] | undefined;
     const closed = vi.fn();
     const client: AgentTerminalClient = {
       open: vi.fn(async () => session()),
-      stream: vi.fn((_identity, _sessionId, _after, candidate) => {
+      stream: vi.fn((_session, candidate) => {
         handlers = candidate;
-        return { close: closed };
+        return { close: closed, write: vi.fn(), resize: vi.fn() };
       }),
-      resize: vi.fn(async () => undefined),
     };
     await render(client);
     await act(async () => {
@@ -190,8 +194,7 @@ describe('AgentTerminalPanel', () => {
     const pending = deferred<AgentTerminalSession>();
     const client: AgentTerminalClient = {
       open: vi.fn(() => pending.promise),
-      stream: vi.fn(() => ({ close: vi.fn() })),
-      resize: vi.fn(async () => undefined),
+      stream: vi.fn(terminalStream),
     };
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -211,8 +214,7 @@ describe('AgentTerminalPanel', () => {
     const nextIdentity = { ...identity, cardId: 'card_second' };
     const client: AgentTerminalClient = {
       open: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
-      stream: vi.fn(() => ({ close: vi.fn() })),
-      resize: vi.fn(async () => undefined),
+      stream: vi.fn(terminalStream),
     };
     await render(client);
     await act(async () => {
@@ -234,8 +236,7 @@ describe('AgentTerminalPanel', () => {
   it('surfaces an automatic-open failure without exposing a manual connection workflow', async () => {
     const client: AgentTerminalClient = {
       open: vi.fn().mockRejectedValueOnce(new Error('open_failed')),
-      stream: vi.fn(() => ({ close: vi.fn() })),
-      resize: vi.fn(async () => undefined),
+      stream: vi.fn(terminalStream),
     };
     await render(client);
     await act(async () => { await Promise.resolve(); });

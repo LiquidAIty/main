@@ -1826,11 +1826,13 @@ export interface ProfilesDescribeResult {
   toolsets?: ToolsetEntry[]
   toolsets_pinned?: boolean
   mcp_servers?: McpServerEntry[]
-  bot_mode_roster?: string[] | null
+  delegation: ProfileDelegationSettings
+  task_mode?: 'team' | null
 }
 export interface ProfileModelPin {
   provider?: string
   default?: string
+  openai_runtime?: 'auto' | 'codex_app_server' | null
 }
 export interface CapabilityEntry {
   name: string
@@ -1848,6 +1850,13 @@ export interface McpServerEntry {
   enabled?: boolean
   transport?: string
 }
+export interface ProfileDelegationSettings {
+  provider: string
+  model: string
+  max_spawn_depth: 1 | 2
+  orchestrator_enabled: boolean
+  enabled: boolean
+}
 /** Sections are independent; ``ui_meta_expected_revisions`` is a per-key compare-and-swap. */
 export interface ProfilesConfigureParams {
   profile?: string | null
@@ -1858,11 +1867,13 @@ export interface ProfilesConfigureParams {
   description?: string | null
   model?: string | null
   provider?: string | null
+  openai_runtime?: 'auto' | 'codex_app_server' | null
   confirm_expensive_model?: boolean | string | null
   disabled_skills?: string[] | null
   enabled_toolsets?: string[] | null
   enabled_mcp_servers?: string[] | null
-  bot_mode_roster?: string[] | null
+  delegation?: ProfileDelegationSettings | null
+  task_mode?: 'team' | null
 }
 /** ``confirm_required`` mirrors ``config.set``: a guarded model pick wrote nothing yet. */
 export interface ProfilesConfigureResult {
@@ -1882,7 +1893,8 @@ export interface ProfilesConfigureApplied {
   skills?: boolean | null
   toolsets?: boolean | null
   mcp_servers?: boolean | null
-  bot_mode_roster?: boolean | null
+  delegation?: boolean | null
+  task_mode?: boolean | null
 }
 export interface UiMetaConflict {
   expected?: unknown
@@ -3248,6 +3260,7 @@ export interface SessionInterruptParams {
   session_id: string
   profile?: string | null
   expected_hosted_task_id?: string | null
+  expected_submission_id?: string | null
 }
 export interface SessionInterruptResult {
   status: InterruptStatus
@@ -3809,6 +3822,7 @@ export interface SkillCommandRef {
   description?: string
 }
 export interface LearningFramesParams {
+  profile?: string | null
   cols?: number | null
   rows?: number | null
   frames?: number | null
@@ -3863,6 +3877,7 @@ export interface LearningAxis {
   end: string
 }
 export interface LearningNodeParams {
+  profile?: string | null
   id?: string | null
 }
 export interface LearningDetailResult {
@@ -3879,6 +3894,7 @@ export interface LearningMutationResult {
   message?: string | null
 }
 export interface LearningEditParams {
+  profile?: string | null
   id?: string | null
   content?: string | null
 }

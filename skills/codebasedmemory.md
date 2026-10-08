@@ -102,9 +102,9 @@ Exceptions: pure prose edits, spelling fixes, emergency repair when CBM itself i
 
 Never claim CBM-path-proven unless trace_path returned the edge. Never claim a function is dead without inbound trace + rg + coverage reasoning.
 
-## Discovery Procedure and Known Native Operations
+## Discovery Procedure and Official Codebase Memory Operations
 
-This section is usage guidance, not a copied or exhaustive native catalog. The official server's live
+This section is usage guidance, not a copied or exhaustive catalog. The official server's live
 `tools/list` response is authoritative for names, schemas, descriptions, and availability. New valid tools do
 not require a skill or application-source update before the application can publish them.
 

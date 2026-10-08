@@ -37,12 +37,6 @@ def load_input_data_dictionary() -> dict[str, Any]:
             raise IddValidationError("idd_object_type_or_cardinality_invalid")
     for template in document["templates"]:
         template_objects(document, template)
-    # Operation metadata is a Builder-facing projection of executable Python
-    # definitions. Checked-in IDD text cannot grant, remove, or republish a
-    # runtime operation.
-    from app.python_models.tool_registry import operation_catalog_metadata
-
-    document["operations"] = operation_catalog_metadata()
     return document
 
 
@@ -201,7 +195,7 @@ def materialize_runtime_options(model_options: Any, *, document: dict[str, Any] 
 def materialize_card_editor(
     model_options: Any, *, catalog_options: Any = None, selected_ids: Any = None,
 ) -> dict[str, Any]:
-    """One builder palette. Supplier catalogs enrich IDD without becoming IDD."""
+    """Project one current live tool catalog into the disposable Builder palette."""
     document = load_input_data_dictionary()
     runtime_options = materialize_runtime_options(model_options, document=document)
     models = runtime_options["catalogs"]["configured-models"]
@@ -226,33 +220,66 @@ def materialize_card_editor(
     for model in models:
         add("model:" + model["provider"] + ":" + model["key"], "model",
             "configured-models", "configured-models", model)
-    if catalog_options is not None and not isinstance(catalog_options, list):
-        raise IddValidationError("builder_catalog_options_invalid")
-    for option in catalog_options or []:
-        if (not isinstance(option, dict)
-                or any(not isinstance(option.get(key), str) or not option[key]
-                       for key in ("id", "kind", "owner", "source"))
-                or not isinstance(option.get("schema", {}), dict)):
-            raise IddValidationError("builder_catalog_option_invalid")
-        available = option.get("available", True) is True
-        diagnostics = []
-        if option["kind"] == "tool" and option.get("schema", {}).get("type") != "object":
-            diagnostics.append("provider_input_schema_unavailable")
-        # Unclassified host effects remain visible but cannot become capabilities.
-        if option["owner"] == "LiquidAIty" and option["kind"] == "tool":
-            policy = next((item for item in document["operations"] if item["id"] == option["id"]), None)
-            if policy is None:
-                available = False
-                diagnostics.append("liquidaity_effect_unclassified")
-        add(option["id"], option["kind"], option["owner"], option["source"],
-            option.get("schema", {}), available, diagnostics)
+    if not isinstance(catalog_options, list):
+        raise IddValidationError("builder_live_tool_catalog_unavailable")
+    for reference in catalog_options:
+        if not isinstance(reference, dict):
+            raise IddValidationError("builder_tool_catalog_entry_invalid")
+        canonical_id = str(reference.get("canonicalId") or "").strip()
+        namespace = str(reference.get("namespace") or "").strip()
+        source_ids = reference.get("sourceIds")
+        contracts = reference.get("contracts")
+        access = reference.get("access")
+        publication = reference.get("publication")
+        grant_eligible = reference.get("grantEligible")
+        availability = reference.get("availability")
+        if (
+            not canonical_id
+            or reference.get("kind") != "tool"
+            or not namespace
+            or not isinstance(source_ids, list)
+            or not source_ids
+            or any(not isinstance(value, str) or not value for value in source_ids)
+            or not isinstance(contracts, list)
+            or not contracts
+            or access not in {"read", "write"}
+            or publication not in {"private-runtime", "external-mcp"}
+            or not isinstance(grant_eligible, bool)
+            or availability not in {"available", "disabled"}
+        ):
+            raise IddValidationError("builder_tool_catalog_entry_invalid")
+        available_contracts = [
+            contract for contract in contracts
+            if isinstance(contract, dict) and contract.get("available") is not False
+        ]
+        contract = (available_contracts or contracts)[0]
+        schema = contract.get("inputSchema") if isinstance(contract, dict) else None
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            raise IddValidationError(
+                f"builder_tool_catalog_schema_invalid:{canonical_id}"
+            )
+        available = availability == "available" and grant_eligible
+        diagnostics = [] if grant_eligible else ["tool_not_grant_eligible"]
+        owner = source_ids[0]
+        add(
+            canonical_id, "tool", owner, owner, schema, available, diagnostics,
+        )
+        options[canonical_id].update({
+            "title": str(reference.get("displayName") or canonical_id),
+            "description": str(reference.get("shortDescription") or ""),
+            "namespace": namespace,
+            "sourceIds": list(source_ids),
+            "access": access,
+            "publication": publication,
+            "grantEligible": grant_eligible,
+            "contracts": deepcopy(contracts),
+        })
     for identity in sorted(selected - options.keys()):
         add(identity, "unresolved", "unknown", "saved-card", {}, False, ["saved_selection_stale"])
     palette = {
         "dictionary": document["dictionary"],
         "types": document["types"], "objects": document["objects"],
         "templates": document["templates"], "relationships": document["relationships"],
-        "operations": document["operations"],
         "options": [options[key] for key in sorted(options)],
     }
     # Selection is not source freshness and never implies effective authorization.

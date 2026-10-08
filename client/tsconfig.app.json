@@ -23,10 +23,13 @@
     "baseUrl": ".",
     "paths": {
       "@/types/hermes": [
-        "../Hermes/apps/desktop/src/types/hermes.ts"
+        "../HermesLatest/apps/desktop/src/types/hermes.ts"
       ],
       "@/lib/time": [
-        "../Hermes/apps/desktop/src/lib/time.ts"
+        "../HermesLatest/apps/desktop/src/lib/time.ts"
+      ],
+      "@/lib/tool-result-metadata": [
+        "../HermesLatest/apps/desktop/src/lib/tool-result-metadata.ts"
       ]
     }
   },
@@ -51,15 +54,16 @@
     "src/**/*.jsx",
     "src/**/*.ts",
     "src/**/*.tsx",
-    "../Hermes/apps/desktop/src/app/starmap/color.ts",
-    "../Hermes/apps/desktop/src/app/starmap/constants.ts",
-    "../Hermes/apps/desktop/src/app/starmap/geometry.ts",
-    "../Hermes/apps/desktop/src/app/starmap/render.ts",
-    "../Hermes/apps/desktop/src/app/starmap/simulation.ts",
-    "../Hermes/apps/desktop/src/app/starmap/text.ts",
-    "../Hermes/apps/desktop/src/app/starmap/time-axis.ts",
-    "../Hermes/apps/desktop/src/app/starmap/types.ts",
-    "../Hermes/apps/desktop/src/types/hermes.ts",
-    "../Hermes/apps/desktop/src/lib/time.ts"
+    "../HermesLatest/apps/desktop/src/app/starmap/color.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/constants.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/geometry.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/render.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/simulation.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/text.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/time-axis.ts",
+    "../HermesLatest/apps/desktop/src/app/starmap/types.ts",
+    "../HermesLatest/apps/desktop/src/types/hermes.ts",
+    "../HermesLatest/apps/desktop/src/lib/time.ts",
+    "../HermesLatest/apps/desktop/src/lib/tool-result-metadata.ts"
   ]
 }

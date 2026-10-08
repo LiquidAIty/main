@@ -20,7 +20,16 @@ const deck: DeckDocument = {
       role: 'Card role',
       prompt: 'Card contract',
       runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
-      runtimeOptions: { tools: ['main.context'] },
+      runtimeOptions: {
+        provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'gpt-hermes',
+        providerModelId: 'gpt-hermes', openaiRuntime: 'codex_app_server',
+        tools: ['main.context'], skills: [], toolsets: [], mcpConnectionIds: [],
+        subagentType: 'none',
+        subagentModel: {
+          provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'gpt-child',
+          providerModelId: 'gpt-child',
+        },
+      },
       position: { x: 0, y: 0 },
     },
     {
@@ -30,7 +39,10 @@ const deck: DeckDocument = {
       role: 'Delegate role',
       prompt: 'Delegate contract',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
-      runtimeOptions: { tools: [] },
+      runtimeOptions: {
+        provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'gpt-hermes',
+        providerModelId: 'gpt-hermes', openaiRuntime: 'codex_app_server', tools: [],
+      },
       position: { x: 1, y: 1 },
     },
   ],
@@ -40,12 +52,17 @@ function profileState() {
   return {
     name: 'liquidaity-main',
     description: 'Hermes description',
-    soul: 'Hermes SOUL',
-    model: { provider: 'openai-codex', default: 'gpt-hermes' },
-    skills: [],
+    soul: 'Card contract',
+    model: { provider: 'openai-codex', default: 'gpt-hermes', openai_runtime: 'codex_app_server' },
+    skills: [{ name: 'hermes-agent', enabled: true }],
     toolsets: [],
     toolsets_pinned: false,
     mcp_servers: [],
+    delegation: {
+      provider: 'openai-codex', model: 'gpt-child', max_spawn_depth: 1,
+      orchestrator_enabled: false, enabled: false,
+    },
+    task_mode: null,
   };
 }
 
@@ -80,6 +97,7 @@ async function start(requestHermes: HermesRequest = hermesRequest()) {
   app.use('/hermes-profile', createHermesProfileRouter({
     getDeck: vi.fn(async () => ({ deck, meta: { deckRevision: 'rev-1', deckSavedAt: null } })),
     requestHermes: requestHermes as never,
+    authorizeProject: vi.fn(async () => true),
   }));
   const server = createServer(app);
   servers.push(server);
@@ -99,15 +117,15 @@ describe('Hermes profile Card routes', () => {
     expect(body.profileApply).toBe('run_start');
     expect(body.cardSaveMutatesProfile).toBe(false);
     expect(body.binding).toMatchObject({ profile: 'liquidaity-main', mode: 'main' });
-    expect(body.profile).toMatchObject({ description: 'Hermes description', soul: 'Hermes SOUL' });
+    expect(body.profile).toMatchObject({ description: 'Hermes description', soul: 'Card contract' });
     expect(requestHermes).toHaveBeenCalledTimes(3);
     expect(requestHermes).toHaveBeenNthCalledWith(1, 'profiles.describe', {
       name: 'liquidaity-main',
-    });
+    }, 'liquidaity-main');
     expect(JSON.stringify(body)).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret|bearer\s+[a-z0-9]/i);
   });
 
-  it('applies one supported Hermes operation without creating a Card revision or Run', async () => {
+  it('rejects direct profile configuration because the Card is the profile authority', async () => {
     const { base, requestHermes } = await start();
     const response = await fetch(`${base}/cards/card_main/operations`, {
       method: 'POST',
@@ -121,16 +139,9 @@ describe('Hermes profile Card routes', () => {
     });
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.method).toBe('profiles.configure');
-    expect(body.cardSaveMutatesProfile).toBe(false);
-    expect(requestHermes).toHaveBeenCalledTimes(4);
-    expect(requestHermes).toHaveBeenNthCalledWith(1, 'profiles.configure', {
-      name: 'liquidaity-main',
-      description: 'Hermes role only',
-    });
-    expect(body).not.toHaveProperty('runId');
-    expect(body).not.toHaveProperty('cardRevision');
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('hermes_method_unsupported');
+    expect(requestHermes).not.toHaveBeenCalled();
     expect(deck.nodes[0].prompt).toBe('Card contract');
   });
 
@@ -154,7 +165,10 @@ describe('Hermes profile Card routes', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(requestHermes).toHaveBeenNthCalledWith(1, method, params, 'liquidaity-main');
+    expect(requestHermes).toHaveBeenNthCalledWith(1, method, {
+      ...params,
+      profile: 'liquidaity-main',
+    }, 'liquidaity-main');
     expect(requestHermes).toHaveBeenCalledTimes(4);
   });
 
@@ -174,7 +188,7 @@ describe('Hermes profile Card routes', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       ok: false,
-      error: 'hermes_profile_operation_invalid',
+      error: 'hermes_method_unsupported',
     });
     expect(requestHermes).not.toHaveBeenCalled();
   });
@@ -202,7 +216,7 @@ describe('Hermes profile Card routes', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       ok: false,
-      error: 'hermes_profile_operation_invalid',
+      error: 'hermes_method_unsupported',
     });
     expect(requestHermes).not.toHaveBeenCalled();
   });

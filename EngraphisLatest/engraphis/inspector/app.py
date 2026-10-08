@@ -1,0 +1,443 @@
+"""Legacy JSON Inspector for a single local Engraphis instance.
+
+The standalone Inspector UI was retired in favour of the unified dashboard.  This
+module remains as a small, local-only inspection API for compatibility and testing.
+It deliberately has no user database, sessions, roles, invitations, seats, license
+issuer, analytics implementation, or automation scheduler.  Team administration and
+paid compute are hosted Engraphis Cloud services.
+
+Set ``ENGRAPHIS_API_TOKEN`` to require the same constant-time bearer check used by
+the other local HTTP surfaces.  With no token, the API is intended for loopback-only
+single-user use.
+"""
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+
+import hashlib
+import logging
+import time
+from typing import Optional
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, StrictBool, StrictInt
+
+from engraphis import __version__, http_security
+from engraphis.config import settings
+from engraphis.local_auth import bearer_ok
+from engraphis.netutil import is_local_request
+from engraphis.service import MemoryService, ValidationError
+
+logger = logging.getLogger("engraphis")
+
+_PUBLIC_API = {"/api/health", "/api/ready", "/api/auth/state"}
+
+
+class _CorrectBody(BaseModel):
+    memory_id: str = Field(min_length=1, max_length=200)
+    new_content: str = Field(min_length=1, max_length=100_000)
+    workspace: str = Field(min_length=1, max_length=200)
+    repo: Optional[str] = Field(default=None, max_length=200)
+    reason: str = Field(default="", max_length=1_000)
+    exact_value: Optional[str] = Field(default=None, max_length=4096)
+    exact_value_type: str = Field(default="literal", max_length=32)
+    exact_value_span: Optional[tuple[StrictInt, StrictInt]] = None
+    clear_exact_value: StrictBool = False
+
+
+class _GovernBody(BaseModel):
+    memory_id: str = Field(min_length=1, max_length=200)
+    workspace: str = Field(min_length=1, max_length=200)
+    repo: Optional[str] = Field(default=None, max_length=200)
+    reason: str = Field(default="", max_length=1_000)
+    pinned: bool = True
+    confirmed: bool = False
+
+
+class _PromoteBody(BaseModel):
+    memory_id: str = Field(min_length=1, max_length=200)
+    target_scope: str = Field(min_length=1, max_length=50)
+    workspace: str = Field(min_length=1, max_length=200)
+    repo: Optional[str] = Field(default=None, max_length=200)
+    reason: str = Field(default="", max_length=1_000)
+
+
+class _ConsolidateBody(BaseModel):
+    workspace: str = Field(min_length=1, max_length=200)
+    repo: Optional[str] = Field(default=None, max_length=200)
+    dry_run: bool = True
+    min_cluster: int = Field(default=3, ge=2, le=20)
+    archive_below: float = Field(default=0.05, ge=0.0, le=0.5)
+
+
+def _cloud_only(feature: str) -> JSONResponse:
+    return JSONResponse(
+        {
+            "error": f"{feature} is available only through Engraphis Cloud",
+            "feature": feature,
+            "cloud_only": True,
+        },
+        status_code=501,
+    )
+
+
+def create_app(
+    service: Optional[MemoryService] = None,
+    auth_store: Optional[object] = None,
+) -> FastAPI:
+    """Create the compatibility Inspector API.
+
+    ``auth_store`` is accepted only so older embedding code fails safely during the
+    open-core transition.  It is intentionally ignored: local Team/session authority
+    no longer exists in the published package.
+    """
+    del auth_store
+    owns_service = service is None
+    bound_service = service or MemoryService.create(
+        settings.db_path,
+        embed_model=settings.embed_model or None,
+        embed_revision=getattr(settings, "embed_revision", "") or None,
+        require_immutable_models=bool(getattr(settings, "require_immutable_models", False)),
+        embed_dim=settings.embed_dim if settings.embed_dim is not None else 384,
+        vector_backend=settings.vector_backend,
+        rerank_model=getattr(settings, "rerank_model", "") or None,
+        rerank_revision=getattr(settings, "rerank_revision", "") or None,
+        extractor=settings.extractor,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            if owns_service:
+                await asyncio.to_thread(bound_service.close)
+
+    app = FastAPI(
+        title="Engraphis Memory Inspector", docs_url=None, redoc_url=None,
+        lifespan=lifespan,
+    )
+    app.state.service = bound_service
+    app.state.owns_service = owns_service
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins
+        or ["http://127.0.0.1:8710", "http://localhost:8710"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=False,
+    )
+
+    def svc() -> MemoryService:
+        return app.state.service
+
+    @app.middleware("http")
+    async def _auth_gate(request: Request, call_next):
+        # A prior Team-enabled process may have left a context-local identity behind.
+        # The compatibility Inspector is always single-user, so clear it explicitly.
+        from engraphis.service import set_current_user
+
+        set_current_user(None)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        path = request.url.path
+        protected = path.startswith("/api/") and path not in _PUBLIC_API
+        if protected and settings.api_token:
+            if not bearer_ok(request.headers.get("Authorization"), settings.api_token):
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        elif protected and not is_local_request(request):
+            return JSONResponse(
+                {
+                    "error": "remote access is disabled until ENGRAPHIS_API_TOKEN is set",
+                    "auth": "local-token-required",
+                },
+                status_code=403,
+            )
+        return await call_next(request)
+
+    @app.exception_handler(ValidationError)
+    async def _validation(request: Request, exc: ValidationError):
+        del request
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        path_ref = hashlib.sha256(
+            request.url.path.encode("utf-8", "replace")
+        ).hexdigest()[:12]
+        logger.error(
+            "unhandled exception on %s path_ref=%s (%s)",
+            request.method,
+            path_ref,
+            type(exc).__name__,
+        )
+        return JSONResponse({"error": "internal error -- see server logs"}, status_code=500)
+
+    @app.get("/api/auth/state")
+    def auth_state():
+        """Describe the only local auth mode; Team identity is cloud-owned."""
+        mode = "token" if settings.api_token else "open"
+        return JSONResponse(
+            {
+                "mode": mode,
+                "enabled": bool(settings.api_token),
+                "user": None,
+                "local_multi_user": False,
+                "team": {"available_locally": False, "mode": "hosted_cloud"},
+            },
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+
+    @app.api_route(
+        "/api/auth/{operation:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    )
+    def hosted_team(operation: str):
+        del operation
+        return _cloud_only("team")
+
+    @app.api_route("/api/license", methods=["GET", "POST"])
+    @app.api_route("/api/license/{operation:path}", methods=["GET", "POST"])
+    def hosted_license(operation: str = ""):
+        del operation
+        return _cloud_only("license")
+
+    @app.api_route("/api/analytics", methods=["GET", "POST"])
+    @app.api_route("/api/analytics/{operation:path}", methods=["GET", "POST"])
+    def hosted_analytics(operation: str = ""):
+        del operation
+        return _cloud_only("analytics")
+
+    @app.api_route("/api/automation", methods=["GET", "POST"])
+    @app.api_route("/api/automation/{operation:path}", methods=["GET", "POST"])
+    def hosted_automation(operation: str = ""):
+        del operation
+        return _cloud_only("automation")
+
+    @app.get("/api/health")
+    def health():
+        return {"status": "ok", "service": "engraphis-inspector"}
+
+    @app.get("/api/ready")
+    def ready():
+        checks = {"db": False, "embedder": False}
+        try:
+            local_service = svc()
+            local_service.store.conn.execute("SELECT 1").fetchone()
+            checks["db"] = True
+            checks["embedder"] = getattr(local_service.engine, "embedder", None) is not None
+        except Exception:
+            pass
+        is_ready = all(checks.values())
+        return JSONResponse(
+            {"ready": is_ready, "checks": checks, "version": __version__},
+            status_code=200 if is_ready else 503,
+        )
+
+    @app.get("/api/workspaces")
+    def workspaces():
+        return svc().list_workspaces()
+
+    @app.get("/api/stats")
+    def stats(workspace: Optional[str] = None):
+        return svc().stats(workspace=workspace)
+
+    @app.get("/api/recall")
+    def recall(q: str, workspace: str, repo: Optional[str] = None, k: int = 12):
+        return svc().recall(q, workspace=workspace, repo=repo, k=k, reinforce=False)
+
+    @app.get("/api/why")
+    def why(q: str, workspace: str, repo: Optional[str] = None, k: int = 5):
+        return svc().why(q, workspace=workspace, repo=repo, k=k)
+
+    @app.get("/api/timeline")
+    def timeline(
+        q: str, workspace: str, repo: Optional[str] = None, limit: int = 20
+    ):
+        return svc().timeline(q, workspace=workspace, repo=repo, limit=limit)
+
+    @app.get("/api/proactive")
+    def proactive(workspace: str, repo: Optional[str] = None, k: int = 10):
+        return svc().recall_proactive(workspace=workspace, repo=repo, k=k)
+
+    @app.get("/api/memory/{memory_id}")
+    def memory(memory_id: str, workspace: str, repo: Optional[str] = None):
+        return svc().inspect(memory_id, workspace=workspace, repo=repo)
+
+    @app.get("/api/audit")
+    def audit_log(workspace: str, limit: int = 100):
+        return svc().audit_log(workspace=workspace, limit=limit)
+
+    @app.get("/api/receipts")
+    def receipts(workspace: str, limit: int = 100):
+        return svc().receipt_log(workspace=workspace, limit=limit)
+
+    @app.get("/api/context-savings")
+    def context_savings(
+        workspace: Optional[str] = None,
+        repo: Optional[str] = None,
+        from_ts: Optional[float] = None,
+        to_ts: Optional[float] = None,
+        release_version: Optional[str] = None,
+        format: Optional[str] = None,
+        group_by: Optional[str] = None,
+    ):
+        return svc().context_savings(
+            workspace=workspace.strip() if isinstance(workspace, str) else None,
+            repo=repo,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            release_version=release_version,
+            format=format,
+            group_by=group_by,
+        )
+
+    @app.get("/api/receipts/verify")
+    def receipts_verify(workspace: str):
+        return svc().verify_receipts(workspace=workspace)
+
+    @app.get("/api/graph")
+    def graph(
+        workspace: str,
+        limit: int = 2000,
+        layers: Optional[str] = None,
+        include_code: bool = False,
+        repo: Optional[str] = None,
+        as_of: Optional[float] = None,
+        valid_at: Optional[float] = None,
+        known_at: Optional[float] = None,
+    ):
+        selected = (
+            None
+            if layers is None
+            else [item.strip() for item in layers.split(",") if item.strip()]
+        )
+        return svc().graph(
+            workspace=workspace,
+            limit=limit,
+            layers=selected,
+            include_code=include_code,
+            repo=repo,
+            backfill=False,
+            as_of=as_of,
+            valid_at=valid_at,
+            known_at=known_at,
+        )
+
+    @app.get("/api/export")
+    def export(workspace: str):
+        # Local data portability is not a paid algorithm.  The compatibility API has
+        # already applied its optional bearer boundary, so bypass the retired local
+        # entitlement gate and let the owner recover their complete workspace.
+        data = svc().export_workspace(workspace=workspace, recovery=True)
+        # Sanitize workspace name for filename. Restrict to ASCII to prevent
+        # UnicodeEncodeError in Starlette's Latin-1 header encoding when workspace
+        # names contain non-Latin-1 characters (e.g., CJK). isascii()+isalnum()
+        # filters out anything that would crash the response construction.
+        safe_ws = "".join(
+            c if c.isascii() and (c.isalnum() or c in "-_.") else "_"
+            for c in workspace
+        ) or "workspace"
+        filename = "engraphis-export-%s-%s.json" % (
+            safe_ws,
+            time.strftime("%Y%m%d"),
+        )
+        return JSONResponse(
+            data,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.post("/api/pin")
+    def pin(body: _GovernBody):
+        return svc().pin(
+            body.memory_id,
+            workspace=body.workspace,
+            repo=body.repo,
+            pinned=body.pinned,
+            actor="inspector-local",
+        )
+
+    @app.post("/api/retire")
+    def retire(body: _GovernBody):
+        return svc().retire(
+            body.memory_id,
+            workspace=body.workspace,
+            repo=body.repo,
+            reason=body.reason,
+            actor="inspector-local",
+        )
+
+    @app.post("/api/forget", deprecated=True)
+    def forget(body: _GovernBody):
+        return svc().forget(
+            body.memory_id,
+            workspace=body.workspace,
+            repo=body.repo,
+            reason=body.reason,
+            actor="inspector-local",
+        )
+
+    @app.post("/api/secure-erase")
+    def secure_erase(body: _GovernBody):
+        return svc().secure_erase(
+            body.memory_id,
+            workspace=body.workspace,
+            repo=body.repo,
+            actor="inspector-local",
+            confirmed=body.confirmed,
+        )
+
+    @app.post("/api/correct")
+    def correct(body: _CorrectBody):
+        return svc().correct(
+            body.memory_id,
+            body.new_content,
+            workspace=body.workspace,
+            repo=body.repo,
+            reason=body.reason,
+            actor="inspector-local",
+            exact_value=body.exact_value,
+            exact_value_type=body.exact_value_type,
+            exact_value_span=body.exact_value_span,
+            clear_exact_value=body.clear_exact_value,
+        )
+
+    @app.post("/api/promote")
+    def promote(body: _PromoteBody):
+        return svc().promote(
+            body.memory_id,
+            body.target_scope,
+            workspace=body.workspace,
+            repo=body.repo,
+            reason=body.reason,
+            actor="inspector-local",
+        )
+
+    @app.post("/api/consolidate")
+    async def consolidate(body: _ConsolidateBody):
+        # This is an explicit manual sweep. Scheduling, dreaming/inference, and
+        # automatic consolidation belong to the hosted automation worker.
+        return await asyncio.to_thread(
+            svc().consolidate,
+            workspace=body.workspace,
+            repo=body.repo,
+            dry_run=body.dry_run,
+            min_cluster=body.min_cluster,
+            archive_below=body.archive_below,
+            infer=False,
+        )
+
+    http_security.install(app)
+    return app

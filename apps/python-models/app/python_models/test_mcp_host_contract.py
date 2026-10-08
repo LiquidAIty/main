@@ -37,6 +37,7 @@ def clear_live_cbm_operations():
         from app.python_models.tool_registry import replace_discovered_external_operations
 
         replace_discovered_external_operations("cbm", [])
+        replace_discovered_external_operations("graphiti", [])
 
 
 def test_public_mcp_identity_is_liquidaity():
@@ -44,8 +45,9 @@ def test_public_mcp_identity_is_liquidaity():
 
     options = mcp_host.server.create_initialization_options()
     assert options.server_name == "LiquidAIty"
-    assert options.server_version == mcp_host._PUBLIC_MCP_VERSION
-    assert options.server_version == f"source-{mcp_host._STARTUP_SOURCE_SHA256[:12]}"
+    assert options.server_version == mcp_host._MCP_IMPLEMENTATION_VERSION
+    assert options.server_version == "0.21.5"
+    assert "source-" not in options.server_version
     assert options.instructions == (
         "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
         "ThinkGraph, KnowGraph, and supported agent runtimes. "
@@ -95,21 +97,20 @@ def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypa
     assert len(tools) == len(names)
     assert not any(tool.name.startswith("constellation.") for tool in catalog)
     for tool in tools:
-        schema = tool.inputSchema
+        schema = tool.input_schema
         jsonschema.Draft202012Validator.check_schema(schema)
         assert schema["additionalProperties"] is False
         assert not ({"projectId", "workspace"} & schema["properties"].keys())
         payload = tool.model_dump(by_alias=True, exclude_none=True)
-        assert payload["securitySchemes"] == [{
+        assert payload["_meta"]["securitySchemes"] == [{
             "type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE],
         }]
-        assert payload["_meta"]["securitySchemes"] == payload["securitySchemes"]
-    schemas = {tool.name: tool.inputSchema for tool in tools}
+    schemas = {tool.name: tool.input_schema for tool in tools}
     jsonschema.validate({"query": "spacecraft component suppliers", "k": 6,
                          "token_budget": 600}, schemas["engraphis_recall_context"])
     jsonschema.validate({"memory_id": "memory-id"}, schemas["engraphis_get_memory"])
     jsonschema.validate({"content": "A tentative assistant suggestion",
-                         "title": "Paper journal"},
+                         "importance": 0.3},
                         schemas["engraphis_remember"])
     jsonschema.validate({"memory_id": "memory-id", "title": "Updated title"},
                         schemas["engraphis_update_memory"])
@@ -137,7 +138,7 @@ def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch,
     assert completed == [operation]
     # Ordinary reads keep their short deadline; this is not a global increase.
     result = asyncio.run(mcp_host.call_tool("engraphis_recall_context", {}))
-    assert result.isError
+    assert result.is_error
     assert completed == [operation]
 
 
@@ -164,7 +165,7 @@ def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch)
     result = asyncio.run(mcp_host.call_tool("engraphis_remember", {
         "content": "A retained thought",
     }))
-    assert result.isError is True
+    assert result.is_error is True
     assert json.loads(result.content[0].text) == {
         "ok": False, "error": "thinkgraph_project_id_invalid",
     }
@@ -174,22 +175,20 @@ def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch)
     assert requests[0]["projectId"] == "project-one"
 
 
-def test_engraphis_provider_tool_output_contract_preserved(monkeypatch):
+def test_engraphis_smart_result_preserves_python_rails_payload(monkeypatch):
     import asyncio
-    import jsonschema
     import mcp_host
-    from app.python_models.engraphis import engraphis_tools
-    schemas = {t["name"]: t.get("outputSchema") for t in asyncio.run(engraphis_tools())}
-    payload = {"a": "one", "b": "two", "linked": True}
+    payload = {"id": "mem-one", "content": "Synthetic memory"}
     monkeypatch.setattr(mcp_host, "_authenticated_main_context",
         lambda: {"projectId": "project-one", "mainCardId": "thinkgraph"})
     monkeypatch.setattr(mcp_host, "_enforce_tool_caller", lambda *a, **k: None)
     monkeypatch.setattr(mcp_host, "_thinkgraph_via_python_rails_sync", lambda *a: payload)
-    monkeypatch.setitem(mcp_host._ALLOWED_KEYS, "engraphis_link", {"a", "b"})
-    result = asyncio.run(mcp_host._dispatch_tool("engraphis_link", {"a": "one", "b": "two"}))
-    jsonschema.validate(result.structuredContent, schemas["engraphis_link"])
-    assert json.loads(result.structuredContent["result"]) == payload
-    assert result.isError is False
+    monkeypatch.setitem(mcp_host._ALLOWED_KEYS, "engraphis_get_memory", {"memory_id"})
+    result = asyncio.run(mcp_host._dispatch_tool(
+        "engraphis_get_memory", {"memory_id": "mem-one"},
+    ))
+    assert json.loads(result.structured_content["result"]) == payload
+    assert result.is_error is False
 
 
 def test_card_team_schema_exposes_only_proven_saved_fields():
@@ -215,7 +214,7 @@ def test_canvas_wire_catalog_preserves_supported_fields_without_provider_discove
     monkeypatch.setattr(mcp_host, "_cbm_tools", lambda: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(mcp_host, "_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
-    schema = next(tool.inputSchema for tool in tools if tool.name == 'canvas.upsert_wire')
+    schema = next(tool.input_schema for tool in tools if tool.name == 'canvas.upsert_wire')
     assert 'main.context' in {tool.name for tool in tools}
     for edge_type in ('flow', 'magentic_option'):
         jsonschema.validate({'projectId': 'p', 'deckId': 'd', 'op': 'upsert', 'wire': {
@@ -264,7 +263,7 @@ def test_execution_receipt_observes_the_actual_provider_client_boundary():
     assert receipt["providerSubstitution"] is False
 
 
-def test_caller_enforcement_reads_explicit_idd_permissions():
+def test_caller_enforcement_reads_explicit_registry_permissions():
     import mcp_host
 
     allowed = {
@@ -428,7 +427,7 @@ def test_worldview_action_catalog_offers_only_spatial_actions():
         tool for tool in mcp_host._application_tools()
         if tool.name == "worldview.action"
     )
-    assert action.inputSchema["properties"]["name"]["enum"] == [
+    assert action.input_schema["properties"]["name"]["enum"] == [
         "get_current_view_state",
         "get_entity_context",
         "zoom_to_globe",
@@ -614,7 +613,7 @@ def test_graphiti_initialization_failure_never_leaks_secrets_or_kills_mcp(monkey
     assert "RuntimeError" in failure_text
 
     later = asyncio.run(mcp_host.call_tool("main.context", {}))
-    assert later.isError is True
+    assert later.is_error is True
     later_payload = json.loads(later.content[0].text)
     assert later_payload["error"] == "main_context_unavailable"
     assert secret not in json.dumps(later_payload)
@@ -676,7 +675,7 @@ def test_call_tool_preserves_exact_results_without_runtime_observation_leak(monk
 
     monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
     failed = asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "x"}))
-    assert failed.isError is True
+    assert failed.is_error is True
     failure = json.loads(failed.content[0].text)
     assert failure["failureCode"] == "insufficient_credits"
     assert failure["retryable"] is False
@@ -1053,7 +1052,9 @@ def test_materializer_principal_rejects_malformed_connection_grants(
     assert verifier._verify_sync(token) is None
 
 
-def test_materializer_provider_reads_keep_project_scope_without_a_fake_run(monkeypatch):
+def test_materializer_provider_reads_keep_project_scope_without_a_fake_run(
+    monkeypatch, clear_live_cbm_operations,
+):
     import asyncio
     import mcp_host
     calls = []
@@ -1066,7 +1067,7 @@ def test_materializer_provider_reads_keep_project_scope_without_a_fake_run(monke
         return None
     async def graphiti_tools():
         return [mcp_host.Tool(name="search_memory_facts", description="facts", inputSchema={
-            "properties": {"query": {}, "group_ids": {}}})]
+            "type": "object", "properties": {"query": {}, "group_ids": {}}})]
     async def graphiti(name, args):
         calls.append((name, args))
         return []
@@ -1074,6 +1075,10 @@ def test_materializer_provider_reads_keep_project_scope_without_a_fake_run(monke
     monkeypatch.setattr(mcp_host, "_graphiti_tools", graphiti_tools)
     monkeypatch.setattr(mcp_host, "_GRAPHITI_NAMES", {"search_memory_facts"})
     monkeypatch.setattr(mcp_host, "_call_graphiti", graphiti)
+    provider_tools = asyncio.run(graphiti_tools())
+    mcp_host._register_graphiti_catalog(
+        mcp_host._namespace_provider_tools("graphiti", provider_tools)
+    )
     asyncio.run(mcp_host._dispatch_tool("graphiti.search_memory_facts", {"query": "sources"}))
     assert calls == [("search_memory_facts", {"query": "sources", "group_ids": ["liquidaity-project-1"]})]
     monkeypatch.setattr(mcp_host, "_thinkgraph_via_python_rails_sync", lambda *args: calls.append(args) or {"nodes": []})
@@ -1197,7 +1202,10 @@ def test_builder_cbm_read_forwards_explicit_provider_arguments_without_operation
     })
     monkeypatch.setattr(mcp_host, "_cbm_tools", catalog)
     monkeypatch.setattr(mcp_host, "_CBM_NAMES", {"search_graph"})
-    monkeypatch.setattr(mcp_host, "_call_cbm", lambda name, args: calls.append((name, args)) or [])
+    async def call_cbm(name, args):
+        calls.append((name, args))
+        return []
+    monkeypatch.setattr(mcp_host, "_call_cbm", call_cbm)
     args = {"project": "C-Projects-LiquidAIty-main", "query": "materialize_idf"}
     asyncio.run(mcp_host._dispatch_tool("cbm.search_graph", args))
     assert calls == [("search_graph", args)]
@@ -1240,7 +1248,7 @@ def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypa
     ]
 
     denied = asyncio.run(mcp_host.call_tool("web_search", {"query": "forbidden"}))
-    assert denied.isError is True
+    assert denied.is_error is True
     assert "tool_not_granted" in denied.content[0].text
 
     current["token"] = AccessToken(
@@ -1318,7 +1326,7 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
         lambda *_args, **_kwargs: bridge_calls.append(True),
     )
 
-    async def inspect_cards(arguments):
+    async def inspect_cards(arguments, **_authority):
         calls.append(arguments)
         return {"ok": True, "cards": []}
 
@@ -1331,13 +1339,13 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
     assert "context" not in result[0].text
 
 
-def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
+def test_agentgraph_staging_and_mag_one_dispatch_use_current_python_owners(
     monkeypatch,
 ):
     import asyncio
     import mcp_host
     from app import control_plane
-    from app.python_models import card_domain
+    from app.python_models import card_domain, magentic_execution
 
     context = {
         "projectId": "project-1",
@@ -1410,6 +1418,32 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "cardId": "card_mag_one",
         },
     )
+    magentic_calls = []
+
+    def begin(payload):
+        magentic_calls.append(("begin", dict(payload)))
+        return {
+            "magenticExecution": {
+                "runId": payload["runId"],
+                "projectId": payload["projectId"],
+                "deckId": payload["deckId"],
+                "mission": payload["assignment"],
+                "workers": [{"cardId": "worker"}],
+                "workerAuthorities": [{"cardId": "worker"}],
+            },
+        }
+
+    def submit(payload):
+        magentic_calls.append(("submit", dict(payload)))
+        return {
+            "ok": True,
+            "runId": payload["runId"],
+            "hermesRootId": "t_root",
+            "state": "running",
+        }
+
+    monkeypatch.setattr(card_domain, "begin_run", begin)
+    monkeypatch.setattr(magentic_execution, "submit_magentic_execution", submit)
 
     inspected = asyncio.run(
         mcp_host._dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
@@ -1484,35 +1518,42 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             },
         )
     )
-    assert json.loads(executed[0].text) == {"ok": True}
-    assert calls[-1][0] == "run_configured_card"
-    assert calls[-1][1] == {
-        "action": "execute",
+    executed_payload = json.loads(executed.content[0].text)
+    assert executed_payload["ok"] is True
+    assert executed_payload["state"] == "running"
+    assert [call[0] for call in magentic_calls] == ["begin", "submit"]
+    assert magentic_calls[0][1] == {
         "projectId": "project-1",
         "deckId": "deck_builder",
         "cardId": "card_mag_one",
         "senderCardId": "card_main_chat",
-        "correlationId": calls[-1][1]["correlationId"],
+        "runId": magentic_calls[0][1]["runId"],
+        "correlationId": magentic_calls[0][1]["runId"],
+        "acceptedAt": magentic_calls[0][1]["acceptedAt"],
         "conversationId": "external-mcp:grant-1",
-        "input": "exact proposed mission",
+        "assignment": "exact proposed mission",
         "dataAnchors": [{
             "graphitiEpisodeId": "episode-1",
             "reason": "Current sourced evidence", "priority": 0,
             "boundedExpansion": 1, "resultLimit": 8, "required": True,
         }],
+        "discoveredTools": [],
+        "discoveredToolCatalogState": "unavailable",
+        "unavailableToolCatalogFamilies": [],
     }
 
+    magentic_calls.clear()
     executed_without_graph = asyncio.run(
         mcp_host._dispatch_tool(
             "run_mag_one",
             {"input": "mission with no selected graph data"},
         )
     )
-    assert json.loads(executed_without_graph[0].text) == {"ok": True}
-    assert calls[-1][0] == "run_configured_card"
-    assert calls[-1][1]["cardId"] == "card_mag_one"
-    assert calls[-1][1]["input"] == "mission with no selected graph data"
-    assert "dataAnchors" not in calls[-1][1]
+    assert json.loads(executed_without_graph.content[0].text)["ok"] is True
+    assert magentic_calls[0][0] == "begin"
+    assert magentic_calls[0][1]["cardId"] == "card_mag_one"
+    assert magentic_calls[0][1]["assignment"] == "mission with no selected graph data"
+    assert magentic_calls[0][1]["dataAnchors"] == []
 
 
 def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
@@ -1567,8 +1608,8 @@ def test_worldsignals_connection_refusal_is_dependency_unavailable(monkeypatch):
     result = asyncio.run(mcp_host._dispatch_tool("worldsignals.capabilities", {}))
 
     assert isinstance(result, mcp_host.CallToolResult)
-    assert result.isError is False
-    assert result.structuredContent == {"error_code": "DEPENDENCY_UNAVAILABLE"}
+    assert result.is_error is False
+    assert result.structured_content == {"error_code": "DEPENDENCY_UNAVAILABLE"}
     assert json.loads(result.content[0].text) == {
         "ok": False,
         "error": "service_unavailable",
@@ -1602,7 +1643,7 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
 
     sibling, timed_out = asyncio.run(check())
     assert json.loads(sibling[0].text) == {"ok": True, "name": "agentgraph.inspect"}
-    assert timed_out.isError is True
+    assert timed_out.is_error is True
     assert json.loads(timed_out.content[0].text)["failureCode"] == "timeout"
 
 
@@ -1620,13 +1661,15 @@ def test_long_running_provider_tools_use_their_owned_timeouts(monkeypatch):
     assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
 
 
-def test_saved_card_backend_bridge_uses_the_long_running_timeout(monkeypatch):
+def test_removed_generic_card_bridge_has_no_route_or_long_running_policy(monkeypatch):
     import mcp_host
 
     monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(mcp_host, "_CBM_REQUEST_TIMEOUT_SECONDS", 300.0)
 
-    assert mcp_host._backend_bridge_timeout_seconds("run_configured_card") == 300.0
+    assert "run_configured_card" not in mcp_host._BACKEND_ROUTES
+    assert "describe_connected_agents" not in mcp_host._BACKEND_ROUTES
+    assert mcp_host._backend_bridge_timeout_seconds("run_configured_card") == 30.0
     assert mcp_host._backend_bridge_timeout_seconds("external_main_chat") == 300.0
     assert mcp_host._backend_bridge_timeout_seconds("external_main_context") == 30.0
 
@@ -1634,8 +1677,6 @@ def test_saved_card_backend_bridge_uses_the_long_running_timeout(monkeypatch):
 @pytest.mark.parametrize("operation,route,has_secret", [
     ("external_main_chat", "/api/main/chat", True),
     ("external_main_context", "/api/main/context", True),
-    ("describe_connected_agents", "/api/cards/connected", False),
-    ("run_configured_card", "/api/cards/run", True),
 ])
 def test_backend_domain_routes_preserve_payload_and_process_owned_secret(
     monkeypatch, operation, route, has_secret,
@@ -1674,12 +1715,12 @@ def test_backend_domain_routes_preserve_payload_and_process_owned_secret(
     ) == (secret if has_secret else None)
     assert captured["timeout"] == (
         mcp_host._CBM_REQUEST_TIMEOUT_SECONDS
-        if operation in {"external_main_chat", "run_configured_card"}
+        if operation == "external_main_chat"
         else mcp_host._MCP_CALL_TIMEOUT_SECONDS
     )
 
 
-def test_configured_card_bridge_fails_closed_without_the_process_secret(monkeypatch):
+def test_removed_generic_card_bridge_cannot_dispatch(monkeypatch):
     import mcp_host
 
     monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", "short")
@@ -1689,7 +1730,7 @@ def test_configured_card_bridge_fails_closed_without_the_process_secret(monkeypa
         lambda *_args, **_kwargs: pytest.fail("backend request must not be sent"),
     )
 
-    with pytest.raises(RuntimeError, match="internal_mcp_secret_missing"):
+    with pytest.raises(KeyError, match="run_configured_card"):
         mcp_host._bridge_sync("run_configured_card", {"action": "execute"})
 
 
@@ -1727,7 +1768,7 @@ def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():
     bound = mcp_host._namespace_provider_tools("cbm", [providerTool])[0]
 
     assert bound.name == "cbm.search_graph"
-    assert bound.inputSchema == providerTool.inputSchema
+    assert bound.input_schema == providerTool.input_schema
     assert bound.annotations == providerTool.annotations
     assert bound.meta == {
         "liquidaitySource": {
@@ -1756,8 +1797,8 @@ def test_unfamiliar_cbm_tool_without_annotations_is_restricted_not_rejected(
     bound = mcp_host._bind_operation_access(namespaced[0])
 
     assert bound.description is None
-    assert bound.inputSchema == providerTool.inputSchema
-    assert bound.annotations.model_dump(exclude_none=True) == {
+    assert bound.input_schema == providerTool.input_schema
+    assert bound.annotations.model_dump(by_alias=True, exclude_none=True) == {
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
@@ -1767,17 +1808,23 @@ def test_unfamiliar_cbm_tool_without_annotations_is_restricted_not_rejected(
 
 
 @pytest.mark.parametrize("name", ["engraphis_recall_context", "engraphis_get_memory"])
-def test_operation_access_preserves_provider_hints_and_completes_missing_metadata(name):
+def test_operation_access_requires_exact_canonical_annotations(name):
     import mcp_host
+    from app.python_models.tool_registry import operation_definition
 
+    definition = operation_definition(name)
+    assert definition is not None
     providerTool = mcp_host.Tool(name=name, inputSchema={"type": "object"},
-                          annotations={"readOnlyHint": False, "destructiveHint": False})
+                          annotations=definition.annotations)
     bound = mcp_host._bind_operation_access(providerTool)
-    assert bound.annotations.readOnlyHint is False
-    assert bound.annotations.destructiveHint is False
-    assert bound.annotations.idempotentHint is True
-    assert bound.annotations.openWorldHint is False
+    assert bound.annotations.model_dump(by_alias=True, exclude_none=True) == definition.annotations
     assert bound.meta["liquidaityAccess"] == "read"
+    mismatched = dict(definition.annotations)
+    mismatched["readOnlyHint"] = not mismatched["readOnlyHint"]
+    with pytest.raises(RuntimeError, match=f"mcp_tool_annotation_mismatch:{name}:readOnlyHint"):
+        mcp_host._bind_operation_access(mcp_host.Tool(
+            name=name, inputSchema={"type": "object"}, annotations=mismatched,
+        ))
 
 
 def test_ungranted_and_destructive_tools_are_not_callable(
@@ -1793,6 +1840,21 @@ def test_ungranted_and_destructive_tools_are_not_callable(
             annotations={"readOnlyHint": True},
         ),
     ]))
+    mcp_host._register_graphiti_catalog(mcp_host._namespace_provider_tools("graphiti", [
+        mcp_host.Tool(
+            name="add_memory",
+            description="Add a Graphiti memory.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "episode_body": {"type": "string"},
+                    "group_id": {"type": "string"},
+                },
+                "required": ["name", "episode_body"],
+            },
+        ),
+    ]))
 
     principal = {"kind": "card-runtime", "grantedTools": ["graphiti.add_memory"]}
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
@@ -1806,6 +1868,7 @@ def test_ungranted_and_destructive_tools_are_not_callable(
 
 
 def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkeypatch):
+    import asyncio
     import mcp_host
 
     calls = []
@@ -1813,19 +1876,20 @@ def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkey
         "type": "object", "properties": {"format": {"type": "string", "enum": ["tree", "json"]}},
     })
     result = mcp_host.CallToolResult(content=[], structuredContent={"total": 0, "groups": []})
-    monkeypatch.setattr(mcp_host, "_initialize_cbm_sync", lambda: None)
     monkeypatch.setattr(mcp_host, "_CBM_TOOLS", (providerTool,))
-    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", SimpleNamespace(
-        call_tool=lambda name, args: calls.append((name, args)) or result,
-    ))
+    class CbmClient:
+        async def call_tool(self, name, args, **_kwargs):
+            calls.append((name, args))
+            return result
+    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", CbmClient())
     arguments = {"project": "canonical"}
-    assert mcp_host._call_cbm("search_graph", arguments) is result
+    assert asyncio.run(mcp_host._call_cbm("search_graph", arguments)) is result
     assert arguments == {"project": "canonical"}
     assert calls == [("search_graph", {"project": "canonical"})]
-    mcp_host._call_cbm("search_graph", {**arguments, "format": "tree"})
+    asyncio.run(mcp_host._call_cbm("search_graph", {**arguments, "format": "tree"}))
     assert calls[-1][1]["format"] == "tree"
     advertised = mcp_host._namespace_provider_tools("cbm", [providerTool])[0]
-    assert advertised.inputSchema == providerTool.inputSchema
+    assert advertised.input_schema == providerTool.input_schema
     assert advertised.description == providerTool.description
 
 
@@ -1898,13 +1962,14 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
     import asyncio
     import jsonschema
     import mcp_host
-    from app.python_models.idd import load_input_data_dictionary
+    from app.python_models.tool_registry import operation_definitions
 
     # This checks application schemas, not upstream process initialization.
     # The canonical catalog test supplies provider catalog fixtures.
     application_ids = {
-        item["id"] for item in load_input_data_dictionary()["operations"]
-        if item["namespace"] in {"main", "engraphis"}
+        definition.canonical_id for definition in operation_definitions()
+        if definition.namespace in {"main", "engraphis"}
+        and "external-mcp" in definition.publishers
     }
 
     async def provider_catalog_fixture():
@@ -1922,15 +1987,15 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
         by_name = {tool.name: tool for tool in tools}
         assert "card.run_assistant_agent" not in by_name
         assert "card.run_agent" not in by_name
-        assert by_name["run_mag_one"].inputSchema["required"] == ["input"]
-        assert set(by_name["run_mag_one"].inputSchema["properties"]) == {
+        assert by_name["run_mag_one"].input_schema["required"] == ["input"]
+        assert set(by_name["run_mag_one"].input_schema["properties"]) == {
             "input", "dataAnchors",
         }
-        assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
+        assert by_name["write_mag_one_instructions"].input_schema["required"] == [
             "targetCardId", "mission",
         ]
-        assert by_name["run_mag_one"].inputSchema["properties"]["dataAnchors"]["minItems"] == 0
-        assert by_name["worldview.set_capability"].inputSchema == {
+        assert by_name["run_mag_one"].input_schema["properties"]["dataAnchors"]["minItems"] == 0
+        assert by_name["worldview.set_capability"].input_schema == {
             "type": "object",
             "properties": {
                 "capabilityId": {
@@ -1947,17 +2012,17 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
             "required": ["capabilityId", "enabled", "reason"],
             "additionalProperties": False,
         }
-        assert by_name["card.load_graph_references"].inputSchema["required"] == [
+        assert by_name["card.load_graph_references"].input_schema["required"] == [
             "targetCardId", "reason", "order", "depth", "resultLimit", "required",
         ]
-        assert by_name["card.load_graph_references"].inputSchema["oneOf"] == [
+        assert by_name["card.load_graph_references"].input_schema["oneOf"] == [
             {"required": [field]} for field in (
                 "engraphisMemoryId", "engraphisEntityId", "engraphisRelationshipId",
                 "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
                 "cbmQualifiedName",
             )
         ]
-        assert by_name["card.create"].inputSchema["required"] == [
+        assert by_name["card.create"].input_schema["required"] == [
             "projectId",
             "deckId",
             "expectedRevision",
@@ -1968,14 +2033,14 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
             "runtime",
             "model",
         ]
-        assert by_name["card.create"].inputSchema["additionalProperties"] is False
-        assert set(by_name["card.create"].inputSchema["properties"]) == {
+        assert by_name["card.create"].input_schema["additionalProperties"] is False
+        assert set(by_name["card.create"].input_schema["properties"]) == {
             "projectId", "deckId", "expectedRevision", "templateId", "title",
             "role", "prompt", "runtime", "model", "tools", "skills",
             "toolsets", "mcpConnectionIds", "subagentType", "subagentModel",
             "openaiRuntime", "position",
         }
-        runtime_schema = by_name["card.create"].inputSchema["properties"]["runtime"]
+        runtime_schema = by_name["card.create"].input_schema["properties"]["runtime"]
         assert runtime_schema == {
             "type": "object",
             "properties": {
@@ -1995,7 +2060,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
                         {"kind": "hermes", "mode": "delegate", "override": True}):
             with pytest.raises(jsonschema.ValidationError):
                 jsonschema.validate(binding, runtime_schema)
-        update_properties = by_name["card.update_configuration"].inputSchema[
+        update_properties = by_name["card.update_configuration"].input_schema[
             "properties"
         ]["updates"]["properties"]
         assert set(update_properties) == {
@@ -2004,10 +2069,10 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
             "providerModelId", "accessMode", "subagentType", "subagentModel", "openaiRuntime",
             "reasoningEffort", "temperature", "maxTokens",
         }
-        assert by_name["card.update_configuration"].inputSchema["required"] == [
+        assert by_name["card.update_configuration"].input_schema["required"] == [
             "projectId", "deckId", "cardId", "expectedRevision", "expectedCardRevisionId", "updates",
         ]
-        assert by_name["card.update_configuration"].inputSchema[
+        assert by_name["card.update_configuration"].input_schema[
             "properties"
         ]["updates"]["minProperties"] == 1
         assert "main.context" in by_name
@@ -2017,7 +2082,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
         assert {"engraphis_recall_context", "engraphis_get_memory", "engraphis_remember"}.issubset(by_name)
         assert not any(name.startswith("engraphis.") for name in by_name)
         assert all(
-            tool.inputSchema.get("additionalProperties") is False
+            tool.input_schema.get("additionalProperties") is False
             for name, tool in by_name.items()
             if not name.startswith(("cbm.", "graphiti."))
         )
@@ -2076,7 +2141,7 @@ def test_stale_external_catalog_cannot_invoke_known_internal_only_operation(
     assert mcp_host._request_tool_is_allowed("not_a_real_tool") is True
 
     stale = asyncio.run(mcp_host.call_tool("calculator", {"expression": "1+1"}))
-    assert stale.isError is True
+    assert stale.is_error is True
     assert json.loads(stale.content[0].text)["error"] == "tool_not_granted"
 
 def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metadata(
@@ -2093,17 +2158,22 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
             lambda *_args, **_kwargs: SimpleNamespace(stdout=""),
         )
     mcp_host = importlib.import_module("mcp_host")
-    from app.python_models.idd import load_input_data_dictionary
-    from app.python_models.tool_registry import tool_access
+    from app.python_models.tool_registry import (
+        graphiti_operation_policy,
+        operation_definitions,
+        tool_access,
+    )
 
-    declarations = load_input_data_dictionary()["operations"]
+    declarations = operation_definitions()
     from app.python_models.tool_registry import external_mcp_manifest
     from app.python_models.engraphis import READ_TOOLS, WRITE_TOOLS
     base_expected_names = {item["name"] for item in external_mcp_manifest()}
     expected_names = set(base_expected_names)
 
-    def provider_tool(canonical_name, provider_tool_name, *, read_only):
-        annotations = {
+    def provider_tool(
+        canonical_name, provider_tool_name, *, read_only, annotations_override=None,
+    ):
+        annotations = dict(annotations_override) if annotations_override is not None else {
             "destructiveHint": read_only is not True,
             "idempotentHint": read_only is True,
             "openWorldHint": False,
@@ -2135,10 +2205,10 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
         "graphiti": [],
     }
     for declaration in declarations:
-        namespace = declaration["namespace"]
+        namespace = declaration.namespace
         if namespace not in by_namespace:
             continue
-        canonical_name = declaration["id"]
+        canonical_name = declaration.canonical_id
         provider_tool_name = canonical_name.split(".", 1)[1]
         expected_names.add(canonical_name)
         by_namespace[namespace].append(provider_tool(
@@ -2154,6 +2224,21 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
         "cbm.search_graph",
         "cbm.unfamiliar_current_tool",
     })
+    for canonical_name in (
+        "graphiti.add_memory",
+        "graphiti.clear_graph",
+        "graphiti.get_status",
+        "graphiti.search_nodes",
+    ):
+        policy = graphiti_operation_policy(canonical_name)
+        assert policy is not None
+        by_namespace["graphiti"].append(provider_tool(
+            canonical_name,
+            canonical_name.split(".", 1)[1],
+            read_only=policy["access"] == "read",
+            annotations_override=policy["annotations"],
+        ))
+        expected_names.add(canonical_name)
 
     async def cbm_tools():
         return by_namespace["cbm"]
@@ -2210,22 +2295,21 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
             assert {tool.name for tool in listed} == expected
     for tool in canonical:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
-        assert payload["securitySchemes"] == [{
+        assert payload["_meta"]["securitySchemes"] == [{
             "type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE],
         }]
-        assert payload["_meta"]["securitySchemes"] == payload["securitySchemes"]
     for namespace, fixtures in by_namespace.items():
         for fixture in fixtures:
             tool = canonical_by_name[f"{namespace}.{fixture.name}"]
             assert tool.title == fixture.title
             assert tool.description == fixture.description
-            assert tool.outputSchema == fixture.outputSchema
-            expected_annotations = fixture.annotations.model_dump(exclude_none=True)
+            assert tool.output_schema == fixture.output_schema
+            expected_annotations = fixture.annotations.model_dump(by_alias=True, exclude_none=True)
             if namespace == "cbm" and "readOnlyHint" not in expected_annotations:
                 expected_annotations["readOnlyHint"] = False
-            assert tool.annotations.model_dump(exclude_none=True) == expected_annotations
+            assert tool.annotations.model_dump(by_alias=True, exclude_none=True) == expected_annotations
             assert tool.meta["canonicalFixture"] == fixture.meta["canonicalFixture"]
-            assert tool.inputSchema["properties"]["probe"] == {"type": "string"}
+            assert tool.input_schema["properties"]["probe"] == {"type": "string"}
     assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
     assert canonical_by_name["cbm.search_graph"].meta["liquidaityAccess"] == "read"
     assert canonical_by_name["cbm.unfamiliar_current_tool"].meta[
@@ -2234,12 +2318,12 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
     assert canonical_by_name["cbm.unfamiliar_current_tool"].description == (
         "Canonical description for cbm.unfamiliar_current_tool."
     )
-    assert canonical_by_name["cbm.unfamiliar_current_tool"].inputSchema[
+    assert canonical_by_name["cbm.unfamiliar_current_tool"].input_schema[
         "properties"
     ]["probe"] == {"type": "string"}
     assert "questionEvidence" not in canonical_by_name[
         "graphiti.add_memory"
-    ].inputSchema["properties"]
+    ].input_schema["properties"]
     assert {
         "cbm.search_graph",
         "cbm.unfamiliar_current_tool",
@@ -2519,7 +2603,7 @@ def test_provider_catalog_progress_is_part_of_canonical_startup(monkeypatch):
     assert mcp_host._CATALOG_INITIALIZING_FAMILY is None
 
 
-def test_cbm_catalog_failure_is_reported_without_publishing_a_partial_catalog(
+def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     monkeypatch,
 ):
     import asyncio
@@ -2553,7 +2637,7 @@ def test_cbm_catalog_failure_is_reported_without_publishing_a_partial_catalog(
 
     assert tools
     assert not any(tool.name.startswith("cbm.") for tool in tools)
-    assert closed == [True]
+    assert closed == []
     assert mcp_host._CATALOG_COMPLETED_FAMILIES == (
         "liquidaity",
         "graphiti",
@@ -2576,8 +2660,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     import asyncio
     import httpx
     import mcp_host
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamable_http_client
+    from mcp import Client
     from mcp.types import Tool
 
     with socket.socket() as probe:
@@ -2609,12 +2692,16 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     async def closed_graphiti():
         return None
 
+    async def no_cbm():
+        return None
+
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", False)
     monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", slow_complete_catalog)
     monkeypatch.setattr(mcp_host, "_close_graphiti", closed_graphiti)
-    monkeypatch.setattr(mcp_host, "_close_cbm", lambda: None)
+    monkeypatch.setattr(mcp_host, "_start_cbm_client", no_cbm)
+    monkeypatch.setattr(mcp_host, "_close_cbm", no_cbm)
     monkeypatch.setattr(
         mcp_host,
         "_codegraph_diagnostics",
@@ -2659,10 +2746,9 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                 assert readiness.status_code == 200
                 assert "codeGraphReady" not in readiness.json()
 
-            async with streamable_http_client(f"{base_url}/mcp") as streams:
-                async with ClientSession(streams[0], streams[1]) as session:
-                    await session.initialize()
-                    tools = (await session.list_tools()).tools
+            async with Client(f"{base_url}/mcp", mode="auto") as session:
+                    assert session.protocol_version == "2026-07-28"
+                    tools = (await session.list_tools(cache_mode="refresh")).tools
                     assert len(tools) == len({tool.name for tool in tools}) == catalog_size
         finally:
             server_task.cancel()
@@ -2734,7 +2820,8 @@ def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypat
 
 
 
-def test_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):
+def test_cbm_lifespan_uses_one_official_sdk_client_and_closes_once(monkeypatch):
+    import asyncio
     import mcp_host
 
     provider_tool = mcp_host.Tool(
@@ -2743,51 +2830,47 @@ def test_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):
         inputSchema={"type": "object", "properties": {}},
     )
 
-    class StaleClient:
-        def __init__(self):
-            self.closed = False
+    class OfficialClient:
+        closed = False
 
-        def is_running(self):
-            return False
-
-        def close(self):
+        async def __aexit__(self, *_args):
             self.closed = True
 
-    class FreshClient:
-        def __init__(self, command, args, cwd):
-            self.command = command
-            self.args = args
-            self.cwd = cwd
-            self.closed = False
+    client = OfficialClient()
+    opens = []
 
-        def is_running(self):
-            return True
+    async def open_client(command, args, cwd):
+        opens.append((command, list(args), cwd))
+        return client, (provider_tool,), ["list_projects"], {
+            "name": "codebase-memory-mcp",
+            "version": "current",
+        }
 
-        def list_tools(self):
-            return [provider_tool]
+    async def diagnostics(_client):
+        return {"indexReady": True}
 
-        def close(self):
-            self.closed = True
-
-    stale = StaleClient()
-    mcp_host._CBM_CLIENT = stale
-    mcp_host._CBM_TOOLS = (provider_tool,)
-    mcp_host._CBM_NAMES = frozenset({"list_projects"})
+    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", None)
+    monkeypatch.setattr(mcp_host, "_CBM_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_CBM_NAMES", frozenset())
     monkeypatch.setattr(
         mcp_host,
         "_cbm_config",
         lambda: ("cbm", ["--stdio"], r"C:\Projects\main"),
     )
-    monkeypatch.setattr(mcp_host, "_CbmStdioMcpClient", FreshClient)
+    monkeypatch.setattr(mcp_host, "_open_cbm_client", open_client)
+    monkeypatch.setattr(mcp_host, "_read_cbm_codegraph_diagnostics", diagnostics)
 
-    try:
-        mcp_host._initialize_cbm_sync()
-        assert stale.closed is True
-        assert isinstance(mcp_host._CBM_CLIENT, FreshClient)
+    async def check():
+        await mcp_host._start_cbm_client()
+        await mcp_host._start_cbm_client()
+        assert mcp_host._CBM_CLIENT is client
         assert mcp_host._CBM_NAMES == frozenset({"list_projects"})
-    finally:
-        mcp_host._close_cbm()
+        await mcp_host._close_cbm()
 
+    asyncio.run(check())
+
+    assert opens == [("cbm", ["--stdio"], r"C:\Projects\main")]
+    assert client.closed is True
     assert mcp_host._CBM_CLIENT is None
     assert mcp_host._CBM_TOOLS is None
     assert mcp_host._CBM_NAMES == frozenset()
@@ -2808,44 +2891,24 @@ def test_http_mcp_resolves_the_current_official_command_from_path():
 
 def test_codegraph_readiness_uses_the_existing_frontend_and_cbm_project_state(monkeypatch):
     import mcp_host
-    from mcp.types import CallToolResult, TextContent
 
-    class ReadyClient:
-        server_info = {"name": "codebase-memory-mcp", "version": "current"}
-
-        def is_running(self):
-            return True
-
-        def call_tool(self, name, arguments, *, timeout_seconds):
-            assert timeout_seconds == mcp_host._CBM_HEALTH_TIMEOUT_SECONDS
-            if name == "list_projects":
-                assert arguments == {"format": "json", "detail": "stats"}
-                payload = {
-                    "projects": [{
-                        "name": "C-Projects-LiquidAIty-main",
-                        "root_path": mcp_host._CBM_HOST_REPO_ROOT,
-                        "node_count": 4459,
-                        "edge_count": 16773,
-                    }],
-                }
-            else:
-                assert name == "index_status"
-                assert arguments == {
-                    "project": "C-Projects-LiquidAIty-main",
-                    "format": "json",
-                }
-                payload = {
-                    "status": "ready",
-                    "nodes": 4459,
-                    "edges": 16773,
-                    "generation": "generation-1",
-                    "revision": "revision-1",
-                }
-            return CallToolResult(
-                content=[TextContent(type="text", text=json.dumps(payload))]
-            )
-
-    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", ReadyClient())
+    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", object())
+    monkeypatch.setattr(
+        mcp_host,
+        "_CBM_SERVER_INFO",
+        {"name": "codebase-memory-mcp", "version": "current"},
+    )
+    monkeypatch.setattr(mcp_host, "_CBM_CODEGRAPH_DIAGNOSTICS", {
+        "daemonAttached": True,
+        "daemonState": "attached",
+        "cbmFrontendAttached": True,
+        "cbmFrontendState": "attached",
+        "canonicalProjectRegistered": True,
+        "projectState": "registered",
+        "indexReady": True,
+        "indexState": "ready",
+        "indexGeneration": "generation-1",
+    })
     monkeypatch.setattr(
         mcp_host,
         "_host_codegraph_runtime",
@@ -2879,23 +2942,19 @@ def test_codegraph_readiness_does_not_inspect_cbm_daemon_or_cache_internals():
 
 def test_codegraph_readiness_rejects_a_ready_catalog_with_no_project(monkeypatch):
     import mcp_host
-    from mcp.types import CallToolResult, TextContent
 
-    class EmptyClient:
-        server_info = {"name": "codebase-memory-mcp", "version": "current"}
-
-        def is_running(self):
-            return True
-
-        def call_tool(self, name, arguments, *, timeout_seconds):
-            assert name == "list_projects"
-            assert arguments == {"format": "json", "detail": "stats"}
-            assert timeout_seconds == mcp_host._CBM_HEALTH_TIMEOUT_SECONDS
-            return CallToolResult(
-                content=[TextContent(type="text", text=json.dumps({"projects": []}))]
-            )
-
-    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", EmptyClient())
+    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", object())
+    monkeypatch.setattr(
+        mcp_host,
+        "_CBM_SERVER_INFO",
+        {"name": "codebase-memory-mcp", "version": "current"},
+    )
+    monkeypatch.setattr(mcp_host, "_CBM_CODEGRAPH_DIAGNOSTICS", {
+        "daemonAttached": True,
+        "daemonState": "attached",
+        "cbmFrontendAttached": True,
+        "cbmFrontendState": "attached",
+    })
     monkeypatch.setattr(
         mcp_host,
         "_host_codegraph_runtime",
@@ -3067,6 +3126,7 @@ def test_cbm_index_does_not_redirect_an_unmounted_checkout():
 
 
 def test_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
+    import asyncio
     import mcp_host
     from mcp.types import CallToolResult, TextContent
 
@@ -3080,16 +3140,16 @@ def test_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
     calls = []
 
     class CbmClient:
-        def call_tool(self, name, arguments):
+        async def call_tool(self, name, arguments, *, read_timeout_seconds):
+            assert read_timeout_seconds == mcp_host._CBM_REQUEST_TIMEOUT_SECONDS
             calls.append((name, dict(arguments)))
             return CallToolResult(content=[TextContent(type="text", text="ok")])
 
     monkeypatch.setattr(mcp_host, "_CBM_CLIENT", CbmClient())
-    monkeypatch.setattr(mcp_host, "_initialize_cbm_sync", lambda: None)
-    result = mcp_host._call_cbm(
+    result = asyncio.run(mcp_host._call_cbm(
         "search_graph",
         {"project": "C-Projects-LiquidAIty-main", "query": "Graph Agent continuity"},
-    )
+    ))
 
     assert calls == [
         (
@@ -3104,37 +3164,46 @@ def test_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
 
 
 def test_cbm_client_failure_is_strict(monkeypatch):
+    import asyncio
     import mcp_host
 
     class FailingClient:
-        def call_tool(self, _name, _arguments):
+        async def call_tool(self, _name, _arguments, **_kwargs):
             raise RuntimeError("provider transport closed")
 
     monkeypatch.setattr(mcp_host, "_CBM_CLIENT", FailingClient())
-    monkeypatch.setattr(mcp_host, "_initialize_cbm_sync", lambda: None)
     with pytest.raises(RuntimeError, match="provider transport closed"):
-        mcp_host._call_cbm(
+        asyncio.run(mcp_host._call_cbm(
             "search_graph", {"project": "C-Projects-LiquidAIty-main"}
-        )
+        ))
 
 
 def test_cbm_bootstrap_failure_does_not_spawn_a_second_frontend(monkeypatch):
+    import asyncio
     import mcp_host
 
     attempts = []
-    class CbmClient:
-        def __init__(self, command, args, cwd):
-            attempts.append((command, list(args), cwd))
-            raise RuntimeError(
-                "cbm_process_exited:1:codebase-memory-mcp: "
-                "CBM daemon could not start within 30000 ms"
-            )
-
-    monkeypatch.setattr(mcp_host, "_CbmStdioMcpClient", CbmClient)
-    with pytest.raises(RuntimeError, match="CBM daemon could not start within 30000 ms"):
-        mcp_host._open_cbm_client(
-            "docker", ["exec", "-i", "codegraph", "/usr/local/bin/codebase-memory-mcp"], "repo"
+    async def open_client(command, args, cwd):
+        attempts.append((command, list(args), cwd))
+        raise RuntimeError(
+            "cbm_process_exited:1:codebase-memory-mcp: "
+            "CBM daemon could not start within 30000 ms"
         )
+
+    monkeypatch.setattr(mcp_host, "_open_cbm_client", open_client)
+    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", None)
+    monkeypatch.setattr(mcp_host, "_CBM_TOOLS", None)
+    monkeypatch.setattr(
+        mcp_host,
+        "_cbm_config",
+        lambda: (
+            "docker",
+            ["exec", "-i", "codegraph", "/usr/local/bin/codebase-memory-mcp"],
+            "repo",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="CBM daemon could not start within 30000 ms"):
+        asyncio.run(mcp_host._start_cbm_client())
 
     assert attempts == [
         (
@@ -3146,24 +3215,28 @@ def test_cbm_bootstrap_failure_does_not_spawn_a_second_frontend(monkeypatch):
 
 
 def test_cbm_bootstrap_does_not_retry_other_failures(monkeypatch):
+    import asyncio
     import mcp_host
 
     attempts = 0
 
-    class CbmClient:
-        def __init__(self, _command, _args, _cwd):
-            nonlocal attempts
-            attempts += 1
-            raise RuntimeError("cbm_initialize_invalid")
+    async def open_client(_command, _args, _cwd):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("cbm_initialize_invalid")
 
-    monkeypatch.setattr(mcp_host, "_CbmStdioMcpClient", CbmClient)
+    monkeypatch.setattr(mcp_host, "_open_cbm_client", open_client)
+    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", None)
+    monkeypatch.setattr(mcp_host, "_CBM_TOOLS", None)
     with pytest.raises(RuntimeError, match="cbm_initialize_invalid"):
-        mcp_host._open_cbm_client("docker", [], "repo")
+        asyncio.run(mcp_host._start_cbm_client())
     assert attempts == 1
 
 
 def test_cbm_duplicate_catalog_closes_the_only_frontend(monkeypatch):
+    import asyncio
     import mcp_host
+    from mcp.types import ListToolsResult
 
     attempts = 0
     closed = False
@@ -3173,21 +3246,24 @@ def test_cbm_duplicate_catalog_closes_the_only_frontend(monkeypatch):
         inputSchema={"type": "object", "properties": {}},
     )
 
-    class CbmClient:
-        def __init__(self, _command, _args, _cwd):
+    class OfficialClient:
+        def __init__(self, _server, **_kwargs):
             nonlocal attempts
             attempts += 1
 
-        def list_tools(self):
-            return [provider_tool, provider_tool]
+        async def __aenter__(self):
+            return self
 
-        def close(self):
+        async def list_tools(self, **_kwargs):
+            return ListToolsResult(tools=[provider_tool, provider_tool])
+
+        async def __aexit__(self, *_args):
             nonlocal closed
             closed = True
 
-    monkeypatch.setattr(mcp_host, "_CbmStdioMcpClient", CbmClient)
+    monkeypatch.setattr(mcp_host, "Client", OfficialClient)
     with pytest.raises(RuntimeError, match="cbm_duplicate_tool_name"):
-        mcp_host._open_cbm_client("docker", [], "repo")
+        asyncio.run(mcp_host._open_cbm_client("docker", [], "repo"))
     assert attempts == 1
     assert closed is True
 
@@ -3197,8 +3273,9 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
 ):
     import asyncio
     import httpx
+    import httpx2
     import mcp_host
-    from mcp import ClientSession
+    from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
     from mcp.server.auth.provider import AccessToken
 
@@ -3331,24 +3408,29 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 assert invalid_origin.status_code == 403
                 assert invalid_origin.text == "Invalid Origin header"
 
-            async def fresh_client(token, *, inspect_main=False):
+            async def fresh_client(token, *, mode="auto", inspect_main=False):
                 response_session_ids = []
 
                 async def observe(response):
                     response_session_ids.append(response.headers.get("mcp-session-id"))
 
-                async with httpx.AsyncClient(
+                async with httpx2.AsyncClient(
                     headers={"Authorization": f"Bearer {token}"},
                     event_hooks={"response": [observe]},
                     timeout=60,
                 ) as http_client:
-                    async with streamable_http_client(
+                    transport = streamable_http_client(
                         f"http://127.0.0.1:{port}/mcp",
                         http_client=http_client,
-                    ) as streams:
-                        async with ClientSession(streams[0], streams[1]) as session:
-                            await session.initialize()
-                            listed_tools = (await session.list_tools()).tools
+                    )
+                    async with Client(
+                        transport,
+                        mode=mode,
+                        read_timeout_seconds=60,
+                    ) as session:
+                            listed_tools = (
+                                await session.list_tools(cache_mode="refresh")
+                            ).tools
                             actual = sorted(tool.name for tool in listed_tools)
                             catalog_identity = mcp_host._catalog_identity(listed_tools)
                             cbm_result = await session.call_tool("cbm.search_graph", {
@@ -3357,7 +3439,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                                 "limit": 1,
                                 "format": "json",
                             })
-                            assert cbm_result.isError is not True
+                            assert cbm_result.is_error is not True
                             cbm_payload = json.loads(cbm_result.content[0].text)
                             visible_context = None
                             if inspect_main:
@@ -3370,23 +3452,34 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 if inspect_main:
                     assert len(result.content) == 1
                     assert "executionReceipt" not in _tool_result_wire_text(result)
-                    assert invalid.isError is True
+                    assert invalid.is_error is True
                     assert len(invalid.content) == 1
                     assert "executionReceipt" not in _tool_result_wire_text(invalid)
-                cbm_process = mcp_host._CBM_CLIENT._process
-                assert cbm_process.poll() is None
-                return actual, visible_context, catalog_identity, cbm_process.pid
+                assert mcp_host._CBM_CLIENT is not None
+                return (
+                    actual,
+                    visible_context,
+                    catalog_identity,
+                    id(mcp_host._CBM_CLIENT),
+                    session.protocol_version,
+                )
 
             # Close and recreate the optional external client around two distinct
             # internal Card clients. All four requests remain stateless at the
             # outer HTTP boundary and use the same host-owned CBM child.
-            first = await fresh_client("external-gpt-token", inspect_main=True)
+            first = await fresh_client(
+                "external-gpt-token", mode="auto", inspect_main=True,
+            )
             card_one = await fresh_client("internal-card-one")
             card_two = await fresh_client("internal-card-two")
-            second = await fresh_client("external-gpt-token", inspect_main=True)
-            first_catalog, first_context, first_identity, first_cbm_pid = first
-            second_catalog, second_context, second_identity, second_cbm_pid = second
+            second = await fresh_client(
+                "external-gpt-token", mode="legacy", inspect_main=True,
+            )
+            first_catalog, first_context, first_identity, first_cbm_client, first_protocol = first
+            second_catalog, second_context, second_identity, second_cbm_client, second_protocol = second
             assert first_catalog == second_catalog
+            assert "card.run_assistant_agent" not in first_catalog
+            assert "mag_one.describe_connected_agents" not in first_catalog
             assert card_one[0] == card_two[0]
             assert set(card_one[0]) < set(first_catalog)
             assert first_catalog
@@ -3398,9 +3491,11 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 "cbm.search_graph",
                 "graphiti.get_status",
                 "engraphis_recall_context",
-                "mag_one.describe_connected_agents",
                 "write_mag_one_instructions",
             }.issubset(first_catalog)
+            assert len([name for name in first_catalog if name.startswith("engraphis_")]) == 9
+            assert "engraphis_discover_actions" in first_catalog
+            assert "engraphis_stats" not in first_catalog
             assert "cbm.search_graph" in card_one[0]
             assert not any(name.startswith("graphiti.") for name in card_one[0])
             assert not any(name.startswith("liquidaity.") for name in first_catalog)
@@ -3409,8 +3504,13 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert first_context == second_context == context
             assert first_identity == second_identity
             assert card_one[2] == card_two[2]
-            assert first_cbm_pid == card_one[3] == card_two[3] == second_cbm_pid
+            assert first_cbm_client == card_one[3] == card_two[3] == second_cbm_client
+            assert first_protocol == "2026-07-28"
+            assert second_protocol in {
+                "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25",
+            }
             base_identity = mcp_host._catalog_identity(list(mcp_host._CATALOG_TOOLS or ()))
+            assert len(first_catalog) == base_identity[0]
             assert readiness.json()["toolCount"] == base_identity[0]
             assert readiness.json()["uniqueToolCount"] == base_identity[0]
             assert readiness.json()["catalogHash"] == base_identity[1]
@@ -3593,7 +3693,16 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     asyncio.run(mcp_host._initialize_catalog_once())
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
+    from app.python_models.tool_registry import (
+        operation_definitions,
+        operation_definition,
+        project_server_injected_schema,
+    )
+
     assert len(tools) == len(by_name)
+    assert len(operation_definitions()) == len({
+        definition.canonical_id for definition in operation_definitions()
+    })
     assert "card.run_assistant_agent" not in by_name
     assert "card.run_agent" not in by_name
     for tool in tools:
@@ -3605,6 +3714,33 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
             tool.name in mcp_host._ALLOWED_KEYS
             or tool.name.startswith(tuple(mcp_host._PROVIDER_PREFIXES.values()))
         ), f"advertised but undispatchable: {tool.name}"
+        source = tool.meta["liquidaitySource"]
+        definition = operation_definition(tool.name)
+        assert definition is not None, f"published without canonical definition: {tool.name}"
+        assert source["dispatcherOwner"] == definition.dispatcher_owner
+        assert source["serverInjectedArguments"] == sorted(
+            definition.server_injected_arguments
+        )
+        assert source["dispatcherContextArguments"] == sorted(
+            definition.dispatcher_context_arguments
+        )
+        assert source["authenticatedProjection"] is True
+        assert tool.input_schema == project_server_injected_schema(
+            source["canonicalInputSchema"],
+            frozenset(source["serverInjectedArguments"]),
+        )
+        assert source["available"] is definition.available is True
+        assert source["grantEligible"] is definition.grant_eligible
+        assert source["access"] == definition.access
+        if tool.name.startswith("cbm."):
+            assert source["dispatcherOwner"] == "app.mcp_host._call_cbm"
+        elif tool.name.startswith("graphiti."):
+            assert source["dispatcherOwner"] == "app.mcp_host._call_graphiti"
+        else:
+            assert tool.name in mcp_host._ALLOWED_KEYS
+            assert definition.dispatcher_context_arguments == frozenset(
+                mcp_host._ALLOWED_KEYS[tool.name] & mcp_host._SERVER_OWNED_ARGUMENTS
+            )
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "write_mag_one_instructions" in by_name
@@ -3615,14 +3751,14 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         f"graphiti.{tool.name}" for tool in graphiti_tools
     }
     assert all(
-        tool.inputSchema.get("additionalProperties") is False
+        tool.input_schema.get("additionalProperties") is False
         for name, tool in by_name.items()
         if name not in provider_tool_names
     )
     assert "worldsignals.package" not in by_name
     assert {"engraphis_recall_context", "engraphis_get_memory", "engraphis_remember"}.issubset(by_name)
-    assert "projectId" not in by_name["engraphis_recall_context"].inputSchema["properties"]
-    assert "projectId" not in by_name["engraphis_remember"].inputSchema["properties"]
+    assert "projectId" not in by_name["engraphis_recall_context"].input_schema["properties"]
+    assert "projectId" not in by_name["engraphis_remember"].input_schema["properties"]
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
@@ -3631,21 +3767,30 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         "namespace": "cbm",
         "providerToolName": "search_graph",
         "connectionKind": "external-mcp",
+        "publication": "external-mcp",
+        "access": "read",
+        "available": True,
+        "grantEligible": True,
+        "canonicalInputSchema": cbm_tools[0].input_schema,
+        "serverInjectedArguments": [],
+        "dispatcherContextArguments": [],
+        "dispatcherOwner": "app.mcp_host._call_cbm",
+        "authenticatedProjection": True,
     }
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
     assert "run_mag_one" in by_name
-    assert {scheme["scopes"][0] for scheme in by_name["engraphis_recall_context"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
-    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
-    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["engraphis_recall_context"].model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Provider search description."
-    assert by_name["cbm.search_graph"].inputSchema == cbm_tools[0].inputSchema
-    assert by_name["cbm.search_graph"].annotations.model_dump(exclude_none=True) == {
+    assert by_name["cbm.search_graph"].input_schema == cbm_tools[0].input_schema
+    assert by_name["cbm.search_graph"].annotations.model_dump(by_alias=True, exclude_none=True) == {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": False,
     }
-    assert by_name["graphiti.search_nodes"].annotations.model_dump(exclude_none=True) == {
+    assert by_name["graphiti.search_nodes"].annotations.model_dump(by_alias=True, exclude_none=True) == {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
@@ -3675,7 +3820,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         mcp_host, "_thinkgraph_via_python_rails_sync", thinkgraph_call
     )
 
-    def call_cbm(name, arguments):
+    async def call_cbm(name, arguments):
         calls.append((name, arguments))
         return mcp_host.CallToolResult(
             content=[
@@ -3711,7 +3856,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     )
 
     memory = {
-        "title": "Approved fact", "content": "Approved fact",
+        "content": "Approved fact", "importance": 0.5,
     }
     asyncio.run(mcp_host.call_tool("engraphis_remember", memory))
     assert calls[-1] == (
@@ -3744,7 +3889,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     removed_adapter = asyncio.run(
         mcp_host.call_tool("codegraph.search", {"query": "Main"})
     )
-    assert removed_adapter.isError is True
+    assert removed_adapter.is_error is True
     assert "unknown_tool: codegraph.search" in removed_adapter.content[0].text
 
     main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
@@ -3924,47 +4069,51 @@ def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypa
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
     assert tools
     assert all(
-        tool.model_dump(exclude_none=True)["securitySchemes"]
-        == [{"type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE]}]
-        for tool in tools
-    )
-    assert all(
         tool.model_dump(by_alias=True, exclude_none=True)["_meta"]["securitySchemes"]
         == [{"type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE]}]
         for tool in tools
     )
 
 def test_identical_cbm_index_requests_share_one_in_flight_call(monkeypatch):
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
+    import asyncio
     from mcp.types import CallToolResult, TextContent
     import mcp_host
-
-    entered = threading.Event()
-    release = threading.Event()
 
     calls = []
 
     class IndexClient:
-        def call_tool(self, name, arguments):
+        async def call_tool(self, name, arguments, **_kwargs):
             assert name == "index_repository"
             calls.append(dict(arguments))
             entered.set()
-            assert release.wait(timeout=2)
+            await release.wait()
             return CallToolResult(content=[TextContent(type="text", text="indexed")])
 
-    monkeypatch.setattr(mcp_host, "_initialize_cbm_sync", lambda: None)
     monkeypatch.setattr(mcp_host, "_CBM_CLIENT", IndexClient())
     monkeypatch.setattr(mcp_host, "_CBM_INDEX_IN_FLIGHT", None)
     arguments = {"repo_path": "C:/Projects/main", "mode": "fast"}
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(mcp_host._call_cbm, "index_repository", arguments)
-        assert entered.wait(timeout=2)
-        second = pool.submit(mcp_host._call_cbm, "index_repository", dict(arguments))
+    async def check():
+        nonlocal entered, release
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        first = asyncio.create_task(
+            mcp_host._call_cbm("index_repository", arguments)
+        )
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second = asyncio.create_task(
+            mcp_host._call_cbm("index_repository", dict(arguments))
+        )
         release.set()
-        assert first.result(timeout=2).content[0].text == "indexed"
-        assert second.result(timeout=2).content[0].text == "indexed"
+        first_result, second_result = await asyncio.wait_for(
+            asyncio.gather(first, second), timeout=2
+        )
+        assert first_result.content[0].text == "indexed"
+        assert second_result.content[0].text == "indexed"
+
+    entered = None
+    release = None
+    asyncio.run(check())
 
     assert calls == [arguments]
 
@@ -3994,7 +4143,7 @@ def test_graphiti_episode_projection_is_bounded_and_full_body_is_explicit():
     compact = mcp_host._bounded_graphiti_episodes(
         providerTool, include_body=False, preview_chars=120, response_budget=2000,
     )
-    compact_episode = compact.structuredContent["result"]["episodes"][0]
+    compact_episode = compact.structured_content["result"]["episodes"][0]
     assert "content" not in compact_episode
     assert compact_episode["content_preview"] == "x" * 120
     assert compact_episode["content_truncated"] is True
@@ -4003,10 +4152,10 @@ def test_graphiti_episode_projection_is_bounded_and_full_body_is_explicit():
     explicit = mcp_host._bounded_graphiti_episodes(
         providerTool, include_body=True, preview_chars=120, response_budget=3000,
     )
-    explicit_episode = explicit.structuredContent["result"]["episodes"][0]
+    explicit_episode = explicit.structured_content["result"]["episodes"][0]
     assert "content" in explicit_episode
     assert explicit_episode["content_truncated"] is True
-    assert explicit.structuredContent["result"]["truncated"] is True
+    assert explicit.structured_content["result"]["truncated"] is True
     assert len(explicit.content[0].text) <= 3000
 
 
@@ -4057,7 +4206,7 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
 
     attempts = 0
 
-    async def inspect(_args):
+    async def inspect(_args, **_authority):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -4070,7 +4219,7 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
     failed = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
     succeeded = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
 
-    assert failed.isError is True
+    assert failed.is_error is True
     failed_payload = json.loads(failed.content[0].text)
     assert failed_payload["error"] == "database_failure"
     assert failed_payload["failureCode"] == "database_failure"

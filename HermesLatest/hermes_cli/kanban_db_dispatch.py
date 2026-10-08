@@ -1470,7 +1470,22 @@ def _set_worker_pid(conn: sqlite3.Connection, task_id: str, pid: int) -> None:
         if run_id is not None:
             conn.execute("UPDATE task_runs SET worker_pid = ?, worker_started_at = ? WHERE id = ?",
                          (int(pid), started_at, run_id))
-        _kb._append_event(conn, task_id, "spawned", {"pid": int(pid), "started_at": started_at}, run_id=run_id)
+        payload: dict[str, Any] = {"pid": int(pid), "started_at": started_at}
+        receipt = conn.execute(
+            "SELECT workflow_template_id, current_step_key, model_override, provider_override "
+            "FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+
+        if receipt and receipt["workflow_template_id"] == TEAM_WORKFLOW_ID:
+            payload.update({
+                "workflow_template_id": receipt["workflow_template_id"],
+                "step_key": receipt["current_step_key"],
+                "provider": receipt["provider_override"],
+                "model": receipt["model_override"],
+            })
+        _kb._append_event(conn, task_id, "spawned", payload, run_id=run_id)
 
 
 def _clear_failure_counter(conn: sqlite3.Connection, task_id: str) -> None:
@@ -2115,6 +2130,12 @@ def _apply_default_assignee(
         return True
     try:
         with _kb.write_txn(conn):
+            row = conn.execute(
+                "SELECT allowed_assignees FROM tasks WHERE id = ?", (task_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            _kb._require_allowed_assignee(row["allowed_assignees"], assignee)
             conn.execute(
                 "UPDATE tasks SET assignee = ? WHERE id = ? "
                 "AND (assignee IS NULL OR assignee = '')",
@@ -2863,6 +2884,10 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
     # kanban_comment reads HERMES_PROFILE for its default author; `-p` alone
     # doesn't set the env var.
     env["HERMES_PROFILE"] = profile_arg
+    from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+
+    if task.workflow_template_id == TEAM_WORKFLOW_ID:
+        env["HERMES_KANBAN_TEAM_WORKER"] = "1"
     # This is the grant boundary: the dispatcher assigned this new worker's task.
     from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER
     env.pop(DELEGATED_CHILD_ENV_MARKER, None)

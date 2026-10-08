@@ -1,0 +1,302 @@
+# MCP tool reference
+
+`engraphis-mcp` is the zero-configuration Smart MCP gateway. It initially exposes nine concise
+tools: `engraphis_session`, `engraphis_recall_context`, `engraphis_remember`,
+`engraphis_discover_actions`, `engraphis_execute_read`, `engraphis_execute_action`,
+`engraphis_get_memory`, `engraphis_update_memory`, and `engraphis_conflict_review`. Agents use
+the routine tools directly; for any advanced capability, they discover the best action and execute
+the returned, version-bound capability ID. Discovery returns the precise schema and side-effect
+class, and execution revalidates availability, scope, authorization, and arguments.
+
+### Smart tool inventory
+
+| Tool | What it does |
+|---|---|
+| `engraphis_session` | Starts or resumes a session, or ends it with a next-session handoff. |
+| `engraphis_recall_context` | Returns one compact, bounded context packet for routine agent work. |
+| `engraphis_remember` | Stores a routine durable memory with safe default provenance and deduplication. |
+| `engraphis_discover_actions` | Returns exact schemas for a small set of matching advanced actions. |
+| `engraphis_execute_read` | Executes only a discovered action that is read-only and idempotent. |
+| `engraphis_execute_action` | Executes a discovered write, admin, or destructive-capable action. |
+| `engraphis_get_memory` | Returns one governed memory record, excluding non-prompt-eligible content. |
+| `engraphis_update_memory` | Edits memory metadata; content changes use the governed correction path. |
+| `engraphis_conflict_review` | Lists pending, quarantined, or conflicting memories for review. |
+
+The Smart gateway exposes these nine tools directly; advanced capabilities remain available through
+discovery and the validated executors.
+
+For a deliberate cross-agent handoff, pass the source ID as `session_id` when starting
+`engraphis_session`, or as `resume_from_session_id` to `engraphis_start_session`. The source must
+be an ended session owned by the same authenticated user in the exact resolved workspace and
+repository. Missing, active, deleted, or unauthorized sources fail closed; the tool never
+substitutes a recent handoff. The returned `bootstrap` is
+bounded to 512 regex-counted content tokens, at most six open threads, and per-field character
+limits. `handoff_source` labels the source start/end times in UTC. Sessions have no automatic
+age expiry; those timestamps show age but do not guarantee freshness.
+
+### Smart routine schemas are reduced by design
+
+The two routine Smart tools deliberately accept smaller allow-lists than their Classic
+namesakes; advanced controls are discoverable rather than routine:
+
+| Smart tool | Accepted parameters |
+|---|---|
+| `engraphis_remember` | `content`, `workspace`, `repo`, `session_id`, `mtype`, `importance`, `subject_key`, `claim_kind`, optional source-bound `exact_value`/`exact_value_type`; safe provenance is fixed internally |
+| `engraphis_recall_context` | `query`, `workspace`, `repo`, `session_id`, `k`, `token_budget`, `packing_mode`, `retrieval_recipe`, `format`, optional Jev controls `allow_remote`, `data_classification`; always compact, no `response_mode` |
+
+`format="gist"` is a compatibility option for the same budgeted, cited evidence as
+`full`. It preserves the same selected text and whitespace; it does not apply an
+additional summary or promise extra token savings. Source IDs remain in `sources`.
+
+Jev-assisted recall planning requires explicit BYOK and is opt-in. On the Smart context tool,
+set `allow_remote=true` and
+`data_classification="public"` or `"internal"`; that call both enables bounded route selection
+and gives per-call consent for remote processing. The default stays deterministic and local.
+Classic recall tools additionally require `planning="auto"` and `jev_assisted=true`.
+The provider receives the query and bounded local routes, not recalled memory bodies. Jev cannot
+change scope, time, type, or trust filters; uncertainty and failures retain deterministic route
+order and appear in `planning_advisory`. Leaving the Jev controls at their defaults keeps local
+deterministic behavior.
+Managed access does not admit `query_planning`: it fails closed before credential refresh or
+network requests, retaining deterministic route order with a visible fallback. Neither `managed`
+nor `auto` silently switches to BYOK.
+
+
+No user profile choice or tool switching is required. The dashboard `/mcp` endpoint and
+`engraphis-mcp-http` use this Smart surface by default. `engraphis-mcp-classic` (or
+`engraphis-mcp-http --classic`) preserves the 39 direct tools below for integrations that pin
+their historical names and response shapes.
+
+Hosts which already own chat history should use `POST /api/adaptive-context`, not an MCP action.
+The gateway works in general MCP clients without native deferred tool search; clients that
+explicitly support OpenAI's deferred `tool_search` can apply it as an optional host optimization.
+
+### Workspace routing
+
+Session starts accept an omitted workspace, resolving an explicit value, then the saved repo
+mapping, then `default`. Routine remember and recall calls also inherit an omitted workspace
+from an authorized supplied session before consulting the repo mapping. Local recall with no
+workspace, repo, or session stays broad.
+Explicit workspace/repo values that conflict with a supplied session are rejected; invalid or
+unauthorized sessions never fall back. An explicit `workspace="default"` overrides a mapping.
+
+Session and remember responses report the resolved workspace and `workspace_source` (`explicit`,
+`project`, or `default`, plus `session` on inherited writes) so the agent can show its destination.
+Pass the returned `session_id` on subsequent recall and write calls to retain that scope.
+There is no implicit server-global current session, and changing the dashboard workspace
+selector does not change agent arguments. See [workspace organization](WORKSPACE_ORGANIZATION.md)
+for project setup, hook overrides, and organizing existing memories.
+
+Saved project mappings live in the shared database, per authenticated caller or standalone
+local context. The Classic `engraphis_list_workspaces`, `engraphis_get_workspace_routing`, and
+`engraphis_set_workspace_routing` capabilities are available through Smart discovery and the
+validated executors; saving a mapping still requires workspace access. Classic batch remember,
+record-event, ingest, and proactive recall retain their explicit workspace contract: pass the
+resolved destination returned by the session.
+
+### Standalone semantic startup
+
+On Windows, the standalone stdio and HTTP launchers import optional semantic dependencies
+on the launcher thread before serving MCP requests. This prevents the first semantic tool
+call from stalling during a native dependency import in a worker thread. Models are still
+loaded lazily, and exact-backend validation retains its normal failure policy. Dependency
+import diagnostics go to stderr so stdout stays reserved for the stdio protocol.
+
+`ENGRAPHIS_MCP_PRELOAD_EMBEDDER=auto` enables this startup step on Windows when a semantic
+embedding or reranking model is configured. Configured sources are validated before
+optional imports, including the immutable revision policy. Set `0` to disable it or `1` to
+enable it on other platforms. An unavailable optional dependency is left to the configured
+backend fallback policy.
+
+## Classic direct-tool inventory
+
+The following inventory applies to the Classic compatibility server. Start with
+`engraphis_recall_context` when an agent needs prompt-ready context, and use
+`engraphis_remember` when it learns a durable fact.
+
+Retrieval responses (`engraphis_recall`, `engraphis_recall_context`,
+`engraphis_recall_grounded`, and `engraphis_answer`) always declare
+`degraded_mode`, `semantic_support`, `embedding_mode`, and `vector_search_ready`. A `true`
+degraded flag means the active backend is not a declared semantic embedder (the bundled
+deterministic fallback is feature hashing with lexical overlap), the persistent vector space is
+rebuilding or does not match the configured embedder, or the vector index failed for that
+request. `vector_search_ready` is the authoritative vector-arm status. When
+`semantic_support=false`, vector retrieval and semantic-cosine evidence are both disabled;
+recall remains lexical/graph/code based and grounded answers use lexical support only. A
+request-local index failure instead reports `vector_search_ready=false` while semantic support
+can remain available for exact support scoring from the configured embedder and stored vectors.
+
+Classic `engraphis_recall` and `engraphis_recall_context` also accept `jev_assisted` (default
+`false`), `allow_remote` (default `false`), and `data_classification` (optional). Use the same
+explicit remote-consent requirements described for the Smart context tool above.
+
+Trust boundary: normal local-agent memory creation is prompt-visible immediately after validation;
+it does not require owner approval. The default `agent` source covers `engraphis_remember`,
+`engraphis_ingest`, and dashboard intent writes. External sources remain `pending` regardless of
+a caller-supplied `trusted` label, and detector matches are `quarantined` immediately. Pending
+and quarantined records are available only to explicit inspection workflows and never appear in
+prompt-ready MCP recall or context, `engraphis_why`, or `engraphis_timeline`, nor can they feed
+resolution, links, graph/code backfill, or derived prompt context. `include_untrusted=True` is
+inspection-only and must never be copied into a model prompt.
+
+MCP deliberately has no approval tool. Approval is only for external evidence: it
+creates a fresh, audited `approved` successor while retaining the reviewed source and its
+provenance. In the local product it is available only through the CSRF-bound dashboard review
+action (with `ENGRAPHIS_API_TOKEN`) or the interactive TTY command
+`python -m scripts.approve_memory MEM_ID --reason "..."`; the command rejects redirected input
+and requires a typed confirmation. Local operators can use `engraphis-cli review list` and the
+dry-run-first `engraphis-cli review approve` for scoped batches; quarantined records are excluded.
+Hosted approval is an owner/admin action of the private hosted service. Direct in-process
+`MemoryEngine` use is a trusted-code boundary for code that already has local database authority,
+not a transport permission.
+
+For the full memory trust model, automatic schema-11 classification, and operator recovery, see
+the [memory write trust model](WRITE_REVIEW.md) and [recall recovery guide](RECALL_RECOVERY.md).
+
+### Receipt-chain failure behavior
+
+Receipt recording is deliberately fail-closed: if verification finds a fork, cycle, or
+disconnected chain with no safe predecessor, the Store refuses to append and
+`engraphis_verify_receipts` continues to report the invalid chain. The completed service
+operation is not rolled back or reported as failed solely because its follow-up receipt could
+not be recorded. Its JSON result contains `"receipt": null` and a content-free
+`"receipt_warning":{"code":"receipt_chain_integrity_failure",...}` marker. Repair or restore
+the receipt chain before treating subsequent receipt continuity as audit evidence.
+
+Emitted recall receipts include the normalized `packing_mode` (`legacy` or `coverage`)
+alongside the retrieval recipe and effective depth. Historical receipts remain valid;
+an omitted mode means it was not recorded, and is not inferred from current defaults.
+
+| Category | Tool | What it does |
+|---|---|---|
+| Write | `engraphis_remember` | Stores a fact and resolves it as a new memory, reinforcement, safe supersession, or related memory. |
+| Write | `engraphis_remember_many` | Stores a fan-out batch of facts in one transaction: within-batch dedup/supersession, plus evidence-labeled edges between siblings sharing a `subject_key` or declared `evidence_source`. |
+| Write | `engraphis_record_event` | Appends one raw occurrence to the event ledger; event rows are not recalled, deduplicated, reinforced, or consolidated as memories. |
+| Write | `engraphis_link` | Connects two related memories. |
+| Write | `engraphis_ingest` | Applies the configured extractor (`chunk`, `llm`, or `llm_structured`). With `none`, it stores one verbatim memory. |
+| Write | `engraphis_ingest_postgres_schema` | Stores a PostgreSQL schema snapshot and typed graph. The DSN is never stored. |
+| Write | `engraphis_consolidate` | Runs a dry-run or live consolidation sweep. A live call can write resolved facts and receipts. |
+| Stateful read | `engraphis_recall_context` | Returns hard-budget context, compact sources, token usage, and optional diagnostics. Recommended for agent prompts. Compact-only: it never accepts `response_mode` and never returns full memory bodies. |
+| Stateful read | `engraphis_recall` | Runs hybrid vector, lexical, and graph recall. It attempts a receipt without strengthening weak matches. |
+| Stateful read | `engraphis_recall_grounded` | Returns a cited answer or abstains when the evidence is too weak. It attempts a receipt and reinforces cited memories. |
+| Stateful read | `engraphis_answer` | Backward-compatible alias for `engraphis_recall_grounded`. |
+| Pure read | `engraphis_recall_proactive` | Returns high-signal, queryless context and a last-session handoff. It does not reinforce or record a receipt. |
+| Stateful read | `engraphis_proactive_context` | Builds task-aware cited context and attempts a receipt without reinforcement. |
+| Read | `engraphis_why` | Returns the current answer and the memories it superseded. |
+| Read | `engraphis_timeline` | Returns complete bi-temporal history, oldest first. |
+| Code | `engraphis_index_repo` | Incrementally parses a repository into the code and memory graph. Each run attempts a receipt. |
+| Code | `engraphis_search_code` | Finds symbols, callers, and linked memories. |
+| Code | `engraphis_code_path` | Finds a path across definitions, calls, imports, and memories. |
+| Code | `engraphis_code_impact` | Ranks changed-file impact using dependents, communities, memories, and hotspots. |
+| Code | `engraphis_export_code_graph` | Exports graph JSON, Markdown, and HTML. |
+| Code | `engraphis_link_symbol` | Manually links a code symbol to a memory (idempotent). |
+| Audit | `engraphis_receipts` | Lists content-free hashed operation receipts. |
+| Audit | `engraphis_context_savings` | Reports receipt-backed estimated context tokens saved across all visible workspaces by default, or one workspace when supplied; optional `from_ts`, `to_ts`, and `release_version` filters are supported. This is estimated prompt-context reduction, not provider billing. |
+| Audit | `engraphis_verify_receipts` | Verifies the receipt chain, local tail anchor, and an optional saved head/count. |
+| Audit | `engraphis_export_receipts` | Exports a shareable receipt-only audit bundle. |
+| Governance | `engraphis_retire` | Retires a memory by closing its validity window. It does not delete history. |
+| Governance | `engraphis_secure_erase` | Irreversibly removes one leaked memory and local indexes; reports local-backup and external-copy limitations. |
+| Compatibility | `engraphis_forget` | Deprecated alias for `engraphis_retire`; preserves the legacy response shape. |
+| Governance | `engraphis_pin` | Prevents future automatic decay or pruning. |
+| Governance | `engraphis_correct` | Replaces memory content without losing the previous version. Changed content clears the old literal binding; `exact_value`, `exact_value_type`, and optional `exact_value_span` explicitly bind a replacement, or `clear_exact_value=true` removes it. Governed provenance remains pending unless separately approved. |
+| Governance | `engraphis_promote` | Widens an explicitly approved memory's scope while preserving and linking its narrower history. |
+| Session | `engraphis_start_session` | Starts a work session. Exact retries are safe; `force_new=true` creates another session. |
+| Workspace | `engraphis_list_workspaces` | Lists visible workspaces for choosing a destination. |
+| Workspace | `engraphis_get_workspace_routing` | Returns the current caller's saved destination for an exact `repo` name. |
+| Workspace | `engraphis_set_workspace_routing` | Saves or removes a repo-to-workspace mapping; takes `workspace`, `repo`, and `enabled` (default `true`). |
+| Session | `engraphis_end_session` | Closes a work session with a summary and open threads. |
+| Operations | `engraphis_stats` | Returns memory counts for health checks. |
+| Operations | `engraphis_check_update` | Refreshes the release cache and reports whether a newer version is available. Update checks are OFF unless `ENGRAPHIS_UPDATE_CHECK` is set to an affirmative value; `=0` keeps them off. |
+| Decision | `engraphis_decide` | Advisory typed decisions with local fallback. Remote Jev requires an explicit backend and per-call `allow_remote=true`; missing, malformed, and uncertain answers stay visible. Smart discovery routes it through `engraphis_execute_action` because a remote call may consume allowance. |
+
+Classic `engraphis_start_session` accepts optional `resume_from_session_id` for the same explicit,
+same-owner, exact-workspace/repository handoff. Its `handoff_usage` reports the deterministic output
+limit; it is context accounting and does not measure provider billing or task-time savings.
+
+Decision inputs must be nonblank for the selected kind: `guard_command` needs `state`;
+`classify_contradiction` needs `state` and `existing_content`; `verify_support` needs `state`
+and `query`; `verify_completion` needs `state` and `goal`, with optional `recent_actions`.
+`custom` accepts either `state` or `question`. Missing required input returns `invalid_request`
+before backend lookup, with unknown/null conclusions and no remote allowance consumed.
+Managed access admits only the four concrete workflows above with their fixed questions and
+required context. A purpose label cannot authorize arbitrary question schemas. Managed `custom`
+requests return `managed_operation_unsupported` without a credential refresh or network request;
+custom remote questions require explicit BYOK. Local custom fallback remains available.
+Managed Jev is currently `not_yet_available` pending release acceptance and
+service-capacity qualification; client configuration does not enable it. After
+enablement, every legitimate Pro user and each eligible Team named seat, including paid
+viewers, with an active paid, trial, or test entitlement receives managed Jev at no
+additional customer charge and without a personal provider key.
+
+Each individual receives all three independent rolling limits: **100 evaluated questions per rolling hour, 1,000 per rolling five hours, and 2,000 per rolling 24 hours**. Usage is per
+person, not pooled across a Team and not monthly. Each evaluated question counts once;
+if a batch is evaluated, every question counts. A `guard_command` review evaluates two
+questions, and each other supported workflow evaluates one. Admitted attempts that fail
+or are interrupted remain counted. No overage is charged. The account portal reports
+that member's remaining usage across all three windows; usage returns as earlier
+questions leave each rolling window.
+
+The existing production fleet guard remains 100 questions per day across the service. It
+conflicts with the per-person rolling caps and may pause or reject requests earlier, so
+resolve capacity and the fleet guard before launch. No latency, accuracy, or cost-saving
+guarantee is established by configuration or a successful health check.
+
+Managed access admits only `guard_command`, `classify_contradiction`, `verify_support`,
+and `verify_completion`, with fixed question schemas and required context. Managed
+`custom` questions and `query_planning` fail closed before credential refresh or network
+requests; explicit BYOK and local custom heuristics remain separate choices.
+
+Admitted errors remain counted. Managed transport callers can preserve an explicit `request_key`
+for a retry; duplicate admitted keys return 409 without a second provider call or usage increment.
+No answer is stored for replay, and no automatic retry occurs. The MCP tool does not expose a
+`request_key` parameter.
+
+The direct Classic `engraphis_decide` tool permits authorized viewers and remains advisory.
+It does not grant memory writes or administration. Smart discovery still classifies the action
+as stateful because it can consume allowance, so `engraphis_execute_action` retains its admin
+requirement. The private hosted Team tool catalog is unchanged. Managed service release
+acceptance, service capacity, and live quality evaluation remain required.
+Command decisions always return `allow_auto=false` and `escalate_to_user=true`, including
+successful remote answers. Provider probability and category are advice, not shell authorization.
+Local command labels are coarse: only one simple inspection command, without chaining, pipes,
+substitution or file redirection, is `read_only`. Recognized destructive, history-rewriting,
+exfiltrating or credential-file commands are `destructive_or_leak`; anything else, including a
+command too long to screen completely, is `state_change`.
+
+The classic recall, grounded, and answer tools (`engraphis_recall`,
+`engraphis_recall_grounded`, and the `engraphis_answer` alias) accept `planning="off"|"auto"`,
+optional `mtype_limits` such as `{"working": 1, "semantic": 3}`, and optional
+`max_response_tokens` from `2` through `1000000`. `response_mode="full"` retains complete
+memory/citation bodies; `"compact"` omits those duplicate bodies. If the serialized response
+cap cannot hold the packed context, it removes that context and its exact-binding metadata
+together while preserving source/citation references when they fit. `engraphis_recall_context`
+is always compact and does not accept `response_mode`; it shares the same
+`max_response_tokens` floor. Responses include a stable `context_revision`. Planner
+details, per-query rankings, type-limit drops, and fallback reasons are returned only when
+`diagnostics=true`. Type limits are post-rank maxima and can intentionally return fewer than `k`;
+they do not raise a memory type's relevance. Every planned query remains inside the caller's scope,
+temporal, trust, and prompt-eligibility filters, and grounded recall still measures support against
+the original query.
+
+Compact service and REST recall candidate rows contain identities and scores, without
+`exact_value`. Literal bindings appear only in `packed_sources` for admitted evidence;
+`engraphis_recall_context` exposes these admitted bindings in `sources`. A candidate's presence
+alone does not establish that its complete source was included in the returned context.
+An exact binding requires the complete memory source, with boundary whitespace trimming
+permitted only outside the bound value. This retains conditions without inferring their
+meaning or authorizing an action. Partial legacy excerpts remain ordinary context without
+binding metadata; coverage withholds bound groups that cannot fit.
+
+For parameter details and return shapes, see the tool descriptions exposed by the MCP server. The
+[agent connection guide](AGENT_CONNECT.md) explains local and hosted connections, and the
+[Kilo Code guide](KILO_CODE_INTEGRATION.md) shows a complete editor integration.
+
+## Versioned integration contract
+
+[The generated MCP contract](MCP_CONTRACT.json) exports the registered Smart and
+Classic input schemas, descriptions and annotations with a content digest.
+Regenerate it with `python scripts/export_mcp_contract.py`; CI verifies the JSON
+and the generated Pi/Prime Agent schemas with `--check` and the contract tests.
+Host-specific session agent names and configured scope defaults are supplied by
+integration adapters. Prime Agent also retains strict unknown-field validation
+and documented action aliases and enum checks. Runtime authorization is unchanged.

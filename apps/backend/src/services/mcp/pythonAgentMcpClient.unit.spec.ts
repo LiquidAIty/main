@@ -74,6 +74,7 @@ describe('Python Agent MCP client', () => {
       state: 'unavailable',
       tools: [],
       unavailableFamilies: [],
+      toolFailures: {},
       reason: 'catalog_unavailable',
     });
     expect(readiness).toHaveBeenCalledOnce();
@@ -101,6 +102,15 @@ describe('Python Agent MCP client', () => {
             namespace: 'graphiti',
             providerToolName: 'search_nodes',
             connectionKind: 'external-mcp',
+            publication: 'external-mcp',
+            access: 'read',
+            available: true,
+            grantEligible: true,
+            canonicalInputSchema: { type: 'object', properties: {} },
+            serverInjectedArguments: [],
+            dispatcherContextArguments: [],
+            dispatcherOwner: 'app.mcp_host._call_graphiti',
+            authenticatedProjection: true,
           },
         },
       }],
@@ -133,9 +143,44 @@ describe('Python Agent MCP client', () => {
       state: 'unavailable',
       tools: [],
       unavailableFamilies: [],
+      toolFailures: {},
       reason: 'catalog_unavailable',
     });
     expect(mcpMocks.listTools).not.toHaveBeenCalled();
+  });
+
+  it('keeps valid tools when one published descriptor is malformed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ catalogState: 'ready', unavailableCatalogFamilies: [] }),
+    })));
+    mcpMocks.listTools.mockResolvedValueOnce({
+      tools: [{
+        name: 'cbm.search_graph',
+        description: 'Search CodeGraph.',
+        inputSchema: { type: 'object', properties: {} },
+        _meta: { liquidaitySource: {
+          sourceId: 'cbm', namespace: 'cbm', providerToolName: 'search_graph',
+          connectionKind: 'external-mcp', publication: 'external-mcp', access: 'read',
+          available: true, grantEligible: true,
+          canonicalInputSchema: { type: 'object', properties: {} },
+          serverInjectedArguments: [], dispatcherContextArguments: [],
+          dispatcherOwner: 'app.mcp_host._call_cbm', authenticatedProjection: true,
+        } },
+      }, {
+        name: 'graphiti.search_nodes',
+        description: 'Missing source metadata.',
+        inputSchema: { type: 'object', properties: {} },
+      }],
+    });
+
+    await expect(readPythonAgentMcpCatalog()).resolves.toMatchObject({
+      state: 'available',
+      tools: [{ name: 'cbm.search_graph' }],
+      toolFailures: {
+        'graphiti.search_nodes': 'python_agent_mcp_source_metadata_missing: graphiti.search_nodes',
+      },
+    });
   });
 
   it('late-binds the exact authorized Card-runtime catalog before probing its result', async () => {
@@ -158,6 +203,15 @@ describe('Python Agent MCP client', () => {
             namespace: 'cbm',
             providerToolName: 'search_graph',
             connectionKind: 'external-mcp',
+            publication: 'external-mcp',
+            access: 'read',
+            available: true,
+            grantEligible: true,
+            canonicalInputSchema: { type: 'object', properties: {} },
+            serverInjectedArguments: [],
+            dispatcherContextArguments: [],
+            dispatcherOwner: 'app.mcp_host._call_cbm',
+            authenticatedProjection: true,
           },
         },
       }],
@@ -217,6 +271,15 @@ describe('Python Agent MCP client', () => {
             namespace: 'cbm',
             providerToolName: 'search_graph',
             connectionKind: 'external-mcp',
+            publication: 'external-mcp',
+            access: 'read',
+            available: true,
+            grantEligible: true,
+            canonicalInputSchema: { type: 'object', properties: {} },
+            serverInjectedArguments: [],
+            dispatcherContextArguments: [],
+            dispatcherOwner: 'app.mcp_host._call_cbm',
+            authenticatedProjection: true,
           },
         },
       }],

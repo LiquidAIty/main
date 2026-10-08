@@ -1,0 +1,640 @@
+"""FastAPI app assembly — mounts all routes, serves dashboard, initializes DB,
+starts background loop."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from collections import defaultdict, deque
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional, Union
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from engraphis import __version__
+from engraphis.local_auth import bearer_ok
+from engraphis.config import settings
+from engraphis.engines import reweight, thoughts as thoughts_engine
+from engraphis.engines.embedder import warmup as _warmup_embedder
+from engraphis.logging_setup import configure_logging
+from engraphis.netutil import client_ip
+from engraphis.routes.memory import router as memory_router
+from engraphis.routes.vault import (
+    SINGLE_UPLOAD_REQUEST_BYTES,
+    VAULT_UPLOAD_REQUEST_BYTES,
+    router as vault_router,
+)
+from engraphis.stores import get_conn, init_db
+from engraphis.core.interfaces import SearchFilter
+
+logger = logging.getLogger("engraphis")
+
+
+_background_task: Optional[asyncio.Task] = None
+# Readiness records startup state and re-checks the same legacy warmup on every probe,
+# so a transient failure can recover without mixing in the v2 fallback backend.
+_embedder_ok: bool = False
+_UPLOAD_LIMIT_PATHS = frozenset({
+    "/api/workspaces/import-files",
+    "/memory/vaults/upload-folder",
+    "/memory/vaults/upload-folder-smart",
+    "/memory/documents/upload",
+})
+_JSON_REQUEST_BYTES = 8 * 1024 * 1024
+_REQUIRED_LEGACY_TABLES = frozenset({
+    "memories",
+    "chunks",
+    "entities",
+    "edges",
+    "graph_documents",
+    "document_entities",
+    "document_edges",
+    "events",
+    "interactions",
+    "thoughts",
+    "jobs",
+    "vaults",
+})
+
+
+class LegacyReferenceConfigurationError(RuntimeError):
+    """The retired v1 server was not given a safely isolated database."""
+
+
+def _canonical_db_path(value: Union[str, Path]) -> Path:
+    """Return a comparison-safe database path without requiring it to exist."""
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def _activate_legacy_reference_db(legacy_db_path: Union[str, Path]) -> str:
+    """Point the v1-only store at an explicitly separate compatibility database.
+
+    The legacy routes use the process-global v1 ``settings.db_path``.  They are safe
+    only in their own process, and only after this guard has rejected the active v2
+    database.  Dropping any thread-local v1 connection also prevents a prior test or
+    embedder call from keeping the old database open after the switch.
+    """
+    if not str(legacy_db_path).strip():
+        raise LegacyReferenceConfigurationError(
+            "the v1 reference requires an explicit --legacy-db path"
+        )
+    legacy_path = _canonical_db_path(legacy_db_path)
+    current_v2_path = _canonical_db_path(settings.db_path)
+    if legacy_path == current_v2_path:
+        raise LegacyReferenceConfigurationError(
+            "the v1 reference database must differ from the current v2 database "
+            "(%s)" % current_v2_path
+        )
+
+    # The v1 store is intentionally process-global.  This factory is therefore an
+    # internal compatibility boundary, not a way to mount v1 beside v2 in one server.
+    from engraphis import stores as legacy_stores
+
+    connection = getattr(legacy_stores._local, "conn", None)
+    if connection is not None:
+        connection.close()
+        del legacy_stores._local.conn
+    settings.db_path = str(legacy_path)
+    return settings.db_path
+
+
+def create_legacy_reference_app(*, legacy_db_path: Union[str, Path]) -> FastAPI:
+    """Build the internal v1 compatibility application on an isolated database.
+
+    This is deliberately distinct from the public v2 server and dashboard launchers.
+    Callers must supply the legacy database explicitly; using the configured v2
+    database is rejected before any schema initialization can occur.
+    """
+    _activate_legacy_reference_db(legacy_db_path)
+    return _build_legacy_reference_app()
+
+
+class _RequestBodyTooLarge(Exception):
+    """Internal signal used by the streaming ASGI request limiter."""
+
+
+class _VaultUploadLimitMiddleware:
+    """Reject oversized multipart and JSON requests before body binding.
+
+    The legacy name is retained for import compatibility. Each upload path selects its
+    own finite transport limit; other JSON write requests use a separate envelope cap.
+    """
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope["path"].rstrip("/")
+        headers = scope.get("headers", [])
+        content_type = next(
+            (
+                value.decode("latin-1").split(";", 1)[0].strip().lower()
+                for name, value in headers
+                if name.lower() == b"content-type"
+            ),
+            "",
+        )
+        if path in _UPLOAD_LIMIT_PATHS:
+            max_bytes = self.max_bytes
+            if path == "/memory/documents/upload":
+                max_bytes = min(max_bytes, SINGLE_UPLOAD_REQUEST_BYTES)
+        elif (
+            scope["method"] in {"POST", "PUT", "PATCH", "DELETE"}
+            and (content_type == "application/json" or content_type.endswith("+json"))
+        ):
+            max_bytes = min(self.max_bytes, _JSON_REQUEST_BYTES)
+        else:
+            await self.app(scope, receive, send)
+            return
+
+        raw_lengths = [
+            value for name, value in scope.get("headers", [])
+            if name.lower() == b"content-length"
+        ]
+        if len(raw_lengths) > 1:
+            await JSONResponse(
+                {"error": "invalid content-length"},
+                status_code=400,
+            )(scope, receive, send)
+            return
+        if raw_lengths:
+            try:
+                declared_length = int(raw_lengths[0])
+            except (TypeError, ValueError):
+                declared_length = -1
+            if declared_length < 0:
+                await JSONResponse(
+                    {"error": "invalid content-length"},
+                    status_code=400,
+                )(scope, receive, send)
+                return
+            if declared_length > max_bytes:
+                await self._too_large(scope, receive, send, max_bytes)
+                return
+
+        received = 0
+        limit_exceeded = False
+
+        async def limited_receive():
+            nonlocal limit_exceeded, received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > max_bytes:
+                    limit_exceeded = True
+                    raise _RequestBodyTooLarge
+            return message
+
+        async def guarded_send(message):
+            # FastAPI converts arbitrary body-parser exceptions into a generic 400.
+            # Suppress that replacement response once our receive wrapper has observed
+            # the real cause; the middleware emits the canonical 413 below.
+            if limit_exceeded:
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except _RequestBodyTooLarge:
+            pass
+        if limit_exceeded:
+            await self._too_large(scope, receive, send, max_bytes)
+
+    async def _too_large(self, scope, receive, send, max_bytes):
+        await JSONResponse(
+            {
+                "error": "request body too large",
+                "max_bytes": max_bytes,
+            },
+            status_code=413,
+        )(scope, receive, send)
+
+
+def _legacy_schema_ready() -> bool:
+    """Return whether the configured database contains the complete v1 schema."""
+    rows = get_conn().execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()
+    present = {row["name"] for row in rows}
+    return _REQUIRED_LEGACY_TABLES.issubset(present)
+
+
+def _embedder_ready() -> bool:
+    """Probe the exact legacy embedder used by v1 recall."""
+    global _embedder_ok
+    try:
+        _embedder_ok = bool(_warmup_embedder())
+    except Exception as exc:
+        logger.warning("Readiness: legacy embedder failed (%s)", type(exc).__name__)
+        _embedder_ok = False
+    return _embedder_ok
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Startup/shutdown for the app (replaces the deprecated @app.on_event hooks).
+
+    Startup: initialize the DB in a worker (deferred so the CLI can set
+    ENGRAPHIS_DB_PATH first), then start the background consolidation loop unless
+    it's disabled. Shutdown: cancel and await the loop."""
+    global _background_task, _embedder_ok
+    _background_task = None
+    background_task: Optional[asyncio.Task] = None
+    await asyncio.to_thread(init_db)
+    _embedder_ok = await asyncio.to_thread(_warmup_embedder)
+    if settings.loop_interval > 0:
+        background_task = asyncio.create_task(
+            _consciousness_loop(
+                enable_consolidation=not bool(getattr(app.state, "legacy_reference", False))
+            )
+        )
+        _background_task = background_task
+        logger.info("Background consciousness loop started (interval=%ds)", settings.loop_interval)
+    else:
+        logger.info("Background loop disabled (ENGRAPHIS_LOOP_INTERVAL=0)")
+    try:  # one-line "update available" notice (background, fail-silent, opt-out)
+        from engraphis import update_check
+        update_check.emit_startup_notice(logger.info)
+    except Exception:  # noqa: BLE001 - never block server startup
+        pass
+    try:
+        yield
+    finally:
+        if background_task is not None:
+            background_task.cancel()
+            try:
+                await background_task
+            except asyncio.CancelledError:
+                pass
+        if _background_task is background_task:
+            _background_task = None
+
+
+def _build_legacy_reference_app() -> FastAPI:
+    """Build the v1 compatibility/reference FastAPI application."""
+    configure_logging()
+    # Hosted JSON logging is credential-redacting. Keep this after the legacy logging
+    # setup so it replaces that formatter, and pair it with the launcher's log_config=None
+    # so Uvicorn cannot replace it again after app construction.
+    from engraphis.observability import configure_structured_logging
+    configure_structured_logging()
+
+    app = FastAPI(
+        title="Engraphis",
+        description="Self-hosted AI memory engine for agents — Ebbinghaus decay, "
+                    "interaction-aware recall, bi-temporal facts, and background "
+                    "consolidation. Local-first; you bring the LLM.",
+        version=__version__,
+        lifespan=_lifespan,
+        docs_url=None,
+        redoc_url=None,
+    )
+    # This app is the retired v1 compatibility surface.  Its lifespan still owns the
+    # legacy decay/thought loop, but it must never ask the v2 service factory to open
+    # this v1 database: MemoryService.create() would auto-migrate the file in place.
+    app.state.legacy_reference = True
+
+    # Local-first CORS: loopback by default, override with ENGRAPHIS_CORS_ORIGINS.
+    # Credentials are only allowed when the allow-list is explicit (never with "*").
+    _wildcard = "*" in settings.cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=not _wildcard,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(
+        _VaultUploadLimitMiddleware,
+        max_bytes=VAULT_UPLOAD_REQUEST_BYTES,
+    )
+
+    # Bearer-token auth when ENGRAPHIS_API_TOKEN is set; loopback-only otherwise.
+    # Health-type probes (liveness + readiness) stay unauthenticated by convention.
+    _PUBLIC_PROBES = frozenset({
+        "/memory/health",
+        "/api/health",
+        "/api/ready",
+        "/openapi.json",
+    })
+
+    def _public_path(path: str) -> bool:
+        # ``/memory/health/*`` contains owner data such as titles and content previews;
+        # only the exact liveness probe is public. Static files remain prefix-matched.
+        return path in _PUBLIC_PROBES or path == "/static" or path.startswith("/static/")
+
+    from engraphis.netutil import is_local_request
+
+    @app.middleware("http")
+    async def _require_token(request: Request, call_next):
+        token = settings.api_token
+        if (request.method == "OPTIONS" or request.url.path == "/"
+                or _public_path(request.url.path)):
+            return await call_next(request)
+        if token:
+            if not bearer_ok(request.headers.get("authorization"), token):
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+            return await call_next(request)
+
+        # Zero-config access is loopback-only, matching dashboard_app's gate.  Without
+        # this backstop a bind-all deployment (docker-entrypoint.sh defaults
+        # ENGRAPHIS_HOST to "::") publishes /memory/export and /memory/admin/* to every
+        # reachable peer.  scripts/graph_server.py already refuses the equivalent
+        # non-loopback start; this applies the same rule to the v1 surface.
+        if not is_local_request(request):
+            return JSONResponse(
+                {
+                    "error": "remote access is disabled until ENGRAPHIS_API_TOKEN is set",
+                    "auth": "local-token-required",
+                },
+                status_code=403,
+            )
+        return await call_next(request)
+
+    # Optional in-process rate limiting (per-client-IP sliding window). Disabled unless
+    # ENGRAPHIS_RATE_LIMIT > 0. In-memory/per-process — fine for one self-hosted instance;
+    # front it with a reverse proxy for multi-process or distributed limits.
+    if settings.rate_limit > 0:
+        _hits: dict[str, deque] = defaultdict(deque)
+        _PRUNE_EVERY = 60  # seconds between cleanup sweeps
+        _last_prune = time.monotonic()
+
+        @app.middleware("http")
+        async def _rate_limit(request: Request, call_next):
+            nonlocal _last_prune
+            if request.method == "OPTIONS" or _public_path(request.url.path):
+                return await call_next(request)
+            client = client_ip(request)
+            now = time.monotonic()
+            # Periodically prune stale IP entries to prevent unbounded growth.
+            if now - _last_prune > _PRUNE_EVERY:
+                cutoff_all = now - settings.rate_window
+                stale = [k for k, dq in _hits.items() if not dq or dq[-1] < cutoff_all]
+                for k in stale:
+                    del _hits[k]
+                _last_prune = now
+            dq = _hits[client]
+            cutoff = now - settings.rate_window
+            while dq and dq[0] <= cutoff:
+                dq.popleft()
+            if len(dq) >= settings.rate_limit:
+                retry = int(dq[0] + settings.rate_window - now) + 1
+                return JSONResponse({"error": "rate limit exceeded"}, status_code=429,
+                                    headers={"Retry-After": str(retry)})
+            dq.append(now)
+            return await call_next(request)
+
+    # Request-ID + access log. Defined last so it is the *outermost* middleware and
+    # also covers requests short-circuited by auth/rate-limit above. An incoming
+    # X-Request-ID is propagated (so a fronting proxy's id survives); otherwise one
+    # is assigned. Echoed on the response for client-side correlation.
+    @app.middleware("http")
+    async def _request_log(request: Request, call_next):
+        request_id = request.headers.get("x-request-id", "").strip() or uuid.uuid4().hex
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration_ms = round((time.perf_counter() - start) * 1000, 1)
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "%s %s -> %d (%.1fms)",
+            request.method, request.url.path, response.status_code, duration_ms,
+            extra={"request_id": request_id, "method": request.method,
+                   "path": request.url.path, "status": response.status_code,
+                   "duration_ms": duration_ms},
+        )
+        return response
+
+    # Baseline security response headers, outermost of all (registered after the log
+    # middleware, so it wraps it) — see engraphis.http_security.
+    from engraphis import http_security
+    http_security.install(app)
+
+    # DB init + background loop lifecycle live in _lifespan (above); see FastAPI(lifespan=…).
+    app.include_router(memory_router)
+    app.include_router(vault_router)
+
+    # ── probes (unauthenticated; see _PUBLIC_PROBES) ────────────────────────────
+    @app.get("/api/health")
+    async def api_health():
+        """Liveness: the process is up and serving. No dependency checks."""
+        return {"status": "ok", "timestamp": time.time(), "service": "engraphis"}
+
+    @app.get("/api/ready")
+    async def api_ready():
+        """Readiness: the complete legacy schema exists and the exact v1 embedder
+        initializes. 503 until both hold, so orchestrators hold traffic."""
+        checks = {"db": False, "embedder": False}
+        try:
+            checks["db"] = await asyncio.to_thread(_legacy_schema_ready)
+        except Exception as exc:
+            logger.warning("Readiness: db check failed (%s)", type(exc).__name__)
+        checks["embedder"] = await asyncio.to_thread(_embedder_ready)
+        ready = all(checks.values())
+        return JSONResponse({"ready": ready, "checks": checks, "version": __version__},
+                            status_code=200 if ready else 503)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def reference_home():
+        """Serve an explicit API-only compatibility notice, never the v2 dashboard."""
+        return HTMLResponse(
+            """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engraphis v1 reference</title></head>
+<body><main><h1>Engraphis v1 reference API</h1>
+<p>This compatibility server is API-only and uses an isolated legacy database.</p>
+<p>Use <code>engraphis-dashboard</code> or <code>engraphis-server</code> for the
+current v2 dashboard and service.</p></main></body></html>"""
+        )
+
+
+    return app
+
+
+async def _consciousness_loop(*, enable_consolidation: bool = True) -> None:
+    """Phase 2 + Phase 4 background cycle: decay → thought synthesis → reweight.
+
+    Phase 3 (consolidation) is an opt-in extra: when ``ENGRAPHIS_LOOP_CONSOLIDATE`` is
+    set to N > 0 the loop runs one local consolidation sweep at most once every N ticks.
+    The sweep is gated behind a cheap candidate pre-check so an idle database never pays
+    for the workspace-wide cluster scan, and the expensive work itself runs in a worker
+    thread (``asyncio.to_thread``) so the event loop — and therefore every request — is
+    never blocked by it. Any consolidation failure is logged and swallowed: it must never
+    kill the loop or poison the decay/thought cadence.
+    """
+    _consecutive_errors = 0
+    _ticks = 0
+    while True:
+        try:
+            await asyncio.sleep(settings.loop_interval)
+            _ticks += 1
+            touched = await asyncio.to_thread(reweight.decay_pass, namespace=None)
+            if touched:
+                logger.info("Decay pass: %d memories reweighted", touched)
+            result = await asyncio.to_thread(
+                thoughts_engine.synthesize_thoughts,
+                namespace=None,
+                max_chunks=settings.loop_top_k,
+                persist=True,
+            )
+            if result.get("persisted"):
+                # A synthesized thought is memory content. Never copy it into logs.
+                logger.info(
+                    "Thought synthesized and persisted (sources=%d)",
+                    int(result.get("source_count") or 0),
+                )
+            if (enable_consolidation and settings.loop_consolidate > 0
+                    and _ticks % settings.loop_consolidate == 0):
+                await _maybe_consolidate()
+            _consecutive_errors = 0
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _consecutive_errors += 1
+            backoff = min(60, settings.loop_interval * (2 ** _consecutive_errors))
+            logger.error("Consciousness loop error (%s), backing off %ds",
+                         type(exc).__name__, backoff)
+            await asyncio.sleep(backoff)
+
+
+def _loop_consolidation_candidates(engine) -> int:
+    """Cheap pre-check: count live, prompt-eligible memories a sweep could act on.
+
+    The consolidation sweep itself scans up to ``DISTILL_SCAN_LIMIT`` episodic records
+    and runs a Jaccard cluster pass — expensive work that should never run when there is
+    nothing to do. This mirrors the sweep's two inputs with two bounded COUNT(*) queries
+    (episodic records for pass 1 distillation, transient records for pass 2 archival;
+    both in the same maintenance scopes the sweep uses, prompt-only like the sweep's
+    reads). Pinned memories are ignored here on purpose: they are archival-exempt, and
+    counting them could only turn an empty sweep into a non-empty pre-check.
+    """
+    from engraphis.core.consolidate import MAINTENANCE_SCOPES, TRANSIENT_TYPES
+    from engraphis.core.interfaces import MemoryType
+
+    count = 0
+    for mtype in (MemoryType.EPISODIC, *TRANSIENT_TYPES):
+        count += store_count_prompt_eligible(
+            engine.store,
+            SearchFilter(scopes=MAINTENANCE_SCOPES, mtypes=[mtype]),
+        )
+    return count
+
+
+def store_count_prompt_eligible(store, flt: SearchFilter) -> int:
+    """Count live memories matching ``flt`` that are also prompt-eligible.
+
+    ``store.count_memories`` does not know about the provenance/review-state gate, so a
+    pending-only workspace would otherwise pass the pre-check while the sweep (whose
+    reads are ``prompt_only=True``) sees nothing. Kept as a module-level helper so tests
+    can exercise the SQL against a real store.
+    """
+    from engraphis.core.store import _row_is_prompt_eligible
+
+    where, params = store._where(flt, include_invalid=False)
+    sql = "SELECT provenance, metadata FROM memories"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    rows = store.conn.execute(sql, params).fetchall()
+    return sum(1 for row in rows if _row_is_prompt_eligible(row["provenance"], row["metadata"]))
+
+
+def _consolidation_candidates_exist(engine) -> bool:
+    """True when at least one workspace holds consolidation-eligible memories."""
+    return _loop_consolidation_candidates(engine) > 0
+
+
+def _run_loop_consolidation(engine) -> None:
+    """One deterministic (LLM-free) consolidation sweep over every workspace.
+
+    Runs inside ``asyncio.to_thread`` from the loop. The sweep is a blocking, CPU-bound
+    scan plus SQLite writes, so it must never run on the event loop. Every workspace in
+    the database is swept with no LLM (``structured``/``profiles``/``infer`` stay off) —
+    the same conservative defaults the explicit ``scripts/consolidate.py`` uses.
+    """
+    rows = engine.store.conn.execute("SELECT id, name FROM workspaces").fetchall()
+    workspaces = [(row["id"], row["name"]) for row in rows]
+    for wid, name in workspaces:
+        try:
+            report = engine.consolidate(workspace_id=wid, dry_run=False)
+            created = len(report.get("digests_created") or [])
+            archived = len(report.get("archived") or [])
+            if created or archived:
+                logger.info(
+                    "Auto-consolidation: workspace '%s' distilled=%d archived=%d",
+                    name, created, archived,
+                )
+        except Exception as exc:  # noqa: BLE001 — one workspace must not block the rest
+            logger.error("Auto-consolidation failed for workspace '%s' (%s)",
+                         name, type(exc).__name__)
+
+
+async def _maybe_consolidate() -> None:
+    """Opt-in Phase 3: run the local consolidation sweep when candidates exist.
+
+    Fail-safe by construction: every failure path is caught and logged so an error can
+    never propagate into (and kill) ``_consciousness_loop``. The pre-check and the sweep
+    both run in worker threads — the check is cheap but still a SQL scan, and the sweep
+    is deliberately heavy.
+    """
+    try:
+        from engraphis.routes import v2_api
+
+        svc = v2_api.service()
+        engine = svc.engine
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auto-consolidation skipped (service unavailable: %s)",
+                       type(exc).__name__)
+        return
+    try:
+        has_candidates = await asyncio.to_thread(_consolidation_candidates_exist, engine)
+        if not has_candidates:
+            return
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Auto-consolidation pre-check failed (%s)", type(exc).__name__)
+        return
+    try:
+        await asyncio.to_thread(_run_loop_consolidation, engine)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Auto-consolidation sweep failed (%s)", type(exc).__name__)
+
+
+def _create_retired_direct_app() -> FastAPI:
+    """Retire the old ``uvicorn engraphis.app:app`` deployment target safely."""
+    retired = FastAPI(
+        title="Engraphis v1 reference retired",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+
+    @retired.api_route(
+        "/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        include_in_schema=False,
+    )
+    async def legacy_reference_retired(path: str):
+        return JSONResponse(
+            {
+                "error": "legacy v1 reference application is retired",
+                "detail": (
+                    "Use engraphis-dashboard or engraphis-server for v2. "
+                    "The internal v1 reference requires "
+                    "python -m scripts.legacy_reference --legacy-db <separate-path>."
+                ),
+            },
+            status_code=410,
+        )
+
+    return retired
+
+
+# Keep the historical ASGI import target inert.  A direct ``engraphis.app:app`` launch
+# must never initialize the v1 schema in the configured (normally v2) database.
+app = _create_retired_direct_app()

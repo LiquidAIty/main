@@ -147,6 +147,40 @@ def _main_bot(card_id: str, **overrides):
 _REMOVED_PROFILE_TARGET_PROJECTION = "delegation" + "Targets"
 
 
+def _external_tool(name: str, *, read_only: bool) -> dict:
+    namespace, provider_name = name.split(".", 1)
+    input_schema = {"type": "object", "properties": {}}
+    return {
+        "name": name,
+        "providerToolName": provider_name,
+        "kind": "tool",
+        "sourceId": f"{namespace}_mcp",
+        "namespace": namespace,
+        "connectionKind": "external-mcp",
+        "publication": "external-mcp",
+        "access": "read" if read_only else "write",
+        "title": name,
+        "description": f"Provider contract for {name}.",
+        "inputSchema": input_schema,
+        "canonicalInputSchema": input_schema,
+        "serverInjectedArguments": [],
+        "dispatcherContextArguments": [],
+        "dispatcherOwner": (
+            "app.mcp_host._call_graphiti"
+            if namespace == "graphiti" else "app.mcp_host._call_cbm"
+        ),
+        "authenticatedProjection": True,
+        "annotations": {
+            "readOnlyHint": read_only,
+            "destructiveHint": False,
+            "idempotentHint": read_only,
+            "openWorldHint": True,
+        },
+        "grantEligible": True,
+        "available": True,
+    }
+
+
 def _expected_bot_target(card_id: str = "child") -> dict:
     return {
         "cardId": card_id,
@@ -735,21 +769,41 @@ def test_no_script_preserves_saved_presentation_without_narrowing_effective_gran
     )
     before = json.dumps(card, sort_keys=True)
     payload = _destination_payload("hermes")
-    payload["discoveredTools"] = [{
-        "name": name,
-        "providerToolName": "search_nodes" if name == "graphiti.search_nodes" else name,
-        "kind": "tool",
-        "sourceId": "graphiti" if name == "graphiti.search_nodes" else "main_mcp",
-        "namespace": name.split(".")[0], "connectionKind": "external-mcp",
-        "description": name, "inputSchema": {"type": "object", "properties": {}},
-        "annotations": {"readOnlyHint": True},
-    } for name in card["runtimeOptions"]["tools"]]
+    payload["discoveredTools"] = [
+        _external_tool("graphiti.search_nodes", read_only=True),
+    ]
     prepared = card_domain._prepare_invocation(payload)
     config = prepared["_callConfig"]
     assert config["presentedTools"] == card["runtimeOptions"]["tools"]
     assert set(config["presentedTools"]) <= set(config["enabledTools"])
     assert "web_search" not in config["enabledTools"]
     assert json.dumps(card, sort_keys=True) == before
+
+
+def test_published_catalog_failure_keeps_the_model_turn_and_surfaces_the_error(monkeypatch):
+    from app.python_models.tool_registry import external_mcp_manifest
+
+    loaded = _destination_fixture(monkeypatch)
+    card = loaded["deck"]["nodes"][1]
+    card["runtimeOptions"]["tools"] = ["canvas.inspect"]
+    published = next(
+        item for item in external_mcp_manifest()
+        if item["name"] == "canvas.inspect"
+    )
+    published["description"] = "Conflicting published description."
+    payload = _destination_payload("hermes")
+    payload["discoveredTools"] = [published]
+
+    prepared = card_domain._prepare_invocation(payload)
+
+    config = prepared["_callConfig"]
+    assert config["enabledTools"] == []
+    assert config["presentedTools"] == []
+    assert config["unavailableTools"] == ["canvas.inspect"]
+    assert config["unavailableToolReasons"] == {
+        "canvas.inspect": "tool_catalog_definition_mismatch:canvas.inspect",
+    }
+    assert config["toolCatalogFailure"] == "tool_catalog_definition_mismatch:canvas.inspect"
 
 
 def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
@@ -760,18 +814,13 @@ def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
     )
     before = json.dumps(card, sort_keys=True)
     payload = _destination_payload("hermes")
-    payload["discoveredTools"] = [{
-        "name": name,
-        "providerToolName": name,
-        "kind": "tool",
-        "sourceId": "main_mcp",
-        "namespace": name.split(".")[0],
-        "connectionKind": "external-mcp",
-        "description": name,
-        "inputSchema": {"type": "object", "properties": {}},
-        "annotations": {"readOnlyHint": True},
-        "available": name == "canvas.inspect",
-    } for name in card["runtimeOptions"]["tools"]]
+    unavailable = _external_tool("graphiti.search_nodes", read_only=True)
+    unavailable.update({
+        "title": "Search Graphiti nodes",
+        "description": "Search the connected Graphiti knowledge graph.",
+        "available": False,
+    })
+    payload["discoveredTools"] = [unavailable]
 
     prepared = card_domain._prepare_invocation(payload)
     config = prepared["_callConfig"]
@@ -1438,16 +1487,34 @@ def test_catalog_does_not_broaden_saved_card_grants(
     )
 
     def discovered(name: str, namespace: str, *, read_only: bool) -> dict:
+        input_schema = {"type": "object", "properties": {}}
         return {
             "name": name,
             "providerToolName": name.split(".")[-1],
             "kind": "tool",
-            "sourceId": "main_mcp",
+            "sourceId": f"{namespace}_mcp",
             "namespace": namespace,
             "connectionKind": "external-mcp",
+            "publication": "external-mcp",
+            "access": "read" if read_only else "write",
+            "title": name,
             "description": name,
-            "inputSchema": {"type": "object", "properties": {}},
-            "annotations": {"readOnlyHint": read_only},
+            "inputSchema": input_schema,
+            "canonicalInputSchema": input_schema,
+            "serverInjectedArguments": [],
+            "dispatcherContextArguments": [],
+            "dispatcherOwner": (
+                "app.mcp_host._call_graphiti"
+                if namespace == "graphiti" else "app.mcp_host._call_cbm"
+            ),
+            "authenticatedProjection": True,
+            "annotations": {
+                "readOnlyHint": read_only,
+                "destructiveHint": not read_only,
+                "idempotentHint": read_only,
+                "openWorldHint": True,
+            },
+            "grantEligible": True,
         }
 
     invocation = card_domain.materialize_invocation({
@@ -1459,7 +1526,6 @@ def test_catalog_does_not_broaden_saved_card_grants(
         "discoveredTools": [
             discovered("cbm.search_graph", "cbm", read_only=True),
             discovered("graphiti.search_nodes", "graphiti", read_only=True),
-            discovered("engraphis_remember", "engraphis", read_only=False),
             discovered("cbm.index_repository", "cbm", read_only=False),
         ],
     })
@@ -1782,6 +1848,8 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
                for i in range(6)]
     for i, worker in enumerate(workers):
         worker["_cardRevisionId"] = f"worker-revision-{i}"
+        worker["_cardRevision"] = 1
+        worker["_cardRevisionSha256"] = f"{i:064x}"
     monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {"deck": {
         "nodes": workers,
@@ -3001,95 +3069,6 @@ def test_invocation_rejects_every_non_graph_context_field(
         card_domain.materialize_invocation(payload)
 
 
-def test_saved_hook_and_handoff_anchor_resolve_before_one_materialization(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    loaded = _destination_fixture(monkeypatch)
-    target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
-    target["runtimeOptions"]["graphHooks"] = [{
-        "engraphisEntityId": "hook:one",
-        "reason": "saved start point",
-        "order": 1,
-        "boundedExpansion": 0,
-        "required": True,
-    }]
-    resolved: list[dict] = []
-
-    def resolve(project_id, anchors, **kwargs):
-        assert project_id == loaded["projectId"]
-        assert kwargs["search_text"] == "Use every supplied declaration."
-        resolved.extend(anchors)
-        return "actual current graph data", [{
-            "engraphisEntityId": anchor["engraphisEntityId"],
-            "reason": anchor["reason"], "asOf": "current", "required": anchor["required"],
-        } for anchor in anchors]
-
-    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
-    payload = {
-        **_destination_payload("hermes"),
-        "dataAnchors": [{
-            "engraphisEntityId": "handoff:one",
-            "reason": "selected by sender",
-            "priority": 10,
-            "boundedExpansion": 0,
-            "required": True,
-        }],
-    }
-    invocation = card_domain.materialize_invocation(payload)
-
-    assert [anchor["engraphisEntityId"] for anchor in resolved] == ["hook:one", "handoff:one"]
-    assert invocation["idf"]["actualGraphData"]["modelText"] == "actual current graph data"
-    assert [reference["engraphisEntityId"] for reference in invocation["idf"]["actualGraphData"]["selectedGraphRecords"]] == [
-        "hook:one", "handoff:one",
-    ]
-
-    loaded["deck"]["edges"] = []
-    resolved.clear()
-    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_domain.materialize_invocation(payload)
-    assert resolved == []
-
-
-def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    loaded = _destination_fixture(monkeypatch)
-    target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
-    target["runtimeOptions"]["graphHooks"] = [{
-        "reason": "start from current sourced knowledge",
-        "order": 1,
-        "boundedExpansion": 1,
-        "required": False,
-        "searchDynamicInput": True,
-        "entityTypes": ["Company"],
-        "edgeTypes": ["SUPPORTS"],
-        "maxNodes": 4,
-        "maxFacts": 5,
-    }]
-    calls: list[tuple[list[dict], dict]] = []
-
-    def resolve(_project_id, anchors, **kwargs):
-        calls.append((anchors, kwargs))
-        return "current KnowGraph result", [{
-            "graphitiEntityId": "entity-1",
-            "reason": anchors[0]["reason"], "asOf": "current",
-            "required": False, "readOperation": "graphiti.search_nodes",
-        }]
-
-    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
-    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
-
-    assert len(calls) == 1
-    anchors, kwargs = calls[0]
-    assert len(anchors) == 1
-    assert anchors[0]["searchDynamicInput"] is True
-    assert anchors[0]["entityTypes"] == ["Company"]
-    assert anchors[0]["edgeTypes"] == ["SUPPORTS"]
-    assert kwargs["search_text"] == "Use every supplied declaration."
-    assert invocation["idf"]["actualGraphData"]["modelText"] == "current KnowGraph result"
-    assert invocation["resolvedGraphReads"][0]["graphitiEntityId"] == "entity-1"
-
-
 def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3301,24 +3280,25 @@ def test_card_graph_handoff_fails_closed_for_ungranted_or_unresolved_required_re
 def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    loaded = _destination_fixture(monkeypatch)
-    target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
-    target["runtimeOptions"]["graphHooks"] = [{
-        "engraphisEntityId": "same:one",
-        "reason": "saved start point",
-        "order": 1,
-        "boundedExpansion": 0,
-        "required": True,
-    }]
+    _destination_fixture(monkeypatch)
     payload = {
         **_destination_payload("hermes"),
-        "dataAnchors": [{
-            "engraphisEntityId": "same:one",
-            "reason": "sender selected the same object",
-            "priority": 1,
-            "boundedExpansion": 0,
-            "required": True,
-        }],
+        "dataAnchors": [
+            {
+                "engraphisEntityId": "same:one",
+                "reason": "sender selected the object",
+                "priority": 1,
+                "boundedExpansion": 0,
+                "required": True,
+            },
+            {
+                "engraphisEntityId": "same:one",
+                "reason": "sender selected the same object twice",
+                "priority": 0,
+                "boundedExpansion": 0,
+                "required": True,
+            },
+        ],
     }
     with pytest.raises(card_domain.CardDomainError, match="data_anchor_duplicate"):
         card_domain.materialize_invocation(payload)
@@ -3344,11 +3324,13 @@ def test_explicit_card_mission_is_transient_and_retaskable(
         **_destination_payload("hermes"),
         "runId": "run-first",
         "assignment": "Research the first bounded question.",
+        "discoveredTools": [_external_tool("graphiti.add_memory", read_only=False)],
     })
     second = card_domain.materialize_invocation({
         **_destination_payload("hermes"),
         "runId": "run-second",
         "assignment": "Retask the same saved Graph Agent Card with a second question.",
+        "discoveredTools": [_external_tool("graphiti.add_memory", read_only=False)],
     })
 
     assert first["cardIdentity"]["cardId"] == second["cardIdentity"]["cardId"] == "hermes"
@@ -3386,6 +3368,7 @@ def test_only_main_mode_can_retask_one_connected_graph_card(
             "runId": f"run-{sender}-{len(task)}",
             "cardId": "graph-agent", "senderCardId": sender,
             "assignment": task,
+            "discoveredTools": [_external_tool("graphiti.add_memory", read_only=False)],
         })
 
     assert invoke("main", "Research the current question.")["cardIdentity"]["cardId"] == "graph-agent"

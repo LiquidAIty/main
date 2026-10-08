@@ -1,0 +1,478 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test + lint (full offline stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install (core + server/mcp/code extras; no torch or SQLCipher)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Commercial manifest + strict-CSP drift gate
+        run: |
+          python scripts/check_commercial_manifest.py
+          python scripts/externalize_dashboard_assets.py
+      - name: Unit tests (full suite — extras-gated tests included)
+        run: |
+          python -c "import fastapi, httpx, mcp, multipart, pydantic, uvicorn"
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/ -q -rs --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+      - name: Retrieval eval gate
+        run: python -m eval.harness --dataset eval/datasets/sample.jsonl --k 5
+      - name: Retrieval eval gate — CodeMem (coding-agent wedge, incl. conflict resolution)
+        run: python -m eval.harness --dataset eval/datasets/codemem.jsonl --k 5
+      - name: Ablation (vector-only vs hybrid)
+        run: python -m eval.ablation
+      - name: Reinforcement state-transition gate
+        run: python -m eval.reinforcement
+      - name: Adversarial memory prompt-boundary gate
+        run: python -m eval.adversarial_memory_security
+      - name: Grounded-recall decision gate
+        run: python -m eval.grounded
+      - name: Code-agent arm gate
+        run: python -m eval.code_arm
+      - name: Evidence contract boundary gate
+        run: python -m eval.evidence_contracts
+
+  typecheck:
+    name: core + backends typecheck (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install typecheck dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Typecheck core and backends (Pyright)
+        run: pyright
+
+  encryption:
+    name: encryption driver gate (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install encryption integration gate
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,encryption]"
+      # sqlcipher3-binary currently cannot coexist safely with the stdlib sqlite
+      # extension during the long general suite. Keep its real driver contract in
+      # this dedicated, short-lived process rather than skipping encryption coverage.
+      - name: Encryption at-rest integration tests
+        run: |
+          python -c "import sqlcipher3; print(sqlcipher3.__file__)"
+          ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}" python -m pytest -o addopts="" tests/test_encrypted_store.py -q -rs --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+
+  core-py39:
+    name: core floor (numpy-only, Python 3.9)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.9"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install (numpy-only core — the minimum supported runtime)
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy "pytest<9"
+      - name: Unit tests (extras-gated tests skip; the core must pass)
+        run: ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/ -q -rs --basetemp="${RUNNER_TEMP}/engraphis-pytest"
+      - name: Retrieval eval gate
+        run: python -m eval.harness --dataset eval/datasets/sample.jsonl --k 5
+      - name: Retrieval eval gate — CodeMem (coding-agent wedge, incl. conflict resolution)
+        run: python -m eval.harness --dataset eval/datasets/codemem.jsonl --k 5
+      - name: Ablation
+        run: python -m eval.ablation
+      - name: Reinforcement state-transition gate
+        run: python -m eval.reinforcement
+      - name: Adversarial memory prompt-boundary gate
+        run: python -m eval.adversarial_memory_security
+      - name: Evidence contract boundary gate
+        run: python -m eval.evidence_contracts
+      - name: Build and smoke installed core artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "build==1.2.2"
+          dist_dir="$RUNNER_TEMP/engraphis-py39-dist"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python -m build --outdir "$dist_dir"
+          index=0
+          for artifact in "$dist_dir"/*.whl "$dist_dir"/*.tar.gz; do
+            index=$((index + 1))
+            venv="$RUNNER_TEMP/engraphis-py39-artifact-$index"
+            python -m venv "$venv"
+            "$venv/bin/python" -m pip install --disable-pip-version-check "$artifact"
+            "$venv/bin/python" -m pip check
+            (
+              cd "$RUNNER_TEMP"
+              "$venv/bin/python" - <<'PY'
+          import pathlib
+          import sys
+
+          import engraphis
+          from engraphis.core.engine import MemoryEngine
+
+          package = pathlib.Path(engraphis.__file__).resolve()
+          assert pathlib.Path(sys.prefix).resolve() in package.parents, package
+          engine = MemoryEngine.create(":memory:")
+          workspace_id = engine.store.get_or_create_workspace("py39-artifact")
+          memory_id = engine.remember(
+              "The Python 3.9 artifact marker is indigo.",
+              workspace_id=workspace_id,
+              resolve_conflicts=False,
+          )
+          result = engine.recall("Python 3.9 artifact marker", workspace_id=workspace_id, k=3)
+          assert any(chunk["id"] == memory_id for chunk in result.chunks)
+          engine.store.close()
+          PY
+              "$venv/bin/engraphis" --help
+              "$venv/bin/engraphis" --version
+              "$venv/bin/engraphis-cli" --help
+            )
+          done
+
+  coverage:
+    name: coverage gate (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]" pytest-cov
+      - name: Coverage run (all extras-gated tests, tracked modules)
+        run: ENGRAPHIS_INDEX_ROOTS="${GITHUB_WORKSPACE}:${RUNNER_TEMP}:$(python -c 'import tempfile; print(tempfile.gettempdir())')" python -m pytest -o addopts="" tests/ -q -rs --basetemp="${RUNNER_TEMP}/engraphis-pytest" --cov=engraphis --cov-report=term-missing --cov-fail-under=60
+
+  hygiene:
+    name: repo hygiene gate (no stray DBs/logs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Reject stray runtime artifacts at repo root
+        run: |
+          stray=$(find . -maxdepth 1 -type f \( -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' \
+            -o -name '*.bak' -o -name '*.log' \) -print)
+          if [ -n "$stray" ]; then
+            echo "Refusing to commit stray runtime artifacts:"; echo "$stray"; exit 1
+          fi
+          echo "repo root clean"
+
+  pi-extension:
+    name: Pi extension (${{ matrix.os }}, Python ${{ matrix.python-version }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+            node-version: "22.19.0"
+          - os: windows-latest
+            python-version: "3.11"
+            node-version: "24"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: integrations/pi/npm-shrinkwrap.json
+      - name: Install the current Smart MCP server
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+      - name: Install and verify the Pi package
+        working-directory: integrations/pi
+        # Windows defaults to pwsh, which reports only the last command's exit code.
+        shell: bash
+        env:
+          ENGRAPHIS_PI_TEST_COMMAND: engraphis-mcp
+        run: |
+          # npm 10 crashes while repairing a nested published shrinkwrap.
+          npm install --global --ignore-scripts npm@11.12.1
+          npm ci --ignore-scripts
+          # The test host's published shrinkwrap overrides this package's nested pin.
+          # Repair that exact leaf in the installed host, preserving its other locked deps.
+          # --omit=dev excludes the host's own authoring tools, not this package's test tools.
+          npm install --prefix node_modules/@earendil-works/pi-coding-agent --ignore-scripts --no-save --omit=dev brace-expansion@5.0.12
+          node -e "require('node:assert/strict').equal(require('./node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion/package.json').version, '5.0.12')"
+          npm run verify
+          npm run test:integration
+          npm audit
+          npm audit --no-package-lock --include=dev
+
+  browser-accessibility:
+    name: browser accessibility smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Install dashboard and browser test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]" "uvicorn[standard]>=0.29"
+          npm ci --ignore-scripts --omit=optional
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Audit the root browser dependency lock
+        run: npm audit --audit-level=high
+      - name: Playwright desktop/mobile, keyboard, CSP, console, and axe checks
+        run: npx playwright test
+      - name: Retain browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: browser-failure-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  docker-gate:
+    # Keeps CI fast: the docker job always runs on push to main, but on PRs only
+    # when image/deployment paths changed (Dockerfile, entrypoint, Railway, source,
+    # pyproject.toml, or this workflow). No third-party actions — plain git diff.
+    name: docker smoke — path gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" \
+              | grep -qE '^(Dockerfile|docker-entrypoint\.sh|docker-compose(\.lan)?\.yml|railway\.json|deploy/|\.dockerignore|engraphis/|scripts/|pyproject\.toml|\.github/workflows/)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  docker-smoke:
+    name: docker build + health smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: docker-gate
+    if: needs.docker-gate.outputs.run == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+      - name: Reject unauthenticated LAN Compose overlay
+        run: |
+          if env -u ENGRAPHIS_API_TOKEN docker compose -f docker-compose.yml -f docker-compose.lan.yml config --quiet; then
+            echo "LAN overlay must require ENGRAPHIS_API_TOKEN"
+            exit 1
+          fi
+      - name: Validate token-protected LAN Compose overlay
+        env:
+          ENGRAPHIS_API_TOKEN: ci-lan-overlay-token
+        run: docker compose -f docker-compose.yml -f docker-compose.lan.yml config --quiet
+      - name: Build image
+        run: docker build -t engraphis:ci .
+      - name: Verify production image OCR runtime
+        run: >-
+          docker run --rm --entrypoint sh engraphis:ci -c
+          'python -c "import PIL, pytesseract" && command -v tesseract >/dev/null &&
+          tesseract --version | head -n 1'
+      - name: Audit the exact production image dependency set
+        # The runtime image intentionally has no pip: it is a build tool whose vendored
+        # dependency snapshot would otherwise remain an unnecessary attack surface. Copy the
+        # exact installed distributions to the runner and audit that set instead of mutating
+        # the production image just to run the audit.
+        run: |
+          set -euo pipefail
+          audit_dir="$(mktemp -d)"
+          container="engraphis-audit-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$audit_dir"
+          }
+          trap cleanup EXIT
+          python -m pip install --disable-pip-version-check --no-cache-dir pip-audit==2.10.1
+          docker create --name "$container" engraphis:ci >/dev/null
+          site_packages=$(docker run --rm engraphis:ci python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+          docker cp "$container:$site_packages/." "$audit_dir"
+          python scripts/pin_installed_audit_requirements.py "$audit_dir" > "$RUNNER_TEMP/published-audit-requirements.txt"
+          python -m pip_audit --vulnerability-service osv --path "$audit_dir"
+          python -m pip_audit --vulnerability-service pypi --no-deps --disable-pip -r "$RUNNER_TEMP/published-audit-requirements.txt"
+      - name: Run container (offline deterministic embedder — no model downloads)
+        run: |
+          docker run -d --name engraphis -p 8700:8700 \
+            -e ENGRAPHIS_EMBED_MODEL= \
+            -e ENGRAPHIS_LOOP_INTERVAL=0 \
+            -e ENGRAPHIS_HOST=0.0.0.0 \
+            -e ENGRAPHIS_SERVICE_MODE=customer \
+            engraphis:ci
+      - name: Wait for /api/health, then check /api/ready
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8700/api/health || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy after ~${i}s"
+              curl -fsS http://127.0.0.1:8700/api/ready
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server never became healthy"
+          docker logs engraphis
+          exit 1
+      - name: Teardown
+        if: always()
+        run: docker rm -f engraphis
+
+  build:
+    name: build + install wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install pinned build and audit tooling
+        run: >-
+          python -m pip install --disable-pip-version-check
+          "build==1.5.0" "pip-audit==2.10.1"
+      - name: Build sdist + wheel and verify a clean install
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python -m build
+          python scripts/verify_distribution_contents.py dist/*
+          python -m venv .audit-venv
+          .audit-venv/bin/python -m pip install --upgrade "pip>=26.1.2" "setuptools>=83"
+          .audit-venv/bin/python -m pip install dist/*.whl
+          AUDIT_SITE=$(.audit-venv/bin/python -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+          python scripts/pin_installed_audit_requirements.py "$AUDIT_SITE" > "$RUNNER_TEMP/published-audit-requirements.txt"
+          python -m pip_audit --vulnerability-service osv --path "$AUDIT_SITE"
+          python -m pip_audit --vulnerability-service pypi --no-deps --disable-pip -r "$RUNNER_TEMP/published-audit-requirements.txt"
+          .audit-venv/bin/python -c "import engraphis, eval.harness; print('wheel imports OK')"
+
+  installed-journeys:
+    name: Installed journey (${{ matrix.os }}, ${{ matrix.profile }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        profile: [mcp, server]
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+      PIP_BUILD_CONSTRAINT: ${{ github.workspace }}/.github/release-constraints.txt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Build the candidate wheel
+        run: |
+          python -m pip install build==1.5.0
+          python -m build --wheel --outdir dist
+      - name: Exercise a clean installed product outside the checkout
+        env:
+          ENGRAPHIS_SMOKE_PROFILE: ${{ matrix.profile }}
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "installed-candidate"
+          root.mkdir()
+          environment = root / "venv"
+          subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
+          executable = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1
+          profile = os.environ["ENGRAPHIS_SMOKE_PROFILE"]
+          # Large server wheels can pause longer than pip's default socket timeout.
+          subprocess.run([str(executable), "-m", "pip", "install",
+                          "--timeout", "120", "--retries", "5",
+                          str(wheels[0].resolve()) + f"[{profile}]"], check=True)
+          subprocess.run([str(executable), "-m", "pip", "check"], check=True)
+          (root / "environment.lock").write_text(subprocess.check_output(
+              [str(executable), "-m", "pip", "freeze", "--all"], text=True), encoding="utf-8")
+          (root / "artifact.json").write_text(json.dumps({
+              "commit": os.environ["GITHUB_SHA"], "profile": profile,
+              "wheel": wheels[0].name,
+              "sha256": hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
+          }), encoding="utf-8")
+          subprocess.run([str(executable), "-m", "scripts.smoke_installed_product",
+                          "--surface", profile, "--output", str(root / "journey.json")],
+                         cwd=root, check=True)
+      - name: Preserve installed journey evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-journey-${{ matrix.os }}-${{ matrix.profile }}
+          path: |
+            ${{ runner.temp }}/installed-candidate/journey.json
+            ${{ runner.temp }}/installed-candidate/environment.lock
+            ${{ runner.temp }}/installed-candidate/artifact.json
+          if-no-files-found: warn

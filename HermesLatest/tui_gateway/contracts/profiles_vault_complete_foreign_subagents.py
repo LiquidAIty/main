@@ -242,6 +242,15 @@ class McpServerEntry(CapabilityEntry):
 class ProfileModelPin(Result):
     provider: str = ""
     default: str = ""
+    openai_runtime: Literal["auto", "codex_app_server"] | None = None
+
+
+class ProfileDelegationSettings(Params):
+    provider: str
+    model: str
+    max_spawn_depth: Literal[1, 2]
+    orchestrator_enabled: bool
+    enabled: bool
 
 
 class ProfilesDescribeResult(Result):
@@ -255,7 +264,8 @@ class ProfilesDescribeResult(Result):
     toolsets: list[ToolsetEntry] = Field(default_factory=list)
     toolsets_pinned: bool = False
     mcp_servers: list[McpServerEntry] = Field(default_factory=list)
-    bot_mode_roster: list[str] | None = None
+    delegation: ProfileDelegationSettings
+    task_mode: Literal["team"] | None = None
 
 
 method("profiles.describe", params=ProfileNameParams, result=ProfilesDescribeResult,
@@ -272,11 +282,13 @@ class ProfilesConfigureParams(ProfileParams):
     description: str | None = None
     model: str | None = None
     provider: str | None = None
+    openai_runtime: Literal["auto", "codex_app_server"] | None = None
     confirm_expensive_model: bool | str | None = None
     disabled_skills: list[str] | None = None
     enabled_toolsets: list[str] | None = None
     enabled_mcp_servers: list[str] | None = None
-    bot_mode_roster: list[str] | None = None
+    delegation: ProfileDelegationSettings | None = None
+    task_mode: Literal["team"] | None = None
 
 
 class UiMetaConflict(Result):
@@ -296,7 +308,8 @@ class ProfilesConfigureApplied(Result):
     skills: bool | None = None
     toolsets: bool | None = None
     mcp_servers: bool | None = None
-    bot_mode_roster: bool | None = None
+    delegation: bool | None = None
+    task_mode: bool | None = None
 
 
 class ProfilesConfigureResult(Result):

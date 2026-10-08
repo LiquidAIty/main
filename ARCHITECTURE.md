@@ -71,7 +71,7 @@ A saved Card is the permanent authority for:
 - provider, model, native profile, and desired native subagent model;
 - runtime kind and mode;
 - enabled state;
-- selected skills, native tools/toolsets, MCP tools, and other capability grants;
+- selected skills, Hermes tools/toolsets, MCP tools, and other capability grants;
 - saved topology and presentation attachments.
 
 The sending user or Card supplies only the current task, images, and selected native references.
@@ -135,10 +135,10 @@ process owner is retained.
 
 ## MCP and Codebase Memory
 
-`apps/python-models/app/mcp_host.py` is the one official MCP host. It freezes one canonical external
-publication view, preserves native tool schemas, and dispatches to the existing Python owners. External
+`apps/python-models/app/mcp_host.py` is the one official MCP host. It derives one authenticated MCP
+projection from the canonical definitions, preserves provider-owned tool schemas, and dispatches to the existing Python owners. External
 account access uses the configured OAuth resource boundary. Internal Hermes Card tools use the same
-protocol-neutral Python operation definitions through the native plugin and do not depend on MCP discovery.
+protocol-neutral Python operation definitions through the Hermes Dynamic Tools callback and do not depend on IDD.
 Catalog/readback tests and loaded internal-tool execution are proven separately from external-client live
 acceptance.
 
@@ -299,6 +299,7 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
+| `Coding-Dev-Tools/engraphis` `1.7.9` from upstream `main` at `619f49860f293ab1826aaf4e11a158bc22f03fcf` | `EngraphisLatest/pyproject.toml`, `requirements.txt`; `engraphis/mcp_server.py::{classic_mcp,smart_mcp,_safe_run_stdio_async}`; `engraphis/{mcp_http_cli,dashboard_app}.py`; `integrations/prime_agent/src/engraphis_prime_agent/mcp_client.py`; corresponding MCP/HTTP/package/Prime tests | Port only Engraphis's MCP binding and bundled client from SDK v1 `FastMCP`/`ClientSession` to official SDK v2 `MCPServer`/`Client(mode="auto")`. Preserve all 39 Classic compatibility handlers, the Smart 9 handlers, memory/Think semantics, schemas, storage, consent, authentication, stdio wire isolation, and HTTP DNS-rebinding protection. LiquidAIty publishes only the Smart 9; advanced Classic actions remain reachable only through Engraphis's own discover/execute gateway. | Upstream MCP, HTTP, consent, dispatch, packaging, contract, annotation, and Prime client tests pass; direct disposable modern (`2026-07-28`) and legacy (`2025-11-25`) clients list the same Smart 9 and complete remember/recall/get/update/discovery/read/conflict/session flows. Fork cost is one mechanical SDK-major port. Remove this row and return `apps/python-models/requirements.txt` to upstream Engraphis when upstream ships the equivalent v2 port; no memory database or saved Card migration is required. |
 | Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: `semanticRelationshipStrength`, `semanticRelationshipWidth`, `semanticRelationshipDistance`, `semanticRelationshipSpring`, `turnHeatIntensity`, `preserveRefreshPosition`, `solarpunkMaterialRecipe`, `paintSolarpunkMaterial`, `materialCacheKey`, `handleNodeClick`, and the existing force/paint/`setData` call sites | Render Jev relationship strength through native edge width/spring/distance, preserve mature coordinates/camera across authoritative revisions, paint transient current-turn heat, and opt explicitly annotated render nodes into one cached Solarpunk material seam: blue-dominant Think with a soft green material accent, orange-dominant Know with a soft yellow material accent, or a unified dark paired surface with separate blue and orange authority treatment. Lavender marks recent turn activity; neutral cyan-white remains available for selection/Focus emphasis, and the opposite authority hue never decorates a single-authority node. Node-provided authority colors and active state key the cache without changing modality. When an embed supplies `onNodeDoubleClick`, the renderer resolves the click pair before either callback so a single-click inspector cannot move or cover the second hit; embeds without that option retain immediate upstream click behavior. Existing public style names, presets, palettes, shared node geometry, graph scene, inspectors, Galaxy black-hole authority/physics, controls, focus behavior, and layout engine remain authoritative. No second style, layout, or graph is introduced. | `ThinkGraphSemanticPhysics.spec.ts` exercises the real renderer internals for all three canonical-color modalities, single-authority secondary accents, lavender turn activity, unified paired material, and active exposure/cache identity; focused renderer and graph-state tests plus client production typecheck cover the retained seams. Sync cost is a small call-site rebase when deliberately adopting a later renderer asset. Rollback removes these helpers/call-site mappings and restores the upstream width/force/refresh behavior without changing graph data. |
 
 ## Current proof limits

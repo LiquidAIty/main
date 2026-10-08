@@ -40,7 +40,7 @@ def _required_text(value: Any, field: str) -> str:
 
 def _runtime_paths() -> tuple[Path, Path]:
     repository = Path(__file__).resolve().parents[4]
-    hermes_root = repository / "Hermes"
+    hermes_root = repository / "HermesLatest"
     hermes_home = hermes_root / ".hermes"
     if not hermes_root.is_dir():
         raise MagenticExecutionError("magentic_hermes_runtime_missing")

@@ -1,0 +1,407 @@
+"""Optional PostgreSQL catalog introspection.
+
+The DSN is used only to open the caller-requested connection. It is never persisted,
+returned, logged, or embedded in memory; provenance contains a one-way digest instead.
+"""
+from __future__ import annotations
+
+import hashlib
+import importlib
+import ipaddress
+import os
+import shlex
+import socket
+from typing import Any, Optional, Union
+from urllib.parse import urlparse
+
+from engraphis.core.interfaces import SchemaIntrospector, SchemaSnapshot
+
+_SYSTEM_SCHEMAS = {"pg_catalog", "information_schema"}
+_MAX_ENTITIES = 20_000
+_MAX_RELATIONS = 50_000
+_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
+_MAX_CONNECT_TIMEOUT_SECONDS = 120
+_DEFAULT_STATEMENT_TIMEOUT_MS = 30_000
+_MAX_STATEMENT_TIMEOUT_MS = 300_000
+
+
+def _catalog_id(kind: str, *components: object) -> str:
+    """Encode catalog coordinates without delimiter collisions."""
+    encoded = "".join(f"{len(value)}:{value}" for value in map(str, components))
+    return f"{kind}:{encoded}"
+
+
+def _qualified_name(*components: object) -> str:
+    """Render PostgreSQL identifiers without flattening distinct coordinates."""
+    return ".".join(
+        '"' + str(component).replace('"', '""') + '"'
+        for component in components
+    )
+
+
+class PostgresIntrospectionError(ValueError):
+    """Safe, actionable PostgreSQL inspection failure."""
+
+
+def _bounded_env_int(name: str, default: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(maximum, value))
+
+
+def _global_unicast(
+    address: Union[ipaddress.IPv4Address, ipaddress.IPv6Address],
+) -> bool:
+    """Return whether *address* is safe for an untrusted outbound connection."""
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return (
+        address.is_global
+        and not address.is_multicast
+        and not address.is_unspecified
+        and not address.is_loopback
+        and not address.is_link_local
+        and not address.is_private
+        and not address.is_reserved
+    )
+
+
+def _validate_dsn_host(dsn: str) -> tuple[str, Optional[str]]:
+    """Return the TLS hostname and pinned socket address for a safe DSN."""
+    env_dsn = os.environ.get("ENGRAPHIS_POSTGRES_DSN", "")
+    if env_dsn and dsn.strip() == env_dsn.strip():
+        return "", None
+    try:
+        parsed = urlparse(dsn)
+        hostname = parsed.hostname
+    except (TypeError, ValueError) as exc:
+        raise PostgresIntrospectionError("invalid PostgreSQL DSN") from exc
+    if not hostname:
+        raise PostgresIntrospectionError("PostgreSQL DSN must include a hostname")
+    loopback = {
+        "localhost": "127.0.0.1",
+        "127.0.0.1": "127.0.0.1",
+        "::1": "::1",
+    }
+    if hostname.lower() in loopback:
+        return hostname, loopback[hostname.lower()]
+    try:
+        infos = socket.getaddrinfo(
+            hostname,
+            parsed.port or 5432,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except (OSError, ValueError) as exc:
+        raise PostgresIntrospectionError("cannot resolve PostgreSQL host") from exc
+    addresses: list[str] = []
+    for _, _, _, _, sockaddr in infos:
+        try:
+            addr = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            raise PostgresIntrospectionError(
+                "PostgreSQL host resolved to an invalid address"
+            )
+        if not _global_unicast(addr):
+            raise PostgresIntrospectionError(
+                "PostgreSQL DSN must resolve only to global unicast addresses"
+            )
+        canonical = str(addr)
+        if canonical not in addresses:
+            addresses.append(canonical)
+    if not addresses:
+        raise PostgresIntrospectionError("cannot resolve PostgreSQL host")
+    return hostname, addresses[0]
+
+
+def _connect(dsn: str):
+    hostname, hostaddr = _validate_dsn_host(dsn)
+    timeout = _bounded_env_int(
+        "ENGRAPHIS_POSTGRES_CONNECT_TIMEOUT",
+        _DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        _MAX_CONNECT_TIMEOUT_SECONDS,
+    )
+    connect_kwargs: dict[str, Any] = {"connect_timeout": timeout}
+    if hostaddr is not None:
+        # libpq connects to hostaddr without another DNS lookup, while host remains
+        # available for TLS certificate verification and password-file matching.
+        connect_kwargs.update(host=hostname, hostaddr=hostaddr)
+    try:
+        import psycopg
+        return psycopg.connect(dsn, **connect_kwargs)
+    except ImportError:
+        try:
+            psycopg2 = importlib.import_module('psycopg2')
+            return psycopg2.connect(dsn, **connect_kwargs)
+        except ImportError as exc:
+            raise PostgresIntrospectionError(
+                "PostgreSQL introspection needs psycopg: "
+                "pip install \"engraphis[postgres]\""
+            ) from exc
+
+
+def _rows(cursor, query: str, params: tuple = ()) -> list[tuple]:
+    cursor.execute(query, params)
+    return list(cursor.fetchall())
+
+
+def _source_digest(dsn: str) -> str:
+    """Identify a database endpoint without turning its password into a verifier.
+
+    Userinfo, passwords, query parameters, and fragments are credentials or connection
+    policy, not source identity, so exclude them from provenance entirely. URL and
+    libpq keyword/value DSNs both reduce to host/port/database coordinates.
+    """
+    identity = "postgresql|unknown"
+    try:
+        parsed = urlparse(dsn)
+        if parsed.scheme.casefold() in {"postgres", "postgresql"} and parsed.hostname:
+            hostname = (parsed.hostname or "").casefold()
+            port = parsed.port or 5432
+            database = parsed.path.lstrip("/")
+            identity = f"postgresql|{hostname}|{port}|{database}"
+        else:
+            fields: dict[str, str] = {}
+            for token in shlex.split(dsn, posix=True):
+                if "=" not in token:
+                    raise ValueError("invalid keyword DSN")
+                key, value = token.split("=", 1)
+                normalized_key = key.casefold()
+                if normalized_key in {"host", "hostaddr", "port", "dbname"}:
+                    fields[normalized_key] = value
+            host = fields.get("host", "")
+            hostaddr = fields.get("hostaddr", "")
+            if not host and not hostaddr:
+                raise ValueError("keyword DSN has no endpoint")
+            if host and not host.startswith("/"):
+                host = ",".join(part.casefold() for part in host.split(","))
+            port = fields.get("port") or "5432"
+            database = fields.get("dbname", "")
+            identity = (
+                f"postgresql|host={host}|hostaddr={hostaddr}|"
+                f"port={port}|database={database}"
+            )
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+
+
+class PostgresSchemaIntrospector:
+    def inspect(self, dsn: str, *, schemas: Optional[list[str]] = None) -> SchemaSnapshot:
+        allow = {str(name).strip() for name in (schemas or []) if str(name).strip()}
+        selected = sorted(allow)
+        conn = None
+        try:
+            conn = _connect(dsn)
+            with conn:
+                with conn.cursor() as cursor:
+                    statement_timeout = _bounded_env_int(
+                        "ENGRAPHIS_POSTGRES_STATEMENT_TIMEOUT_MS",
+                        _DEFAULT_STATEMENT_TIMEOUT_MS,
+                        _MAX_STATEMENT_TIMEOUT_MS,
+                    )
+                    cursor.execute(
+                        "SELECT set_config('statement_timeout', %s, true)",
+                        (str(statement_timeout),),
+                    )
+                    cursor.execute("SELECT current_database()")
+                    database_row = cursor.fetchone()
+                    if not database_row:
+                        raise PostgresIntrospectionError('PostgreSQL did not return a database name')
+                    database = str(database_row[0])
+                    tables = _rows(cursor, """
+                        SELECT table_schema, table_name, table_type
+                        FROM information_schema.tables
+                        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                          AND (
+                            cardinality(%s::text[]) = 0
+                            OR table_schema = ANY(%s::text[])
+                          )
+                        ORDER BY table_schema, table_name
+                        LIMIT %s
+                    """, (selected, selected, _MAX_ENTITIES + 1))
+                    columns = _rows(cursor, """
+                        SELECT table_schema, table_name, column_name, ordinal_position,
+                               data_type, is_nullable, column_default
+                        FROM information_schema.columns
+                        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                          AND (
+                            cardinality(%s::text[]) = 0
+                            OR table_schema = ANY(%s::text[])
+                          )
+                        ORDER BY table_schema, table_name, ordinal_position
+                        LIMIT %s
+                    """, (selected, selected, _MAX_ENTITIES + 1))
+                    constraints = _rows(cursor, """
+                        SELECT tc.constraint_type, tc.table_schema, tc.table_name,
+                               kcu.column_name, ccu.table_schema, ccu.table_name,
+                               ccu.column_name, tc.constraint_name
+                        FROM information_schema.table_constraints tc
+                        LEFT JOIN information_schema.key_column_usage kcu
+                          ON tc.constraint_catalog=kcu.constraint_catalog
+                         AND tc.constraint_schema=kcu.constraint_schema
+                         AND tc.constraint_name=kcu.constraint_name
+                         AND tc.table_name=kcu.table_name
+                        LEFT JOIN information_schema.constraint_column_usage ccu
+                          ON tc.constraint_catalog=ccu.constraint_catalog
+                         AND tc.constraint_schema=ccu.constraint_schema
+                         AND tc.constraint_name=ccu.constraint_name
+                        WHERE tc.table_schema NOT IN ('pg_catalog', 'information_schema')
+                          AND (
+                            cardinality(%s::text[]) = 0
+                            OR tc.table_schema = ANY(%s::text[])
+                          )
+                        ORDER BY tc.table_schema, tc.table_name, tc.constraint_name
+                        LIMIT %s
+                    """, (selected, selected, _MAX_RELATIONS + 1))
+        except PostgresIntrospectionError:
+            raise
+        except Exception as exc:
+            raise PostgresIntrospectionError(
+                f"PostgreSQL schema inspection failed ({type(exc).__name__}); "
+                "verify the DSN, network access, and database permissions"
+            ) from exc
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        def permitted(schema: Any) -> bool:
+            value = str(schema or "")
+            return value not in _SYSTEM_SCHEMAS and (not allow or value in allow)
+
+        catalog_truncated = (
+            len(tables) > _MAX_ENTITIES
+            or len(columns) > _MAX_ENTITIES
+            or len(constraints) > _MAX_RELATIONS
+        )
+        tables = [row for row in tables[:_MAX_ENTITIES] if permitted(row[0])]
+        columns = [row for row in columns[:_MAX_ENTITIES] if permitted(row[0])]
+        constraints = [
+            row for row in constraints[:_MAX_RELATIONS] if permitted(row[1])
+        ]
+
+        database_id = _catalog_id("database", database)
+        entities: list[dict] = [{
+            "id": database_id, "name": database, "kind": "database",
+        }]
+        relations: list[dict] = []
+        schema_names = sorted({str(row[0]) for row in tables} | {str(row[0]) for row in columns})
+        for schema in schema_names:
+            sid = _catalog_id("schema", schema)
+            entities.append({"id": sid, "name": schema, "kind": "schema"})
+            relations.append({
+                "source": database_id, "target": sid, "relation": "contains",
+            })
+
+        table_ids = set()
+        lines = [f"# PostgreSQL schema: {database}", ""]
+        columns_by_table: dict[tuple[str, str], list[tuple]] = {}
+        for row in columns:
+            columns_by_table.setdefault((str(row[0]), str(row[1])), []).append(row)
+        for schema, table, table_type in tables:
+            schema, table = str(schema), str(table)
+            tid = _catalog_id("table", schema, table)
+            table_ids.add(tid)
+            entities.append({
+                "id": tid, "name": _qualified_name(schema, table), "kind": "view"
+                if "VIEW" in str(table_type).upper() else "table",
+            })
+            relations.append({
+                "source": _catalog_id("schema", schema), "target": tid, "relation": "contains",
+            })
+            lines.extend([f"## {_qualified_name(schema, table)}", ""])
+            for col in columns_by_table.get((schema, table), []):
+                _, _, column, position, data_type, nullable, default = col
+                cid = _catalog_id("column", schema, table, column)
+                entities.append({
+                    "id": cid, "name": _qualified_name(schema, table, column),
+                    "kind": "column",
+                    "data_type": str(data_type), "nullable": str(nullable) == "YES",
+                    "position": int(position),
+                })
+                relations.append({"source": tid, "target": cid, "relation": "contains"})
+                suffix = " nullable" if str(nullable) == "YES" else " not null"
+                default_text = f" default {default}" if default is not None else ""
+                lines.append(f"- `{column}`: {data_type}{suffix}{default_text}")
+            lines.append("")
+
+        constraint_entities: set[str] = set()
+        relation_keys = {
+            (relation["source"], relation["target"], relation["relation"])
+            for relation in relations
+        }
+        for constraint in constraints:
+            ctype, schema, table, column, target_schema, target_table, target_column, name = (
+                constraint
+            )
+            schema, table = str(schema), str(table)
+            source_table = _catalog_id("table", schema, table)
+            if source_table not in table_ids:
+                continue
+            constraint_id = _catalog_id("constraint", schema, table, name)
+            if constraint_id not in constraint_entities:
+                entities.append({
+                    "id": constraint_id,
+                    "name": _qualified_name(schema, table, name),
+                    "kind": "constraint", "constraint_type": str(ctype),
+                })
+                constraint_entities.add(constraint_id)
+            constraint_key = (source_table, constraint_id, "has_constraint")
+            if constraint_key not in relation_keys:
+                relations.append({
+                    "source": source_table,
+                    "target": constraint_id,
+                    "relation": "has_constraint",
+                })
+                relation_keys.add(constraint_key)
+            if str(ctype).upper() == "FOREIGN KEY" and target_schema and target_table:
+                target = _catalog_id("table", target_schema, target_table)
+                reference_key = (source_table, target, "references")
+                if reference_key not in relation_keys:
+                    relations.append({
+                        "source": source_table,
+                        "target": target,
+                        "relation": "references",
+                        "column": str(column or ""),
+                        "target_column": str(target_column or ""),
+                    })
+                    relation_keys.add(reference_key)
+
+        truncated = catalog_truncated
+        if len(entities) > _MAX_ENTITIES:
+            entities = entities[:_MAX_ENTITIES]
+            truncated = True
+        allowed_ids = {entity["id"] for entity in entities}
+        relations = [
+            relation for relation in relations
+            if relation["source"] in allowed_ids and relation["target"] in allowed_ids
+        ]
+        if len(relations) > _MAX_RELATIONS:
+            relations = relations[:_MAX_RELATIONS]
+            truncated = True
+        digest = _source_digest(dsn)
+        return SchemaSnapshot(
+            title=f"PostgreSQL schema: {database}",
+            text="\n".join(lines).strip(),
+            entities=entities,
+            relations=relations,
+            metadata={
+                "database": database,
+                "schemas": schema_names,
+                "tables": len(tables),
+                "columns": len(columns),
+                "constraints": len(constraints),
+                "source_digest": digest,
+                "truncated": truncated,
+            },
+        )
+
+
+def get_postgres_introspector() -> SchemaIntrospector:
+    return PostgresSchemaIntrospector()

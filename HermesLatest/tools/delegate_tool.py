@@ -457,6 +457,13 @@ def delegate_task(
     if normalized_action and normalized_action != "spawn":
         return tool_error(f"Unknown action '{action}'. Use spawn (default), list, steer, or stop.")
 
+    # A Team worker may finish or block its assigned durable task, but may not
+    # create another temporary or durable delegation tree.
+    if os.environ.get("HERMES_KANBAN_TEAM_WORKER", "").strip() == "1":
+        return tool_error(
+            "Team workers cannot delegate nested team, leaf, or orchestrator work."
+        )
+
     # Operator kill switch (TUI / delegation.pause RPC): blocks NEW spawns only.
     if is_spawn_paused():
         return tool_error(

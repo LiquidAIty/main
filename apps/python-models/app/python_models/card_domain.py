@@ -22,8 +22,9 @@ import httpx
 from psycopg.rows import dict_row
 
 from app.python_models.tool_registry import (
-    IddValidationError,
-    materialize_tool_catalog,
+    ToolCatalogError,
+    normalize_live_tool_catalog,
+    normalize_live_tool_catalog_with_failures,
     tool_access,
 )
 from pydantic import TypeAdapter, ValidationError
@@ -34,12 +35,12 @@ from app.python_models.orchestration_contracts import (
     graph_record_fields,
     graph_record_identity,
 )
-from app.python_models.card_script import saved_script, script_presentation
-from app.python_models.card_subsystem import normalize_card_subsystems
-from app.python_models.idd import (
-    load_input_data_dictionary,
-    template_runtime,
+from app.python_models.card_script import (
+    CardScriptValidationError,
+    saved_script,
+    script_presentation,
 )
+from app.python_models.card_subsystem import normalize_card_subsystems
 from app.python_models.idf import (
     InputMaterializationError,
     idf_public,
@@ -1176,7 +1177,7 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
                 extensions["script"],
                 hermes_available=False,
             )
-        except IddValidationError as error:
+        except CardScriptValidationError as error:
             raise CardDomainError(str(error)) from error
     if "subsystems" in extensions:
         try:
@@ -2994,18 +2995,30 @@ def _prepare_invocation(
     ))
     if not unavailable_catalog_families <= _OPTIONAL_TOOL_CATALOG_FAMILIES:
         raise CardDomainError("unavailable_tool_catalog_family_invalid")
-    try:
-        discovered_tools = payload.get("discoveredTools") or []
-        if not isinstance(discovered_tools, list):
-            raise CardDomainError("discovered_tools_invalid")
-        if catalog_state == "unavailable" and discovered_tools:
-            raise CardDomainError("discovered_tool_catalog_state_invalid")
-        catalog = materialize_tool_catalog([
-            *tool_manifest(),
-            *discovered_tools,
-        ])
-    except IddValidationError as error:
-        raise CardDomainError(str(error)) from error
+    discovered_tools = payload.get("discoveredTools") or []
+    if not isinstance(discovered_tools, list):
+        raise CardDomainError("discovered_tools_invalid")
+    if catalog_state == "unavailable" and discovered_tools:
+        raise CardDomainError("discovered_tool_catalog_state_invalid")
+    raw_discovered_failures = payload.get("discoveredToolFailures") or {}
+    if (
+        not isinstance(raw_discovered_failures, dict)
+        or any(
+            not isinstance(name, str) or not name.strip()
+            or not isinstance(reason, str) or not reason.strip()
+            for name, reason in raw_discovered_failures.items()
+        )
+    ):
+        raise CardDomainError("discovered_tool_failures_invalid")
+    catalog, normalized_failures = normalize_live_tool_catalog_with_failures([
+        *tool_manifest(),
+        *discovered_tools,
+    ])
+    tool_catalog_failures = {
+        **{str(name): str(reason) for name, reason in raw_discovered_failures.items()},
+        **normalized_failures,
+    }
+    catalog_failure = next(iter(tool_catalog_failures.values()), None)
     by_id = {item["canonicalId"]: item for item in catalog}
     hermes_tool_prefix = "hermes:tool:"
     hermes_tools: list[dict[str, str]] = []
@@ -3034,6 +3047,7 @@ def _prepare_invocation(
         name for name in unknown_tools
         if (
             catalog_state == "available"
+            and name not in tool_catalog_failures
             and (
                 "." not in name
                 or name.split(".", 1)[0] not in unavailable_catalog_families
@@ -3043,6 +3057,14 @@ def _prepare_invocation(
     if unexpected_unknown_tools:
         raise CardDomainError(
             f"configured_tool_unknown:{unexpected_unknown_tools[0]}"
+        )
+    ineligible_tools = [
+        name for name in catalog_ceiling
+        if name in by_id and by_id[name].get("grantEligible") is not True
+    ]
+    if ineligible_tools:
+        raise CardDomainError(
+            f"configured_tool_not_grant_eligible:{ineligible_tools[0]}"
         )
     selected_mcp_connections = set(call_config["mcpConnectionIds"])
     connection_granted_tools = [
@@ -3060,6 +3082,8 @@ def _prepare_invocation(
     catalog_ceiling = list(dict.fromkeys([*catalog_ceiling, *connection_granted_tools]))
 
     def unavailable_reason(name: str) -> str | None:
+        if name in tool_catalog_failures:
+            return tool_catalog_failures[name]
         definition = by_id.get(name)
         if definition is None:
             family = name.split(".", 1)[0] if "." in name else ""
@@ -3106,11 +3130,8 @@ def _prepare_invocation(
         name for name in catalog_ceiling
         if unavailable_reason(name) is None
     ]
-    # Live discovery is the execution-availability owner for external MCP
-    # operations.  The IDD registry still supplies the capability vocabulary,
-    # effect metadata, and saved-grant validation, but it must not erase a
-    # currently published external tool merely because this Python process did
-    # not register that provider at import time.
+    # The normalized live catalog is the execution-availability and
+    # saved-grant owner. Builder IDD data is not read on this path.
     try:
         project_worldview = resolve_project_worldview(
             loaded["projectId"],
@@ -3130,6 +3151,8 @@ def _prepare_invocation(
     call_config["hermesSuppliedTools"] = hermes_tools
     call_config["unavailableTools"] = unavailable_tools
     call_config["unavailableToolReasons"] = unavailable_tool_reasons
+    call_config["toolCatalogFailure"] = catalog_failure
+    call_config["toolCatalogFailures"] = tool_catalog_failures
     call_config["projectWorldview"] = project_worldview
     # `tools` remains the saved Card's deliberately selected presentation.
     presented_tools = [
@@ -3143,7 +3166,7 @@ def _prepare_invocation(
             default_agent_tools=presented_tools,
             hermes_available=False,
         )
-    except IddValidationError as error:
+    except CardScriptValidationError as error:
         raise CardDomainError(str(error)) from error
     if options.get("script") is not None:
         runtime_options["script"] = script_plan["script"]
@@ -3377,7 +3400,7 @@ def _apply_card_jev_decisions(
             default_agent_tools=selected_tools,
             hermes_available=False,
         )
-    except IddValidationError as error:
+    except CardScriptValidationError as error:
         raise CardDomainError(str(error)) from error
     call_config["enabledTools"] = selected_tools
     call_config["presentedTools"] = script_plan["presentedTools"]
@@ -3705,7 +3728,7 @@ def describe_magentic_agents(
     if not unavailable_families <= _OPTIONAL_TOOL_CATALOG_FAMILIES:
         raise CardDomainError("unavailable_tool_catalog_family_invalid")
     known_tools = {
-        item["canonicalId"] for item in materialize_tool_catalog(tool_manifest())
+        item["canonicalId"] for item in normalize_live_tool_catalog(tool_manifest())
     } | discovered_names
     for edge in loaded["deck"]["edges"]:
         if (edge["edgeType"] != "magentic_option" or edge.get("enabled") is False
@@ -4491,6 +4514,7 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
     owner = prepared["runtimeOwner"]
     runtime = prepared["idf"]["stableSavedCardContext"]["runtime"]
     magentic_workers: list[dict[str, Any]] = []
+    magentic_worker_authorities: list[dict[str, str]] = []
     if owner == "mag_one":
         loaded = _load_deck_internal(prepared["projectId"], prepared["deckId"])
         cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
@@ -4508,6 +4532,21 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
             magentic_workers,
             cards,
         )
+        for worker in magentic_workers:
+            worker_card = cards.get(str(worker.get("cardId") or ""))
+            fingerprint = str(
+                (worker_card or {}).get("_cardRevisionSha256") or ""
+            ).strip()
+            if re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None:
+                raise CardDomainError(
+                    f"magentic_worker_revision_fingerprint_invalid:{worker.get('cardId')}"
+                )
+            magentic_worker_authorities.append({
+                "cardId": str(worker["cardId"]),
+                "cardRevisionId": str(worker["cardRevisionId"]),
+                "profile": str(worker["profile"]).lower(),
+                "configurationFingerprint": fingerprint,
+            })
     request_fingerprint = None
     resolved_run_id, resolved_correlation_id, created = _insert_run(
         prepared,
@@ -4548,6 +4587,7 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
                 "runtimeOptions": options,
             },
             "workers": magentic_workers,
+            "workerAuthorities": magentic_worker_authorities,
         }
     telemetry_written = False
     if created:

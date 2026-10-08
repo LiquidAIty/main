@@ -22,6 +22,11 @@ function sseResponse(frames: string[]): Response {
   return new Response(stream, { status: 200 });
 }
 
+const submissionIds = {
+  clientMessageId: 'client-message-1',
+  clientReplyMessageId: 'client-reply-1',
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -88,6 +93,7 @@ describe('streamSession', () => {
         deckId: 'deck_builder',
         conversationId: 'main',
         message: 'Show me the current picture.',
+        ...submissionIds,
         targetCardId: 'card_worldsignals_agent',
         dataAnchors: [],
       });
@@ -99,6 +105,7 @@ describe('streamSession', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(streamSession({
+      ...submissionIds,
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       message: 'Show me the current picture.', targetCardId: 'card_worldsignals_agent',
       onEvent: vi.fn(),
@@ -116,6 +123,7 @@ describe('streamSession', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await streamSession({
+      ...submissionIds,
       projectId: 'project-1', conversationId: 'main', message: 'Hello Main', onEvent: vi.fn(),
     });
   });
@@ -126,7 +134,7 @@ describe('streamSession', () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([frame('first'), frame('first'), frame('second'),
       'event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n'])));
     const onEvent = vi.fn();
-    await streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent });
+    await streamSession({ ...submissionIds, projectId: 'p', conversationId: 'main', message: 'input', onEvent });
     expect(onEvent.mock.calls.filter(([event]) => event.kind === 'tool_progress').map(([event]) => event.output))
       .toEqual(['first']);
   });
@@ -137,7 +145,7 @@ describe('streamSession', () => {
       'event: done\ndata: {"fullText":"haha"}\n\nevent: end\ndata: {}\n\n',
     ])));
     const onEvent = vi.fn();
-    await expect(streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent })).resolves.toEqual({ finalText: 'haha' });
+    await expect(streamSession({ ...submissionIds, projectId: 'p', conversationId: 'main', message: 'input', onEvent })).resolves.toEqual({ finalText: 'haha' });
     expect(onEvent.mock.calls.filter(([event]) => event.kind === 'text')).toHaveLength(2);
   });
 
@@ -160,7 +168,7 @@ describe('streamSession', () => {
       'event: done\ndata: {"fullText":"haha"}\n\nevent: end\ndata: {}\n\n',
     ])));
     const onEvent = vi.fn();
-    await streamSession({ projectId: 'p', conversationId: 'main', message: 'question', onEvent });
+    await streamSession({ ...submissionIds, projectId: 'p', conversationId: 'main', message: 'question', onEvent });
     expect(onEvent.mock.calls.filter(([event]) => event.kind === 'projection'))
       .toHaveLength(3);
   });
@@ -171,6 +179,7 @@ describe('streamSession', () => {
     )));
 
     await expect(streamSession({
+      ...submissionIds,
       projectId: 'project-1',
       conversationId: 'conversation-start-failure',
       message: 'Normal user message.',
@@ -209,6 +218,7 @@ describe('streamSession', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(streamSession({
+      ...submissionIds,
       projectId: 'project-1',
       conversationId: 'main',
       message: text,
@@ -229,6 +239,7 @@ describe('streamSession', () => {
     ])));
 
     await expect(streamSession({
+      ...submissionIds,
       projectId: 'project-1',
       conversationId: 'main',
       message: 'hello',
@@ -248,6 +259,7 @@ describe('streamSession', () => {
     ])));
 
     await expect(streamSession({
+      ...submissionIds,
       projectId: 'project-1',
       conversationId: 'main',
       message: 'hello',
@@ -262,6 +274,7 @@ describe('streamSession', () => {
     ])));
 
     await expect(streamSession({
+      ...submissionIds,
       projectId: 'project-1',
       conversationId: 'main',
       message: 'hello',
@@ -279,6 +292,7 @@ describe('streamSession', () => {
     ])));
 
     await expect(streamSession({
+      ...submissionIds,
       projectId: 'project-1',
       conversationId: 'main',
       message: 'hello',

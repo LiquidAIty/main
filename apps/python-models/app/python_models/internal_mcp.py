@@ -11,8 +11,8 @@ from typing import Any
 import httpx
 import jwt
 import anyio
-from mcp import ClientSession
-from mcp import types as mcp_types
+import httpx2
+from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 _INTERNAL_MCP_ISSUER = "liquidaity-runtime"
@@ -129,53 +129,44 @@ async def _call_read_tools_via_mcp_async(
     mcp_url = internal_mcp_url()
 
     async def read():
-        async with httpx.AsyncClient(
+        async with httpx2.AsyncClient(
             headers={"Authorization": f"Bearer {token}"},
-            timeout=httpx.Timeout(deadline_seconds or 30.0),
+            timeout=httpx2.Timeout(deadline_seconds or 30.0),
             # internal_mcp_url rejects HTTPS and non-loopback hosts. There is
             # no TLS connection here; loading the Windows CA store is wasted.
             **({"verify": False} if deadline_seconds is not None else {}),
         ) as http_client:
-            async with streamable_http_client(
-                mcp_url, http_client=http_client,
-            ) as (read_stream, write_stream, _):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
+            transport = streamable_http_client(mcp_url, http_client=http_client)
+            async with Client(
+                transport,
+                mode="auto",
+                read_timeout_seconds=deadline_seconds or 30.0,
+            ) as client:
 
-                    async def call(index, name, arguments):
-                        try:
-                            if deadline_seconds is None:
-                                result = await session.call_tool(name, dict(arguments or {}))
-                            else:
-                                # These known read results are decoded below by
-                                # their graph owner. The public typed request
-                                # avoids call_tool's extra catalog round trip;
-                                # it retains MCP transport/result validation.
-                                result = await session.send_request(
-                                    mcp_types.ClientRequest(mcp_types.CallToolRequest(
-                                        params=mcp_types.CallToolRequestParams(
-                                            name=name, arguments=dict(arguments or {}),
-                                        ),
-                                    )),
-                                    mcp_types.CallToolResult,
-                                )
-                            if getattr(result, "isError", False):
-                                raise RuntimeError(f"materializer_mcp_read_failed:{name}")
-                            results[index] = _json_result(result, name)
-                        except Exception:
-                            if deadline_seconds is None:
-                                raise
-                            results[index] = {"ok": False, "error": "read_failed"}
-                        if deadline_seconds is not None:
-                            results[index]["_readDurationMs"] = round((time.monotonic() - started) * 1000)
+                async def call(index, name, arguments):
+                    try:
+                        result = await client.call_tool(
+                            name,
+                            dict(arguments or {}),
+                            read_timeout_seconds=deadline_seconds or 30.0,
+                        )
+                        if result.is_error:
+                            raise RuntimeError(f"materializer_mcp_read_failed:{name}")
+                        results[index] = _json_result(result, name)
+                    except Exception:
+                        if deadline_seconds is None:
+                            raise
+                        results[index] = {"ok": False, "error": "read_failed"}
+                    if deadline_seconds is not None:
+                        results[index]["_readDurationMs"] = round((time.monotonic() - started) * 1000)
 
-                    if concurrent:
-                        async with anyio.create_task_group() as group:
-                            for index, (name, arguments) in enumerate(calls):
-                                group.start_soon(call, index, name, arguments)
-                    else:
+                if concurrent:
+                    async with anyio.create_task_group() as group:
                         for index, (name, arguments) in enumerate(calls):
-                            await call(index, name, arguments)
+                            group.start_soon(call, index, name, arguments)
+                else:
+                    for index, (name, arguments) in enumerate(calls):
+                        await call(index, name, arguments)
 
     if deadline_seconds is None:
         await read()

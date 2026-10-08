@@ -1,0 +1,1287 @@
+"""Eval runner: ingest fixture memories, query, score retrieval.
+
+Routes both ingestion and querying through ``MemoryEngine`` — the same hybrid
+vector+lexical+graph recall, retention-aware weighted scoring, RRF fusion, and deterministic
+conflict resolution that ships in production — not a bare vector-index lookup.
+(Earlier versions of this harness called the vector index directly, which meant
+the CI gate measured plumbing but never exercised the actual recall pipeline or
+the write-path resolver; AGENTS.md §3.7 — "prove better with a number" — only
+means something if the number is about what ships.)
+
+Runs fully offline with the deterministic embedder + NumPy index, so it executes
+anywhere (including CI) with no model download. The same harness will drive the
+real backends — just pass a different ``Embedder`` in.
+
+    python -m eval.harness --dataset eval/datasets/sample.jsonl --k 5
+
+Dataset format (JSONL, one object per line):
+    {
+      "id": "case-1",
+      "memories": [{"tag": "f1", "text": "..."}, ...],
+      "questions": [{"q": "...", "answer": "...", "supporting": ["f1"]}]
+    }
+
+A memory's tag may be absent from the retrieved set without being "wrong": if its
+text was resolved as a near-duplicate or superseded by a later memory in the same
+case (conflict resolution — see ``core.resolve``), its tag now maps to whichever
+memory *is* live, and that is what gets credited. This is intentional: the
+"temporal-update" style fixtures rely on exactly this to test that superseded
+facts stop being treated as current.
+"""
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+from dataclasses import asdict, dataclass
+import json
+from pathlib import Path
+import subprocess
+import sys
+import time
+from typing import Any, Callable, Optional
+
+from engraphis.backends import DeterministicEmbedder, NumpyVectorIndex
+from engraphis.backends.embedder_st import get_embedder
+from engraphis.backends.reranker import IdentityReranker
+from engraphis.core.engine import MemoryEngine
+from engraphis.core.context import DeterministicContextPacker, RegexTokenCounter
+from engraphis.core.grounded import build_grounded_answer
+from engraphis.core.interfaces import (
+    ContextUsage, Edge, Embedder, MemoryRecord, MemoryType, Node, PackedChunk, Reranker,
+    Scope, SearchFilter,
+)
+from engraphis.core.recall import RecallResult
+from engraphis.core.retrieval_policy import ProfileConfig
+from engraphis.core.store import Store
+from eval.benchmark import (
+    CANONICAL_TOKEN_BUDGETS,
+    canonical_benchmark_config,
+    exclusion,
+    paired_bootstrap_ci,
+    question_record,
+    report_envelope,
+    sha256_text,
+    stratified_bootstrap_ci,
+    validate_canonical_profile,
+    write_canonical_artifact,
+)
+from eval import metrics
+
+
+class _PinnedReaderTokenCounter:
+    """Count reader content tokens with a tokenizer loaded at one immutable revision."""
+
+    def __init__(self, tokenizer: object, identity: str) -> None:
+        self.tokenizer = tokenizer
+        self.identity = identity
+
+    def __call__(self, text: str) -> int:
+        encode = getattr(self.tokenizer, "encode")
+        try:
+            return len(encode(text, add_special_tokens=False))
+        except TypeError:
+            return len(encode(text))
+
+
+def _load_pinned_reader_token_counter(model: str, revision: str) -> Callable[[str], int]:
+    """Load the canonical reader tokenizer without affecting the offline default."""
+    try:
+        from transformers import AutoProcessor  # pyright: ignore[reportMissingImports]  # lazy: optional dependency
+    except ImportError as exc:  # pragma: no cover - optional canonical benchmark dependency
+        raise ValueError(
+            "canonical output requires transformers and the pinned reader tokenizer"
+        ) from exc
+    processor = AutoProcessor.from_pretrained(model, revision=revision)
+    tokenizer = getattr(processor, "tokenizer", processor)
+    if not hasattr(tokenizer, "encode"):
+        raise ValueError("canonical reader processor did not expose an encode-capable tokenizer")
+    return _PinnedReaderTokenCounter(tokenizer, f"{model}@{revision}")
+
+
+@dataclass(frozen=True)
+class BaselineSpec:
+    """One baseline with an explicit executable mode and recorded limitations."""
+
+    label: str
+    retrieval_profile: str
+    vector: bool
+    lexical: bool
+    graph: bool
+    no_retrieval: bool = False
+    mode: str = "retrieval"
+    disable_temporal_resolution: bool = False
+    disable_reranker: bool = False
+    requires_nonidentity_reranker: bool = False
+    equivalent_to: Optional[str] = None
+
+    @property
+    def arm_config(self) -> ProfileConfig:
+        return ProfileConfig(
+            self.label, vector=self.vector, lexical=self.lexical,
+            graph=self.graph, code=False,
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "label": self.label,
+            "retrieval_profile": self.retrieval_profile,
+            "arms": {
+                "vector": self.vector,
+                "lexical": self.lexical,
+                "graph": self.graph,
+                "code": False,
+            },
+            "no_retrieval": self.no_retrieval,
+            "mode": self.mode,
+            "temporal_resolution": "disabled" if self.disable_temporal_resolution else "enabled",
+            "reranker": "disabled" if self.disable_reranker else "enabled",
+            **({"equivalent_to": self.equivalent_to} if self.equivalent_to else {}),
+        }
+
+
+_EXECUTABLE_BASELINES = {
+    "full_hybrid": BaselineSpec("full_hybrid", "balanced", True, True, True),
+    "dense_only": BaselineSpec("dense_only", "balanced", True, False, False),
+    "lexical_only": BaselineSpec("lexical_only", "lexical", False, True, False),
+    # The current retrieval pipeline uses RRF whenever more than one arm is on.
+    # With graph disabled this is operationally identical to ``no_graph``; retain
+    # the published label, but make that equivalence visible in every artifact.
+    "dense_lexical_rrf": BaselineSpec(
+        "dense_lexical_rrf", "balanced", True, True, False, equivalent_to="no_graph",
+    ),
+    "full_history": BaselineSpec(
+        "full_history", "balanced", False, False, False, mode="full_history",
+    ),
+    "no_graph": BaselineSpec("no_graph", "balanced", True, True, False),
+    "no_reranker": BaselineSpec(
+        "no_reranker", "balanced", True, True, True, disable_reranker=True,
+        requires_nonidentity_reranker=True,
+    ),
+    "no_temporal_resolution": BaselineSpec(
+        "no_temporal_resolution", "balanced", True, True, True,
+        disable_temporal_resolution=True,
+    ),
+    "whole_document": BaselineSpec(
+        "whole_document", "balanced", False, False, False, mode="whole_document",
+    ),
+    "no_retrieval": BaselineSpec("no_retrieval", "balanced", False, False, False, True),
+}
+
+
+def executable_baseline(label: str) -> BaselineSpec:
+    """Return an honest harness baseline or fail before producing an artifact."""
+    normalized = str(label or "").strip().casefold()
+    if normalized not in _EXECUTABLE_BASELINES:
+        supported = ", ".join(sorted(_EXECUTABLE_BASELINES))
+        raise ValueError(
+            f"baseline_label {label!r} is not executable by eval.harness; "
+            f"supported labels: {supported}"
+        )
+    return _EXECUTABLE_BASELINES[normalized]
+
+
+def _validate_baseline_dataset(
+    dataset: list[dict], baseline: BaselineSpec, reranker: Reranker,
+) -> None:
+    """Fail before an artifact when a claimed ablation has no representable input."""
+    if baseline.mode == "whole_document" and not dataset:
+        raise ValueError("whole_document requires a non-empty dataset")
+    if baseline.mode == "whole_document" and not all(
+        isinstance(case.get("document"), str) and case["document"].strip() for case in dataset
+    ):
+        raise ValueError("whole_document requires a non-empty document in every dataset case")
+    if baseline.mode == "full_history" and not dataset:
+        raise ValueError("full_history requires a non-empty dataset")
+    if baseline.mode == "full_history" and not all(
+        isinstance(case.get("memories"), list) and case["memories"] for case in dataset
+    ):
+        raise ValueError("full_history requires ordered non-empty memories in every dataset case")
+    if baseline.disable_temporal_resolution:
+        groups: list[list[dict]] = []
+        for case in dataset:
+            grouped: dict[tuple[str, str], list[dict]] = {}
+            for item in case.get("memories", []):
+                key = (str(item.get("subject_key", "")).strip(), str(item.get("claim_kind", "")).strip())
+                if key[0]:
+                    grouped.setdefault(key, []).append(item)
+            groups.extend(grouped.values())
+        representable = any(
+            len(group) >= 2
+            and len({str(item.get("text", "")) for item in group}) >= 2
+            and all(item.get("valid_from") is not None for item in group)
+            for group in groups
+        )
+        if not representable:
+            raise ValueError(
+                "no_temporal_resolution requires two memories with the same non-empty "
+                "subject_key (and claim_kind)"
+            )
+    if baseline.requires_nonidentity_reranker and isinstance(reranker, IdentityReranker):
+        raise ValueError("no_reranker requires a non-identity reranker to make the ablation meaningful")
+
+
+def _whole_source_result(
+    records: list[MemoryRecord],
+    *,
+    label: str,
+    token_budget: Optional[int],
+    token_counter: Optional[Callable[[str], int]] = None,
+    token_counter_identity: Optional[str] = None,
+) -> RecallResult:
+    """Return exact source text for corpus baselines, never query-selecting or truncating it."""
+    counter = token_counter or RegexTokenCounter()
+    counter_identity = (
+        token_counter_identity
+        or getattr(counter, "identity", None)
+        or type(counter).__name__
+    )
+    context = "\n\n".join(record.content for record in records)
+    tokens = counter(context)
+    if token_budget is not None and tokens > int(token_budget):
+        raise ValueError(f"{label} cannot preserve complete source under token_budget={token_budget}")
+    packed = [PackedChunk(
+        id=record.id, excerpt=record.content, tokens=counter(record.content), reason=label,
+    ) for record in records]
+    usage = ContextUsage(
+        budget_tokens=tokens if token_budget is None else int(token_budget),
+        context_tokens=tokens, source_tokens=tokens, saved_tokens=0, savings_ratio=0.0,
+        packed_count=len(packed), omitted_count=0, token_counter=counter_identity,
+    )
+    return RecallResult(
+        chunks=[{"id": record.id, "title": record.title, "content": record.content}
+                for record in records],
+        context=context, count=len(records), packed_chunks=packed, usage=usage,
+        retrieval_profile=label,
+        token_counter=counter,
+    )
+
+
+def _recall_for_baseline(
+    engine: MemoryEngine,
+    query: str,
+    *,
+    workspace_id: str,
+    repo_id: str,
+    k: int,
+    token_budget: Optional[int],
+    baseline: BaselineSpec,
+    source_records: Optional[list[MemoryRecord]] = None,
+) -> RecallResult:
+    """Run the declared arms directly, without expanding ``RetrievalPolicy``."""
+    budget = engine.recall_engine.token_budget if token_budget is None else max(0, int(token_budget))
+    flt = SearchFilter(workspace_id=workspace_id, repo_id=repo_id, include_ancestors=True)
+    if baseline.mode in {"full_history", "whole_document"}:
+        packer = engine.recall_engine.context_packer
+        return _whole_source_result(
+            source_records or [],
+            label=baseline.label,
+            token_budget=token_budget,
+            token_counter=getattr(packer, "count_tokens", None),
+            token_counter_identity=getattr(packer, "token_counter_identity", None),
+        )
+    if baseline.no_retrieval:
+        context, packed, usage = engine.recall_engine.context_packer.pack(query, [], budget)
+        return RecallResult(
+            context=context, packed_chunks=packed, usage=usage,
+            retrieval_profile=baseline.label,
+            token_counter=getattr(engine.recall_engine.context_packer, "count_tokens", None),
+        )
+    return engine.recall_engine.recall(
+        query, flt, k=k, token_budget=token_budget,
+        retrieval_profile=baseline.retrieval_profile,
+        arm_config=baseline.arm_config,
+    )
+
+
+def load_dataset(path: str) -> list[dict]:
+    """Load and validate JSONL, reporting the source line for malformed input."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"could not read dataset {path!r}: {exc}") from exc
+    items = []
+    for line_number, line in enumerate(lines, start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON in dataset {path!r} at line {line_number}: {exc.msg}") from exc
+        if not isinstance(item, dict):
+            raise ValueError(f"dataset {path!r} line {line_number} must contain a JSON object")
+        items.append(item)
+    _validate_dataset(items)
+    return items
+
+
+def _validate_dataset(dataset: list[dict]) -> None:
+    """Reject malformed or ambiguous JSONL before creating any stores."""
+    if not isinstance(dataset, list):
+        raise ValueError("dataset must be a list of case objects")
+    case_ids: set[str] = set()
+    question_ids: set[str] = set()
+    for case_number, case in enumerate(dataset, start=1):
+        if not isinstance(case, dict):
+            raise ValueError(f"dataset case {case_number} must be a JSON object")
+        case_id = case.get("id")
+        if (
+            not isinstance(case_id, str)
+            or not case_id.strip()
+            or case_id != case_id.strip()
+        ):
+            raise ValueError(f"dataset case {case_number} requires a non-empty string id")
+        case_id = case_id.strip()
+        if case_id in case_ids:
+            raise ValueError(f"dataset case ids must be unique: {case_id!r}")
+        case_ids.add(case_id)
+        memories = case.get("memories", [])
+        if not isinstance(memories, list):
+            raise ValueError(f"{case_id}: memories must be a list")
+        tags: set[str] = set()
+        for memory_number, memory in enumerate(memories, start=1):
+            if not isinstance(memory, dict):
+                raise ValueError(f"{case_id}: memory {memory_number} must be an object")
+            tag = memory.get("tag")
+            text = memory.get("text")
+            if (
+                not isinstance(tag, str)
+                or not tag.strip()
+                or tag != tag.strip()
+            ):
+                raise ValueError(f"{case_id}: memory tags must be non-empty strings")
+            if tag in tags:
+                raise ValueError(f"{case_id}: memory tags must be unique")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(f"{case_id}: memory {tag!r} requires non-empty text")
+            tags.add(tag)
+        questions = case.get("questions", [])
+        if not isinstance(questions, list):
+            raise ValueError(f"{case_id}: questions must be a list")
+        if "document" in case and (
+            not isinstance(case["document"], str) or not case["document"].strip()
+        ):
+            raise ValueError(f"{case_id}: document must be a non-empty string when supplied")
+        entities = case.get("entities", [])
+        if not isinstance(entities, list):
+            raise ValueError(f"{case_id}: entities must be a list")
+        entity_names: set[str] = set()
+        for entity in entities:
+            if not isinstance(entity, (list, tuple)) or not entity:
+                raise ValueError(f"{case_id}: each entity must contain a non-empty name")
+            name = str(entity[0]).strip()
+            if not name or name in entity_names:
+                raise ValueError(f"{case_id}: entity names must be unique and non-empty")
+            entity_names.add(name)
+        edges = case.get("edges", [])
+        if not isinstance(edges, list):
+            raise ValueError(f"{case_id}: edges must be a list")
+        for edge in edges:
+            if not isinstance(edge, (list, tuple)) or len(edge) < 2:
+                raise ValueError(f"{case_id}: each edge requires source and target entities")
+            if str(edge[0]) not in entity_names or str(edge[1]) not in entity_names:
+                raise ValueError(
+                    f"{case_id}: edge references an unknown entity: {edge[0]!r} -> {edge[1]!r}"
+                )
+        for question_number, question in enumerate(questions, start=1):
+            if not isinstance(question, dict):
+                raise ValueError(f"{case_id}: question {question_number} must be an object")
+            query = question.get("q")
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError(f"{case_id}: question {question_number} requires non-empty q")
+            question_id = question.get("id") or f"{case_id}:{question_number - 1}"
+            if (
+                not isinstance(question_id, str)
+                or not question_id.strip()
+                or question_id != question_id.strip()
+            ):
+                raise ValueError(f"{case_id}: question ids must be non-empty strings")
+            if question_id in question_ids:
+                raise ValueError(f"question ids must be unique: {question_id!r}")
+            question_ids.add(question_id)
+            answerable = question.get("answerable")
+            if answerable is not None and not isinstance(answerable, bool):
+                raise ValueError(f"{case_id}:{question_number - 1}: answerable must be a boolean")
+            supporting = question.get("supporting")
+            if supporting is not None:
+                if not isinstance(supporting, list) or any(
+                    not isinstance(item, str)
+                    or not item.strip()
+                    or item != item.strip()
+                    for item in supporting
+                ):
+                    raise ValueError(
+                        f"{case_id}:{question_number - 1}: supporting must be a list of strings"
+                    )
+                unknown = sorted(set(supporting) - tags)
+                if unknown:
+                    raise ValueError(
+                        f"{case_id}:{question_number - 1}: unknown supporting memory tags: "
+                        + ", ".join(unknown)
+                    )
+            elif "document" not in case and answerable is not False:
+                raise ValueError(
+                    f"{case_id}:{question_number - 1}: supporting must be supplied for "
+                    "memory-backed questions"
+                )
+            for field in ("answer", "evidence"):
+                if field in question and not isinstance(question[field], str):
+                    raise ValueError(f"{case_id}:{question_number - 1}: {field} must be a string")
+            variants = question.get("answer_variants")
+            if variants is not None and (
+                not isinstance(variants, list)
+                or not variants
+                or any(
+                    not isinstance(value, str)
+                    or not value.strip()
+                    or value != value.strip()
+                    for value in variants
+                )
+                or len(set(variants)) != len(variants)
+            ):
+                raise ValueError(
+                    f"{case_id}:{question_number - 1}: answer_variants must be "
+                    "unique non-empty strings"
+                )
+            accepted_answers = list(variants or [])
+            accepted_answers.extend(
+                question[field]
+                for field in ("answer", "evidence")
+                if isinstance(question.get(field), str) and question[field].strip()
+            )
+            if answerable is True and not accepted_answers and not supporting:
+                raise ValueError(
+                    f"{case_id}:{question_number - 1}: answerable questions require "
+                    "answer evidence or supporting memory tags"
+                )
+
+
+
+
+def _git_commit() -> str:
+    """Return the checked-out commit when available, without making it a dependency."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip() or "unknown"
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def _seed_case_graph(
+    store: Store,
+    *,
+    workspace_id: str,
+    repo_id: str,
+    case: dict,
+) -> None:
+    """Persist an optional fixture graph before its memories are written.
+
+    The ordinary harness previously ignored ``entities``/``edges`` even though
+    graph fixtures declare them.  Seeding first also lets the production write
+    path persist exact memory↔entity incidence, so the harness measures the
+    shipped sparse graph arm rather than accidentally falling back to dense
+    retrieval alone.
+    """
+    entity_ids: dict[str, str] = {}
+    for entity in case.get("entities", []):
+        name = str(entity[0])
+        entity_ids[name] = store.upsert_entity(Node(
+            id="",
+            name=name,
+            ntype=(str(entity[1]) if len(entity) > 1 else "concept"),
+            workspace_id=workspace_id,
+            repo_id=repo_id,
+        ))
+    for edge in case.get("edges", []):
+        source = entity_ids.get(str(edge[0]))
+        target = entity_ids.get(str(edge[1]))
+        if source is None or target is None:
+            raise ValueError(
+                f"eval edge references an unknown entity: {edge[0]!r} -> {edge[1]!r}"
+            )
+        store.upsert_edge(Edge(
+            id="",
+            src=source,
+            dst=target,
+            relation=(str(edge[2]) if len(edge) > 2 else "rel"),
+            workspace_id=workspace_id,
+            repo_id=repo_id,
+        ))
+
+
+def _usage_dict(usage, *, budget: int) -> dict:
+    """Keep the public v2 usage contract complete even for an empty recall."""
+    if usage is not None:
+        return asdict(usage)
+    return {
+        "budget_tokens": budget,
+        "context_tokens": 0,
+        "source_tokens": 0,
+        "saved_tokens": 0,
+        "savings_ratio": 0.0,
+        "packed_count": 0,
+        "omitted_count": 0,
+        "token_counter": "unknown",
+    }
+
+
+def _mean(records: list[dict], field: str) -> float:
+    return sum(float(item.get(field, 0.0)) for item in records) / max(len(records), 1)
+
+
+def _rounded_mean(records: list[dict], field: str, digits: int = 4) -> Optional[float]:
+    return round(_mean(records, field), digits) if records else None
+
+
+def _v2_metrics(records: list[dict], *, bootstrap_iterations: int) -> dict:
+    """Aggregate retrieval and answer coverage over their distinct gold labels."""
+    retrieval_scored = [
+        item for item in records if item.get("retrieval_scored") is True
+    ]
+    answer_scored = [item for item in records if item.get("answer_scored") is True]
+    metric_fields = [
+        "recall_at_1", "recall_at_5", "recall_at_10",
+        "mrr_at_1", "mrr_at_5", "mrr_at_10",
+        "ndcg_at_1", "ndcg_at_5", "ndcg_at_10",
+    ]
+    summary: dict[str, Any] = {
+        field: _rounded_mean(retrieval_scored, field, 6) for field in metric_fields
+    }
+    summary["retrieval_scored_questions"] = len(retrieval_scored)
+    summary["answer_token_recall"] = _rounded_mean(answer_scored, "answer_token_recall", 6)
+    summary["answer_token_recall_n"] = len(answer_scored)
+    summary["confidence_intervals"] = {
+        field: stratified_bootstrap_ci(
+            retrieval_scored,
+            lambda rows, metric=field: _mean(list(rows), metric),
+            iterations=bootstrap_iterations,
+        )
+        for field in metric_fields
+    }
+    if not retrieval_scored:
+        for interval in summary["confidence_intervals"].values():
+            interval.update(point=None, low=None, high=None)
+    # A paired interval is meaningful only when a baseline contains the same
+    # question IDs.  Keep the stable field present so artifact consumers never
+    # mistake an absent comparison for a zero-effect result.
+    summary["paired_bootstrap"] = {
+        "available": False,
+        "reason": "baseline_records_not_supplied",
+        "n": 0,
+        "delta": None,
+        "low": None,
+        "high": None,
+        "iterations": bootstrap_iterations,
+    }
+    labeled = [item for item in records if isinstance(item.get("answerable"), bool)]
+    grounded = [item for item in labeled if "grounded" in item and "abstained" in item]
+    if not labeled:
+        summary["grounded"] = {
+            "available": False, "reason": "no_answerability_labels", "n": 0,
+        }
+        summary["abstention"] = {
+            "available": False, "reason": "no_answerability_labels", "n": 0,
+        }
+    elif len(grounded) != len(labeled):
+        reason = "grounded_recall_not_run"
+        summary["grounded"] = {"available": False, "reason": reason, "n": len(labeled)}
+        summary["abstention"] = {"available": False, "reason": reason, "n": len(labeled)}
+    else:
+        answerable = [bool(item["answerable"]) for item in grounded]
+        summary["grounded"] = {
+            "available": True,
+            **metrics.grounded_precision_recall_f1(
+                [bool(item["grounded"]) for item in grounded], answerable,
+            ),
+        }
+        summary["abstention"] = {
+            "available": True,
+            **metrics.abstention_precision_recall_f1(
+                [bool(item["abstained"]) for item in grounded], answerable,
+            ),
+        }
+    for source, target in (("grounded", "grounded_f1"), ("abstention", "abstention_f1")):
+        measurement = summary[source]
+        summary[target] = (
+            measurement["f1"]
+            if measurement["available"]
+            else {"available": False, "reason": measurement["reason"], "n": measurement["n"]}
+        )
+    return summary
+
+
+def paired_v2_bootstrap(
+    candidate_records: list[dict], baseline_records: list[dict], *,
+    metric: str = "recall_at_5", iterations: int = 1000,
+) -> dict:
+    """Compute a paired interval after requiring complete question-ID coverage.
+
+    A partial baseline would make an apparent delta incomparable, so it is
+    rejected rather than silently intersected away.  This helper lets a caller
+    add a comparison after two independently written v2 runs.
+    """
+    def by_question_id(records: list[dict], label: str) -> dict:
+        indexed = {}
+        for item in records:
+            if item.get("excluded"):
+                continue
+            question_id = item["question_id"]
+            if question_id in indexed:
+                raise ValueError(
+                    f"paired bootstrap requires unique scored question IDs in {label}"
+                )
+            indexed[question_id] = item
+        return indexed
+
+    candidate = by_question_id(candidate_records, "candidate")
+    baseline = by_question_id(baseline_records, "baseline")
+    if set(candidate) != set(baseline):
+        raise ValueError("paired bootstrap requires identical scored question IDs")
+    result = paired_bootstrap_ci(
+        [(float(candidate[qid].get(metric, 0.0)), float(baseline[qid].get(metric, 0.0)))
+         for qid in sorted(candidate)],
+        iterations=iterations,
+    )
+    return {"available": True, "metric": metric, **result}
+
+
+def run(dataset: list[dict], *, k: int = 5, dim: int = 256,
+        embedder: Optional[Embedder] = None,
+        reranker: Optional[Reranker] = None, grounded: bool = False,
+        resolve_conflicts: bool = True, v2: bool = False,
+        dataset_path: Optional[str] = None, token_budget: Optional[int] = None,
+        canonical: bool = False, canonical_profile: Optional[dict[str, Any]] = None,
+        bootstrap_iterations: int = 1000,
+        baseline_label: str = "full_hybrid") -> dict:
+    """Run the offline gate, or build the opt-in reproducible v2 envelope.
+
+    The default output remains the original compact report.  ``v2=True`` is
+    deliberately explicit because artifacts carry per-question measurements and
+    immutable provenance rather than only the CI gate's aggregate fields.
+    """
+    _validate_dataset(dataset)
+    if isinstance(k, bool) or not isinstance(k, int) or k <= 0:
+        raise ValueError("k must be a positive integer")
+    if isinstance(dim, bool) or not isinstance(dim, int) or dim <= 0:
+        raise ValueError("dim must be a positive integer")
+    if token_budget is not None and (
+        isinstance(token_budget, bool) or not isinstance(token_budget, int) or token_budget < 0
+    ):
+        raise ValueError("token_budget must be a non-negative integer")
+    if (
+        isinstance(bootstrap_iterations, bool)
+        or not isinstance(bootstrap_iterations, int)
+        or bootstrap_iterations < 0
+    ):
+        raise ValueError("bootstrap_iterations must be a non-negative integer")
+    if canonical and not v2:
+        v2 = True
+    if v2 and not dataset_path:
+        raise ValueError("v2 output requires dataset_path so the dataset can be hashed")
+    baseline = executable_baseline(baseline_label)
+    configured_reranker = reranker if reranker is not None else IdentityReranker()
+    _validate_baseline_dataset(dataset, baseline, configured_reranker)
+    validated_profile: Optional[dict[str, Any]] = None
+    if canonical:
+        if canonical_profile is None:
+            raise ValueError(
+                "canonical output requires pinned revisions: canonical_profile is missing"
+            )
+        profile_errors = validate_canonical_profile(canonical_profile)
+        if profile_errors:
+            raise ValueError("canonical output requires pinned revisions: " + "; ".join(profile_errors))
+        validated_profile = canonical_profile
+        if validated_profile["baseline_label"] != baseline.label:
+            raise ValueError(
+                "canonical_profile.baseline_label must match the executed baseline_label "
+                f"({baseline.label})"
+            )
+        if not dataset:
+            raise ValueError("canonical output requires a complete, non-empty dataset")
+        if (
+            not isinstance(bootstrap_iterations, int)
+            or isinstance(bootstrap_iterations, bool)
+            or bootstrap_iterations <= 0
+        ):
+            raise ValueError(
+                "canonical output requires a positive bootstrap_iterations value"
+            )
+        reader_profile = validated_profile["reader"]
+        context_token_counter = _load_pinned_reader_token_counter(
+            reader_profile["model"], reader_profile["revision"]
+        )
+        context_token_method = "pinned_reader_content_tokenizer"
+        context_tokenizer_identity = (
+            f"{reader_profile['model']}@{reader_profile['revision']}"
+        )
+    else:
+        context_token_counter = None
+        context_token_method = "deterministic_estimate"
+        context_tokenizer_identity = None
+    embedder = embedder if embedder is not None else DeterministicEmbedder(dim=dim)
+    per_q = []
+    curve_measurements = {budget: [] for budget in CANONICAL_TOKEN_BUDGETS} if canonical else {}
+
+    for case in dataset:
+        store = Store(":memory:")
+        wid = store.get_or_create_workspace("eval")
+        rid = store.get_or_create_repo(wid, case.get("id", "case"))
+        index = NumpyVectorIndex(store)
+        engine = MemoryEngine(
+            store, embedder, index,
+            None if baseline.disable_reranker else configured_reranker,
+        )
+        if context_token_counter is not None:
+            engine.recall_engine.context_packer = DeterministicContextPacker(
+                token_counter=context_token_counter,
+                token_counter_identity=context_tokenizer_identity,
+            )
+        _seed_case_graph(
+            store,
+            workspace_id=wid,
+            repo_id=rid,
+            case=case,
+        )
+
+        tag_to_id: dict[str, str] = {}
+        id_to_tags: dict[str, list[str]] = {}
+        id_to_text: dict[str, str] = {}
+        document_record: Optional[MemoryRecord] = None
+        if baseline.mode == "whole_document":
+            document = str(case["document"])
+            mid = engine.remember(
+                document, workspace_id=wid, repo_id=rid, mtype=MemoryType.EPISODIC,
+                scope=Scope.REPO, title=str(case.get("id", "whole_document")),
+                resolve_conflicts=False,
+            )
+            document_record = store.get_memory(mid)
+            if document_record is None:  # pragma: no cover - Store contract
+                raise RuntimeError("whole_document ingestion did not create a memory")
+            tag_to_id["whole_document"] = mid
+            # A whole-document baseline injects the complete case without query
+            # selection.  It therefore contains every source tag in the case,
+            # not merely a synthetic document label.  Otherwise a fixture that
+            # retains normal gold source IDs beside ``document`` would be
+            # incorrectly reported as a retrieval failure.
+            source_tags = [
+                str(memory.get("tag"))
+                for memory in case.get("memories", [])
+                if memory.get("tag") is not None
+            ]
+            id_to_tags[mid] = source_tags or ["whole_document"]
+            id_to_text[mid] = document
+        else:
+            for m in case.get("memories", []):
+                mid = engine.remember(
+                    m["text"], workspace_id=wid, repo_id=rid, mtype=MemoryType.EPISODIC,
+                    scope=Scope.REPO, title=str(m.get("title", "")),
+                    valid_from=m.get("valid_from"), subject_key=str(m.get("subject_key", "")),
+                    claim_kind=str(m.get("claim_kind", "")),
+                    resolve_conflicts=(False if baseline.disable_temporal_resolution else resolve_conflicts),
+                )
+                tag = m.get("tag")
+                tag_to_id[tag] = mid
+                id_to_tags.setdefault(mid, []).append(tag)
+                id_to_text[mid] = m["text"]
+
+        history_records = (
+            store.list_memories(
+                SearchFilter(workspace_id=wid, repo_id=rid, include_ancestors=True),
+                include_invalid=True,
+            ) if baseline.mode == "full_history" else None
+        )
+        if history_records is not None:
+            history_records.sort(key=lambda record: (record.valid_from or record.ingested_at or 0.0, record.id))
+
+        for question_number, q in enumerate(case.get("questions", [])):
+            question_id = str(q.get("id") or f"{case.get('id')}:{question_number}")
+            started = time.perf_counter_ns()
+            supporting = q.get("supporting", ["whole_document"] if document_record else [])
+            res = _recall_for_baseline(
+                engine, q["q"], workspace_id=wid, repo_id=rid, k=k,
+                token_budget=token_budget, baseline=baseline,
+                source_records=(history_records if history_records is not None else
+                                ([document_record] if document_record is not None else None)),
+            )
+            latency_ms = (time.perf_counter_ns() - started) / 1_000_000
+            retrieved_ids = [c["id"] for c in res.chunks]
+            retrieved_tags = [t for i in retrieved_ids for t in id_to_tags.get(i, [])]
+            retrieved_texts = [id_to_text.get(i, "") for i in retrieved_ids]
+            packed_tags = [
+                tag for chunk in res.packed_chunks for tag in id_to_tags.get(chunk.id, [])
+            ]
+            # Score the context actually emitted to the reader.  Titles and
+            # ownership headers can carry required answer tokens even when the
+            # chunk excerpt is only a value or procedure body.
+            packed_texts = [res.context] if res.context else []
+            retrieval_scored = bool(supporting)
+            accepted_answer = (
+                q.get("answer_variants")
+                or q.get("answer")
+                or q.get("evidence")
+                or ""
+            )
+            answer_scored = q.get("answerable") is not False and bool(accepted_answer)
+            excluded = None if retrieval_scored else exclusion(
+                str(q.get("id") or f"{case.get('id')}:{question_number}"),
+                str(q.get("exclusion_reason") or "no_gold_retrieval_evidence"),
+            )
+            depth_metrics = metrics.retrieval_metrics_at_depths(
+                retrieved_tags, supporting, depths=(1, 5, 10),
+            )
+            answerable = q.get("answerable")
+            grounded_answer = (
+                build_grounded_answer(q["q"], res, engine.embedder)
+                if grounded and isinstance(answerable, bool) else None
+            )
+            usage = _usage_dict(
+                res.usage,
+                budget=(token_budget if token_budget is not None else 1500),
+            )
+            label_provenance = str(q.get("evidence_label_provenance") or (
+                "explicit_ids" if supporting else "unlabeled"
+            ))
+            label_count = int(q.get("evidence_label_count") or len(set(supporting)))
+            label_ceiling = (
+                min(1.0, float(k) / label_count) if label_count > 0 else None
+            )
+            packed_answer_recall = metrics.answer_token_recall(
+                packed_texts, accepted_answer,
+            )
+            sufficient_evidence_proxy = bool(
+                answer_scored and packed_answer_recall >= 1.0
+            )
+            record = question_record(
+                question_id,
+                category=str(q.get("category") or "unknown"),
+                retrieved_ids=[tag for tag in retrieved_tags if tag],
+                supporting_ids=supporting,
+                context_tokens=usage["context_tokens"],
+                latency_ms=latency_ms,
+                excluded=excluded,
+                case=case.get("id"),
+                q=q["q"],
+                retrieval_scored=retrieval_scored,
+                answer_scored=answer_scored,
+                **({"answerable": answerable} if isinstance(answerable, bool) else {}),
+                **({
+                    "grounded": grounded_answer.grounded,
+                    "abstained": grounded_answer.abstained,
+                    "grounded_support": round(grounded_answer.support, 6),
+                } if grounded_answer is not None else {}),
+                recall_at_k=metrics.recall_at_k(retrieved_tags, supporting),
+                hit_at_k=metrics.hit_at_k(retrieved_tags, supporting),
+                mrr_at_k=metrics.mrr_at_k(retrieved_tags, supporting, k),
+                ndcg_at_k=metrics.ndcg_at_k(retrieved_tags, supporting, k),
+                answer_token_recall=metrics.answer_token_recall(
+                    retrieved_texts, accepted_answer,
+                ),
+                packed_ids=[tag for tag in packed_tags if tag],
+                packed_recall_at_k=metrics.recall_at_k(packed_tags, supporting),
+                packed_hit_at_k=metrics.hit_at_k(packed_tags, supporting),
+                packed_mrr_at_k=metrics.mrr_at_k(packed_tags, supporting, k),
+                packed_ndcg_at_k=metrics.ndcg_at_k(packed_tags, supporting, k),
+                packed_answer_token_recall=packed_answer_recall,
+                evidence_label_provenance=label_provenance,
+                evidence_label_count=label_count,
+                evidence_label_ceiling_at_k=label_ceiling,
+                evidence_label_method=str(q.get("evidence_label_method") or (
+                    "provided_source_ids" if supporting else "none"
+                )),
+                sufficient_evidence_proxy=sufficient_evidence_proxy,
+                sufficient_evidence_proxy_method="all_answer_tokens_in_packed_context",
+                usage=usage,
+                **depth_metrics,
+            )
+            # Public artifacts omit prompt-derived identifiers entirely.  An
+            # unsalted question hash still permits offline membership testing
+            # against a private or proprietary prompt corpus.
+            record["context_token_method"] = context_token_method
+            if context_tokenizer_identity is not None:
+                record["context_tokenizer_identity"] = context_tokenizer_identity
+            per_q.append(record)
+            if canonical:
+                for budget in CANONICAL_TOKEN_BUDGETS:
+                    budget_result = _recall_for_baseline(
+                        engine, q["q"], workspace_id=wid, repo_id=rid, k=k,
+                        token_budget=budget, baseline=baseline,
+                        source_records=(history_records if history_records is not None else
+                                        ([document_record] if document_record is not None else None)),
+                    )
+                    # Fixed-budget quality is defined by evidence actually admitted
+                    # to the packed context.  Scoring the uncapped retrieval list
+                    # would credit gold memories that the reader never received.
+                    budget_ids = [chunk.id for chunk in budget_result.packed_chunks]
+                    budget_tags = [
+                        tag for memory_id in budget_ids for tag in id_to_tags.get(memory_id, [])
+                    ]
+                    budget_depth = metrics.retrieval_metrics_at_depths(
+                        budget_tags, supporting, depths=(1, 5, 10),
+                    )
+                    budget_usage = _usage_dict(budget_result.usage, budget=budget)
+                    curve_measurements[budget].append({
+                        "question_id": question_id,
+                        "excluded": bool(excluded),
+                        "context_tokens": budget_usage["context_tokens"],
+                        "context_token_method": context_token_method,
+                        "context_tokenizer_identity": context_tokenizer_identity,
+                        "retrieved_ids": [tag for tag in budget_tags if tag],
+                        "supporting_ids": list(supporting),
+                        **budget_depth,
+                    })
+        store.close()
+
+    retrieval_rows = [
+        item for item in per_q if item.get("retrieval_scored") is True
+    ]
+    answer_rows = [item for item in per_q if item.get("answer_scored") is True]
+    report = {
+        "questions": len(per_q),
+        "scored_questions": len(retrieval_rows),
+        "answer_scored_questions": len(answer_rows),
+        "exclusions": [item["excluded"] for item in per_q if item.get("excluded")],
+        **{field: _rounded_mean(retrieval_rows, field) for field in (
+            "recall_at_k", "hit_at_k", "mrr_at_k", "ndcg_at_k",
+        )},
+        "answer_token_recall": _rounded_mean(answer_rows, "answer_token_recall"),
+        "k": k,
+        "baseline_label": baseline.label,
+        "baseline_execution": baseline.as_dict(),
+        "grounded_recall": bool(grounded),
+        "detail": per_q,
+    }
+    for metric in ("recall_at_k", "hit_at_k", "mrr_at_k", "ndcg_at_k"):
+        report[f"packed_{metric}"] = _rounded_mean(retrieval_rows, f"packed_{metric}")
+    report["packed_answer_token_recall"] = _rounded_mean(answer_rows, "packed_answer_token_recall")
+    labeled = [item for item in per_q if item.get("evidence_label_count", 0) > 0]
+    label_counts = [int(item["evidence_label_count"]) for item in labeled]
+    report["evidence_label_provenance"] = dict(Counter(
+        str(item.get("evidence_label_provenance") or "unknown") for item in per_q
+    ))
+    report["evidence_label_cardinality"] = {
+        "questions": len(labeled),
+        "mean": round(sum(label_counts) / len(label_counts), 4) if label_counts else None,
+        "max": max(label_counts, default=0),
+        "ceiling_at_k_mean": round(
+            sum(float(item["evidence_label_ceiling_at_k"]) for item in labeled) / len(labeled), 4
+        ) if labeled else None,
+        "boundary": "label-cardinality ceiling assumes perfect top-k selection; it is not a quality score",
+    }
+    sufficient_rows = [item for item in per_q if item.get("answer_scored") is True]
+    report["sufficient_evidence_proxy_rate"] = round(
+        sum(bool(item.get("sufficient_evidence_proxy")) for item in sufficient_rows)
+        / len(sufficient_rows), 4,
+    ) if sufficient_rows else None
+    report["sufficient_evidence_proxy_questions"] = len(sufficient_rows)
+    report["sufficient_evidence_proxy_boundary"] = (
+        "packed answer-token coverage diagnostic; not generated-answer correctness or citation entailment"
+    )
+    if not v2:
+        return report
+
+    if dataset_path is None:  # guarded above; keeps the artifact call type-safe too
+        raise RuntimeError("v2 dataset path validation was bypassed")
+    profile = validated_profile if canonical else None
+    config = {
+        "measurement_scope": "retrieval_only",
+        "k": int(k),
+        "dim": int(dim),
+        "token_budget": token_budget,
+        "resolve_conflicts": bool(resolve_conflicts),
+        "grounded_recall": bool(grounded),
+        "bootstrap_iterations": int(bootstrap_iterations),
+        "baseline_label": baseline.label,
+        "baseline_execution": baseline.as_dict(),
+    }
+    if canonical:
+        if profile is None:  # guarded above; defensive against future control-flow edits
+            raise RuntimeError("canonical profile validation was bypassed")
+        config.update(canonical_benchmark_config(
+            run_label="eval.harness", baseline_label=baseline.label,
+            token_budgets=CANONICAL_TOKEN_BUDGETS, profile=profile,
+        ))
+    public_records = []
+    for record in per_q:
+        public_record = dict(record)
+        public_record.pop("q", None)
+        public_records.append(public_record)
+    v2_metrics = _v2_metrics(per_q, bootstrap_iterations=max(0, int(bootstrap_iterations)))
+    v2_metrics["packed_evidence"] = {
+        key: report[key] for key in (
+            "packed_recall_at_k", "packed_hit_at_k", "packed_mrr_at_k", "packed_ndcg_at_k",
+            "packed_answer_token_recall",
+        )
+    }
+    if canonical:
+        v2_metrics["fixed_budget_curve"] = _measured_fixed_budget_curve(curve_measurements)
+    envelope = report_envelope(
+        suite="engraphis-harness",
+        dataset_path=dataset_path,
+        config=config,
+        records=public_records,
+        metrics=v2_metrics,
+        exclusions=report["exclusions"],
+        git_commit=_git_commit(),
+    )
+    model = {
+        "name": type(embedder).__name__,
+        "model_id": getattr(embedder, "model_name", None),
+        "revision": getattr(embedder, "revision", None),
+        "dimension": getattr(embedder, "dim", dim),
+    }
+    envelope["models"] = {"embedder": {**model, "sha256": sha256_text(json.dumps(model, sort_keys=True))}}
+    envelope["legacy_summary"] = {key: value for key, value in report.items() if key != "detail"}
+    if canonical:
+        if profile is None:  # guarded above; keeps the model check fail closed
+            raise RuntimeError("canonical profile validation was bypassed")
+        expected_embedding = profile["embedding"]
+        if model["model_id"] != expected_embedding["model"] or model["revision"] != expected_embedding["revision"]:
+            raise ValueError(
+                "canonical output requires an embedder whose model_name and revision match "
+                "canonical_profile.embedding"
+            )
+        envelope["protocol"]["complete_dataset"] = True
+        envelope["protocol"]["source_questions"] = len(per_q)
+    return envelope
+
+
+def _measured_fixed_budget_curve(measurements: dict[int, list[dict]]) -> dict:
+    """Summarize actual canonical budget reruns with their per-question evidence."""
+    rows = []
+    for budget in CANONICAL_TOKEN_BUDGETS:
+        records = sorted(measurements.get(budget, []), key=lambda item: item["question_id"])
+        scored = [item for item in records if not item.get("excluded")]
+        row = {
+            "token_budget": budget,
+            "status": "measured",
+            "n_total": len(records),
+            "n_scored": len(scored),
+            "records": records,
+        }
+        row.update({field: _rounded_mean(scored, field, 6) for field in (
+            "recall_at_1", "recall_at_5", "recall_at_10",
+            "mrr_at_1", "mrr_at_5", "mrr_at_10",
+            "ndcg_at_1", "ndcg_at_5", "ndcg_at_10",
+        )})
+        rows.append(row)
+    return {"available": True, "rows": rows}
+
+
+def run_baseline_matrix(
+    dataset: list[dict],
+    *,
+    baseline_labels: tuple[str, ...] = tuple(_EXECUTABLE_BASELINES),
+    **kwargs,
+) -> dict[str, dict]:
+    """Run an explicit, reproducible matrix of executable harness baselines.
+
+    A canonical artifact represents one declared method, so callers must run the
+    rows separately with their matching pinned profile rather than claiming a
+    multi-baseline canonical report.
+    """
+    if kwargs.get("canonical"):
+        raise ValueError("run_baseline_matrix does not emit multi-baseline canonical artifacts")
+    if "baseline_label" in kwargs:
+        raise ValueError("pass labels through baseline_labels, not baseline_label")
+    return {
+        label: run(dataset, baseline_label=label, **kwargs)
+        for label in baseline_labels
+    }
+
+
+def _load_cli_embedder(
+    model_name: Optional[str],
+    revision: Optional[str],
+    *,
+    dim: int,
+) -> Optional[Embedder]:
+    """Load an explicitly pinned semantic embedder or fail closed."""
+    if bool(model_name) != bool(revision):
+        raise ValueError("--embed-model and --embed-revision must be supplied together")
+    if model_name is None:
+        return None
+    embedder = get_embedder(
+        model_name,
+        dim,
+        revision=revision,
+        require_immutable_models=True,
+    )
+    expected_model = model_name.removeprefix("local:").strip()
+    if (
+        getattr(embedder, "supports_semantic_search", False) is not True
+        or getattr(embedder, "model_name", None) != expected_model
+        or getattr(embedder, "revision", None) != revision
+    ):
+        raise ValueError(
+            "configured canonical semantic embedder is unavailable or mismatched"
+        )
+    return embedder
+
+
+def _write_immutable_report(report: dict, output: str | Path) -> None:
+    """Write one strict JSON report without creating a publication sidecar."""
+    payload = json.dumps(
+        report,
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=True,
+        allow_nan=False,
+    ) + "\n"
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and target.read_text(encoding="utf-8") != payload:
+        raise ValueError(f"refusing to replace different report: {target}")
+    target.write_text(payload, encoding="utf-8")
+
+
+def _print(report: dict) -> None:
+    # ASCII-only output: the Windows console's default cp1252 encoding cannot
+    # emit a Unicode em dash, which would crash the documented offline gate.
+    print(f"\nEngraphis eval - {report['questions']} questions @ k={report['k']}")
+    for label, key in (("recall@k", "recall_at_k"), ("hit@k", "hit_at_k"),
+                       ("mrr@k", "mrr_at_k"), ("ndcg@k", "ndcg_at_k"),
+                       ("answer_token_recall", "answer_token_recall")):
+        value = report[key]
+        display = "unscored" if value is None else f"{value:.3f}"
+        print(f"  {label:<19} : {display}")
+    print()
+
+
+#: Minimum recall@k / hit@k enforced by the CLI gate per bundled dataset. Both
+#: deterministic baselines score 1.0 today; the floor leaves regression headroom
+#: while still failing CI on a real retrieval collapse. Datasets not listed here
+#: (opt-in external benchmarks) carry no floor.
+_METRIC_FLOORS: dict[str, dict[str, float]] = {
+    "sample": {"recall_at_k": 0.9, "hit_at_k": 0.9},
+    "codemem": {"recall_at_k": 0.9, "hit_at_k": 0.9},
+}
+
+
+def _enforce_metric_floors(report: dict, dataset_path: str) -> None:
+    """Exit 1 when a gated dataset's retrieval metrics drop below their floor."""
+    floors = _METRIC_FLOORS.get(Path(dataset_path).stem)
+    if not floors:
+        return
+    # v2/canonical envelopes nest the legacy metrics under ``legacy_summary``.
+    summary = report.get("legacy_summary", report)
+    for metric in sorted(floors):
+        if metric not in summary:
+            continue
+        if summary[metric] is None:
+            print(f"FLOOR VIOLATION: {Path(dataset_path).stem} {metric} is unscored", file=sys.stderr)
+            raise SystemExit(1)
+        value = float(summary[metric])
+        if value < floors[metric]:
+            stem = Path(dataset_path).stem
+            print(
+                f"FLOOR VIOLATION: {stem} {metric}={value:.3f} "
+                f"< required {floors[metric]:.2f}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    ap = argparse.ArgumentParser(description="Run the Engraphis retrieval eval.")
+    ap.add_argument("--dataset", default=str(Path(__file__).resolve().parent / "datasets" / "sample.jsonl"))
+    ap.add_argument("--k", type=int, default=5)
+    ap.add_argument("--dim", type=int, default=256)
+    ap.add_argument("--token-budget", type=int, default=None,
+                    help="packed-context token budget (recorded in v2 artifacts)")
+    ap.add_argument("--json", action="store_true", help="print full JSON report")
+    ap.add_argument("--v2", action="store_true",
+                    help="emit the provenance-complete engraphis-benchmark/v2 envelope")
+    ap.add_argument("--artifact", default=None,
+                    help="immutably write a v2 JSON artifact and SHA-256 sidecar")
+    ap.add_argument("--report", default=None,
+                    help="immutably write the JSON report without a publication checksum")
+    ap.add_argument("--canonical", action="store_true",
+                    help="require a complete dataset and a pinned canonical profile (implies --v2)")
+    ap.add_argument("--canonical-profile", default=None,
+                    help="JSON file with pinned benchmark, reader, and embedding revisions")
+    ap.add_argument("--embed-model", default=None,
+                    help="semantic embedding model required for canonical CLI runs")
+    ap.add_argument("--embed-revision", default=None,
+                    help="immutable embedding revision required with --embed-model")
+    ap.add_argument("--baseline-label", default="full_hybrid",
+                    help="executable baseline: " + ", ".join(sorted(_EXECUTABLE_BASELINES)))
+    ap.add_argument("--bootstrap-iterations", type=int, default=1000,
+                    help="deterministic stratified-bootstrap iterations for v2 output")
+    ap.add_argument("--grounded", action="store_true",
+                    help="run deterministic grounded recall for rows declaring answerable")
+    ap.add_argument("--output-dir", default=None,
+                    help="save the JSON report to this directory (filename derived from dataset + timestamp)")
+    args = ap.parse_args(argv)
+
+    if args.artifact and not (args.v2 or args.canonical):
+        ap.error("--artifact requires --v2 (or --canonical)")
+    if args.canonical and not args.canonical_profile:
+        ap.error("--canonical requires --canonical-profile with pinned revisions")
+    profile = None
+    if args.canonical_profile:
+        try:
+            profile = json.loads(Path(args.canonical_profile).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            ap.error(f"could not read --canonical-profile: {exc}")
+    if args.canonical:
+        if not args.embed_model or not args.embed_revision:
+            ap.error("--canonical requires --embed-model and --embed-revision")
+        expected_embedding = (
+            profile.get("embedding") if isinstance(profile, dict) else None
+        )
+        if (
+            isinstance(expected_embedding, dict)
+            and (
+                args.embed_model.removeprefix("local:").strip()
+                != expected_embedding.get("model")
+                or args.embed_revision != expected_embedding.get("revision")
+            )
+        ):
+            ap.error(
+                "--embed-model/--embed-revision must match the canonical profile"
+            )
+
+    try:
+        embedder = _load_cli_embedder(
+            args.embed_model,
+            args.embed_revision,
+            dim=args.dim,
+        )
+        report = run(
+            load_dataset(args.dataset), k=args.k, dim=args.dim,
+            v2=args.v2 or args.canonical, dataset_path=args.dataset,
+            token_budget=args.token_budget, canonical=args.canonical,
+            canonical_profile=profile, bootstrap_iterations=args.bootstrap_iterations,
+            baseline_label=args.baseline_label, grounded=args.grounded,
+            embedder=embedder,
+        )
+        if args.report:
+            _write_immutable_report(report, args.report)
+        if args.artifact:
+            write_canonical_artifact(report, args.artifact, canonical=args.canonical)
+    except (OSError, ValueError) as exc:
+        ap.error(str(exc))
+    _enforce_metric_floors(report, args.dataset)
+    if args.output_dir:
+        try:
+            import datetime
+            out_dir = Path(args.output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            dataset_stem = Path(args.dataset).stem
+            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            out_file = out_dir / f"{dataset_stem}_{ts}.json"
+            payload = json.dumps(report, indent=2, sort_keys=True, allow_nan=False)
+            out_file.write_text(payload, encoding="utf-8")
+            latest = out_dir / f"{dataset_stem}_latest.json"
+            latest.write_text(payload, encoding="utf-8")
+        except OSError as exc:
+            ap.error(f"could not write to --output-dir: {exc}")
+    if args.json or args.v2 or args.canonical:
+        print(json.dumps(report, indent=2))
+    else:
+        _print(report)
+
+
+if __name__ == "__main__":
+    main()

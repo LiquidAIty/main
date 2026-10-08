@@ -15,6 +15,8 @@ import worldviewRoutes, { worldviewInternalRoutes } from './worldview.routes';
 import graphRoutes from './graph.routes';
 import mainSessionRoutes from './mainSession.routes';
 import agentTerminalRoutes from './agentTerminal.routes';
+import externalMainRoutes from './externalMain.routes';
+import hermesProfileRoutes from './hermesProfile.routes';
 
 const router = Router();
 
@@ -29,6 +31,8 @@ router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor);
 router.use('/main/session', authMiddleware, mainSessionRoutes);
 router.use('/agent-terminals', authMiddleware, agentTerminalRoutes);
+router.use('/hermes-profile', authMiddleware, hermesProfileRoutes);
+router.use('/main', externalMainRoutes);
 router.use('/idd', authMiddleware, iddRoutes);
 router.use('/graph', authMiddleware, graphRoutes);
 router.use('/codegraph', authMiddleware, codegraph);

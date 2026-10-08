@@ -77,9 +77,9 @@ direct user addressing.
 ### Confirmed current state
 
 - Python rails derives the saved Card's `enabledTools`, `unavailableTools`, `presentedTools`, schemas,
-  skills, native toolsets, and MCP connection IDs before Hermes inference.
+  skills, Hermes toolsets, and MCP connection IDs before Hermes inference.
 - The current Hermes profile materializer applies and reads back only the parent model, selected skills,
-  and native subagent model. It does not make the Card's selected LiquidAIty tools callable in Hermes.
+  and Hermes subagent model. It does not make the Card's selected LiquidAIty tools callable in Hermes.
 - IDF tool text is context, not registration. Stock Hermes presents and dispatches only tools in its
   native registry snapshot, populated by built-ins, enabled native plugins, and deliberately configured
   external MCP servers.

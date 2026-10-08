@@ -44,6 +44,26 @@ def _model_provider_params(params) -> tuple:
     return str(params.get("model") or "").strip(), str(params.get("provider") or "").strip()
 
 
+def _profile_delegation_settings(cfg) -> dict:
+    from agent.skill_utils import parse_config_string_list
+
+    delegation = cfg.get("delegation") if isinstance(cfg.get("delegation"), dict) else {}
+    agent = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+    raw_disabled = agent.get("disabled_toolsets")
+    disabled = (
+        parse_config_string_list(raw_disabled)
+        if isinstance(raw_disabled, str)
+        else list(raw_disabled) if isinstance(raw_disabled, list) else []
+    )
+    return {
+        "provider": str(delegation.get("provider") or ""),
+        "model": str(delegation.get("model") or ""),
+        "max_spawn_depth": 2 if delegation.get("max_spawn_depth") == 2 else 1,
+        "orchestrator_enabled": delegation.get("orchestrator_enabled") is True,
+        "enabled": "delegation" not in disabled,
+    }
+
+
 def _try(fn, default):
     """``fn()`` or ``default`` on any exception (best-effort sections must never fail each other)."""
     try:
@@ -475,20 +495,25 @@ def _(rid, params: dict) -> dict:
             if isinstance(entry, dict)
         ], []) if isinstance(mcp_cfg, dict) else []
         model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
-        bot_mode_cfg = cfg.get("bot_mode") if isinstance(cfg.get("bot_mode"), dict) else {}
-        bot_mode_roster = bot_mode_cfg.get("roster") if "roster" in bot_mode_cfg else None
-        if not isinstance(bot_mode_roster, list) or any(
-            not isinstance(item, str) for item in bot_mode_roster
-        ):
-            bot_mode_roster = None
         meta = _try(lambda: _lazy("hermes_cli.profiles", "read_profile_meta")(profile_dir), {})
         return _ok(rid, {
             "name": name, "description": str(meta.get("description") or ""), "soul": soul,
             "model": {"provider": str(model_cfg.get("provider") or ""),
-                      "default": str(model_cfg.get("default") or "")},
+                      "default": str(model_cfg.get("default") or ""),
+                      "openai_runtime": (
+                          str(model_cfg.get("openai_runtime"))
+                          if model_cfg.get("openai_runtime") in {"auto", "codex_app_server"}
+                          else None
+                      )},
             "skills": installed, "toolsets": toolsets_out,
             "toolsets_pinned": pinned_set is not None, "mcp_servers": mcp_out,
-            "bot_mode_roster": bot_mode_roster})
+            "delegation": _profile_delegation_settings(cfg),
+            "task_mode": (
+                "team"
+                if isinstance(cfg.get("kanban"), dict)
+                and cfg["kanban"].get("task_mode") == "team"
+                else None
+            )})
 
 
 def _configure_ui_meta(profile_dir, params, applied) -> None:
@@ -556,7 +581,76 @@ def _configure_model(profile_dir, params, applied):
         confirm_message = _try(lambda: getattr(warn(model, provider=provider or None), "message", None), None)
     if confirm_message is None:
         applied["model"] = _best_effort(lambda: _pin_profile_model(profile_dir, provider, model))
+        if applied["model"] and "openai_runtime" in params:
+            def save_runtime():
+                with _hermes_home_scope(profile_dir):
+                    from hermes_cli.config import read_user_config_raw, save_config
+                    cfg = read_user_config_raw() or {}
+                    model_cfg = cfg.get("model")
+                    model_cfg = dict(model_cfg) if isinstance(model_cfg, dict) else {}
+                    model_cfg["openai_runtime"] = params.get("openai_runtime") or "auto"
+                    cfg["model"] = model_cfg
+                    save_config(cfg)
+            applied["model"] = _best_effort(save_runtime)
     return confirm_message
+
+
+def _configure_card_execution(profile_dir, params, applied) -> None:
+    if "delegation" not in params and "task_mode" not in params:
+        return
+    with _hermes_home_scope(profile_dir):
+        from agent.skill_utils import parse_config_string_list
+        from hermes_cli.config import read_user_config_raw, save_config
+
+        cfg = read_user_config_raw() or {}
+        changed = False
+        if isinstance(params.get("delegation"), dict):
+            requested = params["delegation"]
+            delegation = cfg.get("delegation")
+            delegation = dict(delegation) if isinstance(delegation, dict) else {}
+            for key in ("provider", "model", "max_spawn_depth", "orchestrator_enabled"):
+                if delegation.get(key) != requested.get(key):
+                    delegation[key] = requested.get(key)
+                    changed = True
+            cfg["delegation"] = delegation
+            agent = cfg.get("agent")
+            agent = dict(agent) if isinstance(agent, dict) else {}
+            raw_disabled = agent.get("disabled_toolsets")
+            if raw_disabled is None:
+                disabled = []
+            elif isinstance(raw_disabled, str):
+                disabled = parse_config_string_list(raw_disabled)
+            elif isinstance(raw_disabled, list) and all(isinstance(item, str) for item in raw_disabled):
+                disabled = list(raw_disabled)
+            else:
+                raise ValueError("agent.disabled_toolsets must be a string list")
+            expected_disabled = (
+                [name for name in disabled if name != "delegation"]
+                if requested.get("enabled") is True
+                else disabled if "delegation" in disabled else [*disabled, "delegation"]
+            )
+            if disabled != expected_disabled:
+                agent["disabled_toolsets"] = expected_disabled
+                cfg["agent"] = agent
+                changed = True
+            applied["delegation"] = True
+        if "task_mode" in params:
+            task_mode = params.get("task_mode")
+            if task_mode not in {None, "team"}:
+                raise ValueError("task_mode must be team or null")
+            kanban = cfg.get("kanban")
+            kanban = dict(kanban) if isinstance(kanban, dict) else {}
+            if task_mode == "team" and kanban.get("task_mode") != "team":
+                kanban["task_mode"] = "team"
+                cfg["kanban"] = kanban
+                changed = True
+            elif task_mode is None and "task_mode" in kanban:
+                kanban.pop("task_mode")
+                cfg["kanban"] = kanban
+                changed = True
+            applied["task_mode"] = True
+        if changed:
+            save_config(cfg)
 
 
 def _clean_names(values) -> set:
@@ -602,7 +696,7 @@ def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
 
 
 def _canonical_bot_roster(profile_dir, values) -> list[str]:
-    """Validate one source profile's ordered local Bot roster without broadening it."""
+    """Validate one session's ordered local Bot roster without broadening it."""
     from tools.bot_mode_probe import _hermes_root, _profile_name, _roster
 
     available = dict(_roster(_hermes_root(profile_dir)))
@@ -626,22 +720,11 @@ def _canonical_bot_roster(profile_dir, values) -> list[str]:
     return result
 
 
-def _save_bot_roster(profile_dir, cfg, values, save_config) -> None:
-    from tools.bot_mode_probe import invalidate_bot_mode_protocol_cache
-
-    bot_mode_cfg = cfg.get("bot_mode") if isinstance(cfg.get("bot_mode"), dict) else {}
-    bot_mode_cfg["roster"] = _canonical_bot_roster(profile_dir, values)
-    cfg["bot_mode"] = bot_mode_cfg
-    save_config(cfg)
-    invalidate_bot_mode_protocol_cache(profile_dir)
-
-
 def _configure_cfg_sections(profile_dir, params, applied) -> None:
-    """Apply skills, toolsets, MCP servers and the explicit Bot roster (replace
+    """Apply ``disabled_skills`` / ``enabled_toolsets`` / ``enabled_mcp_servers`` (replace
     semantics; empty toolsets clears the pin). An undefined MCP server is copied from the LAUNCH
     catalog (unknown names skipped); credentials stay in .env/auth."""
     want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
-    want_bot_roster = isinstance(params.get("bot_mode_roster"), list)
     launch_mcp = {}
     if want_mcp:  # launch catalog read BEFORE the home override flips config resolution
         load_launch = _lazy("hermes_cli.config", "load_config_readonly")
@@ -663,17 +746,13 @@ def _configure_cfg_sections(profile_dir, params, applied) -> None:
         if want_mcp:
             applied["mcp_servers"] = _best_effort(lambda: _save_mcp_toggles(
                 load_config() or {}, params["enabled_mcp_servers"], launch_mcp, save_config))
-        if want_bot_roster:
-            _save_bot_roster(profile_dir, load_config() or {}, params["bot_mode_roster"], save_config)
-            applied["bot_mode_roster"] = True
 
 
 @_profile_handler("profiles.configure", 5064)
 def _(rid, params: dict) -> dict:
     """Editor Save: ``name`` plus any of ``ui_meta`` (+ ``ui_meta_expected_revisions``), ``soul``,
     ``description``, ``model`` + ``provider`` (+ ``confirm_expensive_model``), ``disabled_skills``,
-    ``enabled_toolsets``, ``enabled_mcp_servers``, ``bot_mode_roster``; sections are independent,
-    ``applied`` reports each."""
+    ``enabled_toolsets``, ``enabled_mcp_servers``; sections are independent, ``applied`` reports each."""
     _name, profile_dir, err = _resolve_profile(rid, params)
     if err is not None:
         return err
@@ -688,9 +767,10 @@ def _(rid, params: dict) -> dict:
             profile_dir, description=params["description"].strip(), description_auto=False))
     confirm_message = _configure_model(profile_dir, params, applied)
     if any(isinstance(params.get(k), list) for k in (
-        "disabled_skills", "enabled_toolsets", "enabled_mcp_servers", "bot_mode_roster",
+        "disabled_skills", "enabled_toolsets", "enabled_mcp_servers",
     )):
         _configure_cfg_sections(profile_dir, params, applied)
+    _configure_card_execution(profile_dir, params, applied)
     # confirm_* is the shape config.set returns, so clients reuse one confirm handler.
     return _ok(rid, {"ok": all(applied.values()) if applied else True, "applied": applied,
                      **({"confirm_required": True, "confirm_message": confirm_message}

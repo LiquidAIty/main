@@ -1,0 +1,1401 @@
+"""Create a deterministic, content-safe manifest for a public release candidate.
+
+The evidence is deliberately limited to files and commands in this repository.  It is
+not an operational attestation for the hosted control plane, payment provider, or a
+customer deployment.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any, Iterable, Optional
+from urllib.parse import parse_qs, unquote, urlsplit
+import zipfile
+
+try:  # Python 3.11+
+    import tomllib
+except ImportError:  # pragma: no cover - supported Python 3.9/3.10
+    tomllib = None
+
+try:  # Prefer the installed packaging module when available.
+    from packaging.markers import InvalidMarker, Marker
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+    from packaging.version import InvalidVersion, Version
+except ImportError:  # pragma: no cover - fallback for environments without top-level packaging
+    from pip._vendor.packaging.markers import InvalidMarker, Marker
+    from pip._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+    from pip._vendor.packaging.version import InvalidVersion, Version
+
+
+FORMAT = "engraphis-release-evidence/3"
+PACKAGE = "engraphis"
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+_TAG = re.compile(r"v([0-9]+\.[0-9]+(?:\.[0-9]+)?)\Z")
+_SAFE_PATH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
+_PACKAGE_LOCK_LINE = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]*)==([^\s]+)\Z")
+_IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_BUILDER_IMAGE = "github-hosted:ubuntu-latest/python-3.11"
+# Extras installed by the release workflow (`.github/workflows/release.yml` runs
+# `pip install ... ".[all,test]"` before capturing the SBOM), so the captured
+# closure must include every marker-applicable requirement they declare.
+_RELEASE_EXTRAS = ("all", "test")
+_BUILDER_TOOLCHAIN = {
+    "build": "1.5.0",
+    "pip": "26.2",
+    "setuptools": "83.0.0",
+    "wheel": "0.47.0",
+}
+
+
+def _purl_matches(purl: str, name: str, version: str) -> bool:
+    """Return True when a pkg:pypi PURL names *name* at *version*."""
+    if not purl.startswith("pkg:pypi/"):
+        return False
+    remainder = purl[len("pkg:pypi/"):].split("?", 1)[0]
+    if "@" not in remainder:
+        return False
+    purl_name, purl_version = remainder.split("@", 1)
+    return _canonical_package_name(purl_name) == name and purl_version == version
+_GRYPE_VERSION = "0.110.0"
+_SECRET_NAME = re.compile(
+    r"(?:secret|token|password|credential|api[-_]?key|private[-_]?key)", re.IGNORECASE
+)
+_SECRET_VALUE = re.compile(
+    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|rk|pk)_[A-Za-z0-9_-]{16,}\b|"
+    r"\bgh[pous]_[A-Za-z0-9_]{16,}\b|\bgithub_pat_[A-Za-z0-9_]{16,}\b|"
+    r"\bAKIA[0-9A-Z]{16}\b|\bengr_(?:ct|rt|at)_[A-Za-z0-9_-]{12,}\b)",
+    re.IGNORECASE,
+)
+
+
+class EvidenceError(ValueError):
+    """A release-evidence input is malformed, incomplete, or unsafe to publish."""
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    """Return one stable UTF-8 encoding suitable for a reproducible artifact."""
+    return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode(
+        "utf-8"
+    )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _relative_path(root: Path, path: Path) -> str:
+    try:
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError as exc:
+        raise EvidenceError("evidence inputs must stay within the repository") from exc
+    if not _SAFE_PATH.fullmatch(relative) or _SECRET_NAME.search(relative):
+        raise EvidenceError("evidence input path is unsafe to publish")
+    return relative
+
+
+def _reject_secret_like(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise EvidenceError("evidence object keys must be strings")
+            if _SECRET_NAME.search(key):
+                raise EvidenceError("evidence must not include secret-like fields")
+            _reject_secret_like(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_secret_like(item)
+    elif isinstance(value, str) and _SECRET_VALUE.search(value):
+        raise EvidenceError("evidence must not include secret-like values")
+
+
+def _file_input(root: Path, relative: str) -> dict[str, str]:
+    path = root / relative
+    if not path.is_file():
+        raise EvidenceError("required release input is missing: %s" % relative)
+    return {"path": _relative_path(root, path), "sha256": _sha256(path)}
+
+
+def project_version(root: Path) -> str:
+    pyproject = root / "pyproject.toml"
+    try:
+        raw = pyproject.read_text(encoding="utf-8")
+        if tomllib is not None:
+            version = tomllib.loads(raw)["project"]["version"]
+        else:
+            project = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", raw)
+            match = (
+                re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', project.group(1))
+                if project else None
+            )
+            if match is None:
+                raise KeyError("project.version")
+            version = match.group(1)
+    except (KeyError, OSError, ValueError) as exc:
+        raise EvidenceError("pyproject project.version is required") from exc
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", version):
+        raise EvidenceError("project.version must use stable semantic version syntax")
+    return version
+
+
+
+
+def git_commit(root: Path) -> str:
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise EvidenceError("could not determine the release commit") from exc
+    return validate_commit(commit)
+
+
+def validate_commit(commit: str) -> str:
+    if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
+        raise EvidenceError("release commit must be a lowercase 40-character SHA-1")
+    return commit
+
+
+def validate_tag(tag: str, version: str) -> str:
+    """Require a canonical release tag that exactly names the package version."""
+    if not isinstance(tag, str):
+        raise EvidenceError("release tag must be a stable semantic version tag")
+    match = _TAG.fullmatch(tag)
+    if match is None or match.group(1) != version:
+        raise EvidenceError("release tag must exactly match the package version")
+    return tag
+
+
+def repair_run_candidates(runs: Any, tag: str, commit: str) -> list[str]:
+    """Return matching push-run IDs newest first; artifact viability is checked by the caller."""
+    if _TAG.fullmatch(tag) is None:
+        raise EvidenceError("repair tag must use stable semantic version syntax")
+    validate_commit(commit)
+    if not isinstance(runs, list):
+        raise EvidenceError("workflow runs must be a JSON array")
+    matches = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        run_id = run.get("databaseId")
+        created_at = run.get("createdAt")
+        if (
+            run.get("headBranch") == tag
+            and run.get("headSha") == commit
+            and run.get("event") == "push"
+            and isinstance(run_id, int)
+            and isinstance(created_at, str)
+            and created_at
+        ):
+            matches.append((created_at, str(run_id)))
+    return [run_id for _, run_id in sorted(matches, reverse=True)]
+
+
+def distribution_artifacts(directory: Path, version: str) -> list[dict[str, Any]]:
+    if not directory.is_dir():
+        raise EvidenceError("distribution directory is missing")
+    allowed = (".whl", ".tar.gz")
+    paths = sorted(path for path in directory.iterdir() if path.is_file())
+    if not paths:
+        raise EvidenceError("distribution directory is empty")
+    artifacts = []
+    for path in paths:
+        name = path.name
+        if path.is_symlink() or not path.is_file() or (
+                not name.endswith(allowed) or not _SAFE_PATH.fullmatch(name)
+                or _SECRET_NAME.search(name)
+        ):
+            raise EvidenceError("distribution directory contains an unsafe non-package file")
+        if not name.startswith(PACKAGE + "-" + version + ".") and not name.startswith(
+            PACKAGE + "-" + version + "-"
+        ):
+            raise EvidenceError("distribution filename does not match package version")
+        if _SECRET_VALUE.search(name):
+            raise EvidenceError("evidence must not include secret-like values")
+        artifacts.append({"filename": name, "bytes": path.stat().st_size, "sha256": _sha256(path)})
+    if (
+        sum(item["filename"].endswith(".whl") for item in artifacts) != 1
+        or sum(item["filename"].endswith(".tar.gz") for item in artifacts) != 1
+    ):
+        raise EvidenceError(
+            "distribution directory must contain exactly one wheel and one source distribution"
+        )
+    return artifacts
+
+
+def _json_object(path: Path, label: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EvidenceError(f"{label} must be valid UTF-8 JSON") from exc
+    if not isinstance(parsed, dict):
+        raise EvidenceError(f"{label} must be a JSON object")
+    return parsed
+
+
+def _canonical_package_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def _parse_requirement(requirement: str) -> tuple[str, str | None]:
+    """Extract (name, specifier) from a PEP 508 requirement string."""
+    requirement = requirement.strip()
+    if not requirement:
+        return ("", None)
+    match = re.match(
+        r'^([A-Za-z0-9][A-Za-z0-9._-]*)'
+        r'(?:\[.*?\])?'
+        r'\s*'
+        r'((?:[<>=!~]=?[^;,\s]+(?:\s*,\s*[<>=!~]=?[^;,\s]+)*)?)',
+        requirement,
+    )
+    if not match:
+        name = re.split(r"[\s;<(>=!~\[]", requirement, maxsplit=1)[0]
+        return (name, None)
+    name = match.group(1)
+    specifier = match.group(2) if match.group(2) else None
+    return (name, specifier)
+
+
+def _version_satisfies(version: str, specifier: str) -> bool:
+    """Check if *version* satisfies a PEP 440 specifier."""
+    if not specifier:
+        return True
+    try:
+        candidate = Version(version)
+        spec = SpecifierSet(specifier)
+    except (InvalidVersion, InvalidSpecifier):
+        return False
+    return candidate in spec
+
+
+def _declared_dependencies(
+        root: Path, *, include_extras: bool = True,
+) -> dict[str, str | None]:
+    """Return {canonical_name: combined specifier} required in the SBOM closure.
+
+    Covers [project].dependencies plus, when ``include_extras`` is true, every
+    requirement declared by the extras the release workflow installs
+    (``_RELEASE_EXTRAS``). PEP 508 environment markers are evaluated against the
+    running interpreter, which in the release workflow is the same environment
+    that captures the SBOM; requirements whose markers do not apply are not
+    required.
+    """
+    pyproject = root / "pyproject.toml"
+    try:
+        raw = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    requirements: list[str] = []
+    if tomllib is not None:
+        try:
+            parsed = tomllib.loads(raw)
+        except (KeyError, ValueError):
+            parsed = {}
+        project = parsed.get("project", {}) if isinstance(parsed, dict) else {}
+        if isinstance(project, dict):
+            core = project.get("dependencies", [])
+            if isinstance(core, list):
+                requirements.extend(item for item in core if isinstance(item, str))
+            extras = project.get("optional-dependencies", {})
+            if include_extras and isinstance(extras, dict):
+                for extra in _RELEASE_EXTRAS:
+                    group = extras.get(extra)
+                    if isinstance(group, list):
+                        requirements.extend(
+                            item for item in group if isinstance(item, str)
+                        )
+    else:
+        project = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", raw)
+        if project is not None:
+            deps_block = re.search(
+                r'(?m)^dependencies\s*=\s*\[(.*?)\]', project.group(1), re.DOTALL,
+            )
+            if deps_block is not None:
+                requirements.extend(re.findall(r'"([^"]+)"', deps_block.group(1)))
+        extras_table = re.search(
+            r"(?ms)^\[project\.optional-dependencies\]\s*(.*?)(?=^\[|\Z)", raw,
+        )
+        if include_extras and extras_table is not None:
+            for extra in _RELEASE_EXTRAS:
+                group = re.search(
+                    r"(?m)^" + re.escape(extra) + r"\s*=\s*\[(.*?)\]",
+                    extras_table.group(1), re.DOTALL,
+                )
+                if group is not None:
+                    requirements.extend(re.findall(r'"([^"]+)"', group.group(1)))
+    deps: dict[str, str | None] = {}
+    for requirement in requirements:
+        if not isinstance(requirement, str) or not requirement.strip():
+            continue
+        name, specifier = _parse_requirement(requirement)
+        canonical = _canonical_package_name(name)
+        if not canonical or canonical == PACKAGE:
+            continue
+        marker_text = requirement.split(";", 1)[1].strip() if ";" in requirement else ""
+        if marker_text:
+            try:
+                applies = Marker(marker_text).evaluate()
+            except InvalidMarker as exc:
+                raise EvidenceError(
+                    "pyproject.toml declares an unparsable environment marker: "
+                    + marker_text
+                ) from exc
+            if not applies:
+                continue
+        if canonical not in deps or deps[canonical] is None:
+            deps[canonical] = specifier
+        elif specifier and specifier != deps[canonical]:
+            # Multiple selected extras can constrain the same distribution.
+            # Preserve every applicable constraint so validation enforces their
+            # intersection instead of silently accepting the first one seen.
+            deps[canonical] = f"{deps[canonical]},{specifier}"
+    return deps
+
+def _python_sbom_packages(document: dict[str, Any]) -> set[tuple[str, str]]:
+    packages = set()
+    metadata_component = document.get("metadata", {}).get("component")
+    if isinstance(metadata_component, dict):
+        purl = metadata_component.get("purl")
+        name = metadata_component.get("name")
+        version = metadata_component.get("version")
+        # cyclonedx-py --pyproject emits the application as root-component
+        # without a PURL; environment_lock_artifact validates the name/version.
+        if (
+            isinstance(name, str)
+            and isinstance(version, str)
+            and (
+                purl is None
+                or (isinstance(purl, str) and purl.startswith("pkg:pypi/"))
+            )
+        ):
+            packages.add((_canonical_package_name(name), version))
+    components = document.get("components", [])
+    if not isinstance(components, list):
+        raise EvidenceError("SBOM components must be a JSON array")
+    for component in components:
+        if not isinstance(component, dict):
+            raise EvidenceError("SBOM components must be JSON objects")
+        purl = component.get("purl")
+        name = component.get("name")
+        version = component.get("version")
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(version, str)
+            or not version
+        ):
+            raise EvidenceError("SBOM component must identify name and version")
+        if not isinstance(purl, str) or not purl.startswith("pkg:pypi/"):
+            raise EvidenceError(
+                "SBOM component lacks a valid PyPI PURL: "
+                + name + "@" + version
+            )
+        if not _purl_matches(purl, _canonical_package_name(name), version):
+            raise EvidenceError(
+                "SBOM component PURL does not match its name/version: "
+                + name + "@" + version + " vs " + purl
+            )
+        packages.add((_canonical_package_name(name), version))
+    return packages
+
+
+def _python_component_refs(component: Any) -> set[str]:
+    """Return the component's preferred CycloneDX dependency-graph ref."""
+    if not isinstance(component, dict):
+        return set()
+    bom_ref = component.get("bom-ref")
+    if isinstance(bom_ref, str) and bom_ref:
+        return {bom_ref}
+    purl = component.get("purl")
+    return {purl} if isinstance(purl, str) and purl else set()
+
+
+def _validate_python_sbom_dependency_closure(
+    document: dict[str, Any], declared_names: set[str],
+) -> None:
+    """Validate the CycloneDX dependency graph of the captured Python SBOM.
+
+    The pinned capture generator (cyclonedx-bom 7.3.0) emits one
+    ``dependencies`` entry per component plus the project root, with
+    ``dependsOn`` resolved against installed distribution metadata. The graph
+    is optional here because lock-to-SBOM closure coverage in
+    ``environment_lock_artifact`` already rejects truncated captures
+    deterministically; when present it must be coherent: every ``dependsOn``
+    ref must resolve to the root or a listed component, and every declared
+    requirement must be transitively reachable from the project root.
+    Workflow-installed build tooling (pip, build, twine, ...) is legitimately
+    captured yet unreachable from the root, so full-graph reachability from
+    the root alone is intentionally not required.
+    """
+    entries = document.get("dependencies")
+    if entries is None:
+        return
+    if not isinstance(entries, list):
+        raise EvidenceError("SBOM dependency graph must be a JSON array")
+    edges: dict[str, list[str]] = {}
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("ref"), str)
+            or not entry["ref"]
+        ):
+            raise EvidenceError("SBOM dependency graph entries must carry string refs")
+        children = entry.get("dependsOn", [])
+        if not isinstance(children, list) or any(
+            not isinstance(child, str) or not child for child in children
+        ):
+            raise EvidenceError("SBOM dependency graph dependsOn must list string refs")
+        ref = entry["ref"]
+        if ref in edges:
+            raise EvidenceError(
+                "SBOM dependency graph contains duplicate ref: " + ref
+            )
+        edges[ref] = children
+    metadata_component = document.get("metadata", {}).get("component")
+    root_refs = _python_component_refs(metadata_component)
+    known_refs = set(root_refs)
+    ref_names: dict[str, str] = {}
+    for component in document.get("components", []):
+        name = component.get("name") if isinstance(component, dict) else None
+        refs = _python_component_refs(component)
+        if not isinstance(name, str) or not refs:
+            continue
+        canonical = _canonical_package_name(name)
+        for ref in refs:
+            if ref in known_refs:
+                raise EvidenceError(
+                    "SBOM dependency graph ref collides with root or another "
+                    "component: " + ref
+                )
+            known_refs.add(ref)
+            ref_names[ref] = canonical
+        if not any(ref in edges for ref in refs):
+            raise EvidenceError(
+                "SBOM dependency graph is missing an entry for component " + name
+            )
+    for ref in edges:
+        if ref not in known_refs:
+            raise EvidenceError(
+                "SBOM dependency graph references unknown component ref: " + ref
+            )
+    for children in edges.values():
+        for child in children:
+            if child not in known_refs:
+                raise EvidenceError(
+                    "SBOM dependency graph references unknown component ref: " + child
+                )
+    frontier = list(root_refs)
+    reachable_refs = set(root_refs)
+    while frontier:
+        ref = frontier.pop()
+        for child in edges.get(ref, ()):
+            if child not in reachable_refs:
+                reachable_refs.add(child)
+                frontier.append(child)
+    reachable_names = {
+        ref_names[ref] for ref in reachable_refs if ref in ref_names
+    }
+    unreachable = declared_names - reachable_names
+    if unreachable:
+        raise EvidenceError(
+            "declared dependencies are unreachable from the SBOM root "
+            "in the dependency graph: " + ", ".join(sorted(unreachable))
+        )
+
+
+def sbom_artifact(root: Path, path: Path) -> dict[str, Any]:
+    """Validate and fingerprint the build-captured Python CycloneDX SBOM."""
+    if not path.is_file():
+        raise EvidenceError("SBOM is missing")
+    relative = _relative_path(root, path)
+    if not path.name.endswith(".cdx.json"):
+        raise EvidenceError("SBOM filename must use the .cdx.json suffix")
+    parsed = _json_object(path, "SBOM")
+    if parsed.get("bomFormat") != "CycloneDX":
+        raise EvidenceError("SBOM must be a CycloneDX JSON document")
+    if not isinstance(parsed.get("specVersion"), str) or not isinstance(
+            parsed.get("components"), list):
+        raise EvidenceError("SBOM is missing required CycloneDX fields")
+    _reject_secret_like(parsed)
+    return {
+        "format": "CycloneDX",
+        "spec_version": parsed["specVersion"],
+        "filename": path.name,
+        "path": relative,
+        "bytes": path.stat().st_size,
+        "sha256": _sha256(path),
+    }
+
+
+def environment_lock_artifact(
+        root: Path, path: Path, sbom: Path, version: str) -> dict[str, Any]:
+    """Require the captured freeze and the Python SBOM to describe one closure.
+
+    The comparison is two-sided after name canonicalization: every SBOM
+    package must appear in the lock at the same version (version skew fails),
+    and every locked package must be inventoried by the SBOM. The pinned
+    generator (cyclonedx-bom 7.3.0, ``cyclonedx-py environment``) inventories
+    the whole build environment including workflow-installed tooling, so a
+    lock entry missing from the SBOM means a truncated capture, not expected
+    tooling overhead. A truncated SBOM that keeps the root and every direct
+    requirement but drops transitive packages would otherwise pass a
+    one-directional subset check and let incomplete release evidence publish.
+    """
+    if not path.is_file() or path.is_symlink():
+        raise EvidenceError("build environment lock is missing")
+    relative = _relative_path(root, path)
+    packages: set[tuple[str, str]] = set()
+    seen_names: set[str] = set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise EvidenceError("build environment lock must be UTF-8 text") from exc
+    if not lines:
+        raise EvidenceError("build environment lock is empty")
+    for line in lines:
+        match = _PACKAGE_LOCK_LINE.fullmatch(line)
+        if match is None:
+            raise EvidenceError("build environment lock must contain exact name==version lines")
+        canonical = _canonical_package_name(match.group(1))
+        package = (canonical, match.group(2))
+        if package in packages:
+            raise EvidenceError("build environment lock contains a duplicate package")
+        if canonical in seen_names:
+            raise EvidenceError(
+                "build environment lock contains conflicting versions of " + canonical
+            )
+        seen_names.add(canonical)
+        packages.add(package)
+    document = _json_object(sbom, "SBOM")
+    sbom_packages = _python_sbom_packages(document)
+    if not sbom_packages:
+        raise EvidenceError("SBOM contains no Python package components")
+    metadata_component = document.get("metadata", {}).get("component")
+    if not isinstance(metadata_component, dict):
+        raise EvidenceError(
+            "SBOM metadata.component does not identify the " + PACKAGE + " root"
+        )
+    root_name = metadata_component.get("name")
+    root_version = metadata_component.get("version")
+    root_purl = metadata_component.get("purl")
+    if (
+        not isinstance(root_name, str)
+        or _canonical_package_name(root_name) != PACKAGE
+        or not isinstance(root_version, str)
+        or root_version != version
+        or (
+            root_purl is not None
+            and (
+                not isinstance(root_purl, str)
+                or not _purl_matches(root_purl, PACKAGE, version)
+            )
+        )
+    ):
+        raise EvidenceError(
+            "SBOM metadata.component does not identify the " + PACKAGE
+            + " root at version " + version
+        )
+    declared = _declared_dependencies(root)
+    core_declared = _declared_dependencies(root, include_extras=False)
+    dependency_packages = {
+        pkg for pkg in sbom_packages
+        if pkg != (_canonical_package_name(PACKAGE), version)
+    }
+    declared_names = {name for name in declared if name != PACKAGE}
+    core_declared_names = {name for name in core_declared if name != PACKAGE}
+    sbom_dependency_names = {
+        name for name, _ in dependency_packages
+    }
+    missing_declared = declared_names - sbom_dependency_names
+    if missing_declared:
+        raise EvidenceError(
+            "SBOM is missing declared dependencies: "
+            + ", ".join(sorted(missing_declared))
+        )
+    # Validate version constraints for declared dependencies
+    sbom_versions = {name: ver for name, ver in dependency_packages}
+    for name, specifier in declared.items():
+        if name == PACKAGE or not specifier or name not in sbom_versions:
+            continue
+        sbom_ver = sbom_versions[name]
+        if not _version_satisfies(sbom_ver, specifier):
+            raise EvidenceError(
+                f"SBOM version {name}=={sbom_ver} does not satisfy "
+                f"declared constraint {specifier}"
+            )
+    if not dependency_packages:
+        raise EvidenceError(
+            "SBOM contains no dependency components beyond the " + PACKAGE + " root"
+        )
+    # Extras are required to be present in the captured SBOM/lock above, but
+    # pip's installed-distribution metadata does not preserve which extras were
+    # selected. Their CycloneDX nodes therefore need not be reachable from the
+    # project root, unlike core project dependencies.
+    _validate_python_sbom_dependency_closure(document, core_declared_names)
+    if not sbom_packages.issubset(packages):
+        raise EvidenceError("build environment lock and Python SBOM package closure differ")
+    missing_from_sbom = sorted(
+        {name for name, _ in packages} - {name for name, _ in sbom_packages}
+    )
+    if missing_from_sbom:
+        raise EvidenceError(
+            "Python SBOM omits captured environment packages "
+            "(truncated closure): " + ", ".join(missing_from_sbom)
+        )
+    return {
+        "filename": path.name,
+        "path": relative,
+        "bytes": path.stat().st_size,
+        "sha256": _sha256(path),
+        "package_count": len(packages),
+    }
+
+
+def container_sbom_artifact(
+        root: Path, path: Path, image_digest: str) -> dict[str, Any]:
+    """Validate a whole-image SBOM bound to one immutable production image."""
+    if not _IMAGE_DIGEST.fullmatch(image_digest):
+        raise EvidenceError("production image digest must be a lowercase sha256 digest")
+    if not path.is_file() or path.is_symlink():
+        raise EvidenceError("container SBOM is missing")
+    relative = _relative_path(root, path)
+    document = _json_object(path, "container SBOM")
+    if document.get("bomFormat") != "CycloneDX" or not isinstance(
+            document.get("components"), list):
+        raise EvidenceError("container SBOM must be a CycloneDX document")
+    metadata = document.get("metadata")
+    component = metadata.get("component") if isinstance(metadata, dict) else None
+    properties = component.get("properties") if isinstance(component, dict) else None
+    digest_properties = {
+        item.get("value")
+        for item in properties or []
+        if isinstance(item, dict) and item.get("name") == "engraphis:image-digest"
+    }
+    if digest_properties != {image_digest}:
+        raise EvidenceError("container SBOM must bind the production image digest")
+    purls: list[str] = []
+    for item in document["components"]:
+        if isinstance(item, dict):
+            purl = item.get("purl")
+            if isinstance(purl, str):
+                purls.append(purl)
+    os_packages = sum(purl.startswith("pkg:deb/") for purl in purls)
+    python_packages = sum(purl.startswith("pkg:pypi/") for purl in purls)
+    if not os_packages or not python_packages:
+        raise EvidenceError("container SBOM must inventory both OS and Python packages")
+    _reject_secret_like(document)
+    return {
+        "format": "CycloneDX",
+        "filename": path.name,
+        "path": relative,
+        "bytes": path.stat().st_size,
+        "sha256": _sha256(path),
+        "image_digest": image_digest,
+        "os_package_count": os_packages,
+        "python_package_count": python_packages,
+    }
+
+
+def container_scan_artifact(root: Path, path: Path) -> dict[str, Any]:
+    """Validate and fingerprint a pinned-Grype report with an identified database."""
+    if not path.is_file() or path.is_symlink():
+        raise EvidenceError("container vulnerability report is missing")
+    relative = _relative_path(root, path)
+    document = _json_object(path, "container vulnerability report")
+    descriptor = document.get("descriptor")
+    if not isinstance(descriptor, dict) or descriptor.get("name") != "grype":
+        raise EvidenceError("container vulnerability report must identify Grype")
+    if descriptor.get("version") != _GRYPE_VERSION:
+        raise EvidenceError("container vulnerability report used an unexpected Grype version")
+    database = descriptor.get("db")
+    if not isinstance(database, dict):
+        raise EvidenceError("container vulnerability report must identify its database")
+    # Grype >= 0.110 nests the database identity under db.status; older releases
+    # wrote built/schemaVersion/checksum|from directly on db. Accept both shapes.
+    status = database.get("status")
+    if isinstance(status, dict):
+        if status.get("valid") is False:
+            raise EvidenceError(
+                "container vulnerability database is marked invalid by the scanner"
+            )
+        database = {**database, **status}
+    built = database.get("built")
+    schema_version = database.get("schemaVersion")
+    checksum = database.get("checksum")
+    if not isinstance(checksum, str):
+        source = database.get("from")
+        if isinstance(source, str):
+            checksum = parse_qs(urlsplit(source).query).get("checksum", [None])[0]
+    schema_identified = (
+        isinstance(schema_version, (str, int))
+        and not isinstance(schema_version, bool)
+        and str(schema_version)
+    )
+    if (
+        not isinstance(built, str)
+        or not built
+        or not schema_identified
+        or not isinstance(checksum, str)
+        or not _IMAGE_DIGEST.fullmatch(checksum)
+    ):
+        raise EvidenceError("container vulnerability database identity is incomplete")
+    _reject_secret_like(document)
+    return {
+        "format": "Grype JSON",
+        "filename": path.name,
+        "path": relative,
+        "bytes": path.stat().st_size,
+        "sha256": _sha256(path),
+        "scanner_version": descriptor["version"],
+        "database": {
+            "built": built,
+            "schema_version": schema_version,
+            "checksum": checksum,
+        },
+    }
+
+
+def reproducibility_artifact(
+        root: Path,
+        path: Path,
+        expected_artifacts: dict[str, str],
+) -> dict[str, Any]:
+    """Validate two independent pinned builders against the shipped digests."""
+    if not path.is_file() or path.is_symlink():
+        raise EvidenceError("independent reproducibility evidence is missing")
+    relative = _relative_path(root, path)
+    document = _json_object(path, "independent reproducibility evidence")
+    if document.get("format") != "engraphis-independent-reproducibility/v1":
+        raise EvidenceError("independent reproducibility evidence has the wrong format")
+    builders = document.get("builders")
+    if not isinstance(builders, list) or len(builders) != 2:
+        raise EvidenceError("independent reproducibility evidence requires two builders")
+    names = set()
+    environment_digests = set()
+    for builder in builders:
+        if not isinstance(builder, dict):
+            raise EvidenceError("independent builder metadata must be an object")
+        names.add(builder.get("name"))
+        if builder.get("image") != _BUILDER_IMAGE:
+            raise EvidenceError("independent builder image digest is not approved")
+        if builder.get("python") != "3.11":
+            raise EvidenceError("independent builder Python identity is incomplete")
+        if builder.get("artifacts") != expected_artifacts:
+            raise EvidenceError("independent builder artifacts differ from the release")
+        if builder.get("toolchain") != _BUILDER_TOOLCHAIN:
+            raise EvidenceError("independent builder toolchain identity is incomplete")
+        environment_digest = builder.get("environment_lock_sha256")
+        if not isinstance(environment_digest, str) or not _SHA256.fullmatch(environment_digest):
+            raise EvidenceError("independent builder environment lock digest is invalid")
+        environment_digests.add(environment_digest)
+    if len(names) != 2 or None in names:
+        raise EvidenceError("independent reproducibility builders must be distinct")
+    if len(environment_digests) != 1:
+        raise EvidenceError("independent builder environment locks differ")
+    _reject_secret_like(document)
+    return {
+        "format": document["format"],
+        "filename": path.name,
+        "path": relative,
+        "bytes": path.stat().st_size,
+        "sha256": _sha256(path),
+        "builder_image": _BUILDER_IMAGE,
+        "builder_count": 2,
+        "environment_lock_sha256": next(iter(environment_digests)),
+    }
+
+
+def check_manifest(root: Path) -> dict[str, list[dict[str, Any]]]:
+    """Return the exact public checks represented by this evidence format."""
+    return {
+        "tests": [
+            {"id": "ruff", "command": ["ruff", "check", "."], "inputs": []},
+            {
+                "id": "pyright-core-backends",
+                "command": ["pyright"],
+                "workflow_job": "build",
+                "workflow_steps": ["Full release gate"],
+                "inputs": [],
+            },
+            {
+                "id": "codeql",
+                "command": [
+                    "python", "scripts/check_codeql_sarif.py", "codeql-results",
+                ],
+                "workflow_job": "code-security",
+                "workflow_steps": [
+                    "Initialize CodeQL",
+                    "Analyze complete source tree",
+                    "Require clean CodeQL results",
+                ],
+                "inputs": [],
+            },
+            {
+                "id": "pytest",
+                "command": ["python", "-m", "pytest", "-o", "addopts=", "tests/", "-q", "-rs"],
+                "inputs": [],
+            },
+            {
+                "id": "reproducible-distributions",
+                "command": [
+                    "python", "-c",
+                    "compare two independent builder artifact SHA-256 maps",
+                ],
+                "workflow_job": "reproducibility-check",
+                "workflow_steps": ["Compare independent distribution builders"],
+                "inputs": [],
+            },
+            {
+                "id": "installed-artifact-smoke",
+                "command": ["python", "-m", "scripts.smoke_entry_points", "--timeout", "20"],
+                "workflow_job": "build",
+                "workflow_steps": ["Smoke installed wheel and source distribution"],
+                "inputs": [],
+            },
+            {
+                "id": "installed-artifact-smoke-py39",
+                "command": [
+                    "python", "-m", "pip", "install", "<downloaded-wheel-or-sdist>",
+                ],
+                "workflow_job": "artifact-core-py39",
+                "workflow_steps": [
+                    "Download exact release distributions",
+                    "Install, verify, and smoke wheel and source distribution",
+                ],
+                "inputs": [],
+            },
+            {
+                "id": "installed-artifact-platform-smoke",
+                "command": [
+                    "python", "-m", "scripts.smoke_installed_product", "--surface", "<mcp-or-server>",
+                ],
+                "workflow_job": "installed-artifact-platform-smoke",
+                "workflow_steps": [
+                    "Install and exercise the downloaded wheel on supported platforms",
+                ],
+                "inputs": [],
+            },
+            {
+                "id": "privacy-boundary",
+                "command": [
+                    "python", "-m", "pytest", "-o", "addopts=",
+                    "tests/test_public_research_boundary.py", "-q",
+                ],
+                "inputs": [],
+            },
+            {
+                "id": "token-efficiency",
+                "command": [
+                    "python", "-m", "pytest", "-o", "addopts=",
+                    "tests/test_compact_recall.py", "tests/test_eval_performance.py", "-q",
+                ],
+                "inputs": [],
+            },
+            {
+                "id": "benchmark-schema-evidence",
+                "command": [
+                    "python", "-m", "pytest", "-o", "addopts=",
+                    "tests/test_eval_harness.py", "tests/test_benchmark_evidence.py", "-q",
+                ],
+                "inputs": [],
+            },
+            {
+                "id": "encryption-at-rest",
+                "command": [
+                    "python", "-m", "pytest", "-o", "addopts=",
+                    "tests/test_encrypted_store.py", "-q", "-rs",
+                ],
+                "workflow_job": "encryption",
+                "inputs": [],
+            },
+            {
+                "id": "browser-e2e",
+                "command": ["npm", "run", "test:e2e"],
+                "workflow_job": "browser-accessibility",
+                "inputs": [],
+            },
+            {
+                "id": "pi-extension",
+                "command": ["npm", "run", "verify"],
+                "workflow_job": "pi-extension",
+                "workflow_steps": [
+                    "Verify the publishable Pi package and live bridge",
+                ],
+                "inputs": [],
+            },
+            {
+                "id": "dependency-audit",
+                "command": ["python", "-m", "pip_audit", "--local", "--skip-editable"],
+                "inputs": [],
+            },
+            {
+                "id": "browser-dependency-audit",
+                "command": ["npm", "audit", "--audit-level=high"],
+                "workflow_job": "browser-accessibility",
+                "workflow_steps": ["Audit the root browser dependency lock"],
+                "inputs": [],
+            },
+            {
+                "id": "container-smoke",
+                "command": [
+                    "docker", "buildx", "build", "--pull", "--load",
+                    "-t", "engraphis:release", ".",
+                ],
+                "workflow_job": "docker-smoke",
+                "workflow_steps": [
+                    "Validate Compose configuration",
+                    "Verify production image OCR runtime",
+                    "Generate whole-image SBOM",
+                    "Scan whole production image",
+                    "Run customer-mode readiness smoke",
+                    "Record immutable production image digest",
+                ],
+                "inputs": [],
+            },
+        ],
+        "evaluations": [
+            {
+                "id": "retrieval-sample",
+                "command": [
+                    "python", "-m", "eval.harness", "--dataset", "eval/datasets/sample.jsonl", "--k", "5"
+                ],
+                "inputs": [_file_input(root, "eval/datasets/sample.jsonl")],
+            },
+            {
+                "id": "retrieval-codemem",
+                "command": [
+                    "python", "-m", "eval.harness", "--dataset", "eval/datasets/codemem.jsonl", "--k", "5"
+                ],
+                "inputs": [_file_input(root, "eval/datasets/codemem.jsonl")],
+            },
+            {
+                "id": "retrieval-ablation",
+                "command": ["python", "-m", "eval.ablation"],
+                "inputs": [
+                    _file_input(root, "eval/datasets/sample.jsonl"),
+                    _file_input(root, "eval/datasets/graph_multihop.jsonl"),
+                ],
+            },
+            {
+                "id": "adversarial-memory-security",
+                "command": ["python", "-m", "eval.adversarial_memory_security"],
+                "inputs": [],
+            },
+            {
+                "id": "reinforcement-state-transition",
+                "command": ["python", "-m", "eval.reinforcement"],
+                "inputs": [],
+            },
+        ],
+    }
+
+
+def _verified_check_ids(manifest: dict[str, list[dict[str, Any]]]) -> set[str]:
+    return {check["id"] for group in manifest.values() for check in group}
+
+
+_INSTALLED_PLATFORMS = {"ubuntu-latest": "linux", "windows-latest": "win32", "macos-latest": "darwin"}
+_INSTALLED_CHECKS = {
+    "mcp": ["initialize", "tools/list", "remember", "restart recall", "correction",
+            "restart current and historical recall", "governed history and provenance"],
+    "server": ["dashboard HTML", "health/readiness/build identity", "HTTP remember",
+               "restart recall", "correction", "restart current and historical recall", "history"],
+}
+_INSTALLED_ENVIRONMENT_NOTE = "Pinned package versions; local wheel URI replaced by engraphis==version."
+
+
+def _installed_bytes(root: Path, path: Path) -> bytes:
+    _relative_path(root, path)
+    for ancestor in (path, *path.parents):
+        if ancestor == root:
+            break
+        if ancestor.is_symlink() or getattr(ancestor, "is_junction", lambda: False)():
+            raise EvidenceError("installed evidence must not use linked paths")
+    with path.open("rb") as handle:
+        raw = handle.read(8 * 1024 * 1024 + 1)
+    if len(raw) > 8 * 1024 * 1024:
+        raise EvidenceError("installed evidence exceeds its size limit")
+    return raw
+
+
+def _installed_json(raw: bytes) -> dict:
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise EvidenceError("installed evidence contains duplicate JSON keys")
+            result[key] = value
+        return result
+
+    def number(_):
+        raise EvidenceError("installed evidence must not contain numeric JSON fields")
+
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs,
+                           parse_int=number, parse_float=number, parse_constant=number)
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise EvidenceError("installed evidence must be unambiguous UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise EvidenceError("installed evidence must be a JSON object")
+    _reject_secret_like(value)
+    return value
+
+
+def _wheel_source_digest(wheel: Path, platform: str) -> str:
+    """Match package_build_info against archive bytes, including platform path ordering."""
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise EvidenceError("wheel contains duplicate archive entries")
+            sources = [name for name in names if name.startswith("engraphis/")
+                       and PurePosixPath(name).suffix in {".py", ".js", ".css", ".html", ".json"}]
+            if not sources:
+                raise EvidenceError("wheel is missing package source identity")
+            digest = hashlib.sha256()
+            order = PureWindowsPath if platform == "win32" else PurePosixPath
+            for name in sorted(sources, key=order):
+                if ".." in PurePosixPath(name).parts or "\\" in name:
+                    raise EvidenceError("wheel source path is unsafe")
+                digest.update(name[len("engraphis/"):].encode("utf-8"))
+                digest.update(b"\0")
+                with archive.open(name) as handle:
+                    for block in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(block)
+            return digest.hexdigest()
+    except (OSError, zipfile.BadZipFile, KeyError) as exc:
+        raise EvidenceError("installed evidence requires a readable release wheel") from exc
+
+
+def _public_installed_environment(raw: bytes, version: str, wheel: str, profile: str) -> bytes:
+    """Publish full pinned versions while removing the runner's local wheel URI."""
+    try:
+        lines = raw.decode("utf-8-sig").splitlines()
+    except UnicodeError as exc:
+        raise EvidenceError("installed environment must be UTF-8") from exc
+    packages = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        if line.startswith("engraphis @ "):
+            reference = urlsplit(line[len("engraphis @ "):])
+            if (reference.scheme != "file" or reference.netloc not in ("", "localhost")
+                    or PurePosixPath(unquote(reference.path)).name != wheel):
+                raise EvidenceError("installed environment references a different wheel")
+            line = "engraphis==" + version
+        match = _PACKAGE_LOCK_LINE.fullmatch(line)
+        if match is None:
+            raise EvidenceError("installed environment must contain pinned public package versions")
+        name, package_version = match.groups()
+        name = _canonical_package_name(name)
+        try:
+            Version(package_version)
+        except InvalidVersion as exc:
+            raise EvidenceError("installed environment contains an invalid package version") from exc
+        if name in packages:
+            raise EvidenceError("installed environment contains duplicate packages")
+        packages[name] = package_version
+    required = {"engraphis", "numpy", "pip"} | ({"mcp"} if profile == "mcp" else {"fastapi", "uvicorn"})
+    if not required <= packages.keys() or packages.get("engraphis") != version:
+        raise EvidenceError("installed environment is incomplete for its selected profile")
+    if "mcp" in packages and Version(packages["mcp"]) >= Version("2"):
+        raise EvidenceError("installed environment widened the supported MCP major version")
+    result = "".join(name + "==" + value + "\n" for name, value in sorted(packages.items()))
+    _reject_secret_like(result)
+    return result.encode("utf-8")
+
+
+def installed_journey_artifacts(
+    root: Path, directory: Path, output: Path, wheel: Path, version: str,
+) -> dict:
+    """Validate all six real surface cells and publish only their allowlisted reports."""
+    root, directory, output = root.resolve(), directory.absolute(), output.absolute()
+    expected = {"installed-journey-" + os_name + "-" + profile
+                for os_name in _INSTALLED_PLATFORMS for profile in _INSTALLED_CHECKS}
+    if not directory.is_dir() or {path.name for path in directory.iterdir()} != expected:
+        raise EvidenceError("installed journey evidence requires the complete six-cell surface matrix")
+    wheel_digest = _sha256(wheel)
+    files = {"journey": "installed-journey.json", "environment": "installed-environment.lock",
+             "artifact": "installed-artifact.json"}
+    cells, staged = [], {}
+    for os_name, platform in sorted(_INSTALLED_PLATFORMS.items()):
+        source_digest = _wheel_source_digest(wheel, platform)
+        for profile, checks in _INSTALLED_CHECKS.items():
+            cell_root = directory / ("installed-journey-" + os_name + "-" + profile)
+            if not cell_root.is_dir() or {path.name for path in cell_root.iterdir()} != set(files.values()):
+                raise EvidenceError("installed journey cell must contain exactly its three public inputs")
+            raw = {kind: _installed_bytes(root, cell_root / name) for kind, name in files.items()}
+            journey, artifact = _installed_json(raw["journey"]), _installed_json(raw["artifact"])
+            if (set(journey) != {"format", "version", "package_source_sha256", "platform", "python",
+                                 "installed_artifact", "embedding", "checks"}
+                    or journey["format"] != "engraphis-installed-journey/v1"
+                    or journey["version"] != version or journey["platform"] != platform
+                    or not isinstance(journey["python"], str)
+                    or not re.fullmatch(r"3\.11\.\d+", journey["python"])
+                    or journey["installed_artifact"] is not True
+                    or journey["embedding"] != "deterministic/offline"
+                    or journey["package_source_sha256"] != source_digest
+                    or journey["checks"] != {profile: checks}):
+                raise EvidenceError("installed journey identity or completed milestones do not match")
+            if artifact != {"profile": profile, "wheel": wheel.name, "wheel_sha256": wheel_digest}:
+                raise EvidenceError("installed journey used different distribution bytes")
+            public = {
+                "journey": canonical_json_bytes(journey), "artifact": canonical_json_bytes(artifact),
+                "environment": _public_installed_environment(raw["environment"], version, wheel.name, profile),
+            }
+            records = []
+            for kind, data in public.items():
+                filename = "installed-" + os_name + "-" + profile + "-" + files[kind].removeprefix("installed-")
+                destination = output / filename
+                relative = _relative_path(root, destination)
+                for ancestor in (destination, *destination.parents):
+                    if ancestor == root:
+                        break
+                    if ancestor.is_symlink() or getattr(ancestor, "is_junction", lambda: False)():
+                        raise EvidenceError("installed evidence output must not be linked")
+                staged[destination] = data
+                records.append({"kind": kind, "filename": filename, "path": relative,
+                                "sha256": hashlib.sha256(data).hexdigest(),
+                                "captured_sha256": hashlib.sha256(raw[kind]).hexdigest()})
+            cells.append({"os": os_name, "profile": profile, "platform": platform,
+                          "python": journey["python"], "package_source_sha256": source_digest,
+                          "files": records})
+    for destination, data in staged.items():
+        if destination.exists() and destination.read_bytes() != data:
+            raise EvidenceError("installed evidence output already contains different candidate bytes")
+    for destination, data in staged.items():
+        destination.write_bytes(data)
+    return {"format": "engraphis-installed-matrix/v1", "wheel": wheel.name,
+            "wheel_sha256": wheel_digest, "cells": cells,
+            "environment_normalization": _INSTALLED_ENVIRONMENT_NOTE}
+
+
+def installed_bundle_records(document: Any, distributions: dict[str, str]) -> list[dict]:
+    """Validate the public matrix index before a repair reuses its hashed files."""
+    if (not isinstance(document, dict)
+            or set(document) != {"format", "wheel", "wheel_sha256", "cells", "environment_normalization"}
+            or document.get("format") != "engraphis-installed-matrix/v1"
+            or document.get("environment_normalization") != _INSTALLED_ENVIRONMENT_NOTE
+            or not isinstance(document.get("wheel"), str)
+            or not document["wheel"].endswith(".whl")
+            or document.get("wheel_sha256") != distributions.get(document["wheel"])):
+        raise EvidenceError("installed bundle does not match the release distributions")
+    cells = document["cells"]
+    expected = {(os_name, profile) for os_name in _INSTALLED_PLATFORMS for profile in _INSTALLED_CHECKS}
+    if not isinstance(cells, list) or len(cells) != len(expected):
+        raise EvidenceError("installed bundle has an incomplete surface matrix")
+    seen, records = set(), []
+    for cell in cells:
+        if not isinstance(cell, dict) or set(cell) != {
+            "os", "profile", "platform", "python", "package_source_sha256", "files",
+        }:
+            raise EvidenceError("installed bundle cell is malformed")
+        key = (cell["os"], cell["profile"])
+        if (any(not isinstance(value, str) for value in key) or key not in expected or key in seen
+                or cell["platform"] != _INSTALLED_PLATFORMS[cell["os"]]
+                or not isinstance(cell["package_source_sha256"], str)
+                or not _SHA256.fullmatch(cell["package_source_sha256"])
+                or not isinstance(cell["python"], str) or not re.fullmatch(r"3\.11\.\d+", cell["python"])):
+            raise EvidenceError("installed bundle contains a duplicate or invalid cell")
+        seen.add(key)
+        files = cell["files"]
+        if not isinstance(files, list) or len(files) != 3:
+            raise EvidenceError("installed bundle cell requires all three captured inputs")
+        kinds = set()
+        for record in files:
+            if not isinstance(record, dict) or set(record) != {
+                "kind", "filename", "path", "sha256", "captured_sha256",
+            }:
+                raise EvidenceError("installed bundle file record is malformed")
+            suffixes = {"journey": "journey.json", "artifact": "artifact.json", "environment": "environment.lock"}
+            kind = record["kind"]
+            if not isinstance(kind, str) or kind not in suffixes or kind in kinds:
+                raise EvidenceError("installed bundle file kinds must be complete and distinct")
+            kinds.add(kind)
+            filename = "installed-" + cell["os"] + "-" + cell["profile"] + "-" + suffixes[kind]
+            if (record["filename"] != filename or not isinstance(record["path"], str)
+                    or not _SAFE_PATH.fullmatch(record["path"])
+                    or ".." in PurePosixPath(record["path"]).parts
+                    or PurePosixPath(record["path"]).name != filename
+                    or any(not isinstance(record[field], str) or not _SHA256.fullmatch(record[field])
+                           for field in ("sha256", "captured_sha256"))):
+                raise EvidenceError("installed bundle file identity is invalid")
+            records.append(record)
+    return records
+
+
+def build_evidence(
+    root: Path,
+    distribution_directory: Path,
+    *,
+    commit: str,
+    tag: str,
+    sbom: Path,
+    environment_lock: Path,
+    image_sbom: Path,
+    image_digest: str,
+    image_scan: Path,
+    reproducibility: Path,
+    installed_journeys: Optional[Path] = None,
+    verified_checks: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Build deterministic evidence; callers state which fixed checks they ran."""
+    root = root.resolve()
+    version = project_version(root)
+    manifest = check_manifest(root)
+    expected = _verified_check_ids(manifest)
+    verified = sorted(set(verified_checks))
+    if any(not isinstance(item, str) for item in verified) or set(verified) != expected:
+        missing = sorted(expected - set(verified))
+        unexpected = sorted(set(verified) - expected)
+        details = []
+        if missing:
+            details.append("missing=" + ",".join(missing))
+        if unexpected:
+            details.append("unexpected=" + ",".join(unexpected))
+        raise EvidenceError(
+            "verified checks must exactly match the public manifest ("
+            + "; ".join(details) + ")"
+        )
+    checked_commit = validate_commit(commit)
+    checked_tag = validate_tag(tag, version)
+    artifacts = distribution_artifacts(distribution_directory, version)
+    artifact_digests = {item["filename"]: item["sha256"] for item in artifacts}
+    python_sbom = sbom_artifact(root, sbom)
+    environment = environment_lock_artifact(root, environment_lock, sbom, version)
+    container_sbom = container_sbom_artifact(root, image_sbom, image_digest)
+    container_scan = container_scan_artifact(root, image_scan)
+    reproducibility_record = reproducibility_artifact(
+        root, reproducibility, artifact_digests,
+    )
+    installed = None
+    if installed_journeys is not None:
+        wheel = next(distribution_directory.glob("*.whl"))
+        installed = installed_journey_artifacts(root, installed_journeys, sbom.parent, wheel, version)
+    evidence = {
+        "format": FORMAT,
+        "package": {"name": PACKAGE, "version": version},
+        "commit": checked_commit,
+        "tag": checked_tag,
+        "provenance": {
+            "source": {"commit": checked_commit, "tag": checked_tag},
+            "builder": {
+                "workflow": ".github/workflows/release.yml",
+                "job": "release-evidence",
+                "completed_gate_jobs": [
+                    "build", "reproducibility-build", "reproducibility-check",
+                    "python-matrix", "artifact-core-py39", "installed-artifact-platform-smoke",
+                    "encryption", "browser-accessibility", "pi-extension", "docker-smoke",
+                    "code-security",
+                ],
+                "python_environment_capture": {
+                    "job": "build",
+                    "sbom_generator": {
+                        "name": "cyclonedx-bom",
+                        "version": "7.3.0",
+                        "command": [
+                            "cyclonedx-py", "environment", "--output-reproducible",
+                            "--of", "JSON", "--pyproject", "pyproject.toml",
+                        ],
+                    },
+                },
+            },
+        },
+        "source_inputs": [
+            _file_input(root, "pyproject.toml"),
+            _file_input(root, "LICENSE"),
+            _file_input(root, "NOTICE"),
+        ],
+        "artifacts": artifacts,
+        "sbom": python_sbom,
+        "environment_lock": environment,
+        "container": {
+            "image_digest": image_digest,
+            "sbom": container_sbom,
+            "vulnerability_scan": container_scan,
+        },
+        "reproducibility": reproducibility_record,
+        "checks": manifest,
+        "verified_checks": verified,
+        "limitations": [
+            "This evidence attests only to the named source inputs, distributions, "
+            "captured build environment, production image, and checks.",
+            "It does not attest to publication, release hosting, hosted services, "
+            "payments, deployments, or runtime data.",
+            "The vulnerability result is a point-in-time scan bound to the recorded "
+            "Grype version and database identity; later disclosures require rescanning.",
+        ],
+    }
+    if installed is not None:
+        installed_bundle_records(installed, artifact_digests)
+        evidence["installed_journeys"] = installed
+    _reject_secret_like(evidence)
+    return evidence
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dist", type=Path, required=True, help="directory containing wheel and sdist")
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--commit", help="release commit; defaults to git HEAD")
+    parser.add_argument("--tag", required=True, help="release tag matching pyproject project.version")
+    parser.add_argument("--sbom", type=Path, required=True, help="generated CycloneDX JSON SBOM")
+    parser.add_argument(
+        "--environment-lock", type=Path, required=True,
+        help="pip freeze captured in the build job",
+    )
+    parser.add_argument(
+        "--image-sbom", type=Path, required=True,
+        help="CycloneDX SBOM generated from the production image",
+    )
+    parser.add_argument(
+        "--image-digest", required=True,
+        help="immutable sha256 digest of the production image",
+    )
+    parser.add_argument(
+        "--image-scan", type=Path, required=True,
+        help="pinned Grype JSON report for the production image",
+    )
+    parser.add_argument(
+        "--reproducibility", type=Path, required=True,
+        help="two-builder reproducibility evidence",
+    )
+    parser.add_argument("--verified-check", action="append", default=[], help="one completed public check id")
+    parser.add_argument("--installed-journeys", type=Path,
+                        help="complete six-cell installed surface evidence; required by new release workflows")
+    parser.add_argument("--output", type=Path, help="write canonical JSON instead of stdout")
+    args = parser.parse_args(argv)
+    try:
+        root = args.root.resolve()
+        evidence = build_evidence(
+            root, args.dist.resolve(), commit=args.commit or git_commit(root),
+            tag=args.tag, sbom=args.sbom.resolve(),
+            environment_lock=args.environment_lock.resolve(),
+            image_sbom=args.image_sbom.resolve(),
+            image_digest=args.image_digest,
+            image_scan=args.image_scan.resolve(),
+            reproducibility=args.reproducibility.resolve(),
+            installed_journeys=args.installed_journeys,
+            verified_checks=args.verified_check,
+        )
+        encoded = canonical_json_bytes(evidence)
+        if args.output:
+            args.output.write_bytes(encoded)
+        else:
+            __import__("sys").stdout.buffer.write(encoded)
+    except EvidenceError as exc:
+        parser.error(str(exc))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

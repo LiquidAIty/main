@@ -2164,7 +2164,6 @@ def _(rid, params: dict, session: dict) -> dict:
 # ── interrupt / steer / redirect ─────────────────────────────────────
 @method("session.interrupt")
 def _(rid, params: dict) -> dict:
-    _tts_stream_stop()  # keypress barge-in also silences streaming TTS (voice is process-global)
     session, err = _sess_nowait(params, rid)
     if err:
         return err
@@ -2173,6 +2172,14 @@ def _(rid, params: dict) -> dict:
             task = session.get("_hosted_room_task")
             if not (session.get("running") and isinstance(task, dict) and task.get("task_id") == expected):
                 return _ok(rid, {"status": "not_interrupted", "interrupted": False})
+    if expected := _str_param(params, "expected_submission_id"):
+        with session["history_lock"]:
+            if not (
+                session.get("running")
+                and session.get("_active_submission_id") == expected
+            ):
+                return _ok(rid, {"status": "not_interrupted", "interrupted": False})
+    _tts_stream_stop()  # keypress barge-in also silences streaming TTS (voice is process-global)
     sid = str(params.get("session_id") or "")
     if _session_uses_compute_host(session):
         try:

@@ -1269,8 +1269,18 @@ def test_same_root_waits_on_hermes_dependencies_then_returns_its_own_final_resul
             creator_task_id=root_id,
             initial_status="running",
         )
-        assert not task_db.link_tasks(connection, parent_id=worker_a, child_id=root_id)
-        assert not task_db.link_tasks(connection, parent_id=worker_b, child_id=root_id)
+        assert not task_db.link_tasks(
+            connection,
+            parent_id=worker_a,
+            child_id=root_id,
+            expected_child_run_id=first_run_id,
+        )
+        assert not task_db.link_tasks(
+            connection,
+            parent_id=worker_b,
+            child_id=root_id,
+            expected_child_run_id=first_run_id,
+        )
         assert task_db.block_task(
             connection, root_id, reason="Waiting for the selected workers.",
             kind="dependency", expected_run_id=first_run_id,
@@ -1410,12 +1420,13 @@ def test_completed_root_without_its_own_result_fails_closed(
 
     root_id = _submit_root(monkeypatch)
     with task_db_connect.connect_closing(hermes_task_store) as connection:
-        assert task_db.complete_task(connection, root_id)
+        with pytest.raises(task_db.EmptyCompletionError):
+            task_db.complete_task(connection, root_id)
 
     status = magentic_execution.read_magentic_execution({"hermesRootId": root_id})
-    assert status["state"] == "failed"
-    assert status["hermesStatus"] == "done"
-    assert status["error"] == "magentic_final_result_missing"
+    assert status["state"] == "running"
+    assert status["hermesStatus"] == "ready"
+    assert "finalResult" not in status
 
 
 def test_hermes_allowed_assignees_reject_an_unwired_profile(

@@ -1,0 +1,163 @@
+"""Railway deployment contracts that can be checked without a live deployment."""
+from __future__ import annotations
+
+import json
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+from scripts import start_dashboard
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _text(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_railway_manifest_builds_the_runtime_image_and_uses_readiness():
+    manifest = json.loads(_text("railway.json"))
+
+    assert manifest["$schema"] == "https://railway.com/railway.schema.json"
+    assert manifest["build"] == {"builder": "DOCKERFILE", "dockerfilePath": "Dockerfile"}
+    assert manifest["deploy"] == {
+        "healthcheckPath": "/api/ready",
+        "healthcheckTimeout": 300,
+        # Railway otherwise defaults the SIGTERM-to-SIGKILL grace period to zero.
+        # Give Uvicorn time to stop taking requests and close SQLite cleanly.
+        "drainingSeconds": 30,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 10,
+    }
+
+
+def test_container_runtime_matches_the_railway_persistence_and_port_contract():
+    dockerfile = _text("Dockerfile")
+    entrypoint = _text("docker-entrypoint.sh")
+
+    assert "EXPOSE 8700" in dockerfile
+    assert 'ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]' in dockerfile
+    assert 'CMD ["engraphis-dashboard", "--no-open"]' in dockerfile
+    assert "os.environ.get('PORT') or os.environ.get('ENGRAPHIS_PORT','8700')" in dockerfile
+    # Railway binds an IPv6-only listener. ``localhost`` lets urllib try the matching
+    # loopback family, whereas a literal 127.0.0.1 probe would keep the Docker health
+    # state unhealthy even while the Railway readiness endpoint is serving traffic.
+    assert "http://localhost:%s/api/ready" in dockerfile
+    assert "http://127.0.0.1:%s/api/ready" not in dockerfile
+    assert "useradd --create-home --uid 10001 engraphis" in dockerfile
+    assert "HF_HOME=/data/.cache/huggingface" in dockerfile
+    assert "ENGRAPHIS_STATE_DIR=/data/.engraphis" in dockerfile
+    assert "ENGRAPHIS_ENV_FILE=/data/.engraphis/config.env" in dockerfile
+    assert "COPY deploy ./deploy" in dockerfile
+
+    assert 'if [ -z "${ENGRAPHIS_HOST:-}" ]; then' in entrypoint
+    assert '[ -n "${RAILWAY_SERVICE_NAME:-}" ]' in entrypoint
+    assert "ENGRAPHIS_HOST=\"::\"" in entrypoint
+    assert "ENGRAPHIS_HOST=\"0.0.0.0\"" in entrypoint
+    assert "chown -R -h engraphis:engraphis /data" in entrypoint
+    assert ".volume-ownership" in entrypoint
+    assert "reject_linked_path()" in entrypoint
+    assert 'if ! reject_linked_path "$state_dir"; then' in entrypoint
+    assert "refusing linked or unnormalized state path" in entrypoint
+    assert 'if ! reject_linked_path "$config_file"; then' in entrypoint
+    assert "refusing linked or unnormalized trusted config path" in entrypoint
+    assert 'if [ -L "$state_dir" ]; then' in entrypoint
+    assert "refusing symlinked state directory" in entrypoint
+    assert 'elif [ -e "$state_dir" ] && [ ! -d "$state_dir" ]; then' in entrypoint
+    assert "refusing non-directory state path" in entrypoint
+    assert 'if [ -L "$config_parent" ]; then' in entrypoint
+    assert "refusing non-directory trusted config parent" in entrypoint
+    assert "config_owner=$(stat -c '%u' \"$config_parent\"" in entrypoint
+    assert "trusted config directory must be owned by engraphis" in entrypoint
+    assert '[ -L "$ownership_marker" ]' in entrypoint
+    assert "refusing symlinked volume ownership marker" in entrypoint
+    assert 'if [ ! -e "$ownership_marker" ]; then' in entrypoint
+    assert 'elif [ ! -f "$ownership_marker" ]; then' in entrypoint
+    assert "refusing non-regular volume ownership marker" in entrypoint
+    assert 'config_file="${ENGRAPHIS_ENV_FILE:-}"' in entrypoint
+    assert "refusing symlinked trusted config file" in entrypoint
+    assert 'chmod 600 "$config_file"' in entrypoint
+    assert "chown -R engraphis:engraphis /data 2>/dev/null || true" not in entrypoint
+    assert 'exec gosu engraphis "$@"' in entrypoint
+
+
+def test_railway_image_is_cpu_only_and_installs_only_its_runtime_surface():
+    """A Railway web image must not silently download CUDA or unrelated optional tools."""
+    dockerfile = _text("Dockerfile")
+
+    assert "https://download.pytorch.org/whl/cpu torch" in dockerfile
+    assert 'pip install ".[server,mcp,documents,cloud-sync]"' in dockerfile
+    assert 'pip install ".[all]"' not in dockerfile
+    # pip is needed while building the image, but no production command invokes it.
+    # Its vendored dependency snapshot must not remain in the runtime attack surface.
+    assert "rm -rf /root/.cache/pip" in dockerfile
+    assert "/usr/local/lib/python3.11/site-packages/pip" in dockerfile
+
+
+def test_ci_audits_the_stripped_image_without_mutating_it():
+    workflow = _text(".github/workflows/ci.yml")
+    image_audit = workflow.split("  docker-smoke:\n", 1)[1].split("  build:\n", 1)[0]
+
+    # The audit copies the installed site-packages out of a created (not running) container.
+    # The path is resolved dynamically via sysconfig so it survives base-image Python bumps.
+    assert "sysconfig.get_path('purelib')" in image_audit
+    assert 'docker cp "$container:$site_packages/."' in image_audit
+    assert "set -euo pipefail" in image_audit
+    assert 'python scripts/pin_installed_audit_requirements.py "$audit_dir"' in image_audit
+    assert 'python -m pip_audit --vulnerability-service osv --path "$audit_dir"' in image_audit
+    assert (
+        'python -m pip_audit --vulnerability-service pypi --no-deps '
+        '--disable-pip -r "$RUNNER_TEMP/published-audit-requirements.txt"'
+    ) in image_audit
+    assert 'python -m pip install --disable-pip-version-check --no-cache-dir' in image_audit
+    assert 'pip-audit==2.10.1' in image_audit
+
+
+def test_platform_port_precedes_a_fixed_engraphis_port(monkeypatch):
+    """Railway routes and probes the port injected as ``PORT``, not 8700."""
+    uvicorn = pytest.importorskip("uvicorn")
+    captured = {}
+    monkeypatch.setenv("PORT", "8791")
+    monkeypatch.setenv("ENGRAPHIS_PORT", "8700")
+    monkeypatch.setattr(start_dashboard, "_port_is_available", lambda *_args: True)
+    monkeypatch.setattr(
+        uvicorn, "run", lambda _app, **kwargs: captured.update(kwargs),
+    )
+    fake_dashboard = types.ModuleType("engraphis.dashboard_app")
+    fake_dashboard.app = object()
+    monkeypatch.setitem(sys.modules, "engraphis.dashboard_app", fake_dashboard)
+
+    start_dashboard.main(["--no-open"])
+
+    assert captured["port"] == 8791
+    assert captured["host"] == start_dashboard.os.environ.get("ENGRAPHIS_HOST", "127.0.0.1")
+    assert start_dashboard.os.environ["ENGRAPHIS_PORT"] == "8791"
+
+
+def test_launcher_updates_cors_snapshot_after_port_override(monkeypatch):
+    uvicorn = pytest.importorskip("uvicorn")
+    from engraphis import config
+
+    original = (config.settings.host, config.settings.port, config.settings.cors_origins)
+    captured = {}
+    monkeypatch.setenv("ENGRAPHIS_PORT", "8700")
+    monkeypatch.delenv("ENGRAPHIS_CORS_ORIGINS", raising=False)
+    monkeypatch.setattr(start_dashboard, "_port_is_available", lambda *_args: True)
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: captured.update(kwargs))
+    fake_dashboard = types.ModuleType("engraphis.dashboard_app")
+    fake_dashboard.app = object()
+    monkeypatch.setitem(sys.modules, "engraphis.dashboard_app", fake_dashboard)
+
+    try:
+        start_dashboard.main(["--no-open", "--port", "9000"])
+        assert captured["port"] == 9000
+        assert config.settings.host == "127.0.0.1"
+        assert config.settings.port == 9000
+        assert config.settings.cors_origins == [
+            "http://127.0.0.1:9000", "http://localhost:9000",
+        ]
+    finally:
+        config.settings.host, config.settings.port, config.settings.cors_origins = original

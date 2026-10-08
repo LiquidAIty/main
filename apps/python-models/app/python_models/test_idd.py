@@ -3,47 +3,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 from app.python_models.idd import IddValidationError, load_input_data_dictionary, materialize_card_editor, materialize_runtime_options, template_objects
-from app.python_models.tool_registry import (
-    OperationDefinition,
-    materialize_tool_catalog,
-    replace_discovered_external_operations,
-    required_tool_caller_runtime,
+from app.python_models.card_script import (
+    CardScriptValidationError,
+    compile_card_script,
+    generate_card_script_header,
+    saved_script,
+    script_presentation,
 )
-from app.python_models.card_script import compile_card_script, generate_card_script_header, saved_script, script_presentation
 from app.python_models.orchestration_contracts import HermesRuntime
-
-
-@pytest.fixture
-def live_cbm_operations():
-    definitions = [
-        OperationDefinition(
-            canonical_id="cbm.search_graph",
-            description="Live CBM read.",
-            parameters_schema={"type": "object", "properties": {}},
-            handler=lambda **_arguments: None,
-            available=True,
-            publishers=frozenset({"external-mcp"}),
-            access="read",
-            namespace="cbm",
-            external_source_id="cbm",
-        ),
-        OperationDefinition(
-            canonical_id="cbm.current_write",
-            description="Live CBM restricted operation.",
-            parameters_schema={"type": "object", "properties": {}},
-            handler=lambda **_arguments: None,
-            available=True,
-            publishers=frozenset({"external-mcp"}),
-            access="write",
-            namespace="cbm",
-            external_source_id="cbm",
-        ),
-    ]
-    replace_discovered_external_operations("cbm", definitions)
-    try:
-        yield
-    finally:
-        replace_discovered_external_operations("cbm", [])
 
 
 def test_literal_idd_is_the_only_loaded_builder_data() -> None:
@@ -51,7 +18,8 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
     assert dictionary["dictionary"]["name"] == "LiquidAIty"
     assert dictionary["dictionary"]["purpose"] == "agent-builder"
     assert dictionary["dictionary"]["ordinaryText"] == "markdown"
-    assert {"types", "objects", "templates", "relationships", "operations"}.issubset(dictionary)
+    assert {"types", "objects", "templates", "relationships"}.issubset(dictionary)
+    assert "operations" not in dictionary
     assert {"records", "catalogs", "models", "editorFields", "islands", "toolGroups"}.isdisjoint(dictionary)
     assert dictionary["types"]["GraphReference"]["source"].endswith(".GraphReference")
     assert dictionary["cardEditor"]["tabs"] == ["Results", "Prompt", "Runtime", "Memory", "Tools"]
@@ -84,7 +52,7 @@ output.emit({"agent": {"run": False}, "query": query})
 
 
 def test_unknown_future_objects_remain_absent_until_declared() -> None:
-    palette = materialize_card_editor([])
+    palette = materialize_card_editor([], catalog_options=[])
     assert "future_provider" not in palette["objects"]
     assert "future_provider" not in template_objects(palette, "template_assist")
 
@@ -93,7 +61,7 @@ def test_runtime_errors_remain_at_the_executable_contract() -> None:
     secret = "sk-secret-that-must-never-appear"
     with pytest.raises(ValidationError):
         HermesRuntime.model_validate({"kind": "hermes", "mode": secret, "profile": "helper"})
-    with pytest.raises(IddValidationError) as error:
+    with pytest.raises(CardScriptValidationError) as error:
         saved_script({"enabled": secret, "source": secret})
     assert str(error.value) == "card_script_configuration_invalid"
     assert secret not in str(error.value)
@@ -332,7 +300,7 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     materialized = materialize_card_editor([{
         "provider": "openrouter", "key": "provider/model", "label": "Provider Model",
         "providerModelId": "provider/model", "default": False,
-    }])
+    }], catalog_options=[])
     assert materialized["catalogs"]["configured-models"][0]["key"] == "provider/model"
     fields = {field["name"]: field for field in materialized["fields"]}
     assert fields["modelKey"]["catalog"] == "configured-models"
@@ -371,7 +339,7 @@ def test_human_and_builder_options_resolve_the_same_idd_without_sending_the_full
             "reasoningEfforts": ["low", "high"],
         },
     }]
-    palette = materialize_card_editor(models)
+    palette = materialize_card_editor(models, catalog_options=[])
 
     options = materialize_runtime_options(models)
     assert options == {key: palette[key] for key in ("fields", "catalogs")}
@@ -388,7 +356,9 @@ def test_human_and_builder_options_resolve_the_same_idd_without_sending_the_full
     document["cardEditor"]["fields"][0]["label"] = "Profile"
     monkeypatch.setattr(idd, "load_input_data_dictionary", lambda: document)
     assert materialize_runtime_options(models)["fields"][0]["label"] == "Profile"
-    assert materialize_card_editor(models)["fields"] == materialize_runtime_options(models)["fields"]
+    assert materialize_card_editor(
+        models, catalog_options=[],
+    )["fields"] == materialize_runtime_options(models)["fields"]
 
 
 def test_idd_runtime_dependencies_and_constraints_come_from_executable_schemas():
@@ -413,98 +383,10 @@ def test_ordinary_options_keep_catalog_validation(models, code):
     assert "sk-secret" not in str(error.value)
 
 
-def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -> None:
-    annotations = {"readOnlyHint": True, "destructiveHint": False}
-    security = [{"type": "oauth2", "scopes": ["liquidaity.main"]}]
-    references = materialize_tool_catalog([{
-        "name": "cbm.search_graph",
-        "kind": "tool",
-        "namespace": "cbm",
-        "sourceId": "cbm",
-        "providerToolName": "search_graph",
-        "connectionKind": "external-mcp",
-        "description": "Provider search description.",
-        "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
-        "outputSchema": {"type": "object"},
-        "annotations": annotations,
-        "securitySchemes": security,
-    }])
-    by_id = {reference["canonicalId"]: reference for reference in references}
-
-    assert "cbm.search_graph" in by_id
-    assert "graphiti.search_nodes" in by_id
-    assert by_id["graphiti.search_nodes"]["availability"] == "disabled"
-    live = by_id["cbm.search_graph"]
-    assert live["availability"] == "available"
-    assert live["access"] == "read"
-    assert live["contracts"] == [{
-        "sourceId": "cbm",
-        "providerToolName": "search_graph",
-        "connectionKind": "external-mcp",
-        "available": True,
-        "description": "Provider search description.",
-        "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
-        "outputSchema": {"type": "object"},
-        "annotations": annotations,
-        "securitySchemes": security,
-    }]
-
-
-def test_provider_side_effect_annotations_do_not_redefine_idd_read_availability():
-    from app.python_models.tool_registry import readable_tool_ids
-
-    references = materialize_tool_catalog([{
-        "name": "graphiti.search_nodes", "namespace": "graphiti", "sourceId": "graphiti",
-        "providerToolName": "search_nodes", "connectionKind": "external-mcp",
-        "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": False},
-    }])
-    search = next(item for item in references if item["canonicalId"] == "graphiti.search_nodes")
-    assert search["access"] == "read"
-    assert search["contracts"][0]["annotations"] == {"readOnlyHint": False}
-    assert "graphiti.search_nodes" in readable_tool_ids()
-
-
-def test_engraphis_tools_are_bounded_and_codegraph_stays_with_cbm():
-    from app.python_models.tool_registry import external_mcp_tool_ids, readable_tool_ids, writable_tool_ids
-
-    engraphis = {
-        "engraphis_recall_context", "engraphis_get_memory", "engraphis_remember",
-    }
-    references = {item["canonicalId"]: item for item in materialize_tool_catalog([])}
-    assert engraphis.issubset(references)
-    assert engraphis.issubset(external_mcp_tool_ids())
-    assert {"engraphis_recall_context", "engraphis_get_memory"}.issubset(readable_tool_ids())
-    assert "engraphis_remember" in writable_tool_ids()
-    assert not any(name.startswith("cbm.") for name in external_mcp_tool_ids())
-
-
-def test_live_cbm_permissions_come_from_provider_discovery(live_cbm_operations) -> None:
-    dictionary = load_input_data_dictionary()
-    tool_names = {
-        tool["id"] for tool in dictionary["operations"]
-    }
-    assert {
-        "agentgraph.inspect", "run_mag_one", "worldview.set_capability",
-    }.issubset(tool_names)
-    assert {"cbm.search_graph", "cbm.current_write"}.issubset(tool_names)
-    assert required_tool_caller_runtime("run_mag_one") == {"kind": "hermes", "mode": "main"}
-    assert required_tool_caller_runtime("worldview.set_capability") == {
-        "kind": "hermes", "mode": "main",
-    }
-    assert required_tool_caller_runtime("cbm.search_graph") is None
-    from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
-    assert "cbm.search_graph" in readable_tool_ids()
-    assert "cbm.current_write" in writable_tool_ids()
-    assert "write_mag_one_instructions" in writable_tool_ids()
-    assert "card.load_graph_references" in writable_tool_ids()
-    assert "worldview.set_capability" in writable_tool_ids()
-    assert "write_mag_one_instructions" not in readable_tool_ids()
-
-
 def test_materialized_catalog_errors_do_not_echo_secret_values() -> None:
     secret = "sk-secret-that-must-never-appear"
     try:
-        materialize_card_editor([{"provider": secret}])
+        materialize_card_editor([{"provider": secret}], catalog_options=[])
     except IddValidationError as error:
         assert str(error) == "model_catalog_entry_invalid"
         assert secret not in str(error)
@@ -513,10 +395,42 @@ def test_materialized_catalog_errors_do_not_echo_secret_values() -> None:
 
 
 
-def test_new_catalog_option_and_stale_selection_need_no_static_declaration():
-    option = {"id": "external.search", "kind": "tool", "owner": "Example MCP",
-              "source": "connection:example", "schema": {"type": "object", "properties": {
-                  "query": {"type": "string"}}, "required": ["query"]}}
+def test_builder_projects_live_catalog_option_and_marks_stale_selection():
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+    option = {
+        "canonicalId": "external.search",
+        "kind": "tool",
+        "namespace": "external",
+        "sourceIds": ["example"],
+        "displayName": "Search example",
+        "shortDescription": "Read one current example result.",
+        "availability": "available",
+        "access": "read",
+        "publication": "external-mcp",
+        "grantEligible": True,
+        "contracts": [{
+            "sourceId": "example",
+            "providerToolName": "search",
+            "connectionKind": "external-mcp",
+            "publication": "external-mcp",
+            "available": True,
+            "grantEligible": True,
+            "title": "Search example",
+            "description": "Read one current example result.",
+            "inputSchema": schema,
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
+            },
+        }],
+    }
     palette = materialize_card_editor(
         [], catalog_options=[option],
         selected_ids=["external.search", "removed.tool"],
@@ -525,18 +439,30 @@ def test_new_catalog_option_and_stale_selection_need_no_static_declaration():
     assert by_id["external.search"]["availability"] == "available"
     assert by_id["external.search"]["selected"] is True
     assert by_id["external.search"]["effective"] is False
+    assert by_id["external.search"]["access"] == "read"
+    assert by_id["external.search"]["publication"] == "external-mcp"
+    assert by_id["external.search"]["grantEligible"] is True
     assert by_id["removed.tool"]["availability"] == "unavailable"
     assert by_id["removed.tool"]["diagnostics"] == ["saved_selection_stale"]
-    assert palette["fingerprint"] != materialize_card_editor([])["fingerprint"]
-    unknown_host = {**option, "owner": "LiquidAIty"}
-    host_palette = materialize_card_editor([], catalog_options=[unknown_host])
-    assert next(item for item in host_palette["options"] if item["id"] == "external.search")["availability"] == "unavailable"
-    assert by_id["external.search"]["schema"] == option["schema"]
+    assert palette["fingerprint"] != materialize_card_editor(
+        [], catalog_options=[],
+    )["fingerprint"]
+    assert by_id["external.search"]["schema"] == schema
+
+
+def test_builder_projection_failure_does_not_make_idd_a_tool_authority():
+    dictionary = load_input_data_dictionary()
+    assert "operations" not in dictionary
+    with pytest.raises(
+        IddValidationError,
+        match="builder_live_tool_catalog_unavailable",
+    ):
+        materialize_card_editor([])
 
 
 def test_labels_do_not_change_object_identity_and_templates_select_objects():
     from copy import deepcopy
-    palette = materialize_card_editor([])
+    palette = materialize_card_editor([], catalog_options=[])
     before = template_objects(palette, "template_assist")
     changed = deepcopy(palette)
     changed["objects"]["mission"]["label"] = "A new display label"
@@ -547,7 +473,7 @@ def test_labels_do_not_change_object_identity_and_templates_select_objects():
 
 
 def test_typed_objects_and_cardinality_are_declared_data():
-    palette = materialize_card_editor([])
+    palette = materialize_card_editor([], catalog_options=[])
     palette["objects"]["notes"] = {"type": "InstructionsObject", "cardinality": "optional", "label": "Notes"}
     palette["templates"]["template_assist"]["objects"].append("notes")
     assert "notes" in template_objects(palette, "template_assist")
@@ -560,7 +486,10 @@ def test_typed_objects_and_cardinality_are_declared_data():
 
 def test_editor_fields_resolve_only_their_referenced_definitions():
     from jsonschema import Draft202012Validator
-    fields = {field["name"]: field for field in materialize_card_editor([])["fields"]}
+    fields = {
+        field["name"]: field
+        for field in materialize_card_editor([], catalog_options=[])["fields"]
+    }
     assert "delegationRole" not in fields
     assert "teamMode" not in fields
     assert not {"teamMaxWorkers", "teamRetryLimit", "teamWorkerModel", "teamLeadModel"} & fields.keys()
@@ -585,7 +514,7 @@ def test_template_runtime_is_shared_creation_data_and_inherits():
 
 def test_new_composable_object_is_read_from_idd_without_a_python_dictionary(tmp_path, monkeypatch):
     from app.python_models import idd
-    before = materialize_card_editor([])
+    before = materialize_card_editor([], catalog_options=[])
     declared = idd.IDD_PATH.read_text(encoding="utf-8") + '''
 [types.ReviewNote]
 kind = "record"
@@ -601,7 +530,7 @@ objects = ["review_note"]
     path = tmp_path / "LiquidAIty.idd"
     path.write_text(declared, encoding="utf-8")
     monkeypatch.setattr(idd, "IDD_PATH", path)
-    palette = materialize_card_editor([])
+    palette = materialize_card_editor([], catalog_options=[])
     assert palette["fingerprint"] != before["fingerprint"]
     assert {"mission", "agent", "review_note"}.issubset(template_objects(palette, "template_review"))
     assert palette["objects"]["review_note"]["type"] == "ReviewNote"

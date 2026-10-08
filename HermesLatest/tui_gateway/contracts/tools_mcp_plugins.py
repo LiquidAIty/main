@@ -237,7 +237,7 @@ method("skills.reload", params=SkillsReloadParams, result=SkillsReloadResult,
 # ── learning graph (/journey) ─────────────────────────────────────────────────────────────────
 
 
-class LearningFramesParams(Params):
+class LearningFramesParams(ProfileParams):
     cols: int | None = None
     rows: int | None = None
     frames: int | None = None
@@ -304,7 +304,7 @@ method("learning.frames", params=LearningFramesParams, result=LearningFramesResu
        doc="Pre-render the /journey timeline (frames + legend/summary) so the TUI walks it locally.")
 
 
-class LearningNodeParams(Params):
+class LearningNodeParams(ProfileParams):
     id: str | None = None
 
 

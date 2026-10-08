@@ -1,0 +1,496 @@
+"""Ingestion engine — Phase 1 of the consciousness loop.
+
+Takes raw content, chunks it, embeds it, extracts entities/relations (lightweight
+NER via regex + keyword heuristics, upgradeable to LLM-based extraction), appends
+a state-transition event, and stores everything in the memory layer.
+"""
+from __future__ import annotations
+
+import json
+import math
+import re
+from collections.abc import Mapping
+from typing import Any, Optional
+
+import numpy as np
+
+from engraphis.core.secrets import reject_secrets
+from engraphis.models import (
+    MAX_BATCH_ITEMS as _MAX_BATCH_ITEMS,
+    MAX_CONTENT_CHARS as _MAX_CONTENT_CHARS,
+    MAX_METADATA_BYTES as _MAX_METADATA_BYTES,
+    MAX_NAME_CHARS as _MAX_NAME_CHARS,
+    MAX_TITLE_CHARS as _MAX_TITLE_CHARS,
+)
+from engraphis.engines import embedder
+from engraphis.stores import get_conn, now_ts
+from engraphis.stores import graph as graph_store
+from engraphis.stores import ledger as ledger_store
+from engraphis.stores import vectors as mem_store
+
+# ── Lightweight entity extraction ────────────────────────────────────────────
+# Keep each recognizer unambiguous.  The previous combined expression nested a
+# repeated, unanchored branches and could take polynomial time on adversarial input.
+_CAPITALIZED_WORD_RE = re.compile(r"\b[A-Z][a-z]+(?:-[A-Za-z]+)*\b")
+_HASHTAG_RE = re.compile(r"#[a-zA-Z][a-zA-Z0-9_-]+")
+_MENTION_RE = re.compile(r"@[a-zA-Z][a-zA-Z0-9_-]+")
+_EMAIL_LOCAL_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._%+-"
+)
+_EMAIL_DOMAIN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"
+)
+_EMAIL_SUFFIX_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+)
+_RELATION_RE = re.compile(
+    r"\b(?:is|are|was|were|has|have|had|owns|works at|lives in|prefers|likes|"
+    r"dislikes|uses|manages|created|founded|located in|part of|member of)\b",
+    re.IGNORECASE,
+)
+
+_STOPWORDS = {
+    "The", "This", "That", "These", "Those", "A", "An", "And", "But", "Or",
+    "If", "Then", "When", "Where", "What", "Who", "How", "Why", "It", "Is",
+    "Was", "Are", "Were", "Has", "Have", "Had", "Will", "Would", "Could",
+    "Should", "May", "Might", "Can", "Did", "Do", "Does", "Not", "No", "Yes",
+    "User", "We", "They", "He", "She", "His", "Her", "Their", "Our", "My",
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December",
+    # Common sentence-start words that match the capitalized-entity regex.
+    "New", "First", "Last", "Next", "Let", "Now", "Here", "There", "Also",
+    "However", "Before", "After", "Since", "While", "Although", "Because",
+    "Just", "Still", "Even", "Already", "Another", "Each", "Every", "Both",
+    "Many", "Some", "Most", "Few", "All", "Any", "Either", "Neither",
+    "Please", "Thanks", "Note", "See", "Tip", "Warning", "Important",
+    "Example", "Step", "Section", "Chapter", "Figure", "Table",
+    "For", "From", "To", "In", "On", "At", "By", "With", "About", "Between",
+    "Through", "During", "After", "Above", "Below", "Under", "Over",
+}
+
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_MAX_FUTURE_TIMESTAMP_SECONDS = 300.0
+
+
+def _normalize_text(value: Any, *, field: str, max_chars: int, required: bool = True) -> str:
+    """Validate and defang text before any detector, embedder, or store sees it."""
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    cleaned = _CONTROL_RE.sub("", value)
+    if required and not cleaned.strip():
+        raise ValueError(f"{field} must not be empty")
+    if len(cleaned) > max_chars:
+        raise ValueError(f"{field} exceeds {max_chars} characters")
+    return cleaned
+
+
+def _normalize_optional_text(value: Any, *, field: str, max_chars: int) -> Optional[str]:
+    if value is None:
+        return None
+    return _normalize_text(value, field=field, max_chars=max_chars, required=False)
+
+
+def _normalize_timestamp(value: Any, *, field: str) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a finite number")
+    result = float(value)
+    if not math.isfinite(result) or result < 0:
+        raise ValueError(f"{field} must be a non-negative finite number")
+    if result > now_ts() + _MAX_FUTURE_TIMESTAMP_SECONDS:
+        raise ValueError(f"{field} is too far in the future")
+    return result
+
+
+def _normalize_vector(value: Any) -> np.ndarray:
+    try:
+        result = np.asarray(value, dtype=np.float32)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("vector must be a finite one-dimensional array") from None
+    if result.ndim != 1 or result.size == 0 or not np.isfinite(result).all():
+        raise ValueError("vector must be a finite one-dimensional array")
+    return np.ascontiguousarray(result)
+
+
+def _iter_emails(text: str):
+    """Yield email-like spans in one pass without regex backtracking."""
+
+    index = 0
+    length = len(text)
+    while index < length:
+        if text[index] not in _EMAIL_LOCAL_CHARS:
+            index += 1
+            continue
+        if index > 0 and text[index - 1] in _EMAIL_LOCAL_CHARS:
+            index += 1
+            continue
+        start = index
+        while index < length and text[index] in _EMAIL_LOCAL_CHARS:
+            index += 1
+        if index >= length or text[index] != "@":
+            continue
+        domain_start = index + 1
+        end = domain_start
+        while end < length and text[end] in _EMAIL_DOMAIN_CHARS:
+            end += 1
+        domain = text[domain_start:end]
+        dot = domain.rfind(".")
+        suffix = domain[dot + 1:] if dot > 0 else ""
+        if len(suffix) >= 2 and all(char in _EMAIL_SUFFIX_CHARS for char in suffix):
+            yield start, end, text[start:end]
+        # If another @ terminated an invalid domain, its domain run can be the local
+        # part of a later valid address (for example ``bad@name@valid.test``).
+        index = domain_start if end < length and text[end] == "@" else end
+
+
+def ingest_document(
+    *,
+    namespace: str,
+    document_id: str,
+    title: str,
+    content: str,
+    metadata: Optional[dict] = None,
+    source_type: Optional[str] = None,
+    priority: Optional[str] = None,
+    created_at: Optional[float] = None,
+    updated_at: Optional[float] = None,
+    memory_type: str = "semantic",
+    vector: Optional[np.ndarray] = None,
+    trusted: bool = True,
+    commit: bool = True,
+) -> dict[str, Any]:
+    """Full ingestion pipeline: embed (or use provided vector) → store → extract entities → append event.
+
+    ``trusted`` defaults to True because the legacy v1 routes write the user's OWN
+    local documents (memory files, manual entries) — those are the user's trusted
+    notes and must remain recall-visible. External file ingestion (folder/upload
+    imports of web/PDF content) passes ``trusted=False`` so recall filters it out,
+    mirroring the v2 poisoning gate without breaking the primary v1 UX.
+    """
+    namespace = _normalize_text(
+        namespace, field="namespace", max_chars=_MAX_NAME_CHARS
+    )
+    document_id = _normalize_text(
+        document_id, field="document_id", max_chars=_MAX_NAME_CHARS
+    )
+    title = _normalize_text(
+        title, field="title", max_chars=_MAX_TITLE_CHARS, required=False
+    )
+    content = _normalize_text(
+        content, field="content", max_chars=_MAX_CONTENT_CHARS
+    )
+    source_type = _normalize_optional_text(
+        source_type, field="source_type", max_chars=_MAX_NAME_CHARS
+    )
+    priority = _normalize_optional_text(
+        priority, field="priority", max_chars=_MAX_NAME_CHARS
+    )
+    memory_type = _normalize_text(
+        memory_type, field="memory_type", max_chars=_MAX_NAME_CHARS
+    )
+    created_at = _normalize_timestamp(created_at, field="created_at")
+    updated_at = _normalize_timestamp(updated_at, field="updated_at")
+    if not isinstance(trusted, bool):
+        raise ValueError("trusted must be a boolean")
+    if metadata is not None and not isinstance(metadata, Mapping):
+        raise ValueError("metadata must be an object")
+    clean_metadata = dict(metadata or {})
+
+    # Reject credentials after control-character removal so an attacker cannot
+    # hide a token behind terminal controls. The detector's error is content-free.
+    reject_secrets((
+        ("title", title), ("content", content), ("metadata", clean_metadata),
+        ("source_type", source_type), ("priority", priority),
+    ))
+    raw_provenance = clean_metadata.get("provenance")
+    provenance = dict(raw_provenance) if isinstance(raw_provenance, Mapping) else {}
+    # Caller metadata may describe origin, but it cannot grant authority. The explicit
+    # route-level trust decision owns every authority-bearing field.
+    provenance["trusted"] = trusted
+    provenance["trust_origin"] = "legacy_ingest"
+    provenance.setdefault("source", "document")
+    provenance["review_state"] = "approved" if trusted else "pending"
+    stamped_metadata = {**clean_metadata, "provenance": provenance}
+    try:
+        encoded_metadata = json.dumps(
+            stamped_metadata, ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        raise ValueError("metadata must be JSON-serializable") from None
+    if len(encoded_metadata) > _MAX_METADATA_BYTES:
+        raise ValueError(f"metadata exceeds {_MAX_METADATA_BYTES} bytes")
+
+    ts = now_ts()
+    created_at = ts if created_at is None else created_at
+    updated_at = ts if updated_at is None else updated_at
+    full_text = f"{title}\n\n{content}" if title else content
+    vec = _normalize_vector(vector) if vector is not None else _normalize_vector(
+        embedder.embed(full_text)
+    )
+
+    conn = get_conn()
+    entities = _extract_entities_from_doc(title, content)
+    relations = _extract_relations(full_text, entities)
+    try:
+        mem = mem_store.upsert_memory(
+            namespace=namespace,
+            document_id=document_id,
+            title=title,
+            content=content,
+            metadata=stamped_metadata,
+            source_type=source_type,
+            priority=priority,
+            vector=vec,
+            created_at=created_at,
+            updated_at=updated_at,
+            memory_type=memory_type,
+            commit=False,
+        )
+        graph_store.replace_document_evidence(
+            namespace,
+            document_id,
+            entities,
+            relations,
+            updated_at=updated_at,
+            commit=False,
+        )
+        for name, entity_type in entities:
+            ledger_store.append_event(
+                namespace=namespace,
+                entity_name=name,
+                event_type="ingest",
+                description=f"Entity seen in document '{title}'",
+                payload={"document_id": document_id, "entity_type": entity_type},
+                timestamp=updated_at,
+                commit=False,
+            )
+        job = ledger_store.create_job(
+            namespace=namespace,
+            job_type="ingest",
+            payload={
+                "document_id": document_id,
+                "entity_count": len(entities),
+                "edge_count": len(relations),
+            },
+            commit=False,
+        )
+        if commit:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {
+        **mem,
+        "jobId": job["job_id"],
+        "status": "inserted" if mem.get("access_count", 0) == 0 else "updated",
+        "entities": len(entities),
+        "edges": len(relations),
+    }
+
+
+def ingest_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Ingest a bounded batch atomically; failures never leave a partial prefix."""
+    if not isinstance(items, list):
+        raise ValueError("items must be a list")
+    if len(items) > _MAX_BATCH_ITEMS:
+        raise ValueError(f"items exceeds {_MAX_BATCH_ITEMS} entries")
+    conn = get_conn()
+    results = []
+    try:
+        for item in items:
+            if not isinstance(item, Mapping):
+                raise ValueError("each item must be an object")
+            results.append(ingest_document(
+                namespace=item.get("namespace"),
+                document_id=item.get("documentId") or item.get("document_id"),
+                title=item.get("title", ""),
+                content=item.get("content"),
+                metadata=item.get("metadata"),
+                source_type=item.get("sourceType") or item.get("source_type"),
+                priority=item.get("priority"),
+                created_at=(
+                    item.get("createdAt")
+                    if item.get("createdAt") is not None
+                    else item.get("created_at")
+                ),
+                updated_at=(
+                    item.get("updatedAt")
+                    if item.get("updatedAt") is not None
+                    else item.get("updated_at")
+                ),
+                memory_type=(
+                    item.get("memory_type") or item.get("memoryType") or "semantic"
+                ),
+                vector=item.get("vector"),
+                trusted=item.get("trusted", True),
+                commit=False,
+            ))
+        job = ledger_store.create_job(
+            namespace=None,
+            job_type="batch_ingest",
+            payload={"count": len(results)},
+            commit=False,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"accepted": results, "jobId": job["job_id"], "count": len(results)}
+
+
+# ── Entity / relation extraction (heuristic, no LLM needed) ──────────────────
+
+def _extract_entities(text: str) -> list[tuple[str, str]]:
+    candidates: list[tuple[int, int, int, str, str]] = []
+
+    # Build the old maximum four-word capitalized sequence in Python rather than
+    # asking the backtracking engine to discover every possible word grouping.
+    words = list(_CAPITALIZED_WORD_RE.finditer(text))
+    index = 0
+    while index < len(words):
+        first = words[index]
+        last = first
+        index += 1
+        for _ in range(3):
+            if index >= len(words) or not text[last.end():words[index].start()].isspace():
+                break
+            last = words[index]
+            index += 1
+        candidates.append((first.start(), last.end(), 0, text[first.start():last.end()], "person_or_concept"))
+
+    candidates.extend(
+        (start, end, 1, value, "email")
+        for start, end, value in _iter_emails(text)
+    )
+    candidates.extend(
+        (match.start(), match.end(), 2, match.group(0), "hashtag")
+        for match in _HASHTAG_RE.finditer(text)
+    )
+    candidates.extend(
+        (match.start(), match.end(), 3, match.group(0), "mention")
+        for match in _MENTION_RE.finditer(text)
+    )
+
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    matched_through = 0
+    for start, end, _priority, candidate, etype in sorted(candidates):
+        if start < matched_through:
+            continue
+        matched_through = end
+        raw = candidate.strip()
+        if not raw or raw in _STOPWORDS:
+            continue
+        if raw.lower() in ("user", "the user"):
+            continue
+        if etype == "person_or_concept":
+            ent, etype = raw, "person_or_concept"
+        else:
+            ent = raw
+        key = ent.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append((ent, etype))
+    return out
+
+
+def _extract_entities_from_doc(title: str, content: str) -> list[tuple[str, str]]:
+    """Extract entities from title and content independently, then merge.
+
+    Title and content must be processed as *separate* regex passes, never
+    concatenated first: the capitalized-word recognizer has no notion
+    of a title/content boundary, so matching it against ``f"{title}\\n\\n{content}"``
+    lets it bridge across that boundary — e.g. title "Meeting Notes" + content
+    "Alice Johnson met..." previously produced one garbled entity "Meeting
+    Notes\\n\\nAlice Johnson" instead of two clean ones. That fragments what should
+    be a single real-world entity (e.g. "Alice Johnson") into multiple graph nodes,
+    each of which only sees the document(s) it happened to be garbled together with
+    — which is why clicking a node could open the wrong document or none at all.
+    Extracting each field on its own and merging by name avoids that entirely.
+    """
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for text in (content, title):   # content first — the more meaningful signal
+        for ent, etype in _extract_entities(text):
+            key = ent.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append((ent, etype))
+    return out
+
+
+def _extract_relations(text: str, entities: list[tuple[str, str]]) -> list[tuple[str, str, str]]:
+    """Find simple subject-relation-object triples via regex proximity."""
+    if len(entities) < 2:
+        return []
+    ent_names = [e[0] for e in entities]
+    relations: list[tuple[str, str, str]] = []
+    for m in _RELATION_RE.finditer(text):
+        rel = m.group(0).lower()
+        start = max(0, m.start() - 60)
+        end = min(len(text), m.end() + 60)
+        window = text[start:end]
+        nearby = []
+        for name in ent_names:
+            if name in window:
+                nearby.append(name)
+        if len(nearby) >= 2:
+            relations.append((nearby[0], rel, nearby[1]))
+    return relations[:20]
+
+
+
+def extract_entities(content: str, title: str = "") -> list[tuple[str, str]]:
+    """Public deterministic extractor used by legacy graph migration."""
+    return _extract_entities_from_doc(title, content)
+
+
+def extract_relations(
+    text: str,
+    entities: list[tuple[str, str]],
+) -> list[tuple[str, str, str]]:
+    """Public deterministic relation extractor used by legacy graph migration."""
+    return _extract_relations(text, entities)
+
+
+def update_document(
+    *,
+    namespace: str,
+    document_id: str,
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    memory_type: Optional[str] = None,
+) -> dict[str, Any]:
+    """Apply a validated edit and refresh derived graph state atomically."""
+    existing = mem_store.get_memory(namespace, document_id)
+    if existing is None:
+        raise ValueError("memory not found")
+    current_metadata = existing.get("metadata")
+    next_metadata = metadata if metadata is not None else current_metadata
+    provenance = (
+        current_metadata.get("provenance", {})
+        if isinstance(current_metadata, Mapping)
+        else {}
+    )
+    result = ingest_document(
+        namespace=namespace,
+        document_id=document_id,
+        title=existing["title"] if title is None else title,
+        content=existing["content"] if content is None else content,
+        metadata=next_metadata,
+        source_type=existing.get("source_type"),
+        priority=existing.get("priority"),
+        created_at=existing.get("created_at"),
+        updated_at=now_ts(),
+        memory_type=(
+            existing.get("memory_type", "semantic")
+            if memory_type is None
+            else memory_type
+        ),
+        trusted=provenance.get("trusted") is True,
+    )
+    result["status"] = "updated"
+    return result

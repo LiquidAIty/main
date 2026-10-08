@@ -42,10 +42,12 @@ class FakeClient:
         self._notifications: list[dict] = []
         self._server_requests: list[dict] = []
         self._request_handler = None  # Optional[Callable[[str, dict], dict]]
+        self.initialize_kwargs: dict[str, Any] = {}
 
     # API matching CodexAppServerClient
     def initialize(self, **kwargs):
         self._initialized = True
+        self.initialize_kwargs = dict(kwargs)
         return {"userAgent": "fake/0.0.0", "codexHome": "/tmp",
                 "platformOs": "linux", "platformFamily": "unix"}
 
@@ -127,6 +129,106 @@ def make_session(client: FakeClient, **kwargs) -> CodexAppServerSession:
         cwd="/tmp",
         client_factory=lambda **kw: client,
         **kwargs,
+    )
+
+
+def test_dynamic_tool_binding_preserves_exact_schema_and_executes_once():
+    client = FakeClient()
+    calls = []
+    tool = {
+        "type": "function",
+        "name": "selected",
+        "canonicalName": "graphiti.search_nodes",
+        "description": "Search the granted graph.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    }
+
+    def execute(name, arguments, call_id):
+        calls.append((name, arguments, call_id))
+        return {
+            "success": True,
+            "contentItems": [{"type": "inputText", "text": "result"}],
+        }
+
+    session = make_session(
+        client,
+        dynamic_tools=[tool],
+        tool_executor=execute,
+        model="saved-model",
+        developer_instructions="saved card prompt",
+    )
+    params = {
+        "threadId": "thread-fake-001",
+        "turnId": "turn-fake-001",
+        "callId": "call-1",
+        "tool": "selected",
+        "arguments": {"query": "current evidence"},
+    }
+    client.queue_server_request("item/tool/call", request_id="first", **params)
+    client.queue_server_request("item/tool/call", request_id="retry", **params)
+    client.queue_server_request(
+        "item/tool/call",
+        request_id="conflict",
+        **{**params, "arguments": {"query": "changed"}},
+    )
+    client.queue_server_request(
+        "item/tool/call",
+        request_id="foreign",
+        **{**params, "threadId": "another-thread"},
+    )
+    client.queue_server_request(
+        "item/tool/call",
+        request_id="invalid",
+        **{**params, "arguments": {"query": 7}},
+    )
+    client.queue_server_request(
+        "item/tool/call",
+        request_id="unselected",
+        **{**params, "tool": "not_granted"},
+    )
+    respond = client.respond
+
+    def reply(request_id, response):
+        respond(request_id, response)
+        if request_id == "unselected":
+            client.queue_notification(
+                "turn/completed",
+                threadId="thread-fake-001",
+                turn={"id": "turn-fake-001", "status": "completed"},
+            )
+
+    client.respond = reply
+
+    result = session.run_turn("Use the selected tool.", turn_timeout=2)
+
+    assert result.error is None
+    assert calls == [("selected", {"query": "current evidence"}, "call-1")]
+    responses = dict(client.responses)
+    assert responses["first"] == responses["retry"]
+    assert all(
+        responses[name]["success"] is False
+        for name in ("conflict", "foreign", "invalid", "unselected")
+    )
+    assert client.initialize_kwargs["capabilities"] == {"experimentalApi": True}
+    assert client.requests[0] == (
+        "thread/start",
+        {
+            "cwd": "/tmp",
+            "personality": "none",
+            "dynamicTools": [{
+                "type": "function",
+                "name": "selected",
+                "description": "Search the granted graph.",
+                "inputSchema": tool["inputSchema"],
+            }],
+            "developerInstructions": "saved card prompt",
+            "model": "saved-model",
+        },
     )
 
 

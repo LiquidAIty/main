@@ -15974,6 +15974,18 @@
       "LearningEditParams": {
         "additionalProperties": false,
         "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
           "id": {
             "anyOf": [
               {
@@ -16047,6 +16059,18 @@
       "LearningFramesParams": {
         "additionalProperties": false,
         "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
           "cols": {
             "anyOf": [
               {
@@ -16228,6 +16252,18 @@
       "LearningNodeParams": {
         "additionalProperties": false,
         "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
           "id": {
             "anyOf": [
               {
@@ -22511,6 +22547,44 @@
         "title": "ProfileCanonicalSession",
         "type": "object"
       },
+      "ProfileDelegationSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "max_spawn_depth": {
+            "enum": [
+              1,
+              2
+            ],
+            "title": "Max Spawn Depth",
+            "type": "integer"
+          },
+          "orchestrator_enabled": {
+            "title": "Orchestrator Enabled",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "max_spawn_depth",
+          "orchestrator_enabled",
+          "enabled"
+        ],
+        "title": "ProfileDelegationSettings",
+        "type": "object"
+      },
       "ProfileMirrored": {
         "additionalProperties": false,
         "description": "What was copied from the launch profile; ``auth`` is ``\"shared\"`` under ``share_auth``.",
@@ -22559,6 +22633,22 @@
             "type": "string",
             "default": "",
             "title": "Default"
+          },
+          "openai_runtime": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "codex_app_server"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Openai Runtime"
           }
         },
         "title": "ProfileModelPin",
@@ -22966,7 +23056,7 @@
             "default": null,
             "title": "Mcp Servers"
           },
-          "bot_mode_roster": {
+          "delegation": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -22976,7 +23066,19 @@
               }
             ],
             "default": null,
-            "title": "Bot Mode Roster"
+            "title": "Delegation"
+          },
+          "task_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task Mode"
           }
         },
         "title": "ProfilesConfigureApplied",
@@ -23086,6 +23188,22 @@
             "default": null,
             "title": "Provider"
           },
+          "openai_runtime": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "codex_app_server"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Openai Runtime"
+          },
           "confirm_expensive_model": {
             "anyOf": [
               {
@@ -23146,20 +23264,29 @@
             "default": null,
             "title": "Enabled Mcp Servers"
           },
-          "bot_mode_roster": {
+          "delegation": {
             "anyOf": [
               {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
+                "$ref": "#/components/schemas/ProfileDelegationSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "task_mode": {
+            "anyOf": [
+              {
+                "const": "team",
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "title": "Bot Mode Roster"
+            "title": "Task Mode"
           }
         },
         "title": "ProfilesConfigureParams",
@@ -23470,25 +23597,27 @@
             "title": "Mcp Servers",
             "type": "array"
           },
-          "bot_mode_roster": {
+          "delegation": {
+            "$ref": "#/components/schemas/ProfileDelegationSettings"
+          },
+          "task_mode": {
             "anyOf": [
               {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
+                "const": "team",
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "title": "Bot Mode Roster"
+            "title": "Task Mode"
           }
         },
         "required": [
           "name",
-          "model"
+          "model",
+          "delegation"
         ],
         "title": "ProfilesDescribeResult",
         "type": "object"
@@ -29696,6 +29825,18 @@
             ],
             "default": null,
             "title": "Expected Hosted Task Id"
+          },
+          "expected_submission_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Submission Id"
           }
         },
         "required": [

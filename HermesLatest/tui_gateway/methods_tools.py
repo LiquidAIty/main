@@ -1211,7 +1211,7 @@ def _(rid, params: dict) -> dict:
     return _err(rid, 4016, f"unknown cron action: {action}")
 
 
-@_rpc("learning.frames", 5000, "learning.frames failed: ")
+@_scoped_rpc("learning.frames", 5000, prefix="learning.frames failed: ")
 def _(rid, params: dict) -> dict:
     """Pre-render the ``/journey`` timeline (frames + legend/summary metadata) so Ink walks it locally."""
     try:
@@ -1238,7 +1238,9 @@ def _learning_mutation(fn_name: str, arg_keys: tuple):
 for _name, _fn, _keys in (
     ("detail", "node_detail", ("id",)), ("delete", "delete_node", ("id",)), ("edit", "edit_node", ("id", "content")),
 ):
-    _rpc(f"learning.{_name}", 5000, f"learning.{_name} failed: ")(_learning_mutation(_fn, _keys))
+    _scoped_rpc(
+        f"learning.{_name}", 5000, prefix=f"learning.{_name} failed: ",
+    )(_learning_mutation(_fn, _keys))
 del _name, _fn, _keys
 
 

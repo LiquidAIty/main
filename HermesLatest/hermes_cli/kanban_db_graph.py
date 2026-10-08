@@ -101,8 +101,9 @@ def decompose_triage_task(
     """
     from hermes_cli.kanban_db import (
         _canonical_assignee, _link, _append_event, _insert_comment,
-        write_txn, recompute_ready,
+        _require_allowed_assignee, write_txn, recompute_ready,
     )
+    from hermes_cli.kanban_team import TEAM_SYNTHESIS_STEP, TEAM_WORKFLOW_ID
 
     if not children:
         return None
@@ -115,11 +116,18 @@ def decompose_triage_task(
     now = int(time.time())
     with write_txn(conn):
         root_row = conn.execute(
-            "SELECT id, status, tenant, workspace_kind, workspace_path "
+            "SELECT id, status, tenant, workspace_kind, workspace_path, "
+            "workflow_template_id, max_retries, allowed_assignees "
             "FROM tasks WHERE id = ?", (task_id,),
         ).fetchone()
         if root_row is None or root_row["status"] != "triage":
             return None
+        if root_assignee is not None:
+            _require_allowed_assignee(root_row["allowed_assignees"], root_assignee)
+        for child in children:
+            _require_allowed_assignee(
+                root_row["allowed_assignees"], _canonical_assignee(child.get("assignee")),
+            )
         # Dependency links alone do not imply lineage. The completion event is
         # committed with the graph, and survives re-triage or unlinking.
         if conn.execute(
@@ -144,6 +152,13 @@ def decompose_triage_task(
         # Flip the root triage -> todo, assignee -> orchestrator.
         sets = ["status = 'todo'"]
         params: list[Any] = []
+        if root_row["workflow_template_id"] == TEAM_WORKFLOW_ID:
+            sets.extend([
+                "current_step_key = ?",
+                "consecutive_failures = 0",
+                "last_failure_error = NULL",
+            ])
+            params.append(TEAM_SYNTHESIS_STEP)
         if root_assignee is not None:
             sets.append("assignee = ?")
             params.append(root_assignee)
@@ -181,8 +196,10 @@ def _insert_decomposed_child(
     ``<repo>/.worktrees/<child-id>`` per child from the board anchor.
     """
     from hermes_cli.kanban_db import (
-        _new_task_id, _canonical_assignee, _append_event,
+        _new_task_id, _canonical_assignee, _append_event, _stored_allowed_assignees,
+        normalize_reasoning_effort,
     )
+    from hermes_cli.kanban_team import TEAM_WORKER_STEP, TEAM_WORKFLOW_ID
 
     root_ws_kind = root_row["workspace_kind"] or "scratch"
     child_ws_kind = child.get("workspace_kind") or root_ws_kind
@@ -199,16 +216,29 @@ def _insert_decomposed_child(
     conn.execute(
         "INSERT INTO tasks "
         "(id, title, body, assignee, status, workspace_kind, "
-        " workspace_path, tenant, created_at, created_by) "
-        "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?)",
+        " workspace_path, tenant, created_at, created_by, workflow_template_id, "
+        " current_step_key, max_retries, model_override, provider_override, reasoning_effort, "
+        " allowed_assignees) "
+        "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             new_id, child["title"].strip(), body if isinstance(body, str) else None,
             _canonical_assignee(child.get("assignee")), child_ws_kind, child_ws_path,
             root_row["tenant"], now, (author or "decomposer"),
+            TEAM_WORKFLOW_ID if root_row["workflow_template_id"] == TEAM_WORKFLOW_ID else None,
+            TEAM_WORKER_STEP if root_row["workflow_template_id"] == TEAM_WORKFLOW_ID else None,
+            child.get("max_retries", root_row["max_retries"]),
+            child.get("model_override"), child.get("provider_override"),
+            normalize_reasoning_effort(child.get("reasoning_effort")),
+            root_row["allowed_assignees"],
         ),
     )
     _append_event(
-        conn, new_id, "created", {"by": author or "decomposer", "from_decompose_of": root_id},
+        conn, new_id, "created", {
+            "by": author or "decomposer",
+            "from_decompose_of": root_id,
+            "creator_task_id": root_id,
+            "allowed_assignees": _stored_allowed_assignees(root_row["allowed_assignees"]),
+        },
     )
     inherit_creator_origin(conn, new_id, root_id, created_at=now)
     return new_id

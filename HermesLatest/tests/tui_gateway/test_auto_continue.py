@@ -166,6 +166,29 @@ def test_interrupt_ack_retires_marker_before_run_thread_exits(monkeypatch, marke
     assert "_active_turn_marker_key" not in session
 
 
+def test_interrupt_expected_submission_refuses_a_different_active_turn(monkeypatch):
+    interrupted = []
+    session = _session(
+        agent=types.SimpleNamespace(interrupt=lambda: interrupted.append(True)),
+        running=True,
+        _active_submission_id="run-current",
+    )
+    _patch_local_interrupt(monkeypatch, session)
+
+    refused = server._methods["session.interrupt"](
+        "request-wrong",
+        {"session_id": "runtime-1", "expected_submission_id": "run-stale"},
+    )
+    accepted = server._methods["session.interrupt"](
+        "request-current",
+        {"session_id": "runtime-1", "expected_submission_id": "run-current"},
+    )
+
+    assert refused["result"] == {"status": "not_interrupted", "interrupted": False}
+    assert accepted["result"]["status"] == "interrupted"
+    assert interrupted == [True]
+
+
 def test_interrupt_racing_marker_write_cannot_leave_recovery_state(
     monkeypatch, emits, turn_env, marker_home
 ):
@@ -510,4 +533,3 @@ def test_failed_agent_build_leaves_marker_for_retry(
 
 
 # ── End to end: continuation runs a real turn and clears the marker ────
-

@@ -104,9 +104,9 @@ model/grants and canonical IDF, graph reads with native references, and a useful
 Main saying "Builder is working" or writing a long response does not establish delegation. Ordinary
 prose may be long without being a requested report; assess the actual user request.
 
-The checked-in Hermes supports native asynchronous child delegation inside one Card and native Bot
-conversation between authorized saved Cards. Inspect the current native tools before changing the
-thin authorization policy. Preserve native completion delivery and capacity limits. Do not add an
+The checked-in Hermes supports its own asynchronous child delegation inside one Card and Bot
+conversation between authorized saved Cards. Inspect the currently published tools before changing the
+thin authorization policy. Preserve Hermes completion delivery and capacity limits. Do not add an
 application queue, temporary saved Cards, or a second scheduler to work around a rejected call.
 
 ## Measure the boundaries separately

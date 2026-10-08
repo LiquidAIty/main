@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.python_models.idd import IddValidationError, load_input_data_dictionary
+from app.python_models.idd import load_input_data_dictionary
 
 
 SCRIPT_MAX_BYTES = 32_768
@@ -25,6 +25,10 @@ SAFE_IMPORT_ROOTS = frozenset({
     "collections", "datetime", "decimal", "fractions", "functools",
     "hermes_tools", "itertools", "json", "math", "re", "statistics",
 })
+
+
+class CardScriptValidationError(ValueError):
+    """Secret-safe structural error in saved Card Script data."""
 FORBIDDEN_CALLS = frozenset({
     "__import__", "breakpoint", "compile", "eval", "exec", "globals",
     "help", "input", "locals", "open", "vars",
@@ -97,7 +101,6 @@ def generate_card_script_header(
         "idd": {
             "types": dictionary.get("types", {}),
             "objects": dictionary.get("objects", {}),
-            "operations": dictionary.get("operations", []),
         },
         "catalog": [
             {
@@ -441,7 +444,7 @@ def saved_script(
     try:
         script = CardScript.model_validate(value)
     except ValidationError as error:
-        raise IddValidationError("card_script_configuration_invalid") from error
+        raise CardScriptValidationError("card_script_configuration_invalid") from error
     # Saved Script data is not an authorization source. When a stable Card is
     # merely read or re-saved without a live catalog, use the last compiler
     # palette only to preserve and re-check its source. Invocation always

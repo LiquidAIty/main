@@ -1,15 +1,19 @@
 """Focused coverage for the deterministic tool registry primitives."""
 import json
+from copy import deepcopy
 
 from app.python_models.tool_registry import (
     OperationDefinition,
+    ToolCatalogError,
     ToolRegistry,
     build_default_tool_registry,
     external_mcp_manifest,
+    graphiti_operation_policy,
     operation_definition,
     operation_definitions,
+    project_server_injected_schema,
     replace_discovered_external_operations,
-    materialize_tool_catalog,
+    normalize_live_tool_catalog,
     tool_calculator,
     tool_current_datetime,
     tool_manifest,
@@ -131,20 +135,48 @@ def test_every_code_owned_publisher_contract_has_complete_effect_metadata():
         assert item["annotations"]["readOnlyHint"] is (item["access"] == "read")
 
 
-def test_materialized_catalog_preserves_title_security_and_effect_metadata():
+def test_live_catalog_preserves_title_security_and_effect_metadata():
     source = next(item for item in external_mcp_manifest() if item["name"] == "run_mag_one")
     source["securitySchemes"] = [{"type": "oauth2", "scopes": ["liquidaity.main"]}]
     reference = next(
-        item for item in materialize_tool_catalog([source])
+        item for item in normalize_live_tool_catalog([source])
         if item["canonicalId"] == "run_mag_one"
     )
-    assert reference["displayName"] == "Run an approved Magnetic mission"
+    assert reference["displayName"] == "Mag One"
     contract = reference["contracts"][0]
     assert contract["title"] == source["title"]
     assert contract["description"] == source["description"]
     assert contract["inputSchema"] == source["inputSchema"]
     assert contract["annotations"] == source["annotations"]
     assert contract["securitySchemes"] == source["securitySchemes"]
+
+
+def test_authenticated_projection_may_remove_server_owned_schema_fields_only_per_contract():
+    private = next(item for item in tool_manifest() if item["name"] == "canvas.inspect")
+    public = next(item for item in external_mcp_manifest() if item["name"] == "canvas.inspect")
+    public["inputSchema"] = project_server_injected_schema(
+        public["canonicalInputSchema"],
+        frozenset(public["serverInjectedArguments"]),
+    )
+    public["authenticatedProjection"] = True
+
+    reference = normalize_live_tool_catalog([private, public])[0]
+
+    assert reference["canonicalId"] == "canvas.inspect"
+    assert len(reference["contracts"]) == 2
+    by_kind = {contract["connectionKind"]: contract for contract in reference["contracts"]}
+    assert "projectId" in by_kind["private-runtime"]["inputSchema"]["properties"]
+    assert "projectId" not in by_kind["external-mcp"]["inputSchema"]["properties"]
+    assert by_kind["external-mcp"]["serverInjectedArguments"] == ["deckId", "projectId"]
+
+    malformed = deepcopy(public)
+    malformed["inputSchema"]["properties"]["includeCatalog"]["type"] = "string"
+    with pytest.raises(ToolCatalogError, match="tool_catalog_schema_projection_mismatch:canvas.inspect"):
+        normalize_live_tool_catalog([private, malformed])
+
+    public["description"] = "Drifted operation metadata."
+    with pytest.raises(ToolCatalogError, match="tool_catalog_definition_mismatch:canvas.inspect"):
+        normalize_live_tool_catalog([private, public])
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
@@ -200,8 +232,8 @@ def test_engraphis_is_internal_while_cbm_comes_only_from_live_discovery():
     assert internal_names.count("engraphis_recall_context") == 1
     assert internal_names.count("engraphis_get_memory") == 1
     assert operation_definition("cbm.unfamiliar_current_tool") is None
-    assert operation_definition("graphiti.search_nodes").publishers == frozenset({"external-mcp"})
-    assert operation_definition("graphiti.search_nodes").external_source_id == "graphiti"
+    assert operation_definition("graphiti.search_nodes") is None
+    assert graphiti_operation_policy("graphiti.search_nodes")["access"] == "read"
     assert "cbm.search_graph" not in internal_names
     assert "graphiti.search_nodes" not in internal_names
 
@@ -231,7 +263,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
     before = tuple(
         (item.canonical_id, item.publishers, id(item.handler)) for item in definitions
     )
-    materialize_tool_catalog([
+    normalize_live_tool_catalog([
         *tool_manifest(),
         *external_mcp_manifest(),
         {
@@ -240,9 +272,23 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
             "sourceId": "cbm",
             "namespace": "cbm",
             "connectionKind": "external-mcp",
+            "publication": "external-mcp",
             "description": "CBM search.",
+            "title": "Search CodeGraph",
+            "access": "read",
+            "available": True,
+            "grantEligible": True,
             "inputSchema": {"type": "object", "properties": {}},
-            "annotations": {"readOnlyHint": True},
+            "canonicalInputSchema": {"type": "object", "properties": {}},
+            "serverInjectedArguments": [],
+            "dispatcherContextArguments": [],
+            "dispatcherOwner": "app.mcp_host._call_cbm",
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
         },
     ])
     after = tuple(
@@ -258,11 +304,11 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
         "load_input_data_dictionary",
         lambda: (_ for _ in ()).throw(AssertionError("runtime_loaded_idd")),
     )
-    assert materialize_tool_catalog(tool_manifest())
+    assert normalize_live_tool_catalog(tool_manifest())
 
 
 def test_combined_publisher_contracts_have_no_duplicate_discovery_tuple():
-    references = materialize_tool_catalog([*tool_manifest(), *external_mcp_manifest()])
+    references = normalize_live_tool_catalog([*tool_manifest(), *external_mcp_manifest()])
     tuples = [
         (reference["canonicalId"], contract["sourceId"], contract["providerToolName"])
         for reference in references

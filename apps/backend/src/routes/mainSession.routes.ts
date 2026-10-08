@@ -21,12 +21,16 @@ import {
   internalMcpAuthorization,
   resolveInternalMcpUrl,
 } from '../services/mcp/internalMcpAuth';
+import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
   resolveProductChatWorkingDirectory,
   resolveRepoRoot,
 } from '../services/workspaceRoot';
 import type { AgentCardInstance, DeckDocument } from '../types';
-import { loadInputDictionaryToolCatalog } from './cardEditor.routes';
+import {
+  materializeSavedCardProfile,
+  savedCardBotRoster,
+} from '../hermes/profileMaterialization';
 
 export const mainSessionRoutes = Router();
 
@@ -221,18 +225,6 @@ function boundedSharedContext(messages: ConversationMessage[]): Array<Record<str
   return result;
 }
 
-function outboundBotRoster(authority: SharedChatAuthority, source: AddressableCard): string[] {
-  const orchestrator = source.card.runtime.mode === 'main'
-    || source.card.runtimeOptions?.orchestrator === true;
-  if (!orchestrator) return [];
-  const targetById = new Map(authority.cards.map((card) => [card.card.id, card]));
-  return authority.deck.edges.flatMap((edge) => {
-    if (edge.enabled === false || edge.edgeType !== 'flow' || edge.source !== source.card.id) return [];
-    const target = targetById.get(edge.target);
-    return target ? [target.profile] : [];
-  }).filter((profile, index, all) => all.indexOf(profile) === index);
-}
-
 function sessionTitle(args: {
   userId: string;
   projectId: string;
@@ -284,9 +276,12 @@ export async function cardSession(
   owner: { userId: string; projectId: string; deckId: string; conversationId: string },
 ): Promise<SessionBinding> {
   const title = sessionTitle({ ...owner, cardId: card.card.id });
-  const roster = outboundBotRoster(authority, card);
+  const roster = savedCardBotRoster(authority.deck, card.card);
   const profile = card.profile;
-  const profileState = record(await client.request('profiles.describe', { name: profile }));
+  const profileState = record(await materializeSavedCardProfile(
+    (method, params = {}) => client.request(method, params),
+    card.card,
+  ));
   const profileModel = record(profileState.model);
   const completeBinding = (binding: SessionBinding): SessionBinding => ({
     ...binding,
@@ -360,7 +355,7 @@ async function prepareRun(args: {
   images: unknown[];
 }): Promise<PreparedRun> {
   const runId = `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-  const toolCatalog = await loadInputDictionaryToolCatalog();
+  const toolCatalog = await readPythonAgentMcpCatalog();
   const payload = {
     projectId: args.projectId,
     deckId: args.deckId,
@@ -373,9 +368,10 @@ async function prepareRun(args: {
     images: args.images,
     sharedConversation: boundedSharedContext(args.priorMessages),
     sharedConversationTargetLabel: args.target.title,
-    discoveredTools: toolCatalog.references,
-    discoveredToolCatalogState: 'available',
-    unavailableToolCatalogFamilies: [],
+    discoveredTools: toolCatalog.tools,
+    discoveredToolCatalogState: toolCatalog.state,
+    unavailableToolCatalogFamilies: toolCatalog.unavailableFamilies,
+    discoveredToolFailures: toolCatalog.toolFailures,
   };
   const direct = args.target.card.id !== args.main.card.id;
   const prepared = record(await requestPythonRailsJson(
@@ -820,24 +816,53 @@ mainSessionRoutes.get('/events', async (req, res) => {
 
 mainSessionRoutes.post('/stop', async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
   const expectedRunId = String(req.body?.expectedRunId || '').trim();
-  if (!projectId || !expectedRunId) {
-    return res.status(400).json({ ok: false, error: 'project_and_expected_run_required' });
+  const expectedCardId = String(req.body?.expectedCardId || '').trim();
+  if (!projectId || !deckId || !conversationId || !expectedRunId) {
+    return res.status(400).json({ ok: false, error: 'project_conversation_and_expected_run_required' });
   }
   const userId = await authorizeProject(req, res, projectId);
   if (!userId) return undefined;
   try {
+    const authority = await sharedChatAuthority(projectId, deckId);
+    const matches = expectedCardId
+      ? authority.cards.filter((item) => item.card.id === expectedCardId)
+      : [authority.main];
+    if (matches.length !== 1) {
+      return res.status(409).json({ ok: false, error: 'no_active_turn' });
+    }
+    const target = matches[0];
     const client = await hermesGateway();
-    const active = record(await client.request('session.active_list', {})).sessions;
+    const title = sessionTitle({ userId, projectId, deckId, cardId: target.card.id, conversationId });
+    const storedRows = sessionRows(await client.request('session.list', {
+      profile: target.profile,
+      title,
+      include_hidden: true,
+      limit: 200,
+    }));
+    if (storedRows.length !== 1) {
+      return res.status(409).json({ ok: false, error: 'no_active_turn' });
+    }
+    const storedSessionId = String(storedRows[0].resolved_id || storedRows[0].id || '').trim();
+    const active = record(await client.request('session.active_list', { profile: target.profile })).sessions;
     const sessions = Array.isArray(active) ? active.map(record) : [];
-    const expectedCardId = String(req.body?.expectedCardId || '').trim();
-    const match = sessions.find((item) => (
-      !expectedCardId || String(item.card_id || item.cardId || '') === expectedCardId
+    const activeMatches = sessions.filter((item) => (
+      String(item.session_key || '').trim() === storedSessionId
     ));
-    if (!match) return res.status(409).json({ ok: false, error: 'no_active_turn' });
-    const sessionId = String(match.session_id || '').trim();
+    if (activeMatches.length !== 1) {
+      return res.status(409).json({ ok: false, error: 'no_active_turn' });
+    }
+    const sessionId = String(activeMatches[0].id || '').trim();
     if (!sessionId) return res.status(409).json({ ok: false, error: 'no_active_turn' });
-    await client.request('session.interrupt', { session_id: sessionId });
+    const interrupted = record(await client.request('session.interrupt', {
+      session_id: sessionId,
+      expected_submission_id: expectedRunId,
+    }));
+    if (interrupted.status !== 'interrupted') {
+      return res.status(409).json({ ok: false, error: 'no_active_turn' });
+    }
     return res.json({ ok: true, runId: expectedRunId, state: 'stopping' });
   } catch (error) {
     return res.status(503).json({

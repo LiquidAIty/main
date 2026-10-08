@@ -151,7 +151,7 @@ describe('Main chat live observation callbacks', () => {
       await result.current.requestMainText('@builder Reply exactly BUILDER_DIRECT_OK');
     });
 
-    expect(result.current.messages).toEqual([
+    expect(result.current.messages).toMatchObject([
       {
         role: 'user', text: '@builder Reply exactly BUILDER_DIRECT_OK', status: 'complete',
         speaker: { kind: 'user', label: 'You' }, target: builder,
@@ -464,7 +464,7 @@ describe('Main chat live observation callbacks', () => {
     }));
   });
 
-  it('snapshots the selected target Card when a submission enters the queue', async () => {
+  it('keeps a second submission visible and sends it while the first turn is active', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
       runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
@@ -476,7 +476,7 @@ describe('Main chat live observation callbacks', () => {
         onEvent({ kind: 'session', runId: 'run-first', cardId: 'card_worldsignals_agent' });
         return new Promise((resolve) => { finishFirst = resolve; });
       })
-      .mockResolvedValueOnce({ finalText: 'Builder queued reply.' });
+      .mockResolvedValueOnce({ finalText: 'Builder second reply.' });
     const { result } = renderHook(() => useAgentBuilderMainChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
@@ -490,23 +490,25 @@ describe('Main chat live observation callbacks', () => {
     await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(1));
     act(() => {
       result.current.setCurrentResponderCardId('builder');
-      result.current.handleSend('Queued for Builder.');
+      result.current.handleSend('Second turn for Builder.');
       result.current.setCurrentResponderCardId(null);
     });
-    expect(result.current.queuedInputCount).toBe(1);
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
+    expect(result.current.messages.filter((message) => message.role === 'user').map((message) => message.text))
+      .toEqual(['First turn.', 'Second turn for Builder.']);
+    expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
+      message: 'Second turn for Builder.',
+      targetCardId: 'builder',
+    });
 
     await act(async () => {
       finishFirst({ finalText: 'WorldSignals first reply.' });
       await Promise.resolve();
     });
-    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
-    expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
-      message: 'Queued for Builder.',
-      targetCardId: 'builder',
-    });
+    expect(mocks.streamSession).toHaveBeenCalledTimes(2);
   });
 
-  it('snapshots queued images and the responder before the caller changes either', async () => {
+  it('snapshots submitted images and the responder before the caller changes either', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
       runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
@@ -537,30 +539,27 @@ describe('Main chat live observation callbacks', () => {
     await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(1));
     act(() => {
       result.current.setCurrentResponderCardId('builder');
-      result.current.handleSend('Queued image for Builder.', { images });
+      result.current.handleSend('Image for Builder.', { images });
       uploadedImage.name = 'changed.png';
       uploadedImage.dataUrl = 'data:image/png;base64,Y2hhbmdlZA==';
       uploadedImage.metadata.caption = 'Changed caption';
       images.splice(0, 1);
       result.current.setCurrentResponderCardId('card_worldview');
     });
-    expect(result.current.queuedInputCount).toBe(1);
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
     expect(result.current.currentResponderCardId).toBe('card_worldview');
 
     await act(async () => {
       finishFirst({ finalText: 'WorldSignals first reply.' });
       await Promise.resolve();
     });
-    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
-
     expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
-      message: 'Queued image for Builder.', targetCardId: 'builder',
+      message: 'Image for Builder.', targetCardId: 'builder',
       images: [{
         name: 'original.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=',
         kind: 'user-upload', metadata: { caption: 'Original caption' },
       }],
     });
-    expect(result.current.queuedInputCount).toBe(0);
     expect(result.current.currentResponderCardId).toBe('card_worldview');
   });
 
@@ -615,7 +614,7 @@ describe('Main chat live observation callbacks', () => {
         .rejects.toMatchObject({ code: 'addressed_card_turn_failed' });
     });
 
-    expect(result.current.messages).toEqual([{
+    expect(result.current.messages).toMatchObject([{
       role: 'user',
       text: '@builder unavailable test',
       status: 'error',

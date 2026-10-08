@@ -2,40 +2,30 @@
 
 Wraps a child process behind a pseudo-terminal so its ANSI output can be streamed to xterm.js and
 keystrokes fed back in; the only caller is the ``/api/pty`` WebSocket endpoint in
-``hermes_cli.web_server``. POSIX uses ``ptyprocess``; native Windows uses the already-declared
-``pywinpty`` dependency and its ConPTY backend.
+``hermes_cli.web_server``. POSIX-only: depends on ``fcntl``, ``termios`` and ``ptyprocess`` (native
+Windows would need a separate ConPTY/``pywinpty`` implementation).
 """
 
 from __future__ import annotations
 
 import asyncio
 import errno
+import fcntl  # windows-footgun: ok — POSIX-only module by design (see docstring)
 import os
 import select
 import signal
 import struct
 import sys
+import termios  # windows-footgun: ok — POSIX-only module by design (see docstring)
 import time
 from typing import Optional, Sequence
 
-if sys.platform.startswith("win"):
-    fcntl = termios = ptyprocess = None  # type: ignore
-    try:
-        import winpty  # type: ignore
-        _PTY_AVAILABLE = True
-    except ImportError:  # pragma: no cover - broken Windows installation
-        winpty = None  # type: ignore
-        _PTY_AVAILABLE = False
-else:
-    import fcntl  # type: ignore[no-redef]
-    import termios  # type: ignore[no-redef]
-    winpty = None  # type: ignore
-    try:
-        import ptyprocess  # type: ignore
-        _PTY_AVAILABLE = True
-    except ImportError:  # pragma: no cover - dev env without ptyprocess
-        ptyprocess = None  # type: ignore
-        _PTY_AVAILABLE = False
+try:
+    import ptyprocess  # type: ignore
+    _PTY_AVAILABLE = not sys.platform.startswith("win")
+except ImportError:  # pragma: no cover - dev env without ptyprocess
+    ptyprocess = None  # type: ignore
+    _PTY_AVAILABLE = False
 
 
 __all__ = ["PTY_HOST_DASHBOARD", "PTY_HOST_ENV", "PtyBridge", "PtyUnavailableError"]
@@ -78,13 +68,11 @@ class PtyBridge:
     WebSocket task, never the dashboard event loop.
     """
 
-    def __init__(self, proc):
+    def __init__(self, proc: "ptyprocess.PtyProcess"):  # type: ignore[name-defined]
         self._proc = proc
-        self._windows = sys.platform.startswith("win")
-        self._fd: int = int(proc.fileno() if self._windows else proc.fd)
+        self._fd: int = proc.fd
         self._closed = False
-        if not self._windows:
-            os.set_blocking(self._fd, False)
+        os.set_blocking(self._fd, False)
 
     @classmethod
     def is_available(cls) -> bool:
@@ -98,7 +86,8 @@ class PtyBridge:
         """Spawn ``argv`` behind a new PTY and return a bridge."""
         if not _PTY_AVAILABLE:
             if sys.platform.startswith("win"):
-                raise PtyUnavailableError("The pywinpty ConPTY backend is unavailable.")
+                raise PtyUnavailableError("Pseudo-terminals are unavailable on this platform. "
+                                          "Hermes Agent supports Windows only via WSL.")
             raise PtyUnavailableError("The `ptyprocess` package is missing. "  # only other way _PTY_AVAILABLE is False
                                       "Install with: pip install ptyprocess (or pip install -e '.[pty]').")
         # env=None: callers own env policy (process_registry already sanitizes), so inherit via the
@@ -113,9 +102,7 @@ class PtyBridge:
         # (xterm.js never drops frames, so under the dashboard that repaint was a visible flash on
         # every OS app-switch).
         spawn_env[PTY_HOST_ENV] = PTY_HOST_DASHBOARD
-        factory = winpty.PtyProcess if sys.platform.startswith("win") else ptyprocess.PtyProcess
-        proc = factory.spawn(  # type: ignore[union-attr]
-            list(argv), cwd=cwd, env=spawn_env, dimensions=(rows, cols))
+        proc = ptyprocess.PtyProcess.spawn(list(argv), cwd=cwd, env=spawn_env, dimensions=(rows, cols))  # type: ignore[union-attr]
         return cls(proc)
 
     @property
@@ -135,14 +122,6 @@ class PtyBridge:
         """
         if self._closed:
             return None
-        if self._windows:
-            try:
-                readable, _, _ = select.select([self._proc.fileobj], [], [], timeout)
-                if not readable:
-                    return b""
-                return self._proc.read(65536).encode("utf-8")
-            except (EOFError, OSError, ValueError):
-                return None
         try:
             readable, _, _ = select.select([self._fd], [], [], timeout)
         except (OSError, ValueError):
@@ -196,15 +175,6 @@ class PtyBridge:
             return False
         if not data:
             return True
-        if self._windows:
-            try:
-                await asyncio.wait_for(
-                    asyncio.to_thread(self._proc.write, data.decode("utf-8", errors="replace")),
-                    timeout=max(0.0, timeout),
-                )
-                return not self._closed
-            except (asyncio.TimeoutError, EOFError, OSError, ValueError):
-                return False
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, timeout)
@@ -243,15 +213,6 @@ class PtyBridge:
         """
         if self._closed:
             return
-        if self._windows:
-            try:
-                self._proc.setwinsize(
-                    _clamp_dimension(rows, _MAX_ROWS),
-                    _clamp_dimension(cols, _MAX_COLS),
-                )
-            except (EOFError, OSError, ValueError):
-                pass
-            return
         # struct winsize: rows, cols, xpixel, ypixel (all unsigned short)
         winsize = struct.pack("HHHH", _clamp_dimension(rows, _MAX_ROWS), _clamp_dimension(cols, _MAX_COLS), 0, 0)
         try:
@@ -266,13 +227,6 @@ class PtyBridge:
         if self._closed:
             return
         self._closed = True
-
-        if self._windows:
-            try:
-                self._proc.close(force=True)
-            except Exception:
-                pass
-            return
 
         try:
             pgid = os.getpgid(self._proc.pid)  # windows-footgun: ok — POSIX-only module (imports fcntl/termios/ptyprocess at top)

@@ -1,0 +1,1952 @@
+# Changelog
+
+All notable changes to Engraphis are documented here. Format loosely follows
+[Keep a Changelog](https://keepachangelog.com/); versions use SemVer.
+
+## [Unreleased]
+
+## [1.7.9] - 2026-09-29
+
+- Classify local `engraphis_decide` command advice conservatively. Chained, piped,
+  substituted or redirected commands, and options that run programs or write files
+  (`rg --pre`, `pytest --basetemp`), are never labeled read-only. Recursive deletes in any
+  flag order, raw device writes, history-rewriting or work-discarding Git operations, SQL
+  and infrastructure teardown, downloaded-script execution, exfiltrating pipes and uploads,
+  and well-known credential files are labeled destructive or leaking. Screening is bounded
+  so adversarial input stays cheap. Repeated Git options and quoted arguments use disjoint
+  matching alternatives to prevent exponential backtracking when no destructive command follows.
+- Match whole words, ignore zero counts and treat negated success as failure in local
+  completion checks; contrasts ("not only passed") and negated failures ("did not fail") are
+  not failures. Local support and contradiction checks compare content words rather than
+  shared stopwords, and support keeps one-character terms such as "C". Supersession requires
+  a shared subject plus a replacement cue the existing fact lacks, or a negation (including
+  "cannot") whose ruled-out clause the other fact asserts ("does not use port 80" opposes
+  "uses port 80", not "uses port 443"); between terse facts one shared word is the subject,
+  so "No SQLite" opposes "Use SQLite". Reinforcement requires matching cues and one fact
+  containing the other's content words, so conflicting values defer. Any number of Git global
+  options and clustered short flags no longer bypass destructive-command checks, and
+  path-specific or pathspec-file checkouts, worktree restores and force-created branch resets
+  count as discarding work. Credential paths match either path separator.
+- Fixed Anthropic connections for current Claude models. Opus 4.7 and later, Sonnet 5 and
+  later, and Fable no longer receive `temperature`, which they reject. Replies are read from
+  text blocks, so a leading thinking block no longer fails with "Unexpected Anthropic response
+  format". Models that think by default get `ENGRAPHIS_LLM_EFFORT` (default `medium`) and at
+  least 4096 output tokens so reasoning cannot crowd out the reply.
+- Replaced the retired `claude-3-5-sonnet-20241022` Anthropic default in the dashboard picker,
+  the API defaults, `.env.example`, and the provider guide with `claude-sonnet-5-5`.
+- Documented how to back the experimental Jev decision adapter with Claude: pin an exact model
+  id, keep fallback disabled, and avoid sampling parameters and forced tool choice.
+- Recognized `claude-mythos-preview` and other unversioned Fable/Mythos ids, so they no longer
+  receive `temperature` (an HTTP 400) and get the thinking-model output headroom.
+- A remote `verify_completion` probability between the certainty bound and the 0.85 completion
+  bar is now `uncertain` with a null `is_complete`, instead of a decisive failure.
+- Local completion checks recognize `N passing` (Mocha/Jest style), `not passing`, `0 passing`
+  and `errors: none`.
+- Preserve individual negation targets in local contradiction advice, so a shared prohibition
+  cannot hide a separate conflict; different explicit subjects defer. Forced Git branch resets
+  and clustered deletion flags are destructive advice, and explicit Git diff/textconv or
+  ripgrep hostname helpers are never labeled read-only.
+
+- Added the saved-session managed Jev transport and Classic/Smart MCP decision route
+  for Pro and Team, with explicit consent and current hosted entitlement checks.
+  Cloud activation remains a separate rollout requirement; see the upgrade and
+  qualification instructions in `docs/RELEASE_1_7_9.md`.
+- Retire consumed refresh credentials when a successful response has an invalid
+  token subject, and keep empty graph-layer selections separate from all-layer cache entries.
+
+- Updated the Pi extension's locked `fast-uri` to 3.1.8, `ip-address` to 10.7.2 and
+  `brace-expansion` to 5.0.12. CI repairs the Pi test host's embedded vulnerable leaf with
+  that exact pin, verifies the installed version, and audits both the full dependency lock
+  and installed tree. Pi checks use bash on Windows, so every install, build, test and audit
+  failure stops the job.
+- Provide a valid offline decision example in Smart MCP action discovery.
+- Reject coerced numeric/string remote consent before Classic MCP can select a Jev backend.
+- Retain global entities referenced by workspace edges during secure erasure,
+  while preserving exact-workspace incidence checks for workspace-owned entities.
+- Preserve graph cache isolation, pause intent through WebGL context loss, and
+  theme-correct exported backgrounds.
+- Scope graph incidence queries to candidate entities and retain shared legacy
+  entities during secure erasure.
+- Require the credential-bound control origin before selecting managed Jev.
+- Bound chunked response trailers while retaining strict deadline completion checks.
+- Keep relocation policy behind domain storage operations and 500-memory moves
+  within the legacy SQLite variable limit.
+- Updated the Pi test host to 0.87.1 to include the patched WebSocket client, and
+  extended the Pi dependency audit to cover its development dependencies.
+- Updated the Pi extension's locked `ip-address` dependency to 10.5.1, fixing
+  IPv6 link-local and NAT64 classification advisories without changing its dependency ranges.
+- Kept managed Jev available when an unrelated compute endpoint cannot resolve,
+  while retaining destination validation for requests that use compute.
+- Bounded Jev key input and serialized configuration before publication, preserving
+  existing setup on rejection. Invalid decision kinds now defer without a fabricated
+  selection in direct, Classic, and Smart calls.
+- Preserved owner-only configuration checks when updating an existing Jev key, and
+  restored support for legacy injected decision clients while retaining per-call consent
+  and a single provider invocation.
+- Save fully received Cloud credential rotations before reporting an expired request
+  deadline, while rejecting truncated bodies and watchdog-interrupted responses.
+- Recognize complete chunked refresh responses at the watchdog boundary without
+  accepting a missing or truncated trailer terminator.
+- Rebuild FastMCP settings eagerly to avoid a forward-reference warning on newer SDKs.
+- Preserve CSS gradient tiles, screen blending and reduced-motion opacity in graph PNGs,
+  including fractional display scaling; synchronize graph cache metadata across threads.
+- Refreshed public offline fixtures and source bindings in immutable v128 evidence for the
+  final 1.7.9 candidate; historical artifacts remain unchanged.
+- Campaign adapter capabilities and metrics now report the loaded Engraphis runtime version.
+
+- Added saved project-to-workspace routing and connection instructions so agents can use the
+  user's selected workspace. Routine MCP calls inherit an omitted workspace from an authorized
+  session or repo mapping, report the resolved destination, and reject session mismatches.
+- Command Code's SessionStart hook now uses the nearest Git root's repo name, honors saved
+  workspace mappings unless explicitly overridden, and labels recalled context with the
+  server's resolved workspace. Save a mapping to keep recalling memories stored under the
+  earlier folder-named workspace default.
+- Added a previewed selective move workflow for organizing mixed workspaces while retaining
+  source history and enforcing move eligibility and workspace access.
+- Hardened the experimental Cloud decision client with validated destinations,
+  redirect refusal, bounded responses, strict decision parsing, and read-only
+  result interfaces. Loopback endpoints bypass proxies and reject external DNS
+  destinations. Managed availability and performance remain unverified.
+- Fixed the spacetime overlay's final paused frame being skipped by paint throttling.
+- Enforced a Cloud request deadline across connection retries, TLS, request sends,
+  proxy handshakes, slow headers, and chunk framing. Preserved HTTP 413 for streamed oversized read-only
+  requests across parser versions.
+- Prevented retained-release waiver repairs from replacing a newer GitHub Latest
+  release, with a shared publication queue to serialize GitHub release writes.
+- Reran the public offline fixtures into immutable v88 evidence and refreshed its
+  source bindings, documentation, and charts.
+
+## [1.7.8] - 2026-09-27
+
+- Improved graph rendering and overlay scheduling, preserved saved Compact and custom
+  slider preferences, and corrected orbit radii, focus validation, and worker force limits.
+- Hardened Windows MCP startup by preloading configured embedding and reranking
+  dependencies before background warmup, while retaining exact-backend requirements,
+  source-integrity validation, and an explicit preload opt-out.
+- Added an experimental, explicitly authorized Jev decision adapter with fail-closed
+  response validation; it does not write memories or participate in grounded recall.
+- Corrected API capacity and evidence projections and refreshed immutable offline
+  evidence and charts against the release source. Offline fixtures do not establish
+  live hosted-service or full-product qualification.
+- Updated the optional Codex SDK to 0.155.1 and pinned CodeQL actions to 4.38.2.
+
+## [1.7.7] - 2026-09-23
+
+- Cloud Sync shows local encryption-key and dependency readiness before enabling Sync now,
+  guides first-device key setup, and identifies shared workspaces eligible for upload.
+  Partial workspace rounds remain visibly incomplete.
+- Pro Analytics resumes the exact submitted job across workspace switches and displays
+  its completed result without submitting a duplicate snapshot or run.
+- Release auditing checks an unpublished wheel with OSV and its installed published
+  dependencies with PyPI. Qualification inputs now use protected Actions secrets so
+  variable-backed step logs cannot disclose the signed receipt. Owner-signed,
+  exact-artifact full-product qualification remains required before publication.
+
+## [1.7.6] - 2026-09-23
+
+- Hardened Railway container startup persistence and readiness: entrypoint revalidates
+  trusted paths before ownership changes, enforces private 0700 permissions, preserves
+  ownership of external container state directories, rejects unsafe ownership markers
+  and hard-linked privileged startup inputs, and initializes private state for rootless
+  container execution.
+- Improved agent-memory evidence and benchmark integrity: expanded evaluation harness,
+  local capacity campaign runners, campaign oracles and candidate compatibility, exact
+  value correction surfaces, compact recall HTTP endpoints, and comprehensive evidence
+  verification contracts.
+- Upgraded tree-sitter-language-pack to 1.20.0, openai-codex to 0.154.0, and pyright to 1.1.414.
+- Receipt-chain structural corruption remains fail-closed at the Store boundary without
+  bricking a completed service operation: affected responses now carry a content-free
+  `receipt_warning`, and graph/import workers preserve their completed state.
+
+## [1.7.4] - 2026-09-13
+
+- Writable SQLite files now default to WAL plus FULL synchronization, with an explicit
+  balanced option and effective-policy diagnostics. Disposable fault tests cover abrupt
+  process exit and database-full rollback; hardware power loss remains unverified.
+- Consolidation recall batches evidence-visibility checks within the Store's 500-ID bound,
+  preserving citations for larger digests under scope and temporal filters.
+- Pi resolves patched Hono while retaining MCP SDK compatibility below version 2.
+- Release verification exercises installed MCP and dashboard writes, restarts, corrections
+  and history on Windows, macOS and Linux. Product-readiness receipts bind exact components,
+  underlying evidence and independent release/leadership decisions.
+- Normal and repair publication require owner-signed qualification of the exact source,
+  distributions and private ledger. Protected authority configuration is a release prerequisite;
+  no signing authority or approval is created by installing this package.
+- Performance diagnostics accept pinned local models, real files and exact vector backends,
+  and expose opt-in recall phase timings. Planner promotion now has an explicit failing CLI
+  gate when its evaluation booleans are unmet; ranking defaults are unchanged.
+- Added schema 18 content-free command receipts and cross-process source revalidation for
+  corrections, approvals, promotions and merges. Combined memory revisions have expected
+  versions, operation IDs, atomic metadata/history, and typed conflicts.
+- Sync publication uses current canonical state and generation-aware repair; delayed work
+  cannot restore erased vectors. Native-index failures roll back canonical changes.
+- Context retains distinct scoped evidence; synthesis falls back when complete source
+  units, titles, values or conditions are lost. Answer coverage defaults to unknown.
+- Added project-aware memory workflows and paginated record history.
+- Library cursors survive unrelated activity and work across processes. File-backed
+  browsing uses bounded live read snapshots; completed graph migrations are not
+  repeated at ordinary startup.
+- Ask separates answer/preview retries, cancellation and answer coverage. Home uses
+  actionable review state; Explore pauses hidden views through existing renderers.
+- Added content-free diagnostics and build/capability information, strict coding
+  acceptance validation and a file-backed independent-process capacity harness.
+  These provide measurement infrastructure, not verified 100k capacity claims.
+- MCP stdio startup accepts the JSON-RPC handshake before optional semantic-model
+  warmup, while retaining deterministic fallback and exact-backend policy.
+
+## [1.7.3] - 2026-09-07
+
+### Fixed
+
+- Preserved Galaxy carrier lane and kinematic orbit invariants through central-field slider
+  changes, including the global and core cached radii used by the next fixed slice.
+- Refreshed the retained local orbital speed budget when the effective local-gravity control
+  changes, preventing a stale phase cache from masking the slider.
+- Kept high-density Galaxy layouts inside the strict speed cap while maintaining authored
+  carrier and nested local orbit phase.
+- Bounded the zero central-gravity radius response so finite far-field envelopes cannot leave
+  oversized kinematic carrier caches behind, and counted fallback speed-cap activations.
+- Bumped the deterministic Galaxy scene algorithm identity to `galaxy-v13-responsive-compact-orbits`
+  so cached layouts cannot be confused with the revised placement contract.
+
+### Tests
+
+- Added deterministic regressions for central-field cache scaling and local-gravity phase
+  invalidation, alongside the existing 500-body and browser accessibility coverage.
+
+## [1.7.2] - 2026-09-05
+
+### Added
+
+- Added `idx_vector_index_repairs_queue` composite index on `(identity, generation, memory_id)`
+  in `engraphis/core/schema.py` to prevent table scans during external vector repair queue dequeue.
+- Added explicit operator opt-out verification with `403 Forbidden` (`processing_operator_disabled`)
+  for authenticated direct POST requests to `/managed-processing` in `engraphis/routes/v2_api.py`.
+- Added `_only_environment_title_order_changed` in `engraphis/core/resolve.py` ensuring unkeyed
+  facts with permuted environment titles resolve to `NOOP` rather than false conflicts.
+- Added comprehensive reliability regression coverage covering storage concurrency, vector index
+  repair indexing, and managed processing policy enforcement.
+
+### Fixed
+
+- Preserved `[all]` extras fallback for legacy editable installations in `scripts/update.py`
+  when no installation profile is recorded.
+- Fixed external vector index hydration on physical index recreation and rebuilds.
+- Fixed docstring dedenting and contract normalization across Python 3.9 through 3.14.
+
+### Changed
+
+- Bumped `tree-sitter-language-pack` to 1.16.1.
+- Updated `codeql-action`, `anchore/scan-action`, and `anchore/sbom-action` GitHub Actions dependencies.
+
+### Reliability and privacy
+
+- Preserve distinct context claims, qualified sentences and complete units under tight budgets;
+  measure false NOOP outcomes through real write sequences.
+- Preserve separate sources during packing and keep MCP gist responses within the canonical
+  context budget. Response caps retain or omit complete context and report accurate usage.
+- Canonical temporal browsing, server-side Library filtering/pagination, independent Ask states,
+  actionable setup diagnostics and retained installation capabilities.
+- Cross-process write resolution and schema 17 durable vector-index repair, with canonical
+  fallback and bounded NumPy scans. Public engine entrypoints remain compatible.
+- Commit native batch indexing with canonical memory state and roll back both on failure.
+  Retain the established 12,000-memory graph window pending quality evidence for a smaller one.
+- Explicit workspace managed-processing approval; missing legacy policy pauses readable uploads.
+  Requires the compatible cloud migration before rollout. Encrypted sync remains separate.
+- Generated Smart/Classic MCP contract and integration inputs; Pro three-day and Team ten-day
+  trial copy aligned with cloud authority. Real browser and Workers evidence remains distinct
+  from production verification. See `docs/RELIABILITY_PROGRAM.md`.
+- Isolate the manual graph diagnostic on an available local port with a private in-memory
+  server; fail before contacting an existing service when the requested port is occupied.
+
+## [1.7.1] - 2026-09-03
+
+### Fixed
+
+- Isolated stdio transport wire in `engraphis.mcp_server`: redirected `sys.stdout`
+  to `sys.stderr` while preserving the raw binary stream for JSON-RPC wire
+  communication, preventing external library stdout chatter (e.g. PyTorch,
+  Hugging Face, tqdm) from corrupting the wire and triggering `write EOF` stream
+  disconnection errors in Node.js harnesses (Command Code, Cursor, Claude Code, Cline).
+- Added thread-safe singleton initialization with `threading.Lock()` to
+  `engraphis.mcp_server.service()`.
+- Added non-blocking background daemon warmup (`_start_background_warmup()`) in
+  `engraphis.mcp_server` to pre-warm the database and embedder, eliminating
+  cold-start latency and timeout disconnects on the first MCP tool call. Can be
+  bypassed with `ENGRAPHIS_MCP_WARMUP=0`.
+- Added cache-first fast path (`local_files_only=True`) in
+  `SentenceTransformerEmbedder` (`engraphis/backends/embedder_st.py`), allowing
+  locally cached models to initialize in ~0.3s without network calls or remote
+  registry checks.
+- Added embedder forward-pass diagnostic check to `engraphis-init --check` and
+  added `engraphis-init --prefetch` command to download and cache model weights
+  during setup.
+
+## [1.7] - 2026-09-03
+
+### Added
+
+- Smart MCP `engraphis_recall_context` default `k` raised 8 -> 50 so the token-budget
+  packer binds on realistic stores by default. Measured at budget=1024 against a
+  49-fact store: 100% labelled-relevance retention and ~50% of the store withheld
+  (savings_ratio 0.0 -> 0.4975) with no caller-side arguments. The packer is the
+  existing 1.6 contract; the change just makes it the default fast path.
+- Smart MCP `engraphis_remember` now accepts and forwards `subject_key` and
+  `claim_kind` to the classic tool, so the documented safe-supersession
+  mechanism is reachable through MCP.
+- A new integration at `integrations/commandcode/session_start_hook.py` (with
+  `scripts/install_cc_hook.py` for idempotent user-scope install/uninstall) wires
+  durable-memory recall into Command Code's SessionStart lifecycle: each new
+  session's first turn receives bounded relevant context as `additionalContext`.
+  Fail-open and silent on any error. Override workspace via
+  `ENGRAPHIS_HOOK_WORKSPACE`; override the MCP URL via `ENGRAPHIS_MCP_URL`.
+- Cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) is now
+  reachable as an opt-in config knob (`rerank_model=` on `MemoryEngine.create`
+  / `ENGRAPHIS_RERANK_MODEL`). Evaluated offline on the bundled retrieval gates
+  (sample.jsonl, codemem.jsonl, k=5): hit@5 stays at 1.0 with zero per-question
+  regressions, MRR@5 lifts 0.889 -> 0.944 (sample) and 0.962 -> 0.981 (codemem),
+  with ~15 ms per query added. Not the default; set the value in the trusted
+  config file (`~/.engraphis/config.env` on the operator account, or as a
+  process environment variable); Engraphis deliberately does not read the
+  CWD `.env`, so editing `./.env` and restarting leaves the identity
+  reranker active. Restart the MCP server and dashboard after the change.
+
+### Changed
+
+- The reworded-correction detector in `core/resolve.py` now supersedes reworded
+  corrections without a stable `subject_key` when the aligned token diff shows
+  a same-attribute value change (e.g. "the timeout is 30 seconds" -> "we raised
+  the timeout to 90 seconds"). The strong-evidence branch and the rewrite_gate
+  branch both require a change marker (e.g. "now", "raised") to be accompanied
+  by a value_swap on the same shared subject, so a bare "now" can never retire
+  a fact it merely shares surface nouns with. Vetoes preserve coexisting
+  distinct facts: clashing environment qualifiers (staging vs production,
+  folded through `prod`/`production` and `dev`/`development` aliases so a
+  legitimate correction across short forms does not get vetoed),
+  named mixed-case identifier swaps (ProviderA -> ProviderB), and clean
+  noun-for-noun replacements (REST -> GraphQL docs). Measured on the
+  reproducible corpus shipped at
+  `eval/datasets/resolver_reworded_corrections.jsonl` (44 pairs, 38
+  positives + 6 negatives); reproduce locally with
+  `python -m eval.resolver_reworded_corrections` or
+  `python -m eval.resolver_reworded_corrections --strict` in CI.
+- The `temporal_splice` flag passed from `core/engine.py` to `resolve()` is
+  now narrowed to the bi-temporal backfill case (a deliberate `valid_at`
+  AND a `subject_key`), instead of any `valid_at`-pinned write. Scheduled
+  future writes stay on the present-time veto contract.
+
+### Fixed
+
+- The Smart MCP gateway `engraphis_remember` now forwards `subject_key` and
+  `claim_kind` end to end, matching the **Added** entry above.
+
+### Operational
+
+- The new `engraphis_recall_context` tool emits one `INFO` log per call with
+  workspace, k, budget, packed/omitted counts, and the call's measured ms.
+  Operators get visibility without changing the on-the-wire contract.
+  The standalone \engraphis-mcp-http\ launcher only configures the root logger when
+  \ENGRAPHIS_MCP_LOG\ is set to a truthy value (\ / \	rue\ / \yes\ / \info\ /
+  \on\); the default stays silent so the CLI keeps its quiet profile.
+
+- The graph's "Show all nodes" toggle is replaced by a dedicated **Every node** layout built
+  on a new ultra-performance engine (`engraphis-graph-every.js` +
+  `engraphis-graph-every-worker.js`, WebGL2-only): all geometry is uploaded once and camera
+  moves touch only uniforms, so pan/zoom frame cost is independent of node count up to the
+  20,000-node / 200,000-relation ceilings. Zoomed-out scenes read as an additive glow
+  density map; edges reveal progressively by weight with gold bridges; community districts
+  paint as tinted region hulls with hub-derived labels; hovering or highlighting a node dims
+  everything outside its neighbourhood, marks its relations with directional arrows and
+  relation names, and shows a callout card with category, connection count, and strongest
+  connections. Includes two-pointer pinch zoom, keyboard browsing (arrows/+/-/F/Escape),
+  a screen-reader live region for scene and hover announcements, and deterministic worker
+  layouts that stream settling passes (measured: ~320 ms settle at 2k nodes, ~1.2 s at 20k).
+  Entering Every-node shows every entity regardless of overview filters; leaving restores
+  the person's filters.
+
+### Changed
+
+- Direct black-hole children now receive compact, deterministic orbital lanes near the black
+  hole instead of inheriting the farthest authored radius. Each lane keeps phase and painted
+  clearance, while community-child planets remain in their local moving frame; oversized Galaxy
+  scenes seed the same lanes before their kinematic clock starts.
+- Complete Galaxy packing now uses a 4% painted-envelope clearance instead of a blanket 15%
+  radial allowance, keeping solar-system carriers materially denser around the black-hole
+  interior while preserving non-overlap.
+- Explicit `orbits` links from the black hole now promote community anchors and their declared
+  stellar children into the central orbital carrier group, so the Orbital speed control moves
+  the connected nodes in both live and oversized Galaxy paths.
+- Every Galaxy body now receives both motion frames: its top-level system carrier orbits the
+  black hole, while the body follows its immediate star/planet carrier with cached local phase;
+  legacy community metadata and nested moons use the same hierarchy without phase rewinds.
+- Any direct black-hole edge now promotes its endpoint into the central orbital carrier group;
+  relation labels no longer suppress direct star/system motion.
+- Galaxy physics ticks now explicitly invalidate the canvas camera, so advancing orbital
+  coordinates repaints visibly even when force-graph's automatic redraw loop is paused.
+- Complete graph analysis now scans up to 40,000 entity rows and 200,000 raw relationships,
+  while the explicit all-node renderer retains its 20,000-node, 200,000-link refusal ceiling.
+  Live-render safety thresholds remain unchanged so oversized scenes stay on the static path.
+- Show all nodes now keeps the complete sidebar live: deterministic worker layouts respond to
+  repel, link-distance, gravity, and advanced force controls; minimum relations, unlinked nodes,
+  focus depth, relation layers, ghosts, and auto-collapse filter the LOD scene without a reload.
+  Capped directional relation flow, reduced-motion fallbacks, visible-count status, exact-repository
+  code overlays, and a 200,000-link worker guard complete the release safety contract.
+
+- Galaxy admission now uses a tighter default carrier gap and calibrated orbital slack, keeping
+  more complete solar systems in the black-hole interior without sacrificing painted clearance.
+
+- Galaxy mode now exposes normalized controls for gravitational constant, compact black-hole
+  mass, independent local-solar gravity, space friction, edge-spring stiffness, and orbit
+  pause/play. The fixed-step Velocity Verlet field superposes black-hole carrier motion with
+  softened dominant-star orbits, adds bounded near-horizon frame dragging, differential tidal
+  stretching, and carrier-only orbital decay, preserves Hooke tethers and short-range
+  repulsion, and captures sub-escape drag releases into their authored star system while high
+  velocity releases escape. A bounded canvas layer renders the central gravity well, lens halo,
+  short trails, and up to 24 shallow local-star wells without adding simulation bodies.
+- The dashboard Galaxy graph now caches its outer safety radius at 2× the initial painted
+  extent; escaped nodes are confined to that fixed envelope instead of expanding it.
+- The Galaxy gravity slider now spans `0..400` while retaining the release-stable default
+  black-hole field of `240` and local field of `120`. Independent community stars run on a 2.5×
+  orbital clock and retain the calibrated default stellar well when Gravity is zero. An explicit
+  black hole now retains a smaller `24`-setting floor at the loose endpoint, so neither solar
+  systems nor their planets silently stop while the displayed control remains at zero.
+- The Galaxy default orbital separation is now `60`, a 25% increase from `48`. Link and contact
+  projections remain contractive and correction-capped so dense layouts cannot overshoot or
+  ping-pong. Same-system contacts project along each declared stellar orbit so they preserve
+  radius and relative velocity while the dominant star remains fixed in the local system frame.
+- Galaxy's `Orbital speed` control now scales local stellar rotation and whole-system rotation
+  around the central galaxy anchor in both live and oversized kinematic layouts. Its faster
+  endpoint also gives planets a modest 6% larger local orbital radius while the midpoint remains
+  unchanged; saved views continue using `repel`.
+- Direct black-hole graph connections now classify their non-anchor nodes as black-hole
+  satellites, including legacy payloads without `system_anchor_id`, so those nodes rotate with
+  the same Orbital speed phase.
+- Carrier orbit support now adopts a node's post-contact phase before advancing it, preventing
+  collision or boundary corrections from snapping nodes back to a stale lane angle and producing
+  visible jitter.
+- Oversized Galaxy fallback layouts now use the complete gravity range instead of saturating near
+  the lower end of the slider.
+- Complete Galaxy overview scenes remain expanded and physically live through 1,000 nodes and
+  2,000 relations; larger Galaxy scenes and non-Galaxy full views retain the deterministic
+  fallback.
+- Historical graph views now keep at least one ghost relation's endpoints together under
+  undersized node caps, and ghost evidence drilldowns resolve invalidated supporting memories
+  instead of a colliding live canonical alias.
+
+- The source-import consolidation loop now uses union-find (path halving) to merge overlapping
+  clusters, replacing an O(n²) nested scan with near-linear time. The `consolidation_evidence_cache`
+  is bounded to 1000 entries with clear-on-overflow to prevent unbounded memory growth.
+- Duplicate `_is_reparse_point` implementations across 4 modules (documents, obsidian, resources,
+  vault) are extracted to a shared `core/fsutil.is_reparse_point` helper, eliminating code drift.
+- Backend factory functions (`get_embedder`, `get_vector_index`, `get_transport`, `get_extractor`,
+  `get_resource_extractor`, `get_postgres_introspector`) now declare Protocol-based return types,
+  making the interface contract explicit and enabling static type checking.
+- Graph visibility SQL helpers now use parameterized queries instead of `repr(float)` string
+  interpolation, eliminating a fragile pattern that could theoretically be exploited if float
+  representation ever produced non-numeric characters. The dead `_graph_edge_visibility_sql`
+  helper is removed; `_graph_edge_history_visibility_sql` returns `(sql, params)` tuple.
+- The dashboard graph scene endpoint (`/api/graph/scene`) now accepts a `presentation`
+  query parameter (`quality` or `all`); the `all` profile requests the complete entity
+  projection up to 20,000 nodes and 200,000 relationships with an explicit worker-backed
+  LOD renderer, while `quality` retains the existing overview cap.
+- Galaxy overview now retains the strongest cross-community bridge edge for every visible
+  system pair plus every direct global-anchor link, so inter-system and black-hole
+  relationships appear connected instead of isolated.
+- Added `docs/GRAPH_PERFORMANCE.md` documenting the two graph presentation profiles,
+  worker layout, progressive rendering, and the 20,000-node / 200,000-relation safety
+  ceilings.
+- Source-import manifest paging now uses keyset (cursor) pagination instead of OFFSET,
+  so concurrent writes during a source re-import can no longer skip or duplicate rows
+  mid-scan (PR #154).
+- Local file/folder imports now accept up to 1,500 files per batch (was 500), with the total
+  batch ceiling scaled to 750 MB so the average per-file allowance is unchanged; document-wizard
+  scanner ceilings move in lockstep.
+- Folder imports report truncation explicitly: a folder with more matching files than the
+  ceiling now warns and returns `truncated`/`matched_total`/`unreadable` fields instead of
+  silently importing an alphabetically-first slice that looks complete.
+- The `engraphis_prime_agent` integration now ships a fleet wrapper that boots multiple
+  sub-agents (researcher / coder / reviewer / writer) with one shared memory workspace,
+  with fleet-wide configuration via `ENGRAPHIS_REPO` and per-agent override via the
+  `repo=` argument; the `engraphis-prime-agent install` subcommand configures a target
+  prime-agent configuration file and `python -m engraphis_prime_agent install`
+  works directly from the installed wheel.
+
+### Fixed
+
+- The Every node dashboard view no longer crashes on open: a declaration-order bug in the
+  renderer threw during construction before anything painted. The scene canvas also keeps its
+  accessible role/label now instead of being hidden from assistive technology.
+- Prompt-only recall now honours an opt-in `ENGRAPHIS_RECALL_ARM_CANDIDATE_K` env var (and
+  the matching `RecallEngine(arm_candidate_k_cap=...)` constructor argument) that clamps both
+  the first-page widening (`candidate_k + min(250, candidate_k*3)`) and the second-page
+  ceiling, so operators can trade untrusted-scope widening for latency on the new k=50
+  default without code changes. The accompanying benchmark test,
+  `test_recall_arm_candidate_k_cap.py`, uses a 300-fact trusted corpus because both requested
+  arm depths clamp to the same 49 rows on a smaller corpus and the timing assertion was
+  unreliable. Default behaviour is unchanged.
+- Import previews now page the source manifest exactly like execution, so vaults whose manifest
+  outgrew one list page (10k identities) no longer show manifest-only files as silently absent
+  from the preview plan; beyond-boundary rows are reported as `missing` instead of dropped.
+  Manifest pages now use one read snapshot and de-duplicate identities that move across a
+  cursor while a concurrent import updates their path.
+- Importing more than 1,000 files through the dashboard no longer fails with "Internal Server
+  Error": wizard upload routes parse multipart forms under the advertised 1,500-file ceiling
+  instead of Starlette's hidden 1,000-part parser default, oversized batches return a clear 413,
+  and large vault uploads no longer trip the dashboard's 8 MB default body limit.
+- One unreadable or pathological file (locked, deep-nested JSON, concurrent writer) now degrades
+  to a per-file error instead of rolling back the entire import batch with a 500.
+- Document/Obsidian import jobs whose worker died with the process are marked failed on the next
+  status poll (`worker_lease_expired`) instead of reporting `running` forever.
+- Cloud-placeholder files (OneDrive Files-On-Demand) on Windows are hydrated and imported rather
+  than rejected as non-regular files; symlinks and junctions remain blocked.
+- Galaxy layout now packs each complete solar-system envelope before orbital seeding and keeps
+  those envelopes separated with rigid carrier translations during live motion. Compact server
+  targets can no longer stack large systems near the black hole, while local planet positions,
+  velocities, event-horizon clearance, and the finite outer boundary remain intact.
+- Galaxy hierarchy authority is now label-independent: an authored `anchor_role="global"`
+  selects the central mass regardless of its display name or evidence mass, while unannotated
+  compatibility scenes fall back deterministically through mass, rank, degree, and stable ID.
+- The central black-hole adornment now advances a visible spin phase with the Galaxy physics
+  clock, so an otherwise satellite-free core no longer appears frozen while remaining the fixed
+  origin for the surrounding galaxy.
+- Near-horizon curvature is now measured from each system's dominant-star carrier through a
+  bounded black-hole-scale band. A wide solar system can no longer be misclassified as already
+  inside the gravity well and have its ordinary galactic angular momentum drained.
+- Galaxy systems revealed after the initial render, restored with zeroed velocity, or shown as
+  singletons now receive their own black-hole-frame tangential admission instead of being marked
+  seeded while stationary. Oversized Complete views use a bounded node-only hierarchical orbit
+  clock, and visible historical ghosts move as massless test particles without entering gravity,
+  contacts, or momentum.
+- Galaxy members that appear before their eventual star, arrive through a later reveal, change
+  parent systems, or return with a zeroed local phase now receive one star-relative circular seed
+  without recoiling the dominant node. Existing healthy stellar orbits remain untouched.
+- Dominant community stars now remain inertial at the centre of their moving solar-system frame.
+  Local gravity, stellar contact, dense separation, seeding, speed limiting, and the oversized
+  kinematic fallback move planets around that star instead of wobbling the star with its planets.
+- Galaxy Reheat now wakes the persistent fixed-step clock without injecting bonus physics slices,
+  and cross-system separation is bounded so it cannot kick entire solar systems into a visible
+  fast-forward, ping-pong, or speed-cap pulse.
+- Ledger graph reloads now retire and cache-bust a renderer that fetched successfully but failed
+  to register, instead of replaying the same broken asset response.
+- Existing Galaxy preferences migrate only the retired `48` orbital-separation default to `60`;
+  deliberate custom values, including Gravity `0`, remain unchanged.
+- Source-import hardening lands via separate PR #154: deterministic missing-item detection
+  now guards an unknown baseline instead of reporting spurious misses, denial-guard
+  supersession binds digests computed from the parsed record rather than raw input,
+  import-job finalization is generation-guarded so a stale worker cannot finalize over a
+   newer attempt, and the finalized-state check completes in constant time.
+- Smart MCP `engraphis_session` now accepts `action="start_session"` and `action="end_session"`
+  (the full tool-name forms the Command Code harness sends when translating the AGENTS.md
+  `engraphis_start_session`/`engraphis_end_session` shorthand), normalizing them to `start`/`end`
+  before the pattern validation instead of rejecting them with a 400.
+
+### Documentation
+
+- `docs/LLM_PROVIDERS.md` now warns Windows users that `cmd` may resolve to `cmd.exe`
+  (the built-in Windows command interpreter) instead of the Command Code CLI, and explains
+  how to diagnose and work around the PATH collision.
+
+### Security
+
+
+- HTTP error responses in `vault.py` and `service.py` no longer echo user-controlled paths back
+  to the client, preventing filesystem structure leakage (SEC-001).
+- Graph visibility SQL helpers now use parameterized queries instead of `repr(float)` string
+  interpolation, eliminating a fragile SQL construction pattern (SEC-002).
+- The `pypdf` dependency floor is raised to `>=6.15.0` to address PYSEC-2026-3655 and
+  PYSEC-2026-3656 (arbitrary code execution via crafted PDF objects).
+
+### Removed
+
+- The Hermes memory-provider plugin integration (`integrations/hermes/`, its
+  `ENGRAPHIS_HERMES_*` environment surface, and its integration test) is withdrawn from
+  the repository ahead of the v1.6 tag. The provider remains available in the v1.5
+  release history for anyone who already copied it.
+## [1.6] - 2026-08-15
+
+Minor release advancing the v2 engine through schema 16 with deterministic sync state, trusted
+local document and Obsidian import, tighter trust boundaries, synchronized agent guidance, and
+stronger release and evaluation evidence.
+
+### Changed
+
+- The dashboard graph now separates two explicit presentation budgets. **High quality** keeps the
+  interactive renderer for focused exploration, while **Show all nodes** requests the complete
+  entity projection and uses a worker-backed level-of-detail renderer with batched WebGL2 points,
+  a bounded Canvas fallback, progressive relationship disclosure, and no live force simulation.
+  The all-node profile supports up to 20,000 entities and 200,000 relationships; larger filtered
+  results fail with an explicit capacity response instead of silently sampling an incomplete graph.
+  Repository and entity-type filters remain the supported route for narrowing oversized views.
+- The Ledger knowledge graph now defaults to evidence-mass Galaxy gravity. The `galaxy-v6`
+  scene contract retains the magnitude of degree, PageRank, support, and repository evidence;
+  one mass value determines both visibly distinct star radius and gravitational pull. Deterministic
+  mass-ranked cores and orbital bands form local solar systems. The highest-evidence node becomes
+  the central black hole, rendered at least twice the ordinary evidence radius so its event horizon
+  remains visible at minimum Node size. Deterministic logarithmic arms seed a non-uniform disk, and
+  a fixed-step leapfrog clock advances eccentric, differential system orbits through an
+  evidence-derived core-plus-halo potential. Gravity now treats the dominant evidence node as
+  the explicit black-hole source: its field is `240` at the default slider and `864` at maximum,
+  while local solar-system, bridge, and drag gravity receives exactly half (`120` and `432`). The
+  smooth response remains true-zero and monotonic, and the rest of the core community contributes
+  through the softened halo rather than silently inflating the black-hole node's mass. External
+  solar systems also exert a weaker softened mutual field on one another: nearby evidence-heavy
+  systems perturb each other without requiring a relation edge, while the black hole remains the
+  dominant galaxy-wide potential.
+  The controlled centre pull is also doubled, retaining an immediate radial response rather than
+  hiding the stronger field behind a slower projector. Galaxy dynamics no
+  longer depend on D3 alpha decay, render cadence, or
+  force-directed settling. Galactic and local-system motion now uses a `0.021328125` fixed timestep,
+  another 30% slower than the preceding `0.03046875` cadence, while direct pointer movement remains responsive.
+  Every live seed coordinate and local orbit begins another 20% inward, putting
+  system centers at 40% of the original Galaxy radius. While live, the black-hole frame follows a
+  controlled inward spiral: Gravity 0 holds the loose seeded radius, and default/maximum convergence
+  now advances the same inward trajectory at 70% of its immediately preceding speed. Gravity slider input also
+  applies an immediate, reversible system-center response without changing local geometry or velocity:
+  its full range spans 40% radius contraction, and default-to-maximum visibly contracts about 31%
+  synchronously while maximum gravity retains its 3.6x field;
+  outward attempts still receive a 110% radial counter-projection and can never increase their
+  radius. Link distance now drives same-system evidence springs with twice the prior response and
+  a squared scale curve. Its default is now `8`, giving connected nodes a 0.25x rest length, 75%
+  tighter than the preceding default, while the full range still spans 1/16x tight orbits through
+  25x loose orbits without allowing
+  cross-system relations to collapse the galaxy. A bounded mass-weighted positional relation
+  constraint makes Link distance respond immediately while preserving each solar system's centre
+  of mass. Orbital separation now owns an explicit same-system safety envelope instead of relying
+  on an imperceptible softening side effect: both its positional response and cushion scale are
+  doubled, spanning zero added space through 30 world units while preserving evidence-mass centre
+  of mass and removing closing energy. Dense projections retain the requested
+  compact radius and report unavoidable projected overlap instead of silently expanding the disk.
+  Near the core, the direct close-encounter term is 25% lower and its weight moves into the smooth
+  halo, reducing ejection without weakening the total evidence-mass field. Legacy layouts and
+  `/api/graph` remain available.
+
+### Fixed
+
+- Replace the packed-disk Galaxy regression with persistent softened-Newtonian dynamics. Galaxy
+  phase space is isolated from Compact and other legacy layouts, angular momentum is preserved
+  across layout changes, and large stars are visibly distinct. A smooth evidence-mass field keeps
+  each solar system bound while direct star-to-star gravity supplies smaller organic perturbations;
+  evidence bridges remain visible provenance without injecting non-central orbital energy or
+  relation springs compressing the scene into a graph blob. Dragging now leaves the fixed-step
+  Galaxy clock live without alpha changes, global reheats, reseeding, or detaching any global force.
+  The pointer owns exactly one moving mass source while every live body follows its softened
+  inverse-square gravity, whether linked or unlinked; distance and evidence mass determine the
+  response, and explicit relations only strengthen it. A bounded once-per-physics-slice projection
+  makes nearby unlinked bodies visibly follow without teleporting, freezing the rest of the graph,
+  or depending on pointer-event frequency. Pointer events update only the source position and
+  field membership--the gravitational response is sampled by the 30 Hz physics clock. The selected
+  Link orbit supplies a safe periapsis,
+  tangential momentum is retained, and release adds no wake or impulse. Freeze remains the sole
+  explicit motion gate. The explicit **Reheat layout** action now gives Galaxy a finite custom-
+  solver relaxation burst (30 extra steps, or 12 for large live scenes) instead of merely ensuring
+  its already-running clock exists; repeated clicks coalesce, current orbital phase is preserved,
+  and no D3 alpha, random kick, or orbital reseed is introduced.
+- Eliminate false Galaxy "reheating" caused by two local solvers fighting each other every tick.
+  Link distance and Orbital separation now share the same lower-bound target, the redundant live
+  velocity spring no longer injects energy alongside the positional constraint, and close-range
+  separation dissipates closing radial motion. Correction-distance diagnostics expose whether a
+  system is genuinely settling without changing its orbital phase or waking D3.
+- Stabilize dense solar systems and high-degree hubs without weakening their gravity. Link and
+  Orbital-separation constraints now sample one immutable phase and apply one simultaneous,
+  mass-balanced update per node instead of stacking an update for every incident edge. Aggregate
+  position and contact-velocity caps prevent a hub slingshot, while a system-relative speed fuse
+  damps only anomalous member motion and preserves each free system's center-of-mass orbit.
+- Show unlinked entities in new Ledger and Classic graph views by default so isolated evidence is
+  not silently omitted. The toolbar still switches to a linked-only view, and persisted user or
+  saved-view preferences remain authoritative.
+- Keep large Galaxy scenes interactive by replacing quadratic entity-visibility scans with
+  set-wise privacy pruning, driving evidence lookups from the requested relation IDs, and making
+  Ledger retries cancel and supersede stale scene requests safely.
+
+### Added
+
+- A dependency-free, source-neutral local document importer for Markdown, plain text,
+  reStructuredText, HTML, JSON/JSONL, CSV/TSV, configuration/XML text, and stdlib-readable
+  source code, RTF, DOCX/ODT, XLSX/ODS, PPTX/ODP, and EPUB documents, with existing local
+  adapters for PDF text, image OCR, and explicitly local-model audio/video transcription.
+  `engraphis import documents` and the
+  dashboard’s **Import local documents** flow
+  provide strict previews, safe per-file reporting, resumable source manifests, temporal
+  re-import history, and explicit conflict choices. Obsidian remains the rich Markdown adapter.
+- Offline, repeatable Obsidian-vault import with strict dry-run previews, source
+  safety exclusions, resumable per-note progress, temporal re-import history, and
+  a trusted-owner dashboard wizard that uploads only `.md` note bytes plus content-free
+  attachment manifests. It ships through
+  `engraphis import obsidian`, the `engraphis-import` console alias, and a deprecated
+  v1 seed-script wrapper that maps legacy namespaces to v2 workspaces.
+
+### Security
+
+- Fail closed on new `user`-scope memory writes until records carry an immutable owner identity;
+  preserve historical reads and the existing promotion rejection instead of presenting
+  workspace-bound rows as private personal memory.
+- Parse bounded dotenv-style configuration without an optional runtime dependency, and load it only from the owner-private
+  `~/.engraphis/config.env` or an absolute owner-private file selected by
+  `ENGRAPHIS_ENV_FILE`; arbitrary working-directory `.env` files are not a trust boundary.
+- Clarify Cloud Sync credential-origin binding, secret-manager-only unattended credentials,
+  version-3 rollback evidence, and the deliberately incomplete first-contact state without
+  claiming an untrusted relay can prove a complete device set.
+- Advance through schema 15: schema 12 classifies content-free erasure markers so local-only
+  `never_export` markers remain private and only validated `remote_erasure` markers may cross
+  sync boundaries; schema 13 adds per-memory hybrid logical clocks for deterministic
+  descriptive-state sync and durable, content-free proof that a memory crossed a sync boundary;
+  schema 14 adds Obsidian collection and import manifests; schema 15 generalizes them to
+  source-neutral `documents` and `obsidian` adapters, preserves temporal source lineage, enforces
+  adapter/job and target-scope integrity, and retains only bounded, content-free per-job
+  format/result metadata. Schema 16 persists the optional session target on import jobs and
+  enforces exact session equality for source lineage and job items.
+- Bind each trusted-owner dashboard document or Obsidian run to an expiring, owner-session-bound,
+  one-time preview token over the exact note/document bytes, attachment manifest, target, source,
+  and conflict policy; invalidate changed client previews and keep job polling and cancellation
+  bound to the workspace where the job started.
+- Make read-only Store inspection write-free for SQLite and injected/SQLCipher connectors:
+  require injected connectors to expose `open_read_only(path)`, open existing checkpointed files
+  with `mode=ro&immutable=1` plus `PRAGMA query_only=ON`, and reject missing paths or active
+  WAL/rollback journals before a connector can create or recover state.
+
+### Fixed
+
+- Publish separately backed vector-index changes for service memory-title edits only after the
+  canonical Store row, FTS mirror, portable vector, audit, and commit succeed; late Store failures
+  publish nothing, while post-commit provider failures preserve canonical state and record
+  content-free repair debt.
+- Defer separately backed vector-index upserts and deletes during sync until each canonical apply
+  batch commits, coalesce repeated IDs, publish nothing on late Store failure, and record
+  content-free repair debt if the provider fails after commit.
+- Synchronize the portable memory skill with the live Smart nine-tool and Classic 34-tool
+  surfaces, including the two intentionally narrower Smart overlap schemas, trust/origin fields,
+  planner and response bounds, context-savings filters, receipt anchors, and expanded health
+  output.
+- Separate append-only event rows from episodic memories in every agent guide: event rows are not
+  recalled, deduplicated, reinforced, or consolidated, while recallable recurring outcomes use
+  governed episodic memories.
+- Make every documentation and image target in the PyPI long description an absolute canonical
+  repository URL, and add offline contracts that reject future relative-link regressions.
+- Replace unregistered external and consolidation numbers in the context-efficiency image with a
+  checksum-bound public fixture artifact; publish exact commands plus suite/config digests and
+  retain only deterministic aggregates reproduced by the checked-in offline fixtures.
+- Align the canonical offline gate, protocol-only `core/` boundary and outer
+  `engraphis/factory.py` composition root, deterministic versus entrypoint vector-backend
+  selection, persistent embedding identity, v1 migration repair reporting, trusted configuration,
+  and hosted/local boundaries across public docs.
+- Remove the obsolete consolidation source-supersession option across public docs; consolidation
+  now exposes only the explicit clustering, archival, profile, inference, structured, LLM, time,
+  and level controls implemented by the engine.
+- Document the official LongMemEval-V2 six-variant, five-budget execution matrix end to end,
+  including clean-checkout completion receipts, exact source-question coverage, privacy-safe
+  export binding, matched `context_k=2` comparators, and memory-type count evidence.
+
+### Added
+
+- Dashboard Settings panel and startup banner now display the running Engraphis
+  version, fetched from the existing `/api/info` endpoint.
+
+### Fixed
+
+- Wrap `engraphis_get_memory` post-inspect body in error-redaction try/except
+  matching all other Smart gateway tools, preventing internal SQL errors and
+  file paths from leaking through FastMCP error responses.
+- Fix malformed SQLite URI on Windows in `_keyword_search` and `/api/memories`
+  fallback paths: use `Path.resolve().as_uri()` instead of bare string
+  interpolation, matching the store's URI construction.
+- Apply `_graph_csv()` limit enforcement to the `/graph` endpoint's `layers`
+  parameter, matching all other graph endpoints.
+- Log a warning when `ENGRAPHIS_LLM_EXTRA_HEADERS` contains invalid JSON
+  instead of silently dropping the headers.
+
+## [1.5] - 2026-08-04
+
+Minor release advancing the v2 engine to schema 11 with governed recall recovery,
+embedding-space safety, reproducible release evidence, and stronger offline memory-quality gates.
+
+### Security
+
+- Add opt-in immutable Hugging Face model provenance enforcement for remote embedding models,
+  rerankers, and chunk tokenizers, with revision plumbing across v2 services and local front ends;
+  model loaders now explicitly disable remote code execution while local paths remain supported.
+- Refuse redirects in loopback startup-health and PyPI metadata probes, and treat shortcut icon
+  paths as data across PowerShell, macOS shells, and Linux desktop files.
+- Add an offline release gate proving that quarantined, review-pending, and caller-self-approved
+  external content is downgraded and stays outside prompt recall, including direct poisoned
+  edges and pending-memory-supported edges, while trusted graph evidence remains available.
+- Reject control characters in hosted access and refresh credentials, including credentials
+  returned during rotation, before any network or persistent-state use.
+- Restrict the Inspector API to loopback clients when no API token is configured, and exclude
+  pending or quarantined memories from managed-cloud snapshots.
+- Harden update checks with bounded, link-safe cache reads, atomic private cache writes, strict
+  version limits, finite timestamps, and validated HTTPS or loopback-HTTP URLs.
+- Route private credential and state-file reads through one bounded, race-resistant boundary that
+  rejects links, reparse points, non-regular files, invalid UTF-8, and oversized input.
+- Raise the optional `cryptography` floor to 50.0.0 to exclude known vulnerable releases.
+- Require the patched pytest line in supported release environments and give every CI pytest
+  invocation a private runner-owned temporary root, including the Python 3.9 compatibility lane.
+
+### Fixed
+
+- In schema 11, migrate pre-review trusted memories to explicit approval without releasing quarantined or
+  ambiguous evidence; recover the exact historical local-agent service-gate downgrade and expose
+  content-free eligibility diagnostics when review gating causes zero-result recall.
+- Replace per-backend vector version checks with one active embedding-space fingerprint, make
+  Sentence Transformer/API spaces durable, rebuild on every space transition (including
+  A -> B -> A), and disable vector recall throughout interrupted or mixed-space rebuilds.
+- Describe the stable sqlite-vec backend accurately as native exact KNN, add a dedicated
+  `vector` install extra, require the upstream release containing the vec0 delete fix,
+  and let server entrypoints select it automatically with a safe NumPy fallback.
+- Make contradiction supersession failure-atomic so a failed predecessor invalidation cannot
+  leave two live facts.
+- Bound reinforcement stability and migrate existing out-of-range retention state to schema 10.
+- Preserve v1 graph endpoints during migration and publish migrated databases only after a
+  validated staging database is complete.
+- Reject partial API embedding batches instead of persisting zero-vector placeholders; give
+  semantic embedding spaces durable, secret-free identities; and batch SQLite vector hydration.
+- Prevent CLI metadata from overriding trusted local provenance and honor the selected namespace
+  for grounded chat.
+- Keep service replacement atomic when the prior SQLite handle cannot close, and make
+  authoritative cloud denials fail closed in-process before their durable state writes complete.
+- Keep tag publication reachable by defining every workflow-verified release check in the public
+  evidence manifest, including CodeQL, reproducible distributions, and fresh artifact smokes, and
+  bind the evidence provenance to the completed code-security job.
+- Repair GitHub releases only from the frozen, hash-verified distribution set, excluding any
+  publisher receipt or other unverified file left in the working distribution directory.
+- Exercise both the exact tagged wheel and source distribution in clean Python 3.9 environments,
+  including dependency resolution, pip check, core CLI startup, and in-memory remember/recall;
+  declare the CI build and vulnerability-audit tool versions instead of relying on runner images.
+- Eliminate duplicate NumPy vector writes and commits after ordinary remembers, embedding rebuilds,
+  sync application, and title re-embedding. Store-backed indexes opt out only when they share the
+  exact canonical Store; separately-backed and injected indexes retain explicit synchronization.
+- Replace row-by-row NumPy scan hydration with one filtered, fixed-width matrix read while
+  preserving temporal/scope filters, malformed-dimension isolation, deterministic ties, and
+  immediate visibility of newly written vectors.
+- Surface best-effort graph, entity-linking, evolution, conflict-repair, and index-audit failures as
+  per-engine rate-limited, payload-redacted warnings instead of silently suppressing operational
+  faults.
+- Honor the configured embedding dimension, vector backend, model revisions, reranker, and encrypted
+  connection path consistently across every v2 front end and the sync/consolidation CLIs, preventing
+  an operational command from accidentally rebuilding a persisted semantic space with defaults.
+- Commit standalone entity links without closing a caller-owned transaction, and make the Windows
+  shortcut installer retain its redacted Desktop launcher fallback when PowerShell is unavailable.
+- Serialize and make Store shutdown idempotent, add context-manager and weakref-finalizer cleanup,
+  and keep the offline suite from loading production embedding/reranker models merely because a
+  developer has optional semantic dependencies installed.
+
+### Added
+
+- Extend `eval.vector_scale` with input-identical NumPy/sqlite-vec exact-KNN comparisons,
+  explicit backend identity, deterministic result hashes, and setup-excluded latency envelopes.
+- Add `engraphis-cli review list|approve` for content-free, scoped bulk review. Approval is
+  dry-run by default, requires a reason and one batch confirmation, excludes quarantined records,
+  and supports explicit ids, source/repo filters, and the legacy-agent signature.
+- Add embedding coverage and prompt-eligibility health to service stats, stamp service ingress and
+  writer-policy provenance, and document recall recovery without direct database surgery.
+- Add deterministic reinforcement and adversarial-memory release gates plus a hash-bound LoCoMo
+  evidence-repair manifest and complete pinned-dataset retrieval diagnostics.
+- Pin the Pyright contract for core, backends, and external evaluation; require it in CI and release
+  evidence; verify distribution contents; generate a reproducible CycloneDX SBOM; byte-compare
+  normalized repeat builds; smoke fresh wheel/sdist installs; and bind complete-tree CodeQL to the
+  tag gate.
+- Smoke all 14 installed console entrypoints from their distribution metadata and generated wrapper
+  paths for both wheel and source-distribution installs, with bounded timeouts and diagnostics.
+- Add opt-in semantic-confidence calibration for retrieval-arm experiments while preserving the
+  existing default ranking until paired external non-inferiority evidence is available.
+
+## [1.4.5] - 2026-08-04
+
+Patch release aligning the package, runtime, commercial manifest, and plugin metadata at 1.4.5
+for the governed recall/write hardening, schema 8 migration, Smart MCP gateway fixes, and
+credential-safe evaluation capture included in PR #111.
+Schema 9 adds repository-scoped tombstone support and performs a one-time entity-canonicalization
+repair; `confidence` and `pinned_at`/`unpinned_at` were introduced by the preceding v7-to-v8
+migration. Known-repository tombstones are terminal only within that repository, while legacy
+repo-less tombstones remain global.
+
+## [1.4.0] - 2026-08-02
+
+Engraphis 1.4 makes the compact Smart MCP gateway the default agent interface while preserving
+the complete Classic surface for existing integrations. It also strengthens external-write
+governance,
+bounded context delivery, secure erasure, and release/runtime hardening, and moves the v2 SQLite
+schema to version 9 (schema-level additions include repository-scoped `memory_tombstones`; the
+upgrade also performs a one-time entity-canonicalization repair), which migrates automatically on
+first open. Known-repository tombstones are terminal only within that repository; legacy repo-less
+tombstones remain global.
+
+### Upgrade notes
+
+- `engraphis-mcp` now exposes nine Smart tools instead of 34 direct tools. Clients that depend on
+  the former names should switch their server command to `engraphis-mcp-classic`; HTTP clients can
+  use `engraphis-mcp-http --classic`.
+- Existing v2 databases migrate automatically to schema 9 on first open; the change is additive
+  and requires no manual step.
+- The NumPy-only core supports Python 3.9+. Dashboard, MCP, documents, Cloud Sync, and `all`
+  installations require Python 3.10+ because their supported dependency versions require it.
+
+### Added
+
+- Smart MCP is now the zero-configuration `engraphis-mcp` default. It exposes nine compact tools:
+  sessions, prompt-ready recall, durable memory, discovery, validated read/action execution, and
+  governed record read/update plus conflict review. `engraphis-mcp-classic` preserves the former 34
+  direct tool names and legacy alias response shapes for pinned integrations.
+- The first-party `@engraphis/pi` package under `integrations/pi` exposes that Smart MCP surface
+  as native Pi tools, verifies the Engraphis 1.4.x handshake, and ships with independent npm
+  packaging and release gates.
+- Hosts that retain their own conversation history can call the non-MCP
+  `POST /api/adaptive-context` endpoint. Advanced proactive context also supports a bounded,
+  content-lean compact response while Classic keeps its full response by default.
+- Opt-in planned recall adds a bounded deterministic planner, an injectable planner protocol and
+  optional LLM backend, priority-weighted multi-query RRF, post-rerank memory-type maxima, stable
+  context revisions, and diagnostics-only planner traces across Python, service, REST, and MCP
+  recall surfaces. The default remains the existing single-query path (now on schema 9).
+- A 40-task context-routing stress fixture, four-way five-budget ablation harness, pinned
+  LongMemEval-V2 planner configurations, and evaluation-only imported-resource hierarchy prototype
+  encode local regression gates and matrix tooling. Official benchmark, safety, and hosted-cache
+  artifacts remain mandatory before any default or schema change.
+
+### Security
+
+- The Pi extension preserves the Smart gateway's destructive boundary: every discovered
+  state-changing action requires an explicit Pi confirmation, fails closed without a dialog,
+  and consumes its capability after one approval attempt so unknown outcomes are not retried.
+- Public writes now enter an explicit review gate: MCP, REST/dashboard-intent, import, sync, and
+  extractor ingress are pending regardless of a caller-supplied trust label; detector matches are
+  quarantined before they can contribute to prompt context or derived state. Human approval creates
+  a fresh audited successor only through the CSRF-bound dashboard action or an interactive TTY
+  command, never through MCP or a general REST endpoint. Historical rescans demote non-approved
+  records and retire their derived bridges. Public history, graph/code retrieval and indexing, and
+  consolidation apply prompt eligibility before ranking or capacity decisions, so pending or
+  quarantined records cannot influence prompt-visible results through derived bridges.
+- Smart MCP authorization now fails closed: discovery and read execution require viewer access,
+  state-changing execution requires admin access remotely, and pure reads do not emit write-side
+  telemetry receipts. Executor output is bounded without retrying or double-running handlers.
+- Tokenless remote requests to the read-only recall and repository-graph API now fail closed;
+  health and OpenAPI discovery remain public.
+- The deterministic detector now uses a pinned Unicode TR39 15.1.0 ASCII projection rather than
+  a short hand-picked table, covering additional Latin, Cyrillic, Greek, mathematical, and legacy
+  glyph substitutions without an online lookup or runtime dependency.
+- Secret scanning is cycle-safe and depth-bounded, and PostgreSQL source identities are reduced to
+  credential-free digests for both URI and libpq keyword DSNs.
+
+### Fixed
+
+- Secure erase now rebuilds shared-edge provenance from surviving support rows. Historical-only
+  support remains available to time-travel reads while the edge is closed in the current graph.
+- API embedding backends now validate dimensions, response cardinality, item indices, finite
+  values, and normalization before accepting provider output, with consistent bounded fallback.
+- Planned-recall datasets reject dangling references, vector dimensions are bounded across local
+  and SQLite backends, and sync imports accept pinned state only when it is the literal boolean
+  `true`.
+- The production image now removes build-only pip and its vendored dependency snapshot after
+  installation, eliminating unreachable vulnerable packages from the runtime attack surface.
+- Automatic LLM retention supervision now discards proposed retention values when it
+  demotes an unapproved `critical` label; legacy poisoning rescans also honor
+  `--keep-unlabelled`, and code-memory exports apply eligibility before their result cap.
+- Scope promotion now preserves an owner-approved detector match and its stable claim identity
+  without re-quarantining the approved derived copy.
+- `engraphis connect` now treats its printed summary as a provider trust boundary: only bounded,
+  printable registration metadata is rendered, preventing malformed control-plane values from
+  being reflected into CLI or JSON output.
+- Explicit local `engraphis-cli ingest` commands now record local-owner-approved provenance,
+  allowing their memories to appear in ordinary subsequent CLI recall. HTTP, MCP, import, and
+  file-ingestion boundaries remain pending review.
+- The standalone v1→v2 migrator now refuses in-place and pre-existing output paths before
+  opening either database, preventing accidental mixing of legacy source history into a v2 target.
+- Cloud Sync now closes failed HTTP response streams without reading their untrusted error bodies,
+  preventing descriptor leaks during repeated relay failures.
+- Hosted customer clients now bind provider credential/session state before persistence and
+  preserve sanitized authorization/billing outcomes when an HTTP error body is truncated, so a
+  one-time connection cannot be stranded by an unreadable state file or retain stale paid badges.
+- Authoritative hosted managed-compute authorization denials now immediately settle local
+  entitlement presentation state, so a revoked, lapsed, or de-authorized account is not shown
+  stale paid feature access while awaiting a background refresh.
+- The production image health probe now follows the active IPv4 or IPv6 loopback listener,
+  preventing a Railway IPv6 deployment from being marked unhealthy while its readiness route
+  is serving traffic.
+- Grounded recall's absolute support floor ignores titles and non-finite semantic scores, so
+  display text cannot independently make an answer eligible.
+- Keyed-claim deduplication ignores harmless punctuation, and legacy zero, negative, or non-finite
+  stability values use the documented one-day default instead of producing invalid decay scores.
+- Approval requires a non-empty audit reason, accepts only a live pending source, and preserves the
+  reviewed claim's pin, sensitivity, and keyed identity on its approved successor.
+- The zero-config Compose quickstart remains loopback-only; a LAN deployment is an explicit,
+  token-protected operator choice and cannot inherit the local Docker bridge trust exception.
+- Credential-shaped values are rejected before capture can create memory, FTS, vector, event, or
+  sync copies. `retire` is the canonical temporal lifecycle operation; targeted `secure_erase`
+  removes an already-leaked record and known local derivatives while reporting physical limits.
+- The standalone MCP-over-HTTP launcher is explicitly loopback-only. Remote MCP clients must use
+  the dashboard's authenticated `/mcp` endpoint instead of an unauthenticated FastMCP bind.
+
+### Changed
+
+- MCP-over-HTTP has a packaged `engraphis-mcp-http` command and a generic local setup guide. The
+  project makes no client-specific integration claim without a maintained guide and integration
+  test.
+- `.env.example` now mirrors runtime defaults for decay, context packing, loop cadence, and recall
+  depth so copied configurations do not silently override the documented behavior.
+
+## [1.3.0] - 2026-08-01
+
+### Added
+
+- The optional `hosted-eval` extra adds guarded hosted-Luna productivity evaluation with a
+  redacted public evidence exporter.
+- Protected public benchmark workflows now support redacted hosted and retrieval evidence runs.
+
+### Security
+
+- Untrusted ingress now fails closed: provenance and extractor metadata are allowlisted, suspicious
+  records are quarantined before embedding, linking, graph extraction, resolution, recall, or
+  grounding, and `scripts/rescan_poisoning.py` can retroactively label or quarantine old records.
+- Trust is preserved across resolution, structured graph writes, consolidation, entity profiles,
+  and review paths. Untrusted records cannot mutate or promote trusted memory, and derived outputs
+  remain trusted only when every source is explicitly trusted.
+
+### Documentation
+
+- README and release guidance now match the current install extras, public entry points, product
+  boundaries, and focused MCP/provider documentation.
+
+### Fixed
+
+- Public server entry points now share the v2 service, keeping recall behavior consistent across
+  the dashboard, server, Compose, Classic, and MCP-over-HTTP.
+- Keyed mutable-fact replacements now load their live predecessor directly, so reworded updates
+  preserve history without relying on vector top-K recall.
+- Versioned deterministic embeddings now rebuild persisted vectors after a mapping change, keeping
+  existing databases searchable after an upgrade.
+- Prompt-facing recall now widens candidate search when untrusted results crowd out trusted
+  evidence, while keeping expansion bounded. Title text now contributes to absolute support floors
+  for grounded and hosted recall.
+- Hosted productivity evaluation now scores canonical, acceptable, or supporting-evidence answers
+  with strict natural-language framing instead of token containment or raw JSON text.
+- Hosted-Luna workers on Windows now establish kill-on-close containment before sending input; a
+  failure refuses the request, and timeouts clean up the full worker tree.
+- Poisoning rescans preserve existing temporal validity boundaries and invalidate affected edges
+  without overwriting governed history.
+
+### Changed
+
+- CI and release/install metadata now cover Python 3.13 and 3.14.
+
+## [1.2.5] - 2026-07-31
+
+### Added
+
+- `engraphis_context_savings` aggregates validated, content-free recall receipts by workspace,
+  repo, operation, and token-counter identity. The view is available through the service,
+  dashboard, and read-only APIs.
+- Recall supports an explicit adaptive candidate-depth experiment while retaining the historical
+  fixed depth by default. Performance reports record requested and actual candidate depths.
+- `MemoryEngine` and `MemoryService` now provide adaptive context routing: bypass retrieval when
+  prompt history fits, use compact recall when support is strong, and fall back to bounded recent
+  history when support is weak.
+- `eval.productivity` measures task completion, corrections, agent turns, memory calls, latency,
+  and model-facing tokens.
+- Chunk ingestion can enforce budgets with a configured Hugging Face tokenizer and records the
+  counter identity, target, and overlap in chunk metadata.
+- Offline adapters now cover MemoryAgentBench, LoCoMo-Plus, and Mem2ActBench, with a paired
+  full-history versus Engraphis code-agent analyzer.
+- Public benchmark evidence can carry source hashes, repository state, environment and model
+  provenance, secret-redacted commands and URLs, content digests, and adjacent immutable SHA-256
+  files.
+
+### Changed
+
+- Context-economy evaluation now compares full history, a same-budget recency window, and hybrid
+  recall while accounting for indexing cost.
+- Official LongMemEval-V2 output has a dedicated redacted evidence exporter that retains the
+  official QA, token, and latency measures without publishing prompts, answers, model output, or
+  retrieved context.
+- Folder-sync dry runs no longer create a remote directory or persist a local device identity.
+
+### Fixed
+
+- Sync rejects malformed scope/repo combinations and every peer-driven visibility change for an
+  existing memory, including malformed legacy rows. Scope promotion or repair remains a local,
+  explicit governance operation.
+- Workspace consolidation excludes session-private memories and partitions digests and entity
+  profiles by their exact visibility owner, preventing cross-repo or cross-scope summaries.
+- Tokenizer-aware chunk overlap can no longer exceed the configured prose budget or emit a
+  duplicate overlap-only record before an oversized paragraph. Invalid token counters fail
+  closed instead of silently producing mis-sized chunks.
+- Ledger graph interactions preserve manually selected nodes during refreshes.
+- The new evidence guide is included in wheel and source distributions.
+
+## [1.2.2] - 2026-07-30
+
+### Fixed
+
+- Cloud Sync now continues past legacy plaintext, malformed, and tampered relay objects while
+  still failing closed for each object. Later authenticated peer bundles apply, and the affected
+  sync round is explicitly reported as incomplete rather than successful.
+- Security and sync documentation now consistently distinguish end-to-end encrypted Cloud Sync
+  from the separately readable managed-compute snapshot service.
+- README visual PNG exports now use their SVG canvas dimensions without hidden screenshot padding.
+
+## [1.2.1] - 2026-07-30
+
+### Security
+
+- Cloud Sync now encrypts every eligible shared-workspace bundle on the client with
+  ChaCha20-Poly1305 before upload. The relay receives opaque deterministic bundle names and
+  ciphertext only; tampered, renamed, cross-workspace, wrong-key, and legacy plaintext bundles
+  are rejected before the merge engine.
+- Cloud Sync requires a client-held 32-byte workspace key and the `cloud-sync` optional runtime.
+  Missing or malformed encryption configuration stops sync rather than falling back to plaintext.
+
+### Changed
+
+- Cloud Sync privacy copy now states that eligible shared-workspace changes are encrypted
+  end-to-end before leaving the device and cannot be read by Engraphis Cloud. Product and
+  security documentation separately identifies managed compute as the readable, bounded-snapshot
+  service it is.
+
+## [1.2.0] - 2026-07-30
+
+### Added
+
+- `engraphis_recall_context` brings the MCP surface to 30 tools and is the compact, hard-budget
+  path for agent prompts. It returns packed context, compact source identities, strict token usage
+  fields, optional retrieval diagnostics, and preserves `engraphis_recall` as the full-response
+  compatibility surface.
+- Recall and grounded recall now expose `valid_at` (world time) and `known_at` (system time);
+  `as_of` remains the compatible `valid_at` alias and conflicting anchors are rejected. Retrieval
+  defaults to the `balanced` profile; `auto` remains explicit opt-in.
+- MCP and HTTP remember calls can set a fact's world-time `valid_from`; recall, grounded recall,
+  and the compatibility answer tool can run a point-in-time `as_of` query.
+- `eval.performance` reports full recall-pipeline quality, packed context tokens, and
+  p50/p95/p99 latency with a reproducible JSON schema and deterministic corpus scaling.
+- Schema v5 adds temporal history for symbols, code edges, code-memory links, and persisted
+  memory-entity incidence. Code retrieval is now a first-class profile, and graph walks use
+  bounded sparse PageRank instead of a dense quadratic transition matrix.
+- Optional `subject_key` and `claim_kind` make mutable claims explicit. Uncertain similar facts
+  are conservatively related while keyed or strongly evidenced contradictions supersede.
+- `engraphis-benchmark/v2`, canonical workspace exports, and release-evidence manifests provide
+  deterministic hashes, per-question records, fixed token-budget curves, and validation before
+  public evidence is written.
+
+### Fixed
+
+- Supersessions now close the old fact at the replacement's effective world time instead of its
+  ingestion time. Superseded, corrected, promoted, merged, forgotten, and consolidated source
+  vectors remain available to historical semantic recall while temporal filters keep them out of
+  the current view.
+- Non-finite write and recall timestamps fail validation instead of entering scoring or SQLite.
+- Ordinary recall is observational by default, so weak nearest-neighbor results do not gain
+  stability merely by being returned. Grounded recall still reinforces only cited evidence, and
+  Python callers with an explicit use signal can request reinforcement.
+- Code and PPR retrieval now restrict incident-symbol and memory-entity lookups to the reachable
+  frontier before applying their safety caps, and repo writes link text mentions to visible
+  workspace-level entities.
+
+## [1.1.5] - 2026-07-28
+
+### Changed
+
+- Simplified the Ledger and Classic graph controls by removing the complete-graph action.
+- Replaced the README Knowledge Graph image with the corrected Ledger screenshot.
+
+### Fixed
+
+- Ledger now has one working `Show unlinked nodes` control that reloads the intended bounded
+  graph view.
+- Time-travel graph views prioritize support visible at the selected anchor, and graph drag
+  handling remains safe when browser animation-frame globals are unavailable.
+
+## [1.1.2] - 2026-07-27
+
+### Added
+
+- **The complete Ledger design is now the primary local WebUI**, ported from the final
+  five-area design package without its sample store or unsafe design runtime. Today, grounded
+  Ask, Library, the advanced Graph & Relations view, Provenance, and Manage all use live v2 data.
+  Manage includes workspaces, reviewed local consolidation, hosted Analytics/Automation/Team
+  status, the full plan comparison, settings, and persisted Slate, Midnight, Paper, and Matrix
+  themes.
+- Ledger now exposes the production grounded-answer route (`POST /api/answer`), returning a
+  cited answer or an explicit abstention. Graph & Relations ships the supplied graph capabilities:
+  five layouts, four render styles, palettes, degree/betweenness sizing, bridge detection,
+  valid-time filtering, superseded ghosts, focus, and automatic cluster collapse.
+- The complete former dashboard remains available at `/classic`. Both interfaces expose a
+  visible dashboard selector and share the same workspaces, memories, receipts, and engine.
+
+### Changed
+
+- Ledger defers both the CSP-sensitive renderer and graph payload until Graph & Relations is opened,
+  ignores stale workspace responses, renders memory text through DOM text nodes, and provides
+  responsive, reduced-motion-aware keyboard focus styling. Classic loads its lazy graph vendor
+  dependency from its own packaged backup tree.
+- Graph nodes now use oversampled, cached screen-space material rendering with face-level
+  texture: full-face iridescent PVD for Cyber, directional blue-violet anodizing for Galaxy,
+  concentric brushed copper for Solar, and horizontal satin gunmetal grain for Classic, with
+  deterministic low-detail fallbacks for large graphs.
+- Dashboard asset URLs now carry the node-material revision and local static responses
+  revalidate, preventing an already-open browser from pinning the pre-material renderer.
+- Pro and Team purchase actions now preserve both the selected plan and billing interval, while
+  existing or lapsed subscribers are sent to the plan-neutral account portal for billing recovery.
+  Public documentation now distinguishes hosted-account grace and recovery behavior from the
+  always-local, Apache-licensed dashboard and MCP write paths.
+
+### Fixed
+
+- Token-protected dashboards can now establish a short-lived signed, HttpOnly browser session
+  without storing the API token in browser storage. Remote peers remain denied when no token is
+  configured, and non-loopback v1 server startup is refused unless authentication is enabled.
+- Hosted entitlement refreshes use bounded exponential backoff, terminal denials settle every
+  local entitlement view, inactive sessions expose no paid feature flags, and ambiguous
+  single-use refresh responses permanently retire the possibly spent credential instead of
+  replaying it.
+- Recommended Automation bootstrap is resumable across partial upload/policy-save failures and
+  authorizes paid work before generating or locking a local snapshot.
+- Release checks now enforce commercial prices and trial terms, expose skipped tests instead of
+  hiding them behind duplicate quiet flags, and verify the full-stack dependency imports used by
+  the HTTP authorization boundary.
+
+### Security
+
+- Credential state directories are owner-only, product token forms are redacted consistently
+  from logs, checkout overrides fail closed to validated HTTPS or loopback HTTP destinations, and
+  unsafe control characters can no longer reform blocked browser URL schemes.
+
+## [1.1.0] - 2026-07-26
+
+Public 1.1.0 hosted-connect and graph-experience release.
+
+### Added
+
+- **`engraphis connect --token engr_ct_…`**: the missing client half of device connect.
+  `cloud_session.save_bootstrap()` is the only writer of `~/.engraphis/cloud_session.json`,
+  and it had no production caller: the docs told paying customers to prefer a file nothing
+  created, so a purchased installation could not be connected without hand-writing state.
+  The new command redeems the one-time connect token from the account portal against
+  `POST /v1/devices/connect`, saves the returned session with owner-only permissions, and
+  verifies `cloud_session.configured()` before reporting success. The token is sent in the
+  request body and nowhere else; it is never printed, logged, or written to disk, and every
+  refusal maps to fixed, actionable copy (an expired or already-used token is not confused
+  with a lapsed subscription). Session storage is pre-flighted before the exchange, so an
+  unwritable state directory or a `cloud_session.json` replaced by a link fails the command
+  *without* spending the single-use token; the customer fixes the path and retries with the
+  same token instead of returning to the portal for a new one. Faults that can only happen
+  *after* the exchange: a reply truncated mid-body (`http.client.IncompleteRead`), or an
+  endpoint that stops resolving before the session is written (`CloudUrlUnresolved`) are
+  reported as errors that say the token was already used, rather than escaping as tracebacks
+  that leave the customer unable to tell whether to retry. Also installed as
+  `engraphis-connect`.
+- An `engraphis` front-door command that dispatches to the existing `engraphis-<verb>`
+  entry points, so the command the account portal displays is runnable as shown.
+- A stable per-installation identity at `~/.engraphis/client_identity.json` (random ULIDs,
+  not a hardware fingerprint) so reconnecting a machine updates its existing installation
+  instead of registering a new device every time.
+
+### Removed
+
+- Removed an unimplemented hosted export claim from public product surfaces.
+
+### Changed
+
+- Managed compute consent now travels with the cloud account: an installation connected to
+  Engraphis Cloud is enabled for managed analytics, dreaming, and consolidation **by
+  default**, because connecting already accepts the terms that cover it. A local-only
+  installation with no cloud session is still never allowed.
+  `ENGRAPHIS_MANAGED_COMPUTE_CONSENT` remains as an explicit operator override (`=0` opts a
+  connected installation back out, `=1` forces it on regardless of session state) and is no
+  longer surfaced anywhere in the UI.
+
+## [1.0.1] - 2026-07-24
+
+Public 1.0.1 client reliability release.
+
+### Fixed
+
+- Cloud Sync now defaults to `https://relay.engraphis.com` and safely migrates the former
+  dashboard host and retired Railway relay URL without changing customer-provided relay URLs.
+- Default Pro and Team upgrade links now target the live authenticated account portal rather
+  than the retired Team dashboard host.
+- Hosted endpoint validation now fails closed unless DNS establishes a globally routable
+  destination, and credential-bearing HTTPS connections pin the vetted address while preserving
+  original-host TLS verification to prevent DNS-rebinding SSRF.
+- Hosted Automation and maintenance requests now use the selected workspace end to end rather
+  than silently falling back to the first workspace.
+- The Automation tab has one proposal action, clear managed-upload disclosure, and explicit
+  managed-compute consent in addition to entitlement checks, snapshot redaction, and limits.
+- Commercial metadata now describes Pro as one owner account across that owner's local
+  installations, matching the hosted entitlement model; Team remains billed per named seat.
+- API error responses and provider logs no longer expose arbitrary exception or configuration
+  text; local folder and repository reads resolve and re-check filesystem boundaries.
+- Entity extraction and dashboard asset migration avoid adversarial regular-expression
+  backtracking. CodeQL now disables pull-request diff-informed analysis and CI fails on every
+  raw SARIF result, including pre-existing and source-suppressed results.
+- The documented grounded-recall evaluation prints with the default Windows console encoding.
+- Hosted Pro and Team links preserve the selected plan through account creation and Checkout.
+- A total `401`/`402`/`403` Cloud Sync authorization loss restores the hosted recovery CTA,
+  while a successful empty or read-only workspace remains a partial result instead of being
+  misreported as a total denial.
+
+## [1.0.0] - 2026-07-23
+
+Public 1.0.0 open-core GA release.
+
+### Added
+
+- The search-first Galaxy Knowledge Graph explorer with deterministic communities, canonical
+  evidence-weighted scenes, entity/relation search, temporal filtering, evidence and history
+  inspection, strongest-evidence paths, synchronized accessible tables, saved scene state,
+  local PNG/JSON/CSV export, Simple and Advanced views, and a locally bundled ForceGraph + D3 renderer
+  under the strict same-origin CSP.
+- Additive schema-v4 canonical identity and bi-temporal edge-support records; deterministic
+  graph scene, suggestion, entity, and path APIs; and a persisted graph-index job with dry-run,
+  progress, cancellation, bounded errors, audit records, and tamper-evident receipts.
+- A 29-tool MCP surface with explicit behavior annotations, operation receipts, exact session
+  retry semantics, portable plugin manifests, and checksummed skill assets.
+- Customer-side hosted protocols for scoped Cloud Sync, rotating cloud sessions, Analytics,
+  and managed Automation requests, plus explicit manual folder exchange for local workflows.
+
+### Changed
+
+- The public distribution is a universal Python open-core package that runs only as a customer
+  node. Hosted authorization, billing, relay storage, managed compute, Team identity, workers,
+  and vendor operations remain private services.
+- Commercial compatibility modules now expose presentation and customer-protocol metadata only;
+  no environment variable turns the public package into a hosted Engraphis service.
+- Session identity is exact across workspace, repo, authenticated user, agent, and goal; callers
+  can request a distinct run with `force_new=true` and observe retry reuse explicitly.
+- The legacy graph view defaults to deterministic community islands, keeps sparse influence
+  bridges subordinate, and renders bounded A-MEM links when entity extraction is disabled. The
+  repository screen demo proves session handoff, bi-temporal supersession, recall evidence, and
+  history without an external service.
+- The hosted no-card trial is exactly 3 active days after email confirmation. A separate
+  `workspace_write_grace` may preserve ordinary local writes for at most 24 hours but never
+  extends trial or paid cloud access.
+- Apache-2.0 rights in published releases remain irrevocable; proprietary hosted value is
+  enforced by the private implementation and service authorization boundary.
+
+### Fixed
+
+- Session start/end and session-scoped writes are atomic under concurrency; exact retries reuse
+  one session while intentionally separate runs remain distinct.
+- Rotating refresh credentials serialize across threads and processes, persist replacements in
+  owner-only state, close failed HTTP responses, and never regress to a stale bootstrap value.
+- Managed snapshots reserve a monotonic generation in the same local write transaction as the
+  capture, use one operation ID per run and retry, redact provider errors, reject unknown
+  sensitivity, exclude session and secret data, and enforce exact record/byte limits.
+- Graph reads, suggestions, evidence, history, indexing, exports, audit views, fallback search,
+  and workspace statistics consistently enforce workspace and session boundaries, including
+  forgotten session-only graph evidence.
+- Windows private-state validation uses safe file metadata checks without weakening symlink,
+  ownership, size, or atomic-publication protections.
+- Recall graph seeding uses one boundary-aware compiled pattern instead of rescanning every
+  memory per entity, and the streamable HTTP launcher warms the singleton service before
+  accepting clients.
+- Graph GET requests remain read-only and return a rebuilding conflict while an explicit
+  mutating index job is in progress.
+
+### Security
+
+- Bare memory IDs, shared-workspace controls, graph entities, statistics, snapshots, exports,
+  audit rows, and keyword fallbacks cannot cross authenticated session or workspace boundaries.
+- Managed uploads require explicit customer consent, are capped at 16 MiB and 100,000 rows,
+  omit all session-scoped and secret-class memories, and surface only fixed client-safe
+  provider errors.
+- Customer credentials remain owner-only, redirect-safe, serialized during rotation, and are
+  never substituted with an unproven local machine identifier.
+
+## [0.9.9] - 2026-07-18
+
+Security and reliability release spanning graph isolation and performance, Team / Pro
+authentication, licensing and relay behavior, and the redesigned Knowledge Graph.
+
+### Security
+
+- Code-graph search, path, impact, export, and unified-graph reads now apply the same
+  workspace/repo/session hierarchy filter as recall. Session-scoped memory content and
+  identifiers previously remained reachable through persisted code-memory links from a
+  repo-level caller. Reindexing still rebuilds those links for the owning session, but
+  every read now filters them by caller-visible scope.
+- Auth-bound dashboard users can no longer omit `workspace` to reach global recall.
+  Inspector per-user and deployment bearer tokens now bind real or synthetic identities
+  before personal receipt reads, so the deployment service account remains available for
+  shared automation without bypassing personal-folder ownership. The standalone
+  read-only graph endpoint also disables lazy write-on-read backfill.
+- Repository indexing now creates a first-time Team workspace through the same
+  privacy-aware path as remember/import/session writes, instead of silently creating a
+  shared, unowned folder for the authenticated user.
+
+### Fixed
+
+- Code-graph layer responses and filters now use the concrete persisted layer, including
+  inferred causal relations and explicitly semantic code edges. Code-memory link rebuilds
+  page through every live repo-associated memory instead of clearing the bridge and
+  stopping at 5,000, and Git impact parsing uses NUL-delimited paths without rewriting
+  valid filename characters.
+- Graph layer predicates are applied before workspace and code-edge response caps, and an
+  explicit all-off layer selection remains empty instead of reverting to every layer.
+  Layout preset and custom link-distance changes also recompute component centers while
+  preserving the existing graph data and node objects.
+  Filter reloads also tolerate transient graph-data invalidation, so restoring layers
+  redraws the canvas instead of leaving the explorer list beside an empty graph.
+- Oversized audio/video resources are rejected before transcription begins. A blank
+  `ENGRAPHIS_GRAPH_TOKEN` now correctly falls back to `ENGRAPHIS_API_TOKEN`.
+- The sync relay now has its own per-IP token bucket
+  (`ENGRAPHIS_RELAY_RATE_PER_MINUTE`, default 600) instead of sharing the
+  60-request/minute license-registration budget. A full 64-bundle sync round can complete
+  without throttling its final requests, while invalid-key floods remain bounded before
+  Ed25519 verification.
+- Every `/start-trial/verify` response (success, each error, and the 429) sends
+  `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. The request URL carries
+  the one-time token, so the error pages are as Referer-leaky as the success page that
+  holds the key; they previously used separate inline header literals and had drifted.
+
+### Changed
+
+- `GET /api/auth/users` checks `admin` at the route, matching `auth.min_role()`. The
+  middleware already enforced admin, so this is defense in depth with no behaviour change;
+  the route previously said `member`, which was dead code that misrepresented the policy.
+- Successful version-tag publication now creates the matching GitHub Release and attaches
+  the same validated wheel and source distribution sent to PyPI. Manual workflow dispatch
+  remains build/check-only, and the release job is tag-gated behind successful PyPI
+  publication.
+- The Knowledge Graph defaults to compact component-aware packing and adds community,
+  radial, constellation, original, and custom layouts; selectable Cyberpunk, Galaxy,
+  Solar system, and Classic visual styles with persisted palettes; per-type node colors;
+  a synchronized keyboard-accessible explorer; collision-aware labels; and responsive
+  controls. Large graphs reuse rendered data, cap explorer DOM rows, reduce animation
+  work, and suppress expensive dense-graph effects.
+- The duplicate global Recall shortcut was removed from the dashboard header. Recall
+  remains available in the Memory Operations sidebar and from contextual page actions.
+- The README documentation was expanded to clarify note-link graphs, agent memory, code
+  awareness, encryption, and sleep-time consolidation without making unmeasured product
+  comparisons.
+- The README now documents Command Code CLI as an MCP-native client and includes its
+  verified stdio registration command.
+
+## [0.9.8] - 2026-07-18
+
+Hardening release focused on dependable installation, upgrades, startup, dashboard use,
+and safe hosted deployment.
+
+### Security
+
+- Every entrypoint sends baseline response headers: CSP, `X-Frame-Options: DENY`,
+  `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and HSTS over HTTPS
+  only. Override with `ENGRAPHIS_CSP` / `ENGRAPHIS_HSTS`; set either to an empty string to
+  omit that header where a fronting proxy supplies its own.
+- Loopback/bootstrap trust now rejects all common forwarding metadata, including
+  `X-Forwarded-Proto`; a same-host TLS proxy can no longer make an internet request
+  look like an unproxied local setup request.
+- Inspector first-admin setup now uses the auth store's atomic empty-database gate, so
+  concurrent different-email requests cannot both create administrators.
+
+### Added
+
+- MCP clients now receive canonical recall, session, durable-memory, and handoff guidance
+  through the server's initialization instructions.
+- The dashboard exposes a small `/api` service index, and the graph CLI documents its
+  public commands without showing the internal merge-driver command.
+- Regression coverage now exercises the sqlite-vec backend, workspace-aware entity recall,
+  installed database migration, encryption packaging, CLI startup, update paths, and release
+  artifacts.
+
+### Changed
+
+- Installed builds now keep the default database in the platform user-data directory.
+  Existing package-directory databases are copied with SQLite's backup API, validated, and
+  preserved as recovery copies; source checkouts retain their repository-local default.
+- `engraphis-update` discovers the highest stable SemVer tag, validates explicit versions,
+  fails closed on fetch errors, refuses dirty editable worktrees, and keeps pip, pipx, Git,
+  and documents the source-rebuild path for locally built Docker images.
+- Dashboard styling and navigation were reworked with five selectable themes, responsive
+  mobile behavior, semantic landmarks, improved keyboard focus, clearer confirmations, and
+  fully self-hosted browser assets.
+- Console launchers now validate arguments before optional imports, report actionable startup
+  failures, display reachable IPv4/IPv6 URLs and resolved database paths, and advertise the
+  current dashboard and API routes.
+- Optional-dependency bounds and extras were refreshed. The cross-platform `all` extra no
+  longer pulls the platform-limited SQLCipher driver, while encryption continues to fail
+  closed when no compatible driver is available.
+- The release workflow now pins actions by commit, runs the full test/evaluation and package
+  validation gates, matches release tags to package versions, and reserves publishing for
+  validated tag pushes. Bundled browser-library license notices are included in distributions.
+- Installation, hosting, sync, graph-query, MCP tool-count, and database-location guidance was
+  synchronized with the current commands and runtime behavior.
+
+### Fixed
+
+- Installed `engraphis-init` configuration is now loaded from the current directory's
+  `.env` without parent traversal, while explicit environment variables retain precedence.
+  Upgrading no longer opens a fresh platform-default database instead of the database the
+  user selected through `engraphis-init`.
+- A failed dashboard memory-detail request can no longer retain a prior memory identity or
+  leave write controls enabled, preventing a later Save from modifying the wrong memory.
+- A fresh hosted deployment now renders an actionable, non-data bootstrap screen when remote
+  API access is denied by default; it offers the safe Team-trial path or deployment-variable
+  setup without exposing account-wide license activation to a signed-out browser.
+- Dashboard, REST, Inspector, MCP, licensing, sync, billing, and provider failures now return
+  bounded user-facing messages rather than raw exceptions or upstream response bodies.
+- Trusted-proxy handling now evaluates the rightmost forwarded hop, supports exact/CIDR
+  allow-lists, and prevents untrusted forwarding headers from changing URLs or secure-cookie
+  decisions. Interactive API documentation is disabled on user-facing servers by default.
+- Dashboard handlers now read memory, workspace, member, and token identifiers from escaped
+  `data-*` attributes instead of interpolating untrusted values into inline JavaScript.
+- Repository-graph JSON output now escapes non-ASCII labels so Windows console encodings do
+  not turn successful `impact`, `prs`, or query commands into exit-code 2 failures.
+- A server-only installation now includes the multipart parser required by dashboard import
+  routes instead of depending on the unrelated MCP extra to provide it transitively.
+- `engraphis-mcp --help` works without importing the optional MCP stack; server-only and
+  explicitly offline configurations no longer emit misleading missing-dependency warnings.
+- Dashboard and legacy-server launch failures retain database recovery details instead of
+  collapsing them into generic errors, and invalid port values are rejected cleanly.
+- SQLite vector selection is now tested in both accelerated and offline-fallback modes, while
+  memory writes remain durable and audited if an index update fails.
+- The zero-configuration Compose dashboard now admits its Docker host bridge while both
+  published ports remain loopback-only; widening a port requires an API token.
+- Git-installed updates retain their recorded PEP 610 remote, and failed editable updates
+  restore the original branch without exposing a Python traceback.
+- Customer-operated sync relays are separated from the managed license/trial/invite service,
+  and the sample `.env` no longer overrides installed database defaults with a relative path.
+- MCP end-of-session guidance again represents completed work with an empty unresolved list
+  instead of persisting a fake open thread.
+
+## [0.9.7] - 2026-07-17
+
+### Security
+- Team-mode login gained a per-source-IP failure throttle (25 failures / 15 min)
+  alongside the existing per-email lockout, closing the credential-stuffing sweep
+  that tried each address once; lockouts now surface as a typed
+  `AccountLockedError` mapped to HTTP 429 + `Retry-After` (previously 401, or a
+  429 derived by substring-matching the error message).
+
+### Fixed
+- `remember`/`remember_with_resolution` are now atomic across the neighbor-resolve →
+  insert sequence (engine-level write lock): concurrent near-duplicate writes can no
+  longer both resolve ADD and store duplicates instead of NOOP/INVALIDATE.
+- The Inspector's `/api/auth/login`/`setup` no longer run PBKDF2 (600k iterations)
+  on the asyncio event loop; password hashing moved to a worker thread, so a burst
+  of logins can't stall every other request.
+- A failed vector-index upsert on the write path is now logged and audited
+  (`index_upsert_failed`) instead of silently swallowed. Previously, the memory
+  stayed invisible to semantic recall with no trace.
+- URLs built from a bind host are now IPv6-safe and connectable (`engraphis.netutil`):
+  `ENGRAPHIS_HOST=::` no longer yields the malformed `http://:::8700` in the printed
+  dashboard URL, the :8710 redirector target, or `Settings.base_url`; wildcard binds
+  map to loopback.
+- The Docker image no longer bakes an IPv4-only bind: the entrypoint defaults
+  `ENGRAPHIS_HOST` to dual-stack `::` when the kernel has IPv6 (what Railway's
+  private-network healthchecks require) and `0.0.0.0` otherwise, so wiping the
+  service's env vars can't regress the 2026-07-16 healthcheck outage.
+
+### Changed
+- Consolidated four per-app bearer-token checks into one constant-time
+  `inspector.auth.bearer_ok` helper (scheme now matched case-insensitively per
+  RFC 7235 everywhere); extracted the ~230-line code-graph HTML/Markdown export
+  templates from `core/engine.py` into `core/codegraph_export.py`; documented the
+  v1/v2 split in `engraphis/routes/__init__`; entity ancestor-widening in graph
+  recall now applies to `workspace_id` symmetrically with `repo_id`; filtered
+  sqlite-vec searches cap their geometric widening with a single full scan.
+
+### Added
+- Schema v3 logical graph layers (`temporal`, `entity`, `causal`, `semantic`), privacy-safe
+  SHA-256 receipt chains, optional LLM/host retention supervision, and a persistent code↔memory
+  bridge.
+- Incremental multi-language repository indexing (Python, JS/TS, Go, Rust, Java, C#, C/C++,
+  SQL, Terraform), docstrings/comments, variables, inheritance/implementation, weighted
+  communities, hotspots, path queries, git/PR impact analysis, portable JSON/HTML/Markdown
+  exports, and a graph union merge driver.
+- Local multi-format resource ingestion for text/code/HTML/DOCX, optional PDF/image OCR and
+  faster-whisper transcription, plus live PostgreSQL schema introspection with DSN redaction.
+- Seven MCP tools for code paths/impact/export, PostgreSQL schema ingestion, and receipt
+  list/verify/export, bringing the tool surface from 20 to 27.
+- `engraphis-graph` workflow CLI and token-protected `engraphis-graph-server` read-only HTTP
+  surface.
+
+### Changed
+- Railway hosting now supports Pro solo single-admin deployments: any active Pro or Team
+  entitlement can bootstrap the first admin and activates the login wall, while member
+  seats and direct hosted agent writes remain Team-only. The hosting guide now covers both
+  Pro solo sync-relay and Team member flows.
+
+### Fixed
+- 1-hop graph recall (and the PPR large-graph fallback) now honors `graph_layers`, matching
+  the PPR arm: `Store.neighbors()` gained a `layers` filter.
+- `FolderTransport.push()` no longer follows peer-planted symlinks in the shared sync folder
+  (unpredictable temp name + `O_CREAT|O_EXCL|O_NOFOLLOW`), closing an arbitrary-file-write
+  vector that mirrored the already-hardened read side.
+- `engraphis-graph-server` treats an empty `--host`/`ENGRAPHIS_GRAPH_HOST` as non-loopback
+  (it binds all interfaces), so the bearer-token requirement can no longer be skipped.
+- Caller-supplied `metadata.retention_supervision` is stripped at the service boundary; only
+  the validated `retention_class` presets can influence importance/stability.
+- `merge_workspaces()` no longer duplicates symbols/code edges when both workspaces indexed
+  the same file in a same-named repo: the losing snapshot's rows are cleared, and its
+  memory↔code links are re-pointed at the surviving same-fqname symbols.
+- `engraphis-graph impact/prs` reject leading-dash git revisions (git option injection), and
+  graph exports refuse a symlinked output directory and are written atomically without
+  following pre-planted symlinks.
+- The unified graph endpoint bounds entity edges and code edges/links per request
+  (`limit`-derived cap) so a large workspace graph or indexed repo can't produce unbounded
+  viewer-role responses.
+- Relay sync fails closed when a workspace's settings are unreadable rather than treating a
+  possibly-personal folder as shared: in the sync CLI and in the dashboard/background
+  `_sync_all` path; resource extraction enforces its own raw-size cap.
+
+## [0.9.6] - 2026-07-16
+
+### Added
+- **Agent Connect for hosted Team instances.** Members can mint SHA-256-hashed per-user
+  bearer tokens in Settings and use the hosted v2 store through `POST /api/remember`,
+  the existing read routes, token management under `/api/auth/token*`, and
+  `GET /api/auth/connect-info`. Tokens retain the user's role and personal-folder scope;
+  viewers are read-only and disabling a user invalidates their tokens immediately.
+- **Authenticated MCP-over-HTTP at `/mcp`.** When the MCP extra is installed, the
+  dashboard mounts the same 20 tools as the standalone server and injects its existing
+  `MemoryService`, avoiding a second SQLite writer. The endpoint requires an active Team
+  entitlement and per-user bearer token, enforces viewer/member/admin roles per tool, and
+  reports actual mount availability through connect-info.
+- **One-click Railway hosting.** Added `railway.json`, the README deploy button, and
+  `docs/HOSTING_RAILWAY.md` for persistent volumes, forwarded HTTPS headers, Team
+  entitlement bootstrap, member invites, and HTTP/MCP agent connection.
+- **Two new MCP context tools.** The MCP inventory grows from 18 to 20 with
+  `engraphis_answer`, a compatibility alias for the existing grounded-recall contract,
+  and `engraphis_proactive_context`, also available at `POST /api/proactive-context`.
+  Proactive packets include bounded task/agent state, cited memories, suggested queries,
+  and the previous session handoff. Optional LLM prose is accepted only when every claim
+  carries a valid citation.
+- **Structured LLM ingestion and consolidation.** `ENGRAPHIS_EXTRACTOR=llm_structured`
+  validates typed facts, entities, relations, keywords, and confidence; that metadata is
+  preserved through storage and automatically feeds the graph. Settings now includes a
+  **Connect your LLM** card backed by `/api/llm/status` and `/api/llm/test`.
+  Consolidation adds schema-validated facts and explicit source supersession across the
+  service, REST, MCP, and CLI surfaces, with deterministic fallback on provider/schema
+  failure.
+- **Opt-in deterministic memory intelligence APIs.** Added conflict triage for duplicate,
+  refinement, contradiction, and obsolete candidates, plus a serializable `UserModel`
+  that learns interaction preferences and reranks recall results. These helpers do not
+  mutate the store or alter default recall unless a caller invokes them.
+
+### Changed
+- **Team mode is opt-out by default.** `ENGRAPHIS_TEAM_MODE=0` (or false/no/off) disables
+  Team plumbing. A fresh solo install stays open, first-admin setup requires a live Team
+  entitlement, and an existing team's authentication wall remains active if its license
+  lapses so private data never becomes public.
+- Pre-login license status and trial routes now allow a fresh instance to start a Team
+  trial before first-admin setup. Purchased keys bootstrap through
+  `ENGRAPHIS_LICENSE_KEY` or the license file; `/api/license/activate` remains admin-only.
+- Package fallback metadata and all user-facing tool inventories now agree on version
+  `0.9.6` and 20 MCP tools.
+
+### Fixed
+- **Agent Connect and dashboard lifecycle:** corrected generated endpoint URLs, retained
+  one-time token visibility, made `/mcp` bearer-only, bound MCP sessions to their initiating
+  user, rechecked tool roles on every call, retained DNS-rebinding protection, closed
+  previously injected stores, and made connect-info reflect the real optional MCP mount.
+- **License and Team enforcement:** authoritative revocations override cached entitlement
+  and persist tombstones for previously unrecorded keys; transient failures may use only
+  an unexpired lease; public license/trial bootstrap routes close after the first Team user;
+  trial rate limits trust forwarded addresses only from configured proxies; managed
+  requests use explicit client headers; retired managed relay URLs are canonicalized
+  across key issuance, license/trial, invite, and sync clients; and configured keys
+  that fall back to free after transient outages retry automatically.
+- **Python and packaging compatibility:** rate-limit buckets and audit exports use
+  timezone-aware UTC APIs, package metadata uses the SPDX license format, and the
+  deterministic fallback matches the default embedding model’s 384 dimensions.
+- **Memory and retrieval integrity:** audit writes are committed durably, recall excludes
+  non-live rows, mixed embedding dimensions no longer crash recall and have a backed-up
+  repair path, sync enforces workspace/repository boundaries in both directions, graph
+  provenance is pruned per memory instead of deleting shared edges, SQLite-vector distances
+  are converted to cosine similarity, entity expansion matches complete names, and the
+  sentence-transformers adapters support both legacy and renamed dimension APIs.
+- **Structured-data safety:** extraction metadata survives ingest unchanged, proactive and
+  consolidation inputs are bounded, structured consolidation rejects source IDs outside
+  the requested cluster, and synthesized context cannot replace deterministic output
+  without valid citations.
+- **Dashboard graph navigation:** focusing an isolated node now retains the requested node
+  through the delayed renderer retry instead of reporting a false “Entity not in view.”
+- **Dashboard typography:** replaced sub-12px text and the flat type ramp with a consistent
+  12/16/24/32px hierarchy while preserving responsive layout.
+
+### Documentation
+- Updated the README, Agent Connect, Railway, Kilo Code, bundled memory skill, benchmark
+  command, and package-version fallback to match the shipped routes, tool count, setup
+  order, and extractor/consolidation options; removed the unused shortcut icon helper.
+
+## [0.9.5] - 2026-07-14
+
+### Changed
+- **Team mode is now ON by default (opt-out).** `ENGRAPHIS_TEAM_MODE` defaults to on;
+  set `ENGRAPHIS_TEAM_MODE=0` (or false/no/off) to disable. The per-user login wall is
+  no longer raised just because the mode flag is on. It now requires a *live* `team`
+  feature entitlement (`licensing.has_feature("team")`), checked at request time in
+  `dashboard_app.py` and reflected in `/api/auth/state`. Solo / no-license installs stay
+  fully open, and the wall appears the moment a team license key is added, even via the
+  dashboard UI at runtime. A `team` license is still required to *add seats* beyond the
+  first admin (bootstrap admin is created unconditionally). Docs (`.env.example`,
+  `AGENTS.md`, `README.md`, `SECURITY.md`, `scripts/init.py`) and team-mode test fixtures
+  updated.
+- **Team-invite email rewritten to separate "join" from "activate a key".** The old
+  invite conflated the two, so members pasted the shared team key into the hosted/Railway
+  dashboard, saw it "work" (it just re-activated a license already active there), and
+  thought they'd joined, when joining means signing in with email + password. The email
+  now frames two distinct options: **Option 1** (required to join) sign in to the team
+  dashboard with email + the admin-set password, with explicitly *no license key needed here,
+  don't paste one*; **Option 2** (optional) run Engraphis on your own machine and access
+  the team's memories locally; that is what the shared team key is for (LOCAL
+  `http://127.0.0.1:8700` → Settings → License, then Settings → Cloud Sync to pull the
+  converged team store down to a local offline copy). Invites now always carry a
+  clickable sign-in link: `dashboard_url` resolves explicit arg → `ENGRAPHIS_DASHBOARD_URL`
+  → `DEFAULT_TEAM_DASHBOARD_URL` (`https://team.engraphis.com/`). A footer with the
+  canonical site + repo links is added as env-overridable module constants
+  (`SITE_URL`/`REPO_URL`) so the URLs can't drift per-email. `tests/test_billing.py`.
+
+### Fixed
+- **Intermittent `database is locked` from `set_service`.** `routes/v2_api.set_service`
+  swapped the global `MemoryService` without closing the previously-bound service's store
+  connection, so under heavy test churn a deferred-GC close of the old SQLite/WAL handle
+  collided with the next `MemoryService.create` on the same path. The prior store is now
+  closed on swap (best-effort, never blocks the swap on a close error).
+
+### Docs
+- **README now documents three previously-undocumented shipped features** (the features
+  themselves shipped in 0.9.3): sub-file chunking (`ENGRAPHIS_EXTRACTOR=chunk` + the
+  `eval.chunking_eval` whole-file-vs-chunked harness), auto-dreaming (the background
+  cross-cluster-inference loop, accumulation + idle trigger, `dream_inference`
+  provenance/auditability), and every automation dream knob exposed via the dashboard
+  Automation tab and the `GET/POST /automation` + `POST /maintenance/run` API. Also: a
+  **Team early-access beta** callout (top + feature/pricing tables + Free-vs-Pro section)
+  and a **daily-update reminder for maintainers** near the top (code wins; fix the doc in
+  the same change).
+
+### Chore
+- `.gitignore` now excludes `automation.json` / `autosync.json` (regenerable local
+  runtime state from `engraphis/automation.py`, not source content).
+
+## [0.9.4] - 2026-07-14
+
+### Fixed
+- **The dashboard (`engraphis-dashboard` / `http://127.0.0.1:8700`) would not start.**
+  `scripts/start_dashboard.py` runs uvicorn against `engraphis.dashboard_app:app`, but
+  `dashboard_app.py` only defined the `create_app()` factory and never built a module-level
+  `app` instance, so uvicorn aborted with `Attribute "app" not found` and nothing bound
+  port 8700. The missing `app = create_app()` (present in `engraphis/app.py` and
+  `engraphis/redirector.py`, but dropped from `dashboard_app.py`) is now restored. The
+  background autosync/dreaming/revalidation loops inside `create_app()` are pytest-guarded,
+  so importing the module under test is side-effect-free.
+- **Flaky `database is locked` dashboard test.**
+  `test_consolidate_inference_pass_is_pro_gated` opened two FastAPI `TestClient` lifespans
+  back-to-back on the same temp DB file; the first app's still-open SQLite connection
+  blocked the second's schema init. Split into two one-client test functions, matching
+  the convention already documented above `test_analytics_and_export_*` (two TestClients
+  in one test reproducibly deadlock). Full suite now green (693 passed, 3 skipped).
+
+## [0.9.3] - 2026-07-14
+
+### Added
+- **Email-verified self-serve trial + abuse protections on the trial endpoint.**
+  Starting a trial now requires a verified email and sends a one-time confirmation link
+  before any license is issued; the request path is rate-limited so the endpoint can't be
+  used to spam or farm trials. This raises the bar significantly above the previous
+  device-only gate while keeping the same paste-a-key activation flow on the dashboard.
+  `tests/test_cloud_license.py`, `tests/test_dashboard_v2.py`,
+  `tests/test_online_only_enforcement.py`.
+- **Deterministic, offline sub-file chunking on the write path (`ENGRAPHIS_EXTRACTOR=chunk`).**
+  A third `Extractor` alongside passthrough/LLM: `ChunkingExtractor` splits a document into
+  retrieval-sized `ExtractedFact` chunks that preserve meaning: markdown headings start new
+  chunks and become the title, fenced code blocks stay intact, prose is packed to a token
+  budget (`ENGRAPHIS_CHUNK_TOKENS`, default 256) with a sentence-level overlap
+  (`ENGRAPHIS_CHUNK_OVERLAP`, default 32); a hard per-document cap
+  (`ENGRAPHIS_CHUNK_MAX`, default 200) bounds amplification. numpy/stdlib only, so it runs
+  under the offline gate and is byte-identical across runs. This gives long, multi-topic
+  documents finer retrieval units instead of one diluted memory; the bundled evaluation below
+  preserves Recall@5 while reducing retrieved context. New: `ChunkingExtractor` in
+  `backends/extractor.py`; `tests/test_chunking_extractor.py`.
+- **File/folder imports chunk too.** With `ENGRAPHIS_EXTRACTOR=chunk`,
+  `import_folder`/`import_files` split each file into several retrieval-sized memories
+  (each still `trusted:false`, stamped with `metadata.chunk={index,of,heading}`) instead of
+  one; the LLM extractor is deliberately never applied to the local import path (no external
+  calls on untrusted disk files). A file still counts as one imported unit.
+  `tests/test_import_chunking.py`.
+- **Chunking eval + `longdoc` dataset.** `eval/chunking_eval.py` +
+  `eval/datasets/longdoc.jsonl` compare whole-file vs chunked ingestion through the real
+  recall pipeline. On the offline embedder: identical recall@5 (1.000) at **~73% fewer
+  context tokens** (809 → 219) and ~4× smaller tokens-to-evidence (162 → 42); the "quality per token"
+  number `BENCHMARKS.md` calls for. `tests/test_chunking_eval.py`.
+- **"Dreaming" trigger for automated maintenance.** `automation.should_dream` / `dream_due`
+  run a consolidation sweep *before* the cadence when enough new episodic memories have
+  accumulated **and** the store has gone quiet (`dream_min_new` / `dream_idle_minutes` policy
+  knobs); wired into `scripts/auto_maintain.py`. Purely additive to the existing cadence, so
+  cron behaviour is unchanged; still Pro-gated. `tests/test_dreaming_trigger.py`.
+- **Associative cross-cluster inference (dream pass 4).** `consolidate.infer_links` /
+  `consolidate(infer=True)` proposes evidence-only links between memories in *different,
+  dissimilar* subject clusters that share a bridging entity: the "connect distant dots" step
+  same-subject distillation never reaches. **Off by default** (`infer=False`); the pass
+  follows the sweep's own `dry_run` flag, so a dry-run proposes into the report and a real
+  run applies. Applied inferences are low-salience (`importance=0.25`), `trusted:false`,
+  `source='dream_inference'`, linked to their sources and audited, so a bad inference is
+  visible, downweighted, and never merge-eligible into a trusted fact. Fan-out capped,
+  idempotent. Entity matching is now word-boundary (so `Redis` won't fire on
+  `rediscovered`) and the per-sweep text scan is computed once, not per entity.
+  `tests/test_inference.py`.
+- **Inference is reachable from the maintenance path.** A new `infer` policy knob (off
+  by default) runs the inference pass inside `run_maintenance`, whether manual or from the dream loop,
+  following the sweep's `dry_run`. `/api/consolidate` takes `infer` (`false` by default);
+  `/api/automation` round-trips `infer`; the dashboard Automation tab has an Inference
+  toggle. `tests/test_dashboard_v2.py` (policy round-trip + `/maintenance/run` proposes the
+  Redis bridge), `tests/test_dashboard_dream_ui.py`.
+- **Dreaming runs without cron.** A dashboard background loop (`_maybe_start_dreaming`,
+  mirroring auto-sync) runs a maintenance sweep whenever `automation.dream_due` fires. It is opt-in,
+  Pro-gated, fault-isolated, with an `ENGRAPHIS_DREAM_LOOP=0` kill switch. The `/api/automation`
+  policy round-trips the `dream` / `dream_min_new` / `dream_idle_minutes` knobs, and the
+  dashboard's Automation tab surfaces them as form controls (toggle + thresholds). The
+  trigger now scopes its accumulation/idle count to the policy's `workspaces` (a burst in
+  an out-of-scope workspace no longer fires a sweep). `tests/test_dreaming_trigger.py`,
+  `tests/test_dashboard_dream_ui.py`, `tests/test_dashboard_v2.py`.
+
+### Fixed
+- **First-run team-mode bootstrap hardened.** The admin-creation path no longer depends
+  on an external relay round-trip succeeding to provision the first seat, and concurrent
+  first-admin requests are serialized so only one unlicensed bootstrap admin can ever be
+  created. Subsequent seat additions still require an active Team license.
+- **First-run team-mode bootstrap fixed (frontend).** The admin-account screen now triggers
+  the trial/activation step before provisioning the first admin, so a fresh self-hosted
+  instance no longer deadlocks on the team-feature gate with no way to proceed.
+  No backend change; frontend-only.
+- `MemoryService.create` now defaults `extractor` from `settings.extractor`
+  (`ENGRAPHIS_EXTRACTOR`) when unset, mirroring the existing `graph_extractor` fallback so
+  the dashboard and automated-maintenance front ends honor the config knob, not just the MCP
+  server and CLI. An explicit `extractor="none"` still overrides the environment.
+
+### Security
+- **Closed a Pro-feature bypass on the manual consolidate endpoint.** The inference pass
+  (a paid capability) was reachable through the free housekeeping endpoint without a
+  license; it is now gated at the route and reinforced inside the service layer, so no
+  caller can reach the Pro-only path without a server-approved license. The free manual
+  consolidate action is unchanged. `tests/test_dashboard_v2.py`, `tests/test_inference.py`.
+- **Strengthened license enforcement and revocation handling.** Reaffirmed that every paid
+  surface requires a live, server-validated lease and fails closed when the server is
+  unreachable; tightened the verification so licenses can't be forged client-side, and
+  serverside-issued seats can't be minted without a valid license. Revoked or refunded keys
+  are now re-confirmed against the server on a background interval so they degrade promptly
+  rather than remaining usable until lease expiry, while legitimate offline customers are
+  never stalled. `tests/test_online_only_enforcement.py`, `tests/test_cloud_license.py`.
+
+## [0.9.2] - 2026-07-13
+
+### Added
+- **Personal vs. shared folders + a redesigned Team dashboard.** A folder can now be
+  created `visibility='personal'` (owned by, and visible/usable only to, the creating
+  dashboard user) or `shared` (the whole team, the previous, still-default behaviour).
+  Enforcement runs through a single workspace-authorization chokepoint, so every scoped
+  read/write inherits it and a non-owner cannot access another user's personal folder.
+  Personal folders are excluded from relay sync so they stay on-device. The **Team
+  dashboard** gains a team overview (seat usage + activity), a Folders panel that creates
+  and manages shared/personal folders (folder creation now lives here: the Workspaces
+  tab is selection-only in team mode), members with last-active, and a team audit log with
+  CSV export. New/updated: `service.py`, `routes/v2_api.py`, `dashboard_app.py`,
+  `static/index.html`; tests in `tests/test_personal_folders.py`,
+  `tests/test_dashboard_v2.py`, `tests/test_sync_dashboard.py`.
+
+### Changed
+- README expanded with the missing features (cloud sync, encryption, import/ingest,
+  workspace ops, Docker, config, and more) and now links to the Engraphis Discord.
+
+## [0.9.0] - 2026-07-13
+
+### Added
+- **Automatic v1→v2 database migration on startup**: a pre-existing v1-shaped
+  `engraphis.db` (no `workspace_id` column) is backed up and migrated to the v2
+  schema, so existing installs upgrade cleanly without manual SQL.
+
+### Fixed
+- **Dockerfile default entrypoint** is now `engraphis-dashboard --no-open` (was the v1
+  single-user `engraphis-server`), so a fresh container serves a working team dashboard
+  with auth/license/trial routes instead of a permanently signed-out UI.
+  `engraphis-server` remains available as an explicit override for single-user
+  deployments.
+- **CI**: ruff lint errors and core-floor (numpy-only) test collection.
+  fastapi-dependent tests now skip cleanly on the minimal core floor. `loads_strict`
+  now rejects pathologically deep JSON on every Python version (3.12's JSON scanner
+  no longer raises RecursionError for ~1000-deep input, which had broken the
+  deep-nesting parsing guard and its test on 3.12).
+
+## [0.8.8] - 2026-07-13
+
+### Security
+- Hardened license validation and trial consumption tracking
+- Improved offline trial tamper resistance
+
+## [0.8.7] - 2026-07-12
+
+### Added
+- **Dashboard "Import files & folders"** restored on v2 engine
+- **Kilo Code integration docs** (`docs/KILO_CODE_INTEGRATION.md`)
+
+### Fixed
+- Dashboard auth: session handling, role badges, member management
+- License cloud enforcement: lease validation, online-only gating
+- Service layer: workspace operations, memory reorder, merge
+
+## [0.8.6] - 2026-07-12
+
+### Added
+- Dashboard "Import files & folders" section restored on v2 engine
+  (`engraphis/service.py`, `routes/v2_api.py`, `static/index.html`, Workspaces tab)
+- Server-side path import and drag-and-drop upload, both member-gated and bounded
+- Imported memories marked untrusted by default; 21 new tests
+
+### Security
+- Hardened folder import against path-traversal and containment bypasses
+
+## [0.8.5] - 2026-07-12
+
+### Fixed
+- Logout no longer re-triggers sign-in modal loop
+- Team bootstrap: trial/license endpoints now accessible before first admin exists
+- Expired/revoked Team license no longer locks out all logins
+- Trial start now idempotent (no 400 on repeated calls mid-trial)
+- Team trial grants 5 seats (was 1), enabling actual team evaluation
+- Dashboard handles empty workspaces gracefully
+- Static assets (dashboard HTML, vendor JS) now ship correctly in wheel
+
+## [0.8.4] - 2026-07-12
+
+### Security
+- Paid features now require a live, server-issued license lease
+- Offline handling degrades gracefully with bounded grace when the server is unreachable
+- Local/offline trial grants removed; trials are server-issued and tracked per device
+- Issued keys are server-enforced by default
+
+## [0.8.3] - 2026-07-12
+
+### Fixed
+- Empty workspace `/api/memories` returns `[]` instead of 500
+- Online-only license enforcement: cloud-mode keys validated per request
+
+## [0.8.2] - 2026-07-12
+
+### Fixed
+- Static package discovery: `engraphis/static/__init__.py` added
+- Vendor glob: recursive pattern so `static/vendor/` bundles ship in wheel
+- Dashboard 500 on `GET /`: `static/index.html` was missing from wheel (packaging bug)
+- Dashboard 500 on fresh install: `GET /api/memories` crashed on empty workspace
+
+---
+
+## Earlier versions (condensed)
+
+### Versions 0.5.x to 0.7.x
+- MCP server with 18 tools
+- Memory Inspector product UI (`engraphis-inspector`, port 8710)
+- Dashboard rebuilt on v2 engine with recall, governance, consolidate, analytics
+- Team mode: login auth, viewer/member/admin roles, seat limits
+- Grounded recall with cited answers and abstain gate
+- Sleep-time consolidation with compaction accounting
+- Personalized PageRank graph arm (HippoRAG-style)
+- Offline signed license keys (no phone-home)
+- Pro analytics dashboard
+- Code-symbol graph via tree-sitter or regex fallback
+- Docker + docker-compose deployment
+- 300+ tests, eval harness, ablation suite
+
+### [0.1.0] - 2026-07-09
+- Initial public release: local-first AI memory engine for agents
+- Ebbinghaus decay, interaction-aware recall, bi-temporal facts
+- Background consolidation; you bring the LLM
+
+---
+
+**Security reporting:** Email **security@engraphis.dev** for vulnerability disclosure.

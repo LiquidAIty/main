@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
 from typing import Any
 
 from app.python_models.provider_config import ensure_env_loaded
@@ -35,7 +36,11 @@ from app.python_models.card_domain import (
     save_deck,
     update_run_progress,
 )
-from app.python_models.card_script import generate_card_script_header, saved_script
+from app.python_models.card_script import (
+    CardScriptValidationError,
+    generate_card_script_header,
+    saved_script,
+)
 from app.python_models.idd import (
     IddValidationError,
     materialize_card_editor,
@@ -48,7 +53,11 @@ from app.python_models.magentic_execution import (
     stop_magentic_execution,
     submit_magentic_execution,
 )
-from app.python_models.tool_registry import tool_manifest, materialize_tool_catalog
+from app.python_models.tool_registry import (
+    ToolCatalogError,
+    normalize_live_tool_catalog,
+    tool_manifest,
+)
 from app.python_models.trading_runtime import (
     TradingRuntimeError,
     intervene_trade_job,
@@ -57,7 +66,32 @@ from app.python_models.trading_runtime import (
     run_trading_lifecycle_proof,
 )
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    import asyncio
+    import logging
+    from app.python_models.engraphis import get_service
+
+    async def warm():
+        try:
+            await asyncio.to_thread(get_service)
+        except Exception:
+            logging.getLogger(__name__).exception("ThinkGraph initialization failed")
+
+    warmup = asyncio.create_task(warm())
+    app.state.thinkgraph_warmup = warmup
+    try:
+        yield
+    finally:
+        if not warmup.done():
+            warmup.cancel()
+            try:
+                await warmup
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 def health():
@@ -268,19 +302,6 @@ async def thinkgraph_completed_pair_settle(payload: dict[str, Any]):
         raise HTTPException(status_code=502, detail=str(err)) from err
 
 
-@app.on_event("startup")
-async def warm_thinkgraph():
-    import asyncio
-    import logging
-    from app.python_models.engraphis import get_service
-    async def warm():
-        try:
-            await asyncio.to_thread(get_service)
-        except Exception:
-            logging.getLogger(__name__).exception("ThinkGraph initialization failed")
-    app.state.thinkgraph_warmup = asyncio.create_task(warm())
-
-
 # ---------------------------------------------------------------------------
 # Read-only Alpaca paper market data (no orders, no balances, no mutation).
 # The frontend /tradingui surface consumes these via the vite /market proxy.
@@ -408,12 +429,12 @@ def card_editor_options(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
-@app.post("/idd/tools/materialize")
-def idd_tools_materialize(payload: dict[str, Any]):
-    """Ingest live provider contracts into the one current IDD vocabulary."""
+@app.post("/tools/catalog/normalize")
+def tools_catalog_normalize(payload: dict[str, Any]):
+    """Normalize current provider contracts without loading Builder IDD data."""
     try:
-        return {"references": materialize_tool_catalog(payload.get("tools"))}
-    except IddValidationError as err:
+        return {"references": normalize_live_tool_catalog(payload.get("tools"))}
+    except ToolCatalogError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
@@ -443,7 +464,7 @@ def card_script_validate(payload: dict[str, Any]):
             # Script executor is connected.
             hermes_available=False,
         )
-    except IddValidationError as err:
+    except CardScriptValidationError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
@@ -554,7 +575,7 @@ def domain_card_delete(
 def domain_main_prepare(payload: dict[str, Any]):
     try:
         return prepare_main_chat(payload)
-    except (CardDomainError, IddValidationError) as err:
+    except CardDomainError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
@@ -572,7 +593,7 @@ def domain_mag_one_agents(project_id: str, deck_id: str, payload: dict[str, Any]
                 "unavailableToolCatalogFamilies"
             ),
         )}
-    except (CardDomainError, IddValidationError) as err:
+    except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -580,7 +601,7 @@ def domain_mag_one_agents(project_id: str, deck_id: str, payload: dict[str, Any]
 def domain_run_begin(payload: dict[str, Any]):
     try:
         return begin_run(payload)
-    except (CardDomainError, IddValidationError) as err:
+    except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -604,7 +625,7 @@ def domain_run_preparation_fail(payload: dict[str, Any]):
 def domain_main_run_begin(payload: dict[str, Any]):
     try:
         return begin_main_chat_run(payload)
-    except (CardDomainError, IddValidationError) as err:
+    except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
