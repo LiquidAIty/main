@@ -38,8 +38,6 @@ export type CanonicalSubjectMatcher = {
   ) => CanonicalSubjectTextSegment[];
 };
 
-export type CanonicalSubjectFocusSurface = 'joined';
-
 type TrieNode = {
   children: Map<string, TrieNode>;
   terminal?: boolean;
@@ -409,13 +407,11 @@ function exactFocusNode(
 
 /** Resolve hidden click metadata against the graph's current provider presentation. */
 export function resolveCanonicalSubjectFocusVisualId({
-  authority,
   projection,
   joinedPresentation,
   directory,
   request,
 }: {
-  authority: CanonicalSubjectFocusSurface;
   projection: GraphProjectionV1;
   joinedPresentation?: JoinedGraphPresentation;
   directory?: CanonicalSubjectDirectory | null;

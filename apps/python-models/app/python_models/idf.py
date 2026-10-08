@@ -267,7 +267,6 @@ def _source_path(properties: dict[str, Any]) -> str | None:
 
 def _graph_records(
     *,
-    graph_context: str,
     graph_records: list[dict[str, Any]],
     graph_projection: dict[str, Any],
     materialized_at: str,
@@ -458,7 +457,6 @@ def materialize_idf(
         raise InputMaterializationError("input_graph_reference_field_forbidden")
     timestamp = materialized_at or _timestamp()
     records = _graph_records(
-        graph_context=graph_context,
         graph_records=graph_records,
         graph_projection=graph_projection,
         materialized_at=timestamp,
@@ -556,7 +554,7 @@ def load_idf_bytes(idf_bytes: bytes) -> MaterializedIdf:
     return MaterializedIdf(idf=idf, idf_bytes=idf_bytes)
 
 
-def _workspace_root() -> Path:
+def _run_input_root() -> Path:
     configured = str(os.environ.get("LIQUIDAITY_RUN_INPUT_ROOT") or "").strip()
     return Path(configured).resolve() if configured else (
         Path(__file__).resolve().parents[4] / "runtime" / "run-inputs"
@@ -566,7 +564,7 @@ def _workspace_root() -> Path:
 def invocation_workspace(project_id: str, deck_id: str, run_id: str) -> Path:
     identity = "\u0000".join((project_id, deck_id, run_id))
     digest = sha256(identity.encode("utf-8")).hexdigest()
-    return _workspace_root() / digest
+    return _run_input_root() / digest
 
 
 def write_idf(
@@ -611,7 +609,7 @@ def load_idf(
         idf_path = Path(str(input_file.get("idfPath") or "")).resolve(strict=True)
     except OSError as error:
         raise InputMaterializationError("input_file_unavailable") from error
-    if idf_path.name != IDF_FILENAME or _workspace_root() not in idf_path.parents:
+    if idf_path.name != IDF_FILENAME or _run_input_root() not in idf_path.parents:
         raise InputMaterializationError("input_file_path_invalid")
     materialized = load_idf_bytes(idf_path.read_bytes())
     if str(input_file.get("idfSha256") or "") != materialized.idf_sha256:

@@ -2,15 +2,15 @@ import express from 'express';
 import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { requestPythonRailsJson, getProjectCard, listPythonAgentMcpCatalog } = vi.hoisted(() => ({
+const { requestPythonRailsJson, getProject, listToolCatalog } = vi.hoisted(() => ({
   requestPythonRailsJson: vi.fn(),
-  getProjectCard: vi.fn(),
-  listPythonAgentMcpCatalog: vi.fn(),
+  getProject: vi.fn(),
+  listToolCatalog: vi.fn(),
 }));
 
 vi.mock('../services/pythonRailsClient', () => ({ requestPythonRailsJson }));
-vi.mock('../services/agentBuilderStore', () => ({ getProjectCard }));
-vi.mock('../services/mcp/pythonAgentMcpClient', () => ({ listPythonAgentMcpCatalog }));
+vi.mock('../services/projectStore', () => ({ getProject }));
+vi.mock('../services/mcp/toolCatalogMcpClient', () => ({ listToolCatalog }));
 
 import cardEditorRoutes, { loadLiveToolCatalog } from './cardEditor.routes';
 
@@ -18,9 +18,9 @@ const servers: Array<ReturnType<typeof createServer>> = [];
 
 beforeEach(() => {
   requestPythonRailsJson.mockReset();
-  getProjectCard.mockReset();
-  listPythonAgentMcpCatalog.mockReset();
-  getProjectCard.mockResolvedValue({ ownerUserId: 'user-1' });
+  getProject.mockReset();
+  listToolCatalog.mockReset();
+  getProject.mockResolvedValue({ ownerUserId: 'user-1' });
 });
 
 afterEach(async () => {
@@ -95,12 +95,12 @@ describe('flat Card tool catalog projection', () => {
         openWorldHint: false,
       },
     };
-    listPythonAgentMcpCatalog.mockResolvedValue([liveMcpDescriptor]);
+    listToolCatalog.mockResolvedValue([liveMcpDescriptor]);
     requestPythonRailsJson.mockResolvedValue({ references: [flatDefinition] });
 
     const catalog = await loadLiveToolCatalog();
 
-    expect(listPythonAgentMcpCatalog).toHaveBeenCalledTimes(1);
+    expect(listToolCatalog).toHaveBeenCalledTimes(1);
     expect(requestPythonRailsJson).toHaveBeenCalledTimes(1);
     expect(requestPythonRailsJson).toHaveBeenCalledWith('/tools/catalog/definitions', {
       method: 'POST',

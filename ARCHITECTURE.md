@@ -5,10 +5,10 @@ runtime receipt. `PLAN.md` records the current proof boundary and next ordered w
 contains deferred candidates, `DONT.md` records known failure patterns, and `AGENTS.md` is execution
 law.
 
-The September 15 cleanup removed LiquidAIty's abandoned Hermes ACP integration. Hermes' upstream
-ACP implementation remains part of the vendored project, but it is not LiquidAIty's Card runtime
-boundary. The pushed cleanup source and the smaller current residue deletion still must be rebuilt
-and exercised before either can be described as the loaded application.
+LiquidAIty's abandoned ACP integration and application-owned AgentTerminal/CardRuntime control stack
+are deleted. Hermes' upstream ACP implementation remains part of the vendored project, but it is not
+LiquidAIty's Card boundary. The current adapter uses HermesLatest's shipped Gateway, profile, session,
+prompt, event, and PTY contracts. Source and static proof remain distinct from a loaded product turn.
 
 ## One-line law
 
@@ -34,13 +34,13 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; it does not own Hermes processes or sessions |
 | Hermes Card session adapter | `apps/backend/src/routes/mainSession.routes.ts::cardSession` and `apps/backend/src/services/hermesGateway.ts` | Reuse the shipped Hermes Gateway client, materialize one saved Card profile, and resolve or create the exact Project conversation session |
 | Hermes Run receipt | `apps/backend/src/routes/mainSession.routes.ts::{prepareRun,submitTurn,finishRun}` plus Python rails Run records | Correlate one already-materialized saved Run with one Hermes submission and persist the observed completion or failure |
-| Hermes profile application | `apps/backend/src/hermes/profileMaterialization.ts` | Apply the exact saved parent model, selected skills, and desired native subagent model before a turn |
+| Hermes profile application | `apps/backend/src/hermes/profileMaterialization.ts` | Apply and read back only Card-owned Soul, model/runtime, skills, toolsets, MCP selection, delegation, and Team marker while preserving Hermes-owned and unknown profile state |
 | Hermes runtime | `HermesLatest/` | Hermes inference, profiles, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
 | Mag One execution | `apps/python-models/app/python_models/magentic_execution.py` | Headless structured submit, status/rejoin, stop, and final-result observation against Hermes' existing SQLite task/dependency runtime |
 | Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, provider availability, deterministic validation, and execution; transports do not duplicate these owners |
-| Official MCP host | `apps/python-models/app/mcp_host.py` | External OAuth publication and native external-tool federation; current internal callers remain until the approved Hermes-plugin boundary replaces that use |
+| Official MCP host | `apps/python-models/app/mcp_host.py` | One authenticated projection of the canonical definitions for external clients and Hermes Dynamic Tool callbacks; protocol and transport are owned by the official Python MCP SDK |
 | CodeGraph | Native Codebase Memory through the official MCP host | Repository structure and source relationships; CBM is the sole graph writer |
-| ThinkGraph | Engraphis through `engraphis.py` and `thinkgraph.py` | Project reasoning, canonical entities, append-only temporal episodic Thinks, native structured incidence, and the sole persistent ThinkGraph store; Jev owns durable semantic edge admission/classification |
+| ThinkGraph | Engraphis through `apps/python-models/app/python_models/engraphis.py` | Project reasoning, canonical entities, append-only temporal episodic Thinks, native structured incidence, and the sole persistent ThinkGraph store; Jev owns durable semantic edge admission/classification |
 | KnowGraph | Graphiti/Neo4j through `services/knowgraph` | Sourced knowledge and provenance |
 | AgentGraph | AGE/PostgreSQL through the Card-domain observation path | Saved Card relationships and truthful Run/reference/artifact observations |
 
@@ -100,38 +100,43 @@ signed runtime boundary and are mounted separately from browser authentication.
 
 | Route family | Current responsibility |
 | --- | --- |
-| `/api/cards` | Card editor choices only; the former execution route is removed |
-| `/api/idd` | IDD-backed Card editor and tool projections |
+| `/api/cards` | Card configuration, Script validation, and read-only latest/current Run projection; it does not execute a Card |
+| `/api/idd` | Builder/editor-only IDD fields and deterministic live-catalog tool projections |
+| `/api/main/session` | Main/direct-Card saved Run preparation, exact Hermes submission/events/Stop, conversation projection, and saved-specialist callbacks |
+| `/api/agent-terminals` | Authenticated handoff to HermesLatest's existing PTY WebSocket for the exact Card session |
+| `/api/hermes-profile` | Thin saved-Card profile/learning/skills/MCP read and supported-operation adapter |
 | `/api/codegraph` | Authenticated interactive CodeGraph UI reads through Python rails |
 | `/api/thinkgraph` and `/api/knowgraph` | Native graph projections/operations without merging authority |
 | `/api/projects` | Project and deck transport |
 
-Route names are transport addresses, not agent identities or separate runtimes.
-The former `/api/main`, `/api/agent-terminals`, `/api/hermes-profile`, and
-`/api/hermes-card-tools` families are currently absent during the Hermes integration reset below.
+Route names are transport addresses, not agent identities or separate runtimes. The retired generic
+Card-runtime and loopback Hermes Card-tools routes remain absent.
 
-## Hermes integration reset
+## HermesLatest application boundary
 
-The application-owned Hermes execution substitute has been removed. There is currently no
-LiquidAIty backend owner for Card sessions, Gateway connections, turns, queues, retries, terminal
-processes, Bot delivery, tool forwarding, or startup reconciliation. The former Main/Card run,
-terminal, profile-control, and Card-tool host routes are not mounted.
+One independently supervised `hermes serve` process starts from `scripts/start-hermes.ps1`. The
+backend connects through HermesLatest's shipped JSON-RPC client. It does not launch a per-Card
+process, own a session registry, kill Hermes when a client disconnects, supervise retries, or open a
+second Bot/terminal execution path.
 
-The deletion intentionally preserves the durable product boundary:
+For one authorized Card turn the application performs only this translation:
 
-- saved Cards, revisions, prompts, provider/model/profile selections, skills, tool ON/OFF selections,
-  and orange/blue topology;
-- PostgreSQL conversation, Run, artifact, and AGE observation data;
-- Python rails IDF, graph, deterministic-computation, and saved-Card authorities;
-- the checked-in Hermes fork, its profiles and session stores, Bot Mode, TUI, Gateway contract,
-  tools, skills, and task/dependency implementation;
-- the existing React surfaces and client queue contract.
 
-Those preserved records and interfaces are not proof of a loaded execution path. Saved
-`run_mag_one` grants and client transport addresses remain durable product contracts, but their
-deleted backend/MCP execution path is unavailable until a separately approved direct Hermes
-integration is implemented. No fallback, compatibility wrapper, replacement manager, or hidden
-process owner is retained.
+```text
+saved Card + Project/conversation authority
+  -> Python prepares one Run and rereads one in.idf
+  -> backend applies Card-owned profile fields through profiles.describe/configure
+  -> backend resolves or creates the exact profile-scoped Hermes session
+  -> prompt.submit carries one opaque submission ID and exact Dynamic Tools
+  -> Hermes owns queueing, inference, tools, Bot delivery, retries, and completion
+  -> backend projects real events and settles the exact durable Run through Python
+```
+
+Project-specific orange/blue topology is resolved for the session or Magnetic invocation and is not
+written into the reusable profile. Bot Mode remains an internal Hermes capability, not a product
+catalog tool. The terminal route returns Hermes' PTY WebSocket; React only renders xterm and forwards
+bytes/resize messages. A transport disconnect clears the application client reference but does not
+stop Hermes or manufacture a Run result.
 
 ## MCP and Codebase Memory
 
@@ -150,10 +155,9 @@ join the same upstream per-account daemon/cache/runtime identity outside the rep
 plugins, and connectors do not launch another frontend. The upstream watcher owns ordinary freshness;
 indexing/deletion are explicit application-MCP administrative operations.
 
-`POST /api/codegraph/read` is not an additional CBM tool and not a second catalog. It is an
-authenticated browser transport that checks the saved Card scope, permits only `list_projects`,
-`index_status`, bounded `trace_path`, and the fixed graph projection, then asks Python rails to call
-the actual `cbm.*` reads through the official host. The client uses it to hydrate CodeGraph UI state.
+CodeGraph reads use granted `cbm.*` MCP tools and bounded CBM references selected into the canonical
+IDF. There is no separate browser CodeGraph route or catalog. Builder and other authorized Cards call
+the official CBM provider through the application MCP host; saved Card grants remain the ceiling.
 
 The canonical project is `C-Projects-LiquidAIty-main` at `C:/Projects/LiquidAIty/main`.
 
@@ -201,9 +205,9 @@ paths remain removed; there is no candidate system, approval state, shadow graph
 model edge writer, or whole-graph reclassification loop. This lifecycle does not write KnowGraph.
 
 Visual activity may be driven only by real reads, selections, deliveries, traversals, writes, Run
-completion, or failure. `native_attention.py` normalizes observable tool events. AGE may store stable
-Run/reference/artifact identities, but it does not authorize a runtime, hold raw IDFs, choose a Card,
-or control native lifecycle.
+completion, or failure. There is no native-attention compatibility graph or generic tool-event
+normalizer. AGE may store stable Run/reference/artifact identities, but it does not authorize a
+runtime, hold raw IDFs, choose a Card, or control Hermes lifecycle.
 
 ## UI and Builder
 
@@ -304,9 +308,11 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 
 - Source, focused tests, typechecks, a loaded service, a real saved-Card turn, an external MCP call,
   and owner visual acceptance remain separate proof tiers.
-- The MCP v2, Engraphis Smart-9, Graphiti, Card-grant, Hermes Dynamic Tool, Gateway, and profile changes
-  require one coordinated loaded-stack acceptance after all static gates pass; the preceding process
-  snapshot used older source and is not evidence for this revision.
+- The MCP v2, Engraphis Smart surface, Graphiti, Card-grant, Hermes Dynamic Tool, Gateway, profile,
+  and completed-pair changes require one coordinated loaded-stack acceptance after all static gates
+  pass. A recent `dev:fresh` compiled and launched local services, but MCP readiness stayed `503`
+  when the application CBM dependency was unavailable and the public tunnel remained unpublished;
+  that process is not external-client acceptance.
 - Team and Magnetic preparation must resolve through HermesLatest. Team execution and an actual Mag One
   mission remain separate user-authorized acceptance; this repair does not launch a Magnetic mission.
 - Actual child provider/model, Bot delivery, graph attention, external-provider calls, terminal attachment,

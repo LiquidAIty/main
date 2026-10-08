@@ -1,6 +1,6 @@
 """Kronos adapter — candle-level OHLCV forecast.
 
-Loads the vendored Kronos repo code (top-level ``Kronos-main/``) + the cached HF weights.
+Loads the vendored Kronos source from ``agent-products/kronos/`` plus the cached HF weights.
 Lazy-imports its runtime (torch via the repo's model module) so the rails import cleanly
 without it; reports ``model_unavailable`` when the repo or runtime is absent. Capability
 only — produces predicted candles, never a signal or trade.
@@ -27,8 +27,7 @@ _MODEL_REF = "NeoQuasar/Kronos-small"
 
 
 def _ensure_kronos_repo_on_path() -> bool:
-    # Kronos-main is a top-level vendored repo at the repository root.
-    repo = Path(__file__).resolve().parents[6] / "Kronos-main"
+    repo = Path(__file__).resolve().parents[6] / "agent-products" / "kronos"
     if not repo.exists():
         return False
     path = str(repo)
@@ -42,10 +41,10 @@ def forecast_kronos(window: BarWindow, horizon: int = 5) -> ForecastResult:
     if len(window.bars) < 16:
         return errored(MODEL_KRONOS, MODEL_REF, window, horizon, "insufficient_history")
     if not _ensure_kronos_repo_on_path():
-        return unavailable(MODEL_KRONOS, MODEL_REF, window, horizon, "kronos_repo_absent:Kronos-main")
+        return unavailable(MODEL_KRONOS, MODEL_REF, window, horizon, "kronos_repo_absent:agent-products/kronos")
     try:
         import pandas as pd
-        from model import Kronos, KronosPredictor, KronosTokenizer  # from Kronos-main/model
+        from model import Kronos, KronosPredictor, KronosTokenizer  # from agent-products/kronos/model
     except ImportError as exc:
         return unavailable(MODEL_KRONOS, MODEL_REF, window, horizon,
                            f"runtime_not_installed:{getattr(exc, 'name', exc)}")

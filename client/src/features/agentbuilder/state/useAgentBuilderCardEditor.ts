@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
-import type { AgentManagerLocalConfig } from '../../../components/AgentManager';
-import { resolveEffectiveAgent } from '../../../components/builder/deckRuntime';
+import type { CardEditorConfiguration } from '../cardConfigurationEditor';
+import { readSavedCardEditorValues } from '../../../components/builder/savedCardEditorValues';
 import type {
   DeckDocument,
 } from '../../../types/agentgraph';
@@ -44,25 +44,24 @@ export default function useAgentBuilderCardEditor({
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
-  const effectiveAgent = useMemo(
+  const savedCardEditorValues = useMemo(
     () =>
       selectedCard
-        ? resolveEffectiveAgent(selectedCard)
+        ? readSavedCardEditorValues(selectedCard)
         : null,
     [selectedCard],
   );
-  const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
+  const selectedCardConfig = useMemo<CardEditorConfiguration | null>(() => {
     if (!selectedCard) return null;
     const runtimeOptions = selectedCard.runtimeOptions || {};
     const resolvedProvider =
-      runtimeOptions.provider ?? effectiveAgent?.provider ?? null;
+      runtimeOptions.provider ?? savedCardEditorValues?.provider ?? null;
     return {
       runtime: selectedCard.runtime,
       runtime_options: runtimeOptions,
       parent_graph_id: selectedCard.parentGraphId ?? null,
       role: selectedCard.role ?? null,
       output_contract: selectedCard.outputContract ?? null,
-      workspace_root: deck.workspaceRoot ?? null,
       provider:
         resolvedProvider === 'openai' ||
         resolvedProvider === 'openrouter' ||
@@ -75,26 +74,26 @@ export default function useAgentBuilderCardEditor({
         || runtimeOptions.accessMode === 'openrouter-api'
           ? runtimeOptions.accessMode
           : '',
-      model_key: runtimeOptions.modelKey ?? effectiveAgent?.model ?? null,
+      model_key: runtimeOptions.modelKey ?? savedCardEditorValues?.model ?? null,
       reasoning_effort: runtimeOptions.reasoningEffort ?? null,
       temperature:
-        runtimeOptions.temperature ?? effectiveAgent?.temperature ?? null,
-      max_tokens: runtimeOptions.maxTokens ?? effectiveAgent?.maxTokens ?? null,
+        runtimeOptions.temperature ?? savedCardEditorValues?.temperature ?? null,
+      max_tokens: runtimeOptions.maxTokens ?? savedCardEditorValues?.maxTokens ?? null,
       max_turns: runtimeOptions.maxTurns ?? null,
       prompt_template: selectedCard.prompt || '',
       tools: Array.isArray(runtimeOptions.tools)
         ? runtimeOptions.tools
         : Array.isArray(selectedCard.tools)
           ? selectedCard.tools
-          : effectiveAgent?.tools || [],
+          : savedCardEditorValues?.tools || [],
       skills: normalizeStringList(runtimeOptions.skills),
       toolsets: normalizeStringList(runtimeOptions.toolsets),
       mcp_connection_ids: normalizeStringList(runtimeOptions.mcpConnectionIds),
     };
-  }, [deck.workspaceRoot, effectiveAgent, selectedCard]);
+  }, [savedCardEditorValues, selectedCard]);
 
   const handleSaveSelectedCardConfig = useCallback(
-    async (nextConfig: AgentManagerLocalConfig) => {
+    async (nextConfig: CardEditorConfiguration) => {
       if (!selectedCard) throw new Error("No Card is selected.");
 
       const update = (currentDeck: DeckDocument): DeckDocument => {
@@ -231,7 +230,6 @@ export default function useAgentBuilderCardEditor({
   );
 
   return {
-    effectiveAgent,
     handleRenameSelectedCard,
     handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,

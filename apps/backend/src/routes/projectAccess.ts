@@ -1,34 +1,22 @@
-import {
-  createLocalSession,
-  getUserBySessionId,
-  setSessionCookie,
-} from '../auth/sessionStore';
-import { canIssueBootstrapSession } from '../security/requestAccess';
-import { getProjectCard } from '../services/agentBuilderStore';
+import type { Request, Response } from 'express';
+import { getProject } from '../services/projectStore';
 
-export async function resolveProjectOwnerUserId(req: any, res: any): Promise<string | null> {
-  const sessionId = typeof req.cookies?.sid === 'string' ? req.cookies.sid.trim() : '';
-  if (sessionId) {
-    const user = await getUserBySessionId(sessionId);
-    if (user?.id) return user.id;
-  }
-  if (!canIssueBootstrapSession(req)) return null;
-  const { user, session } = await createLocalSession();
-  setSessionCookie(res, session.id, req);
-  return user.id;
+export function authenticatedUserId(req: Request): string | null {
+  const userId = String((req as Request & { userId?: string }).userId || '').trim();
+  return userId || null;
 }
 
 export async function requireOwnedProject(
-  req: any,
-  res: any,
+  req: Request,
+  res: Response,
   projectId: string,
 ): Promise<{ ownerUserId: string } | null> {
-  const ownerUserId = await resolveProjectOwnerUserId(req, res);
+  const ownerUserId = authenticatedUserId(req);
   if (!ownerUserId) {
     res.status(401).json({ ok: false, error: 'project_owner_session_required' });
     return null;
   }
-  const project = await getProjectCard(projectId, ownerUserId);
+  const project = await getProject(projectId, ownerUserId);
   if (!project) {
     res.status(404).json({ ok: false, error: 'project_not_found' });
     return null;

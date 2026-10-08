@@ -9,8 +9,8 @@ const systemEdges = vi.hoisted(() => ([
 const store = vi.hoisted(() => ({
   createProject: vi.fn(),
   discardFreshProject: vi.fn(),
-  getProjectCard: vi.fn(),
-  listAgentCards: vi.fn(),
+  getProject: vi.fn(),
+  listProjects: vi.fn(),
 }));
 const decks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(),
@@ -18,13 +18,16 @@ const decks = vi.hoisted(() => ({
 }));
 const access = vi.hoisted(() => ({
   requireOwnedProject: vi.fn(),
-  resolveProjectOwnerUserId: vi.fn(),
+  authenticatedUserId: vi.fn(),
 }));
 const database = vi.hoisted(() => ({ query: vi.fn(), connect: vi.fn() }));
 
-vi.mock('../services/agentBuilderStore', () => ({
+vi.mock('../services/projectStore', () => ({
   ...store,
-  SYSTEM6_PROJECT_EDGES: systemEdges,
+}));
+vi.mock('../decks/defaultProjectDeck', () => ({
+  DEFAULT_PROJECT_DECK_ID: 'deck_builder',
+  DEFAULT_PROJECT_EDGES: systemEdges,
 }));
 vi.mock('../decks/store', () => decks);
 vi.mock('./projectAccess', () => access);
@@ -51,7 +54,7 @@ afterEach(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  access.resolveProjectOwnerUserId.mockResolvedValue('owner-one');
+  access.authenticatedUserId.mockReturnValue('owner-one');
   store.createProject.mockResolvedValue({
     id: 'project-new', name: 'New Project', code: 'new-project', status: 'active', project_type: 'agent',
   });

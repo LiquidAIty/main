@@ -99,9 +99,6 @@ export async function applyHermesCardOperation(input: {
     },
   );
   const body = await responseJson(response) as HermesCardProfileView & { result: unknown };
-  window.dispatchEvent(new CustomEvent('liquidaity:hermes-profile-updated', {
-    detail: { cardId: input.cardId },
-  }));
   return body;
 }
 

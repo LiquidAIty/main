@@ -1,9 +1,9 @@
 import { Router, type Request } from 'express';
 import { createHash } from 'crypto';
 import { getDeckDocument } from '../decks/store';
-import { getProjectCard } from '../services/agentBuilderStore';
+import { getProject } from '../services/projectStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
-import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
+import { listToolCatalog } from '../services/mcp/toolCatalogMcpClient';
 import {
   indexLiveToolCatalog,
   resolveScriptToolDefinitions,
@@ -32,7 +32,7 @@ function elapsedMilliseconds(run: Record<string, any>): number | null {
   return Math.max(0, (Number.isFinite(end) ? end : Date.now()) - start);
 }
 
-function runDashboardProjection(run: Record<string, any> | undefined) {
+function runMetricsProjection(run: Record<string, any> | undefined) {
   if (!run) return null;
   const tokenValues = [
     run.inputTokens,
@@ -59,7 +59,7 @@ function runDashboardProjection(run: Record<string, any> | undefined) {
 async function authorizeCardProject(req: Request, projectId: string): Promise<boolean> {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
   if (!userId) return false;
-  const project = await getProjectCard(projectId, userId);
+  const project = await getProject(projectId, userId);
   return Boolean(project && project.ownerUserId === userId);
 }
 
@@ -77,7 +77,7 @@ function commaSeparatedIds(value: unknown): string[] {
 }
 
 export async function loadLiveToolCatalog() {
-  const canonicalMcpTools = await listPythonAgentMcpCatalog();
+  const canonicalMcpTools = await listToolCatalog();
   const materialized = await requestPythonRailsJson('/tools/catalog/definitions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -156,7 +156,7 @@ router.post('/run', async (req, res) => {
     if (action === 'history') {
       return res.json({
         ok: true,
-        result: { cardId, latest: runDashboardProjection(latest) },
+        result: { cardId, latest: runMetricsProjection(latest) },
       });
     }
     if (!latest) return res.json({ ok: true, result: null });
@@ -191,6 +191,13 @@ router.post('/run', async (req, res) => {
 
 iddRoutes.get('/card-editor', async (req, res) => {
   try {
+    const projectId = String(req.query.projectId || '').trim();
+    if (projectId && !(await authorizeCardProject(req, projectId))) {
+      return res.status(403).json({
+        ok: false,
+        error: 'card_editor_project_access_denied',
+      });
+    }
     const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
     const materialized = await requestPythonRailsJson('/idd/card-editor/materialize', {
       method: 'POST',
@@ -198,7 +205,7 @@ iddRoutes.get('/card-editor', async (req, res) => {
       body: JSON.stringify({
         models: listConfiguredModelOptions(openaiDefault),
         ...await cardCatalogOptions(
-          String(req.query.projectId || ''), String(req.query.deckId || ''), String(req.query.cardId || ''),
+          projectId, String(req.query.deckId || ''), String(req.query.cardId || ''),
         ),
       }),
     }) as Record<string, unknown>;

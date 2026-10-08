@@ -33,7 +33,6 @@ from app.python_models.provider_config import sec_api_key as sec_api_key_from_co
 PROVIDER = "sec_api"
 SIGNAL_TYPE = "sec_filing_published"
 SEC_API_QUERY_URL = "https://api.sec-api.io"  # sec-api.io Query API (token-authenticated)
-SEC_API_KEY_ENV = "SEC_API_KEY"
 MAX_RESULT_LIMIT = 50
 
 # WorldSignalEnvelope / provider statuses.

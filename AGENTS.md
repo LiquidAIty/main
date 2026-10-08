@@ -187,7 +187,8 @@ above must reuse the configured command and must not create an additional persis
 
 ## Vendored source modification law
 
-Treat `Hermes/`, `worldsignal/`, `Kronos-main/`, and other explicitly
+Treat `HermesLatest/`, `agent-products/gods-eye-view/`,
+`agent-products/shadowbroker/`, `agent-products/kronos/`, and other explicitly
 vendored or imported runtimes as controlled upstream forks, not ordinary LiquidAIty cleanup targets.
 Before a nontrivial vendor edit, the active ImplementationPacket must record:
 

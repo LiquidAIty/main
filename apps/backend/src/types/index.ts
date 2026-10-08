@@ -157,7 +157,7 @@ export type DeckEdge = {
 export type DeckDocument = {
   id: string;
   name: string;
-  workspaceRoot?: string | null;
+  projectCodeFolder?: string | null;
   promptTemplates: PromptTemplate[];
   nodes: AgentCardInstance[];
   edges: DeckEdge[];

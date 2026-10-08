@@ -8,7 +8,7 @@ import { createHermesProfileRouter } from './hermesProfile.routes';
 const deck: DeckDocument = {
   id: 'deck_builder',
   name: 'Builder',
-  workspaceRoot: 'C:/Projects/LiquidAIty/main',
+  projectCodeFolder: 'worker-agent-ui',
   version: 1,
   promptTemplates: [],
   edges: [],
@@ -69,7 +69,6 @@ function profileState() {
 type HermesRequest = (
   method: string,
   params?: Record<string, unknown>,
-  profile?: string,
 ) => Promise<unknown>;
 
 function hermesRequest() {
@@ -121,7 +120,7 @@ describe('Hermes profile Card routes', () => {
     expect(requestHermes).toHaveBeenCalledTimes(3);
     expect(requestHermes).toHaveBeenNthCalledWith(1, 'profiles.describe', {
       name: 'liquidaity-main',
-    }, 'liquidaity-main');
+    });
     expect(JSON.stringify(body)).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret|bearer\s+[a-z0-9]/i);
   });
 
@@ -168,7 +167,7 @@ describe('Hermes profile Card routes', () => {
     expect(requestHermes).toHaveBeenNthCalledWith(1, method, {
       ...params,
       profile: 'liquidaity-main',
-    }, 'liquidaity-main');
+    });
     expect(requestHermes).toHaveBeenCalledTimes(4);
   });
 

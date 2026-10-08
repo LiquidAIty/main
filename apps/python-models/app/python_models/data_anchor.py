@@ -12,7 +12,6 @@ import hashlib
 import json
 import math
 import os
-import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -265,44 +264,6 @@ def append_canonical_subject_directory(
     return combined
 
 
-def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
-    """Interactive provider reads through the same app-owned MCP hydration seam."""
-    from app.python_models.card_domain import load_deck
-    name = str(payload.get("name") or "")
-    if name not in {"list_projects", "index_status", "trace_path", "graph"}:
-        raise DataAnchorError("codegraph_read_operation_not_allowed")
-    project_id, deck_id, card_id = (str(payload.get(k) or "")
-        for k in ("projectId", "deckId", "cardId"))
-    deck = load_deck(project_id, deck_id)
-    if not any(card["id"] == card_id for card in deck["deck"]["nodes"]):
-        raise DataAnchorError("codegraph_saved_card_required")
-    arguments = dict(payload.get("arguments") or {})
-    if name != "list_projects" and arguments.get("project") != _CODEGRAPH_PROJECT:
-        raise DataAnchorError("codegraph_project_mismatch")
-    if name == "graph":
-        return _read_codegraph_projection(deck["projectId"], deck_id, card_id, arguments)
-    if name == "trace_path":
-        arguments.update(depth=1, limit=100, include_tests=False)
-    # This product read surface consumes exact CBM qualified names. Request the
-    # official machine-readable representation here instead of changing the
-    # CBM catalog or the default behavior of ordinary cbm.* calls.
-    arguments["format"] = "json"
-    try:
-        result = call_read_tools_via_mcp(
-            project_id=deck["projectId"],
-            deck_id=deck_id,
-            card_id=card_id,
-            calls=[("cbm." + name, arguments)],
-        )[0]
-    except (RuntimeError, BaseExceptionGroup) as error:
-        # CBM is an optional graph capability. Its absent catalog or transport
-        # is a typed unavailable read, never an unhandled Python-rails failure.
-        raise DataAnchorError("codegraph_unavailable") from error
-    if result.get("error") or result.get("ok") is False:
-        raise DataAnchorError(str(result.get("error") or "codegraph_read_failed"))
-    return result
-
-
 def _cbm_table(result: dict[str, Any], columns: list[str]) -> list[list[str]]:
     """Decode the official query_graph JSON table without parsing prose."""
     returned_columns = result.get("columns")
@@ -392,15 +353,6 @@ def _read_codegraph_projection(project_id: str, deck_id: str, card_id: str,
     result.update(nodes=list(nodes.values()), edges=list(edges.values()),
                   counts={"nodes": len(nodes), "edges": len(edges)})
     return result
-
-
-def _json_value(value: Any) -> Any:
-    if not isinstance(value, str) or not value.strip():
-        return value
-    try:
-        return json.loads(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return value
 
 
 def _json_safe(value: Any) -> Any:

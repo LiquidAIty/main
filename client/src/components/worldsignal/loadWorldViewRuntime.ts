@@ -1,4 +1,4 @@
-import worldViewDocument from '../../../../worldsignal/gods-eye-view-main/index.html?raw';
+import worldViewDocument from '../../../../agent-products/gods-eye-view/index.html?raw';
 import scopedStyles from 'virtual:worldview-runtime-css';
 import { importWorldViewMount as importRuntimeWorldViewMount } from 'virtual:worldview-runtime-mount';
 

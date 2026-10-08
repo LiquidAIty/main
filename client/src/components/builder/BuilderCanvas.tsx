@@ -30,7 +30,7 @@ import type {
 } from '../../types/agentgraph';
 import {
   buildDeckEdgeIdentityKey,
-} from './deckValidation';
+} from './deckEdgeIdentity';
 import { hasMainBotAuthority, normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 import {
   GRAPH_THEME,
@@ -51,8 +51,6 @@ import MagenticBusNode from './nodes/MagenticBusNode';
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
-const FALLBACK_NODE_WIDTH = 144;
-const FALLBACK_NODE_HEIGHT = 88;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
@@ -61,55 +59,6 @@ const nodeTypes = {
 const edgeTypes = {
   turboFlow: TurboFlowEdge,
 };
-
-type ViewportRect = {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-};
-
-type CanvasRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-export type BuilderCanvasFocusRequest = {
-  kind: 'deck' | 'card';
-  cardId?: string | null;
-  nonce: number;
-};
-
-export function fitBuilderCanvasView(
-  reactFlowInstance: Pick<ReactFlowInstance, 'fitView'>,
-): void {
-  void reactFlowInstance.fitView({
-    duration: GRAPH_THEME.nav.fitDurationMs,
-    maxZoom: GRAPH_WORKSPACE.fitMaxZoom,
-    padding: GRAPH_WORKSPACE.fitPadding,
-  });
-}
-
-export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
-  return JSON.stringify({
-    version: document.version,
-    nodes: document.nodes.map((node) => ({
-      id: node.id,
-      x: node.position.x,
-      y: node.position.y,
-      parentGraphId: String(node.parentGraphId || ''),
-      runtime: node.runtime,
-    })),
-    edges: document.edges.map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      edgeType: normalizeDeckEdgeType(edge.edgeType),
-    })),
-  });
-}
 
 export function syncFlowNodesForRender(currentNodes: Node[], nextNodes: Node[]): Node[] {
   const currentNodeById = new Map(currentNodes.map((node) => [node.id, node] as const));
@@ -148,48 +97,6 @@ export function syncFlowEdgesForRender(currentEdges: Edge[], nextEdges: Edge[]):
       className: nextEdge.className,
     };
   });
-}
-
-function getNodeCanvasRect(node: Node): CanvasRect {
-  const nodeWithLayout = node as Node & {
-    width?: number;
-    height?: number;
-    measured?: { width?: number; height?: number };
-    positionAbsolute?: { x: number; y: number };
-  };
-  const position = nodeWithLayout.positionAbsolute || node.position;
-  const width =
-    typeof nodeWithLayout.measured?.width === 'number'
-      ? nodeWithLayout.measured.width
-      : typeof nodeWithLayout.width === 'number'
-        ? nodeWithLayout.width
-        : FALLBACK_NODE_WIDTH;
-  const height =
-    typeof nodeWithLayout.measured?.height === 'number'
-      ? nodeWithLayout.measured.height
-      : typeof nodeWithLayout.height === 'number'
-        ? nodeWithLayout.height
-        : FALLBACK_NODE_HEIGHT;
-
-  return {
-    x: position.x,
-    y: position.y,
-    width,
-    height,
-  };
-}
-
-export function isCanvasRectVisible(rect: CanvasRect, visibleRect: ViewportRect, padding: number): boolean {
-  return (
-    rect.x + rect.width >= visibleRect.left + padding &&
-    rect.x <= visibleRect.right - padding &&
-    rect.y + rect.height >= visibleRect.top + padding &&
-    rect.y <= visibleRect.bottom - padding
-  );
-}
-
-export function isAnyCanvasNodeVisible(nodes: Node[], visibleRect: ViewportRect, padding: number): boolean {
-  return nodes.some((node) => isCanvasRectVisible(getNodeCanvasRect(node), visibleRect, padding));
 }
 
 export function toFlowNodes(
@@ -234,13 +141,6 @@ export function toFlowNodes(
     };
   });
 }
-
-type DeckEdgeVisualState = {
-  isLoopEdge: boolean;
-  isReturnEdge: boolean;
-  offset: number;
-  borderRadius: number;
-};
 
 type FlowEdgeData = {
   edgeType?: DeckEdgeType | null;
@@ -294,66 +194,6 @@ function resolveCanvasConnectionEdgeType(
     return null;
   }
   return 'flow';
-}
-
-function buildEdgeAdjacency(document: DeckDocument): Map<string, Array<{ edgeId: string; target: string }>> {
-  const adjacency = new Map<string, Array<{ edgeId: string; target: string }>>();
-
-  document.nodes.forEach((node) => {
-    adjacency.set(node.id, []);
-  });
-
-  document.edges.forEach((edge) => {
-    if (!adjacency.has(edge.source) || !adjacency.has(edge.target)) return;
-    adjacency.set(edge.source, [...(adjacency.get(edge.source) || []), { edgeId: edge.id, target: edge.target }]);
-  });
-
-  return adjacency;
-}
-
-function canReachNode(
-  adjacency: Map<string, Array<{ edgeId: string; target: string }>>,
-  startId: string,
-  targetId: string,
-  ignoredEdgeId: string,
-  visited: Set<string> = new Set(),
-): boolean {
-  if (startId === targetId) return true;
-  if (visited.has(startId)) return false;
-  visited.add(startId);
-
-  return (adjacency.get(startId) || []).some((route) => {
-    if (route.edgeId === ignoredEdgeId) return false;
-    return canReachNode(adjacency, route.target, targetId, ignoredEdgeId, visited);
-  });
-}
-
-export function buildDeckEdgeVisualStates(document: DeckDocument): Map<string, DeckEdgeVisualState> {
-  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
-  const adjacency = buildEdgeAdjacency(document);
-
-  return new Map(
-    document.edges.map((edge) => {
-      const sourceNode = nodeMap.get(edge.source);
-      const targetNode = nodeMap.get(edge.target);
-      const isLoopEdge = canReachNode(adjacency, edge.target, edge.source, edge.id);
-      const isReturnEdge =
-        sourceNode && targetNode
-          ? targetNode.position.x < sourceNode.position.x - 16 ||
-            Math.abs(targetNode.position.x - sourceNode.position.x) < 40
-          : false;
-
-      return [
-        edge.id,
-        {
-          isLoopEdge,
-          isReturnEdge,
-          offset: isLoopEdge ? 56 : isReturnEdge ? 42 : 24,
-          borderRadius: isLoopEdge ? 20 : isReturnEdge ? 18 : 14,
-        },
-      ] as const;
-    }),
-  );
 }
 
 export function toFlowEdges(

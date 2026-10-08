@@ -2,20 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
-import {
-  deriveVisibleRailItems,
-  hasDirectedCardConnection,
-} from '../features/agentbuilder/rail/railVisibility';
+import { deriveVisibleRailItems } from '../features/agentbuilder/rail/railVisibility';
 
-const mainToKnowGraphConnected = (nodes: typeof INITIAL_DECK.nodes, edges: typeof INITIAL_DECK.edges) =>
-  hasDirectedCardConnection(
-    nodes,
-    edges,
-    (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'main',
-    (card) => card.id === 'card_knowgraph'
-      && card.runtime.kind === 'hermes'
-      && card.runtime.mode === 'delegate',
-  );
+const mainToKnowGraphConnected = (
+  nodes: typeof INITIAL_DECK.nodes,
+  edges: typeof INITIAL_DECK.edges,
+) => {
+  const mainIds = new Set(nodes.filter((card) => (
+    card.runtime.kind === 'hermes' && card.runtime.mode === 'main'
+  )).map((card) => card.id));
+  const knowIds = new Set(nodes.filter((card) => (
+    card.id === 'card_knowgraph'
+    && card.runtime.kind === 'hermes'
+    && card.runtime.mode === 'delegate'
+  )).map((card) => card.id));
+  return edges.some((edge) => (
+    edge.edgeType === 'flow' && mainIds.has(edge.source) && knowIds.has(edge.target)
+  ));
+};
 
 describe('Main / Hermes / graph authority topology', () => {
   it('keeps saved reuse and new Card creation inside one Add Agent chooser', () => {
@@ -52,7 +56,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(source).toContain("setTab('Prompt')");
     expect(source).toContain('data-testid="under-chat-card-work-surface"');
     const underChat = source.slice(source.indexOf('const cardWorkSurface ='), source.indexOf('terminal={cardWorkSurface()}'));
-    expect(underChat).toContain('<AgentTerminalPanel');
+    expect(underChat).toContain('<CardTerminalPanel');
     expect(underChat).toContain('cardId: builderCard.id');
     expect(source).not.toContain('agentBuilderCard');
     expect(source).not.toContain('sharedWorkSurfaceCard');
@@ -401,7 +405,6 @@ describe('Main / Hermes / graph authority topology', () => {
       new URL('../components/knowledge/KnowledgeAuthorityGraphSurface.tsx', import.meta.url),
       'utf8',
     );
-    expect(source).not.toContain('resolveCbmProjectName');
     expect(source).not.toContain('knowledgeGraphKind');
     expect(framework).toContain('<JoinedKnowledgeGraphSurface');
     expect(framework).not.toContain('Knowledge graph view');

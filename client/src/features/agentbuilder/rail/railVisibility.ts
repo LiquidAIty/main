@@ -75,23 +75,6 @@ function buildBusConnectedCardIds(
   return connected;
 }
 
-export function hasDirectedCardConnection(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-  sourcePredicate: (card: AgentCardInstance) => boolean,
-  targetPredicate: (card: AgentCardInstance) => boolean,
-): boolean {
-  const sourceIds = new Set(nodes.filter(sourcePredicate).map((node) => node.id));
-  const targetIds = new Set(nodes.filter(targetPredicate).map((node) => node.id));
-  if (sourceIds.size === 0 || targetIds.size === 0) return false;
-  return edges.some(
-    (edge) =>
-      normalizeDeckEdgeType(edge.edgeType) === 'flow' &&
-      sourceIds.has(edge.source) &&
-      targetIds.has(edge.target),
-  );
-}
-
 /** A card's surface is reachable when the card is bus-connected — bus
  * connectivity is the only activation signal (PLAN.md §4). */
 function isBusConnectedCard(

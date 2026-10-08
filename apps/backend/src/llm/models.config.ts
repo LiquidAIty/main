@@ -111,11 +111,3 @@ export function listConfiguredModelOptions(openaiDefault: string): ConfiguredMod
   }
   return [...byProviderAndKey.values()];
 }
-
-/** Resolve a selectable model key to its registry entry. Throws on unknown or
- * removed keys — a persisted stale value fails honestly at resolution. */
-export function resolveModel(key: string): ModelEntry {
-  const m = MODEL_REGISTRY[key];
-  if (!m) throw new Error(`Unknown model key: ${key}`);
-  return m;
-}

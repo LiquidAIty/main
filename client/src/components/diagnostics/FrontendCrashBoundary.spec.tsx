@@ -3,7 +3,6 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import FrontendCrashBoundary from "./FrontendCrashBoundary";
-import { clearFrontendCrash } from "../../lib/frontendCrashDiagnostics";
 
 function ThrowingChild(): React.ReactNode {
   throw new Error("boundary_test_crash");
@@ -12,7 +11,6 @@ function ThrowingChild(): React.ReactNode {
 describe("FrontendCrashBoundary", () => {
   afterEach(() => {
     cleanup();
-    clearFrontendCrash();
     vi.clearAllMocks();
     vi.resetModules();
     vi.restoreAllMocks();

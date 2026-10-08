@@ -99,11 +99,11 @@ apps/backend/env
 /neo4j-text2cypher/
 /defog-sqlcoder/
 
-# WorldSignals embed bundle - built from worldsignal/Shadowbroker-main/frontend (npm run build:embed)
+# WorldSignals embed bundle - built from agent-products/shadowbroker/frontend (npm run build:embed)
 client/public/worldsignals/
 
 # Upstream LFS model was not distributed with the source archive
-/worldsignal/Shadowbroker-main/backend/data/drishx/rf_model.pickle
+/agent-products/shadowbroker/backend/data/drishx/rf_model.pickle
 
 # Python caches
 .pytest_cache/

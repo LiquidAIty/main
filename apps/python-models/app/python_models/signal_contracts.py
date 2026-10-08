@@ -146,30 +146,6 @@ class SignalPackage(SignalContract):
         return self
 
 
-class SignalAssessment(SignalContract):
-    schemaVersion: Literal["signal.assessment.v1"] = "signal.assessment.v1"
-    assessmentId: BoundedId
-    projectId: BoundedId
-    deckId: BoundedId
-    requestingCardId: BoundedId
-    requestingRunId: BoundedId
-    analystCardId: BoundedId
-    analysisRunId: BoundedId
-    packageId: BoundedId
-    candidateIds: list[BoundedId] = Field(min_length=1, max_length=100)
-    disposition: Literal["SUPPORTED", "WEAK", "REJECTED", "INCONCLUSIVE"]
-    method: BoundedText
-    observations: list[BoundedText] = Field(min_length=1, max_length=64)
-    inference: BoundedText
-    evidenceRefs: list[SignalEvidenceReference] = Field(min_length=1, max_length=64)
-    limitations: list[BoundedText] = Field(default_factory=list, max_length=32)
-    confidence: float = Field(ge=0, le=1)
-    assessedAt: IsoTimestamp
-    asOfAt: IsoTimestamp
-    expiresAt: IsoTimestamp | None = None
-    freshness: Literal["fresh", "stale", "unknown"] = "unknown"
-
-
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 

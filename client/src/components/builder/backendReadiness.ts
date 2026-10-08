@@ -3,12 +3,12 @@
  *
  * Problem: Vite is ready in ~1.5s but the backend (nx clean → build → serve →
  * compile → boot) takes ~60-70s. During that window, boot-time fetches
- * (projects list, deck load, session history, harness events) hit ECONNREFUSED
+ * (projects list, deck load, session history, session events) hit ECONNREFUSED
  * and Vite logs every failed proxy attempt as a red `[vite] http proxy error`.
  *
  * This gate polls the backend's synchronous health root (`GET /api/health/`,
- * which returns `{status:'ok'}` the instant Express listens — before any DB /
- * Neo4j / ESN dependency) with bounded backoff, and resolves once it is up.
+ * which returns `{status:'ok'}` the instant Express listens) with bounded
+ * backoff, and resolves once it is up.
  * Callers await it before their first real fetch so requests only fire when
  * the backend can actually answer, eliminating the startup error spam WITHOUT
  * suppressing real outages: a non-ECONNREFUSED error (or a timeout after the
@@ -59,6 +59,10 @@ async function defaultFetchHealth(): Promise<boolean> {
 export async function waitForBackendReady(
   options: WaitForBackendOptions = {},
 ): Promise<boolean> {
+  // This is only a Vite/backend startup coordination aid. A built product
+  // issues its real request immediately so an outage surfaces at that route
+  // instead of becoming a hidden 60-second health-poll delay.
+  if (!import.meta.env.DEV && !options.fetchHealth) return true;
   const { signal, fetchHealth = defaultFetchHealth } = options;
   const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   let delay = INITIAL_POLL_MS;

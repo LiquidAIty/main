@@ -24,14 +24,13 @@ export default defineConfig({
     },
   ],
   test: {
-    // The one Vitest workspace definition (replaces the deprecated
-    // vitest.workspace.ts). Three projects, nothing else is ever collected:
+    // The one Vitest workspace definition. Client and application workspaces
+    // own only their current first-party specs:
     //   client  — inline below; owns ONLY client/src specs. Vendored repos
     //             (worldsignal, src/vendor),
     //             e2e/playwright (a Playwright runner), and other foreign
     //             runners that used to produce hundreds of phantom failures.
     //   backend — apps/backend/vitest.config.ts
-    //   scripts — scripts/vitest.config.ts
     projects: [
       {
         // Inherit this root config (react plugin + resolve.alias below).
@@ -47,7 +46,6 @@ export default defineConfig({
         },
       },
       "apps/*/vitest.config.{mjs,js,ts,mts}",
-      "scripts/vitest.config.{mjs,js,ts,mts}",
     ],
   },
   resolve: {

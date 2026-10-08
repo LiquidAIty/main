@@ -1,9 +1,9 @@
 diff --git a/.codex-temp/hermes-overlay-tree/LIQUIDAITY_PATCHES.md b/.codex-temp/hermes-overlay-tree/LIQUIDAITY_PATCHES.md
 new file mode 100644
-index 000000000..e5bb24e52
+index 000000000..27c30bc06
 --- /dev/null
 +++ b/.codex-temp/hermes-overlay-tree/LIQUIDAITY_PATCHES.md
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,265 @@
 +# LiquidAIty HermesLatest patch overlay
 +
 +This file is the update contract for the two LiquidAIty task extensions and
@@ -22,33 +22,49 @@ index 000000000..e5bb24e52
 +- Imported into LiquidAIty by repository commit:
 +  `68b2014e7dbdf502d176e36fc4817a857ae1ce2c`
 +
-+The comparison source retained at `../oldHermes` is evidence only. Production
-+must not import it, launch it, read its profile state, or use it as a fallback.
++Git history is the comparison authority for the deleted former Hermes tree.
++Production must not recreate, import, launch, or use that superseded tree as a
++profile source or fallback.
 +
 +## Integration patch 1: Codex App Server experimental Dynamic Tools
 +
 +Purpose: present one saved Card's exact effective tool schemas to Hermes's
 +existing Codex App Server thread and return each `item/tool/call` through the
 +authenticated LiquidAIty MCP dispatcher. No alternate App Server, provider,
-+login, thread owner, or tool executor is introduced.
++login, thread owner, or tool executor is introduced. The existing turn interrupt
++also cancels and awaits an in-flight Dynamic Tool MCP request so its HTTP and MCP
++contexts close before the Codex turn unwinds.
++
++### Vendored change record
++
++- **VENDORED PROJECT:** `HermesLatest`, at the upstream baseline recorded above.
++- **PURPOSE:** make the already-approved Codex Dynamic Tool transport honor the existing exact turn interrupt while an MCP request is in flight.
++- **EXTERNAL ALTERNATIVE CHECK:** application-only cancellation cannot unblock the synchronous Codex server-request handler; the transport must receive the session's existing interrupt event.
++- **FILES AND SYMBOLS:** `agent/transports/codex_app_server_session.py::_handle_dynamic_tool_call`; `agent/transports/dynamic_tools_mcp.py::_call` and `build_dynamic_tool_executor`; their two focused test modules.
++- **UPSTREAM BEHAVIOR PRESERVED:** normal Dynamic Tool validation, exactly-once response caching, MCP result projection, turn interruption, and every non-Dynamic-Tool request path remain unchanged.
++- **CONTRACTS:** executor callables receive one additional internal `threading.Event`; no Gateway RPC or generated contract changes.
++- **TESTS:** focused session propagation plus in-flight MCP cancellation/context-closure tests.
++- **FORK COST:** two small transport hunks and one focused test module must be reconciled on an upstream refresh.
++- **ROLLBACK:** revert these cancellation hunks and their tests, then keep saved-specialist Dynamic Tools disabled because Stop would no longer cancel their in-flight work.
 +
 +### New files
 +
 +| File | Symbols | Purpose |
 +| --- | --- | --- |
-+| `agent/transports/dynamic_tools_mcp.py` | `build_dynamic_tool_executor` and its bounded HTTP callback helpers | Sends one authenticated Dynamic Tool call to the existing LiquidAIty MCP endpoint and mechanically returns the MCP result. |
++| `agent/transports/dynamic_tools_mcp.py` | `build_dynamic_tool_executor`, `_call`, and its bounded HTTP callback helpers | Sends one authenticated Dynamic Tool call to the existing LiquidAIty MCP endpoint, races the exact session interrupt, closes the active HTTP/MCP contexts on cancellation, and mechanically returns the real MCP result or `dynamic_tool_cancelled`. |
 +
 +### Compatibility hunks in upstream files
 +
 +| File | Symbols / hunk | Why required |
 +| --- | --- | --- |
 +| `agent/codex_runtime.py` | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session` | Reads the already-authorized Card definitions, fingerprints them for thread reuse, and supplies the callback to the existing Codex runtime. |
-+| `agent/transports/codex_app_server_session.py` | constructor Dynamic Tool validation, `dynamic_tools_fingerprint`, `ensure_started`, `_handle_server_request`, `_handle_dynamic_tool_call`, event projection | Advertises only `experimentalApi` when tools are present, sends exact `dynamicTools`, validates thread/turn/schema/call IDs, executes once, and answers the original JSON-RPC request. No other App Server behavior is changed. |
++| `agent/transports/codex_app_server_session.py` | constructor Dynamic Tool validation, `dynamic_tools_fingerprint`, `ensure_started`, `_handle_server_request`, `_handle_dynamic_tool_call`, event projection | Advertises only `experimentalApi` when tools are present, sends exact `dynamicTools`, validates thread/turn/schema/call IDs, executes once, passes the existing session interrupt event into that exact call, and answers the original JSON-RPC request. No other App Server behavior is changed. |
 +| `tui_gateway/contracts/prompt_voice.py` | `DynamicToolDefinition`; `PromptSubmitParams.dynamic_tools`, `tool_endpoint`, `tool_authorization` | Declares the exact turn transport fields. |
 +| `tui_gateway/methods_prompt.py` | Dynamic Tool triple validation and forwarding | Rejects partial configuration and passes the exact definitions/authorization into the accepted turn. |
 +| `tui_gateway/prompt_turn.py` | Dynamic Tool turn binding | Binds the accepted definitions to the existing agent turn without changing saved profile authority. |
 +| `tui_gateway/session_auto_continue.py` | queued-envelope Dynamic Tool fields | Preserves the same accepted definition set when Hermes itself queues a busy-session turn. |
-+| `tests/agent/transports/test_codex_app_server_session.py` | `test_dynamic_tool_binding_preserves_exact_schema_and_executes_once` | Proves experimental handshake, exact schema projection, request scoping, argument validation, conflict rejection, and exactly-once callback behavior. |
++| `tests/agent/transports/test_codex_app_server_session.py` | Dynamic Tool binding and interrupt tests | Proves experimental handshake, exact schema projection, request scoping, argument validation, conflict rejection, exactly-once callback behavior, and propagation of the existing interrupt event into a blocked executor. |
++| `tests/agent/transports/test_dynamic_tools_mcp.py` | in-flight cancellation test | Proves an interrupted MCP call is cancelled and its ClientSession, stream, and HTTP contexts all close before the result returns. |
 +
 +## Integration patch 2: saved orange-roster scoping for Bot Mode
 +
@@ -101,7 +117,8 @@ index 000000000..e5bb24e52
 +## Integration patch 4: Card profile fields and profile-scoped learning selection
 +
 +Purpose: let the existing LiquidAIty Card/profile adapter configure only the
-+Card-owned Hermes profile fields and read them back, while leaving Hermes-owned
++Card-owned Hermes profile fields, including an explicit empty toolset selection,
++and read them back, while leaving Hermes-owned
 +learning, memory, unknown profile keys, execution, and session state intact.
 +One Card remains one reusable profile; Projects create sessions against that
 +profile rather than cloning it.
@@ -111,10 +128,12 @@ index 000000000..e5bb24e52
 +| File | Symbols / hunk | Why required |
 +| --- | --- | --- |
 +| `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` | `ProfileModelPin.openai_runtime`, `ProfileDelegationSettings`, profile describe/configure delegation and task-mode fields | Declares the existing profile configuration values that saved Cards actually own and need to read back. |
-+| `tui_gateway/methods_profiles.py` | `_profile_delegation_settings`, `_configure_model`, `_configure_card_execution`, describe/configure integration | Writes only declared Card-owned fields into the selected profile and preserves every unrelated config key and profile file. |
++| `tui_gateway/methods_profiles.py` | `_profile_delegation_settings`, `_configure_model`, `_configure_card_execution`, `_save_toolset_pin`, describe/configure integration | Writes only declared Card-owned fields into the selected profile, preserves an explicit empty `platform_toolsets.cli` pin, and preserves every unrelated config key and profile file. |
++| `tui_gateway/server.py` | `_load_enabled_toolsets` explicit-empty profile pin | Keeps `platform_toolsets.cli: []` distinct from a missing key so a Card can select no ordinary Hermes toolsets; missing, nonempty, environment-pin, session-fold-in, and Kanban-worker paths retain their existing behavior. |
 +| `tui_gateway/contracts/tools_mcp_plugins.py` | profile on learning frame/node requests | Makes learning reads and edits address the exact saved Card profile instead of an ambient profile. |
 +| `tui_gateway/methods_tools.py` | profile-scoped learning RPC forwarding | Delegates the request to Hermes's existing learning implementation for that profile; it does not add another learning store. |
 +| `tests/tui_gateway/test_profiles_bot_roster.py` | Card execution/profile preservation proof | Proves model runtime, delegation and Team mode read back while unknown and Hermes-owned state survives configuration. |
++| `tests/tui_gateway/test_profiles_toolset_pin.py`, `tests/tui_gateway/test_tui_gateway_server.py` | empty/missing/nonempty toolset-selection proof | Proves an explicit empty profile pin survives save/readback and reaches the runtime as `[]`, while missing and nonempty selections retain Hermes behavior. |
 +
 +## Generated contract artifacts
 +
@@ -134,8 +153,8 @@ index 000000000..e5bb24e52
 +
 +| File | Symbols | Purpose |
 +| --- | --- | --- |
-+| `hermes_cli/kanban_team.py` | `TEAM_WORKFLOW_ID`, `TEAM_DECOMPOSITION_STEP`, `TEAM_WORKER_STEP`, `TEAM_SYNTHESIS_STEP`, `profile_task_mode`, `is_team_profile`, `team_profile_policy`, `create_team_root`, `activate_staged_team_root`, `record_decomposition_failure` | The existing LiquidAIty AutoTeam workflow copied from `oldHermes` without redesign. |
-+| `tests/hermes_cli/test_kanban_team.py` | complete test module | The existing AutoTeam behavior contract copied from `oldHermes`. |
++| `hermes_cli/kanban_team.py` | `TEAM_WORKFLOW_ID`, `TEAM_DECOMPOSITION_STEP`, `TEAM_WORKER_STEP`, `TEAM_SYNTHESIS_STEP`, `profile_task_mode`, `is_team_profile`, `team_profile_policy`, `create_team_root`, `activate_staged_team_root`, `record_decomposition_failure` | The existing LiquidAIty AutoTeam workflow migrated from the former Hermes comparison tree without redesign. |
++| `tests/hermes_cli/test_kanban_team.py` | complete test module | The migrated AutoTeam behavior contract. |
 +
 +### Compatibility hunks in upstream files
 +
@@ -217,6 +236,7 @@ index 000000000..e5bb24e52
 +$env:PYTHONPATH = "C:\Projects\LiquidAIty\main\HermesLatest"
 +apps\python-models\.venv\Scripts\python.exe -m pytest `
 +  HermesLatest/tests/agent/transports/test_codex_app_server_session.py `
++  HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py `
 +  HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py `
 +  HermesLatest/tests/tui_gateway/test_auto_continue.py `
 +  HermesLatest/tests/tui_gateway/contracts/test_generated.py `
@@ -242,13 +262,13 @@ index 000000000..e5bb24e52
 +   production tree.
 +5. Resolve only unavoidable upstream API conflicts. Record every such
 +   compatibility choice in this file; never replace newer upstream files
-+   wholesale with `oldHermes` versions.
++   wholesale with historical snapshots from Git.
 +6. Run upstream Kanban tests first, then the two extension-family tests, then
 +   LiquidAIty adapter and real-product proof.
 +7. Update the pinned revision only after the clean apply-check and focused
 +   proof pass.
-+8. Keep `oldHermes` comparison-only until the owner separately authorizes its
-+   deletion.
++8. Use Git history as the long-term comparison source. Do not recreate a second
++   Hermes source tree beside `HermesLatest`.
 diff --git a/.codex-temp/hermes-baseline-tree/agent/codex_runtime.py b/.codex-temp/hermes-overlay-tree/agent/codex_runtime.py
 index 14ba9d17c..6b52fa3d3 100644
 --- a/.codex-temp/hermes-baseline-tree/agent/codex_runtime.py
@@ -399,7 +419,7 @@ index 853462571..aaaab7a10 100644
      except Exception:
          pass
 diff --git a/.codex-temp/hermes-baseline-tree/agent/transports/codex_app_server_session.py b/.codex-temp/hermes-overlay-tree/agent/transports/codex_app_server_session.py
-index 86287403d..1198d910d 100644
+index 86287403d..7ec91a54f 100644
 --- a/.codex-temp/hermes-baseline-tree/agent/transports/codex_app_server_session.py
 +++ b/.codex-temp/hermes-overlay-tree/agent/transports/codex_app_server_session.py
 @@ -10,6 +10,9 @@ reader threads feed queues that this adapter polls, like the chat_completions lo
@@ -412,16 +432,18 @@ index 86287403d..1198d910d 100644
  import logging
  import os
  import threading
-@@ -218,6 +221,8 @@ class CodexAppServerSession:
+@@ -218,6 +221,10 @@ class CodexAppServerSession:
          model: Optional[str] = None, model_provider: Optional[str] = None,
          developer_instructions: Optional[str] = None, resume_thread_id: Optional[str] = None,
          history_seed: Optional[str] = None,
 +        dynamic_tools: Optional[list[dict[str, Any]]] = None,
-+        tool_executor: Optional[Callable[[str, dict[str, Any], str], dict[str, Any]]] = None,
++        tool_executor: Optional[
++            Callable[[str, dict[str, Any], str, threading.Event], dict[str, Any]]
++        ] = None,
      ) -> None:
          self._cwd = cwd or os.getcwd()
          self._codex_bin = codex_bin
-@@ -237,6 +242,47 @@ class CodexAppServerSession:
+@@ -237,6 +244,47 @@ class CodexAppServerSession:
          # Hermes' prior transcript, appended to developerInstructions ONLY when a thread is started from
          # scratch: a resumed thread already holds the conversation (agent/codex_runtime_history_seed.py).
          self._history_seed = history_seed
@@ -469,7 +491,7 @@ index 86287403d..1198d910d 100644
          self._permission_profile = permission_profile or _HERMES_TO_CODEX_PERMISSION_PROFILE.get(
              os.environ.get("HERMES_TERMINAL_SECURITY_MODE", "auto"), "workspace-write"
          )
-@@ -255,6 +301,10 @@ class CodexAppServerSession:
+@@ -255,6 +303,10 @@ class CodexAppServerSession:
          self._pending_file_changes: dict[str, str] = {}
          self._closed = False
  
@@ -480,7 +502,7 @@ index 86287403d..1198d910d 100644
      def ensure_started(self) -> str:
          """Spawn, handshake, and ``thread/start`` (or ``thread/resume`` for a stored id); idempotent, returns
          the codex thread id. A failed resume raises :class:`CodexThreadResumeError` once; the next call
-@@ -263,12 +313,19 @@ class CodexAppServerSession:
+@@ -263,12 +315,19 @@ class CodexAppServerSession:
              return self._thread_id
          if self._client is None:
              self._client = self._client_factory(codex_bin=self._codex_bin, codex_home=self._codex_home)
@@ -501,7 +523,7 @@ index 86287403d..1198d910d 100644
          if self._developer_instructions and self._developer_instructions.strip():
              params["developerInstructions"] = self._developer_instructions
          if self._model_provider:
-@@ -421,6 +478,13 @@ class CodexAppServerSession:
+@@ -421,6 +480,13 @@ class CodexAppServerSession:
  
          Returns (projection, aborted); aborted = agent text carried a terminal ``<turn_aborted>`` marker.
          """
@@ -515,7 +537,7 @@ index 86287403d..1198d910d 100644
          if self._on_event is not None:
              try:
                  self._on_event(note)
-@@ -690,6 +754,9 @@ class CodexAppServerSession:
+@@ -690,6 +756,9 @@ class CodexAppServerSession:
          method = req.get("method", "")
          rid = req.get("id")
          params = req.get("params") or {}
@@ -525,7 +547,7 @@ index 86287403d..1198d910d 100644
          handler = self._SERVER_REQUEST_HANDLERS.get(method)
          if handler is None:
              logger.warning("Unknown codex server request: %s", method)
-@@ -697,6 +764,88 @@ class CodexAppServerSession:
+@@ -697,6 +766,93 @@ class CodexAppServerSession:
              return
          client.respond(rid, handler(self, params))
  
@@ -586,7 +608,12 @@ index 86287403d..1198d910d 100644
 +                })
 +            return
 +        try:
-+            response = self._tool_executor(name, arguments, call_id)
++            response = self._tool_executor(
++                name,
++                arguments,
++                call_id,
++                self._interrupt_event,
++            )
 +            if (
 +                not isinstance(response, dict)
 +                or not isinstance(response.get("success"), bool)
@@ -616,10 +643,10 @@ index 86287403d..1198d910d 100644
          exposes nothing codex's shell can't do); decline others so the user opts in via codex's own flow."""
 diff --git a/.codex-temp/hermes-overlay-tree/agent/transports/dynamic_tools_mcp.py b/.codex-temp/hermes-overlay-tree/agent/transports/dynamic_tools_mcp.py
 new file mode 100644
-index 000000000..38d2456d0
+index 000000000..b6812545a
 --- /dev/null
 +++ b/.codex-temp/hermes-overlay-tree/agent/transports/dynamic_tools_mcp.py
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,164 @@
 +"""Codex Dynamic Tool execution through one authenticated MCP connection.
 +
 +The caller supplies an exact safe-name -> canonical MCP-name mapping plus a
@@ -632,8 +659,12 @@ index 000000000..38d2456d0
 +
 +import asyncio
 +import json
++import threading
 +from typing import Any, Callable
 +from urllib.parse import urlparse
++
++
++_INTERRUPT_POLL_SECONDS = 0.05
 +
 +
 +def _validated_endpoint(value: str) -> str:
@@ -677,31 +708,56 @@ index 000000000..38d2456d0
 +    authorization: str,
 +    canonical_name: str,
 +    arguments: dict[str, Any],
++    interrupt_event: threading.Event,
 +) -> dict[str, Any]:
 +    import httpx2
 +    from mcp import ClientSession
 +    from mcp.client.streamable_http import streamable_http_client
 +
-+    async with httpx2.AsyncClient(
-+        headers={"Authorization": authorization},
-+        timeout=httpx2.Timeout(600.0),
-+        trust_env=False,
-+    ) as http_client:
-+        async with streamable_http_client(
-+            endpoint,
-+            http_client=http_client,
-+        ) as (read_stream, write_stream):
-+            async with ClientSession(
-+                read_stream,
-+                write_stream,
-+                read_timeout_seconds=600.0,
-+            ) as session:
-+                await session.initialize()
-+                result = await session.call_tool(
-+                    canonical_name,
-+                    dict(arguments),
++    async def invoke() -> Any:
++        async with httpx2.AsyncClient(
++            headers={"Authorization": authorization},
++            timeout=httpx2.Timeout(600.0),
++            trust_env=False,
++        ) as http_client:
++            async with streamable_http_client(
++                endpoint,
++                http_client=http_client,
++            ) as (read_stream, write_stream):
++                async with ClientSession(
++                    read_stream,
++                    write_stream,
 +                    read_timeout_seconds=600.0,
-+                )
++                ) as session:
++                    await session.initialize()
++                    return await session.call_tool(
++                        canonical_name,
++                        dict(arguments),
++                        read_timeout_seconds=600.0,
++                    )
++
++    if interrupt_event.is_set():
++        return {
++            "success": False,
++            "contentItems": [{
++                "type": "inputText",
++                "text": json.dumps({"error": "dynamic_tool_cancelled"}),
++            }],
++        }
++    call_task = asyncio.create_task(invoke())
++    while not call_task.done():
++        if interrupt_event.is_set():
++            call_task.cancel()
++            await asyncio.gather(call_task, return_exceptions=True)
++            return {
++                "success": False,
++                "contentItems": [{
++                    "type": "inputText",
++                    "text": json.dumps({"error": "dynamic_tool_cancelled"}),
++                }],
++            }
++        await asyncio.wait({call_task}, timeout=_INTERRUPT_POLL_SECONDS)
++    result = call_task.result()
 +    content = list(getattr(result, "content", None) or [])
 +    is_error = bool(
 +        getattr(result, "isError", False)
@@ -721,7 +777,7 @@ index 000000000..38d2456d0
 +    endpoint: str,
 +    authorization: str,
 +    canonical_names: dict[str, str],
-+) -> Callable[[str, dict[str, Any], str], dict[str, Any]]:
++) -> Callable[[str, dict[str, Any], str, threading.Event], dict[str, Any]]:
 +    """Return the synchronous executor expected by CodexAppServerSession."""
 +
 +    resolved_endpoint = _validated_endpoint(endpoint)
@@ -734,7 +790,12 @@ index 000000000..38d2456d0
 +        if str(name) and str(canonical)
 +    }
 +
-+    def execute(name: str, arguments: dict[str, Any], _call_id: str) -> dict[str, Any]:
++    def execute(
++        name: str,
++        arguments: dict[str, Any],
++        _call_id: str,
++        interrupt_event: threading.Event,
++    ) -> dict[str, Any]:
 +        canonical_name = mapping.get(name)
 +        if canonical_name is None:
 +            raise ValueError("dynamic_tool_not_selected")
@@ -743,6 +804,7 @@ index 000000000..38d2456d0
 +            token,
 +            canonical_name,
 +            arguments,
++            interrupt_event,
 +        ))
 +
 +    return execute
@@ -2559,10 +2621,18 @@ index 000000000..05c905391
 +            "error": error,
 +        }
 diff --git a/.codex-temp/hermes-baseline-tree/tests/agent/transports/test_codex_app_server_session.py b/.codex-temp/hermes-overlay-tree/tests/agent/transports/test_codex_app_server_session.py
-index a4e03ed54..8187ab132 100644
+index a4e03ed54..1fc1ccc0b 100644
 --- a/.codex-temp/hermes-baseline-tree/tests/agent/transports/test_codex_app_server_session.py
 +++ b/.codex-temp/hermes-overlay-tree/tests/agent/transports/test_codex_app_server_session.py
-@@ -42,10 +42,12 @@ class FakeClient:
+@@ -9,6 +9,7 @@ from __future__ import annotations
+ 
+ import itertools
+ import logging
++import threading
+ import time
+ from types import SimpleNamespace
+ from unittest.mock import patch
+@@ -42,10 +43,12 @@ class FakeClient:
          self._notifications: list[dict] = []
          self._server_requests: list[dict] = []
          self._request_handler = None  # Optional[Callable[[str, dict], dict]]
@@ -2575,7 +2645,7 @@ index a4e03ed54..8187ab132 100644
          return {"userAgent": "fake/0.0.0", "codexHome": "/tmp",
                  "platformOs": "linux", "platformFamily": "unix"}
  
-@@ -130,6 +132,106 @@ def make_session(client: FakeClient, **kwargs) -> CodexAppServerSession:
+@@ -130,6 +133,166 @@ def make_session(client: FakeClient, **kwargs) -> CodexAppServerSession:
      )
  
  
@@ -2595,8 +2665,8 @@ index a4e03ed54..8187ab132 100644
 +        },
 +    }
 +
-+    def execute(name, arguments, call_id):
-+        calls.append((name, arguments, call_id))
++    def execute(name, arguments, call_id, interrupt_event):
++        calls.append((name, arguments, call_id, interrupt_event.is_set()))
 +        return {
 +            "success": True,
 +            "contentItems": [{"type": "inputText", "text": "result"}],
@@ -2654,7 +2724,7 @@ index a4e03ed54..8187ab132 100644
 +    result = session.run_turn("Use the selected tool.", turn_timeout=2)
 +
 +    assert result.error is None
-+    assert calls == [("selected", {"query": "current evidence"}, "call-1")]
++    assert calls == [("selected", {"query": "current evidence"}, "call-1", False)]
 +    responses = dict(client.responses)
 +    assert responses["first"] == responses["retry"]
 +    assert all(
@@ -2679,9 +2749,176 @@ index a4e03ed54..8187ab132 100644
 +    )
 +
 +
++def test_dynamic_tool_interrupt_reaches_the_blocked_executor_and_unwinds_turn():
++    client = FakeClient()
++    entered = threading.Event()
++    observed_interrupt = threading.Event()
++    tool = {
++        "type": "function",
++        "name": "selected",
++        "canonicalName": "graphiti.search_nodes",
++        "description": "Search the granted graph.",
++        "inputSchema": {"type": "object", "properties": {}},
++    }
++
++    def execute(_name, _arguments, _call_id, interrupt_event):
++        entered.set()
++        assert interrupt_event.wait(timeout=2)
++        observed_interrupt.set()
++        return {
++            "success": False,
++            "contentItems": [{
++                "type": "inputText",
++                "text": '{"error":"dynamic_tool_cancelled"}',
++            }],
++        }
++
++    session = make_session(client, dynamic_tools=[tool], tool_executor=execute)
++    client.queue_server_request(
++        "item/tool/call",
++        request_id="blocked",
++        threadId="thread-fake-001",
++        turnId="turn-fake-001",
++        callId="call-1",
++        tool="selected",
++        arguments={},
++    )
++
++    def interrupt() -> None:
++        assert entered.wait(timeout=2)
++        session.request_interrupt()
++
++    interrupter = threading.Thread(target=interrupt, daemon=True)
++    interrupter.start()
++    result = session.run_turn("Use the selected tool.", turn_timeout=2)
++    interrupter.join(timeout=2)
++
++    assert result.interrupted is True
++    assert result.error is None
++    assert observed_interrupt.is_set()
++    assert dict(client.responses)["blocked"] == {
++        "success": False,
++        "contentItems": [{
++            "type": "inputText",
++            "text": '{"error":"dynamic_tool_cancelled"}',
++        }],
++    }
++    assert (
++        "turn/interrupt",
++        {"threadId": "thread-fake-001", "turnId": "turn-fake-001"},
++    ) in client.requests
++
++
  # ---- choice mapping ----
  
  class TestApprovalChoiceMapping:
+diff --git a/.codex-temp/hermes-overlay-tree/tests/agent/transports/test_dynamic_tools_mcp.py b/.codex-temp/hermes-overlay-tree/tests/agent/transports/test_dynamic_tools_mcp.py
+new file mode 100644
+index 000000000..5fbc6bd8e
+--- /dev/null
++++ b/.codex-temp/hermes-overlay-tree/tests/agent/transports/test_dynamic_tools_mcp.py
+@@ -0,0 +1,101 @@
++from __future__ import annotations
++
++import asyncio
++import json
++import sys
++import threading
++from contextlib import asynccontextmanager
++from types import ModuleType
++
++
++def test_in_flight_mcp_call_is_cancelled_and_transport_contexts_close(monkeypatch):
++    from agent.transports import dynamic_tools_mcp
++
++    entered = asyncio.Event()
++    observations: list[str] = []
++
++    class FakeAsyncClient:
++        def __init__(self, **_kwargs):
++            observations.append("http-created")
++
++        async def __aenter__(self):
++            observations.append("http-entered")
++            return self
++
++        async def __aexit__(self, *_args):
++            observations.append("http-closed")
++
++    @asynccontextmanager
++    async def fake_streamable_http_client(_endpoint, *, http_client):
++        assert isinstance(http_client, FakeAsyncClient)
++        observations.append("stream-entered")
++        try:
++            yield object(), object()
++        finally:
++            observations.append("stream-closed")
++
++    class FakeClientSession:
++        def __init__(self, *_args, **_kwargs):
++            pass
++
++        async def __aenter__(self):
++            observations.append("session-entered")
++            return self
++
++        async def __aexit__(self, *_args):
++            observations.append("session-closed")
++
++        async def initialize(self):
++            observations.append("initialized")
++
++        async def call_tool(self, *_args, **_kwargs):
++            entered.set()
++            try:
++                await asyncio.Future()
++            except asyncio.CancelledError:
++                observations.append("call-cancelled")
++                raise
++
++    httpx2 = ModuleType("httpx2")
++    httpx2.AsyncClient = FakeAsyncClient
++    httpx2.Timeout = lambda value: value
++    mcp = ModuleType("mcp")
++    mcp.ClientSession = FakeClientSession
++    mcp_client = ModuleType("mcp.client")
++    mcp_stream = ModuleType("mcp.client.streamable_http")
++    mcp_stream.streamable_http_client = fake_streamable_http_client
++    monkeypatch.setitem(sys.modules, "httpx2", httpx2)
++    monkeypatch.setitem(sys.modules, "mcp", mcp)
++    monkeypatch.setitem(sys.modules, "mcp.client", mcp_client)
++    monkeypatch.setitem(sys.modules, "mcp.client.streamable_http", mcp_stream)
++
++    async def scenario():
++        interrupt_event = threading.Event()
++        task = asyncio.create_task(dynamic_tools_mcp._call(
++            "http://127.0.0.1:9999/mcp",
++            "Bearer exact",
++            "graphiti.search_nodes",
++            {"query": "bounded"},
++            interrupt_event,
++        ))
++        await asyncio.wait_for(entered.wait(), timeout=1)
++        interrupt_event.set()
++        return await asyncio.wait_for(task, timeout=1)
++
++    result = asyncio.run(scenario())
++
++    assert result["success"] is False
++    assert json.loads(result["contentItems"][0]["text"]) == {
++        "error": "dynamic_tool_cancelled",
++    }
++    assert observations == [
++        "http-created",
++        "http-entered",
++        "stream-entered",
++        "session-entered",
++        "initialized",
++        "call-cancelled",
++        "session-closed",
++        "stream-closed",
++        "http-closed",
++    ]
 diff --git a/.codex-temp/hermes-baseline-tree/tests/hermes_cli/test_kanban_creator_origin.py b/.codex-temp/hermes-overlay-tree/tests/hermes_cli/test_kanban_creator_origin.py
 index 4402b201a..7391fbdba 100644
 --- a/.codex-temp/hermes-baseline-tree/tests/hermes_cli/test_kanban_creator_origin.py
@@ -3530,6 +3767,83 @@ index 000000000..084014777
 +        "enabled": False,
 +    }
 +    assert described["task_mode"] == "team"
+diff --git a/.codex-temp/hermes-baseline-tree/tests/tui_gateway/test_profiles_toolset_pin.py b/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_profiles_toolset_pin.py
+index 7c8446bbd..36469828f 100644
+--- a/.codex-temp/hermes-baseline-tree/tests/tui_gateway/test_profiles_toolset_pin.py
++++ b/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_profiles_toolset_pin.py
+@@ -3,6 +3,7 @@
+ Invariant: whatever ``_save_toolset_pin`` writes, ``_load_enabled_toolsets`` (via ``_get_platform_tools(cfg, "cli")``)
+ reads back as the enabled set, and ``_describe_toolsets`` reports the same pin. Before the fix the writer used a
+ ``tools.enabled_toolsets`` key that nothing reads, so a pin of ``[web]`` still produced the full default set.
++An explicit empty pin means no toolsets; only an absent pin means the platform default.
+ """
+ 
+ import pytest
+@@ -37,12 +38,22 @@ def test_toolset_pin_round_trips_a_then_b_then_a(second):
+     assert pinned == {"web"}
+ 
+ 
+-def test_empty_pin_clears_the_pin_and_falls_back_to_the_platform_default():
++def test_empty_pin_round_trips_as_an_explicit_empty_selection():
+     from hermes_cli.tools_config import _get_platform_tools
+ 
+     cfg: dict = {}
+-    _pin_and_resolve(cfg, ["web"])
+     _save_toolset_pin(cfg, [], save_config=lambda _c: None)
++    toolsets, pinned = _describe_toolsets(cfg)
++    assert cfg["platform_toolsets"]["cli"] == []
++    assert pinned == set()
++    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)) == set()
++    assert not any(row["enabled"] for row in toolsets)
++
++
++def test_missing_pin_still_uses_the_platform_default():
++    from hermes_cli.tools_config import _get_platform_tools
++
++    cfg: dict = {}
+     _toolsets, pinned = _describe_toolsets(cfg)
+     assert pinned is None
+-    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)) != {"web"}
++    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False))
+diff --git a/.codex-temp/hermes-baseline-tree/tests/tui_gateway/test_tui_gateway_server.py b/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_tui_gateway_server.py
+index de4586d44..2587c74ae 100644
+--- a/.codex-temp/hermes-baseline-tree/tests/tui_gateway/test_tui_gateway_server.py
++++ b/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_tui_gateway_server.py
+@@ -2365,6 +2365,34 @@ def test_load_enabled_toolsets_folds_project_into_focus_posture(monkeypatch):
+     assert server._load_enabled_toolsets("tui") == ["coding", "figma", "project"]
+ 
+ 
++@pytest.mark.parametrize(
++    ("cfg", "coding_selection", "expected_exact", "expected_members"),
++    [
++        ({"platform_toolsets": {"cli": []}}, ["coding"], [], set()),
++        ({}, ["coding"], ["coding", "project"], set()),
++        ({"platform_toolsets": {"cli": ["memory"]}}, ["coding"], ["coding", "project"], set()),
++        ({"platform_toolsets": {"cli": ["memory"]}}, None, None, {"memory", "project"}),
++    ],
++)
++def test_load_enabled_toolsets_distinguishes_empty_missing_and_nonempty_profile_pins(
++    monkeypatch, cfg, coding_selection, expected_exact, expected_members
++):
++    monkeypatch.delenv("HERMES_TUI_TOOLSETS", raising=False)
++
++    import agent.coding_context as cc
++    import hermes_cli.config as config_mod
++
++    monkeypatch.setattr(cc, "coding_selection", lambda **_: coding_selection)
++    monkeypatch.setattr(config_mod, "load_config", lambda: cfg)
++
++    result = server._load_enabled_toolsets("tui")
++    if expected_exact is not None:
++        assert result == expected_exact
++    else:
++        assert result is not None
++        assert expected_members <= set(result)
++
++
+ def test_load_enabled_toolsets_rejects_disabled_mcp_env(monkeypatch, capsys):
+     monkeypatch.setenv("HERMES_TUI_TOOLSETS", "mcp-off")
+     monkeypatch.setitem(
 diff --git a/.codex-temp/hermes-baseline-tree/tools/bot_mode_dm.py b/.codex-temp/hermes-overlay-tree/tools/bot_mode_dm.py
 index 52a31cfc8..00c827ba2 100644
 --- a/.codex-temp/hermes-baseline-tree/tools/bot_mode_dm.py
@@ -4070,7 +4384,7 @@ index 35e268911..af31e8925 100644
  
  
 diff --git a/.codex-temp/hermes-baseline-tree/tui_gateway/methods_profiles.py b/.codex-temp/hermes-overlay-tree/tui_gateway/methods_profiles.py
-index f0c0374f3..31d2d133d 100644
+index f0c0374f3..a28ef081e 100644
 --- a/.codex-temp/hermes-baseline-tree/tui_gateway/methods_profiles.py
 +++ b/.codex-temp/hermes-overlay-tree/tui_gateway/methods_profiles.py
 @@ -44,6 +44,26 @@ def _model_provider_params(params) -> tuple:
@@ -4124,7 +4438,7 @@ index f0c0374f3..31d2d133d 100644
  
  
  def _configure_ui_meta(profile_dir, params, applied) -> None:
-@@ -549,9 +581,78 @@ def _configure_model(profile_dir, params, applied):
+@@ -549,23 +581,96 @@ def _configure_model(profile_dir, params, applied):
          confirm_message = _try(lambda: getattr(warn(model, provider=provider or None), "message", None), None)
      if confirm_message is None:
          applied["model"] = _best_effort(lambda: _pin_profile_model(profile_dir, provider, model))
@@ -4203,7 +4517,28 @@ index f0c0374f3..31d2d133d 100644
  def _clean_names(values) -> set:
      return {str(v).strip() for v in values if str(v).strip()}
  
-@@ -594,6 +695,31 @@ def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
+ 
+ def _save_toolset_pin(cfg, enabled, save_config) -> None:
+     """Pin ``platform_toolsets.cli``: the key ``_load_enabled_toolsets`` reads and ``hermes tools`` writes.
+-    An empty selection clears the pin so the platform default applies again."""
++    An empty selection is an explicit pin to no toolsets; only a missing key requests the platform default."""
+     from hermes_cli.tools_config import _save_platform_tools
+ 
+     wanted = _clean_names(enabled)
+     if wanted:
+         _save_platform_tools(cfg, "cli", wanted)
+-    elif isinstance(cfg.get("platform_toolsets"), dict):
+-        cfg["platform_toolsets"].pop("cli", None)
++    else:
++        platform_toolsets = cfg.get("platform_toolsets")
++        if not isinstance(platform_toolsets, dict):
++            platform_toolsets = {}
++            cfg["platform_toolsets"] = platform_toolsets
++        platform_toolsets["cli"] = []
+     save_config(cfg)
+ 
+ 
+@@ -594,9 +699,34 @@ def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
      save_config(cfg)
  
  
@@ -4234,8 +4569,12 @@ index f0c0374f3..31d2d133d 100644
 +
  def _configure_cfg_sections(profile_dir, params, applied) -> None:
      """Apply ``disabled_skills`` / ``enabled_toolsets`` / ``enabled_mcp_servers`` (replace
-     semantics; empty toolsets clears the pin). An undefined MCP server is copied from the LAUNCH
-@@ -640,8 +766,11 @@ def _(rid, params: dict) -> dict:
+-    semantics; empty toolsets clears the pin). An undefined MCP server is copied from the LAUNCH
++    semantics; empty toolsets pins no toolsets). An undefined MCP server is copied from the LAUNCH
+     catalog (unknown names skipped); credentials stay in .env/auth."""
+     want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
+     launch_mcp = {}
+@@ -640,8 +770,11 @@ def _(rid, params: dict) -> dict:
          applied["description"] = _best_effort(lambda: write_meta(
              profile_dir, description=params["description"].strip(), description_auto=False))
      confirm_message = _configure_model(profile_dir, params, applied)
@@ -4584,7 +4923,7 @@ index 32cad0497..69d2880ea 100644
              # agent.session_id is re-read because compression may have rotated it (an
              # accepted/finished pair whose id changed IS a rotation trace).
 diff --git a/.codex-temp/hermes-baseline-tree/tui_gateway/server.py b/.codex-temp/hermes-overlay-tree/tui_gateway/server.py
-index 475d106c4..43d4ab183 100644
+index 475d106c4..3447e6dcb 100644
 --- a/.codex-temp/hermes-baseline-tree/tui_gateway/server.py
 +++ b/.codex-temp/hermes-overlay-tree/tui_gateway/server.py
 @@ -1035,6 +1035,8 @@ def _attach_built_agent(current: dict, agent) -> None:
@@ -4596,7 +4935,51 @@ index 475d106c4..43d4ab183 100644
      current["agent"] = agent
      # A workspace move can land while construction is still in flight.
      _register_session_cwd(current)
-@@ -2472,6 +2474,8 @@ def _make_agent(
+@@ -1907,11 +1909,24 @@ def _resolve_explicit_toolsets(explicit: list[str], validate_toolset) -> list[st
+ def _load_enabled_toolsets(platform: str | None = None) -> list[str] | None:
+     """The agent's toolsets for this session (None = all): an explicit HERMES_TUI_TOOLSETS pin; else the
+     coding posture (coding_context collapses to coding toolset + enabled MCP servers in a code workspace);
+-    else the configured CLI toolsets. Client-surface toolsets fold in here — only this surface can answer them."""
++    else the configured CLI toolsets. A configured empty CLI list means none, while a missing key retains
++    Hermes's defaults. Client-surface toolsets fold in here — only this surface can answer them."""
+     session_platform = platform or _resolve_session_platform()
+     explicit = [item.strip() for item in os.environ.get("HERMES_TUI_TOOLSETS", "").split(",") if item.strip()]
+     fallback_notice = None
++    cfg = None
+     if not explicit:
++        # Card profile materialization uses an explicit empty list to deny every ordinary toolset. It must
++        # win before coding/surface posture can broaden the selection; a missing key keeps the stock path.
++        with contextlib.suppress(Exception):
++            from hermes_cli.config import load_config
++            from hermes_cli.tools_config import _coerce_platform_toolsets_value
++            cfg = load_config() or {}
++            platform_toolsets = cfg.get("platform_toolsets")
++            if isinstance(platform_toolsets, dict) and "cli" in platform_toolsets:
++                pinned = _coerce_platform_toolsets_value(platform_toolsets["cli"], "cli")
++                if isinstance(pinned, list) and not pinned:
++                    return []
+         with contextlib.suppress(Exception):
+             from agent.coding_context import coding_selection
+             selection = coding_selection(platform=session_platform)
+@@ -1929,8 +1944,15 @@ def _load_enabled_toolsets(platform: str | None = None) -> list[str] | None:
+         fallback_notice = "[tui] no valid HERMES_TUI_TOOLSETS entries; using configured CLI toolsets"
+     try:
+         from hermes_cli.config import load_config
+-        from hermes_cli.tools_config import _get_platform_tools
+-        cfg = load_config()
++        from hermes_cli.tools_config import _coerce_platform_toolsets_value, _get_platform_tools
++        cfg = cfg if cfg is not None else (load_config() or {})
++        platform_toolsets = cfg.get("platform_toolsets")
++        if isinstance(platform_toolsets, dict) and "cli" in platform_toolsets:
++            pinned = _coerce_platform_toolsets_value(platform_toolsets["cli"], "cli")
++            if isinstance(pinned, list) and not pinned:
++                if fallback_notice is not None:
++                    _tui_notice(fallback_notice)
++                return []
+         # include_default_mcp_servers=True is the runtime variant (the agent must be able to call
+         # default MCP servers); the config-editing variant would silently drop MCP tools from the TUI.
+         # Passing ``False`` here is the config-editing variant — used when we need to persist a toolset list
+@@ -2472,6 +2494,8 @@ def _make_agent(
          pass_session_id=is_truthy_value(os.environ.get("HERMES_TUI_PASS_SESSION_ID")),
          skip_context_files=ignore_rules, skip_memory=ignore_rules, fallback_model=_load_fallback_model(),
          **_agent_cbs(sid))
@@ -4605,7 +4988,7 @@ index 475d106c4..43d4ab183 100644
      if context_cwd_is_launch_artifact is None:
          context_cwd_is_launch_artifact = _context_cwd_is_launch_artifact(session)
      agent._context_cwd_is_launch_artifact = bool(context_cwd_is_launch_artifact)
-@@ -2516,7 +2520,7 @@ def _hydrate_session_cwd(sid: str, key: str, session_db, profile_home: str | Non
+@@ -2516,7 +2540,7 @@ def _hydrate_session_cwd(sid: str, key: str, session_db, profile_home: str | Non
  def _init_session(
      sid: str, key: str, agent, history: list, cols: int = 80, cwd: str | None = None,
      session_db=None, source: str | None = None, profile_home: str | None = None,
@@ -4614,7 +4997,7 @@ index 475d106c4..43d4ab183 100644
      now = time.time()
      with _sessions_lock:
          _sessions[sid] = {
-@@ -2528,6 +2532,7 @@ def _init_session(
+@@ -2528,6 +2552,7 @@ def _init_session(
              "tool_progress_mode": _load_tool_progress_mode(), "edit_snapshots": {}, "tool_started_at": {},
              # Profile-scoped HERMES_HOME (None = launch); SessionBranch copies the parent's (same state.db).
              "profile_home": profile_home,
@@ -4622,7 +5005,7 @@ index 475d106c4..43d4ab183 100644
              # In-session /model switch, honored on rebuild (/new, resume) — never leaks to siblings via env vars.
              "model_override": None,
              # Async events go to the transport that created the session (stdio for Ink, WS for the dashboard).
-@@ -2535,6 +2540,8 @@ def _init_session(
+@@ -2535,6 +2560,8 @@ def _init_session(
              "auth_user_id": _transport_auth_user_id(current_transport()),
          }
          _session_todo_state(_sessions[sid])
@@ -4631,7 +5014,7 @@ index 475d106c4..43d4ab183 100644
      _hydrate_session_cwd(sid, key, session_db, profile_home)
      _register_session_cwd(_sessions[sid])
      _wire_session_agent(sid, key, agent)  # no eager slash-worker pre-warm (see _start_agent_build)
-@@ -2581,7 +2588,7 @@ def _deferred_session_record(
+@@ -2581,7 +2608,7 @@ def _deferred_session_record(
      close_on_disconnect: bool = False, display_history_prefix: list | None = None,
      profile_home: Path | None = None, lazy: bool = False, model_override=None,
      resume_runtime_overrides: dict | None = None, todo_state: dict | None = None,
@@ -4640,7 +5023,7 @@ index 475d106c4..43d4ab183 100644
      """A live-session record whose AIAgent is built later (lazy watch / cold resume) — _init_session's shape minus the agent."""
      now = time.time()
      return {
-@@ -2592,6 +2599,7 @@ def _deferred_session_record(
+@@ -2592,6 +2619,7 @@ def _deferred_session_record(
          "history_lock": threading.Lock(), "history_version": 0, "image_counter": 0,
          "inflight_turn": None, "last_active": now, "lazy": lazy, "model_override": model_override,
          "pending_title": None,

@@ -5,13 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentCardInstance, DeckDocument, DeckEdge } from '../../types/agentgraph';
 import {
-  buildCanvasDocumentRecoveryKey,
   buildDeckEdgeFromConnection,
-  buildDeckEdgeVisualStates,
-  fitBuilderCanvasView,
   isPlainConnectionAllowedForDocument,
-  isAnyCanvasNodeVisible,
-  isCanvasRectVisible,
   mergeFlowEdgesIntoDeck,
   mergeFlowNodesIntoDeck,
   reduceCanvasEdgeChanges,
@@ -30,7 +25,7 @@ import {
   buildInitialWorkbenchLandingViewport,
   buildPresentationLandingViewport,
 } from '../../features/agentbuilder/core/agentBuilderViewportMath';
-import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
+import { buildDeckEdgeIdentityKey } from './deckEdgeIdentity';
 import MagenticBusNode from './nodes/MagenticBusNode';
 import { INITIAL_DECK } from '../../features/agentbuilder/deck/newProjectDeck';
 
@@ -87,7 +82,7 @@ describe('canvas connection validation', () => {
   it('preserves disabled state and existing presentation fields through load and Canvas conversion', () => {
     const deck = structuredClone(INITIAL_DECK);
     const wire = { ...deck.edges[0], enabled: false, label: 'Existing label', style: { opacity: 0.4 } };
-    deck.edges = sanitizeDeckEdges([wire]);
+    deck.edges = [wire];
     const displayed = toFlowEdges(deck, null, null, new Set([wire.id]));
     expect(displayed[0].data).toMatchObject({ enabled: false, isActive: false });
     expect(mergeFlowEdgesIntoDeck(displayed, deck.edges)[0]).toMatchObject(wire);
@@ -212,18 +207,6 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     expect(edgesById.get('edge_main_chat_hermes')?.hidden).not.toBe(true);
     expect(edgesById.get('edge_main_chat_magnetic')?.hidden).not.toBe(true);
     expect(edgesById.get('edge_team_magentic_bus')?.hidden).not.toBe(true);
-  });
-
-  it('fits every rendered Card when the Fit view control is used', () => {
-    const fitView = vi.fn();
-
-    fitBuilderCanvasView({ fitView });
-
-    expect(fitView).toHaveBeenCalledWith({
-      duration: 220,
-      maxZoom: 1.35,
-      padding: 0.2,
-    });
   });
 
   it('builds seam viewport math from the bus center rather than the bus left edge', () => {
@@ -464,7 +447,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ];
 
     const savedEdges = mergeFlowEdgesIntoDeck(flowEdges, []);
-    const loadedEdges = sanitizeDeckEdges(JSON.parse(JSON.stringify(savedEdges)));
+    const loadedEdges = JSON.parse(JSON.stringify(savedEdges)) as DeckEdge[];
 
     expect(savedEdges).toEqual<DeckEdge[]>([
       {
@@ -485,185 +468,6 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       },
     ]);
     expect(loadedEdges).toEqual(savedEdges);
-  });
-
-  it('marks loop and return links visually', () => {
-    const loopDocument: DeckDocument = {
-      id: 'deck_loop',
-      name: 'Loop Deck',
-      promptTemplates: [],
-      version: 1,
-      nodes: [
-        {
-          id: 'a',
-          kind: 'agent',
-          templateId: 'worker',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
-          title: 'A',
-          position: { x: 0, y: 0 },
-        },
-        {
-          id: 'b',
-          kind: 'agent',
-          templateId: 'worker',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
-          title: 'B',
-          position: { x: 320, y: 0 },
-        },
-      ],
-      edges: [
-        { id: 'edge_a_b', source: 'a', target: 'b', edgeType: 'flow' },
-        { id: 'edge_b_a', source: 'b', target: 'a', edgeType: 'flow' },
-      ],
-    };
-
-    const visualStates = buildDeckEdgeVisualStates(loopDocument);
-    expect(visualStates.get('edge_a_b')).toMatchObject({
-      isLoopEdge: true,
-      isReturnEdge: false,
-    });
-    expect(visualStates.get('edge_b_a')).toMatchObject({
-      isLoopEdge: true,
-      isReturnEdge: true,
-    });
-  });
-
-  it('treats a blank gap between cards as not visible', () => {
-    const nodes: Node[] = [
-      {
-        id: 'left',
-        type: 'agentCard',
-        position: { x: 0, y: 0 },
-        width: 280,
-        height: 160,
-        data: {},
-      },
-      {
-        id: 'right',
-        type: 'agentCard',
-        position: { x: 1400, y: 0 },
-        width: 280,
-        height: 160,
-        data: {},
-      },
-    ];
-    const viewport = { left: 600, top: -40, right: 960, bottom: 320 };
-    expect(isAnyCanvasNodeVisible(nodes, viewport, 0)).toBe(false);
-    expect(
-      isCanvasRectVisible(
-        { x: 120, y: 80, width: 280, height: 160 },
-        { left: 0, top: 0, right: 600, bottom: 400 },
-        0,
-      ),
-    ).toBe(true);
-  });
-
-  it('ignores non-layout document changes when deciding whether hover should recover the viewport', () => {
-    const document: DeckDocument = {
-      id: 'deck_recovery_key',
-      name: 'Recovery Key',
-      promptTemplates: [
-        {
-          id: 'prompt_main',
-          label: 'Main Prompt',
-          prompt: 'original prompt',
-        } as any,
-      ],
-      version: 4,
-      nodes: [
-        {
-          id: 'card_main',
-          kind: 'agent',
-          templateId: 'template_main',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
-          title: 'Main',
-          subtitle: 'Original subtitle',
-          prompt: 'Original prompt',
-          position: { x: 120, y: 80 },
-        },
-      ],
-      edges: [],
-    };
-
-    const restyledDocument: DeckDocument = {
-      ...document,
-      name: 'Recovery Key Updated',
-      promptTemplates: [
-        {
-          id: 'prompt_main',
-          label: 'Main Prompt',
-          prompt: 'updated prompt',
-        } as any,
-      ],
-      nodes: [
-        {
-          ...document.nodes[0],
-          title: 'Main Updated',
-          subtitle: 'Updated subtitle',
-          prompt: 'Updated prompt',
-        },
-      ],
-    };
-
-    expect(buildCanvasDocumentRecoveryKey(restyledDocument)).toBe(buildCanvasDocumentRecoveryKey(document));
-  });
-
-  it('changes the viewport recovery key when the actual graph layout changes', () => {
-    const document: DeckDocument = {
-      id: 'deck_recovery_layout',
-      name: 'Recovery Layout',
-      promptTemplates: [],
-      version: 7,
-      nodes: [
-        {
-          id: 'card_a',
-          kind: 'agent',
-          templateId: 'template_a',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
-          title: 'A',
-          position: { x: 80, y: 80 },
-        },
-        {
-          id: 'card_b',
-          kind: 'agent',
-          templateId: 'template_b',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
-          title: 'B',
-          position: { x: 420, y: 80 },
-        },
-      ],
-      edges: [
-        {
-          id: 'edge_a_b',
-          source: 'card_a',
-          target: 'card_b',
-          edgeType: 'flow',
-        },
-      ],
-    };
-
-    const movedNodeDocument: DeckDocument = {
-      ...document,
-      nodes: [
-        {
-          ...document.nodes[0],
-          position: { x: 240, y: 80 },
-        },
-        document.nodes[1],
-      ],
-    };
-    const rewiredEdgeDocument: DeckDocument = {
-      ...document,
-      edges: [
-        {
-          ...document.edges[0],
-          target: 'card_a',
-        },
-      ],
-    };
-
-    expect(buildCanvasDocumentRecoveryKey(movedNodeDocument)).not.toBe(buildCanvasDocumentRecoveryKey(document));
-    expect(buildCanvasDocumentRecoveryKey(rewiredEdgeDocument)).not.toBe(buildCanvasDocumentRecoveryKey(document));
   });
 
   it('preserves measured node layout state during hover-only render sync', () => {
@@ -772,30 +576,6 @@ describe('BuilderCanvas runtime-truth helpers', () => {
 
     expect(edge.sourceHandle).toBe('bus-out-1');
     expect(edge.targetHandle).toBe('agent-in');
-  });
-
-  it('preserves handle fields when sanitizing deck edges', () => {
-    const edges = sanitizeDeckEdges([
-      {
-        id: 'edge_bus_worker',
-        source: 'card_magentic',
-        sourceHandle: 'bus-out-1',
-        target: 'card_worker_a',
-        targetHandle: 'agent-in',
-        edgeType: 'magentic_option',
-      },
-    ]);
-
-    expect(edges).toEqual<DeckEdge[]>([
-      {
-        id: 'edge_bus_worker',
-        source: 'card_magentic',
-        sourceHandle: 'bus-out-1',
-        target: 'card_worker_a',
-        targetHandle: 'agent-in',
-        edgeType: 'magentic_option',
-      },
-    ]);
   });
 
   it('identifies blue membership by the Card pair rather than drawing order or port', () => {

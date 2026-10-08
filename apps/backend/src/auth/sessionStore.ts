@@ -91,6 +91,3 @@ export function clearSessionCookie(res: Response, req?: Request) {
     path: '/',
   });
 }
-
-// Export for backward compatibility
-export { User };

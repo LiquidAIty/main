@@ -9,12 +9,12 @@ ThinkGraph adapter and dynamically discovered Codebase Memory and official
 Graphiti MCP registries:
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.create / card.update_configuration / canvas.upsert_wire
-                                      (handlers live in app.control_plane — Python)
+                                      (handlers live in app.application_tools — Python)
 
-Bridge tools are thin transport to the backend's Main, Card and Hermes domain routes
+Transport tools forward to the backend's Main, Card and Hermes domain routes
 endpoints on loopback — the backend remains the single authority for deck state,
-conversation store, card resolution, and graph persistence. Control tools dispatch
-to Python handlers (app/control_plane.py) which own validation/policy and use the
+conversation store, card resolution, and graph persistence. Application tools dispatch
+to Python handlers (app/application_tools.py) which own validation/policy and use the
 existing backend deck routes. No semantics,
 no fallback lives in this host.
 
@@ -50,12 +50,12 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
-# Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
-# SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
+# Bootstrap the package root onto sys.path. The service command launches this host as a
+# script (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
 # `app/` dir and the `app` package (rooted at apps/python-models) is NOT importable —
-# which broke every `from app...` control handler at call time ("No module named
+# otherwise makes every `from app...` handler fail at call time ("No module named
 # 'app'"). Adding the package root here (the ONE launch/bootstrap boundary) makes all
-# `app.*` imports resolve, for every tool. Not a per-tool sys.path hack.
+# `app.*` imports resolve for every tool. This is the one process bootstrap boundary.
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 if _PACKAGE_ROOT not in sys.path:
@@ -82,7 +82,7 @@ def _startup_source_identity() -> tuple[str, str]:
         source_sha256 = ""
     return revision, source_sha256
 
-from app.control_plane import card_tool_schema
+from app.application_tools import card_tool_schema
 from app.python_models.provider_config import ensure_env_loaded
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
@@ -165,11 +165,6 @@ _CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _PROVIDER_TOOL_TIMEOUT_SECONDS = 30.0
 _CBM_REQUEST_TIMEOUT_SECONDS = 300.0
-# The installed CBM owns a bounded 30-second cold daemon-start window. Give
-# that one application-owned attempt time to return its own result, then let
-# the catalog-family fail-open path continue startup.
-_CBM_STARTUP_TIMEOUT_SECONDS = 35.0
-_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS = 540.0
 _SPECIALIST_CARD_TOOL_TIMEOUT_SECONDS = 570.0
@@ -199,17 +194,9 @@ _PUBLIC_MCP_DESCRIPTION = (
     "Saved Cards own their configuration and granted capabilities. "
     "An accepted operation is not proof of completion; use its returned status and evidence."
 )
-_ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
-    "mcp_execution_receipt", default=None
-)
 _ACTIVE_AUTHENTICATED_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "active_authenticated_mcp_context", default=None
 )
-_GRAPHITI_PROVIDER_HEALTH_LOCK = threading.Lock()
-_GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
-    "last_success": None,
-    "last_failure": None,
-}
 _MAIN_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
 )
@@ -338,12 +325,10 @@ def _catalog_diagnostics() -> dict[str, Any]:
             current_source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
     except OSError:
         current_source_sha256 = None
-    required_families = {"liquidaity", *_PROVIDER_PREFIXES.keys()}
     catalog_ready = bool(
         state == "ready"
         and identity
-        and not unavailable_families
-        and required_families.issubset(completed_families)
+        and "liquidaity" in completed_families
     )
     return {
         "state": state,
@@ -398,23 +383,6 @@ def _catalog_identity(tools: list[Tool]) -> tuple[int, str]:
         ).encode("utf-8")
     ).hexdigest()
     return len(descriptors), digest
-
-
-def _safe_hostname(url: str) -> str:
-    try:
-        return str(urlsplit(str(url or "")).hostname or "")
-    except ValueError:
-        return ""
-
-
-def _provider_identity(configured_provider: str, base_url: str) -> str:
-    """Expose the transport provider while preserving Graphiti's client type."""
-    hostname = _safe_hostname(base_url).lower()
-    if hostname == "openrouter.ai" or hostname.endswith(".openrouter.ai"):
-        return "openrouter"
-    if hostname == "api.openai.com" or hostname.endswith(".api.openai.com"):
-        return "openai"
-    return str(configured_provider or "unknown")
 
 
 def _sanitize_failure_detail(value: Any) -> str:
@@ -599,133 +567,6 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
     }
 
 
-def _observe_provider_call(
-    *,
-    compute: str,
-    dependency: str,
-    provider: str,
-    model: str,
-    base_url: str,
-    credential_configured: bool,
-    state: str,
-    started_at: str,
-    duration_ms: int | None = None,
-    failure: dict[str, Any] | None = None,
-    usage: Any = None,
-) -> None:
-    event = {
-        "compute": compute,
-        "dependency": dependency,
-        "provider": provider,
-        "model": model,
-        "local": not bool(_safe_hostname(base_url)),
-        "baseUrlHostname": _safe_hostname(base_url),
-        "credentialConfigured": bool(credential_configured),
-        "state": state,
-        "startedAt": started_at,
-        "providerSubstitution": False,
-    }
-    if duration_ms is not None:
-        event["durationMs"] = duration_ms
-    if usage is not None:
-        event["usage"] = usage
-    if failure is not None:
-        event["failureCode"] = failure.get("failureCode")
-    receipt = _ACTIVE_EXECUTION_RECEIPT.get()
-    if receipt is not None:
-        calls = receipt.setdefault("providerCalls", [])
-        calls.append(event)
-        observed = {call.get("compute") for call in calls if call.get("compute")}
-        receipt["compute"] = next(iter(observed)) if len(observed) == 1 else "mixed"
-        receipt["providerSubstitution"] = False
-    if state in {"completed", "failed"}:
-        record = dict(event)
-        if failure is not None:
-            record["failure"] = failure
-        with _GRAPHITI_PROVIDER_HEALTH_LOCK:
-            _GRAPHITI_PROVIDER_HEALTH[
-                "last_success" if state == "completed" else "last_failure"
-            ] = record
-            _GRAPHITI_PROVIDER_HEALTH[
-                f"{dependency}:{'last_success' if state == 'completed' else 'last_failure'}"
-            ] = record
-
-
-def _instrument_graphiti_provider_client(
-    client: Any,
-    *,
-    method_names: tuple[str, ...],
-    compute: str,
-    dependency: str,
-    provider: str,
-    model: str,
-    base_url: str,
-    credential_configured: bool,
-) -> None:
-    marker = "_main_mcp_observed_methods"
-    observed = set(getattr(client, marker, set()))
-    for method_name in method_names:
-        if method_name in observed:
-            continue
-        original = getattr(client, method_name, None)
-        if not callable(original):
-            continue
-
-        async def observed_call(*args: Any, _original=original, **kwargs: Any):
-            started_clock = time.monotonic()
-            started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            _observe_provider_call(
-                compute=compute,
-                dependency=dependency,
-                provider=provider,
-                model=model,
-                base_url=base_url,
-                credential_configured=credential_configured,
-                state="started",
-                started_at=started_at,
-            )
-            try:
-                result = await _original(*args, **kwargs)
-            except Exception as error:
-                # Keep the SDK's underlying transport cause in the service log.
-                # Its public error often contains only "Connection error".
-                traceback.print_exception(error, file=sys.stderr)
-                failure = _typed_failure(error, dependency=dependency)
-                _observe_provider_call(
-                    compute=compute,
-                    dependency=dependency,
-                    provider=provider,
-                    model=model,
-                    base_url=base_url,
-                    credential_configured=credential_configured,
-                    state="failed",
-                    started_at=started_at,
-                    duration_ms=int((time.monotonic() - started_clock) * 1000),
-                    failure=failure,
-                )
-                raise
-            usage = getattr(result, "usage", None)
-            if hasattr(usage, "model_dump"):
-                usage = usage.model_dump(exclude_none=True)
-            _observe_provider_call(
-                compute=compute,
-                dependency=dependency,
-                provider=provider,
-                model=model,
-                base_url=base_url,
-                credential_configured=credential_configured,
-                state="completed",
-                started_at=started_at,
-                duration_ms=int((time.monotonic() - started_clock) * 1000),
-                usage=usage,
-            )
-            return result
-
-        setattr(client, method_name, observed_call)
-        observed.add(method_name)
-    setattr(client, marker, observed)
-
-
 @dataclass(frozen=True)
 class OAuthConfig:
     resource_url: str
@@ -864,7 +705,7 @@ def _request_tool_is_allowed(name: str) -> bool:
     }
 
 
-class AgentRuntimeServer(Server):
+class ToolChangeNotificationServer(Server):
     def create_initialization_options(
         self,
         notification_options: NotificationOptions | None = None,
@@ -881,8 +722,6 @@ class AgentRuntimeServer(Server):
 _CBM_CLIENT: Client | None = None
 _CBM_TOOLS: tuple[Tool, ...] | None = None
 _CBM_NAMES: frozenset[str] = frozenset()
-_CBM_SERVER_INFO: dict[str, Any] = {}
-_CBM_CODEGRAPH_DIAGNOSTICS: dict[str, Any] = {}
 _CBM_STARTUP_FAILURE: str | None = None
 _CBM_INDEX_IN_FLIGHT: tuple[str, asyncio.Task[CallToolResult]] | None = None
 _CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
@@ -1203,14 +1042,6 @@ def _graphiti_config():
     )
 
 
-def _graphiti_provider_settings(section: Any) -> Any:
-    provider_name = str(section.provider).lower()
-    settings = getattr(section.providers, provider_name, None)
-    if settings is None:
-        raise RuntimeError(f"graphiti_provider_configuration_missing:{provider_name}")
-    return settings
-
-
 async def _initialize_graphiti() -> None:
     """Discover the Graphiti catalog without opening provider connections."""
     global _GRAPHITI_MODULE, _GRAPHITI_NAMES, _GRAPHITI_TOOLS
@@ -1299,45 +1130,6 @@ async def _ensure_graphiti_service() -> None:
             graphiti_module_ref.graphiti_client = await graphiti_module_ref.graphiti_service.get_client()
             graphiti_module_ref.semaphore = graphiti_module_ref.graphiti_service.semaphore
             await graphiti_module_ref.queue_service.initialize(graphiti_module_ref.graphiti_client)
-            llm_provider = _graphiti_provider_settings(graphiti_module_ref.config.llm)
-            embedder_provider = _graphiti_provider_settings(graphiti_module_ref.config.embedder)
-            _instrument_graphiti_provider_client(
-                graphiti_module_ref.graphiti_client.llm_client,
-                method_names=("generate_response",),
-                compute="api_llm",
-                dependency="graphiti_llm",
-                provider=_provider_identity(
-                    str(graphiti_module_ref.config.llm.provider), str(llm_provider.api_url or "")
-                ),
-                model=str(graphiti_module_ref.config.llm.model),
-                base_url=str(llm_provider.api_url or ""),
-                credential_configured=bool(llm_provider.api_key),
-            )
-            _instrument_graphiti_provider_client(
-                graphiti_module_ref.graphiti_client.embedder,
-                method_names=("create", "create_batch"),
-                compute="api_embedding",
-                dependency="graphiti_embedding",
-                provider=_provider_identity(
-                    str(graphiti_module_ref.config.embedder.provider),
-                    str(embedder_provider.api_url or ""),
-                ),
-                model=str(graphiti_module_ref.config.embedder.model),
-                base_url=str(embedder_provider.api_url or ""),
-                credential_configured=bool(embedder_provider.api_key),
-            )
-            _instrument_graphiti_provider_client(
-                graphiti_module_ref.graphiti_client.cross_encoder,
-                method_names=("rank",),
-                compute="api_llm",
-                dependency="graphiti_reranker",
-                provider=_provider_identity(
-                    str(graphiti_module_ref.config.llm.provider), str(llm_provider.api_url or "")
-                ),
-                model=str(graphiti_module_ref.config.llm.model),
-                base_url=str(llm_provider.api_url or ""),
-                credential_configured=bool(llm_provider.api_key),
-            )
         except BaseException as error:
             client = getattr(graphiti_module_ref, "graphiti_client", None)
             close = getattr(getattr(client, "driver", None), "close", None)
@@ -1556,7 +1348,7 @@ async def _open_cbm_client(
     command: str,
     args: list[str],
     cwd: str,
-) -> tuple[Client, tuple[Tool, ...], list[str], dict[str, Any]]:
+) -> tuple[Client, tuple[Tool, ...], list[str]]:
     """Open the one CBM frontend through the official SDK v2 client."""
     client = Client(
         StdioServerParameters(command=command, args=args, cwd=cwd),
@@ -1584,13 +1376,7 @@ async def _open_cbm_client(
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)):
             raise RuntimeError("cbm_duplicate_tool_name")
-        server_info_value = client.server_info
-        server_info = (
-            server_info_value.model_dump(by_alias=True, exclude_none=True)
-            if server_info_value is not None
-            else {}
-        )
-        return client, tuple(tools), names, server_info
+        return client, tuple(tools), names
     except Exception:
         await client.__aexit__(*sys.exc_info())
         raise
@@ -1598,27 +1384,19 @@ async def _open_cbm_client(
 
 async def _start_cbm_client() -> None:
     """Enter the SDK client once from the owning server-lifespan task."""
-    global _CBM_CLIENT, _CBM_CODEGRAPH_DIAGNOSTICS, _CBM_NAMES
-    global _CBM_SERVER_INFO, _CBM_STARTUP_FAILURE, _CBM_TOOLS
+    global _CBM_CLIENT, _CBM_NAMES, _CBM_STARTUP_FAILURE, _CBM_TOOLS
     if _CBM_CLIENT is not None and _CBM_TOOLS is not None:
         return
     command, args, cwd = _cbm_config()
     try:
-        client, tools, names, server_info = await _open_cbm_client(command, args, cwd)
+        client, tools, names = await _open_cbm_client(command, args, cwd)
     except Exception as error:
         _CBM_STARTUP_FAILURE = f"{error.__class__.__name__}: {error}"
         raise
     _CBM_CLIENT = client
     _CBM_TOOLS = tools
     _CBM_NAMES = frozenset(names)
-    _CBM_SERVER_INFO = server_info
     _CBM_STARTUP_FAILURE = None
-    try:
-        _CBM_CODEGRAPH_DIAGNOSTICS = await _read_cbm_codegraph_diagnostics(client)
-    except Exception as error:
-        _CBM_CODEGRAPH_DIAGNOSTICS = {
-            "cbmFailure": f"{error.__class__.__name__}: {error}",
-        }
 
 
 async def _cbm_tools() -> list[Tool]:
@@ -1669,185 +1447,14 @@ async def _call_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
 
 
 async def _close_cbm() -> None:
-    global _CBM_CLIENT, _CBM_CODEGRAPH_DIAGNOSTICS, _CBM_NAMES
-    global _CBM_SERVER_INFO, _CBM_STARTUP_FAILURE, _CBM_TOOLS
+    global _CBM_CLIENT, _CBM_NAMES, _CBM_STARTUP_FAILURE, _CBM_TOOLS
     client = _CBM_CLIENT
     _CBM_CLIENT = None
     _CBM_TOOLS = None
     _CBM_NAMES = frozenset()
-    _CBM_SERVER_INFO = {}
-    _CBM_CODEGRAPH_DIAGNOSTICS = {}
     _CBM_STARTUP_FAILURE = None
     if client is not None:
         await client.__aexit__(None, None, None)
-
-
-def _mcp_result_payload(result: CallToolResult) -> dict[str, Any]:
-    if result.is_error:
-        detail = next(
-            (
-                block.text
-                for block in result.content
-                if isinstance(block, TextContent) and block.text
-            ),
-            "cbm_tool_error",
-        )
-        raise RuntimeError(detail)
-    structured = result.structured_content
-    if isinstance(structured, dict):
-        payload = structured.get("result", structured)
-        if isinstance(payload, dict):
-            return payload
-    for block in result.content:
-        if not isinstance(block, TextContent) or not block.text:
-            continue
-        try:
-            payload = json.loads(block.text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            return payload
-    raise RuntimeError("cbm_health_payload_invalid")
-
-
-def _host_codegraph_runtime() -> dict[str, Any]:
-    binary_path, _, _ = _cbm_config()
-    binary_exists = os.path.isfile(binary_path)
-    binary_ready = binary_exists
-    return {
-        "runtimeReady": binary_ready,
-        "runtimeState": "ready" if binary_ready else "missing",
-        "binaryPath": binary_path,
-        "binaryReady": binary_ready,
-        "binaryState": "ready" if binary_ready else "missing",
-    }
-
-
-def _project_count(payload: dict[str, Any], *keys: str) -> int:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, (int, float)):
-            return int(value)
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
-    return 0
-
-
-async def _read_cbm_codegraph_diagnostics(client: Client) -> dict[str, Any]:
-    """Read project/index state through the already-open official SDK client."""
-    diagnostics: dict[str, Any] = {
-        "daemonAttached": True,
-        "daemonState": "attached",
-        "cbmFrontendAttached": True,
-        "cbmFrontendState": "attached",
-    }
-    projects = _mcp_result_payload(await client.call_tool(
-        "list_projects",
-        {"format": "json", "detail": "stats"},
-        read_timeout_seconds=_CBM_HEALTH_TIMEOUT_SECONDS,
-    ))
-    rows = projects.get("projects")
-    project = next(
-        (
-            row
-            for row in rows
-            if isinstance(row, dict) and row.get("name") == _CBM_PROJECT
-        ),
-        None,
-    ) if isinstance(rows, list) else None
-    if project is None:
-        return diagnostics
-    root_path = str(project.get("root_path") or project.get("rootPath") or "")
-    diagnostics["projectRoot"] = root_path
-    diagnostics["canonicalProjectRegistered"] = (
-        os.path.normcase(os.path.normpath(root_path))
-        == os.path.normcase(_CBM_HOST_REPO_ROOT)
-    )
-    diagnostics["projectState"] = (
-        "registered" if diagnostics["canonicalProjectRegistered"] else "wrong_root"
-    )
-    status = _mcp_result_payload(await client.call_tool(
-        "index_status",
-        {"project": _CBM_PROJECT, "format": "json"},
-        read_timeout_seconds=_CBM_HEALTH_TIMEOUT_SECONDS,
-    ))
-    status_name = str(status.get("status") or "").strip().lower()
-    nodes = _project_count(status, "nodes", "node_count", "nodeCount") or _project_count(
-        project, "nodes", "node_count", "nodeCount"
-    )
-    edges = _project_count(status, "edges", "edge_count", "edgeCount") or _project_count(
-        project, "edges", "edge_count", "edgeCount"
-    )
-    diagnostics["indexStatus"] = status_name
-    diagnostics["indexNodes"] = nodes
-    diagnostics["indexEdges"] = edges
-    for source_key, target_key in (
-        ("generation", "indexGeneration"),
-        ("revision", "indexRevision"),
-        ("indexed_at", "indexedAt"),
-        ("indexedAt", "indexedAt"),
-    ):
-        if status.get(source_key) is not None:
-            diagnostics[target_key] = status[source_key]
-    diagnostics["indexReady"] = status_name == "ready" and nodes > 0 and edges > 0
-    diagnostics["indexState"] = "ready" if diagnostics["indexReady"] else (
-        status_name or "not_ready"
-    )
-    return diagnostics
-
-
-def _codegraph_diagnostics() -> dict[str, Any]:
-    diagnostics: dict[str, Any] = {
-        "runtimeReady": False,
-        "runtimeState": "unavailable",
-        "binaryReady": False,
-        "binaryState": "unavailable",
-        "binaryVersion": "",
-        "binaryPath": _cbm_config()[0],
-        "daemonAttached": False,
-        "daemonState": "unattached",
-        "cbmFrontendAttached": False,
-        "cbmFrontendState": "unattached",
-        "canonicalProjectRegistered": False,
-        "projectState": "missing",
-        "indexReady": False,
-        "indexState": "missing",
-        "codeGraphReady": False,
-    }
-    try:
-        diagnostics.update(_host_codegraph_runtime())
-    except Exception as error:
-        diagnostics["runtimeFailure"] = str(error)
-
-    if _CBM_CLIENT is None:
-        return diagnostics
-
-    diagnostics["cbmFrontendAttached"] = True
-    diagnostics["cbmFrontendState"] = "attached"
-    server_name = str(_CBM_SERVER_INFO.get("name") or "")
-    binary_version = str(_CBM_SERVER_INFO.get("version") or "")
-    diagnostics["binaryVersion"] = binary_version
-    diagnostics["binaryReady"] = server_name == "codebase-memory-mcp"
-    if diagnostics["binaryReady"]:
-        diagnostics["binaryState"] = "ready"
-    else:
-        diagnostics["binaryState"] = "identity_mismatch"
-    diagnostics.update(_CBM_CODEGRAPH_DIAGNOSTICS)
-
-    diagnostics["codeGraphReady"] = all(
-        bool(diagnostics[key])
-        for key in (
-            "runtimeReady",
-            "binaryReady",
-            "daemonAttached",
-            "cbmFrontendAttached",
-            "canonicalProjectRegistered",
-            "indexReady",
-        )
-    )
-    return diagnostics
 
 
 def _backend_bridge_timeout_seconds(path: str) -> float:
@@ -2141,41 +1748,6 @@ def _grounded_data_anchors_schema() -> dict[str, Any]:
     }
 
 
-def _card_team_schema() -> dict[str, Any]:
-    model = {
-        "type": "object",
-        "properties": {
-            "provider": {"type": "string", "minLength": 1},
-            "accessMode": {
-                "type": "string",
-                "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
-            },
-            "modelKey": {"type": "string", "minLength": 1},
-            "providerModelId": {"type": "string", "minLength": 1},
-        },
-        "required": ["provider", "accessMode", "modelKey", "providerModelId"],
-        "additionalProperties": False,
-    }
-    return {
-        "type": "object",
-        "description": (
-            "Saved Hermes Team defaults and ceilings. Hermes decides whether and "
-            "when to invoke Team; Python Script cannot invoke it."
-        ),
-        "properties": {
-            "mode": {"type": "string", "enum": ["off", "auto"]},
-            "maxWorkers": {"type": "integer", "enum": [2, 3, 4]},
-            "retryLimit": {"type": "integer", "minimum": 0, "maximum": 4},
-            "workerModel": copy.deepcopy(model),
-            "leadModel": copy.deepcopy(model),
-        },
-        "required": [
-            "mode", "maxWorkers", "retryLimit", "workerModel", "leadModel",
-        ],
-        "additionalProperties": False,
-    }
-
-
 def _application_tools() -> list[Tool]:
     return [
         Tool(
@@ -2292,16 +1864,14 @@ def _application_tools() -> list[Tool]:
                 "Card relationships plus available run, lineage, "
                 "tool, and artifact telemetry. runId selects one exact Run; otherwise the "
                 "authenticated conversation is selected. cardId filters its direct Runs. "
-                "projectWide reads across the authenticated Project, before limits. The retired "
-                "assignmentId field is accepted only to report honestly that it is no longer "
-                "a current AgentGraph identity. No prompt or model input is returned."
+                "projectWide reads across the authenticated Project, before limits. "
+                "No prompt or model input is returned."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "runId": {"type": "string"},
                     "cardId": {"type": "string"},
-                    "assignmentId": {"type": "string"},
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
@@ -2964,7 +2534,6 @@ def _catalog_or_error() -> list[Tool]:
         failure = _CATALOG_FAILURE
         tools = _CATALOG_TOOLS
         completed_families = set(_CATALOG_COMPLETED_FAMILIES)
-        unavailable_families = tuple(_CATALOG_UNAVAILABLE_FAMILIES)
     if state == "initializing":
         raise RuntimeError("mcp_catalog_initializing")
     if state == "failed":
@@ -2973,13 +2542,8 @@ def _catalog_or_error() -> list[Tool]:
         )
     if state != "ready" or tools is None:
         raise RuntimeError("mcp_catalog_readiness_invalid")
-    required_families = {"liquidaity", *_PROVIDER_PREFIXES.keys()}
-    missing_families = sorted(required_families - completed_families)
-    if unavailable_families or missing_families:
-        detail = unavailable_families or tuple(missing_families)
-        raise RuntimeError(
-            "mcp_catalog_incomplete:" + ",".join(detail)
-        )
+    if "liquidaity" not in completed_families:
+        raise RuntimeError("mcp_catalog_incomplete:liquidaity")
     return list(tools)
 
 
@@ -3106,7 +2670,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "conversationId",
         "runId",
         "cardId",
-        "assignmentId",
         "limit",
         "projectWide",
     },
@@ -3157,10 +2720,8 @@ for _trading_name in (
 ):
     _ALLOWED_KEYS[_trading_name].update({"projectId", "deckId", "_sourceRunId"})
 
-_BRIDGE_PATHS: dict[str, str] = {}
-
-# Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
-# Imported lazily so bridge-only usage never requires the psycopg dependency chain.
+# Application tools dispatch to their Python handlers (app/application_tools.py).
+# Imported lazily so catalog discovery does not require the psycopg dependency chain.
 _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "agentgraph.inspect": "agentgraph_inspect",
     "canvas.inspect": "canvas_inspect",
@@ -3193,7 +2754,7 @@ async def _dispatch_tool(
             return await _call_cbm(provider_tool_name, provider_arguments)
     if name.startswith(_PROVIDER_PREFIXES["graphiti"]):
         await _initialize_graphiti()
-        provider_tools = await _graphiti_tools()
+        await _graphiti_tools()
         provider_tool_name = name.removeprefix(_PROVIDER_PREFIXES["graphiti"])
         if provider_tool_name in _GRAPHITI_NAMES:
             from app.python_models.tool_registry import operation_definition
@@ -3614,17 +3175,17 @@ async def _dispatch_tool(
             }))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
-        from app import control_plane
+        from app import application_tools
 
         try:
             result = await (
-                control_plane.card_create(
+                application_tools.card_create(
                     args,
                     caller_card_id=caller_card_id,
                 )
                 if name == "card.create"
                 else
-                control_plane.card_update_configuration(
+                application_tools.card_update_configuration(
                     args,
                     authenticated_user_edit=bool(
                         context is not None
@@ -3635,15 +3196,15 @@ async def _dispatch_tool(
                 )
                 if name == "card.update_configuration"
                 else
-                control_plane.canvas_inspect(
+                application_tools.canvas_inspect(
                     args,
                     caller_card_id=caller_card_id,
                 )
                 if name == "canvas.inspect"
-                else getattr(control_plane, handler_name)(args)
+                else getattr(application_tools, handler_name)(args)
             )
             return [TextContent(type="text", text=json.dumps(result))]
-        except control_plane.ControlPlaneError as err:
+        except application_tools.ApplicationToolError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     if DEFAULT_TOOL_REGISTRY.spec(name) is not None:
         try:
@@ -3671,7 +3232,7 @@ async def _dispatch_tool(
             return [TextContent(type="text", text=json.dumps({
                 "ok": False, "error": str(error),
             }))]
-    return await _bridge(_BRIDGE_PATHS[name], args)
+    raise KeyError(f"configured_tool_unknown:{name}")
 
 
 def _tool_result_category(result: Any) -> str:
@@ -3699,55 +3260,6 @@ def _tool_result_category(result: Any) -> str:
     return "success"
 
 
-def _execution_receipt(name: str, transport: str = "mcp") -> dict[str, Any]:
-    return {
-        "schema": "agent-runtime.execution-receipt.v1",
-        "tool": name,
-        "correlationId": f"{transport}:{uuid4()}",
-        "operationPhase": "dispatch",
-        "local": True,
-        "startedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "state": "running",
-        "providerSubstitution": False,
-        "providerCalls": [],
-    }
-
-
-def _failure_code_from_result(result: Any) -> str | None:
-    blocks = result.content if isinstance(result, CallToolResult) else result
-    if not isinstance(blocks, list):
-        return None
-    for block in blocks:
-        try:
-            payload = json.loads(str(getattr(block, "text", "") or ""))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, dict):
-            failure = payload.get("failureCode") or payload.get("error")
-            if failure:
-                return str(failure)[:160]
-    return None
-
-
-def _without_model_visible_runtime_observation(result: Any) -> Any:
-    """Keep runtime observations internal while preserving the actual tool result."""
-
-    if not isinstance(result, CallToolResult) or not result.meta:
-        return result
-    remaining = {
-        key: value
-        for key, value in result.meta.items()
-        if key != "executionReceipt"
-    }
-    if len(remaining) == len(result.meta):
-        return result
-    payload = result.model_dump(exclude_none=True)
-    payload.pop("meta", None)
-    if remaining:
-        payload["_meta"] = remaining
-    return CallToolResult.model_validate(payload)
-
-
 def _mcp_tool_timeout_seconds(name: str) -> float:
     if name in {"thinkgraph.reason", "knowgraph.research"}:
         return _SPECIALIST_CARD_TOOL_TIMEOUT_SECONDS
@@ -3769,11 +3281,8 @@ async def _execute_tool_request(
     granted_tools: set[str] | None,
     transport: str,
 ) -> Any:
-    started_clock = time.monotonic()
     context_token = _ACTIVE_AUTHENTICATED_CONTEXT.set(authenticated_context)
     tool_name = str(name or "").strip()
-    receipt = _execution_receipt(tool_name, transport)
-    receipt_token = _ACTIVE_EXECUTION_RECEIPT.set(receipt)
     trace_fields = {
         "tool_transport": transport,
         "tool_name": tool_name[:160],
@@ -3793,11 +3302,6 @@ async def _execute_tool_request(
             timeout=_mcp_tool_timeout_seconds(tool_name),
         )
         result_category = _tool_result_category(result)
-        receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
-        receipt["state"] = "failed" if result_category == "tool_error" else "completed"
-        receipt["failureCode"] = (
-            _failure_code_from_result(result) if result_category == "tool_error" else None
-        )
         _trace(
             "tool_call_completed",
             **trace_fields,
@@ -3807,15 +3311,12 @@ async def _execute_tool_request(
         )
         if result_category == "tool_error" and isinstance(result, list):
             result = CallToolResult(content=result, isError=True)
-        return _without_model_visible_runtime_observation(result)
+        return result
     except Exception as error:
-        receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
-        receipt["state"] = "failed"
         failure = _typed_failure(
             error,
             dependency="mcp" if transport == "mcp" else "tool-runtime",
         )
-        receipt["failureCode"] = failure.get("failureCode")
         _trace(
             "tool_call_failed",
             **trace_fields,
@@ -3843,9 +3344,8 @@ async def _execute_tool_request(
             ],
             isError=True,
         )
-        return _without_model_visible_runtime_observation(result)
+        return result
     finally:
-        _ACTIVE_EXECUTION_RECEIPT.reset(receipt_token)
         _ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)
 
 
@@ -3892,7 +3392,7 @@ async def _server_call_tool(
     raise RuntimeError(f"mcp_tool_result_invalid:{params.name}")
 
 
-server = AgentRuntimeServer(
+server = ToolChangeNotificationServer(
     _PUBLIC_MCP_NAME,
     version=_MCP_IMPLEMENTATION_VERSION,
     description=_PUBLIC_MCP_DESCRIPTION,

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { pool } from '../db/pool';
 import { requireOwnedProject } from './projectAccess';
 import { isLoopbackSocketRequest } from '../security/requestAccess';
-import { internalMcpBridgeSecretAuthorized } from '../services/mcp/internalMcpAuth';
+import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 
 const DEFAULT_GLOBE_URL = 'http://127.0.0.1:4174';
 
@@ -517,7 +517,7 @@ export function createWorldviewInternalRouter({
   const router = Router();
   router.post('/internal/actions', async (req, res) => {
     if (!isLoopbackSocketRequest(req)
-      || !internalMcpBridgeSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
+      || !internalMcpProcessSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
       return res.status(403).json({ ok: false, error: 'worldview_action_authorization_required' });
     }
     const action = actionRequest(req.body);

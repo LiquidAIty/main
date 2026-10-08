@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
-  GraphProjectionEdge,
   GraphProjectionNode,
   GraphProjectionV1,
 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';

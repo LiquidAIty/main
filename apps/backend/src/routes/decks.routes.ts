@@ -10,7 +10,7 @@ import {
   attachSavedCardToProject,
   discardFreshMembership,
   listSavedCardsForProject,
-} from '../services/agentBuilderStore';
+} from '../services/projectStore';
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();

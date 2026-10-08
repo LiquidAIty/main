@@ -16,8 +16,9 @@ It is an inventory, not runtime authority.
 - Imported into LiquidAIty by repository commit:
   `68b2014e7dbdf502d176e36fc4817a857ae1ce2c`
 
-The comparison source retained at `../oldHermes` is evidence only. Production
-must not import it, launch it, read its profile state, or use it as a fallback.
+Git history is the comparison authority for the deleted former Hermes tree.
+Production must not recreate, import, launch, or use that superseded tree as a
+profile source or fallback.
 
 ## Integration patch 1: Codex App Server experimental Dynamic Tools
 
@@ -146,8 +147,8 @@ dispatcher, worker, retry, and result owner.
 
 | File | Symbols | Purpose |
 | --- | --- | --- |
-| `hermes_cli/kanban_team.py` | `TEAM_WORKFLOW_ID`, `TEAM_DECOMPOSITION_STEP`, `TEAM_WORKER_STEP`, `TEAM_SYNTHESIS_STEP`, `profile_task_mode`, `is_team_profile`, `team_profile_policy`, `create_team_root`, `activate_staged_team_root`, `record_decomposition_failure` | The existing LiquidAIty AutoTeam workflow copied from `oldHermes` without redesign. |
-| `tests/hermes_cli/test_kanban_team.py` | complete test module | The existing AutoTeam behavior contract copied from `oldHermes`. |
+| `hermes_cli/kanban_team.py` | `TEAM_WORKFLOW_ID`, `TEAM_DECOMPOSITION_STEP`, `TEAM_WORKER_STEP`, `TEAM_SYNTHESIS_STEP`, `profile_task_mode`, `is_team_profile`, `team_profile_policy`, `create_team_root`, `activate_staged_team_root`, `record_decomposition_failure` | The existing LiquidAIty AutoTeam workflow migrated from the former Hermes comparison tree without redesign. |
+| `tests/hermes_cli/test_kanban_team.py` | complete test module | The migrated AutoTeam behavior contract. |
 
 ### Compatibility hunks in upstream files
 
@@ -255,10 +256,10 @@ results must therefore be reported separately from upstream-script parity.
    production tree.
 5. Resolve only unavoidable upstream API conflicts. Record every such
    compatibility choice in this file; never replace newer upstream files
-   wholesale with `oldHermes` versions.
+   wholesale with historical snapshots from Git.
 6. Run upstream Kanban tests first, then the two extension-family tests, then
    LiquidAIty adapter and real-product proof.
 7. Update the pinned revision only after the clean apply-check and focused
    proof pass.
-8. Keep `oldHermes` comparison-only until its authorized filesystem deletion
-   can complete; Git history remains the long-term comparison source.
+8. Use Git history as the long-term comparison source. Do not recreate a second
+   Hermes source tree beside `HermesLatest`.

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // WorldSignals runs as its own FastAPI application (vendored under
-// worldsignal/Shadowbroker-main, started by its own docker-compose). LiquidAIty
+// agent-products/shadowbroker, started by its own docker-compose). LiquidAIty
 // renders its frontend in-process from a built module — see
 // client/src/components/worldsignal/WorldSignalSurface.tsx — so the backend is
 // the only part of that stack this product path depends on. Compose still runs
@@ -24,7 +24,7 @@ async function reachable(url: string): Promise<boolean> {
 function resolveRuntimeDir(): string | null {
   let current = path.resolve(process.cwd());
   for (let depth = 0; depth < 9; depth += 1) {
-    const candidate = path.join(current, 'worldsignal', 'Shadowbroker-main');
+    const candidate = path.join(current, 'agent-products', 'shadowbroker');
     if (fs.existsSync(path.join(candidate, 'docker-compose.yml'))) return candidate;
     const parent = path.dirname(current);
     if (parent === current) break;

@@ -199,18 +199,6 @@ def test_engraphis_smart_result_preserves_python_rails_payload(monkeypatch):
     assert result.is_error is False
 
 
-def test_card_team_schema_exposes_only_proven_saved_fields():
-    import mcp_host
-
-    schema = mcp_host._card_team_schema()
-    assert set(schema["properties"]) == {
-        "mode", "maxWorkers", "retryLimit", "workerModel", "leadModel",
-    }
-    assert schema["properties"]["mode"]["enum"] == ["off", "auto"]
-    assert schema["properties"]["maxWorkers"]["enum"] == [2, 3, 4]
-    assert "concurrency" not in schema["properties"]
-
-
 def test_canvas_wire_catalog_preserves_supported_fields_without_provider_discovery(monkeypatch):
     import asyncio
     import jsonschema
@@ -243,42 +231,6 @@ def test_canvas_wire_catalog_preserves_supported_fields_without_provider_discove
     assert wire_tool.meta['liquidaitySource']['serverInjectedArguments'] == [
         'deckId', 'projectId',
     ]
-
-
-def test_execution_receipt_observes_the_actual_provider_client_boundary():
-    import asyncio
-    import mcp_host
-
-    class ProviderClient:
-        async def generate_response(self, *_args, **_kwargs):
-            return SimpleNamespace(usage={"input_tokens": 2, "output_tokens": 1})
-
-    client = ProviderClient()
-    receipt = mcp_host._execution_receipt("graphiti.search_nodes")
-    token = mcp_host._ACTIVE_EXECUTION_RECEIPT.set(receipt)
-    try:
-        mcp_host._instrument_graphiti_provider_client(
-            client,
-            method_names=("generate_response",),
-            compute="api_llm",
-            dependency="graphiti_llm",
-            provider="openai",
-            model="openai/test-model",
-            base_url="https://openrouter.ai/api/v1",
-            credential_configured=True,
-        )
-        asyncio.run(client.generate_response("bounded prompt"))
-    finally:
-        mcp_host._ACTIVE_EXECUTION_RECEIPT.reset(token)
-
-    assert receipt["compute"] == "api_llm"
-    assert [call["state"] for call in receipt["providerCalls"]] == [
-        "started",
-        "completed",
-    ]
-    assert receipt["providerCalls"][-1]["baseUrlHostname"] == "openrouter.ai"
-    assert receipt["providerCalls"][-1]["credentialConfigured"] is True
-    assert receipt["providerSubstitution"] is False
 
 
 def test_caller_enforcement_reads_explicit_registry_permissions():
@@ -1174,7 +1126,7 @@ def test_canonical_catalog_is_identical_for_every_mcp_principal(monkeypatch):
 def test_builder_update_uses_explicit_target_and_revisions_with_saved_grants(monkeypatch):
     import asyncio
     import mcp_host
-    from app import control_plane
+    from app import application_tools
     observed = []
     async def update(args, **authority):
         observed.append((dict(args), dict(authority)))
@@ -1185,7 +1137,7 @@ def test_builder_update_uses_explicit_target_and_revisions_with_saved_grants(mon
         "callerRuntimeMode": "delegate", "principalKind": "card-runtime",
         "grantedTools": ["card.update_configuration"],
     })
-    monkeypatch.setattr(control_plane, "card_update_configuration", update)
+    monkeypatch.setattr(application_tools, "card_update_configuration", update)
     args = {"cardId": "selected", "expectedRevision": "deck-revision-one",
             "expectedCardRevisionId": "selected-revision", "updates": {"prompt": "New prompt"}}
     result = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", args))
@@ -1201,7 +1153,7 @@ def test_builder_update_uses_explicit_target_and_revisions_with_saved_grants(mon
 def test_external_card_edit_uses_authenticated_context_not_caller_arguments(monkeypatch):
     import asyncio
     import mcp_host
-    from app import control_plane
+    from app import application_tools
     observed = []
     async def update(args, **authority):
         observed.append((args, authority))
@@ -1211,7 +1163,7 @@ def test_external_card_edit_uses_authenticated_context_not_caller_arguments(monk
         "projectId": "p", "deckId": "deck_builder", "mainCardId": "main",
         "conversationId": "c", "parentRunId": "r",
     })
-    monkeypatch.setattr(control_plane, "card_update_configuration", update)
+    monkeypatch.setattr(application_tools, "card_update_configuration", update)
     result = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", {
         "cardId": "main", "updates": {"prompt": "Updated instructions"},
     }))
@@ -1330,7 +1282,7 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
 ):
     import asyncio
     import mcp_host
-    from app import control_plane
+    from app import application_tools
     from mcp.server.auth.provider import AccessToken
 
     context = {
@@ -1364,7 +1316,7 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
         calls.append(arguments)
         return {"ok": True, "cards": []}
 
-    monkeypatch.setattr(control_plane, "canvas_inspect", inspect_cards)
+    monkeypatch.setattr(application_tools, "canvas_inspect", inspect_cards)
     result = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
 
     assert json.loads(result[0].text) == {"ok": True, "cards": []}
@@ -1378,7 +1330,7 @@ def test_agentgraph_staging_and_mag_one_dispatch_use_current_python_owners(
 ):
     import asyncio
     import mcp_host
-    from app import control_plane
+    from app import application_tools
     from app.python_models import card_domain, magentic_execution
 
     context = {
@@ -1399,7 +1351,7 @@ def test_agentgraph_staging_and_mag_one_dispatch_use_current_python_owners(
         calls.append((path, dict(payload)))
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
 
-    monkeypatch.setattr(control_plane, "agentgraph_inspect", inspect)
+    monkeypatch.setattr(application_tools, "agentgraph_inspect", inspect)
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
 
     async def load_instructions(args):
@@ -1441,8 +1393,8 @@ def test_agentgraph_staging_and_mag_one_dispatch_use_current_python_owners(
             "resolved": True, "ready": True, "persisted": False, "started": False,
         }
 
-    monkeypatch.setattr(control_plane, "write_mag_one_instructions", load_instructions)
-    monkeypatch.setattr(control_plane, "card_load_graph_references", load_graph)
+    monkeypatch.setattr(application_tools, "write_mag_one_instructions", load_instructions)
+    monkeypatch.setattr(application_tools, "card_load_graph_references", load_graph)
     monkeypatch.setattr(
         card_domain,
         "resolve_magentic_target_card",
@@ -2829,10 +2781,11 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     )
     assert mcp_host._CATALOG_INITIALIZING_FAMILY is None
     diagnostics = mcp_host._catalog_diagnostics()
-    assert diagnostics["catalogReady"] is False
+    assert diagnostics["catalogReady"] is True
     assert diagnostics["unavailableCatalogFamilies"] == ["cbm"]
-    with pytest.raises(RuntimeError, match="mcp_catalog_incomplete:cbm"):
-        asyncio.run(mcp_host.list_tools())
+    listed = asyncio.run(mcp_host.list_tools())
+    assert listed
+    assert not any(tool.name.startswith("cbm.") for tool in listed)
     assert any(
         event == "catalog_family_unavailable"
         and fields["catalog_family"] == "cbm"
@@ -2887,11 +2840,6 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     monkeypatch.setattr(mcp_host, "_close_graphiti", closed_graphiti)
     monkeypatch.setattr(mcp_host, "_start_cbm_client", no_cbm)
     monkeypatch.setattr(mcp_host, "_close_cbm", no_cbm)
-    monkeypatch.setattr(
-        mcp_host,
-        "_codegraph_diagnostics",
-        lambda: {"codeGraphReady": False},
-    )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
@@ -3026,13 +2974,7 @@ def test_cbm_lifespan_uses_one_official_sdk_client_and_closes_once(monkeypatch):
 
     async def open_client(command, args, cwd):
         opens.append((command, list(args), cwd))
-        return client, (provider_tool,), ["list_projects"], {
-            "name": "codebase-memory-mcp",
-            "version": "current",
-        }
-
-    async def diagnostics(_client):
-        return {"indexReady": True}
+        return client, (provider_tool,), ["list_projects"]
 
     monkeypatch.setattr(mcp_host, "_CBM_CLIENT", None)
     monkeypatch.setattr(mcp_host, "_CBM_TOOLS", None)
@@ -3043,7 +2985,6 @@ def test_cbm_lifespan_uses_one_official_sdk_client_and_closes_once(monkeypatch):
         lambda: ("cbm", ["--stdio"], r"C:\Projects\main"),
     )
     monkeypatch.setattr(mcp_host, "_open_cbm_client", open_client)
-    monkeypatch.setattr(mcp_host, "_read_cbm_codegraph_diagnostics", diagnostics)
 
     async def check():
         await mcp_host._start_cbm_client()
@@ -3072,90 +3013,6 @@ def test_http_mcp_resolves_the_current_official_command_from_path():
     assert os.path.basename(command).lower() == "codebase-memory-mcp.exe"
     assert args == []
     assert cwd == mcp_host._CBM_HOST_REPO_ROOT
-
-
-def test_codegraph_readiness_uses_the_existing_frontend_and_cbm_project_state(monkeypatch):
-    import mcp_host
-
-    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", object())
-    monkeypatch.setattr(
-        mcp_host,
-        "_CBM_SERVER_INFO",
-        {"name": "codebase-memory-mcp", "version": "current"},
-    )
-    monkeypatch.setattr(mcp_host, "_CBM_CODEGRAPH_DIAGNOSTICS", {
-        "daemonAttached": True,
-        "daemonState": "attached",
-        "cbmFrontendAttached": True,
-        "cbmFrontendState": "attached",
-        "canonicalProjectRegistered": True,
-        "projectState": "registered",
-        "indexReady": True,
-        "indexState": "ready",
-        "indexGeneration": "generation-1",
-    })
-    monkeypatch.setattr(
-        mcp_host,
-        "_host_codegraph_runtime",
-        lambda: {
-            "runtimeReady": True,
-            "runtimeState": "ready",
-            "binaryReady": True,
-            "binaryState": "ready",
-        },
-    )
-    diagnostics = mcp_host._codegraph_diagnostics()
-    assert diagnostics["runtimeReady"] is True
-    assert diagnostics["binaryReady"] is True
-    assert diagnostics["daemonAttached"] is True
-    assert diagnostics["cbmFrontendAttached"] is True
-    assert diagnostics["canonicalProjectRegistered"] is True
-    assert diagnostics["indexReady"] is True
-    assert diagnostics["codeGraphReady"] is True
-    assert diagnostics["indexGeneration"] == "generation-1"
-
-
-def test_codegraph_readiness_does_not_inspect_cbm_daemon_or_cache_internals():
-    import inspect
-    import mcp_host
-
-    source = inspect.getsource(mcp_host)
-    assert "_CBM_DAEMON_LOG" not in source
-    assert "_CBM_CACHE_ROOT" not in source
-    assert "binarySha256" not in source
-
-
-def test_codegraph_readiness_rejects_a_ready_catalog_with_no_project(monkeypatch):
-    import mcp_host
-
-    monkeypatch.setattr(mcp_host, "_CBM_CLIENT", object())
-    monkeypatch.setattr(
-        mcp_host,
-        "_CBM_SERVER_INFO",
-        {"name": "codebase-memory-mcp", "version": "current"},
-    )
-    monkeypatch.setattr(mcp_host, "_CBM_CODEGRAPH_DIAGNOSTICS", {
-        "daemonAttached": True,
-        "daemonState": "attached",
-        "cbmFrontendAttached": True,
-        "cbmFrontendState": "attached",
-    })
-    monkeypatch.setattr(
-        mcp_host,
-        "_host_codegraph_runtime",
-        lambda: {
-            "runtimeReady": True,
-            "runtimeState": "ready",
-            "binaryReady": True,
-            "binaryState": "ready",
-        },
-    )
-
-    diagnostics = mcp_host._codegraph_diagnostics()
-    assert diagnostics["daemonAttached"] is True
-    assert diagnostics["canonicalProjectRegistered"] is False
-    assert diagnostics["indexReady"] is False
-    assert diagnostics["codeGraphReady"] is False
 
 
 def test_dev_fresh_does_not_resolve_or_launch_optional_cbm():
@@ -3535,11 +3392,6 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
     monkeypatch.setattr(mcp_host, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_host, "Auth0TokenVerifier", lambda _config: VerifiedToken())
-    monkeypatch.setattr(
-        mcp_host,
-        "_codegraph_diagnostics",
-        lambda: {"codeGraphReady": True},
-    )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
@@ -4404,7 +4256,7 @@ def test_oauth_principal_context_is_reloaded_for_each_verified_request(monkeypat
 def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(monkeypatch):
     import asyncio
     import mcp_host
-    from app import control_plane
+    from app import application_tools
 
     attempts = 0
 
@@ -4416,7 +4268,7 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
         return {"ok": True, "cards": []}
 
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(control_plane, "canvas_inspect", inspect)
+    monkeypatch.setattr(application_tools, "canvas_inspect", inspect)
 
     failed = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
     succeeded = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))

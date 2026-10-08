@@ -76,11 +76,6 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-function boundedProbability(value: unknown): number | null {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? clamp(numeric, 0, 1) : null;
-}
-
 function record(value: unknown): Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>

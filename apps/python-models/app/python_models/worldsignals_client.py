@@ -8,7 +8,6 @@ import json
 import os
 import secrets
 import time
-from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -74,17 +73,11 @@ class WorldSignalsClient:
 
     @staticmethod
     def _configured_secret() -> str:
-        configured = os.environ.get("WORLDSIGNALS_HMAC_SECRET") or os.environ.get("OPENCLAW_HMAC_SECRET")
-        if configured:
-            return configured
-        local_env = Path(__file__).resolve().parents[4] / "worldsignal" / "Shadowbroker-main" / ".env"
-        try:
-            for line in local_env.read_text(encoding="utf-8").splitlines():
-                if line.startswith("OPENCLAW_HMAC_SECRET="):
-                    return line.split("=", 1)[1].strip()
-        except OSError:
-            pass
-        return ""
+        return str(
+            os.environ.get("WORLDSIGNALS_HMAC_SECRET")
+            or os.environ.get("OPENCLAW_HMAC_SECRET")
+            or ""
+        ).strip()
 
     def _headers(self, method: str, path: str, body: bytes) -> dict[str, str]:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}

@@ -39,34 +39,15 @@ def test_scoped_run_read_checks_provider_conversation_before_output(monkeypatch,
     monkeypatch.setattr(card_domain, "_resolve_project", lambda *args: {"id": "p"})
     lineage = MagicMock(return_value=[{"run_id": "parent"}] if conversation_matches else [])
     monkeypatch.setattr(card_domain, "_age_rows", lineage)
-    terminal = MagicMock(return_value={"children": []})
-    monkeypatch.setattr(card_domain, "_read_run_terminal", terminal)
     result = card_domain.read_run({"projectId": "p", "deckId": "d", "runId": "parent",
-                                   "conversationId": "selected-conversation", "includeTerminal": True})
+                                   "conversationId": "selected-conversation"})
     if conversation_matches:
         assert result["run"]["conversationId"] == "selected-conversation"
         assert result["run"]["result"] == "private output"
-        assert terminal.call_args.kwargs == {"conversation_id": "selected-conversation"}
     else:
         assert result == {"ok": True, "run": None}
-        terminal.assert_not_called()
     assert lineage.call_args.args[2] == {"projectId": "p", "deckId": "d",
                                          "runId": "parent", "conversationId": "selected-conversation"}
-
-
-def test_scoped_terminal_lineage_requires_both_runs_in_conversation(monkeypatch):
-    from unittest.mock import MagicMock
-
-    lineage = MagicMock(return_value=[])
-    monkeypatch.setattr(card_domain, "_age_rows", lineage)
-    result = card_domain._read_run_terminal(MagicMock(), {
-        "run_id": "parent", "project_id": "p", "deck_id": "d"}, conversation_id="selected")
-    query, params = lineage.call_args.args[1:3]
-    assert "parent.conversationId=$conversationId" in query
-    assert "child.conversationId=$conversationId" in query
-    assert params["conversationId"] == "selected"
-    assert result["children"] == []
-
 
 def test_run_history_is_bounded_to_saved_card_roots(monkeypatch):
     from unittest.mock import MagicMock
@@ -365,15 +346,15 @@ def test_one_flow_connection_grants_only_outbound_main_bot_authority():
     ))
     edges = [{'id': key, 'source': source, 'target': target, 'edgeType': kind}
              for key, source, target, kind in [('connected', 'main', 'helper', 'flow')]]
-    card_domain._validate_changed_flow_edges(cards, edges, [])
-    card_domain._validate_changed_flow_edges(cards, edges, list(edges))
+    card_domain._validate_changed_flow_edges(cards, edges)
+    card_domain._validate_changed_flow_edges(cards, edges)
     indexed = {card['id']: card for card in cards}
     assert [target['cardId'] for target in card_domain._direct_card_targets('main', indexed, edges)] == ['helper']
     assert card_domain._direct_card_targets('helper', indexed, edges) == []
     with pytest.raises(card_domain.CardDomainError, match='card_connection_controller_required:reverse'):
         card_domain._validate_changed_flow_edges(cards, [{
             'id': 'reverse', 'source': 'helper', 'target': 'main', 'edgeType': 'flow',
-        }], edges)
+        }])
 
 
 def test_one_card_can_be_an_independent_main_target_and_magnetic_worker():
@@ -393,10 +374,10 @@ def test_one_card_can_be_an_independent_main_target_and_magnetic_worker():
         "edgeType": "magentic_option",
     }
 
-    card_domain._validate_changed_flow_edges([main, magnetic, team], [orange], [])
-    card_domain._validate_changed_flow_edges([main, magnetic, team], [blue], [])
+    card_domain._validate_changed_flow_edges([main, magnetic, team], [orange])
+    card_domain._validate_changed_flow_edges([main, magnetic, team], [blue])
     card_domain._validate_changed_flow_edges(
-        [main, magnetic, team], [orange, blue], [],
+        [main, magnetic, team], [orange, blue],
     )
     indexed = {card["id"]: card for card in (main, magnetic, team)}
     assert [target["cardId"] for target in card_domain._direct_card_targets(
@@ -473,20 +454,14 @@ def test_saved_orchestrator_flag_grants_non_main_outbound_bot_authority():
         {"id": "signal-world", "source": "signal", "target": "worldsignals", "edgeType": "flow"},
     ]
 
-    card_domain._validate_changed_flow_edges(cards, edges, [])
-    rosters = {
-        row["cardId"]: row["roster"]
-        for row in card_domain._project_hermes_bot_rosters({
-            "nodes": cards,
-            "edges": edges,
-        })
-    }
-
-    assert rosters == {
-        "main": ["signal"],
-        "signal": ["worldsignals"],
-        "worldsignals": [],
-    }
+    card_domain._validate_changed_flow_edges(cards, edges)
+    indexed = {card["id"]: card for card in cards}
+    assert [target["cardId"] for target in card_domain._direct_card_targets(
+        "main", indexed, edges,
+    )] == ["signal"]
+    assert [target["cardId"] for target in card_domain._direct_card_targets(
+        "signal", indexed, edges,
+    )] == ["worldsignals"]
 
 
 def test_new_card_revision_validates_saved_orchestrator_authority():
@@ -528,47 +503,7 @@ def test_magnetic_cannot_gain_outbound_orange_bot_authority():
             [magnetic, helper],
             [{"id": "magnetic-helper", "source": "magnetic", "target": "helper",
               "edgeType": "flow"}],
-            [],
         )
-
-
-def test_hermes_bot_roster_projection_includes_magnetic_and_is_blue_independent():
-    cards = [
-        _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
-        _agent("builder", runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"}),
-        _agent("graph", runtime={"kind": "hermes", "mode": "delegate", "profile": "graph"}),
-        _agent("disconnected", runtime={"kind": "hermes", "mode": "delegate", "profile": "disconnected"}),
-        _agent("disabled", runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled"}),
-        _agent(
-            "mag", runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag"}
-        ),
-    ]
-    cards[4]["runtimeOptions"]["enabled"] = False
-    edges = [
-        {"source": "main", "target": "graph", "edgeType": "flow"},
-        {"source": "main", "target": "mag", "edgeType": "flow"},
-        {"source": "builder", "target": "mag", "edgeType": "magentic_option"},
-        {"source": "main", "target": "builder", "edgeType": "flow"},
-        {"source": "main", "target": "disabled", "edgeType": "flow"},
-        {"source": "main", "target": "disconnected", "edgeType": "flow", "enabled": False},
-    ]
-
-    projected = {
-        row["cardId"]: row["roster"]
-        for row in card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": edges})
-    }
-
-    assert list(projected) == [
-        "main", "builder", "graph", "disconnected", "disabled", "mag",
-    ]
-    assert projected == {
-        "main": ["graph", "mag", "builder"],
-        "builder": [],
-        "graph": [],
-        "disconnected": [],
-        "disabled": [],
-        "mag": [],
-    }
 
 
 def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_roster():
@@ -596,66 +531,15 @@ def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_
          "edgeType": "magentic_option"},
     ]
 
-    card_domain._validate_changed_flow_edges(cards, edges, [])
+    card_domain._validate_changed_flow_edges(cards, edges)
     assert card_domain._is_callable_magentic_worker_card(worldview) is True
-    assert {
-        row["cardId"]: row["roster"]
-        for row in card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": edges})
-    } == {
-        "main": ["worldview"],
-        "worldview": ["worldsignals"],
-        "worldsignals": [],
-        "magnetic": [],
-    }
-
-
-def test_hermes_bot_roster_projection_revokes_main_target_when_edge_is_deleted():
-    cards = [
-        _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
-        _agent("helper", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"}),
-    ]
-    connected = card_domain._project_hermes_bot_rosters({
-        "nodes": cards,
-        "edges": [{"source": "main", "target": "helper", "edgeType": "flow"}],
-    })
-    revoked = card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": []})
-
-    assert [row["roster"] for row in connected] == [["helper"], []]
-    assert [row["roster"] for row in revoked] == [[], []]
-
-
-def test_hermes_bot_roster_projection_fails_closed_on_profile_ambiguity():
-    cards = [
-        _agent("a", runtime={"kind": "hermes", "mode": "delegate", "profile": "shared"}),
-        _agent("b", runtime={"kind": "hermes", "mode": "delegate", "profile": "shared"}),
-    ]
-
-    with pytest.raises(card_domain.CardDomainError, match="card_profile_duplicate:shared"):
-        card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": []})
-
-
-def test_hermes_bot_roster_resolution_accepts_saved_deck_without_revision_metadata(monkeypatch):
-    card = _main_bot(
-        "main",
-        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
-    )
-    monkeypatch.setattr(card_domain, "load_deck", lambda project_id, deck_id: {
-        "projectId": project_id,
-        "deck": {"id": deck_id, "nodes": [card], "edges": [], "meta": {}},
-    })
-
-    assert card_domain.resolve_hermes_bot_rosters("project", "deck") == {
-        "projectId": "project",
-        "deckId": "deck",
-        "profiles": [{
-            "cardId": "main",
-            "cardRevisionId": card.get("_cardRevisionId", ""),
-            "profile": "main",
-            "title": card["title"],
-            "botEnabled": True,
-            "roster": [],
-        }],
-    }
+    indexed = {card["id"]: card for card in cards}
+    assert [target["cardId"] for target in card_domain._direct_card_targets(
+        "main", indexed, edges,
+    )] == ["worldview"]
+    assert [target["cardId"] for target in card_domain._direct_card_targets(
+        "worldview", indexed, edges,
+    )] == ["worldsignals"]
 
 
 def test_wire_blue_save_identity_is_unordered_and_preserves_endpoint_handles():
@@ -703,15 +587,15 @@ def test_flow_endpoints_require_unique_exact_one_word_public_addresses():
         'promptTemplates': [],
     }
     card_domain._validated_deck_collections(document, 'd')
-    card_domain._validate_changed_flow_edges(document['nodes'], document['edges'], [])
+    card_domain._validate_changed_flow_edges(document['nodes'], document['edges'])
 
     helper['title'] = 'Graph Agent'
     with pytest.raises(card_domain.CardDomainError, match='card_address_invalid:helper'):
-        card_domain._validate_changed_flow_edges(document['nodes'], document['edges'], [])
+        card_domain._validate_changed_flow_edges(document['nodes'], document['edges'])
 
     helper['title'] = 'MAIN'
     with pytest.raises(card_domain.CardDomainError, match='card_address_duplicate:main'):
-        card_domain._validate_changed_flow_edges(document['nodes'], document['edges'], [])
+        card_domain._validate_changed_flow_edges(document['nodes'], document['edges'])
 
 
 def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
@@ -725,7 +609,7 @@ def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
              for name in ("builder", "graph")]
     cards = {card["id"]: card for card in nodes}
     before = json.dumps(nodes, sort_keys=True)
-    card_domain._validate_changed_flow_edges(nodes, edges, [])
+    card_domain._validate_changed_flow_edges(nodes, edges)
     assert [target["cardId"] for target in card_domain._direct_card_targets("main", cards, edges)] == ["builder", "graph"]
     assert card_domain._direct_card_targets("builder", cards, edges) == []
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
@@ -741,11 +625,11 @@ def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
     for mutation in ({"source": "builder"}, {"target": "main"}):
         invalid = [{**edges[0], **mutation}]
         with pytest.raises(card_domain.CardDomainError, match="controller_required"):
-            card_domain._validate_changed_flow_edges(nodes, invalid, edges)
+            card_domain._validate_changed_flow_edges(nodes, invalid)
     assert [target["cardId"] for target in card_domain._direct_card_targets("main", cards, edges)] == [
         "builder", "graph",
     ]
-    card_domain._validate_changed_flow_edges(nodes, edges, list(edges))
+    card_domain._validate_changed_flow_edges(nodes, edges)
     assert len(edges) == 2
     assert list(cards) == ["main", "builder", "graph", "disconnected"]
     assert card_domain._prepare_invocation({
@@ -2640,186 +2524,6 @@ def test_connected_magentic_worker_projects_exact_saved_card_binding() -> None:
         )
 
 
-def test_magentic_roster_describes_an_enabled_hermes_saved_card(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mag_one = _agent(
-        "mag-one",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
-    )
-    helper = _agent(
-        "helper",
-        title="Helper",
-        runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"},
-    )
-    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
-        "projectId": "project-one",
-        "deck": {
-            "nodes": [mag_one, helper],
-            "edges": [{
-                "source": "mag-one",
-                "target": "helper",
-                "edgeType": "magentic_option",
-            }],
-        },
-    })
-
-    roster = card_domain.describe_magentic_agents("project-one", "deck-one")
-
-    assert roster["orchestratorCardId"] == "mag-one"
-    assert roster["connectedAgents"] == [{
-        "cardId": "helper",
-        "title": "Helper",
-        "model": {
-            "modelKey": "deepseek/deepseek-v4-flash-0731",
-            "provider": "openrouter",
-        },
-        "tools": [],
-        "connected": True,
-        "executionReady": True,
-        "readinessState": "ready",
-        "readinessReason": None,
-        "capabilities": {
-            "savedToolIds": [],
-            "projectEligibleToolIds": [],
-        },
-    }]
-
-
-def test_magentic_roster_reports_compact_project_eligible_saved_capabilities(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mag = _agent(
-        "mag",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag"},
-    )
-    researcher = _agent("researcher", title="Researcher")
-    researcher["runtimeOptions"]["tools"] = ["calculator", "current_datetime"]
-    writer = _agent("writer", title="Writer")
-    writer["runtimeOptions"]["tools"] = ["current_datetime"]
-    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
-        "projectId": "project-one",
-        "deck": {
-            "nodes": [mag, researcher, writer],
-            "edges": [
-                {"source": "mag", "target": "researcher", "edgeType": "magentic_option"},
-                {"source": "mag", "target": "writer", "edgeType": "magentic_option"},
-            ],
-        },
-    })
-
-    def project_mask(project_id, candidates, **_kwargs):
-        assert project_id == "project-one"
-        assert candidates == ["calculator", "current_datetime"]
-        return {
-            "schemaVersion": "project-worldview.v1",
-            "projectId": project_id,
-            "defaultEnabled": True,
-            "candidateCapabilities": candidates,
-            "enabledCapabilities": ["calculator"],
-            "excludedCapabilities": ["current_datetime"],
-            "overrides": [],
-        }
-
-    monkeypatch.setattr(card_domain, "resolve_project_worldview", project_mask)
-
-    roster = card_domain.describe_magentic_agents("project-one", "deck-one")
-
-    assert [item["capabilities"] for item in roster["connectedAgents"]] == [
-        {
-            "savedToolIds": ["calculator", "current_datetime"],
-            "projectEligibleToolIds": ["calculator"],
-        },
-        {
-            "savedToolIds": ["current_datetime"],
-            "projectEligibleToolIds": [],
-        },
-    ]
-
-
-def test_wire_magentic_roster_deduplicates_both_orders_and_ignores_disabled_edges(monkeypatch):
-    mag = _agent(
-        'mag', runtime={'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'mag'}
-    )
-    workers = [_agent(key) for key in ('a', 'b', 'off')]
-    edges = [{'source': source, 'target': target, 'edgeType': 'magentic_option', 'enabled': enabled}
-             for source, target, enabled in [('mag', 'a', True), ('a', 'mag', True),
-                                             ('b', 'mag', True), ('mag', 'off', False)]]
-    monkeypatch.setattr(card_domain, '_load_deck_internal', lambda *_: {
-        'projectId': 'p', 'deck': {'nodes': [mag, *workers], 'edges': edges},
-    })
-    assert [card['cardId'] for card in card_domain.describe_magentic_agents('p', 'd')['connectedAgents']] == ['a', 'b']
-
-
-def test_magentic_roster_uses_live_tool_catalog_without_making_it_a_startup_gate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    mag = _agent(
-        "mag",
-        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag"},
-    )
-    worker = _agent("worker")
-    worker["runtimeOptions"]["tools"] = ["cbm.search_graph"]
-    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
-        "projectId": "p",
-        "deck": {
-            "nodes": [mag, worker],
-            "edges": [{
-                "source": "worker",
-                "target": "mag",
-                "edgeType": "magentic_option",
-            }],
-        },
-    })
-
-    live = card_domain.describe_magentic_agents(
-        "p",
-        "d",
-        discovered_tool_names=["cbm.search_graph"],
-        discovered_tool_catalog_state="available",
-    )
-    assert live["connectedAgents"][0]["executionReady"] is True
-
-    partial = card_domain.describe_magentic_agents(
-        "p",
-        "d",
-        discovered_tool_catalog_state="available",
-        unavailable_tool_catalog_families=["cbm"],
-    )
-    assert partial["connectedAgents"][0]["executionReady"] is True
-
-    unknown = card_domain.describe_magentic_agents(
-        "p",
-        "d",
-        discovered_tool_catalog_state="available",
-    )
-    assert unknown["connectedAgents"][0]["readinessReason"] == (
-        "configured_tool_unknown:cbm.search_graph"
-    )
-
-    worker["runtimeOptions"]["tools"] = ["graphiti.not_real"]
-    non_cbm_unknown = card_domain.describe_magentic_agents(
-        "p",
-        "d",
-        discovered_tool_catalog_state="available",
-        unavailable_tool_catalog_families=["cbm"],
-    )
-    assert non_cbm_unknown["connectedAgents"][0]["readinessReason"] == (
-        "configured_tool_unknown:graphiti.not_real"
-    )
-
-    with pytest.raises(
-        card_domain.CardDomainError,
-        match="unavailable_tool_catalog_family_invalid",
-    ):
-        card_domain.describe_magentic_agents(
-            "p",
-            "d",
-            discovered_tool_catalog_state="available",
-            unavailable_tool_catalog_families=["graphiti"],
-        )
-
-
 def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
     sender = _main_bot("sender", runtime={"kind": "hermes", "mode": "main", "profile": "sender"})
     hermes = _agent(
@@ -3588,6 +3292,7 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     assert any("EXECUTED_BY" in query for query, _params in statements)
     assert statements[0][1]["driverSource"] == "internal_chat"
     assert statements[0][1]["contextAuthorityMode"] == "main_honcho"
+    assert statements[0][1]["hermesProfile"] == "main"
     assert statements[0][1]["acceptedAt"] == "2026-10-01T20:00:00.000Z"
     assert statements[0][1]["preparationElapsedMs"] is not None
     assert statements[0][1]["idfSha256"] == "a" * 64
@@ -3942,190 +3647,6 @@ def test_run_finish_links_hermes_identity_to_the_same_observed_request(
     assert params["errorSummary"] == "provider source failure"
 
 
-def test_run_attempt_observation_inserts_and_replaces_metadata_by_event_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed: list[tuple[str, dict]] = []
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(
-        card_domain,
-        "_age_rows",
-        lambda _cursor, query, params, _columns: (
-            observed.append((query, params)) or [{"run_id": "run-one"}]
-        ),
-    )
-    llm_attempt = {
-        "eventId": "llm:turn-one:api:1:completed",
-        "attemptId": "turn-one:api:1",
-        "kind": "llm",
-        "phase": "completed",
-        "observedAt": "2026-10-01T20:00:01Z",
-        "provider": "openai-codex",
-        "model": "gpt-5.6-sol",
-        "durationMs": 950.5,
-        "firstTokenMs": 300.0,
-        "inputTokens": 120,
-        "outputTokens": 30,
-        "costUsd": 0,
-        "costStatus": "included",
-        "requestHash": "a" * 64,
-        "responseHash": "b" * 64,
-        "redaction": "hashes_and_metrics_only",
-        "observationGap": 1,
-    }
-    first = card_domain.observe_run_attempt({
-        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
-        "runId": "run-one", "attempt": llm_attempt,
-    })
-    replacement = card_domain.observe_run_attempt({
-        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
-        "runId": "run-one", "attempt": {
-            **llm_attempt,
-            "phase": "failed",
-            "endedAt": "2026-10-01T20:00:02Z",
-            "errorType": "provider_error",
-            "errorMessage": "provider returned a bounded failure",
-            "retryable": True,
-            "outputTokens": 0,
-            "observationGap": 2,
-        },
-    })
-    tool = card_domain.observe_run_attempt({
-        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
-        "runId": "run-one", "attempt": {
-            "eventId": "tool:turn-one:call:1:completed",
-            "attemptId": "turn-one:call:1",
-            "kind": "tool",
-            "phase": "completed",
-            "observedAt": "2026-10-01T20:00:03Z",
-            "toolName": "engraphis_get_memory",
-            "toolCallId": "tool-call-one",
-            "argumentsHash": "c" * 64,
-            "argumentsBytes": 42,
-            "resultHash": "d" * 64,
-            "resultBytes": 84,
-            "status": "ok",
-            "redaction": "hashes_and_metrics_only",
-            "observationGap": 3,
-        },
-    })
-
-    assert first == {"ok": True, "runId": "run-one", "eventId": llm_attempt["eventId"]}
-    assert replacement == first
-    assert tool == {
-        "ok": True, "runId": "run-one", "eventId": "tool:turn-one:call:1:completed",
-    }
-    query, first_params = observed[0]
-    assert "coalesce(run.attemptEvents, []) AS events" in query
-    assert "eventIndex IN range(0, size(events) - 1)" in query
-    assert "events[eventIndex].eventId <> $eventId" in query
-    assert "| events[eventIndex]] AS retained" in query
-    assert "prior.eventId" not in query
-    assert "[-256..]" in query
-    assert first_params["eventId"] == llm_attempt["eventId"]
-    assert first_params["event"]["schemaVersion"] == "hermes-run-attempt.v1"
-    assert first_params["event"]["inputTokens"] == 120
-    assert first_params["event"]["observationGap"] == 1
-    assert "request" not in first_params["event"]
-
-    replacement_params = observed[1][1]
-    assert replacement_params["eventId"] == llm_attempt["eventId"]
-    assert replacement_params["event"]["phase"] == "failed"
-    assert replacement_params["event"]["outputTokens"] == 0
-    assert replacement_params["event"]["observationGap"] == 2
-    assert replacement_params["event"]["errorMessage"] == (
-        "provider returned a bounded failure"
-    )
-
-    tool_params = observed[2][1]
-    assert tool_params["event"]["kind"] == "tool"
-    assert tool_params["event"]["toolName"] == "engraphis_get_memory"
-    assert tool_params["event"]["argumentsHash"] == "c" * 64
-    assert tool_params["event"]["resultHash"] == "d" * 64
-    assert tool_params["event"]["observationGap"] == 3
-    assert "arguments" not in tool_params["event"]
-    assert "result" not in tool_params["event"]
-
-
-def test_run_attempt_observation_rejects_raw_or_unbounded_payloads() -> None:
-    with pytest.raises(card_domain.CardDomainError, match="run_attempt_invalid"):
-        card_domain.observe_run_attempt({
-            "projectId": "p", "deckId": "d", "cardId": "c", "runId": "r",
-            "attempt": {
-                "eventId": "event", "attemptId": "attempt", "kind": "tool",
-                "phase": "completed", "rawResult": "must not persist",
-            },
-        })
-
-
-@pytest.mark.parametrize("observation_gap", [-1, True, float("inf")])
-def test_run_attempt_observation_rejects_invalid_observation_gap(
-    observation_gap: object,
-) -> None:
-    with pytest.raises(card_domain.CardDomainError, match="run_attempt_invalid"):
-        card_domain.observe_run_attempt({
-            "projectId": "p", "deckId": "d", "cardId": "c", "runId": "r",
-            "attempt": {
-                "eventId": "event", "attemptId": "attempt", "kind": "llm",
-                "phase": "completed", "observationGap": observation_gap,
-            },
-        })
-
-
-def test_run_attempt_observation_propagates_age_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-
-    def fail(*_args, **_kwargs):
-        raise RuntimeError("age_write_failed")
-
-    monkeypatch.setattr(card_domain, "_age_rows", fail)
-    with pytest.raises(RuntimeError, match="age_write_failed"):
-        card_domain.observe_run_attempt({
-            "projectId": "p", "deckId": "d", "cardId": "c", "runId": "r",
-            "attempt": {
-                "eventId": "event", "attemptId": "attempt", "kind": "llm",
-                "phase": "completed", "observationGap": 0,
-            },
-        })
-
-
 def test_selected_agentgraph_root_includes_only_its_cards_hermes_team(monkeypatch):
     from contextlib import nullcontext
     class Cursor:
@@ -4290,7 +3811,6 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "projectId": "project-one",
         "deckId": "deck-one",
         "conversationId": "conversation-one",
-        "assignmentId": "retired-assignment",
         "limit": 5,
     })
 
@@ -4346,13 +3866,7 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         }],
         "idf": {"sha256": None, "bytes": None},
         "jevDecisions": [],
-        "attemptEvents": [],
     }]
-    assert result["legacyAssignment"] == {
-        "assignmentId": "retired-assignment",
-        "available": False,
-        "reason": "assignmentId is not a current AgentGraph identity; use runId",
-    }
     assert all(params["projectId"] == "project-one" for _query, params in age_calls)
     assert all(params["deckId"] == "deck-one" for _query, params in age_calls)
     assert all(
@@ -4378,7 +3892,7 @@ def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
     builder.update(_cardRevisionId="revision-one", _cardRevision=1, _cardRevisionSha256="a" * 64)
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
         "projectId": "project-one", "meta": {"deckRevision": "deck-revision-one"},
-        "deck": {"nodes": [builder], "edges": [], "workspaceRoot": "C:/Projects/agents"},
+        "deck": {"nodes": [builder], "edges": [], "projectCodeFolder": "worker-agent-ui"},
     })
     original_read = Path.read_bytes
     plan_reads = []
@@ -4429,28 +3943,6 @@ def test_invocation_rejects_retired_operation_fields(field):
         card_domain._reject_non_graph_invocation_context({field: {"mode": "create"}})
 
 
-def _request_fulfillment_answer(
-    *,
-    score: float = 1.0,
-    probabilities: dict[str, float] | None = None,
-) -> dict:
-    values = probabilities or {
-        "0": 0.33, "1": 0.33, "2": 0.33, "3": 0.0, "4": 0.0,
-    }
-    return {
-        "type": "score",
-        "score": score,
-        "confidence": 0.2,
-        "legend": {
-            str(index): description
-            for index, description in enumerate(
-                card_domain._REQUEST_FULFILLMENT_LEVELS
-            )
-        },
-        "probabilities": values,
-    }
-
-
 def test_card_jev_choice_accepts_possible_two_decimal_rounded_total() -> None:
     result = card_domain._validated_choice_answer(
         {
@@ -4481,97 +3973,6 @@ def test_card_jev_choice_rejects_impossible_rounded_total() -> None:
             ("alpha", "beta"),
             error_code="test_invalid",
         )
-
-
-def test_request_fulfillment_score_accepts_rounding_consistent_raw_values() -> None:
-    result = card_domain._validated_request_fulfillment_answer(
-        _request_fulfillment_answer()
-    )
-
-    assert result["rawScore"] == 1.0
-    assert result["normalizedScore100"] == 25.0
-    assert sum(result["probabilities"].values()) == pytest.approx(0.99)
-
-
-@pytest.mark.parametrize(
-    "answer",
-    [
-        _request_fulfillment_answer(
-            probabilities={
-                "0": 0.30, "1": 0.20, "2": 0.0, "3": 0.0, "4": 0.0,
-            },
-        ),
-        _request_fulfillment_answer(score=4.0),
-        _request_fulfillment_answer(
-            probabilities={
-                "0": 0.0, "1": 0.0, "2": 0.0, "3": 0.0, "4": 0.0,
-            },
-        ),
-    ],
-)
-def test_request_fulfillment_score_rejects_unusable_numeric_payloads(answer) -> None:
-    with pytest.raises(
-        card_domain._CardJevError,
-        match="request_fulfillment_response_invalid",
-    ):
-        card_domain._validated_request_fulfillment_answer(answer)
-
-
-def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
-    from types import SimpleNamespace
-
-    materialized = SimpleNamespace(idf=SimpleNamespace(
-        stableSavedCardContext=SimpleNamespace(
-            instructions="Follow the saved instructions.",
-            outputRequirements="Return the requested result.",
-            runtimeOptions={"configuration": {"token": "configuration-secret"}},
-        ),
-        actualGraphData=SimpleNamespace(modelText="Exact bounded graph context."),
-        dynamicContext=SimpleNamespace(task="Inspect the provider record."),
-        selectedToolsAndGrants=SimpleNamespace(toolDefinitions=[{
-            "canonicalId": "records.read",
-            "displayName": "Record read",
-            "description": "Read one provider record.",
-            "provider": "python_runtime",
-            "providerToolName": "records.read",
-            "publications": ["card-runtime"],
-            "access": "read",
-            "annotations": {"readOnlyHint": True},
-            "inputSchema": {"type": "object", "properties": {}},
-            "credential": "tool-secret",
-            "configurationFingerprint": "tool-fingerprint",
-        }, {
-            "canonicalId": "records.write",
-            "description": "Unexposed tool.",
-        }]),
-    ))
-
-    projected = card_domain._request_fulfillment_model_input(
-        materialized, ["records.read"],
-    )
-
-    assert projected == {
-        "saved_instructions": "Follow the saved instructions.",
-        "output_requirements": "Return the requested result.",
-        "graph_context": "Exact bounded graph context.",
-        "request_or_delegated_mission": "Inspect the provider record.",
-        "presented_tool_contracts": [{
-            "canonicalId": "records.read",
-            "displayName": "Record read",
-            "description": "Read one provider record.",
-            "provider": "python_runtime",
-            "providerToolName": "records.read",
-            "publications": ["card-runtime"],
-            "access": "read",
-            "annotations": {"readOnlyHint": True},
-            "inputSchema": {"type": "object", "properties": {}},
-        }],
-    }
-    serialized = json.dumps(projected, sort_keys=True)
-    assert "configuration-secret" not in serialized
-    assert "tool-secret" not in serialized
-    assert "tool-fingerprint" not in serialized
-    assert "records.write" not in serialized
 
 
 def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
@@ -4615,252 +4016,6 @@ def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
     assert decision["providerWinner"] == "USE"
     assert decision["effectiveDecision"] == "OMIT"
     assert decision["probabilities"] == {"USE": 0.5, "OMIT": 0.5}
-
-
-def test_request_fulfillment_missing_idf_persists_explicit_unavailable(
-    monkeypatch,
-) -> None:
-    run_row = {
-        "project_id": "project-one",
-        "deck_id": "deck-one",
-        "target_card_revision_id": "revision-one",
-        "state": "completed",
-        "final_result": "The completed answer.",
-        "effective_provider": "openrouter",
-        "provider_model_id": "configured/model",
-        "request_fulfillment": None,
-        "card_id": "main",
-    }
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, *_args):
-            return None
-
-        def fetchone(self):
-            return run_row
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    stored: list[dict] = []
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda _run_id: None)
-    monkeypatch.setattr(
-        card_domain,
-        "_persist_request_fulfillment",
-        lambda _run_id, value: stored.append(value) or value,
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "_jev_request",
-        lambda *_args, **_kwargs: pytest.fail("Jev must not run without the exact IDF"),
-    )
-
-    result = card_domain.assess_run_request_fulfillment({
-        "runId": "run-one",
-        "actualProvider": "openrouter",
-        "actualModel": "configured/model",
-        "exposedTools": ["records.read"],
-        "executionEvidence": [],
-        "executionEvidenceComplete": True,
-    })
-
-    assessment = result["assessment"]
-    assert assessment["status"] == "unavailable"
-    assert assessment["failureReason"] == "request_fulfillment_input_file_unavailable"
-    assert assessment["requestCount"] == 0
-    assert assessment["questionCount"] == 0
-    assert "idfSha256" not in assessment
-    assert assessment["executionEvidenceComplete"] is True
-    assert assessment["executionEvidenceError"] is None
-    assert stored == [assessment]
-
-
-
-
-def test_request_fulfillment_scores_once_from_the_completed_run(
-    monkeypatch,
-) -> None:
-    from types import SimpleNamespace
-
-    run_row = {
-        "project_id": "project-one", "deck_id": "deck-one",
-        "target_card_revision_id": "revision-one", "state": "completed",
-        "final_result": "The objective claim is supported by https://example.test/source.",
-        "effective_provider": "openrouter", "provider_model_id": "configured/model",
-        "request_fulfillment": None, "card_id": "main",
-    }
-
-    class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return None
-        def execute(self, *_args): return None
-        def fetchone(self): return run_row
-
-    class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return None
-        def cursor(self, **_kwargs): return Cursor()
-
-    materialized = SimpleNamespace(idf=SimpleNamespace(
-        stableSavedCardContext=SimpleNamespace(
-            instructions="Follow instructions.", outputRequirements="Return evidence.",
-        ),
-        actualGraphData=SimpleNamespace(modelText="Bounded evidence."),
-        dynamicContext=SimpleNamespace(task="Find objective evidence.", images=[]),
-        selectedToolsAndGrants=SimpleNamespace(toolDefinitions=[], skills=[]),
-    ))
-    captured: list[dict] = []
-
-    def decide(body, **_kwargs):
-        captured.append(body)
-        return {
-            "id": "decision-one", "provider": "typesafe", "model": "jev-test",
-            "usage": {},
-            "answers": {"response_fit": _request_fulfillment_answer()},
-        }
-
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda _run_id: {
-        "idfSha256": "a" * 64,
-    })
-    monkeypatch.setattr(card_domain, "load_idf", lambda *_args, **_kwargs: materialized)
-    monkeypatch.setattr(card_domain, "_jev_request", decide)
-    monkeypatch.setattr(
-        card_domain, "_persist_request_fulfillment", lambda _run_id, value: value,
-    )
-
-    assessment = card_domain.assess_run_request_fulfillment({
-        "runId": "run-one", "actualProvider": "openrouter",
-        "actualModel": "configured/model", "exposedTools": [],
-        "executionEvidence": [], "executionEvidenceComplete": True,
-    })["assessment"]
-
-    assert len(captured) == 1
-    assert set(captured[0]["questions"]) == {"response_fit"}
-    assert assessment["questionCount"] == 1
-
-
-def test_magentic_mission_readiness_calls_jev_at_most_once_per_run(
-    monkeypatch,
-) -> None:
-    run_row = {
-        "project_id": "project-one", "deck_id": "deck-one",
-        "target_card_revision_id": "revision-magnetic",
-        "card_id": "card_magentic", "runtime_mode": "magentic_one",
-    }
-    stored: dict[str, object] = {"assessment": None}
-
-    class Cursor:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return None
-        def execute(self, *_args): return None
-        def fetchone(self): return run_row
-
-    class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *_args): return None
-        def cursor(self, **_kwargs): return Cursor()
-
-    def age_rows(_cursor, query, params, _columns):
-        if "WHERE run.missionReadiness IS NULL" in query:
-            stored["assessment"] = params["assessment"]
-        return [{"mission_readiness": stored["assessment"]}]
-
-    calls: list[dict] = []
-
-    def decide(body, **_kwargs):
-        calls.append(body)
-        return {
-            "id": "mission-ready-one", "provider": "typesafe", "model": "jev-test",
-            "answers": {"mission_readiness": {
-                "type": "choice", "choice": "ready", "confidence": 0.9,
-                "probabilities": {
-                    "ready": 0.9, "missing_evidence": 0.04,
-                    "contradictory": 0.03, "source_blocked": 0.03,
-                },
-            }},
-        }
-
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
-    monkeypatch.setattr(card_domain, "_jev_request", decide)
-    payload = {
-        "runId": "run-magnetic", "mission": "Evaluate the bounded mission.",
-        "workers": [{
-            "cardId": "worker-one", "cardRevisionId": "revision-worker",
-            "profile": "worker", "title": "Worker", "description": "Bounded role.",
-        }],
-    }
-
-    first = card_domain.assess_magentic_mission_readiness(payload)
-    second = card_domain.assess_magentic_mission_readiness(payload)
-
-    assert len(calls) == 1
-    assert first["assessment"] == second["assessment"]
-    assert first["assessment"]["advisory"]["classification"] == "ready"
-
-
-def test_request_fulfillment_persistence_replay_is_idempotent_and_binding_safe(
-    monkeypatch,
-) -> None:
-    from unittest.mock import MagicMock
-
-    assessment = {
-        "schemaVersion": "request-fulfillment-assessment.v1",
-        "runId": "run-one",
-        "cardRevisionId": "revision-one",
-        "idfSha256": "a" * 64,
-        "outputSha256": "b" * 64,
-        "executionEvidenceSha256": "c" * 64,
-        "exposedToolsSha256": "d" * 64,
-        "executionEvidenceComplete": True,
-        "executionEvidenceError": None,
-        "actualProvider": "openrouter",
-        "actualModel": "configured/model",
-        "status": "scored",
-    }
-    connection = MagicMock()
-    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
-    cursor.fetchone.side_effect = [None, {"request_fulfillment": dict(assessment)}]
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: connection)
-
-    replay = card_domain._persist_request_fulfillment("run-one", dict(assessment))
-
-    assert replay == assessment
-    assert cursor.execute.call_count == 2
-
-    conflicting_connection = MagicMock()
-    conflicting_cursor = (
-        conflicting_connection.__enter__.return_value.cursor.return_value.__enter__.return_value
-    )
-    conflicting_cursor.fetchone.side_effect = [
-        None,
-        {"request_fulfillment": {**assessment, "outputSha256": "e" * 64}},
-    ]
-    monkeypatch.setattr(
-        card_domain,
-        "connect_postgres",
-        lambda **_kwargs: conflicting_connection,
-    )
-    with pytest.raises(
-        card_domain.CardDomainError,
-        match="request_fulfillment_binding_conflict",
-    ):
-        card_domain._persist_request_fulfillment("run-one", dict(assessment))
 
 
 def _card_jev_application_fixture(*, auto_tools: bool, auto_select: bool):

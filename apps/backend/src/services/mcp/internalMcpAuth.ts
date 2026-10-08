@@ -151,7 +151,7 @@ export function internalMcpAuthorization(
   return `Bearer ${createInternalMcpBearer(principal, env)}`;
 }
 
-export function internalMcpBridgeSecretAuthorized(
+export function internalMcpProcessSecretAuthorized(
   value: unknown,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -160,26 +160,4 @@ export function internalMcpBridgeSecretAuthorized(
   return expected.length >= 32
     && supplied.length === expected.length
     && timingSafeEqual(supplied, expected);
-}
-
-export function verifyInternalMcpBearerForTest(
-  token: string,
-  env: NodeJS.ProcessEnv,
-): Record<string, unknown> {
-  const [header, payload, signature, extra] = token.split('.');
-  if (!header || !payload || !signature || extra) throw new Error('internal_mcp_token_invalid');
-  const expected = createHmac('sha256', requiredSecret(env))
-    .update(`${header}.${payload}`)
-    .digest();
-  const actual = Buffer.from(signature, 'base64url');
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw new Error('internal_mcp_token_invalid');
-  }
-  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>;
-}
-
-export function withoutInternalMcpSecret(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const childEnv = { ...env };
-  delete childEnv.LIQUIDAITY_INTERNAL_MCP_SECRET;
-  return childEnv;
 }

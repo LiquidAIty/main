@@ -48,7 +48,6 @@ export type ConversationMessage = {
   messageId: string;
   projectId: string;
   conversationId: string;
-  parentMessageId?: string | null;
   role: ConversationRole;
   content: string;
   status: ConversationMessageStatus;
@@ -56,10 +55,6 @@ export type ConversationMessage = {
   completedAt?: string | null;
   providerContinuationRef?: string | null;
   providerMessageId?: string | null;
-  linkedPlanDraftId?: string | null;
-  linkedPlanStepId?: string | null;
-  linkedArtifactIds?: string[];
-  linkedEvidenceIds?: string[];
   visibleActivities?: VisibleActivity[];
   seq: number;
 };
@@ -85,17 +80,11 @@ function iso(value: unknown): string {
   return new Date(String(value)).toISOString();
 }
 
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === 'string');
-}
-
 function mapMessage(row: Record<string, any>): ConversationMessage {
   return {
     messageId: String(row.message_id),
     projectId: String(row.project_id),
     conversationId: String(row.conversation_id),
-    parentMessageId: row.parent_message_id == null ? null : String(row.parent_message_id),
     role: row.role as ConversationRole,
     content: String(row.content ?? ''),
     status: row.status as ConversationMessageStatus,
@@ -105,10 +94,6 @@ function mapMessage(row: Record<string, any>): ConversationMessage {
       ? null
       : String(row.provider_continuation_ref),
     providerMessageId: row.provider_message_id == null ? null : String(row.provider_message_id),
-    linkedPlanDraftId: row.linked_plan_draft_id == null ? null : String(row.linked_plan_draft_id),
-    linkedPlanStepId: row.linked_plan_step_id == null ? null : String(row.linked_plan_step_id),
-    linkedArtifactIds: stringArray(row.linked_artifact_ids),
-    linkedEvidenceIds: stringArray(row.linked_evidence_ids),
     visibleActivities: Array.isArray(row.visible_activities)
       ? row.visible_activities as VisibleActivity[]
       : undefined,
@@ -169,23 +154,39 @@ function participantActivity(
   };
 }
 
-/**
- * Append one completed shared-chat turn. If this is the first projected turn,
- * the caller may supply the already-read Main history as a one-time seed.
- * The transaction locks the existing conversation row so speaker ordering and
- * sequence identities remain exact under concurrent requests.
- */
-export async function appendSharedConversationTurn(input: {
+function replayMatches(
+  existing: ConversationMessage,
+  write: SharedChatMessageWrite,
+  activities: VisibleActivity[],
+): boolean {
+  return existing.role === write.role
+    && (!write.messageId || existing.messageId === write.messageId)
+    && existing.content === write.content
+    && (existing.providerContinuationRef || null) === (write.providerContinuationRef || null)
+    && JSON.stringify(existing.visibleActivities || []) === JSON.stringify(activities);
+}
+
+/** Persist one user-authored shared-chat message exactly once by client message ID. */
+export async function appendSharedConversationUserMessageOnce(input: {
   projectId: string;
   conversationId: string;
-  seedMessages?: SharedChatMessageWrite[];
-  messages: SharedChatMessageWrite[];
-}): Promise<ConversationMessage[]> {
-  if (!input.conversationId.trim() || input.messages.length === 0) {
-    throw new Error('shared_conversation_turn_invalid');
+  message: SharedChatMessageWrite & { role: 'user'; messageId: string };
+}): Promise<{ inserted: boolean; message: ConversationMessage }> {
+  if (
+    !input.conversationId.trim()
+    || !MESSAGE_ID_REGEX.test(input.message.messageId)
+    || !input.message.content.trim()
+  ) {
+    throw new Error('shared_conversation_user_message_invalid');
   }
   return withTransaction(async (client) => {
     const canonicalProjectId = await resolveProjectId(client, input.projectId);
+    const activities = [
+      participantActivity('shared_chat_speaker', input.message.speaker),
+      ...(input.message.target
+        ? [participantActivity('shared_chat_target', input.message.target)]
+        : []),
+    ];
     await client.query(
       `INSERT INTO ${CONVERSATIONS_TABLE} (project_id, conversation_id)
        VALUES ($1::uuid, $2)
@@ -200,57 +201,48 @@ export async function appendSharedConversationTurn(input: {
     );
     if (!locked.rows.length) throw new Error('conversation_not_found');
     const existing = await client.query(
-      `SELECT 1 FROM ${MESSAGES_TABLE}
-       WHERE project_id = $1::uuid AND conversation_id = $2
+      `SELECT * FROM ${MESSAGES_TABLE}
+       WHERE project_id = $1::uuid AND conversation_id = $2 AND message_id = $3
+       ORDER BY seq ASC
        LIMIT 1`,
-      [canonicalProjectId, input.conversationId],
+      [canonicalProjectId, input.conversationId, input.message.messageId],
     );
-    const writes = [
-      ...(existing.rows.length ? [] : input.seedMessages || []),
-      ...input.messages,
-    ];
-    if (writes.length === 0) return [];
+    if (existing.rows.length) {
+      const message = mapMessage(existing.rows[0]);
+      if (!replayMatches(message, input.message, activities)) {
+        throw new Error('shared_conversation_message_identity_conflict');
+      }
+      return { inserted: false, message };
+    }
     const sequence = await client.query(
       `UPDATE ${CONVERSATIONS_TABLE}
-       SET next_seq = next_seq + $3, updated_at = NOW()
+       SET next_seq = next_seq + 1, updated_at = NOW()
        WHERE project_id = $1::uuid AND conversation_id = $2
        RETURNING next_seq`,
-      [canonicalProjectId, input.conversationId, writes.length],
+      [canonicalProjectId, input.conversationId],
     );
     if (!sequence.rows.length) throw new Error('conversation_not_found');
-    const firstSequence = Number(sequence.rows[0].next_seq) - writes.length + 1;
-    const inserted: ConversationMessage[] = [];
-    for (const [index, write] of writes.entries()) {
-      if (write.messageId && !MESSAGE_ID_REGEX.test(write.messageId)) {
-        throw new Error('shared_conversation_message_id_invalid');
-      }
-      const activities = [
-        participantActivity('shared_chat_speaker', write.speaker),
-        ...(write.target ? [participantActivity('shared_chat_target', write.target)] : []),
-      ];
-      const result = await client.query(
-        `INSERT INTO ${MESSAGES_TABLE} (
-           project_id, conversation_id, message_id, role, content, status, seq,
-           completed_at, provider_continuation_ref, provider_message_id,
-           visible_activities
-         )
-         VALUES ($1::uuid, $2, $3, $4, $5, 'complete', $6, NOW(), $7, $8, $9::jsonb)
-         RETURNING *`,
-        [
-          canonicalProjectId,
-          input.conversationId,
-          write.messageId || `msg_${randomUUID()}`,
-          write.role,
-          write.content,
-          firstSequence + index,
-          write.providerContinuationRef ?? null,
-          write.providerMessageId ?? null,
-          JSON.stringify(activities),
-        ],
-      );
-      inserted.push(mapMessage(result.rows[0]));
-    }
-    return inserted;
+    const write = input.message;
+    const result = await client.query(
+      `INSERT INTO ${MESSAGES_TABLE} (
+         project_id, conversation_id, message_id, role, content, status, seq,
+         completed_at, provider_continuation_ref, provider_message_id,
+         visible_activities
+       )
+       VALUES ($1::uuid, $2, $3, 'user', $4, 'complete', $5, NOW(), $6, $7, $8::jsonb)
+       RETURNING *`,
+      [
+        canonicalProjectId,
+        input.conversationId,
+        write.messageId,
+        write.content,
+        Number(sequence.rows[0].next_seq),
+        write.providerContinuationRef ?? null,
+        write.providerMessageId ?? null,
+        JSON.stringify(activities),
+      ],
+    );
+    return { inserted: true, message: mapMessage(result.rows[0]) };
   });
 }
 
@@ -273,6 +265,12 @@ export async function appendSharedConversationReplyOnce(input: {
   }
   return withTransaction(async (client) => {
     const canonicalProjectId = await resolveProjectId(client, input.projectId);
+    const activities = [
+      participantActivity('shared_chat_speaker', input.message.speaker),
+      ...(input.message.target
+        ? [participantActivity('shared_chat_target', input.message.target)]
+        : []),
+    ];
     await client.query(
       `INSERT INTO ${CONVERSATIONS_TABLE} (project_id, conversation_id)
        VALUES ($1::uuid, $2)
@@ -295,7 +293,11 @@ export async function appendSharedConversationReplyOnce(input: {
       [canonicalProjectId, input.conversationId, providerMessageId],
     );
     if (existing.rows.length) {
-      return { inserted: false, message: mapMessage(existing.rows[0]) };
+      const message = mapMessage(existing.rows[0]);
+      if (!replayMatches(message, input.message, activities)) {
+        throw new Error('shared_conversation_reply_identity_conflict');
+      }
+      return { inserted: false, message };
     }
     const sequence = await client.query(
       `UPDATE ${CONVERSATIONS_TABLE}
@@ -305,12 +307,6 @@ export async function appendSharedConversationReplyOnce(input: {
       [canonicalProjectId, input.conversationId],
     );
     if (!sequence.rows.length) throw new Error('conversation_not_found');
-    const activities = [
-      participantActivity('shared_chat_speaker', input.message.speaker),
-      ...(input.message.target
-        ? [participantActivity('shared_chat_target', input.message.target)]
-        : []),
-    ];
     const result = await client.query(
       `INSERT INTO ${MESSAGES_TABLE} (
          project_id, conversation_id, message_id, role, content, status, seq,

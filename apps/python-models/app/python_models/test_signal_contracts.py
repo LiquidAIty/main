@@ -4,7 +4,6 @@ import pytest
 from pydantic import ValidationError
 
 from app.python_models.signal_contracts import (
-    SignalAssessment,
     SignalGeoPoint,
     SignalQuery,
     build_signal_query,
@@ -103,31 +102,3 @@ def test_contracts_reject_invalid_geometry_and_unknown_fields() -> None:
             ).model_dump(),
             "inventedAuthority": True,
         })
-
-
-def test_assessment_is_a_separate_analyst_run_contract() -> None:
-    assessment = SignalAssessment(
-        assessmentId="assessment-1",
-        projectId="project-1",
-        deckId="deck-1",
-        requestingCardId="card-worldview",
-        requestingRunId="run-worldview-1",
-        analystCardId="card-evidence-analyst",
-        analysisRunId="run-analyst-1",
-        packageId="signal-package:abc",
-        candidateIds=["signal-candidate:def"],
-        disposition="INCONCLUSIVE",
-        method="Single-source evidence review.",
-        observations=["The package contains one sourced observation."],
-        inference="The observation deserves bounded follow-up.",
-        evidenceRefs=[{
-            "sourceRef": "worldsignals:what_changed:sha256:" + "a" * 64,
-            "contentHash": "sha256:" + "a" * 64,
-        }],
-        limitations=["One source result is not enough to confirm the claim."],
-        confidence=0.35,
-        assessedAt="2026-09-03T10:05:00+00:00",
-        asOfAt="2026-09-03T10:00:00+00:00",
-    )
-    assert assessment.disposition == "INCONCLUSIVE"
-    assert assessment.analystCardId != "card_worldsignals_agent"

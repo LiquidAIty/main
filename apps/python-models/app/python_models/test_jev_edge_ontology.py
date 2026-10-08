@@ -14,7 +14,5 @@ def test_graph_twins_share_the_same_seed_twenty_and_control_outcomes_stay_local(
     assert SHARED_JEV_RELATIONSHIPS == EXPECTED_SHARED_RELATIONSHIPS
     assert engraphis.SHARED_JEV_RELATIONSHIPS is SHARED_JEV_RELATIONSHIPS
     assert knowgraph_jev.SHARED_JEV_RELATIONSHIPS is SHARED_JEV_RELATIONSHIPS
-    assert engraphis.THINKGRAPH_JEV_CHOICES[:20] == SHARED_JEV_RELATIONSHIPS
     assert knowgraph_jev.KNOWGRAPH_JEV_CHOICES[:20] == SHARED_JEV_RELATIONSHIPS
-    assert engraphis.THINKGRAPH_JEV_CHOICES[20:] == ()
     assert knowgraph_jev.KNOWGRAPH_JEV_CHOICES[20:] == ("INSUFFICIENT_CONTEXT",)

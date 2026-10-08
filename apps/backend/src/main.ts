@@ -3,9 +3,9 @@ import express from "express";
 import type { Server } from "node:http";
 import cookieParser = require("cookie-parser");
 import routes from "./routes";
-import { getDevTestJsonBodyLimit } from "./services/devTest";
+import { requestJsonBodyLimit } from "./services/requestPayloadLimits";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
-import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
+import { closeToolCatalogMcpClient } from "./services/mcp/toolCatalogMcpClient";
 import { listenAfterRequiredMigrations } from "./db/migrations";
 import { closeHermesGateway } from "./services/hermesGateway";
 
@@ -37,11 +37,11 @@ app.use((req, res, next) => {
   return next();
 });
 
-app.use(express.json({ limit: getDevTestJsonBodyLimit() }));
+app.use(express.json({ limit: requestJsonBodyLimit() }));
 app.use(cookieParser() as unknown as express.RequestHandler);
 
 // Disable caching for API responses to avoid 304/empty body JSON issues
-app.use((req, res, next) => {
+app.use((_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   return next();
 });
@@ -55,7 +55,7 @@ app.use((req, _res, next) => {
 });
 
 // Ensure all responses are JSON
-app.use((req, res, next) => {
+app.use((_req, res, next) => {
   res.setHeader('Content-Type', 'application/json');
   return next();
 });
@@ -161,7 +161,7 @@ function installShutdownHooks() {
         await closeServer(activeServer);
       }
       closeHermesGateway();
-      await closePythonAgentMcpClient();
+      await closeToolCatalogMcpClient();
     } catch {
       // ignore shutdown close errors
     } finally {
@@ -184,7 +184,7 @@ async function startServer() {
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
     closeHermesGateway();
-    await closePythonAgentMcpClient().catch(() => undefined);
+    await closeToolCatalogMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;
     }

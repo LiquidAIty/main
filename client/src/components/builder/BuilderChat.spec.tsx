@@ -63,9 +63,9 @@ describe('BuilderChat', () => {
 
     expect(screen.getByTestId('builder-chat-active-indicator').textContent).toBe('');
     expect(screen.queryByText('Working…')).toBeNull();
-    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
     const send = screen.getByRole('button', { name: 'Send' });
-    expect((send as HTMLButtonElement).disabled).toBe(false);
+    expect((send as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(send);
     expect(onSend).not.toHaveBeenCalled();
   });
@@ -156,7 +156,7 @@ describe('BuilderChat', () => {
     expect(screen.queryByTestId('builder-chat-active-indicator')).not.toBeNull();
     expect(screen.queryByText('Working…')).toBeNull();
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled)
-      .toBe(false);
+      .toBe(true);
   });
 
   it('uses one mic control for idle, listening, and explicit stop', () => {
@@ -192,11 +192,10 @@ describe('BuilderChat', () => {
     expect(onVoiceStop).toHaveBeenCalledOnce();
   });
 
-  it('shows provider history rejoin and prevents a send until it completes', () => {
+  it('keeps the composer usable while persisted history rejoins', () => {
     const onSend = vi.fn();
     render(
       <BuilderChat
-        historyLoading
         messages={[]}
         onSend={onSend}
         knowledgeProjectId="project-1"
@@ -206,9 +205,9 @@ describe('BuilderChat', () => {
 
     expect(screen.queryByText('Loading conversation…')).toBeNull();
     expect(screen.queryByTestId('builder-chat-active-indicator')).toBeNull();
-    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
     const send = screen.getByRole('button', { name: 'Send' });
-    expect((send as HTMLButtonElement).disabled).toBe(true);
+    expect((send as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(send);
     expect(onSend).not.toHaveBeenCalled();
   });

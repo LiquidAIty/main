@@ -223,28 +223,24 @@ describe('canonical subject chat links', () => {
     };
     const directory = current.thinkgraph.canonicalSubjectDirectory!;
     expect(resolveCanonicalSubjectFocusVisualId({
-      authority: 'joined',
       projection: joinedPresentation.projection,
       joinedPresentation,
       directory,
       request: { ...rocket, requestId: 1 },
     })).toBe(visualId);
     expect(resolveCanonicalSubjectFocusVisualId({
-      authority: 'joined',
       projection: joinedPresentation.projection,
       joinedPresentation,
       directory,
       request: { ...electron, requestId: 2 },
     })).toBe(electronVisualId);
     expect(resolveCanonicalSubjectFocusVisualId({
-      authority: 'joined',
       projection: joinedPresentation.projection,
       joinedPresentation,
       directory,
       request: { ...rocket, directorySha256: 'b'.repeat(64), requestId: 3 },
     })).toBeNull();
     expect(resolveCanonicalSubjectFocusVisualId({
-      authority: 'joined',
       projection: joinedPresentation.projection,
       joinedPresentation,
       directory: {

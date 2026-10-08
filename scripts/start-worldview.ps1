@@ -40,7 +40,7 @@ foreach ($name in @('GOOGLE_MAPS_API_KEY', 'CESIUM_ION_TOKEN')) {
 
 Push-Location $repoRoot
 try {
-  & npm.cmd --prefix worldsignal/gods-eye-view-main run dev -- --host 127.0.0.1 --port 4174 --strictPort
+  & npm.cmd --prefix agent-products/gods-eye-view run dev -- --host 127.0.0.1 --port 4174 --strictPort
   exit $LASTEXITCODE
 } finally {
   Pop-Location

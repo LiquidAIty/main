@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import { requireOwnedProject } from './projectAccess';
 
 type RequestRails = typeof requestPythonRailsJson;
 
@@ -161,6 +162,7 @@ export function createGraphRouter(
       return res.status(400).json({ error: 'jev_focus_request_invalid' });
     }
     try {
+      if (!await requireOwnedProject(req, res, String(req.body.projectId))) return undefined;
       return res.json(await requestRails('/graph/jev-focus', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

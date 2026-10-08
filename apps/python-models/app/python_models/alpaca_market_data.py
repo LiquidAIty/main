@@ -22,22 +22,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
-# Credential/env resolution and readiness constants live in the shared typed config
-# boundary; this provider module consumes them and never reads os.getenv directly.
-from app.python_models.provider_config import (  # noqa: F401 (re-exported for callers/tests)
-    DEFAULT_DATA_URL,
-    DEFAULT_PAPER_TRADING_URL,
-    DEFAULT_STREAM_URL,
-    INVALID_CONFIG,
-    LIVE_TRADING_HOST,
-    MODE_PAPER,
-    MODE_READ_ONLY,
-    MODE_UNAVAILABLE,
-    READY,
-    UNCONFIGURED,
+# Credential resolution lives in the shared typed config boundary; this
+# provider module consumes it and never reads os.getenv directly.
+from app.python_models.provider_config import (
     AlpacaCredentials,
-    detect_alpaca_readiness,
-    ensure_env_loaded,
     resolve_alpaca_credentials,
 )
 
@@ -70,28 +58,6 @@ def _freshness(observed_at: Optional[str], fetched_at: str) -> Optional[str]:
         return f"age_seconds={max(int((fetched - observed).total_seconds()), 0)}"
     except (ValueError, AttributeError):
         return None
-
-
-# ---------------------------------------------------------------------------
-# Provider readiness (presence only — never exposes secret values).
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ProviderReadiness:
-    provider: str
-    capability: str
-    status: str  # ready | unconfigured | invalid_configuration
-    mode: str  # paper | read_only | unavailable
-    diagnostics: str  # non-secret structured reason only
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-# `ProviderReadiness` is the value-free readiness object; `AlpacaCredentials`,
-# `resolve_alpaca_credentials`, and `detect_alpaca_readiness` are owned by the shared
-# `provider_config` boundary (imported above) so all env reads go through one place.
 
 
 def _auth_headers(creds: AlpacaCredentials) -> dict[str, str]:

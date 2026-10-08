@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentCardInstance, DeckDocument } from '../types';
 import {
+  materializeBuilderTerminalPolicy,
   materializeSavedCardProfile,
   savedCardBotRoster,
 } from './profileMaterialization';
@@ -30,7 +31,7 @@ const worker: AgentCardInstance = {
 };
 
 const deck: DeckDocument = {
-  id: 'deck', name: 'Deck', workspaceRoot: '', version: 1, promptTemplates: [],
+  id: 'deck', name: 'Deck', projectCodeFolder: '', version: 1, promptTemplates: [],
   nodes: [main, worker],
   edges: [{ id: 'flow', source: 'card_main', target: 'card_worker', edgeType: 'flow' }],
 };
@@ -144,5 +145,57 @@ describe('saved Card to Hermes profile materialization', () => {
     };
     expect(savedCardBotRoster(withNoise, main)).toEqual(['worker']);
     expect(savedCardBotRoster(withNoise, worker)).toEqual([]);
+  });
+
+  it('materializes Builder onto Hermes Docker with only its Project folder mount', async () => {
+    const builder: AgentCardInstance = {
+      ...worker,
+      id: 'builder',
+      title: 'Builder',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
+    };
+    const terminal: Record<string, unknown> = {
+      backend: 'local',
+      docker_mount_cwd_to_workspace: false,
+      container_persistent: true,
+      docker_volumes: ['C:/Projects/LiquidAIty/main:/app'],
+      docker_extra_args: ['--privileged'],
+      docker_forward_env: ['GITHUB_TOKEN'],
+      docker_env: { HOST_SECRET: 'not-allowed' },
+    };
+    const request = vi.fn(async <T>(
+      method: string,
+      params: Record<string, unknown> = {},
+    ): Promise<T> => {
+      if (method === 'config.get') return { config: { terminal: structuredClone(terminal) } } as T;
+      if (method !== 'config.set') throw new Error(`unexpected:${method}`);
+      const field = String(params.key).replace(/^terminal\./, '');
+      terminal[field] = structuredClone(params.value);
+      return { key: params.key, value: params.value } as T;
+    });
+
+    await materializeBuilderTerminalPolicy(
+      request as unknown as Parameters<typeof materializeBuilderTerminalPolicy>[0],
+      builder,
+    );
+
+    expect(terminal).toMatchObject({
+      backend: 'docker',
+      docker_mount_cwd_to_workspace: true,
+      container_persistent: false,
+      docker_volumes: [],
+      docker_extra_args: [],
+      docker_forward_env: [],
+      docker_env: {},
+    });
+    expect(request.mock.calls.filter(([method]) => method === 'config.set')).toHaveLength(7);
+    expect(request.mock.calls.filter(([method]) => method === 'config.get')).toHaveLength(2);
+
+    request.mockClear();
+    await materializeBuilderTerminalPolicy(
+      request as unknown as Parameters<typeof materializeBuilderTerminalPolicy>[0],
+      worker,
+    );
+    expect(request).not.toHaveBeenCalled();
   });
 });

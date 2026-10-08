@@ -1,13 +1,14 @@
 import { Router } from 'express';
 
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
-import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
-import { internalMcpBridgeSecretAuthorized } from '../services/mcp/internalMcpAuth';
+import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
+import { getDeckDocument } from '../decks/store';
+import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 
 export const externalMainRoutes = Router();
 
 externalMainRoutes.post('/context', async (req, res) => {
-  if (!internalMcpBridgeSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
+  if (!internalMcpProcessSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
     return res.status(403).json({ ok: false, error: 'internal_mcp_authorization_required' });
   }
   const issuer = String(req.body?.issuer || '').trim();
@@ -20,7 +21,7 @@ externalMainRoutes.post('/context', async (req, res) => {
     if (!grant) {
       return res.status(403).json({ ok: false, error: 'external_identity_grant_required' });
     }
-    const { deck } = await getDeckDocument(grant.projectId, BUILDER_DECK_ID);
+    const { deck } = await getDeckDocument(grant.projectId, DEFAULT_PROJECT_DECK_ID);
     const mainCards = (deck?.nodes || []).filter((card) => {
       const saved = card.runtimeOptions as (
         typeof card.runtimeOptions & { enabled?: boolean }
@@ -38,7 +39,7 @@ externalMainRoutes.post('/context', async (req, res) => {
       ok: true,
       context: {
         projectId: grant.projectId,
-        deckId: BUILDER_DECK_ID,
+        deckId: DEFAULT_PROJECT_DECK_ID,
         conversationId,
         parentRunId: `external-main:${grant.grantId}`,
         mainCardId: mainCards[0].id,

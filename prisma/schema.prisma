@@ -27,9 +27,3 @@ model Session {
   @@index([userId])
 }
 
-model HealthCheck {
-  id        String   @id @default(cuid())
-  service   String
-  status    String
-  timestamp DateTime @default(now())
-}

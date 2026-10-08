@@ -22,6 +22,7 @@ from typing import Any, Callable, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from engraphis import __version__ as ENGRAPHIS_VERSION
 from engraphis.core.interfaces import Edge, MemoryType, Node, Scope, SearchFilter
 
 from .jev_edge_ontology import (
@@ -58,13 +59,9 @@ _intake_lock = threading.RLock()
 JEV_MODEL = "typesafe/jev-1.13"
 JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 THINKGRAPH_CONTROL_OUTCOMES: tuple[str, ...] = ()
-THINKGRAPH_JEV_CHOICES = SHARED_JEV_RELATIONSHIPS + THINKGRAPH_CONTROL_OUTCOMES
 _THINKGRAPH_JEV_ABSTAIN = "NONE"
 _THINK_INCIDENCE_KIND = "structured_extractor"
 _MAX_JEV_RELATIONSHIP_CONCURRENCY = 4
-_TRUSTED_STRUCTURED_GRAPH_KEYS = frozenset(
-    ("entities", "relations", "structured_extraction")
-)
 # Preserve the existing shared project-vocabulary ceiling used by both graph
 # writers. ThinkGraph no longer spends any of those labels on admission outcomes.
 JEV_CHOICE_OPTION_MAXIMUM = 255
@@ -369,101 +366,6 @@ def _source_pair(payload: dict[str, Any]) -> dict[str, Any]:
         "user_sha256": _text_hash(payload["userMessage"]),
         "main_sha256": _text_hash(payload["mainResponse"]),
     }
-
-
-def _validate_source_response_fit(value: Any, run_id: str) -> dict[str, Any]:
-    """Validate one response-scoped assessment without recomputing its numbers."""
-
-    if not isinstance(value, dict):
-        raise ValueError("thinkgraph_source_response_fit_invalid")
-    allowed = {
-        "schemaVersion", "metric", "rubricVersion", "status", "runId",
-        "cardRevisionId", "idfSha256", "outputSha256",
-        "executionEvidenceSha256", "executionEvidenceComplete",
-        "executionEvidenceError", "actualProvider", "actualModel",
-        "exposedToolsSha256",
-        "requestedModel", "scale", "evaluatedAt", "failureReason",
-        "requestCount", "questionCount", "timingMs", "rawScore",
-        "normalizedScore100", "probabilities", "confidence", "provider",
-        "resolvedModel", "decisionId", "usage",
-    }
-    if set(value) - allowed:
-        raise ValueError("thinkgraph_source_response_fit_invalid")
-    result = deepcopy(value)
-    if (
-        result.get("schemaVersion") != "request-fulfillment-assessment.v1"
-        or result.get("metric") != "request_fulfillment"
-        or result.get("rubricVersion") != "request-fulfillment.v1"
-        or result.get("status") not in {"scored", "unavailable"}
-        or str(result.get("runId") or "") != run_id
-    ):
-        raise ValueError("thinkgraph_source_response_fit_invalid")
-    for field in (
-        "idfSha256", "outputSha256", "executionEvidenceSha256",
-        "exposedToolsSha256",
-    ):
-        if field in result and not re.fullmatch(r"[a-f0-9]{64}", str(result[field])):
-            raise ValueError("thinkgraph_source_response_fit_invalid")
-    if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 100_000:
-        raise ValueError("thinkgraph_source_response_fit_invalid")
-    if result["status"] == "scored":
-        probabilities = result.get("probabilities")
-        if not isinstance(probabilities, dict) or set(probabilities) != {
-            "0", "1", "2", "3", "4"
-        }:
-            raise ValueError("thinkgraph_source_response_fit_invalid")
-        try:
-            normalized = float(result["normalizedScore100"])
-            confidence = float(result["confidence"])
-            values = validate_rounded_probability_distribution(
-                probabilities, ("0", "1", "2", "3", "4"),
-            )
-            raw_score = validate_rounded_weighted_score(
-                result["rawScore"], values, ("0", "1", "2", "3", "4"),
-            )
-        except (KeyError, TypeError, ValueError, OverflowError) as error:
-            raise ValueError("thinkgraph_source_response_fit_invalid") from error
-        required_text = (
-            "cardRevisionId", "idfSha256", "outputSha256",
-            "executionEvidenceSha256", "exposedToolsSha256",
-            "actualProvider", "actualModel",
-            "requestedModel", "evaluatedAt", "provider", "resolvedModel",
-            "decisionId",
-        )
-        scale = result.get("scale")
-        if (
-            not math.isfinite(raw_score) or not 0.0 <= raw_score <= 4.0
-            or not math.isclose(normalized, raw_score * 25.0, rel_tol=0.0, abs_tol=0.000001)
-            or not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0
-            or any(not math.isfinite(item) or not 0.0 <= item <= 1.0 for item in values.values())
-            or any(not str(result.get(field) or "").strip() for field in required_text)
-            or scale != {"minimum": 0.0, "maximum": 4.0}
-            or result.get("executionEvidenceComplete") is not True
-            or result.get("executionEvidenceError") is not None
-            or "failureReason" in result
-            or result.get("requestCount") != 1
-            or result.get("questionCount") != 1
-            or not isinstance(result.get("usage"), dict)
-        ):
-            raise ValueError("thinkgraph_source_response_fit_invalid")
-    else:
-        if (
-            not str(result.get("failureReason") or "")
-            or not isinstance(result.get("executionEvidenceComplete"), bool)
-        ):
-            raise ValueError("thinkgraph_source_response_fit_invalid")
-        for field in ("rawScore", "normalizedScore100", "probabilities", "confidence"):
-            if field in result:
-                raise ValueError("thinkgraph_source_response_fit_invalid")
-    return result
-
-
-def _edge_memory_ids(edge: Any) -> list[str]:
-    provenance = edge.provenance if isinstance(edge.provenance, dict) else {}
-    values = [provenance.get("memory_id")]
-    if isinstance(provenance.get("memory_ids"), list):
-        values.extend(provenance["memory_ids"])
-    return list(dict.fromkeys(str(value) for value in values if value))
 
 
 def _source_event_reference(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2121,12 +2023,12 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "hermesSessionId", "completedAt", "userMessage", "mainResponse",
-        "sourceResponseFit", "mainSubjects",
+        "mainSubjects",
     }
     if set(payload) - allowed:
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     cleaned = dict(payload)
-    for key in allowed - {"sourceResponseFit", "mainSubjects"}:
+    for key in allowed - {"mainSubjects"}:
         if key in cleaned and not isinstance(cleaned[key], str):
             raise ValueError("thinkgraph_completed_pair_payload_invalid")
     if "mainSubjects" in cleaned:
@@ -2149,10 +2051,6 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned["mainResponse"] = str(cleaned.get("mainResponse") or "")
     if not cleaned["userMessage"].strip() or not cleaned["mainResponse"].strip():
         raise ValueError("thinkgraph_completed_pair_text_required")
-    if "sourceResponseFit" in cleaned:
-        cleaned["sourceResponseFit"] = _validate_source_response_fit(
-            cleaned["sourceResponseFit"], str(cleaned.get("runId") or "")
-        )
     return cleaned
 
 
@@ -2220,7 +2118,7 @@ def _validate_settle_payload(
     completed_keys = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "hermesSessionId", "completedAt", "userMessage", "mainResponse",
-        "sourceResponseFit", "mainSubjects",
+        "mainSubjects",
     }
     extras = {"pairReference", "structuredOutput", "cardRun"}
     if set(payload) - completed_keys - extras:
@@ -2497,10 +2395,6 @@ def _engraphis_tools_from_registrations() -> list[dict]:
     return result
 
 
-async def engraphis_tools() -> list[dict]:
-    return _engraphis_tools_from_registrations()
-
-
 _OPERATION_DEFINITIONS: tuple[Any, ...] | None = None
 _OPERATION_DEFINITIONS_LOCK = threading.Lock()
 
@@ -2586,7 +2480,7 @@ async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
                 raise ValueError("thinkgraph_scope_is_owned_by_project")
             nested["workspace"] = project
             arguments["arguments"] = nested
-    service = get_service()
+    get_service()
     response = await server.call_tool(name, arguments)
     content = response.content if hasattr(response, "content") else response[0] if isinstance(response, tuple) else response
     if getattr(response, "is_error", False):
@@ -2873,7 +2767,7 @@ def _bounded_entity_projection(
             if service.stats(workspace=project).get("embedding", {}).get("ready")
             else "unavailable"
         },
-        "runtime": {"engine": "engraphis", "version": "1.7.4"},
+        "runtime": {"engine": "engraphis", "version": ENGRAPHIS_VERSION},
     }
 
 
@@ -3037,4 +2931,4 @@ def projection(project: str, entity_id: str | None = None) -> dict:
             "truncated": scene["meta"]["truncated"],
             "canonicalSubjectDirectory": _projection_subject_directory(project),
             "embedding": {"state": "ready" if service.stats(workspace=project).get("embedding", {}).get("ready") else "unavailable"},
-            "runtime": {"engine": "engraphis", "version": "1.7.4"}}
+            "runtime": {"engine": "engraphis", "version": ENGRAPHIS_VERSION}}

@@ -4,38 +4,6 @@ import json
 import pytest
 
 
-def test_codegraph_ui_reads_saved_scope_and_rejects_effects(monkeypatch):
-    from app.python_models import card_domain, data_anchor
-    monkeypatch.setattr(card_domain, "load_deck", lambda p, d: {
-        "projectId": p, "deck": {"nodes": [{"id": "saved-main"}]}})
-    calls = []
-    def read(**kwargs):
-        calls.append(kwargs)
-        return [{"projects": [{"name": "cbm-project"}]}]
-    monkeypatch.setattr(data_anchor, "call_read_tools_via_mcp", read)
-    scope = {"projectId": "p", "deckId": "d", "cardId": "saved-main"}
-    assert data_anchor.read_codegraph_tool({**scope, "name": "list_projects"})["projects"]
-    assert calls[0]["card_id"] == "saved-main"
-    assert calls[0]["calls"] == [("cbm.list_projects", {"format": "json"})]
-    with pytest.raises(ValueError, match="not_allowed"):
-        data_anchor.read_codegraph_tool({**scope, "name": "delete_project"})
-    with pytest.raises(ValueError, match="saved_card"):
-        data_anchor.read_codegraph_tool({**scope, "cardId": "absent", "name": "list_projects"})
-    with pytest.raises(ValueError, match="project_mismatch"):
-        data_anchor.read_codegraph_tool({**scope, "name": "index_status", "arguments": {"project": "other"}})
-    assert len(calls) == 1
-
-    monkeypatch.setattr(
-        data_anchor,
-        "call_read_tools_via_mcp",
-        lambda **_kwargs: (_ for _ in ()).throw(ExceptionGroup(
-            "transport closed",
-            [RuntimeError("materializer_mcp_read_failed:cbm.list_projects")],
-        )),
-    )
-    with pytest.raises(data_anchor.DataAnchorError, match="codegraph_unavailable"):
-        data_anchor.read_codegraph_tool({**scope, "name": "list_projects"})
-
 from app.python_models.data_anchor import (
     append_canonical_subject_directory,
     assemble_canonical_subject_directory,

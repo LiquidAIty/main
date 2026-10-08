@@ -2,6 +2,10 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./projectAccess', () => ({
+  requireOwnedProject: vi.fn(async () => ({ ownerUserId: 'owner-one' })),
+}));
+
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { createGraphRouter } from './graph.routes';
 

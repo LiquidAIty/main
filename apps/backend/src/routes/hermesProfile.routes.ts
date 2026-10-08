@@ -2,14 +2,13 @@ import { Router, type Request } from 'express';
 
 import { getDeckDocument } from '../decks/store';
 import { materializeSavedCardProfile } from '../hermes/profileMaterialization';
-import { getProjectCard } from '../services/agentBuilderStore';
+import { getProject } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
-import type { AgentCardInstance, DeckDocument } from '../types';
+import type { AgentCardInstance } from '../types';
 
 type RequestHermes = (
   method: string,
   params?: Record<string, unknown>,
-  profile?: string,
 ) => Promise<unknown>;
 
 type Dependencies = {
@@ -41,7 +40,7 @@ async function resolveCard(
   projectIdValue: unknown,
   deckIdValue: unknown,
   cardIdValue: unknown,
-): Promise<{ projectId: string; deck: DeckDocument; card: AgentCardInstance }> {
+): Promise<{ projectId: string; card: AgentCardInstance }> {
   const projectId = requiredText(projectIdValue, 'project_id_required');
   const deckId = requiredText(deckIdValue, 'deck_id_required');
   const cardId = requiredText(cardIdValue, 'card_id_required');
@@ -50,7 +49,7 @@ async function resolveCard(
   const card = deck.nodes.find((node) => node.id === cardId);
   if (!card) throw new Error('card_not_found');
   if (card.runtime.kind !== 'hermes') throw new Error('card_runtime_not_hermes');
-  return { projectId, deck, card };
+  return { projectId, card };
 }
 
 function errorStatus(error: unknown): number {
@@ -125,11 +124,10 @@ function safeMcpTestResult(value: unknown): Record<string, unknown> {
 
 async function readProfile(
   requestHermes: RequestHermes,
-  deck: DeckDocument,
   card: AgentCardInstance,
 ) {
   const request = <T>(method: string, params: Record<string, unknown> = {}) => (
-    requestHermes(method, params, card.runtime.profile) as Promise<T>
+    requestHermes(method, params) as Promise<T>
   );
   const profile = record(await materializeSavedCardProfile(request, card));
   const learning = record(await request('learning.frames', {
@@ -185,7 +183,7 @@ const defaultDependencies: Dependencies = {
   authorizeProject: async (req, projectId) => {
     const userId = String((req as Request & { userId?: string }).userId || '').trim();
     if (!userId) return false;
-    const project = await getProjectCard(projectId, userId);
+    const project = await getProject(projectId, userId);
     return Boolean(project && project.ownerUserId === userId);
   },
 };
@@ -201,7 +199,7 @@ export function createHermesProfileRouter(deps: Dependencies = defaultDependenci
       if (!(await deps.authorizeProject(req, resolved.projectId))) {
         return res.status(403).json({ ok: false, error: 'hermes_profile_project_access_denied' });
       }
-      return res.json({ ok: true, ...await readProfile(deps.requestHermes, resolved.deck, resolved.card) });
+      return res.json({ ok: true, ...await readProfile(deps.requestHermes, resolved.card) });
     } catch (error) {
       return res.status(errorStatus(error)).json({
         ok: false,
@@ -222,13 +220,12 @@ export function createHermesProfileRouter(deps: Dependencies = defaultDependenci
       const result = await deps.requestHermes(
         selected.method,
         { ...selected.params, profile: resolved.card.runtime.profile },
-        resolved.card.runtime.profile,
       );
       return res.json({
         ok: true,
         method: selected.method,
         result: selected.method === 'mcp.servers.test' ? safeMcpTestResult(result) : result,
-        ...await readProfile(deps.requestHermes, resolved.deck, resolved.card),
+        ...await readProfile(deps.requestHermes, resolved.card),
       });
     } catch (error) {
       return res.status(errorStatus(error)).json({

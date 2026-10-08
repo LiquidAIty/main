@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { tsImport } from 'tsx/esm/api';
-import { resolveRepoRoot } from './workspaceRoot';
+import { resolveRepoRoot } from './workingDirectories';
 
 export type HermesGatewayEvent = {
   type: string;
@@ -35,6 +35,8 @@ export type HermesGatewayClient = {
 
 let connectedClient: HermesGatewayClient | null = null;
 let connecting: Promise<HermesGatewayClient> | null = null;
+let connectingClient: HermesGatewayClient | null = null;
+let connectionGeneration = 0;
 
 function gatewayUrl(env: NodeJS.ProcessEnv = process.env): string {
   const configured = String(env.HERMES_GATEWAY_URL || '').trim();
@@ -81,19 +83,36 @@ async function newGatewayClient(): Promise<HermesGatewayClient> {
 export async function hermesGateway(): Promise<HermesGatewayClient> {
   if (connectedClient?.connectionState === 'open') return connectedClient;
   if (connecting) return connecting;
+  const generation = connectionGeneration;
   connecting = (async () => {
     const client = await newGatewayClient();
+    if (generation !== connectionGeneration) {
+      client.close();
+      throw new Error('hermes_gateway_closed_during_connect');
+    }
+    connectingClient = client;
     const ready = new Promise<void>((resolve, reject) => {
+      let detachEvent: () => void = () => undefined;
+      let detachState: () => void = () => undefined;
+      const cleanup = () => {
+        clearTimeout(timer);
+        detachEvent();
+        detachState();
+      };
       const timer = setTimeout(() => {
-        detach();
+        cleanup();
         reject(new Error('hermes_gateway_ready_timeout'));
       }, 15_000);
       timer.unref?.();
-      const detach = client.onEvent((event) => {
+      detachEvent = client.onEvent((event) => {
         if (event.type !== 'gateway.ready') return;
-        clearTimeout(timer);
-        detach();
+        cleanup();
         resolve();
+      });
+      detachState = client.onState((state) => {
+        if (state !== 'closed' && state !== 'error') return;
+        cleanup();
+        reject(new Error(`hermes_gateway_${state}_before_ready`));
       });
     });
     client.onRequest((request) => {
@@ -107,15 +126,23 @@ export async function hermesGateway(): Promise<HermesGatewayClient> {
     });
     await client.connect(gatewayUrl());
     await ready;
+    if (generation !== connectionGeneration) {
+      client.close();
+      throw new Error('hermes_gateway_closed_during_connect');
+    }
     connectedClient = client;
     return client;
   })().finally(() => {
+    connectingClient = null;
     connecting = null;
   });
   return connecting;
 }
 
 export function closeHermesGateway(): void {
+  connectionGeneration += 1;
+  connectingClient?.close();
+  connectingClient = null;
   connectedClient?.close();
   connectedClient = null;
   connecting = null;

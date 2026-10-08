@@ -3,19 +3,18 @@
 // @graph relates_to: AgentBuilderWorkspace, KnowGraph API, KnowGraph
 // @graph depends_on: Express, Neo4j, KnowGraph API
 // @graph feeds_to: KnowGraph API, KnowGraph
-import axios from 'axios';
 import { Router } from 'express';
 import multer from 'multer';
 import { pool } from '../db/pool';
-import { isDevTestModeEnabled } from '../services/devTest';
+import { isDevelopmentEnvironment } from '../services/requestPayloadLimits';
 
 const router = Router();
-// DEV TEST LIMIT RAISED: allow large real-document uploads during development and loop testing.
+// Local development accepts large real-document fixtures; production keeps a bounded default.
 const KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES = Math.max(
   1_000_000,
   Number(
     process.env.KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES ||
-      (isDevTestModeEnabled() ? 512 * 1024 * 1024 : 25 * 1024 * 1024),
+      (isDevelopmentEnvironment() ? 512 * 1024 * 1024 : 25 * 1024 * 1024),
   ),
 );
 function looksLikePdfUpload(file: { mimetype?: string; originalname?: string } | null | undefined): boolean {
@@ -328,51 +327,9 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
   return Array.from(scopeIds);
 }
 
-function _neoInt(v: any): number {
-  return Number(v?.toNumber?.() ?? v ?? 0);
-}
-
 // List the distinct Graphiti group scopes present in Neo4j, with a
 // human label + counts, so the UI can open ANY real KnowGraph scope directly — e.g.
 // an imported book under its own canonical scope — without moving or re-keying data.
-async function listKnowGraphScopes(): Promise<
-  Array<{ scope: string; label: string; nodes: number; concepts: number; documents: number }>
-> {
-  const uri = String(process.env.NEO4J_URI || '').trim();
-  const user = String(process.env.NEO4J_USER || '').trim();
-  const password = String(process.env.NEO4J_PASSWORD || '').trim();
-  if (!uri || !user || !password) throw new Error('NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required');
-  const neo4jModule: any = await import('neo4j-driver');
-  const neo4j: any = neo4jModule?.default ?? neo4jModule;
-  const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
-  const database = String(process.env.NEO4J_DATABASE || '').trim();
-  const session = driver.session(database ? { database } : undefined);
-  try {
-    const r = await session.run(
-      `
-        MATCH (n) WHERE n.group_id IS NOT NULL
-        WITH toString(n.group_id) AS scope, collect(n) AS ns
-        RETURN scope,
-          size(ns) AS nodes,
-          size([x IN ns WHERE 'Entity' IN labels(x)]) AS concepts,
-          size([x IN ns WHERE 'Episodic' IN labels(x)]) AS documents,
-          head([x IN ns WHERE 'Episodic' IN labels(x) | coalesce(x.source_name, x.name, x.document_id)]) AS label
-        ORDER BY nodes DESC
-      `,
-    );
-    return r.records.map((rec: any) => ({
-      scope: String(rec.get('scope')),
-      label: String(rec.get('label') || rec.get('scope')),
-      nodes: _neoInt(rec.get('nodes')),
-      concepts: _neoInt(rec.get('concepts')),
-      documents: _neoInt(rec.get('documents')),
-    }));
-  } finally {
-    await session.close();
-    await driver.close();
-  }
-}
-
 async function queryKnowGraphProject(projectId: string, limit: number): Promise<{
   nodes: KnowGraphNodeDto[];
   relationships: KnowGraphRelationshipDto[];
@@ -509,12 +466,6 @@ async function queryKnowGraphProject(projectId: string, limit: number): Promise<
   }
 }
 
-function stripKnowgraphNodeIdPrefix(nodeId: string): string {
-  return String(nodeId || '')
-    .trim()
-    .replace(/^(kg:|know:)/i, '');
-}
-
 async function queryKnowGraphExpand(
   projectId: string,
   nodeId: string,
@@ -523,7 +474,7 @@ async function queryKnowGraphExpand(
   nodes: KnowGraphNodeDto[];
   relationships: KnowGraphRelationshipDto[];
 }> {
-  const rawNodeId = stripKnowgraphNodeIdPrefix(nodeId);
+  const rawNodeId = String(nodeId || '').trim();
   if (!rawNodeId) {
     throw new Error('nodeId is required');
   }
@@ -663,48 +614,27 @@ function knowgraphBaseUrl(): string {
   return trimBaseUrl(configured || 'http://localhost:8001');
 }
 
-async function proxyKnowgraphGetJson(pathname: string, query?: Record<string, string | string[]>): Promise<{
-  status: number;
-  data: any;
-}> {
-  const search = new URLSearchParams();
-  Object.entries(query || {}).forEach(([key, value]) => {
-    (Array.isArray(value) ? value : [value]).forEach((item) => search.append(key, item));
-  });
-  const url = `${knowgraphBaseUrl()}${pathname}${search.toString() ? `?${search.toString()}` : ''}`;
-  const response = await axios.get(url, {
-    timeout: 8000,
-    validateStatus: () => true,
-  });
-  return { status: response.status, data: response.data };
-}
-
-router.get('/health', async (_req, res) => {
-  try {
-    const response = await proxyKnowgraphGetJson('/health');
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    const status = Number(error?.response?.status) || 502;
-    const message =
-      error?.response?.data?.error?.message ||
-      error?.response?.data?.message ||
-      error?.message ||
-      'KnowGraph health proxy request failed';
-    return res.status(status).json({ ok: false, error: { message } });
-  }
-});
-
 router.get('/graph', async (req, res) => {
   try {
-    const projectId =
+    const requestedProjectId =
       (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
       (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) ||
       '';
 
-    if (!projectId) {
+    if (!requestedProjectId) {
       return res.status(400).json({
         ok: false,
         error: { message: 'projectId is required' },
+      });
+    }
+    const userId = String((req as any).userId || '').trim();
+    const projectId = userId
+      ? await resolveAuthenticatedKnowGraphProjectId(userId, requestedProjectId)
+      : null;
+    if (!projectId) {
+      return res.status(userId ? 404 : 401).json({
+        ok: false,
+        error: { message: userId ? 'KnowGraph project not found.' : 'Authentication required.' },
       });
     }
 
@@ -719,17 +649,9 @@ router.get('/graph', async (req, res) => {
 
 // List available KnowGraph scopes so the UI can open any real scope directly
 // (the book graph keeps its canonical scope; nothing is moved or re-keyed).
-router.get('/scopes', async (_req, res) => {
-  try {
-    return res.json({ ok: true, scopes: await listKnowGraphScopes() });
-  } catch (error: any) {
-    return res.status(500).json({ ok: false, error: { message: error?.message || 'Failed to list KnowGraph scopes' } });
-  }
-});
-
 router.get('/expand', async (req, res) => {
   try {
-    const projectId =
+    const requestedProjectId =
       (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
       (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) ||
       '';
@@ -738,10 +660,20 @@ router.get('/expand', async (req, res) => {
       (typeof req.query?.node_id === 'string' && req.query.node_id.trim()) ||
       '';
 
-    if (!projectId || !nodeId) {
+    if (!requestedProjectId || !nodeId) {
       return res.status(400).json({
         ok: false,
         error: { message: 'projectId and nodeId are required' },
+      });
+    }
+    const userId = String((req as any).userId || '').trim();
+    const projectId = userId
+      ? await resolveAuthenticatedKnowGraphProjectId(userId, requestedProjectId)
+      : null;
+    if (!projectId) {
+      return res.status(userId ? 404 : 401).json({
+        ok: false,
+        error: { message: userId ? 'KnowGraph project not found.' : 'Authentication required.' },
       });
     }
 
@@ -908,59 +840,6 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
   }
 });
 
-router.post('/reconcile-jev-annotations', async (req, res) => {
-  try {
-    const userId = String((req as any).userId || '').trim();
-    if (!userId) {
-      return res.status(401).json({
-        ok: false,
-        error: { message: 'Authentication required for KnowGraph reconciliation.' },
-      });
-    }
-    const requestedProjectId = String(req.body?.project_id || '').trim();
-    const rawFactIds = req.body?.graphiti_fact_uuids ?? [];
-    if (
-      !requestedProjectId
-      || !Array.isArray(rawFactIds)
-      || rawFactIds.length > 64
-      || rawFactIds.some((value: unknown) => typeof value !== 'string' || !value.trim())
-    ) {
-      return res.status(400).json({
-        ok: false,
-        error: { message: 'project_id and at most 64 graphiti_fact_uuids are required.' },
-      });
-    }
-    const projectId = await resolveAuthenticatedKnowGraphProjectId(
-      userId,
-      requestedProjectId,
-    );
-    if (!projectId) {
-      return res.status(404).json({
-        ok: false,
-        error: { message: 'KnowGraph project not found for the authenticated user.' },
-      });
-    }
-    const graphitiFactUuids = Array.from(new Set(
-      rawFactIds.map((value: string) => value.trim()),
-    ));
-    const response = await fetch(`${knowgraphBaseUrl()}/reconcile_jev_annotations`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        graphiti_fact_uuids: graphitiFactUuids,
-      }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    return res.status(response.status).json(await readResponseDataSafe(response));
-  } catch (error: any) {
-    return res.status(502).json({
-      ok: false,
-      error: { message: error?.message || 'KnowGraph reconciliation proxy failed' },
-    });
-  }
-});
-
 router.post('/delete-fact', async (req, res) => {
   try {
     const userId = String((req as any).userId || '').trim();
@@ -1008,34 +887,4 @@ router.post('/delete-fact', async (req, res) => {
 // carried by each document's own typed source field and enforced through the
 // ingest prompt/tool contract — this proxy forwards inputs, it does NOT classify
 // content or gate on text length.
-router.post('/ingest_web', async (req, res) => {
-  try {
-    const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
-    const documents = Array.isArray(req.body?.documents) ? req.body.documents : [];
-    if (!projectId || documents.length === 0) {
-      return res.status(400).json({
-        ok: false,
-        error: { message: 'project_id and at least one document are required' },
-      });
-    }
-    const response = await axios.post(
-      `${knowgraphBaseUrl()}/ingest_web_results`,
-      {
-        project_id: projectId,
-        documents,
-        ...(req.body?.prompt_template ? { prompt_template: req.body.prompt_template } : {}),
-        ...(req.body?.organizing_principle ? { organizing_principle: req.body.organizing_principle } : {}),
-        ...(req.body?.research_focus ? { research_focus: req.body.research_focus } : {}),
-      },
-      { timeout: 300_000, validateStatus: () => true },
-    );
-    return res.status(response.status).json(response.data);
-  } catch (error: any) {
-    return res.status(502).json({
-      ok: false,
-      error: { message: error?.message || 'KnowGraph web ingestion proxy failed' },
-    });
-  }
-});
-
 export default router;

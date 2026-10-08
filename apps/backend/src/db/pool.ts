@@ -64,17 +64,28 @@ async function disposePool(targetPool?: Pool): Promise<void> {
   }
 }
 
-async function withFreshPool<T>(op: (activePool: Pool) => Promise<T>): Promise<T> {
+async function queryOnce(args: any[]): Promise<any> {
   const activePool = getActivePool();
   try {
-    return await op(activePool);
+    const query = activePool.query.bind(activePool) as (...queryArgs: any[]) => Promise<any>;
+    return await query(...args);
   } catch (err: any) {
-    if (!isTransient(err) && !activePool.ended) {
-      throw err;
+    if (isTransient(err) || activePool.ended) {
+      await disposePool(activePool).catch(() => undefined);
     }
+    throw err;
+  }
+}
+
+async function connectWithOneRecovery(): Promise<any> {
+  const activePool = getActivePool();
+  try {
+    return await activePool.connect();
+  } catch (err: any) {
+    if (!isTransient(err) && !activePool.ended) throw err;
     await disposePool(activePool).catch(() => undefined);
     await sleep(250);
-    return await op(getActivePool());
+    return getActivePool().connect();
   }
 }
 
@@ -94,14 +105,10 @@ if (!g.__LIQ_PG_SHUTDOWN_HOOKS__) {
 export const pool: PoolFacade = new Proxy({} as PoolFacade, {
   get(_target, prop) {
     if (prop === 'query') {
-      return async (...args: any[]) =>
-        withFreshPool((activePool) => {
-          const query = activePool.query.bind(activePool) as (...queryArgs: any[]) => Promise<any>;
-          return query(...args);
-        });
+      return async (...args: any[]) => queryOnce(args);
     }
     if (prop === 'connect') {
-      return async () => withFreshPool((activePool) => activePool.connect());
+      return async () => connectWithOneRecovery();
     }
     if (prop === 'end') {
       return async () => {

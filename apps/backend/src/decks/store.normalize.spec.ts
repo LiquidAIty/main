@@ -3,11 +3,11 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { BUILDER_DECK_ID } from './store';
+import { DEFAULT_PROJECT_DECK_ID } from './defaultProjectDeck';
 
 describe('thin Deck transport boundary', () => {
   it('keeps the existing Agent Builder Deck identity', () => {
-    expect(BUILDER_DECK_ID).toBe('deck_builder');
+    expect(DEFAULT_PROJECT_DECK_ID).toBe('deck_builder');
   });
 
   it('contains no TypeScript database or legacy JSONB authority', () => {

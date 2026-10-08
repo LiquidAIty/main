@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { pool } from '../db/pool';
 import { getDeckDocument, saveDeckDocument } from '../decks/store';
+import { DEFAULT_PROJECT_EDGES } from '../decks/defaultProjectDeck';
 import {
   createProject,
   discardFreshProject,
-  getProjectCard,
-  listAgentCards,
-  SYSTEM6_PROJECT_EDGES,
-} from '../services/agentBuilderStore';
-import { requireOwnedProject, resolveProjectOwnerUserId } from './projectAccess';
+  getProject,
+  listProjects,
+} from '../services/projectStore';
+import { authenticatedUserId, requireOwnedProject } from './projectAccess';
 
 const router = Router();
 const PROJECTS_TABLE = 'ag_catalog.projects';
@@ -37,14 +37,14 @@ async function getProjectColumns(): Promise<Set<string>> {
 router.get('/', async (req, res) => {
   logProjectRoute(req);
   try {
-    const ownerUserId = await resolveProjectOwnerUserId(req, res);
+    const ownerUserId = authenticatedUserId(req);
     if (!ownerUserId) {
       return res.status(401).json({ ok: false, error: 'project owner session required' });
     }
     const rawType = req.query.project_type;
     const projectType = rawType === 'assist' || rawType === 'agent' ? rawType : undefined;
-    const cards = await listAgentCards(ownerUserId, projectType);
-    return res.json({ ok: true, projects: cards });
+    const projects = await listProjects(ownerUserId, projectType);
+    return res.json({ ok: true, projects });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to list projects' });
   }
@@ -53,15 +53,15 @@ router.get('/', async (req, res) => {
 router.get('/:projectId', async (req, res) => {
   logProjectRoute(req);
   try {
-    const ownerUserId = await resolveProjectOwnerUserId(req, res);
+    const ownerUserId = authenticatedUserId(req);
     if (!ownerUserId) {
       return res.status(401).json({ ok: false, error: 'project owner session required' });
     }
-    const card = await getProjectCard(req.params.projectId, ownerUserId);
-    if (!card) {
+    const project = await getProject(req.params.projectId, ownerUserId);
+    if (!project) {
       return res.status(404).json({ ok: false, error: 'project_not_found' });
     }
-    return res.json({ ok: true, project: card });
+    return res.json({ ok: true, project });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to load project' });
   }
@@ -75,7 +75,7 @@ router.post('/', async (req, res) => {
   }
   const projectType = project_type === 'assist' || project_type === 'agent' ? project_type : 'agent';
   try {
-    const ownerUserId = await resolveProjectOwnerUserId(req, res);
+    const ownerUserId = authenticatedUserId(req);
     if (!ownerUserId) {
       return res.status(401).json({ ok: false, error: 'project owner session required' });
     }
@@ -89,14 +89,14 @@ router.post('/', async (req, res) => {
       try {
         const loaded = await getDeckDocument(project.id, 'deck_builder');
         if (!loaded.deck || !loaded.meta.deckRevision) {
-          throw new Error('project_system6_deck_missing');
+          throw new Error('default_project_deck_missing');
         }
         await saveDeckDocument(
           project.id,
           'deck_builder',
           {
             ...loaded.deck,
-            edges: SYSTEM6_PROJECT_EDGES.map((edge) => ({ ...edge })),
+            edges: DEFAULT_PROJECT_EDGES.map((edge) => ({ ...edge })),
           },
           { expectedRevision: loaded.meta.deckRevision },
         );
@@ -161,7 +161,7 @@ router.patch('/:projectId', async (req, res) => {
     if (!rows.length) {
       return res.status(404).json({ ok: false, error: 'project_not_found' });
     }
-    const project = await getProjectCard(projectId, access.ownerUserId);
+    const project = await getProject(projectId, access.ownerUserId);
     return res.json({ ok: true, project });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to update project' });

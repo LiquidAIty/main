@@ -9,11 +9,11 @@ const application = vi.hoisted(() => ({
   setPanelCollapsed: vi.fn(),
 }));
 
-vi.mock('../../../../worldsignal/gods-eye-view-main/src/app/directApplication.js', () => ({
+vi.mock('../../../../agent-products/gods-eye-view/src/app/directApplication.js', () => ({
   createWorldViewApplication: application.create,
 }));
 
-import { getActiveWorldViewMountCount, mountWorldView } from '../../../../worldsignal/gods-eye-view-main/src/app/mount.js';
+import { getActiveWorldViewMountCount, mountWorldView } from '../../../../agent-products/gods-eye-view/src/app/mount.js';
 
 const controlIds = [
   'left-panel-stack', 'right-context-rail', 'command-dock',

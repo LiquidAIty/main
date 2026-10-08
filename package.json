@@ -4,7 +4,7 @@
   "license": "MIT",
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "dev:stop": "kill-port 4000 5173 8003 8001 8765 4040 4174",
+    "dev:stop": "kill-port 4000 5173 8003 8001 8765 9119 4040 4174",
     "dev:fresh": "npm run dev:stop && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-services.ps1",
     "dev:services": "concurrently --kill-others --success all --names hermes,backend,dependents --prefix-colors yellow,magenta,cyan \"npm run dev:hermes\" \"npm run dev:backend\" \"npm run dev:after-backend\"",
     "dev:after-backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dependent-services.ps1",
@@ -22,7 +22,6 @@
     "typecheck:all": "npm run typecheck && npm run typecheck:spec",
     "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=prisma/schema.prisma --name init",
-    "prisma:seed": "ts-node prisma/seed.ts",
     "prisma:studio": "prisma studio",
     "test": "vitest run"
   },

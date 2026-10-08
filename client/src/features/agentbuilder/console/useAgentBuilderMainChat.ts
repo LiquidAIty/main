@@ -7,7 +7,6 @@ import {
   type AddressableAgent,
   type DirectChatTarget,
   type GraphRecordIdentity,
-  type HermesSessionEvent,
   type MainHermesSessionEvent,
   SessionStreamError,
   type SharedChatMessage,
@@ -26,8 +25,6 @@ export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking
 export type MainChatRunInput = { images?: Array<Record<string, unknown>> };
 // Matches the Hermes turn-image attachment count limit.
 export const MAX_MAIN_CHAT_IMAGES = 12;
-
-type MainChatRuntimeEvent = NonNullable<HermesSessionEvent['runtimeEvent']>;
 
 type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
@@ -197,10 +194,9 @@ export default function useAgentBuilderMainChat({
   const conversationKey = `${canvasProjectId}\u0000${conversationId}`;
   const [technical, setTechnical] = useState<{
     key: string;
-    events: MainChatRuntimeEvent[];
     error: string | null;
   }>({
-    key: conversationKey, events: [], error: null,
+    key: conversationKey, error: null,
   });
   const [transcript, setTranscript] = useState<{
     key: string;
@@ -222,14 +218,9 @@ export default function useAgentBuilderMainChat({
   } | null>(null);
   const sessionEventsRef = useRef<{
     key: string;
-    runtimeSessionId: string;
-    hermesSessionId: string;
+    liveSessionId: string;
     close: () => void;
   } | null>(null);
-  const observedProjectionIdsRef = useRef<{ key: string; ids: Set<string> }>({
-    key: conversationKey,
-    ids: new Set(),
-  });
   const [responderState, setResponderState] = useState<{
     key: string;
     cardId: string | null;
@@ -316,21 +307,19 @@ export default function useAgentBuilderMainChat({
     };
   }, [conversationKey, directChatTargets, mainCardId, setCurrentResponderCardId]);
 
-  const subscribeToHermesSession = useCallback((runtimeSessionId: string, hermesSessionId: string) => {
-    if (!canvasProjectId || !runtimeSessionId || !hermesSessionId) return;
+  const subscribeToHermesSession = useCallback((liveSessionId: string) => {
+    if (!canvasProjectId || !liveSessionId) return;
     const existing = sessionEventsRef.current;
     if (
       existing?.key === conversationKey
-      && existing.runtimeSessionId === runtimeSessionId
-      && existing.hermesSessionId === hermesSessionId
+      && existing.liveSessionId === liveSessionId
     ) return;
     existing?.close();
     const close = subscribeSessionEvents({
       projectId: canvasProjectId,
       deckId,
       conversationId,
-      runtimeSessionId,
-      hermesSessionId,
+      liveSessionId,
       onEvent: ({ event }: MainHermesSessionEvent) => {
         if (event.type === 'message.complete') {
           const status = String(event.payload?.status || 'complete');
@@ -356,7 +345,7 @@ export default function useAgentBuilderMainChat({
           : current);
       },
     });
-    sessionEventsRef.current = { key: conversationKey, runtimeSessionId, hermesSessionId, close };
+    sessionEventsRef.current = { key: conversationKey, liveSessionId, close };
   }, [canvasProjectId, conversationId, conversationKey, deckId]);
 
   useEffect(() => {
@@ -373,8 +362,7 @@ export default function useAgentBuilderMainChat({
     }
     setTranscript({ key: conversationKey, messages: [] });
     setSharedAuthority({ key: conversationKey, mainCardId: '', agents: [] });
-    setTechnical({ key: conversationKey, events: [], error: null });
-    observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
+    setTechnical({ key: conversationKey, error: null });
     responderRef.current = { key: conversationKey, cardId: null };
     setResponderState({ key: conversationKey, cardId: null });
     setTurnState({ key: conversationKey, phase: 'idle' });
@@ -418,16 +406,10 @@ export default function useAgentBuilderMainChat({
           mainCardId: history.mainCardId,
           agents: history.addressableAgents,
         });
-        subscribeToHermesSession(history.runtimeSessionId, history.hermesSessionId);
         setTechnical({
           key: conversationKey,
-          events: history.runtimeEvents,
           error: null,
         });
-        observedProjectionIdsRef.current = {
-          key: conversationKey,
-          ids: new Set(history.runtimeEvents.map((event) => event.id)),
-        };
         setHistoryState({ key: conversationKey, loading: false });
       })
       .catch(() => {
@@ -456,6 +438,13 @@ export default function useAgentBuilderMainChat({
         setTurnState({ key: conversationKey, phase: 'idle' });
         throw new Error('main_project_required');
       }
+      if (activeStreamRef.current?.key === conversationKey) {
+        throw new SessionStreamError({
+          code: 'main_turn_already_active',
+          message: 'Wait for the current Card turn to finish before sending another message.',
+          route: '/api/main/session/chat',
+        });
+      }
 
       let turnParticipant = submission.participant;
       setTranscript((current) => ({
@@ -473,7 +462,7 @@ export default function useAgentBuilderMainChat({
         ],
       }));
       let runId: string | null = null;
-      setTechnical({ key: conversationKey, events: [], error: null });
+      setTechnical({ key: conversationKey, error: null });
       const streamController = new AbortController();
       activeStreamRef.current = {
         key: conversationKey,
@@ -554,25 +543,12 @@ export default function useAgentBuilderMainChat({
           })),
           signal: streamController.signal,
           onEvent: (event) => {
-            const projection = event.projection;
-            const runtimeEvent = event.runtimeEvent;
-            const observedRunId = typeof event.runId === 'string' ? event.runId : runtimeEvent?.runId;
+            const observedRunId = typeof event.runId === 'string' ? event.runId : undefined;
             if ((event.projectId && event.projectId !== canvasProjectId)
               || (event.deckId && event.deckId !== deckId)
               || (event.conversationId && event.conversationId !== conversationId)
-              || (runtimeEvent && (runtimeEvent.projectId !== canvasProjectId || runtimeEvent.deckId !== deckId))
-              || (observedRunId && runId && observedRunId !== runId)
-              || (runtimeEvent && observedRunId && runtimeEvent.runId !== observedRunId)) {
+              || (observedRunId && runId && observedRunId !== runId)) {
               throw new SessionStreamError({ code: 'main_run_identity_mismatch', message: 'Main stream Run identity changed.' });
-            }
-            if (projection?.id) {
-              const observed = observedProjectionIdsRef.current;
-              if (observed.key !== conversationKey) {
-                observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
-              } else if (observed.ids.has(projection.id)) {
-                return;
-              }
-              observedProjectionIdsRef.current.ids.add(projection.id);
             }
             const observedParticipant = participantFromEvent(event.participant);
             if (observedParticipant) {
@@ -596,17 +572,7 @@ export default function useAgentBuilderMainChat({
                 activeStreamRef.current.runId = runId;
               }
             }
-            if (runtimeEvent?.projectId === canvasProjectId && runtimeEvent.deckId === deckId
-              && runtimeEvent.cardId && runtimeEvent.runId && runtimeEvent.id
-              && runtimeEvent.category?.startsWith('execution.')) {
-              setTechnical((current) => {
-                if (current.key !== conversationKey
-                  || current.events.some((item) => item.id === runtimeEvent.id)) return current;
-                return { ...current, events: [...current.events, runtimeEvent] };
-              });
-            }
-            if (event.kind === 'session' || event.kind === 'text'
-              || projection?.category === 'conversation.answer') {
+            if (event.kind === 'session' || event.kind === 'text') {
               setTurnState((current) => current.key === conversationKey
                 ? { ...current, phase: 'active' }
                 : current);
@@ -614,8 +580,7 @@ export default function useAgentBuilderMainChat({
             if (event.kind === 'session') {
               if (event.directAddressed !== true) {
                 subscribeToHermesSession(
-                  String(event.runtimeSessionId || ''),
-                  String(event.hermesSessionId || ''),
+                  String(event.liveSessionId || ''),
                 );
               }
               const configuration = event.configuration && typeof event.configuration === 'object'
@@ -632,11 +597,7 @@ export default function useAgentBuilderMainChat({
                   : current);
               }
             }
-            if (projection?.category === 'conversation.answer' && projection.status === 'completed') {
-              finalizeModelText(projection.text || '');
-            } else if (projection?.category === 'conversation.answer') {
-              appendModelText(projection.text || '');
-            } else if (event.kind === 'text') {
+            if (event.kind === 'text') {
               appendModelText(
                 String((event as { text?: unknown }).text || ''),
               );
@@ -883,8 +844,8 @@ export default function useAgentBuilderMainChat({
     endVoiceSession,
     mainCardId,
     sessionPending,
-    requestPreparedText,
     sessionHistoryLoading,
+    requestPreparedText,
   ]);
 
   const stopVoiceSession = useCallback(async () => {
@@ -976,7 +937,6 @@ export default function useAgentBuilderMainChat({
   }, [canvasProjectId, conversationId, conversationKey, deckId, sessionPending]);
 
   return {
-    runtimeEvents: technical.key === conversationKey ? technical.events : [],
     technicalError: technical.key === conversationKey ? technical.error : null,
     handleSend,
     messages,
@@ -986,7 +946,6 @@ export default function useAgentBuilderMainChat({
     setCurrentResponderCardId,
     sessionActive,
     sessionConnecting,
-    sessionHistoryLoading,
     requestMainText,
     startVoiceSession,
     stopMainTurn,

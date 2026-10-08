@@ -92,7 +92,7 @@ describe('CardScriptEditor Monaco contract', () => {
       'utf8',
     );
     const managerSource = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
+      path.resolve(process.cwd(), 'client/src/components/CardInspector.tsx'),
       'utf8',
     );
 

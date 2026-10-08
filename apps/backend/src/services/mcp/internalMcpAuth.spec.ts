@@ -1,17 +1,29 @@
 import { describe, expect, it } from 'vitest';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import {
   createInternalMcpBearer,
-  internalMcpBridgeSecretAuthorized,
+  internalMcpProcessSecretAuthorized,
   resolveInternalMcpUrl,
-  verifyInternalMcpBearerForTest,
-  withoutInternalMcpSecret,
 } from './internalMcpAuth';
 
 const env = {
   LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
   LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
 };
+
+function verifyBearer(token: string): Record<string, any> {
+  const [header, payload, signature, extra] = token.split('.');
+  if (!header || !payload || !signature || extra) throw new Error('internal_mcp_token_invalid');
+  const expected = createHmac('sha256', env.LIQUIDAITY_INTERNAL_MCP_SECRET)
+    .update(`${header}.${payload}`)
+    .digest();
+  const actual = Buffer.from(signature, 'base64url');
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    throw new Error('internal_mcp_token_invalid');
+  }
+  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+}
 
 describe('internal MCP Card authentication', () => {
   it('signs fixed server-owned Card identity and grants', () => {
@@ -28,7 +40,7 @@ describe('internal MCP Card authentication', () => {
       hermesChildId: 'hermes-child-1',
       hermesRunId: 'hermes-run-1',
     }, env, 1000);
-    const claims = verifyInternalMcpBearerForTest(token, env);
+    const claims = verifyBearer(token);
     expect(claims).toMatchObject({
       iss: 'liquidaity-runtime',
       aud: 'liquidaity-internal-mcp',
@@ -65,7 +77,7 @@ describe('internal MCP Card authentication', () => {
       grantedTools: ['cbm.search_graph', 'card.create', 'cbm.search_graph'],
       grantedConnections: ['graphiti', 'cbm', 'graphiti'],
     }, env, 1000);
-    const claims = verifyInternalMcpBearerForTest(token, env);
+    const claims = verifyBearer(token);
     expect(claims).toMatchObject({
       sub: 'materializer-read:builder',
       iat: 1000,
@@ -105,7 +117,7 @@ describe('internal MCP Card authentication', () => {
     grantedTools: ['canvas.inspect'], hermesChildId: 'hermes-child', hermesRunId: 'hermes-run',
   };
   it('signs a real Card Run with direct saved authority and Hermes attribution', () => {
-    const principal = verifyInternalMcpBearerForTest(createInternalMcpBearer(terminalRun, env), env).principal;
+    const principal = verifyBearer(createInternalMcpBearer(terminalRun, env)).principal;
     expect(principal).toMatchObject(terminalRun);
   });
   it.each([
@@ -117,7 +129,7 @@ describe('internal MCP Card authentication', () => {
       callerCardId,
       callerRuntimeMode,
     };
-    const principal = verifyInternalMcpBearerForTest(createInternalMcpBearer(value, env), env).principal;
+    const principal = verifyBearer(createInternalMcpBearer(value, env)).principal;
     expect(principal).toMatchObject(value);
   });
   it.each([
@@ -134,12 +146,6 @@ describe('internal MCP Card authentication', () => {
       .toThrow('internal_mcp_presentation_exceeds_grant');
   });
 
-  it('keeps the signing secret out of model runtime environments', () => {
-    const child = withoutInternalMcpSecret({ ...env, SAFE: 'yes' });
-    expect(child.LIQUIDAITY_INTERNAL_MCP_SECRET).toBeUndefined();
-    expect(child.SAFE).toBe('yes');
-  });
-
   it('accepts only the canonical loopback MCP seam', () => {
     expect(resolveInternalMcpUrl(env)).toBe('http://127.0.0.1:8765/mcp');
     expect(() => resolveInternalMcpUrl({ ...env, LIQUIDAITY_INTERNAL_MCP_URL: 'https://example.com/mcp' }))
@@ -147,10 +153,10 @@ describe('internal MCP Card authentication', () => {
   });
 
   it('authenticates the existing process bridge secret without accepting short or foreign values', () => {
-    expect(internalMcpBridgeSecretAuthorized(env.LIQUIDAITY_INTERNAL_MCP_SECRET, env)).toBe(true);
-    expect(internalMcpBridgeSecretAuthorized('wrong', env)).toBe(false);
-    expect(internalMcpBridgeSecretAuthorized('', env)).toBe(false);
-    expect(internalMcpBridgeSecretAuthorized('short', {
+    expect(internalMcpProcessSecretAuthorized(env.LIQUIDAITY_INTERNAL_MCP_SECRET, env)).toBe(true);
+    expect(internalMcpProcessSecretAuthorized('wrong', env)).toBe(false);
+    expect(internalMcpProcessSecretAuthorized('', env)).toBe(false);
+    expect(internalMcpProcessSecretAuthorized('short', {
       LIQUIDAITY_INTERNAL_MCP_SECRET: 'short',
     })).toBe(false);
   });

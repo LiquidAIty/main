@@ -63,7 +63,7 @@ def test_catalog_matches_the_installed_smart_interface_without_added_graph_field
 
     async def inspect_catalog():
         original = {t.name: t for t in await smart_mcp.list_tools()}
-        exposed = {t["name"]: t for t in await adapter.engraphis_tools()}
+        exposed = {t["name"]: t for t in adapter._engraphis_tools_from_registrations()}
         return original, exposed
 
     original, exposed = asyncio.run(inspect_catalog())

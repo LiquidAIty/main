@@ -10,19 +10,17 @@ import json
 import pytest
 
 from app.python_models.alpaca_market_data import (
-    AlpacaCredentials,
     AlpacaInstrumentRef,
-    INVALID_CONFIG,
-    MODE_PAPER,
-    READY,
     STATUS_AVAILABLE,
     STATUS_ERROR,
     STATUS_UNCONFIGURED,
-    UNCONFIGURED,
-    detect_alpaca_readiness,
     get_historical_bars,
     get_market_snapshot,
     get_paper_account_readiness,
+)
+from app.python_models.provider_config import (
+    MODE_PAPER,
+    AlpacaCredentials,
     resolve_alpaca_credentials,
 )
 
@@ -59,34 +57,6 @@ class _RecordingTransport:
     def __call__(self, url, headers):
         self.urls.append(url)
         return self.payload
-
-
-# --- Readiness (presence only) ---------------------------------------------------
-
-
-def test_readiness_unconfigured_when_no_credentials():
-    r = detect_alpaca_readiness("market_data", env={})
-    assert r.status == UNCONFIGURED and r.mode == "unavailable"
-    # Diagnostics may name the accepted variable family, but carry no secret VALUES.
-    assert r.diagnostics and "=" not in r.diagnostics
-
-
-def test_readiness_ready_with_paper_credentials():
-    env = {"ALPACA_API_KEY_ID": "kid", "ALPACA_API_SECRET_KEY": "sec"}
-    r = detect_alpaca_readiness("market_data", env=env)
-    assert r.status == READY
-    blob = json.dumps(r.to_dict())
-    assert "kid" not in blob and "sec" not in blob  # never exposes values
-
-
-def test_readiness_rejects_live_base_url():
-    env = {
-        "ALPACA_API_KEY_ID": "kid",
-        "ALPACA_API_SECRET_KEY": "sec",
-        "APCA_API_BASE_URL": "https://api.alpaca.markets",
-    }
-    r = detect_alpaca_readiness("paper_account", env=env)
-    assert r.status == INVALID_CONFIG and r.mode == "unavailable"
 
 
 def test_resolve_credentials_absent_returns_none():

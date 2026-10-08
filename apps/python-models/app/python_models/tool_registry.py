@@ -16,7 +16,6 @@ import asyncio
 import ast
 import json
 import operator
-import re
 import inspect
 import threading
 from copy import deepcopy
@@ -254,26 +253,11 @@ def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
     return {"kind": kind, "mode": mode}
 
 
-def external_mcp_tool_ids() -> frozenset[str]:
-    """Return operations whose canonical owner permits external MCP publication."""
-    return frozenset(
-        definition.canonical_id for definition in operation_definitions()
-        if "external-mcp" in definition.publishers
-    )
-
-
 def tool_publication(name: str) -> str | None:
     definition = operation_definition(name)
     if definition is None:
         return None
     return "external-mcp" if "external-mcp" in definition.publishers else "private-runtime"
-
-
-def hermes_plugin_operation_ids() -> frozenset[str]:
-    return frozenset(
-        definition.canonical_id for definition in operation_definitions()
-        if "internal-plugin" in definition.publishers
-    )
 
 
 def tool_access(name: str) -> str | None:

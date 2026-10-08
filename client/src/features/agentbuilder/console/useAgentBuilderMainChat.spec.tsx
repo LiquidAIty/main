@@ -72,12 +72,13 @@ describe('Main chat live observation callbacks', () => {
   it('loads Project history without a separate runtime-readiness poll', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main',
-      hermesSessionId: 'hermes-main',
       mainCardId: 'card_main_chat',
       addressableAgents: [],
       messages: [],
-      runtimeEvents: [],
+    });
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({ kind: 'session', runId: 'run-main', liveSessionId: 'hermes-main' });
+      return { finalText: 'Main answer.' };
     });
     const { result } = renderHook(() => useAgentBuilderMainChat({
       canvasProjectId: 'project-1',
@@ -85,27 +86,16 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
     }));
 
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
     expect(mocks.loadSessionHistory).toHaveBeenCalledOnce();
   });
 
-  it('projects input and final answer into Chat exactly once while execution stays runtime-only', async () => {
-    const base = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat',
-      cardName: 'Main Chat', runId: 'server-run', parentRunId: null,
-      timestamp: '2026-08-31T12:00:00.000Z' };
-    const input = { ...base, id: 'input-1', category: 'conversation.input' as const,
-      kind: 'mission' as const, sequence: 1, text: 'Question' };
-    const tool = { ...base, id: 'tool-1', category: 'execution.tool' as const,
-      kind: 'tool_call' as const, sequence: 2, toolName: 'main.context', status: 'started', detail: 'context read' };
-    const answer = { ...base, id: 'answer-1', category: 'conversation.answer' as const,
-      kind: 'model' as const, sequence: 3, status: 'completed', text: 'Short answer.' };
+  it('keeps tool frames out of Chat and replaces streamed text with the exact completion', async () => {
     mocks.streamSession.mockImplementation(async ({ onEvent }) => {
-      onEvent({ kind: 'projection', runId: 'server-run', projection: input });
-      onEvent({ kind: 'projection', runId: 'server-run', projection: input });
-      onEvent({ kind: 'projection', runId: 'server-run', projection: tool, runtimeEvent: tool });
-      onEvent({ kind: 'projection', runId: 'server-run', projection: tool, runtimeEvent: tool });
-      onEvent({ kind: 'projection', runId: 'server-run', projection: answer });
-      onEvent({ kind: 'projection', runId: 'server-run', projection: answer });
+      onEvent({ kind: 'session', runId: 'server-run' });
+      onEvent({ kind: 'tool_start', runId: 'server-run', event: { type: 'tool.start' } });
+      onEvent({ kind: 'text', runId: 'server-run', text: 'Short ' });
+      onEvent({ kind: 'text', runId: 'server-run', text: 'answer.' });
       return { finalText: 'Short answer.' };
     });
     const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1',
@@ -116,8 +106,6 @@ describe('Main chat live observation callbacks', () => {
       { role: 'user', text: 'Question' },
       { role: 'assistant', text: 'Short answer.' },
     ]);
-    expect(result.current.runtimeEvents).toEqual([tool]);
-    expect(JSON.stringify(result.current.runtimeEvents)).not.toContain('Short answer.');
   });
 
   it('attributes a direct addressed turn to Builder and never subscribes it as Main', async () => {
@@ -135,7 +123,7 @@ describe('Main chat live observation callbacks', () => {
       });
       onEvent({
         kind: 'session', runId: 'builder-run', cardId: 'builder', participant: builder,
-        directAddressed: true, runtimeSessionId: 'runtime-builder', hermesSessionId: 'hermes-builder',
+        directAddressed: true,
       });
       onEvent({
         kind: 'text', runId: 'builder-run', cardId: 'builder', participant: builder,
@@ -164,15 +152,14 @@ describe('Main chat live observation callbacks', () => {
   it('uses one visible responder state and lets a typed address replace an icon target', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     mocks.streamSession.mockResolvedValue({ finalText: 'Done.' });
     const { result } = renderHook(() => useAgentBuilderMainChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     act(() => {
       expect(result.current.setCurrentResponderCardId('card_worldsignals_agent')).toBe(true);
@@ -206,8 +193,7 @@ describe('Main chat live observation callbacks', () => {
   it('passes user-uploaded images through a Main request without changing their content', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     mocks.streamSession.mockResolvedValue({ finalText: 'Image received.' });
     const images = [{
@@ -218,7 +204,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
       await result.current.requestMainText('Read this chart.', { images });
@@ -238,8 +224,7 @@ describe('Main chat live observation callbacks', () => {
   it('combines user uploads with the viewport captured for the addressed Card', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     const uploadedImage = {
       name: 'reference.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,cmVmZXJlbmNl',
@@ -256,7 +241,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
       await result.current.requestMainText('@WorldView Compare these views.', { images });
@@ -274,8 +259,7 @@ describe('Main chat live observation callbacks', () => {
   it('keeps user uploads when the addressed Card viewport cannot be captured', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     const images = [{
       name: 'reference.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,cmVmZXJlbmNl',
@@ -287,7 +271,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
       await expect(result.current.requestMainText('@WorldView Read this image.', { images }))
@@ -305,8 +289,7 @@ describe('Main chat live observation callbacks', () => {
   it.each([11, 12])('uses only remaining viewport slots after %i user uploads', async (uploadCount) => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     const images = Array.from({ length: uploadCount }, (_, index) => ({
       name: `upload-${index}.png`, mediaType: 'image/png',
@@ -322,7 +305,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
       await result.current.requestMainText('@WorldView Compare the images.', { images });
@@ -339,8 +322,7 @@ describe('Main chat live observation callbacks', () => {
   it('submits one WorldView voice transcript through the normal Card turn with current scene input', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     const viewportRecord = {
       schemaVersion: 'worldview.turn-context.v1',
@@ -371,7 +353,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     act(() => {
       expect(result.current.setCurrentResponderCardId('card_worldview')).toBe(true);
@@ -402,8 +384,7 @@ describe('Main chat live observation callbacks', () => {
   it('ends the old Card microphone instead of transferring it when the responder changes', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     mocks.streamVoiceCapture.mockImplementation(async (args: any) => {
       args.onEvent({
@@ -419,7 +400,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     act(() => result.current.startVoiceSession());
     await waitFor(() => expect(result.current.voicePhase).toBe('listening'));
@@ -437,15 +418,14 @@ describe('Main chat live observation callbacks', () => {
   it('preserves the current Card when an unavailable companion target is rejected', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     mocks.streamSession.mockResolvedValue({ finalText: 'WorldSignals reply.' });
     const { result } = renderHook(() => useAgentBuilderMainChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     act(() => {
       expect(result.current.setCurrentResponderCardId('card_worldsignals_agent')).toBe(true);
@@ -464,11 +444,10 @@ describe('Main chat live observation callbacks', () => {
     }));
   });
 
-  it('keeps a second submission visible and sends it while the first turn is active', async () => {
+  it('rejects a second submission until the correlated turn has finished', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     let finishFirst!: (value: { finalText: string }) => void;
     mocks.streamSession
@@ -481,7 +460,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     act(() => {
       result.current.setCurrentResponderCardId('card_worldsignals_agent');
@@ -491,19 +470,21 @@ describe('Main chat live observation callbacks', () => {
     act(() => {
       result.current.setCurrentResponderCardId('builder');
       result.current.handleSend('Second turn for Builder.');
-      result.current.setCurrentResponderCardId(null);
     });
-    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
+    await act(async () => { await Promise.resolve(); });
+    expect(mocks.streamSession).toHaveBeenCalledTimes(1);
     expect(result.current.messages.filter((message) => message.role === 'user').map((message) => message.text))
-      .toEqual(['First turn.', 'Second turn for Builder.']);
-    expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
-      message: 'Second turn for Builder.',
-      targetCardId: 'builder',
-    });
+      .toEqual(['First turn.']);
 
     await act(async () => {
       finishFirst({ finalText: 'WorldSignals first reply.' });
       await Promise.resolve();
+    });
+    act(() => result.current.handleSend('Second turn for Builder.'));
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
+    expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
+      message: 'Second turn for Builder.',
+      targetCardId: 'builder',
     });
     expect(mocks.streamSession).toHaveBeenCalledTimes(2);
   });
@@ -511,8 +492,7 @@ describe('Main chat live observation callbacks', () => {
   it('snapshots submitted images and the responder before the caller changes either', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     let finishFirst!: (value: { finalText: string }) => void;
     mocks.streamSession
@@ -530,7 +510,7 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     act(() => {
       result.current.setCurrentResponderCardId('card_worldsignals_agent');
@@ -566,8 +546,7 @@ describe('Main chat live observation callbacks', () => {
   it('keeps Main graph context out of a direct Card turn', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
-      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     mocks.streamSession.mockImplementation(async (args) => {
       expect(args.targetCardId).toBe('builder');
@@ -589,7 +568,7 @@ describe('Main chat live observation callbacks', () => {
         order: 0, boundedExpansion: 1, resultLimit: 12, required: true,
       }],
     }));
-    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     act(() => {
       expect(result.current.setCurrentResponderCardId('builder')).toBe(true);
@@ -625,8 +604,6 @@ describe('Main chat live observation callbacks', () => {
   });
   it('keeps rejoin visible until Hermes history replaces the empty transcript', async () => {
     let resolveHistory!: (history: {
-      runtimeSessionId: string;
-      hermesSessionId: string;
       mainCardId: string;
       addressableAgents: Array<{
         cardId: string; cardRevisionId: string; profile: string; title: string;
@@ -637,7 +614,6 @@ describe('Main chat live observation callbacks', () => {
         speaker: { kind: 'user' | 'card'; label: string; cardId?: string };
         target?: { kind: 'user' | 'card'; label: string; cardId?: string };
       }>;
-      runtimeEvents: Array<Record<string, unknown>>;
     }) => void;
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockReturnValue(new Promise((resolve) => {
@@ -649,11 +625,10 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
     }));
 
-    expect(result.current.sessionHistoryLoading).toBe(true);
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
+    expect(result.current.messages).toEqual([]);
     await act(async () => {
       resolveHistory({
-        runtimeSessionId: 'runtime-main',
-        hermesSessionId: 'hermes-main',
         mainCardId: 'card_main_chat',
         addressableAgents: [],
         messages: [
@@ -662,26 +637,16 @@ describe('Main chat live observation callbacks', () => {
           { role: 'assistant', text: 'Delegate completed.',
             speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' } },
         ],
-        runtimeEvents: [{
-          projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', cardName: 'Main',
-          runId: 'run-history', parentRunId: null, id: 'run-history:tool:1',
-          category: 'execution.tool', kind: 'tool_result', toolName: 'lookup', status: 'completed',
-          sequence: 1, timestamp: null,
-        }],
       });
       await Promise.resolve();
     });
 
-    expect(result.current.sessionHistoryLoading).toBe(false);
-    expect(result.current.messages).toEqual([
+    await waitFor(() => expect(result.current.messages).toEqual([
       { role: 'user', text: 'Run Delegate.', speaker: { kind: 'user', label: 'You' },
         target: { kind: 'card', label: 'Main', cardId: 'card_main_chat' } },
       { role: 'assistant', text: 'Delegate completed.',
         speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' } },
-    ]);
-    expect(result.current.runtimeEvents).toEqual([
-      expect.objectContaining({ id: 'run-history:tool:1', category: 'execution.tool' }),
-    ]);
+    ]));
   });
 
   it('keeps a history failure out of the transcript and clears the loading state', async () => {
@@ -698,21 +663,18 @@ describe('Main chat live observation callbacks', () => {
       await Promise.resolve();
     });
 
-    expect(result.current.sessionHistoryLoading).toBe(false);
+    await waitFor(() => expect(result.current.technicalError)
+      .toBe('Conversation unavailable. Reload to retry.'));
     expect(result.current.messages).toEqual([]);
-    expect(result.current.technicalError).toBe('Conversation unavailable. Reload to retry.');
   });
 
   it('keeps autonomous Hermes Main completions out of the shared transcript', async () => {
     const closeSessionEvents = vi.fn();
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
-      runtimeSessionId: 'runtime-main',
-      hermesSessionId: 'hermes-main',
       mainCardId: 'card_main_chat',
       addressableAgents: [],
       messages: [],
-      runtimeEvents: [],
     });
     mocks.subscribeSessionEvents.mockReturnValue(closeSessionEvents);
     const { result, unmount } = renderHook(() => useAgentBuilderMainChat({
@@ -721,24 +683,30 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
     }));
 
+    await act(async () => {
+      await result.current.requestMainText('Question.');
+    });
     await waitFor(() => expect(mocks.subscribeSessionEvents).toHaveBeenCalledOnce());
     const subscription = mocks.subscribeSessionEvents.mock.calls[0][0];
     expect(subscription).toMatchObject({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-      runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
+      liveSessionId: 'hermes-main',
     });
     await act(async () => {
       subscription.onEvent({
         projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-        cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
+        cardId: 'card_main_chat', liveSessionId: 'hermes-main',
         event: {
           type: 'message.complete', session_id: 'hermes-main', seq: 12,
           payload: { status: 'complete', text: 'Builder finished through Hermes.' },
         },
       });
     });
-    expect(result.current.messages).toEqual([]);
-    expect(mocks.streamSession).not.toHaveBeenCalled();
+    expect(messageText(result.current.messages)).toEqual([
+      { role: 'user', text: 'Question.' },
+      { role: 'assistant', text: 'Main answer.' },
+    ]);
+    expect(mocks.streamSession).toHaveBeenCalledOnce();
 
     unmount();
     expect(closeSessionEvents).toHaveBeenCalledOnce();
@@ -747,7 +715,7 @@ describe('Main chat live observation callbacks', () => {
   it('keeps exact user bytes and replaces stream framing with the persisted Hermes completion', async () => {
     mocks.streamSession.mockImplementation(async (args) => {
       expect(args.message).toBe('  Normal human message.  ');
-      args.onEvent({ kind: 'session', hermesSessionId: 'hermes-session' });
+      args.onEvent({ kind: 'session', liveSessionId: 'hermes-session' });
       args.onEvent({ kind: 'text', text: '\n\nHermes answer.' });
       return { finalText: 'Hermes answer.' };
     });
@@ -770,10 +738,7 @@ describe('Main chat live observation callbacks', () => {
 
   it('keys transcript state by conversation and never shows A while B loads', async () => {
     type LoadedHistory = {
-      runtimeSessionId: string;
-      hermesSessionId: string;
       messages: Array<{ role: 'assistant' | 'user'; text: string }>;
-      runtimeEvents: Array<Record<string, unknown>>;
     };
     let resolveA!: (history: LoadedHistory) => void;
     let resolveB!: (history: LoadedHistory) => void;
@@ -795,10 +760,10 @@ describe('Main chat live observation callbacks', () => {
       expect.objectContaining({ conversationId: 'conversation-a' }),
     ));
     await act(async () => {
-      resolveA({ runtimeSessionId: 'runtime-a', hermesSessionId: 'hermes-a', messages: [
+      resolveA({ messages: [
         { role: 'user', text: 'A user' },
         { role: 'assistant', text: 'A model' },
-      ], runtimeEvents: [] });
+      ] });
       await Promise.resolve();
     });
     expect(result.current.messages).toEqual([
@@ -808,15 +773,13 @@ describe('Main chat live observation callbacks', () => {
 
     rerender({ conversationId: 'conversation-b' });
     expect(result.current.messages).toEqual([]);
-    expect(result.current.sessionHistoryLoading).toBe(true);
 
     await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: 'conversation-b' }),
     ));
     await act(async () => {
       resolveB({
-        runtimeSessionId: 'runtime-b', hermesSessionId: 'hermes-b',
-        messages: [{ role: 'user', text: 'B user' }], runtimeEvents: [],
+        messages: [{ role: 'user', text: 'B user' }],
       });
       await Promise.resolve();
     });
@@ -862,7 +825,7 @@ describe('Main chat live observation callbacks', () => {
 
   it('removes an unfinished assistant stream when the Hermes turn fails', async () => {
     mocks.streamSession.mockImplementation(async ({ onEvent }) => {
-      onEvent({ kind: 'session', hermesSessionId: 'hermes-session' });
+      onEvent({ kind: 'session', liveSessionId: 'hermes-session' });
       onEvent({ kind: 'text', text: 'Unfinished Hermes text' });
       throw new SessionStreamError({
         code: 'harness_turn_failed',
@@ -888,7 +851,7 @@ describe('Main chat live observation callbacks', () => {
 
   it('clears the session active state when the backend reports no active turn', async () => {
     mocks.streamSession.mockImplementation(({ signal, onEvent }) => new Promise((_resolve, reject) => {
-      onEvent({ kind: 'session', hermesSessionId: 'hermes-session', runId: 'hermes-run' });
+      onEvent({ kind: 'session', liveSessionId: 'hermes-session', runId: 'hermes-run' });
       signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
         once: true,
       });

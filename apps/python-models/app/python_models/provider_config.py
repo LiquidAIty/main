@@ -50,7 +50,6 @@ READY = "ready"
 UNCONFIGURED = "unconfigured"
 INVALID_CONFIG = "invalid_configuration"
 MODE_PAPER = "paper"
-MODE_READ_ONLY = "read_only"
 MODE_UNAVAILABLE = "unavailable"
 
 _env_loaded = False
@@ -187,15 +186,6 @@ class AlpacaConfig:
         return asdict(self)
 
 
-@dataclass(frozen=True)
-class SecApiConfig:
-    readiness: str  # ready | unconfigured
-    provider: str = "sec_api"
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
 def load_alpaca_config(env: Mapping[str, str] | None = None) -> AlpacaConfig:
     """Typed, value-free Alpaca config. Paper mode only; live configuration is rejected."""
     creds = resolve_alpaca_credentials(env)
@@ -209,37 +199,4 @@ def load_alpaca_config(env: Mapping[str, str] | None = None) -> AlpacaConfig:
         tradingBaseUrl=creds.paper_trading_url,
         dataBaseUrl=creds.data_url,
         streamBaseUrl=creds.stream_url,
-    )
-
-
-def load_sec_api_config(env: Mapping[str, str] | None = None) -> SecApiConfig:
-    """Typed, value-free SEC API config."""
-    return SecApiConfig(readiness=READY if sec_api_key(env) else UNCONFIGURED)
-
-
-def detect_alpaca_readiness(
-    capability: str,
-    env: Mapping[str, str] | None = None,
-):
-    """Back-compat readiness shim returning a ProviderReadiness (defined in the provider
-    module). Imported lazily to avoid a circular import."""
-    from app.python_models.alpaca_market_data import ProviderReadiness
-
-    config = load_alpaca_config(env)
-    if config.readiness == UNCONFIGURED:
-        return ProviderReadiness(
-            provider="alpaca", capability=capability, status=UNCONFIGURED,
-            mode=MODE_UNAVAILABLE,
-            diagnostics="paper credentials absent (ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY)",
-        )
-    if config.readiness == INVALID_CONFIG:
-        return ProviderReadiness(
-            provider="alpaca", capability=capability, status=INVALID_CONFIG,
-            mode=MODE_UNAVAILABLE,
-            diagnostics="live trading configuration detected; this lane is paper/read-only only",
-        )
-    mode = MODE_READ_ONLY if capability == "market_data" else MODE_PAPER
-    return ProviderReadiness(
-        provider="alpaca", capability=capability, status=READY, mode=mode,
-        diagnostics="paper credentials present",
     )

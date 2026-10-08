@@ -2,253 +2,109 @@
 
 [Execution law](AGENTS.md) · [Known failures](DONT.md) · [Current architecture](ARCHITECTURE.md) · [Deferred work](FUTURE.md)
 
-PLAN records the current route and proof gaps. It is not a model prompt, task ledger, runtime input,
-or historical execution diary.
+This file records only the current route and the next proof boundary. It is not a runtime input,
+incident diary, or historical implementation record. Git preserves superseded implementations.
 
 ## Product outcome
 
-A user talks to Main or deliberately invokes a saved Card, the exact saved Card authority and current
-input produce one canonical IDF, the selected native runtime performs real work, and the application
-shows truthful output, references, artifacts, usage, failure, and lineage without losing saved state.
+A user talks to Main or directly addresses an authorized saved Card. The exact saved Card revision,
+current input, selected references, and effective grants produce one canonical `in.idf`; HermesLatest
+performs the real turn; and LiquidAIty shows the actual response, references, Run state, usage,
+failures, and lineage without inventing another execution owner.
 
-Shared chat sends an unaddressed user turn to Main and an explicitly addressed turn directly to the
-authorized saved Card. Builder remains the saved `builder` Card and the lower terminal in Agent Builder.
-Hermes owns native Card execution, delegation, and the task/dependency execution beneath Mag One; the
-four graph authorities remain separate.
+Builder remains saved Card `builder` and owns the lower terminal. ThinkGraph is Engraphis,
+KnowGraph is Graphiti, CodeGraph is Codebase Memory, and AgentGraph is AGE/PostgreSQL. Team and
+Magnetic use the retained HermesLatest task/dependency extensions beneath their existing saved Cards
+and topology.
 
-## Current Mag One execution-engine cutover — September 19, 2026
+## Current source
 
-### Requested Delta
+The saved restoration baseline is commit `3cc61563cc81e1e4ae12867cf8b916bf867e77a3`. The current
+working tree contains the bounded inverse-residue cleanup that must pass static proof before one
+coordinated reload.
 
-Keep the existing `card_magentic` product identity, Canvas node, blue `magentic_option` worker
-connections, canonical `in.idf`, saved Card authorities, and ordinary outer Run. Blue topology means
-only that a saved Card is available to Magnetic. An ordinary orange relationship from a non-Magnetic Card
-whose saved `Orchestrator` setting is enabled makes Magnetic callable from that source; the explicit
-invocation starts the approved run and no wire itself starts or controls Magnetic. A saved Card may be both
-orange-connected to an orchestrator and blue-connected to
-Magnetic: the orange path invokes it directly, while the blue path makes the same saved Card available
-to Hermes' SQLite task ledger as a Magnetic worker. Neither path creates a duplicate Card identity.
-Replace only the live Microsoft executor beneath that bus with headless Hermes orchestration and its
-existing SQLite task/dependency machinery. No legacy executor fallback or historical-Run compatibility
-path remains live.
+- Saved Cards and orange/blue topology own durable identity, configuration, grants, and authority.
+- Python rails owns Card/Run preparation, the canonical operation registry, deterministic validation,
+  the single IDF materializer, tool dispatch, graph adapters, and durable Run settlement.
+- The backend owns authenticated HTTP/SSE transport, exact Card/Project/conversation mapping, one
+  shared Hermes Gateway client connection, submission correlation, and truthful result projection.
+- HermesLatest owns profiles, sessions, inference, its built-in tools, Bot delivery, queue behavior,
+  retries, terminal/PTY, Team task execution, Magnetic task/dependency execution, and synthesis.
+- Dynamic Tools present only the current Run's authorized Card capabilities and call the existing
+  authenticated Python dispatcher. Bot Mode is not a product tool.
+- The flat live catalog is the selectable product projection. IDD consumes that projection for
+  Builder/editor choices and never authorizes, validates, or dispatches an ordinary Run.
+- One durable Card maps to one reusable Hermes profile. Projects and conversations create distinct
+  sessions; Project topology and private/session state are not written into the shared profile.
+- After an ordinary Main response is persisted and returned, the restored saved ThinkGraph Card
+  lifecycle may process the exact completed User/Main pair into one Engraphis episodic Think. Jev
+  alone admits and classifies durable semantic edges.
+- KnowGraph remains Graphiti-backed sourced research. Its automatic research follow-up remains off
+  until the manual `knowgraph.research` path succeeds in real product acceptance.
+- The Card inspector's compact **Last run** metrics show only the latest/current Run's model, elapsed
+  time, token count, estimated cost, and tool-call count. They are a projection of durable Run data,
+  not another runtime dashboard or event store.
 
-### Current working-tree source
+## Static proof already established
 
-- Python projects the exact enabled blue-connected Card identities, current revisions, and saved Hermes
-  bindings through the same saved-topology projection pattern already used by direct Card relationships.
-- Before submit, the backend materializes and rereads the exact saved prompt, provider/model, tools,
-  skills, plugins/MCP, and profile for the Mag One Card and every worker without opening a visible TUI.
-- Python reloads the retained canonical `in.idf`, requires exact mission equality, and creates one
-  idempotent native root assigned to the saved Mag One profile.
-- The native root carries an assignee scope containing only that profile and the projected workers.
-  Root-created assignments are checked against that blue scope; manually created worker descendants
-  are self-scoped instead of inheriting the whole roster. Ordinary Hermes tasks remain unrestricted
-  when the field is absent.
-- The root model performs decomposition and must create one final dependency sink assigned back to the
-  Mag One profile. Structured status returns only the verified native final summary.
-- PostgreSQL retains one product-level invocation/lineage Run. Hermes SQLite exclusively owns native
-  tasks, dependencies, attempts, assignment, retries, and task state; none is copied into PostgreSQL/AGE.
-- The bus remains headless. The existing Results area shows ordinary outer Run state and the real final
-  answer only—no CLI, task feed, transcript, active-worker display, board, or fabricated artifacts.
-- The checked-in AutoGen fork, adapter package, Python executor, routes, package dependencies, and live
-  runtime contracts are removed. Applied migrations and checksum-bound recovery evidence may still name
-  the removed runtime, but no production caller can select it.
+- The application-owned AgentTerminal/CardRuntime process, registry, reconciler, per-Card Gateway,
+  loopback Card-tools plugin, and startup ownership generations are deleted.
+- Main, direct Card delivery, profile materialization, terminal attachment, Run history, Dynamic
+  Tools, Team/Magnetic preparation, graph projection, and catalog boundaries have focused source
+  tests from the restored baseline.
+- The catalog reduction and saved-grant reconciliation use the one canonical operation-definition
+  set; Engraphis exposes the Smart surface selected for the product.
+- Production backend/client builds and typechecks passed at the saved restoration baseline.
+- A later `npm run dev:fresh` invocation compiled the backend and launched the local services, but MCP
+  readiness remained `503` because the application CBM dependency was unavailable; the public tunnel
+  therefore remained unpublished. That is a real remaining failure, not plugin acceptance.
 
-Static source/tests/build proof and one restarted real saved-product execution remain separate tiers.
-Do not describe this working tree as loaded runtime proof until both are completed.
+Static tests, a successful process start, loaded runtime behavior, external MCP/plugin behavior, and
+visual acceptance remain separate proof tiers.
 
-## Current shared-chat direct addressing — September 18, 2026
+## Current cleanup gate
 
-The shared composer obtains callable addresses from the existing Python-owned saved Hermes Bot-roster
-projection. It performs case-insensitive prefix autocomplete and Tab completion without another registry.
-A leading address is resolved before inference. The addressed saved Card receives the exact user text
-through its ordinary canonical Run/IDF and profile-scoped Gateway session; Main has no Run, inference,
-acknowledgement, or `message_agent` role in that turn. Only a completed native target response is stored
-and rendered with target identity. An unavailable address fails before either target or Main execution.
+Before another reload:
 
-The existing normalized conversation tables retain the exact completed shared-chat projection so speaker
-and target identity survive reload. On a later unaddressed turn, Main alone receives a bounded mechanical
-projection of the shared exchange plus the current user message. Main's independent model-chosen native
-`message_agent` capability remains the only Card-to-Card conversational doorway and is not used to fake
-direct user addressing.
+1. finish the inverse audit of the deleted runtime, catalog, graph-reference, and old-Hermes symbols;
+2. remove only proven dead callers, fields, tests, configuration, and stale current-state documents;
+3. keep checksum-bound recovery exports and append-only migrations unchanged;
+4. make `HermesLatest/LIQUIDAITY_PATCHES.md` and its generated overlay use Git history—not a deleted
+   comparison directory—as the update authority, then clean-apply-check the overlay;
+5. run focused control-plane, backend, client, and Hermes overlay proof;
+6. reindex the current first-party CBM scope once and repeat the inverse searches.
 
-## Current Hermes tool boundary — September 16, 2026
+## One coordinated reload and real acceptance
 
-### Confirmed current state
+After the static gate is green, run `npm run dev:fresh` once and verify in dependency order:
 
-- Python rails derives the saved Card's `enabledTools`, `unavailableTools`, `presentedTools`, schemas,
-  skills, Hermes toolsets, and MCP connection IDs before Hermes inference.
-- The current Hermes profile materializer applies and reads back only the parent model, selected skills,
-  and Hermes subagent model. It does not make the Card's selected LiquidAIty tools callable in Hermes.
-- IDF tool text is context, not registration. Stock Hermes presents and dispatches only tools in its
-  native registry snapshot, populated by built-ins, enabled native plugins, and deliberately configured
-  external MCP servers.
-- Stock `tools.configure` edits durable profile toolsets and may rebuild a session agent. It is not
-  Run-scoped authorization and cannot replace the saved Card/Run grant check.
+1. HermesLatest, backend, Python rails, KnowGraph, MCP, frontend, and WorldView become healthy, with
+   executable/source identities from the current checkout only;
+2. the application CBM catalog dependency becomes ready, MCP `/health/ready` succeeds, and the
+   existing ngrok publication comes online without creating a second tunnel;
+3. the live flat catalog and every saved Card grant reconcile with zero unknown, duplicate,
+   orphaned, or undispatchable entries; IDD failure cannot block an ordinary turn;
+4. Main completes one natural ordinary turn without invoking Magnetic and keeps the submitted user
+   message continuously visible;
+5. an addressed Builder turn completes a real read-only CBM call and its Hermes PTY attaches;
+6. an addressed KnowGraph turn completes a real granted Graphiti read;
+7. Team and Magnetic prepare through HermesLatest; do not execute a Mag One mission without a new
+   explicitly approved mission;
+8. Run history identifies the exact Card, conversation, and submission, and Stop interrupts only the
+   correlated submission;
+9. the refreshed external GPT plugin sees the same ordinary authenticated MCP projection and completes
+   representative read-only Main, Canvas, CBM, Engraphis, and Graphiti calls;
+10. Jeremiah performs the final visual acceptance in Preview.
 
-The current mismatch is therefore explicit:
+If a live gate fails, repair that exact seam. Do not reopen the runtime architecture, restore a deleted
+manager, add a fallback engine, replay a user request, or broaden into voice, trading, God's Eye,
+repository-to-agent automation, or graph redesign.
 
-```text
-saved Card and Python rails know the intended grant
-Hermes independently owns the actual model-facing registry
-```
+## Explicitly outside this acceptance pass
 
-### Approved direction
-
-Internal LiquidAIty capabilities for Hermes-backed Cards will be joined to Hermes through a native,
-profile-scoped Hermes plugin using the public `PluginContext.register_tool` contract. MCP remains the
-publication boundary for external clients and deliberately external MCP servers; it is not the internal
-Hermes-to-LiquidAIty execution bus.
-
-The plugin is a runtime projection, not another authority. It must not copy tool implementations, own a
-catalog, launch a service, infer grants, or accept caller-supplied Card/Run scope. Hermes owns tool schema
-presentation, model selection, dispatch, guardrails, approvals, hooks, and result delivery. The
-authenticated LiquidAIty host derives the calling Card/runtime from process and native session identity;
-Python rails reuses the saved Card and current execution authority and invokes the one existing operation
-owner. External MCP publication and the Hermes plugin must share that protocol-neutral Python operation
-core rather than call one another.
-
-The bounded implementation must still settle and prove two contracts before it can be called complete:
-
-1. exact per-Card visibility without treating durable `tools.configure` state as Run authorization; and
-2. the authority for a native Bot turn that intentionally has no fabricated application Run. A missing
-   Run-dependent grant must fail closed; it must not be replaced by a synthetic Run, broad profile token,
-   MCP credential, or plugin-owned policy.
-
-## Current cleanup — September 15, 2026
-
-Baseline: branch `main`, pushed cleanup HEAD `0ed7fb63314ec00e0762ddeccd86417a5dce883b`
-(`LIQUIDAITY CLEANUP WORK IN PROGRESS`). The smaller residue cleanup after that commit remains an
-uncommitted working tree and has not been loaded into the running application.
-
-### Requested Delta
-
-Keep saved Hermes Card execution on the existing native Gateway/TUI path. Native `message_agent`,
-authorized only from a non-Magnetic Card with its saved `Orchestrator` setting enabled to the exact target
-of one of its outbound orange `flow` connections, is the direct saved-Card conversational path. The target
-gets no reverse authority from that edge; it may become an orchestrator only through its own saved setting
-and outbound edges. Preserve the one intended Hermes extension: the explicitly saved `Team` Card's
-structural `kanban.task_mode: team` route into Hermes' existing SQLite task ledger. Do not restore a
-model-facing `delegate_task(role="team")` option.
-
-### Preservation Set
-
-- saved Cards, Card revisions, Runs, conversations, profiles, native sessions, credentials, and graph data;
-- one canonical Python-owned IDF and saved-Card grant authority;
-- Main, Builder, ordinary Hermes Cards, native Gateway/TUI, and honest Run completion;
-- upstream Hermes ACP as dormant vendor functionality, not a LiquidAIty execution route;
-- native Hermes Bot Mode source, desktop UI, Gateway methods, profile/session state, routines, and peer relay;
-- upstream `leaf`/`orchestrator`, the saved structural Team workflow, and native Bot Mode;
-- Card-owned Python Script source, compiler, validation, editor, saved configuration, IDF presentation,
-  and historical Run receipt data;
-- the existing Mag One Card, Canvas topology, blue worker connections, and outer Run/IDF boundary;
-- ThinkGraph, KnowGraph, CodeGraph, and AgentGraph owners and data;
-- the authenticated `/api/codegraph/read` UI transport to actual application-published `cbm.*` reads;
-- unrelated imported roots and application features.
-
-### Removed path
-
-- backend ACP `mainAdapter`, host execution lifecycle, child execution-context, worker bearer,
-  profile-delegation adapter, internal callback routes, and callback startup;
-- editable `apps/hermes-liquidaity-plugin` package and its installed editable distribution in the
-  repository Hermes virtual environment;
-- Python `hermes_acp_bridge` and its HTTP/MCP execution-context routes;
-- LiquidAIty-specific Hermes plugin/callback/private-host execution hooks and synthetic Team result injection;
-- browser transcript/snapshot/native-event/Team-receipt projections owned by the abandoned path;
-- the old automatic ThinkGraph completed-pair proxy/replay extraction that had been coupled to that
-  route; this historical removal is distinct from the later approved Engraphis-native, novelty-gated
-  User/Main pair lifecycle;
-- the orphan ACP MCP-connection materializer and its self-contained spec after `mainAdapter` lost its
-  last production caller;
-- the abandoned deck-workspace resolver and its self-contained spec after the old Agent Builder
-  operation surface stopped using it;
-- the disconnected NetworkX ThinkGraph community/gap projection, its ceremonial test block, and the
-  Python-rails-only direct `networkx` pin;
-- the unused direct backend `zod` dependency edge; the MCP SDK retains its own required transitive copy;
-- noncanonical build journals and stale architecture claims that described removed code as current;
-- accidentally tracked Windows cache database files under `Hermes/%SystemDrive%`.
-
-Hermes' upstream `acp_adapter/` implementation and tests remain. Native Bot Mode remains. CodeGraph read
-remains because inspection proved it is an authenticated UI transport to the real canonical CBM tools,
-not the fabricated standalone tool initially suspected.
-
-## Current evidence matrix
-
-| Boundary | Current source evidence | Still required |
-| --- | --- | --- |
-| Deleted ACP identities | Exact source/test/route/package searches and inverse-neighbor inspection | CBM after-watcher deletion/edge proof when the application doorway is available |
-| Gateway consolidation | Backend source and focused terminal/Run contracts | Canonical reload; real input, stream, persisted completion, reconnect, and Stop |
-| Profile materialization | Extracted current owner plus focused tests/typecheck | Real saved parent/skills/child selections and actual child receipt |
-| Native Team | Contained vendor source, retained tests, and compilation | Real Gateway Team creation, workers, synthesis, rejoin, and same saved Run |
-| Native Card Bot Mode | Python projects each enabled non-Magnetic orchestrator's ordered outbound orange targets into its explicit `bot_mode.roster`; unconfigured targets receive `[]`; the Card plugin maps unique visible titles only inside that roster before stock `message_agent` validation/delivery | Canonical reload, ordinary Main, real attributed target reply, configured series, reverse/unwired-profile refusal, and no-alternate-machinery inspection |
-| Shared-chat direct Card addressing | Canonical saved-roster resolution, target saved-Card Run/Gateway route, exact-message preservation, participant persistence, autocomplete, failure attribution, and focused backend/client/Python tests | Canonical reload; real Builder exact reply, identity persistence, later Main context, and preserved independent Main-to-Builder native delegation |
-| CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
-| Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
-| Hermes Card tools | Canonical Python `OperationDefinition` registry, publisher-separated views, stable per-Card plugin materialization/readback, focused tests, and loaded Main `engraphis_recall_context` execution | Prove selected external CBM/Graphiti execution and unavailable reasons through their actual configured servers; Bot reply proof remains separate |
-| ThinkGraph episodic intake | Engraphis 1.7.4 is installed in the project runtime; preparation is non-persisting; the exact saved ThinkGraph Card/`llm_structured` path yields one validated episodic Think per completed User/Main pair; direct structured-extractor incidence associates accepted canonical nodes; Jev alone admits/classifies durable directed edges; focused Python/backend/client tests, production typechecks, and client build pass | Canonical reload, exact disposable ThinkGraph wipe, one real natural Main pair, one persisted episodic Think, direct native incidences, real Jev decisions/edges, and Jeremiah's visual acceptance |
-| Production boundaries | Backend and client production typechecks | Loaded build/source hashes and full product acceptance |
-
-## Known baseline failures and environment limits
-
-- The deleted Script route/rail/editor boundary was a cleanup regression, not removable ACP residue.
-  `/idd/script-tools` and `/cards/script/validate` are restored, the Python compiler and Card editor are
-  present again, saved Script data remains readable, and ordinary Runs retain their exact model-visible
-  tool presentation while native execution reports `card_script_native_bridge_unavailable`.
-- The focused Python Card-domain suite covers explicit source-owned orange projection, a configured
-  orchestrator series, blue-edge isolation, disabled/unwired exclusion, target revocation, reverse refusal,
-  and profile-ambiguity failure. Native `message_agent`
-  remains the conversational doorway; no application Bot host/authentication route survives.
-- Client production typecheck passes. Client spec typecheck has unrelated existing errors in Agent
-  Manager mocks, Testing Library role options, graph/team specs, and imported Hermes desktop aliases/types;
-  none references a file removed by this cleanup.
-- Hermes' repository virtual environment does not contain `pytest`; this cleanup does not install a
-  dependency into the vendored runtime. Python compilation and available application tests are separate proof.
-- The Hermes vendor register pins upstream 0.21.3 at
-  `73521a8e375a867fae14ec0579f2dfb47aa0017e`; its intentional divergence manifest contains Team and the
-  bounded profile-scoped native Bot-roster contract. Bot delivery remains stock Hermes.
-- Direct Codex CBM produced useful structural evidence, but repeated frontend calls accumulated duplicate
-  client processes. Twenty-seven exact duplicate frontends were stopped while the one frontend owning the
-  upstream daemon was preserved. No reindex, cache mutation, alternate host, or daemon replacement was
-  performed; further discovery used bounded current-source reads.
-- The canonical roster endpoint loaded the real saved `deck_builder` after removing an invalid dependency on
-  absent legacy `deckRevision` metadata. Startup then stopped at the unchanged Gateway-client module boundary:
-  `json-rpc-gateway.ts` imports missing `json-rpc-channel.js` although the source tree contains
-  `json-rpc-channel.ts`. MCP publication separately stayed at `503` after its native CBM frontend timed out
-  attaching to the already-active daemon. This Bot pass did not change either unrelated owner.
-
-These are not converted into passing results by removing tests, adding mocks, fabricating data, or
-restoring the retired runtime.
-
-## Completion order for this cleanup
-
-1. Finish exact old-identity, route, package, environment, documentation, and vendor-marker scans.
-2. Run focused backend, client, Python, and Hermes compilation proof without installing or restarting.
-3. Run production typechecks/builds for touched TypeScript boundaries.
-4. Inspect the complete diff and every surviving former neighbor; classify every remaining ACP hit as
-   either upstream Hermes functionality, historical recovery material, or a defect.
-5. Return one implementation report with exact deletions, preserved owners, baseline failures, gaps,
-   and Regression Ratio. Bot Mode and the Hermes tool boundary remain separately proven working-tree
-   changes, not permission to restore any removed ACP path.
-
-## Next bounded proof boundary
-
-The native profile-scoped Bot roster and application projection are implemented in the working tree. The
-canonical load reached saved-state projection but failed before a Hermes Card session at the existing shared
-TypeScript Gateway module-resolution boundary. Repair and independently prove that exact canonical Gateway
-client import in a separately authorized pass; do not fold it into Bot delivery or roster logic. Once that
-boundary and the independently owned MCP/CBM readiness failure are healthy, continue with existing-state
-acceptance:
-
-- prove ordinary Main returns a real Hermes response;
-- inspect existing saved topology without creating Cards or edges;
-- have Main send one harmless message to an existing enabled outbound orange-connected Hermes Card by its
-  exact visible one-word name;
-- prove the source roster excludes an existing unwired live profile and stock `message_agent` rejects it;
-- prove the receiving canonical `Bot Chat`, sender attribution, native acknowledgement/completion, and
-  attributed reply notification; and
-- prove Hermes chose delivery without a Card Run, application queue, callback, waiter, correlator,
-  alternate executor, or duplicate Bot session.
-
-Do not force live/offline branches by changing state, restore the deleted Bot host/plugin, expose a Gateway
-credential, add a delivery adapter, or begin Builder/AutoBot work. If existing saved state lacks two valid
-valid outbound Main target, stop at that exact product-proof blocker.
+- voice/HUD work beyond standard Hermes behavior;
+- a new learning graph or memory subsystem;
+- automatic KnowGraph research before the manual path succeeds;
+- a Mag One mission or state-changing research/trading/graph-write proof;
+- new tool-request automation or Card-face metrics beyond the existing compact inspector block;
+- dependency upgrades unrelated to a demonstrated acceptance failure.

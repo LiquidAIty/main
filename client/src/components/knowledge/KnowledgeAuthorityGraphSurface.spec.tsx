@@ -54,10 +54,7 @@ import {
   composeThinkKnowPresentation as composeProviderThinkKnowPresentation,
   JoinedKnowledgeGraphSurface,
   KnowledgeGraphProjectionSurface,
-  KnowGraphSurface,
   graphitiFactIdentity,
-  observationTimeLabel,
-  responsiveRepelForce,
   sourceLinks,
   type CanonicalSubjectHeader,
   type GraphProjectionV1,
@@ -147,16 +144,6 @@ describe('knowledge authority graph surfaces', () => {
     );
   };
 
-  it('keeps the saved repel force independent of viewport width', () => {
-    const baseline = 120;
-    expect(responsiveRepelForce(baseline, 440)).toBe(120);
-    expect(responsiveRepelForce(baseline, 820)).toBe(120);
-    expect(responsiveRepelForce(baseline, 1_200)).toBe(120);
-    expect(responsiveRepelForce(baseline, 200)).toBe(120);
-    expect(responsiveRepelForce(baseline, 2_000)).toBe(120);
-    expect(baseline).toBe(120);
-  });
-
   it('uses only the portable Graphiti fact identity for atomic deletion', () => {
     expect(graphitiFactIdentity({
       id: 'visual-edge', source: 'a', target: 'b', predicate: 'RELATES_TO',
@@ -170,16 +157,6 @@ describe('knowledge authority graph surfaces', () => {
       id: 'visual-edge', source: 'a', target: 'b', predicate: 'RELATES_TO',
       properties: { graphitiFactUuid: 'fact-graphiti-1' },
     })).toBeNull();
-  });
-
-  it('formats Neo4j temporal values without rendering object coercion text', () => {
-    const label = observationTimeLabel({
-      year: 2026, month: 10, day: 3, hour: 12, minute: 30, second: 0,
-      nanosecond: 0, timeZoneOffsetSeconds: 0,
-    });
-    expect(label).toBeTruthy();
-    expect(label).not.toContain('[object Object]');
-    expect(observationTimeLabel({ unexpected: true })).toBeNull();
   });
 
   it('keeps same-domain documents distinct while collapsing exact source URLs', () => {
@@ -924,7 +901,7 @@ describe('knowledge authority graph surfaces', () => {
   it('starts KnowGraph empty without loading the complete Neo4j graph', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    render(<KnowGraphSurface projection={empty('knowgraph')} error={null} onExpand={vi.fn()} />);
+    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={empty('knowgraph')} status="ready" error={null} onExpand={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('knowledge-knowgraph-surface')).toBeTruthy());
     expect(screen.getByRole('button', { name: 'Open graph settings' })).toBeTruthy();
     expect(screen.getByText('No knowledge yet.')).toBeTruthy();
@@ -936,7 +913,7 @@ describe('knowledge authority graph surfaces', () => {
       ...empty('knowgraph'),
       nodes: [{ id: 'entity-one', label: 'Existing entity', mentionCount: 1 }],
     };
-    render(<KnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
+    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
     await waitFor(() => expect(graph.data.nodes.map((node: { id: string }) => node.id)).toEqual(['entity-one']));
     expect(graph.data.links).toEqual([]);
@@ -947,7 +924,7 @@ describe('knowledge authority graph surfaces', () => {
 
   it('loads provider records into the replacement renderer after Strict Mode effect replay', () => {
     const projection = { ...empty('knowgraph'), nodes: [{ id: 'source', label: 'W3C', mentionCount: 1 }] };
-    render(<StrictMode><KnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} /></StrictMode>);
+    render(<StrictMode><KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} /></StrictMode>);
     expect(forceGraphMocks.instances).toHaveLength(2);
     expect(forceGraphMocks.instances.at(-1).data.nodes.map((node: { id: string }) => node.id)).toEqual(['source']);
   });
@@ -1355,7 +1332,7 @@ describe('knowledge authority graph surfaces', () => {
       edges: [{ id: 'evidence', source: 'source', target: 'claim', predicate: 'SUPPORTS', mentionCount: 1,
         properties: { fact: 'This source supports this claim within the recorded scope.' } }],
     };
-    render(<KnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
+    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.linkClick(graph.data.links[0]));
     const inspector = screen.getByTestId('knowgraph-edge-inspector');
@@ -1445,7 +1422,7 @@ describe('knowledge authority graph surfaces', () => {
         jev: { status: 'success', winner: 'PROVIDES', distribution: { PROVIDES: 0.9, ASSOCIATED_WITH: 0.1 } },
       } }],
     };
-    render(<KnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
+    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.linkClick(graph.data.links[0]));
     fireEvent.click(screen.getByText('NASA launch report'));
@@ -1488,7 +1465,7 @@ describe('knowledge authority graph surfaces', () => {
         },
       }],
     };
-    render(<KnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
+    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
 
@@ -1536,7 +1513,7 @@ describe('knowledge authority graph surfaces', () => {
         } },
       ],
     };
-    render(<KnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
+    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.id === 'company')));
 

@@ -339,23 +339,6 @@ export function graphDrawerSectionStyle(
   };
 }
 
-export function graphDrawerInputStyle(
-  overrides?: CSSProperties,
-): CSSProperties {
-  return {
-    width: '100%',
-    padding: '5px 7px',
-    borderRadius: 6,
-    border: '1px solid rgba(126, 232, 226, 0.16)',
-    background: 'linear-gradient(180deg, rgba(29,43,52,0.42), rgba(12,19,25,0.28))',
-    color: GRAPH_THEME.drawer.inputText,
-    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.055)',
-    fontSize: 11,
-    lineHeight: 1.4,
-    ...overrides,
-  };
-}
-
 export function graphDrawerButtonStyle(
   overrides?: CSSProperties,
 ): CSSProperties {

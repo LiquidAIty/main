@@ -128,49 +128,25 @@ describe('streamSession', () => {
     });
   });
 
-  it('delivers a stable hermes event ID exactly once without comparing its content', async () => {
+  it('preserves every tool progress frame emitted by the request stream', async () => {
     const frame = (output: string) => `event: tool_progress\ndata: ${JSON.stringify({ output,
-      projectId: 'p', deckId: 'd', runId: 'r', runtimeEvent: { id: 'r:tool:t:partial', detail: output } })}\n\n`;
+      projectId: 'p', deckId: 'd', runId: 'r' })}\n\n`;
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([frame('first'), frame('first'), frame('second'),
       'event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n'])));
     const onEvent = vi.fn();
     await streamSession({ ...submissionIds, projectId: 'p', conversationId: 'main', message: 'input', onEvent });
     expect(onEvent.mock.calls.filter(([event]) => event.kind === 'tool_progress').map(([event]) => event.output))
-      .toEqual(['first']);
+      .toEqual(['first', 'first', 'second']);
   });
-  it('reconciles replayed event IDs without dropping distinct equal text chunks', async () => {
-    const event = (id: string) => `event: text\ndata: ${JSON.stringify({ text: 'ha', projectId: 'p', deckId: 'd', runId: 'r', runtimeEvent: { id } })}\n\n`;
+  it('preserves equal text chunks because the request stream owns ordering', async () => {
+    const event = () => `event: text\ndata: ${JSON.stringify({ text: 'ha', projectId: 'p', deckId: 'd', runId: 'r' })}\n\n`;
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      event('r:1'), event('r:1'), event('r:2'),
+      event(), event(), event(),
       'event: done\ndata: {"fullText":"haha"}\n\nevent: end\ndata: {}\n\n',
     ])));
     const onEvent = vi.fn();
     await expect(streamSession({ ...submissionIds, projectId: 'p', conversationId: 'main', message: 'input', onEvent })).resolves.toEqual({ finalText: 'haha' });
-    expect(onEvent.mock.calls.filter(([event]) => event.kind === 'text')).toHaveLength(2);
-  });
-
-  it('routes repeated typed projection IDs once while preserving distinct equal deltas', async () => {
-    const frame = (id: string, category: string, text: string) => `event: projection\ndata: ${JSON.stringify({
-      projectId: 'p', deckId: 'd', runId: 'r', projection: {
-        schemaVersion: 'builder.main.projection.v1', id, category,
-        sequence: Number(id.replace(/\D/g, '')) || 1,
-        timestamp: '2026-08-31T12:00:00.000Z', text,
-        projectId: 'p', deckId: 'd', cardId: 'card_main_chat', cardName: 'Main Chat',
-        runId: 'r', parentRunId: null, hermesChildId: null, hermesTurnId: 'turn-1',
-        kind: category === 'conversation.input' ? 'mission' : 'model',
-      },
-    })}\n\n`;
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      frame('event-1', 'conversation.input', 'question'),
-      frame('event-1', 'conversation.input', 'changed but same identity'),
-      frame('event-2', 'conversation.answer', 'ha'),
-      frame('event-3', 'conversation.answer', 'ha'),
-      'event: done\ndata: {"fullText":"haha"}\n\nevent: end\ndata: {}\n\n',
-    ])));
-    const onEvent = vi.fn();
-    await streamSession({ ...submissionIds, projectId: 'p', conversationId: 'main', message: 'question', onEvent });
-    expect(onEvent.mock.calls.filter(([event]) => event.kind === 'projection'))
-      .toHaveLength(3);
+    expect(onEvent.mock.calls.filter(([event]) => event.kind === 'text')).toHaveLength(3);
   });
   it('surfaces a rejected hermes start as typed status instead of model text', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
@@ -379,21 +355,20 @@ describe('subscribeSessionEvents', () => {
       projectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
-      runtimeSessionId: 'runtime-main',
-      hermesSessionId: 'hermes-main',
+      liveSessionId: 'hermes-main',
       onEvent,
       onError,
     });
 
     expect(EventSourceMock).toHaveBeenCalledWith(
       '/api/main/session/events?projectId=project-1&deckId=deck_builder'
-        + '&conversationId=main&runtimeSessionId=runtime-main&hermesSessionId=hermes-main',
+        + '&conversationId=main&liveSessionId=hermes-main',
       { withCredentials: true },
     );
     listeners.get('gateway')?.({
       data: JSON.stringify({
         projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-        cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
+        cardId: 'card_main_chat', liveSessionId: 'hermes-main',
         event: {
           type: 'message.complete', session_id: 'hermes-main', seq: 11,
           payload: { text: 'Builder finished.' },
@@ -405,7 +380,7 @@ describe('subscribeSessionEvents', () => {
 
     listeners.get('gateway')?.({ data: JSON.stringify({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'other',
-      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
+      cardId: 'card_main_chat', liveSessionId: 'hermes-main',
       event: { type: 'message.complete', session_id: 'hermes-main', payload: { text: 'wrong' } },
     }) } as MessageEvent<string>);
     expect(onError).toHaveBeenCalledWith('main_hermes_event_identity_mismatch');
@@ -413,7 +388,7 @@ describe('subscribeSessionEvents', () => {
 
     listeners.get('gateway')?.({ data: JSON.stringify({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', hermesSessionId: 'hermes-main',
+      cardId: 'card_main_chat', liveSessionId: 'hermes-main',
       event: { type: 'message.complete', session_id: 'hermes-main', payload: { text: 'unsequenced' } },
     }) } as MessageEvent<string>);
     expect(onError).toHaveBeenLastCalledWith('main_hermes_event_identity_mismatch');
@@ -430,8 +405,6 @@ describe('loadSessionHistory', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({
         ok: true,
-        sessionId: 'hermes-main',
-        runtimeSessionId: 'runtime-main',
         mainCardId: 'card_main_chat',
         addressableAgents: [{
           cardId: 'builder', cardRevisionId: 'revision:builder', profile: 'builder',
@@ -445,12 +418,6 @@ describe('loadSessionHistory', () => {
           { role: 'assistant', text: 'Exact model text',
             speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
         ],
-        runtimeEvents: [{ id: 'answer', category: 'conversation.answer' }, {
-          id: 'tool', category: 'execution.tool', projectId: 'project-1', deckId: 'deck_builder',
-          cardId: 'card_main_chat', cardName: 'Main', runId: 'run-1', parentRunId: null,
-          hermesChildId: null, kind: 'tool_result', status: 'completed', sequence: 2, timestamp: null,
-          toolName: 'lookup',
-        }],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )));
@@ -459,8 +426,6 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'conversation-history-roles',
     })).resolves.toEqual({
-      hermesSessionId: 'hermes-main',
-      runtimeSessionId: 'runtime-main',
       mainCardId: 'card_main_chat',
       addressableAgents: [{
         cardId: 'builder', cardRevisionId: 'revision:builder', profile: 'builder',
@@ -472,14 +437,13 @@ describe('loadSessionHistory', () => {
         { role: 'assistant', text: 'Exact model text',
           speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
       ],
-      runtimeEvents: [expect.objectContaining({ id: 'tool', category: 'execution.tool' })],
     });
   });
 
   it('keeps a valid fresh conversation as an empty transcript', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({
-        ok: true, sessionId: 'hermes-main', runtimeSessionId: 'runtime-main',
+        ok: true,
         mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -489,8 +453,8 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'main',
     })).resolves.toEqual({
-      hermesSessionId: 'hermes-main', runtimeSessionId: 'runtime-main', mainCardId: 'card_main_chat',
-      addressableAgents: [], messages: [], runtimeEvents: [],
+      mainCardId: 'card_main_chat',
+      addressableAgents: [], messages: [],
     });
   });
 
@@ -498,8 +462,6 @@ describe('loadSessionHistory', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({
         ok: true,
-        sessionId: '',
-        runtimeSessionId: '',
         mainCardId: 'card_main_chat',
         addressableAgents: [],
         messages: [{
@@ -507,7 +469,6 @@ describe('loadSessionHistory', () => {
           text: 'Persisted answer',
           speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
         }],
-        runtimeEvents: [],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )));
@@ -516,8 +477,6 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'main',
     })).resolves.toEqual({
-      hermesSessionId: '',
-      runtimeSessionId: '',
       mainCardId: 'card_main_chat',
       addressableAgents: [],
       messages: [{
@@ -525,7 +484,6 @@ describe('loadSessionHistory', () => {
         text: 'Persisted answer',
         speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
       }],
-      runtimeEvents: [],
     });
   });
 

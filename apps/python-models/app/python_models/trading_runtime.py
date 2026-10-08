@@ -43,7 +43,6 @@ from app.python_models.provider_config import (
 
 
 TRADE_ACTIONS = ("WAIT", "ENTER", "HOLD", "REDUCE", "EXIT", "PAUSE", "FAIL_SAFE")
-JOB_STATES = ("monitoring", "paused", "completed", "fail_safe")
 _DIRECTIONS = frozenset({"long", "short"})
 _ORDER_TYPES = frozenset({"market", "limit", "stop", "stop_limit"})
 _REQUIRED_PLAN_FIELDS = frozenset({

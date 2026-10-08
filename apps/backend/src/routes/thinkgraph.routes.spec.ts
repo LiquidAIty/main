@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   fetchThinkGraphNeighborhood: vi.fn(),
 }));
 
+vi.mock('./projectAccess', () => ({
+  requireOwnedProject: vi.fn(async () => ({ ownerUserId: 'owner-one' })),
+}));
+
 vi.mock('../services/pythonRailsClient', () => ({
   fetchThinkGraphProjection: mocks.fetchThinkGraphProjection,
   fetchThinkGraphNeighborhood: mocks.fetchThinkGraphNeighborhood,

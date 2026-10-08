@@ -1,14 +1,10 @@
-// Shared card/deck normalization primitives for the Agent Builder feature.
-// Extracted verbatim from pages/agentbuilder.tsx (decomposition pass
-// 2026-07-08). Persisted ids/bindings and behavior are unchanged.
+// Shared saved-Card and Project-deck normalization primitives.
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
   CardRuntime,
   DeckEdgeType,
 } from '../../../types/agentgraph';
-
-export const DEFAULT_WORKSPACE_ROOT = 'C:\\Projects\\main';
 
 export function safeText(value: unknown): string {
   if (value == null) return '';
@@ -33,8 +29,8 @@ export function cleanOptionalText(value: unknown): string | null {
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-export const MAIN_CHAT_MODEL_KEY = 'gpt-5.6-sol';
-export const AGENT_BUILDER_MODEL_KEY = 'gpt-5.6-sol';
+export const MAIN_CARD_MODEL_KEY = 'gpt-5.6-sol';
+export const BUILDER_CARD_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 // Builder's non-administrative CodeGraph corridor. Indexing, trace ingestion,
@@ -47,7 +43,7 @@ export const CODEBASE_MEMORY_TOOLS = [
   'cbm.check_index_coverage',
 ] as const;
 // Builder seed selections. Runtime availability and saved grants remain authoritative.
-export const AGENT_BUILDER_CONTROLLER_TOOLS = [
+export const BUILDER_CARD_TOOLS = [
   'canvas.inspect',
   'card.create',
   'card.update_configuration',
@@ -61,7 +57,7 @@ export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   'thinkgraph.reason',
   'knowgraph.research',
 ] as const;
-export const MAIN_CHAT_CONTROLLER_TOOLS = [
+export const MAIN_CARD_TOOLS = [
   'canvas.inspect',
   'engraphis_recall_context',
   'graphiti.search_memory_facts',

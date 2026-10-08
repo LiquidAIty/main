@@ -239,7 +239,6 @@ type FocusReleaseView = {
   edgeIds: string[];
 };
 
-const MAX_TURN_LOCAL_VISUAL_NODES = 24;
 const MAX_JEV_FOCUS_CANDIDATES = 12;
 const FOCUS_RELEASE_MILLISECONDS = 1_400;
 const CALM_FOCUS_GALAXY_SETTINGS = {
@@ -962,72 +961,6 @@ function composeFocusReleasePresentation(
   };
 }
 
-export function KnowGraphSurface({
-  projection,
-  canonicalSubjectDirectory,
-  subjectFocusRequest,
-  status = 'ready',
-  error,
-  onExpand,
-  onUseAsContext,
-  onRemoveEvidence,
-}: {
-  projection: GraphProjectionV1;
-  canonicalSubjectDirectory?: CanonicalSubjectDirectory | null;
-  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
-  status?: 'idle' | 'loading' | 'ready' | 'error';
-  error: string | null;
-  onExpand: (node: GraphProjectionNode) => Promise<void>;
-  onUseAsContext?: (node: GraphProjectionNode) => void;
-  onRemoveEvidence?: (graphitiFactUuid: string) => Promise<void>;
-}) {
-  return (
-    <KnowledgeGraphProjectionSurface
-      projection={projection}
-      status={error ? 'error' : status}
-      error={error}
-      authority="knowgraph"
-      canonicalSubjectDirectory={canonicalSubjectDirectory}
-      subjectFocusRequest={subjectFocusRequest}
-      onExpand={onExpand}
-      onUseAsContext={onUseAsContext}
-      onRemoveKnowEvidence={onRemoveEvidence}
-    />
-  );
-}
-
-export function ThinkGraphSurface({
-  projection,
-  subjectFocusRequest,
-  status = 'ready',
-  error,
-  onExpand,
-  onUseAsContext,
-  onRemoveEvidence,
-}: {
-  projection: GraphProjectionV1;
-  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
-  status?: 'idle' | 'loading' | 'ready' | 'error';
-  error: string | null;
-  onExpand: (node: GraphProjectionNode) => Promise<void>;
-  onUseAsContext?: (node: GraphProjectionNode) => void;
-  onRemoveEvidence?: (memoryId: string) => Promise<void>;
-}) {
-  return (
-    <KnowledgeGraphProjectionSurface
-      projection={projection}
-      status={error ? 'error' : status}
-      error={error}
-      authority="thinkgraph"
-      canonicalSubjectDirectory={projection.canonicalSubjectDirectory}
-      subjectFocusRequest={subjectFocusRequest}
-      onExpand={onExpand}
-      onUseAsContext={onUseAsContext}
-      onRemoveEvidence={onRemoveEvidence}
-    />
-  );
-}
-
 export function JoinedKnowledgeGraphSurface({
   projections,
   statuses,
@@ -1136,12 +1069,6 @@ const PRESENTATION_SETTING_BOUNDS = {
   gravity: [0, 400],
 } as const;
 
-export function responsiveRepelForce(baseValue: unknown, containerWidth: number): number {
-  void containerWidth;
-  const base = Math.max(0, Math.min(400, Number(baseValue) || 0));
-  return base;
-}
-
 export function graphitiFactIdentity(edge: GraphProjectionEdge): string | null {
   const properties = edge.properties;
   if (properties?.portableKind !== 'know') return null;
@@ -1215,10 +1142,7 @@ function rendererGraphStyle(style: GraphStyle): RendererGraphStyle {
   return style === 'solarpunk' ? 'cyber' : style;
 }
 
-function initialPresentationStyle(
-  authority: GraphSurfaceAuthority,
-  savedStyle: GraphStyle | undefined,
-): GraphStyle {
+function initialPresentationStyle(savedStyle: GraphStyle | undefined): GraphStyle {
   return savedStyle || 'solarpunk';
 }
 
@@ -1400,12 +1324,6 @@ function observedEntryTime(value: unknown): { dateTime: string; label: string } 
   const date = new Date(milliseconds);
   if (Number.isNaN(date.getTime())) return null;
   return { dateTime: date.toISOString(), label: date.toLocaleString() };
-}
-
-export function observationTimeLabel(value: unknown): string | null {
-  return observedEntryTime(value)?.label || (
-    typeof value === 'string' && value.trim() ? value : null
-  );
 }
 
 function probabilityLabel(value: unknown): string | null {
@@ -1622,10 +1540,7 @@ export function KnowledgeGraphProjectionSurface({
   );
   const [layout, setLayout] = useState<GraphLayout>(savedPresentation.layout || 'compact');
   const [style, setStyle] = useState<GraphStyle>(
-    initialPresentationStyle(
-      authority,
-      savedPresentationIsCurrent ? savedPresentation.style : undefined,
-    ),
+    initialPresentationStyle(savedPresentationIsCurrent ? savedPresentation.style : undefined),
   );
   const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(
     savedPresentation.physicsProfile || 'galaxy',
@@ -2045,7 +1960,6 @@ export function KnowledgeGraphProjectionSurface({
       });
       const restoredLayout = savedPresentation.layout || 'compact';
       const restoredStyle = initialPresentationStyle(
-        authority,
         savedPresentationIsCurrent ? savedPresentation.style : undefined,
       );
       const restoredPhysics = savedPresentation.physicsProfile || 'galaxy';
@@ -2317,7 +2231,6 @@ export function KnowledgeGraphProjectionSurface({
     const baseProjection = joinedPresentation?.projection;
     if (!baseProjection) return;
     const visualNodeId = resolveCanonicalSubjectFocusVisualId({
-      authority,
       projection: baseProjection,
       joinedPresentation,
       directory: canonicalSubjectDirectory,

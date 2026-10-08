@@ -597,7 +597,7 @@ visible failure, direct recovery, and no need for the user to supervise the mach
 - **index_status / detect_changes**: Accept project name string, never filesystem path.
 - **Python functions**: Current lookup resolves covered functions. Missing dynamic calls and excluded paths still need source reads and focused searches.
 - **Route nodes**: file_path is empty. Read route files directly for handler mapping.
-- **Protected/excluded dirs**: worldsignal/, Kronos-main/, services/esn_rls/, and EDGAR caches remain
+- **Protected/excluded dirs**: the imported roots under `agent-products/` and EDGAR caches remain
   off-limits for cleanup and may be outside graph coverage. `Hermes/` is intentionally indexed for
   structural comparison and inverse-impact analysis, but remains a controlled vendored fork under
   the repository's vendored-source law; graph coverage does not grant broad cleanup authority.
@@ -628,7 +628,7 @@ rg: search for function name across repo (catches dynamic dispatch, string refs,
 source read: check if exported via barrel file, config object, or string registry
 → ONLY delete if CBM shows 0 callers AND rg shows 0 text references AND no dynamic dispatch
 ```
-Tested on: modelConfig.ts (logModelConfiguration has 1 caller: startServer — not dead)
+Tested on: `workingDirectories.ts` (`resolveRepoRoot` has current backend callers and is not dead).
 
 ### Pattern 3: Pre-Grep Scope Narrowing
 ```

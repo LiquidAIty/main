@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import { requireOwnedProject } from './projectAccess';
 
 type Dependencies = {
   requestRails: typeof requestPythonRailsJson;
@@ -60,6 +61,8 @@ export function createTradingRouter(deps: Dependencies = {
 
   router.get('/state', async (req, res) => {
     try {
+      const projectId = requiredText(req.query.projectId, 'project_id_required');
+      if (!await requireOwnedProject(req, res, projectId)) return undefined;
       return res.json(await deps.requestRails(statePath(req.query), {
         method: 'GET',
       }));
@@ -75,6 +78,8 @@ export function createTradingRouter(deps: Dependencies = {
     let path: string;
     try {
       path = statePath(req.query);
+      const projectId = requiredText(req.query.projectId, 'project_id_required');
+      if (!await requireOwnedProject(req, res, projectId)) return undefined;
     } catch (error) {
       return res.status(400).json({
         ok: false,
@@ -145,6 +150,7 @@ export function createTradingRouter(deps: Dependencies = {
           'authenticated_user_required',
         )}`,
       };
+      if (!await requireOwnedProject(req, res, body.projectId)) return undefined;
       return res.json(await deps.requestRails('/trading/intervene', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -173,6 +179,7 @@ export function createTradingRouter(deps: Dependencies = {
           'authenticated_user_required',
         )}`,
       };
+      if (!await requireOwnedProject(req, res, body.projectId)) return undefined;
       return res.json(await deps.requestRails('/trading/lifecycle/backtest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

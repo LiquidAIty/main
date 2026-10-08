@@ -17,7 +17,7 @@ const membership = vi.hoisted(() => ({
 const access = vi.hoisted(() => ({ requireOwnedProject: vi.fn() }));
 
 vi.mock('../decks/store', () => decks);
-vi.mock('../services/agentBuilderStore', () => membership);
+vi.mock('../services/projectStore', () => membership);
 vi.mock('./projectAccess', () => access);
 
 import decksRouter from './decks.routes';

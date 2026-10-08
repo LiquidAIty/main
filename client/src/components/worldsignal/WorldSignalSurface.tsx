@@ -11,7 +11,7 @@ type WorldSignalsHealth = {
 
 // The WorldSignals app is the vendored ShadowBroker frontend, built as a
 // self-contained ES module by `npm run build:embed` in
-// worldsignal/Shadowbroker-main/frontend. It ships its own React (19) and owns
+// agent-products/shadowbroker/frontend. It ships its own React (19) and owns
 // its own root inside our container — this shell is React 18, so the two trees
 // stay separate and only the typed mount handle crosses between them.
 const EMBED_BASE = '/worldsignals';

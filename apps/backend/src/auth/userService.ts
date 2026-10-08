@@ -44,20 +44,6 @@ export async function getUserByEmail(email: string): Promise<User | null> {
   return user;
 }
 
-export async function getUserById(id: string): Promise<User | null> {
-  const user = await prisma.user.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      createdAt: true,
-    },
-  });
-
-  return user;
-}
-
 export async function verifyPassword(email: string, password: string): Promise<User | null> {
   const user = await prisma.user.findUnique({
     where: { email },

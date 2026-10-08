@@ -16,7 +16,6 @@ from app.python_models.provider_config import (
     _canonical_env_path,
     ensure_env_loaded,
     load_alpaca_config,
-    load_sec_api_config,
     resolve_alpaca_credentials,
 )
 
@@ -51,11 +50,6 @@ def test_alpaca_config_rejects_paper_disabled():
 
 def test_alpaca_config_unconfigured_without_keys():
     assert load_alpaca_config({}).readiness == UNCONFIGURED
-
-
-def test_sec_config_presence_only():
-    assert load_sec_api_config({"SEC_API_KEY": "x"}).readiness == READY
-    assert load_sec_api_config({}).readiness == UNCONFIGURED
 
 
 def test_explicit_env_mapping_is_used_verbatim():
@@ -132,7 +126,7 @@ def test_file_backed_database_url_loads_without_overriding_process_env(tmp_path)
         ensure_env_loaded(force=True)
 
 
-def test_public_config_never_carries_secret_values():
-    env = {"ALPACA_API_KEY_ID": "SECRETKID", "ALPACA_API_SECRET_KEY": "SECRETVAL", "SEC_API_KEY": "SECKEY"}
-    blob = json.dumps(load_alpaca_config(env).to_dict()) + json.dumps(load_sec_api_config(env).to_dict())
-    assert "SECRETKID" not in blob and "SECRETVAL" not in blob and "SECKEY" not in blob
+def test_alpaca_public_config_never_carries_secret_values():
+    env = {"ALPACA_API_KEY_ID": "SECRETKID", "ALPACA_API_SECRET_KEY": "SECRETVAL"}
+    blob = json.dumps(load_alpaca_config(env).to_dict())
+    assert "SECRETKID" not in blob and "SECRETVAL" not in blob

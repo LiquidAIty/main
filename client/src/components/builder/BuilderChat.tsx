@@ -382,11 +382,11 @@ export default function BuilderChat({
   mainCardId,
   directChatTargets = [],
   onSend,
+  onKnowledgeUploaded,
   knowledgeProjectId,
   colors,
   busy = false,
   connecting = false,
-  historyLoading = false,
   error = null,
   voiceError = null,
   voicePhase = "idle",
@@ -403,14 +403,13 @@ export default function BuilderChat({
   mainCardId?: string;
   directChatTargets?: DirectChatTarget[];
   onSend: (t: string, runInput?: MainChatRunInput) => void;
+  onKnowledgeUploaded?: () => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
   /** The real Hermes turn is still open; the composer remains available. */
   busy?: boolean;
   /** The request is connecting to the saved Card's Hermes session. */
   connecting?: boolean;
-  /** Persisted conversation history is loading and reconciles with visible submissions by message ID. */
-  historyLoading?: boolean;
   /** Visible transport/configuration failure; never represented as assistant speech. */
   error?: string | null;
   voiceError?: string | null;
@@ -433,7 +432,7 @@ export default function BuilderChat({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imageReadRef = useRef(false);
   const imageReadEpochRef = useRef(0);
-  const interactionDisabled = false;
+  const interactionDisabled = busy || connecting;
   useEffect(() => {
     imageReadEpochRef.current += 1;
     imageReadRef.current = false;
@@ -735,6 +734,7 @@ export default function BuilderChat({
             knowledgeProjectId={knowledgeProjectId}
             disabled={!knowledgeProjectId}
             appearance="chat-inline"
+            onUploaded={onKnowledgeUploaded}
           />
           <input ref={imageInputRef} type="file" multiple accept={COMPOSER_IMAGE_TYPES.join(",")}
             aria-label="Image files" style={{ display: "none" }}

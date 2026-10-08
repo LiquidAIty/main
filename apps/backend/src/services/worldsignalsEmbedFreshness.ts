@@ -1,11 +1,11 @@
 import { existsSync, statSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { resolveRepoRoot } from '../services/workspaceRoot';
+import { resolveRepoRoot } from '../services/workingDirectories';
 
 /**
  * WS-7: the WorldSignals embed bundle (client/public/worldsignals/embed.js) is a
  * BUILD ARTIFACT produced by `npm run build:embed` from the vendor source at
- * worldsignal/Shadowbroker-main/frontend/src. It does NOT rebuild automatically,
+ * agent-products/shadowbroker/frontend/src. It does NOT rebuild automatically,
  * so a vendor source edit silently leaves the host serving a stale bundle. This
  * detects that honestly — it does not rebuild (that stays an explicit command),
  * and it ignores unrelated files so an unrelated change never reads as stale.
@@ -95,6 +95,6 @@ export function computeEmbedBundleFreshness(
 export function resolveEmbedBundleFreshness(): EmbedBundleFreshness {
   const repoRoot = resolveRepoRoot();
   const bundlePath = path.join(repoRoot, 'client', 'public', 'worldsignals', 'embed.js');
-  const sourceDir = path.join(repoRoot, 'worldsignal', 'Shadowbroker-main', 'frontend', 'src');
+  const sourceDir = path.join(repoRoot, 'agent-products', 'shadowbroker', 'frontend', 'src');
   return computeEmbedBundleFreshness(bundlePath, sourceDir);
 }

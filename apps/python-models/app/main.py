@@ -6,35 +6,19 @@ from app.python_models.provider_config import ensure_env_loaded
 
 ensure_env_loaded()
 
-from app.python_models.alpaca_market_data import (
-    AlpacaInstrumentRef,
-    get_historical_bars,
-    get_market_snapshot,
-    get_paper_account_readiness,
-)
 from app.python_models.card_domain import (
     CardDomainError,
-    resolve_hermes_bot_rosters,
-    accept_run_request,
     begin_main_chat_run,
     begin_run,
-    assess_magentic_mission_readiness,
-    assess_run_request_fulfillment,
-    describe_magentic_agents,
     delete_card,
     finish_run,
-    fail_run_preparation,
-    inspect_agentgraph,
     list_decks,
     load_deck,
-    prepare_main_chat,
     read_run,
     read_run_history,
     read_run_input_files,
-    observe_run_attempt,
     record_explicit_artifact,
     save_deck,
-    update_run_progress,
 )
 from app.python_models.card_script import (
     CardScriptValidationError,
@@ -51,7 +35,6 @@ from app.python_models.magentic_execution import (
     authenticate_magentic_worker_tool_request,
     read_magentic_execution,
     stop_magentic_execution,
-    submit_magentic_execution,
 )
 from app.python_models.tool_registry import (
     ToolCatalogError,
@@ -245,15 +228,6 @@ async def graph_jev_focus(payload: dict[str, Any]):
         }
 
 
-@app.post("/codegraph/read")
-def codegraph_read(payload: dict[str, Any]):
-    from app.python_models.data_anchor import read_codegraph_tool
-    try:
-        return read_codegraph_tool(payload)
-    except (RuntimeError, ValueError, KeyError) as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
 @app.post("/thinkgraph/operation")
 async def thinkgraph_operation(payload: dict[str, Any]):
     from app.python_models.engraphis import invoke_tool, private_operation
@@ -305,38 +279,6 @@ async def thinkgraph_completed_pair_settle(payload: dict[str, Any]):
 # Read-only Alpaca paper market data (no orders, no balances, no mutation).
 # The frontend /tradingui surface consumes these via the vite /market proxy.
 # ---------------------------------------------------------------------------
-
-
-@app.get("/market/snapshot")
-def market_snapshot(symbol: str, feed: str = "iex"):
-    """Latest Alpaca paper snapshot for an explicit symbol. Read-only."""
-    if not str(symbol or "").strip():
-        raise HTTPException(status_code=400, detail="symbol required")
-    return get_market_snapshot(AlpacaInstrumentRef(symbol.strip()), feed=feed).to_dict()
-
-
-@app.get("/market/bars")
-def market_bars(
-    symbol: str,
-    timeframe: str = "1Day",
-    start: str | None = None,
-    end: str | None = None,
-    limit: int = 30,
-    feed: str = "iex",
-):
-    """Bounded Alpaca paper historical bars for an explicit symbol/timeframe. Read-only."""
-    if not str(symbol or "").strip():
-        raise HTTPException(status_code=400, detail="symbol required")
-    return get_historical_bars(
-        AlpacaInstrumentRef(symbol.strip()), timeframe,
-        start=start, end=end, limit=limit, feed=feed,
-    ).to_dict()
-
-
-@app.get("/market/paper-account-readiness")
-def market_paper_account_readiness():
-    """Alpaca paper account availability/status only. No balances, positions, or orders."""
-    return get_paper_account_readiness().to_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -505,15 +447,6 @@ def domain_deck_read(project_id: str, deck_id: str):
         raise HTTPException(status_code=status, detail=str(err)) from err
 
 
-@app.get("/domain/hermes-bot-rosters/{project_id}/{deck_id}")
-def domain_hermes_bot_rosters(project_id: str, deck_id: str):
-    try:
-        return {"ok": True, **resolve_hermes_bot_rosters(project_id, deck_id)}
-    except CardDomainError as err:
-        status = 404 if str(err) in {"project_not_found", "deck_not_found"} else 409
-        raise HTTPException(status_code=status, detail=str(err)) from err
-
-
 @app.get("/domain/decks/{project_id}")
 def domain_deck_list(project_id: str):
     try:
@@ -568,52 +501,10 @@ def domain_card_delete(
         raise HTTPException(status_code=status, detail=message) from err
 
 
-@app.post("/domain/main/prepare")
-def domain_main_prepare(payload: dict[str, Any]):
-    try:
-        return prepare_main_chat(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
-
-
-@app.post("/domain/mag-one/{project_id}/{deck_id}/agents")
-def domain_mag_one_agents(project_id: str, deck_id: str, payload: dict[str, Any]):
-    try:
-        return {"ok": True, **describe_magentic_agents(
-            project_id,
-            deck_id,
-            discovered_tool_names=payload.get("discoveredToolNames"),
-            discovered_tool_catalog_state=str(
-                payload.get("discoveredToolCatalogState") or "unavailable"
-            ),
-            unavailable_tool_catalog_families=payload.get(
-                "unavailableToolCatalogFamilies"
-            ),
-        )}
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
 @app.post("/domain/runs/begin")
 def domain_run_begin(payload: dict[str, Any]):
     try:
         return begin_run(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/runs/accept")
-def domain_run_accept(payload: dict[str, Any]):
-    try:
-        return accept_run_request(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/runs/preparation/fail")
-def domain_run_preparation_fail(payload: dict[str, Any]):
-    try:
-        return fail_run_preparation(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
@@ -634,14 +525,6 @@ def domain_run_finish(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/domain/runs/request-fulfillment")
-def domain_run_request_fulfillment(payload: dict[str, Any]):
-    try:
-        return assess_run_request_fulfillment(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
 @app.post("/domain/runs/read")
 def domain_run_read(payload: dict[str, Any]):
     try:
@@ -658,43 +541,11 @@ def domain_run_history(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/domain/runs/attempt")
-def domain_run_attempt(payload: dict[str, Any]):
-    try:
-        return observe_run_attempt(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
 @app.post("/domain/runs/input-files")
 def domain_run_input_files(payload: dict[str, Any]):
     try:
         return read_run_input_files(payload)
     except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/runs/magentic-mission-readiness")
-def domain_magentic_mission_readiness(payload: dict[str, Any]):
-    try:
-        return assess_magentic_mission_readiness(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/runs/progress")
-def domain_run_progress(payload: dict[str, Any]):
-    try:
-        return update_run_progress(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/magentic/execution/submit")
-def magentic_execution_submit(payload: dict[str, Any]):
-    try:
-        return submit_magentic_execution(payload)
-    except MagenticExecutionError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -722,15 +573,6 @@ def magentic_execution_stop(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/domain/agentgraph/inspect")
-def domain_agentgraph_inspect(payload: dict[str, Any]):
-    """Private rails readback for existing AGE Run telemetry."""
-    try:
-        return inspect_agentgraph(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
 @app.post("/domain/artifacts")
 def domain_artifact_record(payload: dict[str, Any]):
     try:
@@ -742,9 +584,6 @@ def domain_artifact_record(payload: dict[str, Any]):
 @app.get("/thinkgraph/projection")
 def thinkgraph_projection(
     projectId: str,
-    limit: int | None = None,
-    includeHistorical: bool = False,
-    memoryType: str | None = None,
 ):
     """Read the Engraphis projection for the selected project."""
     from app.python_models.engraphis import projection

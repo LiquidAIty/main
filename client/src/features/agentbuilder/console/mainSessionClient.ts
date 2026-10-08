@@ -9,15 +9,9 @@
  * resolves with the Hermes completion text. Stable event IDs are delivered
  * once per connection; semantic classification remains server-owned.
  */
-import type {
-  MainProjectionEvent,
-  RuntimeEvent,
-} from '../../../../../apps/backend/src/contracts/runtimeEvents';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 
 export type HermesSessionEvent = {
-  runtimeEvent?: RuntimeEvent;
-  projection?: MainProjectionEvent;
   kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
   [key: string]: unknown;
 };
@@ -34,8 +28,7 @@ export type MainHermesSessionEvent = {
   deckId: string;
   conversationId: string;
   cardId: string;
-  runtimeSessionId: string;
-  hermesSessionId: string;
+  liveSessionId: string;
   event: MainGatewayEvent;
 };
 
@@ -209,7 +202,6 @@ export async function streamSession(args: {
   let finalText = '';
   let streamFailure: SessionStreamError | null = null;
   let sawEnd = false;
-  const deliveredEvents = new Set<string>();
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -242,13 +234,6 @@ export async function streamSession(args: {
       }
       if (kind === 'end') sawEnd = true;
       const event = { ...data, kind };
-      const eventId = (data.projection as MainProjectionEvent | undefined)?.id
-        || (data.runtimeEvent as RuntimeEvent | undefined)?.id;
-      if (eventId) {
-        const identity = `${String(data.projectId || '')}:${String(data.deckId || '')}:${String(data.runId || '')}:${eventId}`;
-        if (deliveredEvents.has(identity)) continue;
-        deliveredEvents.add(identity);
-      }
       args.onEvent(event);
     }
   }
@@ -427,8 +412,7 @@ export function subscribeSessionEvents(args: {
   projectId: string;
   deckId: string;
   conversationId: string;
-  runtimeSessionId: string;
-  hermesSessionId: string;
+  liveSessionId: string;
   onEvent: (event: MainHermesSessionEvent) => void;
   onError: (code: string) => void;
 }): () => void {
@@ -436,8 +420,7 @@ export function subscribeSessionEvents(args: {
     projectId: args.projectId,
     deckId: args.deckId,
     conversationId: args.conversationId,
-    runtimeSessionId: args.runtimeSessionId,
-    hermesSessionId: args.hermesSessionId,
+    liveSessionId: args.liveSessionId,
   });
   const source = new EventSource(`${BASE}/events?${params.toString()}`, { withCredentials: true });
   const receive = (raw: Event) => {
@@ -452,10 +435,9 @@ export function subscribeSessionEvents(args: {
       value.projectId !== args.projectId
       || value.deckId !== args.deckId
       || value.conversationId !== args.conversationId
-      || value.runtimeSessionId !== args.runtimeSessionId
-      || value.hermesSessionId !== args.hermesSessionId
+      || value.liveSessionId !== args.liveSessionId
       || !value.event || typeof value.event.type !== 'string'
-      || value.event.session_id !== args.hermesSessionId
+      || value.event.session_id !== args.liveSessionId
       || !Number.isSafeInteger(value.event.seq) || Number(value.event.seq) < 1
     ) {
       args.onError('main_hermes_event_identity_mismatch');
@@ -486,12 +468,9 @@ export async function loadSessionHistory(args: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{
-  runtimeSessionId: string;
-  hermesSessionId: string;
   mainCardId: string;
   addressableAgents: AddressableAgent[];
   messages: SharedChatMessage[];
-  runtimeEvents: RuntimeEvent[];
 }> {
   const params = new URLSearchParams({
     projectId: args.projectId,
@@ -529,8 +508,6 @@ export async function loadSessionHistory(args: {
   }
   const payload = (await res.json().catch(() => null)) as {
     error?: unknown;
-    runtimeSessionId?: unknown;
-    sessionId?: unknown;
     mainCardId?: unknown;
     addressableAgents?: unknown[];
     messages?: {
@@ -541,7 +518,6 @@ export async function loadSessionHistory(args: {
       speaker?: unknown;
       target?: unknown;
     }[];
-    runtimeEvents?: RuntimeEvent[];
   } | null;
   if (!res.ok) {
     throw new SessionStreamError({
@@ -589,17 +565,6 @@ export async function loadSessionHistory(args: {
       };
     })
     .filter((message): message is SharedChatMessage => message !== null && message.text.length > 0);
-  const runtimeEvents = Array.isArray(payload.runtimeEvents)
-    ? payload.runtimeEvents.filter((event) => (
-        event && typeof event.id === 'string'
-        && typeof event.category === 'string'
-        && event.category.startsWith('execution.')
-      ))
-    : [];
-  const runtimeSessionId = typeof payload.runtimeSessionId === 'string'
-    ? payload.runtimeSessionId.trim()
-    : '';
-  const hermesSessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
   const mainCardId = typeof payload.mainCardId === 'string' ? payload.mainCardId.trim() : '';
   const addressableAgents = Array.isArray(payload.addressableAgents)
     ? payload.addressableAgents.flatMap((value): AddressableAgent[] => {
@@ -633,5 +598,5 @@ export async function loadSessionHistory(args: {
       status: res.status,
     });
   }
-  return { runtimeSessionId, hermesSessionId, mainCardId, addressableAgents, messages, runtimeEvents };
+  return { mainCardId, addressableAgents, messages };
 }

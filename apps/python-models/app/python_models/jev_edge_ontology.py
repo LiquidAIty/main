@@ -56,7 +56,6 @@ SHARED_JEV_RELATIONSHIP_CRITERIA = {
     "FOLLOWS": "A occurs or applies after B in time or an explicit sequence.",
 }
 
-SHARED_JEV_RELATIONSHIP_SCHEMA_VERSION = "jev.semantic-relationships.v1"
 SHARED_JEV_RELATIONSHIP_SCHEMA_HASH = hashlib.sha256(
     json.dumps(SHARED_JEV_RELATIONSHIPS, separators=(",", ":")).encode("utf-8")
 ).hexdigest()
