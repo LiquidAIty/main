@@ -1139,7 +1139,7 @@ describe('AgentManager active builder config', () => {
     expect(() => buildDisplayedToolRows(
       [{ name: 'web_search' }, { name: 'web_search' }],
       [],
-    )).toThrow('duplicate_idd_tool:web_search');
+    )).toThrow('duplicate_catalog_tool:web_search');
   });
 
   it('changes only the exact saved assignment and preserves order', () => {

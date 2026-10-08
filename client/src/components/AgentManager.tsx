@@ -172,7 +172,7 @@ export function buildDisplayedToolRows(
 ): DisplayedToolRow[] {
   const catalogByName = new Map<string, ToolDescriptor>();
   for (const tool of toolCatalog) {
-    if (catalogByName.has(tool.name)) throw new Error(`duplicate_idd_tool:${tool.name}`);
+    if (catalogByName.has(tool.name)) throw new Error(`duplicate_catalog_tool:${tool.name}`);
     catalogByName.set(tool.name, tool);
   }
   const savedNames = Array.from(new Set(savedToolNames));

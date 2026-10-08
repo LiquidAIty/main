@@ -73,6 +73,7 @@ class FakeGateway {
   listeners = new Set<(event: GatewayEvent) => void>();
   blockTarget = false;
   failTarget = false;
+  responsesByProfile = new Map<string, string>();
   promptIssuedResolve!: () => void;
   promptIssued = new Promise<void>((resolve) => { this.promptIssuedResolve = resolve; });
 
@@ -100,6 +101,13 @@ class FakeGateway {
         info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
       } as T;
     }
+    if (method === 'session.resume') {
+      return {
+        session_id: `live-${params.profile}`,
+        stored_session_id: String(params.session_id),
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      } as T;
+    }
     if (method === 'session.active_list') {
       return { sessions: [{ id: 'live-source', session_key: 'stored-source' }] } as T;
     }
@@ -119,7 +127,11 @@ class FakeGateway {
               submission_id: params.submission_id,
               ...(this.failTarget
                 ? { message: 'target failed honestly' }
-                : { status: 'complete', text: 'actual specialist result' }),
+                : {
+                    status: 'complete',
+                    text: this.responsesByProfile.get(String(params.profile))
+                      || 'actual specialist result',
+                  }),
             },
           });
         });
@@ -192,6 +204,9 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
   mocks.getDeck.mockResolvedValue({ deck: savedDeck });
   const finishes: Array<Record<string, any>> = [];
   const begins: Array<Record<string, any>> = [];
+  const mainBegins: Array<Record<string, any>> = [];
+  const pairPreparations: Array<Record<string, any>> = [];
+  const pairSettlements: Array<Record<string, any>> = [];
   mocks.requestRails.mockImplementation(async (path: string, init: RequestInit) => {
     const payload = JSON.parse(String(init.body || '{}'));
     if (path === '/domain/runs/read') {
@@ -206,6 +221,9 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
     if (path === '/domain/runs/begin') {
       begins.push(payload);
       const isThink = payload.cardId === 'card_thinkgraph';
+      const profile = isThink
+        ? 'thinkgraph'
+        : payload.cardId === 'builder' ? 'builder' : 'knowgraph';
       const canonicalId = isThink ? 'engraphis_recall_context' : 'graphiti.add_memory';
       return {
         runId: payload.runId,
@@ -214,7 +232,7 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
           request: {
             runtime: {
               kind: 'hermes', mode: 'delegate',
-              profile: isThink ? 'thinkgraph' : 'knowgraph',
+              profile,
             },
             message: payload.assignment,
             images: [],
@@ -229,6 +247,52 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
             }],
           },
         },
+      };
+    }
+    if (path === '/domain/main/runs/begin') {
+      mainBegins.push(payload);
+      return {
+        runId: payload.runId,
+        hermesTransport: {
+          cardIdentity: { cardId: 'card_main_chat' },
+          request: {
+            runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+            provider: { provider: 'openai', providerModelId: 'gpt-5.6-sol' },
+            message: payload.message,
+            images: [],
+            enabledTools: [],
+            unavailableTools: [],
+            toolDefinitions: [],
+          },
+        },
+      };
+    }
+    if (path === '/thinkgraph/completed-pair/prepare') {
+      pairPreparations.push(payload);
+      return {
+        ok: true,
+        projectId: payload.projectId,
+        pairReference: 'pair-main-one',
+        intakeOperation: 'pending',
+        structuredExtractionRequired: true,
+        revision: 1,
+        revisionChanged: false,
+        preparation: { status: 'completed_without_graph_mutation' },
+        enrichmentSchema: { type: 'object', properties: { facts: { type: 'array' } } },
+        enrichmentPrompt: 'Extract exactly one Think.',
+        enrichmentInput: { exact_main_response: payload.mainResponse },
+      };
+    }
+    if (path === '/thinkgraph/completed-pair/settle') {
+      pairSettlements.push(payload);
+      return {
+        ok: true,
+        revision: 2,
+        revisionChanged: true,
+        changedNodeIds: ['think-node'],
+        changedEdgeIds: ['think-edge'],
+        affectedNodeIds: ['think-node'],
+        newMainSubjects: [],
       };
     }
     if (path === '/domain/runs/finish') {
@@ -253,6 +317,9 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
     base: `http://127.0.0.1:${(server.address() as AddressInfo).port}/main/session`,
     begins,
     finishes,
+    mainBegins,
+    pairPreparations,
+    pairSettlements,
   };
 }
 
@@ -270,6 +337,101 @@ function specialistBody(operation: 'thinkgraph.reason' | 'knowgraph.research') {
 }
 
 describe('fixed saved specialist Card tools', () => {
+  it('runs one automatic saved ThinkGraph child only after an ordinary Main completion', async () => {
+    const gateway = new FakeGateway();
+    gateway.responsesByProfile.set('main', 'Main answer naming Rocket Lab.');
+    gateway.responsesByProfile.set('thinkgraph', JSON.stringify({
+      facts: [{
+        content: 'Rocket Lab uses Electron.',
+        title: 'Rocket Lab and Electron',
+        mtype: 'episodic',
+        importance: 0.8,
+        keywords: ['Rocket Lab', 'Electron'],
+        entities: ['Rocket Lab', 'Electron'],
+        relations: [{ source: 'Rocket Lab', relation: 'uses', target: 'Electron' }],
+        think: { summary: 'Rocket Lab uses Electron.' },
+      }],
+    }));
+    const {
+      base, begins, finishes, mainBegins, pairPreparations, pairSettlements,
+    } = await start(gateway);
+    const response = await fetch(`${base}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId: 'conversation-1',
+        message: 'Explain Rocket Lab.',
+        clientMessageId: 'msg_11111111-1111-4111-8111-111111111111',
+        clientReplyMessageId: 'msg_22222222-2222-4222-8222-222222222222',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const stream = await response.text();
+    expect(stream).toContain('event: done');
+    expect(stream).toContain('Main answer naming Rocket Lab.');
+    await vi.waitFor(() => expect(pairSettlements).toHaveLength(1));
+
+    expect(mainBegins).toHaveLength(1);
+    expect(pairPreparations).toEqual([expect.objectContaining({
+      runId: mainBegins[0].runId,
+      cardId: 'card_main_chat',
+      userMessage: 'Explain Rocket Lab.',
+      mainResponse: 'Main answer naming Rocket Lab.',
+      mainSubjects: [],
+    })]);
+    expect(begins).toHaveLength(1);
+    expect(begins[0]).toMatchObject({
+      cardId: 'card_thinkgraph',
+      senderCardId: 'card_main_chat',
+      originatingRunId: mainBegins[0].runId,
+      sharedConversation: [],
+    });
+    expect(begins[0].assignment).toContain('OUTPUT_SCHEMA:');
+    expect(pairSettlements[0]).toMatchObject({
+      pairReference: 'pair-main-one',
+      structuredOutput: expect.stringContaining('Rocket Lab uses Electron.'),
+      cardRun: {
+        runId: begins[0].runId,
+        cardId: 'card_thinkgraph',
+        revisionId: 'revision-card_thinkgraph',
+        profile: 'thinkgraph',
+        hermesSessionId: 'live-thinkgraph',
+        resolvedModel: 'gpt-5.6-sol',
+      },
+    });
+    expect(finishes.map((item) => [item.runId, item.state])).toEqual([
+      [mainBegins[0].runId, 'completed'],
+      [begins[0].runId, 'completed'],
+    ]);
+  });
+
+  it('does not run completed-pair intake for a directly addressed non-Main Card', async () => {
+    const gateway = new FakeGateway();
+    gateway.responsesByProfile.set('builder', 'Builder answer.');
+    const { base, pairPreparations } = await start(gateway);
+    const response = await fetch(`${base}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId: 'conversation-1',
+        message: '@Builder inspect this.',
+        targetCardId: 'builder',
+        clientMessageId: 'msg_33333333-3333-4333-8333-333333333333',
+        clientReplyMessageId: 'msg_44444444-4444-4444-8444-444444444444',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await response.text();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(pairPreparations).toHaveLength(0);
+  });
+
   it('runs the exact saved ThinkGraph Card as a normal child Run without shared-chat writes', async () => {
     const gateway = new FakeGateway();
     const { base, begins, finishes } = await start(gateway);
