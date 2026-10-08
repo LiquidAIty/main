@@ -1807,36 +1807,6 @@ def _load_deck_internal(project_ref: str, deck_id: str) -> dict[str, Any]:
         return _load_deck_with_cursor(cursor, project_ref, deck_id, include_internal=True)
 
 
-def list_decks(project_ref: str) -> dict[str, Any]:
-    """List every relational Deck owned by one existing Project."""
-    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        project = _resolve_project(cursor, project_ref)
-        project_id = str(project["id"])
-        cursor.execute(
-            """
-            SELECT deck_id, name, revision, saved_at
-            FROM ag_catalog.agent_decks
-            WHERE project_id=%s
-            ORDER BY updated_at DESC, deck_id
-            """,
-            (project_id,),
-        )
-        return {
-            "projectId": project_id,
-            "decks": [
-                {
-                    "id": row["deck_id"],
-                    "name": row["name"],
-                    "meta": {
-                        "deckRevision": row["revision"],
-                        "deckSavedAt": row["saved_at"].isoformat(),
-                    },
-                }
-                for row in cursor.fetchall()
-            ],
-        }
-
-
 def save_deck(
     project_ref: str,
     deck_id: str,

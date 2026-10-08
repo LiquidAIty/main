@@ -8,18 +8,18 @@ import React, {
   useState,
 } from 'react';
 
-import BuilderChat from '../components/builder/BuilderChat';
+import SharedCardChat from '../components/builder/SharedCardChat';
 import {
   createCanonicalSubjectMatcher,
   type CanonicalSubjectFocusRequest,
   type CanonicalSubjectFocusTarget,
 } from '../components/builder/canonicalSubjectLinks';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
-import WorldSignalSurface, {
+import WorldSignalsSurface, {
   type WorldSignalsInspectorBridge,
   type WorldSignalsInspectorSection,
   type WorldSignalsLayerState,
-} from '../components/worldsignal/WorldSignalSurface';
+} from '../components/worldsignal/WorldSignalsSurface';
 import WorldSignalsInspectorPanel from '../components/worldsignal/WorldSignalsInspectorPanel';
 import type { GodsEyeBridge } from '../components/worldsignal/GodsEyeSurface';
 import WorldViewSurface from '../features/worldview/WorldViewSurface';
@@ -34,8 +34,8 @@ import SharedChatTerminalSplit from '../features/agentbuilder/console/SharedChat
 import {
   projectCardChatTargets,
   selectedConversationId,
-} from '../features/agentbuilder/console/mainSessionClient';
-import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
+} from '../features/agentbuilder/console/sharedChatClient';
+import useSharedCardChat from '../features/agentbuilder/console/useSharedCardChat';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
 } from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -94,7 +94,7 @@ import {
   useBuilderDeckPersistenceActions,
 } from '../components/builder/useBuilderDeckPersistenceActions';
 import type {
-  AgentCardInstance,
+  DeckCard,
   DeckEdge,
   DeckDocument,
 } from '../types/agentgraph';
@@ -213,11 +213,11 @@ const BUILDER_PROJECT_TABS = ['Plan'] as const;
 const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 
-function hasTaskLedger(card: AgentCardInstance | null | undefined): boolean {
+function hasTaskLedger(card: DeckCard | null | undefined): boolean {
   return card?.id === 'card_magentic' || card?.id === 'card_team';
 }
 
-function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): string {
+function taskLedgerRunCardId(card: DeckCard, deck: DeckDocument): string {
   if (card.id !== 'card_team') return card.id;
   for (const edge of deck.edges) {
     if (edge.edgeType !== 'magentic_option' || edge.enabled === false) continue;
@@ -473,7 +473,7 @@ export default function AgentBuilder(): React.ReactElement {
       conversationId,
     });
     const stream = new EventSource(
-      `/api/main/session/thinkgraph-revisions?${params.toString()}`,
+      `/api/thinkgraph/revisions?${params.toString()}`,
       { withCredentials: true },
     );
     stream.addEventListener('thinkgraph_revision', (event) => {
@@ -511,7 +511,7 @@ export default function AgentBuilder(): React.ReactElement {
     technicalError,
     voiceError,
     voicePhase,
-  } = useAgentBuilderMainChat({
+  } = useSharedCardChat({
     canvasProjectId,
     deckId: DEFAULT_PROJECT_DECK_ID,
     conversationId,
@@ -566,7 +566,7 @@ export default function AgentBuilder(): React.ReactElement {
   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
   const lastPersistedBoardFingerprintRef = useRef<string | null>(null);
   const lastPersistedBoardSnapshotRef = useRef<{
-    nodes: AgentCardInstance[];
+    nodes: DeckCard[];
     edges: DeckEdge[];
   } | null>(null);
   const layoutAutosaveAbortRef = useRef<AbortController | null>(null);
@@ -1323,7 +1323,7 @@ export default function AgentBuilder(): React.ReactElement {
     // to the separately saved Builder Card and its own Hermes session.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
-        <BuilderChat
+        <SharedCardChat
           messages={messages}
           mainCardId={mainCardId || undefined}
           directChatTargets={directChatTargets}
@@ -1593,7 +1593,7 @@ export default function AgentBuilder(): React.ReactElement {
         />
       }
       worldsignalSurface={
-        <WorldSignalSurface
+        <WorldSignalsSurface
           projectId={
             typeof activeProject === 'string' && activeProject ? activeProject : null
           }

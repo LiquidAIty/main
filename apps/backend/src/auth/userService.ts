@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'node:crypto';
 import { prisma } from '../services/database';
 
 const SALT_ROUNDS = 10;
@@ -42,6 +43,31 @@ export async function getUserByEmail(email: string): Promise<User | null> {
   });
 
   return user;
+}
+
+export async function ensureLocalDevelopmentUser(email: string): Promise<User> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (normalizedEmail !== 'local-user@localhost') {
+    throw new Error('local_development_user_email_invalid');
+  }
+  const existing = await getUserByEmail(normalizedEmail);
+  if (existing) return existing;
+  const password = await bcrypt.hash(randomBytes(32).toString('hex'), SALT_ROUNDS);
+  return prisma.user.upsert({
+    where: { email: normalizedEmail },
+    update: {},
+    create: {
+      email: normalizedEmail,
+      password,
+      name: 'Local owner',
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      createdAt: true,
+    },
+  });
 }
 
 export async function verifyPassword(email: string, password: string): Promise<User | null> {

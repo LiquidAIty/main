@@ -189,13 +189,16 @@ export async function discardFreshProject(projectId: string, ownerUserId: string
   }
 }
 
-export async function listProjects(userId?: string | null, projectType?: 'assist' | 'agent' | null): Promise<ProjectSummary[]> {
+export async function listOwnedProjects(
+  ownerUserId: string,
+  projectType?: 'assist' | 'agent' | null,
+): Promise<ProjectSummary[]> {
+  const owner = ownerUserId.trim();
+  if (!owner) throw new Error('project_owner_required');
   const params: string[] = [];
   const clauses: string[] = [];
-  if (userId) {
-    params.push(userId);
-    clauses.push(`owner_user_id = $${params.length}`);
-  }
+  params.push(owner);
+  clauses.push(`owner_user_id = $${params.length}`);
   if (projectType) {
     params.push(projectType);
     clauses.push(`project_type = $${params.length}`);
@@ -217,20 +220,46 @@ export async function listProjects(userId?: string | null, projectType?: 'assist
   }));
 }
 
-export async function getProject(projectId: string, ownerUserId?: string): Promise<OwnedProject | null> {
-  const trimmed = String(projectId || '').trim();
-  if (!trimmed) return null;
-  const owner = ownerUserId?.trim();
-  if (ownerUserId !== undefined && !owner) return null;
-
-  const { clause, params } = projectLookup(trimmed);
-  if (owner) params.push(owner);
+export async function getOwnedProjectByReference(
+  projectReference: string,
+  ownerUserId: string,
+): Promise<OwnedProject | null> {
+  const reference = String(projectReference || '').trim();
+  const owner = String(ownerUserId || '').trim();
+  if (!reference || !owner) return null;
+  const { clause, params } = projectLookup(reference);
+  params.push(owner);
   const { rows } = await pool.query(
-    `SELECT id, name, code, status, project_type, owner_user_id FROM ${PROJECTS_TABLE} WHERE ${clause}${owner ? ' AND owner_user_id = $2' : ''} LIMIT 1`,
+    `SELECT id, name, code, status, project_type, owner_user_id
+     FROM ${PROJECTS_TABLE}
+     WHERE ${clause} AND owner_user_id = $2
+     LIMIT 1`,
     params,
   );
   if (!rows.length) return null;
 
+  const row = rows[0];
+  return {
+    id: row.id,
+    name: row.name,
+    code: row.code ?? null,
+    status: row.status ?? null,
+    project_type: row.project_type,
+    ownerUserId: String(row.owner_user_id || ''),
+  };
+}
+
+export async function getInternalProjectById(projectId: string): Promise<OwnedProject | null> {
+  const id = String(projectId || '').trim();
+  if (!UUID_REGEX.test(id)) return null;
+  const { rows } = await pool.query(
+    `SELECT id, name, code, status, project_type, owner_user_id
+     FROM ${PROJECTS_TABLE}
+     WHERE id = $1
+     LIMIT 1`,
+    [id],
+  );
+  if (!rows.length) return null;
   const row = rows[0];
   return {
     id: row.id,

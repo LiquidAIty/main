@@ -1,4 +1,4 @@
-import type { AgentCardInstance, DeckDocument } from '../types';
+import type { DeckCard, DeckDocument } from '../types';
 
 type HermesRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
@@ -117,7 +117,7 @@ function delegationSettings(options: Record<string, any>, current: ProfileState)
   } as const;
 }
 
-export function savedCardBotRoster(deck: DeckDocument, card: AgentCardInstance): string[] {
+export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[] {
   const options = record(card.runtimeOptions);
   const orchestrator = card.runtime.mode === 'main' || options.orchestrator === true;
   if (!orchestrator) return [];
@@ -134,7 +134,7 @@ export function savedCardBotRoster(deck: DeckDocument, card: AgentCardInstance):
 }
 
 function configuredProfileParams(
-  card: AgentCardInstance,
+  card: DeckCard,
   current: ProfileState,
 ): Record<string, unknown> {
   const options = record(card.runtimeOptions);
@@ -194,7 +194,7 @@ function configuredProfileParams(
 }
 
 function assertMaterialized(
-  card: AgentCardInstance,
+  card: DeckCard,
   profile: ProfileState,
 ): void {
   const pending = configuredProfileParams(card, profile);
@@ -205,7 +205,7 @@ function assertMaterialized(
 
 export async function materializeSavedCardProfile(
   request: HermesRequest,
-  card: AgentCardInstance,
+  card: DeckCard,
 ): Promise<ProfileState> {
   if (card.runtime.kind !== 'hermes' || !PROFILE_PATTERN.test(card.runtime.profile)) {
     throw new Error('hermes_profile_card_invalid');
@@ -228,7 +228,7 @@ export async function materializeSavedCardProfile(
 
 export async function materializeBuilderTerminalPolicy(
   request: HermesRequest,
-  card: AgentCardInstance,
+  card: DeckCard,
 ): Promise<void> {
   if (card.id !== BUILDER_CARD_ID) return;
   const readTerminal = async (): Promise<Record<string, unknown>> => {

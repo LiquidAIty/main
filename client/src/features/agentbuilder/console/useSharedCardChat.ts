@@ -16,9 +16,9 @@ import {
   subscribeSessionEvents,
   stopSession,
   streamSession,
-} from './mainSessionClient';
+} from './sharedChatClient';
 
-export type AgentBuilderChatMessage = SharedChatMessage & { status?: 'pending' | 'complete' | 'error' };
+export type SharedCardChatMessage = SharedChatMessage & { status?: 'pending' | 'complete' | 'error' };
 
 export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
 
@@ -26,7 +26,7 @@ export type MainChatRunInput = { images?: Array<Record<string, unknown>> };
 // Matches the Hermes turn-image attachment count limit.
 export const MAX_MAIN_CHAT_IMAGES = 12;
 
-type UseAgentBuilderMainChatArgs = {
+type UseSharedCardChatArgs = {
   canvasProjectId: string;
   deckId: string;
   conversationId: string;
@@ -168,14 +168,14 @@ function prepareChatSubmission({
   };
 }
 
-function messageIndex(messages: AgentBuilderChatMessage[], messageId: string): number {
+function messageIndex(messages: SharedCardChatMessage[], messageId: string): number {
   return messages.findIndex((message) => message.messageId === messageId);
 }
 
 function reconcileHistory(
-  persisted: AgentBuilderChatMessage[],
-  visible: AgentBuilderChatMessage[],
-): AgentBuilderChatMessage[] {
+  persisted: SharedCardChatMessage[],
+  visible: SharedCardChatMessage[],
+): SharedCardChatMessage[] {
   const persistedIds = new Set(persisted.flatMap((message) => message.messageId ? [message.messageId] : []));
   return [
     ...persisted,
@@ -183,14 +183,14 @@ function reconcileHistory(
   ];
 }
 
-export default function useAgentBuilderMainChat({
+export default function useSharedCardChat({
   canvasProjectId,
   deckId,
   conversationId,
   directChatTargets = NO_DIRECT_CHAT_TARGETS,
   dataAnchors = [],
   prepareRunImages,
-}: UseAgentBuilderMainChatArgs) {
+}: UseSharedCardChatArgs) {
   const conversationKey = `${canvasProjectId}\u0000${conversationId}`;
   const [technical, setTechnical] = useState<{
     key: string;
@@ -200,7 +200,7 @@ export default function useAgentBuilderMainChat({
   });
   const [transcript, setTranscript] = useState<{
     key: string;
-    messages: AgentBuilderChatMessage[];
+    messages: SharedCardChatMessage[];
   }>({ key: conversationKey, messages: [] });
   const [historyState, setHistoryState] = useState<{
     key: string;
@@ -442,7 +442,7 @@ export default function useAgentBuilderMainChat({
         throw new SessionStreamError({
           code: 'main_turn_already_active',
           message: 'Wait for the current Card turn to finish before sending another message.',
-          route: '/api/main/session/chat',
+          route: '/api/shared-chat/turn',
         });
       }
 
@@ -913,7 +913,7 @@ export default function useAgentBuilderMainChat({
       throw new SessionStreamError({
         code: 'expected_run_id_required',
         message: 'The accepted Main Run identity is not available yet.',
-        route: '/api/main/session/stop',
+        route: '/api/shared-chat/stop',
       });
     }
     try {

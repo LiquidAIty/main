@@ -24,7 +24,7 @@ const WORLDVIEW_MOUNT_ID = 'virtual:worldview-runtime-mount';
 const WORLDVIEW_MOUNT_RESOLVED_ID = `\0${WORLDVIEW_MOUNT_ID}`;
 const WORLDVIEW_BUNDLED_MOUNT_ID = 'virtual:worldview-runtime-mount-bundled';
 const WORLDVIEW_PUBLIC_MOUNT_URL = 'http://127.0.0.1:4174/src/app/mount.js';
-const WORLDVIEW_SELECTOR = '#worldview-native-root';
+const WORLDVIEW_SELECTOR = '#worldview-gods-eye-root';
 
 export function worldviewRuntimeMountModuleSource(command: 'serve' | 'build'): string {
   const target = command === 'serve'
@@ -109,7 +109,7 @@ function worldviewRuntimeCssPlugin(): Plugin {
     async load(id) {
       if (id !== WORLDVIEW_CSS_RESOLVED_ID) return null;
       const source = fs.readFileSync(worldviewStylePath, 'utf8')
-        .replace(/url\(\s*(['"]?)\/(?!\/)/g, 'url($1/worldview-native/');
+        .replace(/url\(\s*(['"]?)\/(?!\/)/g, 'url($1/worldview-gods-eye/');
       const result = await postcss([{
         postcssPlugin: 'worldview-runtime-root-scope',
         Rule(rule) {
@@ -123,7 +123,7 @@ function worldviewRuntimeCssPlugin(): Plugin {
             && /\((?:min|max)-(?:width|height)\s*:/.test(atRule.params)
             && !/prefers-|pointer|hover|resolution|orientation/.test(atRule.params)) {
             atRule.name = 'container';
-            atRule.params = `worldview-native ${atRule.params}`;
+            atRule.params = `worldview-gods-eye ${atRule.params}`;
           }
         },
         Declaration(decl) {
@@ -147,7 +147,7 @@ ${WORLDVIEW_SELECTOR} {
   overflow: hidden;
   contain: layout paint style;
   isolation: isolate;
-  container: worldview-native / size;
+  container: worldview-gods-eye / size;
   transform: translateZ(0);
   color-scheme: dark;
   font-family: 'JetBrains Mono', monospace;
@@ -225,11 +225,11 @@ export default defineConfig(({ mode, command }) => {
         // provider middleware for its data APIs and static models. It
         // renders in this React document; this prefix is transport, not an
         // iframe/runtime page boundary.
-        '/worldview-native': {
+        '/worldview-gods-eye': {
           target: 'http://127.0.0.1:4174',
           changeOrigin: true,
           secure: false,
-          rewrite: (p) => p.replace(/^\/worldview-native/, ''),
+          rewrite: (p) => p.replace(/^\/worldview-gods-eye/, ''),
         },
         // WorldSignals (vendored app, own FastAPI backend on :8000). Its client
         // calls `${API_BASE}/api/...`; the embed mount sets API_BASE to this
@@ -260,11 +260,11 @@ export default defineConfig(({ mode, command }) => {
           secure: true,
           rewrite: (p) => p.replace(/^\/cesium-ion/, ''),
         },
-        '/worldview-native': {
+        '/worldview-gods-eye': {
           target: 'http://127.0.0.1:4174',
           changeOrigin: true,
           secure: false,
-          rewrite: (p) => p.replace(/^\/worldview-native/, ''),
+          rewrite: (p) => p.replace(/^\/worldview-gods-eye/, ''),
         },
         '/worldsignals-api': {
           target: 'http://127.0.0.1:8000',

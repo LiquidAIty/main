@@ -97,7 +97,7 @@ export async function cardSession(
   );
   const profileModel = objectRecord(profileState.model);
   const completeBinding = (binding: SessionBinding): SessionBinding => {
-    const info = {
+    const info: Record<string, unknown> = {
       provider: String(profileModel.provider || ''),
       model: String(profileModel.default || ''),
       ...binding.info,

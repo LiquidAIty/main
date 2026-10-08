@@ -1,10 +1,10 @@
 import { Handle, Position } from '@xyflow/react';
-import type { AgentCardInstance } from '../../../types/agentgraph';
+import type { DeckCard } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 import { hasMainBotAuthority } from '../../../features/agentbuilder/deck/deckPrimitives';
 
-type AgentCardNodeData = AgentCardInstance & {
+type DeckCardNodeData = DeckCard & {
   busX?: number;
   assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
   swarmBadge?: string | null;
@@ -16,11 +16,11 @@ type AgentCardNodeData = AgentCardInstance & {
   activeAgentCount?: number;
 };
 
-export default function AgentCardNode({
+export default function DeckCardNode({
   data,
   selected,
 }: {
-  data: AgentCardNodeData;
+  data: DeckCardNodeData;
   selected?: boolean;
 }) {
   const canReceiveConnection = true;

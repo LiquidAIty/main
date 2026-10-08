@@ -831,6 +831,16 @@ def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() ->
         card_domain._validated_deck_collections(missing, "deck-two")
 
 
+def test_project_code_folder_is_one_portable_managed_folder_name() -> None:
+    assert card_domain._validated_project_code_folder("  worker-agent-ui  ") == "worker-agent-ui"
+    assert card_domain._validated_project_code_folder(None) is None
+    assert card_domain._validated_project_code_folder("  ") is None
+
+    for invalid in (".", "..", "nested/folder", "nested\\folder", "C:\\outside", "/outside", "NUL"):
+        with pytest.raises(card_domain.CardDomainError, match="builder_project_code_folder_invalid"):
+            card_domain._validated_project_code_folder(invalid)
+
+
 def test_explicit_card_deletion_requires_intent_and_rejects_protected_cards() -> None:
     with pytest.raises(card_domain.CardDomainError, match="card_deletion_intent_invalid"):
         card_domain.delete_card(

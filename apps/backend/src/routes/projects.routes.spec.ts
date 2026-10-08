@@ -9,8 +9,7 @@ const systemEdges = vi.hoisted(() => ([
 const store = vi.hoisted(() => ({
   createProject: vi.fn(),
   discardFreshProject: vi.fn(),
-  getProject: vi.fn(),
-  listProjects: vi.fn(),
+  listOwnedProjects: vi.fn(),
 }));
 const decks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(),
@@ -69,7 +68,7 @@ beforeEach(() => {
 });
 
 describe('POST /api/projects', () => {
-  it('finishes the server-owned System6 deck and needs no browser deck document', async () => {
+  it('finishes the server-owned default Project deck without a browser deck document', async () => {
     const response = await request('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -90,7 +89,7 @@ describe('POST /api/projects', () => {
     expect(store.discardFreshProject).not.toHaveBeenCalled();
   });
 
-  it('removes the fresh relational shell if System6 topology finalization fails', async () => {
+  it('removes the fresh relational shell if default topology finalization fails', async () => {
     decks.saveDeckDocument.mockRejectedValueOnce(new Error('topology_failed'));
     store.discardFreshProject.mockResolvedValue(undefined);
 

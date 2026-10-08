@@ -38,7 +38,7 @@ def test_codegraph_projection_preserves_returned_ids_direction_and_type(monkeypa
     def read(**kwargs):
         observed.append(kwargs)
         return [nodes, edges]
-    monkeypatch.setattr(data_anchor, "call_read_tools_via_mcp", read)
+    monkeypatch.setattr(data_anchor, "call_materializer_read_tools", read)
     result = data_anchor._read_codegraph_projection("p", "d", "card", {"node_ids": [source], "expand": True})
     assert [node["id"] for node in result["nodes"]] == [source, target]
     assert result["edges"] == [{"id": "17367", "source": source, "target": target,
@@ -60,7 +60,7 @@ def test_codegraph_empty_and_changed_wire_format_do_not_create_records(monkeypat
             ]
             results.append({"columns": columns, "rows": [], "total": 0})
         return results
-    monkeypatch.setattr(data_anchor, "call_read_tools_via_mcp", read)
+    monkeypatch.setattr(data_anchor, "call_materializer_read_tools", read)
     result = data_anchor._read_codegraph_projection("p", "d", "card", {"node_ids": ["absent"]})
     assert result["nodes"] == result["edges"] == []
     with pytest.raises(DataAnchorError, match="format_invalid"):
@@ -709,7 +709,7 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
         "card_helper",
         "project.module.materialize_idf",
         bounded_expansion=1,
-        mcp_reader=reader,
+        materializer_reader=reader,
     )
 
     assert record is not None
@@ -751,7 +751,7 @@ def test_codegraph_exact_read_normalizes_provider_grouped_trace_json() -> None:
         "card_helper",
         "project.module.materialize_idf",
         bounded_expansion=1,
-        mcp_reader=reader,
+        materializer_reader=reader,
     )
 
     assert record is not None
@@ -807,7 +807,7 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
         entity_types=["Company"], edge_types=["SUPPORTS"],
         valid_at_after="2026-01-01T00:00:00Z",
         max_nodes=3, max_facts=3, bounded_expansion=1,
-        mcp_reader=reader,
+        materializer_reader=reader,
         episode_reader=lambda project_id, ids: [{
             "uuid": "episode-1", "name": "Source episode",
             "source_description": "unit source",

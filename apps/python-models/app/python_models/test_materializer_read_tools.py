@@ -9,23 +9,23 @@ from types import SimpleNamespace
 import jwt
 import pytest
 
-from app.python_models import internal_mcp
+from app.python_models import materializer_read_tools
 
 
 def test_query_graph_text_transport_does_not_relax_other_tool_results():
     result = SimpleNamespace(content=[SimpleNamespace(text="rows: 0  (cols: a)\ntotal: 0")])
-    assert internal_mcp._json_result(result, "cbm.query_graph")["text"].startswith("rows: 0")
+    assert materializer_read_tools._json_result(result, "cbm.query_graph")["text"].startswith("rows: 0")
     with pytest.raises(RuntimeError, match="invalid_json_result"):
-        internal_mcp._json_result(result, "cbm.search_graph")
+        materializer_read_tools._json_result(result, "cbm.search_graph")
 
 
 @pytest.mark.parametrize("url", ["https://127.0.0.1:8765/mcp", "http://example.com/mcp", "http://localhost/other"])
 def test_preload_rejects_nonlocal_transport_before_constructing_client(monkeypatch, url):
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", "0" * 32)
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_URL", url)
-    monkeypatch.setattr(internal_mcp.httpx2, "AsyncClient", lambda **_: pytest.fail("invalid transport constructed"))
-    with pytest.raises(RuntimeError, match="internal_mcp_url_"):
-        internal_mcp.call_read_tools_via_mcp(
+    monkeypatch.setattr(materializer_read_tools.httpx2, "AsyncClient", lambda **_: pytest.fail("invalid transport constructed"))
+    with pytest.raises(RuntimeError, match="materializer_mcp_url_"):
+        materializer_read_tools.call_materializer_read_tools(
             project_id="p", deck_id="d", card_id="main",
             calls=[("cbm.search_graph", {})], deadline_seconds=2,
         )
@@ -34,7 +34,7 @@ def test_preload_rejects_nonlocal_transport_before_constructing_client(monkeypat
 def test_materializer_read_token_has_no_fake_run_and_expires_quickly(monkeypatch):
     secret = "0123456789abcdef0123456789abcdef"
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", secret)
-    token = internal_mcp.create_materializer_read_token(
+    token = materializer_read_tools.create_materializer_read_token(
         project_id="project-1",
         deck_id="deck_builder",
         card_id="card-helper",
@@ -112,11 +112,11 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
                 is_error=False,
             )
 
-    monkeypatch.setattr(internal_mcp.httpx2, "AsyncClient", HttpClient)
-    monkeypatch.setattr(internal_mcp, "streamable_http_client", transport)
-    monkeypatch.setattr(internal_mcp, "Client", OfficialClient)
+    monkeypatch.setattr(materializer_read_tools.httpx2, "AsyncClient", HttpClient)
+    monkeypatch.setattr(materializer_read_tools, "streamable_http_client", transport)
+    monkeypatch.setattr(materializer_read_tools, "Client", OfficialClient)
 
-    results = internal_mcp.call_read_tools_via_mcp(
+    results = materializer_read_tools.call_materializer_read_tools(
         project_id="project-1",
         deck_id="deck_builder",
         card_id="card-helper",
@@ -134,7 +134,7 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
         "cbm.get_code_snippet", "cbm.index_status",
     ]
     try:
-        internal_mcp.call_read_tools_via_mcp(
+        materializer_read_tools.call_materializer_read_tools(
             project_id="project-1",
             deck_id="deck_builder",
             card_id="card-helper",
@@ -184,11 +184,11 @@ def test_preload_deadline_preserves_successful_reads_and_cancels_slow_source(mon
                 is_error=False,
             )
 
-    monkeypatch.setattr(internal_mcp, "streamable_http_client", transport)
-    monkeypatch.setattr(internal_mcp, "Client", OfficialClient)
-    monkeypatch.setattr(internal_mcp.httpx2, "AsyncClient", HttpClient)
+    monkeypatch.setattr(materializer_read_tools, "streamable_http_client", transport)
+    monkeypatch.setattr(materializer_read_tools, "Client", OfficialClient)
+    monkeypatch.setattr(materializer_read_tools.httpx2, "AsyncClient", HttpClient)
     started = time.monotonic()
-    results = internal_mcp.call_read_tools_via_mcp(
+    results = materializer_read_tools.call_materializer_read_tools(
         project_id="p", deck_id="d", card_id="main", conversation_id="conversation-1",
         calls=[("engraphis_recall_context", {}), ("graphiti.search_memory_facts", {}), ("cbm.search_graph", {})],
         concurrent=True, deadline_seconds=0.1,

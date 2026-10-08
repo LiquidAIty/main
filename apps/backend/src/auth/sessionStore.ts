@@ -58,9 +58,8 @@ export async function removeSession(sessionId: string): Promise<void> {
 // per browser, host spelling, or cleared cookie. Future multi-user identity is a
 // separate authenticated product boundary.
 export async function createLocalSession(): Promise<{ user: User; session: Session }> {
-  const { getUserByEmail } = await import('./userService.js');
-  const user = await getUserByEmail(LOCAL_USER_EMAIL);
-  if (!user) throw new Error('local_user_missing');
+  const { ensureLocalDevelopmentUser } = await import('./userService.js');
+  const user = await ensureLocalDevelopmentUser(LOCAL_USER_EMAIL);
   const session = await createSession(user.id);
 
   return { user, session };

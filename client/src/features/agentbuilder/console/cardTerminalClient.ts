@@ -61,13 +61,22 @@ async function post(
 }
 
 function attachmentFrom(payload: Record<string, unknown>): CardTerminalAttachment {
+  let terminalUrl: URL | null = null;
+  try {
+    terminalUrl = typeof payload.websocketUrl === 'string'
+      ? new URL(payload.websocketUrl)
+      : null;
+  } catch {
+    terminalUrl = null;
+  }
   if (
     typeof payload.storedSessionId !== 'string'
     || typeof payload.cardId !== 'string'
     || typeof payload.profile !== 'string'
     || typeof payload.attachIdentity !== 'string'
-    || typeof payload.websocketUrl !== 'string'
-    || !payload.websocketUrl.startsWith('ws://127.0.0.1:9119/api/pty?')
+    || !terminalUrl
+    || !['ws:', 'wss:'].includes(terminalUrl.protocol)
+    || terminalUrl.pathname !== '/api/pty'
     || !Number.isInteger(payload.cols)
     || !Number.isInteger(payload.rows)
   ) {

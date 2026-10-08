@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
-import { getProject } from '../services/projectStore';
+import { getOwnedProjectByReference } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
 import { internalMcpAuthorization, resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
@@ -36,7 +36,7 @@ async function authorizeProject(
     res.status(401).json({ ok: false, error: 'main_owner_authentication_required' });
     return null;
   }
-  const project = await getProject(projectId, userId);
+  const project = await getOwnedProjectByReference(projectId, userId);
   if (!project || project.ownerUserId !== userId) {
     res.status(403).json({ ok: false, error: 'main_project_access_denied' });
     return null;
@@ -300,7 +300,7 @@ export async function runCompletedPairThinkGraphLifecycle(args: {
 }
 
 
-thinkGraphRevisionRoutes.get('/thinkgraph-revisions', async (req, res) => {
+thinkGraphRevisionRoutes.get('/revisions', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();
   const deckId = String(req.query.deckId || DEFAULT_PROJECT_DECK_ID).trim();
   const conversationId = String(req.query.conversationId || '').trim();

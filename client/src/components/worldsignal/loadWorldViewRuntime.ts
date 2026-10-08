@@ -509,7 +509,7 @@ export async function loadWorldViewRuntime(
     ...config,
     documentMarkup: worldViewDocument,
     scopedStyles,
-    runtimeBaseUrl: '/worldview-native/',
+    runtimeBaseUrl: '/worldview-gods-eye/',
     sourceVersion: '0.1.1',
   }) as WorldViewRuntimeMount;
   const visualReadiness = observeWorldViewVisualReadiness(

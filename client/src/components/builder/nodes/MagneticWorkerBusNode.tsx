@@ -40,7 +40,7 @@ const rightHandleStyle = {
   border: '1px solid rgba(191, 255, 250, 0.5)',
 };
 
-export default function MagenticBusNode() {
+export default function MagneticWorkerBusNode() {
   return (
     <div
       style={{

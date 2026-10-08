@@ -249,7 +249,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
 
   return (
     <section style={styles.root} aria-label="WorldView globe">
-      <div ref={rootRef} id="worldview-native-root" style={styles.mount} />
+      <div ref={rootRef} id="worldview-gods-eye-root" style={styles.mount} />
       {status === 'failed' || visualReadiness?.phase === 'unavailable' ? (
         <div style={styles.failed} role="alert">
           <strong>WorldView could not start</strong>
@@ -280,7 +280,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     minHeight: 0,
-    containerName: 'worldview-native',
+    containerName: 'worldview-gods-eye',
     containerType: 'size',
     overflow: 'hidden',
     background: '#050b10',

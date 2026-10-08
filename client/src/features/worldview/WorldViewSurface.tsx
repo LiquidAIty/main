@@ -33,7 +33,7 @@ const INSPECTOR_TABS = [
   { id: 'selection', label: 'Selection' },
 ] as const;
 type InspectorTab = typeof INSPECTOR_TABS[number]['id'];
-const inspectorStyles = `${scopedWorldViewStyles.replaceAll('#worldview-native-root', '#worldview-inspector-controls')}\n${inspectorOverrides}`;
+const inspectorStyles = `${scopedWorldViewStyles.replaceAll('#worldview-gods-eye-root', '#worldview-inspector-controls')}\n${inspectorOverrides}`;
 const NAVIGATION_INSET = 16;
 
 type ViewRect = Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>;

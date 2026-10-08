@@ -1,7 +1,7 @@
 // Shared saved-Card and Project-deck normalization primitives.
 import type {
-  AgentCardInstance,
-  AgentCardRuntimeOptions,
+  DeckCard,
+  SavedCardConfiguration,
   CardRuntime,
   DeckEdgeType,
 } from '../../../types/agentgraph';
@@ -28,11 +28,11 @@ export function cleanOptionalText(value: unknown): string | null {
 // Cards use the ordinary provider/model selector. This is only the valid seed
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
-export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
+export const DEFAULT_CARD_PROVIDER: NonNullable<SavedCardConfiguration['provider']> = 'openai';
 export const MAIN_CARD_MODEL_KEY = 'gpt-5.6-sol';
 export const BUILDER_CARD_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
-export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
+export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<SavedCardConfiguration['provider']> = 'openai';
 // Builder's non-administrative CodeGraph corridor. Indexing, trace ingestion,
 // ADR mutation, and project deletion stay outside ordinary Card grants.
 export const CODEBASE_MEMORY_TOOLS = [
@@ -100,16 +100,16 @@ export function normalizeCardRuntime(value: unknown): CardRuntime | null {
 
 export function normalizeRuntimeOptions(
   value: unknown,
-): AgentCardRuntimeOptions | null {
+): SavedCardConfiguration | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return cloneDeckDocument(value as AgentCardRuntimeOptions);
+  return cloneDeckDocument(value as SavedCardConfiguration);
 }
 
 /** Orange flow authority belongs to Main or an explicitly enabled saved
  * non-Magnetic Hermes orchestrator Card. */
-export function hasMainBotAuthority(card: AgentCardInstance): boolean {
-  const record = card as AgentCardInstance & { enabled?: boolean };
-  const options = card.runtimeOptions as (AgentCardRuntimeOptions & { enabled?: boolean }) | null;
+export function hasMainBotAuthority(card: DeckCard): boolean {
+  const record = card as DeckCard & { enabled?: boolean };
+  const options = card.runtimeOptions as (SavedCardConfiguration & { enabled?: boolean }) | null;
   return card.kind === 'agent'
     && card.runtime.kind === 'hermes'
     && card.runtime.mode !== 'magentic_one'

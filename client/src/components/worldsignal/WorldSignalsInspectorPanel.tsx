@@ -7,7 +7,7 @@ import type {
   WorldSignalsLayerDescriptor,
   WorldSignalsLayerState,
   WorldSignalsMarketsSnapshot,
-} from './WorldSignalSurface';
+} from './WorldSignalsSurface';
 
 /**
  * Canonical-Inspector content for the WorldSignals companion surface.

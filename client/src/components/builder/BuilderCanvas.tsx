@@ -23,7 +23,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import type {
-  AgentCardInstance,
+  DeckCard,
   DeckDocument,
   DeckEdge,
   DeckEdgeType,
@@ -45,16 +45,16 @@ import {
   isEdgeConnectedToNode,
 } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from './edges/TurboFlowEdge';
-import AgentCardNode from './nodes/AgentCardNode';
-import MagenticBusNode from './nodes/MagenticBusNode';
+import DeckCardNode from './nodes/DeckCardNode';
+import MagneticWorkerBusNode from './nodes/MagneticWorkerBusNode';
 
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 
 const nodeTypes = {
-  agentCard: AgentCardNode,
-  magenticBus: MagenticBusNode,
+  deckCard: DeckCardNode,
+  magneticWorkerBus: MagneticWorkerBusNode,
 };
 const edgeTypes = {
   turboFlow: TurboFlowEdge,
@@ -114,12 +114,12 @@ export function toFlowNodes(
   );
   const hoveredRelatedNodeIds = buildFocusedNodeSet(hoveredCardId, neighborsByNode);
   return document.nodes.map((node) => {
-    const isMagenticBus = node.runtime.kind === 'hermes' && node.runtime.mode === 'magentic_one';
+    const isMagneticWorkerBus = node.runtime.kind === 'hermes' && node.runtime.mode === 'magentic_one';
     return {
       id: node.id,
-      type: isMagenticBus ? 'magenticBus' : 'agentCard',
+      type: isMagneticWorkerBus ? 'magneticWorkerBus' : 'deckCard',
       position: node.position,
-      draggable: !isMagenticBus,
+      draggable: !isMagneticWorkerBus,
       selectable: true,
       focusable: true,
       style: hoveredCardId
@@ -182,7 +182,7 @@ function resolveCanvasConnectionEdgeType(
   const targetOptions = targetNode.runtimeOptions as { enabled?: boolean } | null;
   const targetProfile = targetNode.runtime.kind === 'hermes' ? targetNode.runtime.profile.trim().toLowerCase() : '';
   if (!hasMainBotAuthority(sourceNode)
-    || (targetNode as AgentCardInstance & { enabled?: boolean }).enabled === false
+    || (targetNode as DeckCard & { enabled?: boolean }).enabled === false
     || targetOptions?.enabled === false
     || targetNode.runtime.kind !== 'hermes'
     || targetNode.runtime.mode === 'magentic_one'
@@ -208,8 +208,8 @@ export function toFlowEdges(
     const isHoverConnected = isEdgeConnectedToNode(edge.source, edge.target, hoveredCardId);
     const isActive = edge.enabled !== false && activeEdgeIds.has(edge.id);
     const edgeType = normalizeDeckEdgeType(edge.edgeType);
-    const sourceNode = nodeById.get(edge.source) as AgentCardInstance | undefined;
-    const targetNode = nodeById.get(edge.target) as AgentCardInstance | undefined;
+    const sourceNode = nodeById.get(edge.source) as DeckCard | undefined;
+    const targetNode = nodeById.get(edge.target) as DeckCard | undefined;
     if (!sourceNode || !targetNode) return [];
     const sourceCanOrchestrate = hasMainBotAuthority(sourceNode);
     const targetCanOrchestrate = hasMainBotAuthority(targetNode);
@@ -298,7 +298,7 @@ export function reduceCanvasEdgeChanges(
   };
 }
 
-export function mergeFlowNodesIntoDeck(nextNodes: Node[], prevNodes: AgentCardInstance[]): AgentCardInstance[] {
+export function mergeFlowNodesIntoDeck(nextNodes: Node[], prevNodes: DeckCard[]): DeckCard[] {
   const nextNodeById = new Map(nextNodes.map((node) => [node.id, node] as const));
   const merged = prevNodes
     .filter((node) => nextNodeById.has(node.id))
@@ -310,7 +310,7 @@ export function mergeFlowNodesIntoDeck(nextNodes: Node[], prevNodes: AgentCardIn
   nextNodes.forEach((node) => {
     if (merged.some((entry) => entry.id === node.id)) return;
     merged.push({
-      ...(node.data as AgentCardInstance),
+      ...(node.data as DeckCard),
       position: node.position,
     });
   });
@@ -389,7 +389,7 @@ export function isPlainConnectionAllowedForDocument(
       && target.runtime.mode === 'magentic_one';
     if (sourceIsMagnetic === targetIsMagnetic) return false;
     const worker = sourceIsMagnetic ? target : source;
-    const workerRecord = worker as AgentCardInstance & { enabled?: boolean };
+    const workerRecord = worker as DeckCard & { enabled?: boolean };
     const workerOptions = worker.runtimeOptions as { enabled?: boolean } | null;
     if (worker.kind !== 'agent'
       || worker.runtime.kind !== 'hermes'

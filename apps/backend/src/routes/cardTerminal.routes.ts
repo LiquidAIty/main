@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
-import { getProject } from '../services/projectStore';
+import { getOwnedProjectByReference } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
 import { sharedChatAuthority } from '../services/savedCardAuthority';
 import { cardSession } from '../services/hermesCardSession';
@@ -15,7 +15,7 @@ async function authorizeProject(req: Request, res: Response, projectId: string):
     res.status(401).json({ ok: false, error: 'terminal_owner_authentication_required' });
     return null;
   }
-  const project = await getProject(projectId, userId);
+  const project = await getOwnedProjectByReference(projectId, userId);
   if (!project || project.ownerUserId !== userId) {
     res.status(403).json({ ok: false, error: 'terminal_project_access_denied' });
     return null;
@@ -27,6 +27,19 @@ function terminalDimension(value: unknown, fallback: number, maximum: number): n
   return Number.isSafeInteger(value) && Number(value) >= 1
     ? Math.min(Number(value), maximum)
     : fallback;
+}
+
+function hermesTerminalWebSocketUrl(query: URLSearchParams): string {
+  const gateway = new URL(
+    String(process.env.HERMES_GATEWAY_URL || 'ws://127.0.0.1:9119/api/ws').trim(),
+  );
+  if (gateway.protocol !== 'ws:' && gateway.protocol !== 'wss:') {
+    throw new Error('hermes_gateway_url_invalid');
+  }
+  gateway.pathname = '/api/pty';
+  gateway.search = query.toString();
+  gateway.hash = '';
+  return gateway.toString();
 }
 
 cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => {
@@ -83,7 +96,7 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
       attachIdentity: attach,
       cols: terminalDimension(req.body?.cols, 80, 2_000),
       rows: terminalDimension(req.body?.rows, 24, 1_000),
-      websocketUrl: `ws://127.0.0.1:9119/api/pty?${query.toString()}`,
+      websocketUrl: hermesTerminalWebSocketUrl(query),
     });
   } catch (error) {
     return res.status(503).json({

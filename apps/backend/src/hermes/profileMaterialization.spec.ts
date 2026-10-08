@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentCardInstance, DeckDocument } from '../types';
+import type { DeckCard, DeckDocument } from '../types';
 import {
   materializeBuilderTerminalPolicy,
   materializeSavedCardProfile,
   savedCardBotRoster,
 } from './profileMaterialization';
 
-const main: AgentCardInstance = {
+const main: DeckCard = {
   id: 'card_main', templateId: 'main', title: 'Main', role: '', prompt: '# Main\nSaved prompt',
   runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
   runtimeOptions: {
@@ -23,7 +23,7 @@ const main: AgentCardInstance = {
   position: { x: 0, y: 0 },
 };
 
-const worker: AgentCardInstance = {
+const worker: DeckCard = {
   id: 'card_worker', templateId: 'worker', title: 'Worker', role: '', prompt: '# Worker',
   runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
   runtimeOptions: { provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'gpt-child' },
@@ -148,7 +148,7 @@ describe('saved Card to Hermes profile materialization', () => {
   });
 
   it('materializes Builder onto Hermes Docker with only its Project folder mount', async () => {
-    const builder: AgentCardInstance = {
+    const builder: DeckCard = {
       ...worker,
       id: 'builder',
       title: 'Builder',

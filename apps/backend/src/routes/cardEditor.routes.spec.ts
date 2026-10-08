@@ -2,14 +2,14 @@ import express from 'express';
 import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { requestPythonRailsJson, getProject, listToolCatalog } = vi.hoisted(() => ({
+const { requestPythonRailsJson, getOwnedProjectByReference, listToolCatalog } = vi.hoisted(() => ({
   requestPythonRailsJson: vi.fn(),
-  getProject: vi.fn(),
+  getOwnedProjectByReference: vi.fn(),
   listToolCatalog: vi.fn(),
 }));
 
 vi.mock('../services/pythonRailsClient', () => ({ requestPythonRailsJson }));
-vi.mock('../services/projectStore', () => ({ getProject }));
+vi.mock('../services/projectStore', () => ({ getOwnedProjectByReference }));
 vi.mock('../services/mcp/toolCatalogMcpClient', () => ({ listToolCatalog }));
 
 import cardEditorRoutes, { loadLiveToolCatalog } from './cardEditor.routes';
@@ -18,9 +18,9 @@ const servers: Array<ReturnType<typeof createServer>> = [];
 
 beforeEach(() => {
   requestPythonRailsJson.mockReset();
-  getProject.mockReset();
+  getOwnedProjectByReference.mockReset();
   listToolCatalog.mockReset();
-  getProject.mockResolvedValue({ ownerUserId: 'user-1' });
+  getOwnedProjectByReference.mockResolvedValue({ ownerUserId: 'user-1' });
 });
 
 afterEach(async () => {

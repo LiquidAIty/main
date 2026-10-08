@@ -3,14 +3,14 @@ import type {
   SharedChatParticipant,
 } from '../conversations/store';
 import { getDeckDocument } from '../decks/store';
-import type { AgentCardInstance, DeckDocument } from '../types';
+import type { DeckCard, DeckDocument } from '../types';
 
 export const ADDRESS_PATTERN = /^@([A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:\s|$)/;
 export const MESSAGE_ID_PATTERN = /^msg_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const SHARED_CHAT_USER: SharedChatParticipant = { kind: 'user', label: 'You' };
 
 export type AddressableCard = {
-  card: AgentCardInstance;
+  card: DeckCard;
   cardRevisionId: string;
   profile: string;
   title: string;
@@ -65,13 +65,13 @@ export function requireSpecialistConfiguration(
   }
 }
 
-function enabledCard(card: AgentCardInstance): boolean {
+function enabledCard(card: DeckCard): boolean {
   const saved = card.runtimeOptions as (Record<string, unknown> & { enabled?: boolean }) | null | undefined;
-  return (card as AgentCardInstance & { enabled?: boolean }).enabled !== false
+  return (card as DeckCard & { enabled?: boolean }).enabled !== false
     && saved?.enabled !== false;
 }
 
-function addressableCard(card: AgentCardInstance): AddressableCard {
+function addressableCard(card: DeckCard): AddressableCard {
   const cardId = String(card.id || '').trim();
   const cardRevisionId = String(card._cardRevisionId || '').trim();
   const profile = String(card.runtime?.profile || '').trim();

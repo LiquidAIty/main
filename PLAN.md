@@ -28,6 +28,11 @@ coordinated reload.
   the single IDF materializer, tool dispatch, graph adapters, and durable Run settlement.
 - The backend owns authenticated HTTP/SSE transport, exact Card/Project/conversation mapping, one
   shared Hermes Gateway client connection, submission correlation, and truthful result projection.
+- Saved Card execution is split across `sharedChat.routes.ts`, `savedSpecialist.routes.ts`, and
+  `thinkGraphRevision.routes.ts`, using the shared `savedCardAuthority`, `hermesCardSession`, and
+  `savedCardRun` services; the former generic Main-session router is deleted.
+- Builder's Project-owned `projectCodeFolder` is source-wired to managed Project storage and a
+  Hermes Docker mount for Builder only. Loaded Builder product proof is not established.
 - HermesLatest owns profiles, sessions, inference, its built-in tools, Bot delivery, queue behavior,
   retries, terminal/PTY, Team task execution, Magnetic task/dependency execution, and synthesis.
 - Dynamic Tools present only the current Run's authorized Card capabilities and call the existing

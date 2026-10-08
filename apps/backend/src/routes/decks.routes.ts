@@ -2,7 +2,6 @@ import { Router } from 'express';
 import {
   deleteCardFromDeck,
   getDeckDocument,
-  getV3ProjectBlob,
   saveDeckDocument,
 } from '../decks/store';
 import type { DeckDocument } from '../types';
@@ -14,54 +13,6 @@ import {
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();
-
-router.get('/:projectId/decks', async (req, res) => {
-  try {
-    const access = await requireOwnedProject(req, res, req.params.projectId);
-    if (!access) return;
-    const blob = await getV3ProjectBlob(req.params.projectId);
-    const decks = Object.keys(blob.decks).map((deckId) => ({
-      id: deckId,
-      name: blob.decks[deckId]?.name || deckId,
-      meta: blob.meta.decks[deckId] || null,
-    }));
-    return res.json({ ok: true, decks });
-  } catch (err: any) {
-    const status = err?.message === 'project_not_found' ? 404 : 500;
-    return res.status(status).json({ ok: false, error: err?.message || 'deck_list_failed' });
-  }
-});
-
-router.post('/:projectId/decks', async (req, res) => {
-  const document = req.body?.document;
-  const requestedDeckId = String(req.body?.deckId || document?.id || '').trim();
-  if (!document || typeof document !== 'object') {
-    return res.status(400).json({ ok: false, error: 'document_required' });
-  }
-  if (!requestedDeckId) {
-    return res.status(400).json({ ok: false, error: 'deck_id_required' });
-  }
-
-  try {
-    const access = await requireOwnedProject(req, res, req.params.projectId);
-    if (!access) return;
-    const result = await saveDeckDocument(
-      req.params.projectId,
-      requestedDeckId,
-      document as DeckDocument,
-      { expectedRevision: typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : null },
-    );
-    return res.json({ ok: true, deck: result.deck, meta: result.meta });
-  } catch (err: any) {
-    const status =
-      err?.message === 'project_not_found'
-        ? 404
-        : err?.message === 'deck_conflict'
-          ? 409
-          : 500;
-    return res.status(status).json({ ok: false, error: err?.message || 'deck_create_failed' });
-  }
-});
 
 router.get('/:projectId/decks/:deckId', async (req, res) => {
   try {

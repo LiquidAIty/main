@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import './tradingui.css';
-import type { AgentCardInstance } from '../types/agentgraph';
+import type { DeckCard } from '../types/agentgraph';
 import { resolveInstrument } from '../features/trading/instrument';
 import {
   readTradingConfiguration, reconcileTradingState,
@@ -137,7 +137,7 @@ function EquityChart({ points }: { points: TradingState['portfolio']['equityCurv
 
 type TradingUIProps = {
   symbol?: string; projectId?: string | null; deckId?: string;
-  card?: AgentCardInstance | null;
+  card?: DeckCard | null;
 };
 
 export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card }: TradingUIProps) {

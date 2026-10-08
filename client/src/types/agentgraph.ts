@@ -38,7 +38,7 @@ export type CardSubsystemAttachment = {
   configurationSchema?: string | null;
 };
 
-export type AgentCardRuntimeOptions = {
+export type SavedCardConfiguration = {
   /** Saved outbound orange Card-to-Card delegation authority. Main has this
    * authority by its runtime role; another non-Magnetic Card must opt in. */
   orchestrator?: boolean;
@@ -118,7 +118,7 @@ export type AgentCardRuntimeOptions = {
 
 export type DeckNodeKind = 'agent';
 
-export type AgentTemplate = {
+export type CardTemplate = {
   id: string;
   name: string;
   promptTemplate?: string | null;
@@ -129,7 +129,7 @@ export type AgentTemplate = {
   tools: string[];
 };
 
-export type AgentCardInstance = {
+export type DeckCard = {
   id: string;
   /** Current server-owned immutable revision identity returned with a loaded deck. */
   _cardRevisionId?: string;
@@ -143,13 +143,13 @@ export type AgentCardInstance = {
   /** LiquidAIty-owned result validation/presentation contract. */
   outputContract?: unknown;
   runtime: CardRuntime;
-  runtimeOptions?: AgentCardRuntimeOptions | null;
+  runtimeOptions?: SavedCardConfiguration | null;
   parentGraphId?: string | null;
   tools?: string[];
   title: string;
   subtitle?: string;
   position: { x: number; y: number };
-  overrides?: Partial<AgentTemplate>;
+  overrides?: Partial<CardTemplate>;
   status?: 'idle' | 'ready' | 'running' | 'error';
 };
 
@@ -168,7 +168,7 @@ export type DeckDocument = {
   name: string;
   projectCodeFolder?: string | null;
   promptTemplates: PromptTemplate[];
-  nodes: AgentCardInstance[];
+  nodes: DeckCard[];
   edges: DeckEdge[];
   version: number;
 };

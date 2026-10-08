@@ -22,11 +22,29 @@ const CLIENT_ROOT = path.basename(process.cwd()).toLowerCase() === 'client'
   ? process.cwd()
   : path.resolve(process.cwd(), 'client');
 const CARD_INSPECTOR_SOURCE = path.resolve(CLIENT_ROOT, 'src/components/CardInspector.tsx');
+const CARD_INSPECTOR_PROMPT_RUNTIME_SOURCE = path.resolve(
+  CLIENT_ROOT,
+  'src/components/CardInspectorPromptRuntime.tsx',
+);
+const CARD_INSPECTOR_CAPABILITIES_SOURCE = path.resolve(
+  CLIENT_ROOT,
+  'src/components/CardInspectorCapabilities.tsx',
+);
 const HERMES_CARD_PROFILE_SOURCE = path.resolve(
   CLIENT_ROOT,
   'src/features/agentbuilder/hermesCardProfile.ts',
 );
 const AGENT_BUILDER_PAGE_SOURCE = path.resolve(CLIENT_ROOT, 'src/pages/agentbuilder.tsx');
+
+function readCardInspectorSources() {
+  return [
+    CARD_INSPECTOR_SOURCE,
+    CARD_INSPECTOR_PROMPT_RUNTIME_SOURCE,
+    CARD_INSPECTOR_CAPABILITIES_SOURCE,
+  ]
+    .map((sourcePath) => readFileSync(sourcePath, 'utf8'))
+    .join('\n');
+}
 
 let leaveCard: (() => Promise<boolean>) | null = null;
 function CardInspector(props: React.ComponentProps<typeof CardInspectorComponent>) {
@@ -214,6 +232,59 @@ describe('CardInspector active builder config', () => {
     expect(onSave).toHaveBeenCalledOnce();
     expect(onSave.mock.calls[0][0].skills).toEqual(['research']);
     expect(onSave.mock.calls[0][0].runtime_options).toBeUndefined();
+  });
+
+  it('shares one in-flight flush and drains edits made while the first save is pending', async () => {
+    mockEditorFetch();
+    let releaseFirstSave: () => void = () => undefined;
+    const firstSave = new Promise<void>((resolve) => {
+      releaseFirstSave = resolve;
+    });
+    let saveCalls = 0;
+    const onSave = vi.fn((_config: CardEditorConfiguration) => {
+      saveCalls += 1;
+      return saveCalls === 1 ? firstSave : Promise.resolve();
+    });
+    render(React.createElement(CardInspector, {
+      activeTab: 'Prompt',
+      cardId: 'card-one',
+      projectId: 'p',
+      deckId: 'd',
+      localConfig: {
+        ...savedConfig,
+        prompt_template: '[ROLE]\nOriginal role\n\n[GOAL]\nOriginal goal',
+      },
+      onSaveLocalConfig: onSave,
+    }));
+
+    fireEvent.change(await screen.findByLabelText('Role'), {
+      target: { value: 'First revision role' },
+    });
+    expect(leaveCard).not.toBeNull();
+    let firstFlush!: Promise<boolean>;
+    let duplicateFlush!: Promise<boolean>;
+    act(() => {
+      firstFlush = leaveCard!();
+      duplicateFlush = leaveCard!();
+    });
+    expect(duplicateFlush).toBe(firstFlush);
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+
+    fireEvent.change(screen.getByLabelText('Goal'), {
+      target: { value: 'Second revision goal' },
+    });
+    let flushResult = false;
+    await act(async () => {
+      releaseFirstSave();
+      flushResult = await firstFlush;
+    });
+
+    expect(flushResult).toBe(true);
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave.mock.calls[0][0].prompt_template).toContain('[ROLE]\nFirst revision role');
+    expect(onSave.mock.calls[0][0].prompt_template).toContain('[GOAL]\nOriginal goal');
+    expect(onSave.mock.calls[1][0].prompt_template).toContain('[ROLE]\nFirst revision role');
+    expect(onSave.mock.calls[1][0].prompt_template).toContain('[GOAL]\nSecond revision goal');
   });
 
   it.each(['openai', 'openrouter'] as const)('saves the selected %s catalog model ID through the Card editor and retains it on reopen', async (targetProvider) => {
@@ -979,7 +1050,7 @@ describe('CardInspector active builder config', () => {
   });
 
   it('keeps Card Save separate from the bounded learning operations', () => {
-    const source = readFileSync(CARD_INSPECTOR_SOURCE, 'utf8');
+    const source = readCardInspectorSources();
     const profileClient = readFileSync(HERMES_CARD_PROFILE_SOURCE, 'utf8');
 
     expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
@@ -998,7 +1069,7 @@ describe('CardInspector active builder config', () => {
   });
 
   it('keeps the general Card tabs configuration-only and leaves CLI ownership to the page', () => {
-    const source = readFileSync(CARD_INSPECTOR_SOURCE, 'utf8');
+    const source = readCardInspectorSources();
     const pageSource = readFileSync(AGENT_BUILDER_PAGE_SOURCE, 'utf8');
 
     expect(pageSource).toContain(
@@ -1022,7 +1093,7 @@ describe('CardInspector active builder config', () => {
   });
 
   it('keeps saved grants editable and profile state read-only on the existing Tools surface', () => {
-    const source = readFileSync(CARD_INSPECTOR_SOURCE, 'utf8');
+    const source = readCardInspectorSources();
     const profileClient = readFileSync(HERMES_CARD_PROFILE_SOURCE, 'utf8');
 
     expect(source).toContain('data-testid="card-inspector-skills"');
@@ -1033,14 +1104,14 @@ describe('CardInspector active builder config', () => {
     expect(source).toContain('aria-label="Hermes capabilities"');
     expect(source).not.toContain('One Hermes toolset ID per line');
     expect(source).not.toContain('Effective Hermes toolsets');
-    expect(source.indexOf("renderSectionBody('Script')")).toBeLessThan(
+    expect(source.indexOf('<CardInspectorScriptView')).toBeLessThan(
       source.indexOf('aria-label="External connections"'),
     );
     expect(source).toContain('External MCP connection references');
     expect(source).not.toContain('changes.disabled_skills');
     expect(source).not.toContain('changes.enabled_toolsets');
     expect(source).not.toContain('changes.enabled_mcp_servers');
-    expect(source).toContain('onClick={() => void openHermesLearningNode(node.id)}');
+    expect(source).toContain('onClick={() => void actions.openLearningNode(node.id)}');
     expect(source).toContain("change: { method: 'learning.edit', params: { id, content } }");
     expect(profileClient).toContain("method: 'learning.detail'");
     expect(source).not.toContain('Automatic learning');
@@ -1051,7 +1122,7 @@ describe('CardInspector active builder config', () => {
   });
 
   it('keeps the card identity fields without adding another persistence path', () => {
-    const source = readFileSync(CARD_INSPECTOR_SOURCE, 'utf8');
+    const source = readCardInspectorSources();
 
     expect(source).toContain('cardName');
     expect(source).toContain('onChangeCardName');

@@ -71,6 +71,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '053_rename_hermes_run_fields.sql', applied: true }),
       expect.objectContaining({ filename: '054_rename_remaining_hermes_run_aggregates.sql', applied: true }),
       expect.objectContaining({ filename: '055_remove_bot_mode_card_tool_grant.sql', applied: true }),
+      expect.objectContaining({ filename: '056_rename_project_code_folder.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -361,7 +362,7 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
-  it('accepts an applied 053 ledger and schedules only the two forward corrections', async () => {
+  it('accepts an applied 053 ledger and schedules only the three forward corrections', async () => {
     const migrationsDirectory = resolve(__dirname, '../../migrations');
     const fresh = await applyBackendMigrations({
       client: fakeClient() as any,
@@ -380,8 +381,9 @@ describe('canonical backend migrations', () => {
     expect(upgraded.filter((entry) => entry.applied).map((entry) => entry.filename)).toEqual([
       '054_rename_remaining_hermes_run_aggregates.sql',
       '055_remove_bot_mode_card_tool_grant.sql',
+      '056_rename_project_code_folder.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 2);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 3);
   });
 
   it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {

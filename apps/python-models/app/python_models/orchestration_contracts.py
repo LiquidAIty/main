@@ -15,7 +15,7 @@ RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, 
 
 
 class ToolSpec(BaseModel):
-    """Canonical typed description of a tool the runtime may expose (T001).
+    """Canonical typed description of a tool the runtime may expose.
 
     Read/write authority is explicit data, never inferred from the name or
     description. Reads and writes both require explicit Card/Run selection.

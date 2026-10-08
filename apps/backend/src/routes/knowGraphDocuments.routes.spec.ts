@@ -2,17 +2,14 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import router, {
-  boundedKnowGraphProperties,
-  portableKnowGraphFact,
-} from './knowgraph.routes';
+import router from './knowGraphDocuments.routes';
 
 const mocks = vi.hoisted(() => ({
-  poolQuery: vi.fn(),
+  getOwnedProjectByReference: vi.fn(),
 }));
 
-vi.mock('../db/pool', () => ({
-  pool: { query: mocks.poolQuery },
+vi.mock('../services/projectStore', () => ({
+  getOwnedProjectByReference: mocks.getOwnedProjectByReference,
 }));
 
 async function createApiServer(userId?: string): Promise<{ server: Server; baseUrl: string }> {
@@ -48,102 +45,14 @@ function uploadBody(projectId: string): FormData {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  mocks.poolQuery.mockReset();
+  mocks.getOwnedProjectByReference.mockReset();
   delete process.env.KNOWGRAPH_URL;
 });
 
-describe('KnowGraph PDF upload project authority', () => {
-  it('keeps Graphiti provenance but excludes embedding vectors from bounded UI projections', () => {
-    expect(boundedKnowGraphProperties({
-      uuid: 'node-1',
-      source: 'Graphiti',
-      name_embedding: [0.1, 0.2],
-      embedding: [0.3],
-      embedding_1024: [0.4],
-      entity_edges: ['edge-1'],
-    })).toEqual({
-      uuid: 'node-1',
-      source: 'Graphiti',
-      entity_edges: ['edge-1'],
-    });
-  });
-
-  it('projects one Graphiti fact as a portable sourced temporal Know', () => {
-    expect(portableKnowGraphFact(
-      'fact-1',
-      'RELATES_TO',
-      {
-        name: 'partners with',
-        fact: 'Alpha partners with Beta.',
-        episodes: ['episode-1', 'episode-2'],
-        created_at: '2026-09-23T12:00:00Z',
-        reference_time: '2026-09-01T00:00:00Z',
-        valid_at: '2026-09-01T00:00:00Z',
-      },
-      { uuid: 'entity-a', name: 'Alpha' },
-      { uuid: 'entity-b', name: 'Beta' },
-    )).toMatchObject({
-      authority: 'know',
-      graphitiStore: 'neo4j',
-      portableKind: 'know',
-      graphitiFactUuid: 'fact-1',
-      graphitiRelationshipType: 'RELATES_TO',
-      graphitiRelation: 'partners with',
-      fact: 'Alpha partners with Beta.',
-      sourceEntity: { uuid: 'entity-a', name: 'Alpha' },
-      targetEntity: { uuid: 'entity-b', name: 'Beta' },
-      supportingEpisodeUuids: ['episode-1', 'episode-2'],
-      temporalStatus: 'current',
-    });
-  });
-
-  it('passively projects stored Jev metadata without replacing Graphiti fact fields', () => {
-    const properties = portableKnowGraphFact(
-      'fact-1',
-      'RELATES_TO',
-      {
-        name: 'was awarded a launch services contract by',
-        fact: 'NASA awarded Rocket Lab a launch services contract.',
-        episodes: ['episode-1'],
-        valid_at: '2026-09-01T00:00:00Z',
-        jev_relation_winner: 'PROVIDES',
-        jev_relation_distribution_json: JSON.stringify({
-          PROVIDES: 0.92,
-          ASSOCIATED_WITH: 0.08,
-        }),
-        jev_label_confidence: 0.92,
-        jev_requested_model: 'typesafe/jev-1.13',
-        jev_resolved_model: 'typesafe/jev-1.13',
-        jev_evaluated_at: '2026-09-24T12:00:00Z',
-        jev_question_schema_version: 'knowgraph.relationship-choice.v2',
-        jev_ontology_version: 'jev.semantic-relationships.v1',
-        jev_ontology_hash: 'hash-1',
-      },
-      { uuid: 'rocket-lab', name: 'Rocket Lab' },
-      { uuid: 'nasa', name: 'NASA' },
-    );
-
-    expect(properties).toMatchObject({
-      graphitiFactUuid: 'fact-1',
-      graphitiRelation: 'was awarded a launch services contract by',
-      fact: 'NASA awarded Rocket Lab a launch services contract.',
-      supportingEpisodeUuids: ['episode-1'],
-      validAt: '2026-09-01T00:00:00Z',
-      jevCanonicalRelation: 'PROVIDES',
-      relationship_strength: 0.92,
-      jev: {
-        graphitiFactUuid: 'fact-1',
-        status: 'success',
-        winner: 'PROVIDES',
-        distribution: { PROVIDES: 0.92, ASSOCIATED_WITH: 0.08 },
-        label_confidence: 0.92,
-      },
-    });
-  });
-
+describe('KnowGraph document project authority', () => {
   it('resolves the authenticated project selector to its canonical id before Graphiti ingest', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
-    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });
     const realFetch = globalThis.fetch.bind(globalThis);
     const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       if (String(input).startsWith('http://knowgraph.test/')) {
@@ -172,10 +81,7 @@ describe('KnowGraph PDF upload project authority', () => {
         body,
       });
       expect(response.status).toBe(200);
-      expect(mocks.poolQuery).toHaveBeenCalledWith(expect.stringContaining('owner_user_id'), [
-        'user-1',
-        'project-alias',
-      ]);
+      expect(mocks.getOwnedProjectByReference).toHaveBeenCalledWith('project-alias', 'user-1');
       const forwardedCall = upstreamFetch.mock.calls.find(([input]) =>
         String(input).startsWith('http://knowgraph.test/'),
       );
@@ -194,7 +100,7 @@ describe('KnowGraph PDF upload project authority', () => {
   });
 
   it('rejects a project outside the authenticated user before Graphiti ingest', async () => {
-    mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce(null);
     const upstreamFetch = vi.spyOn(globalThis, 'fetch');
     const { server, baseUrl } = await createApiServer('user-1');
     try {
@@ -218,7 +124,7 @@ describe('KnowGraph PDF upload project authority', () => {
         body: uploadBody('project-1'),
       });
       expect(response.status).toBe(401);
-      expect(mocks.poolQuery).not.toHaveBeenCalled();
+      expect(mocks.getOwnedProjectByReference).not.toHaveBeenCalled();
       expect(upstreamFetch).toHaveBeenCalledTimes(1);
     } finally {
       await closeServer(server);
@@ -227,7 +133,7 @@ describe('KnowGraph PDF upload project authority', () => {
 
   it('proxies one authenticated project-scoped Graphiti fact deletion', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
-    mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });
     const realFetch = globalThis.fetch.bind(globalThis);
     const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       if (String(input) === 'http://knowgraph.test/delete_fact') {

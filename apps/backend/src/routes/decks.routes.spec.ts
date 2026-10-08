@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const decks = vi.hoisted(() => ({
   deleteCardFromDeck: vi.fn(),
   getDeckDocument: vi.fn(),
-  getV3ProjectBlob: vi.fn(),
   saveDeckDocument: vi.fn(),
 }));
 const membership = vi.hoisted(() => ({

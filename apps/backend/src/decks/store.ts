@@ -2,7 +2,7 @@
 // TypeScript deliberately owns no SQL, JSONB deck aggregate, Card revision,
 // relationship authority, or topology mutation in this module.
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
-import type { DeckDocument, V3ProjectBlob } from '../types';
+import type { DeckDocument } from '../types';
 
 /** The deck currently opened by the Agent Builder view. Projects may own more. */
 /** Stable saved identity of the surviving Builder Card. */
@@ -15,18 +15,6 @@ type DeckResponse = {
     deckRevision?: unknown;
     deckSavedAt?: unknown;
   };
-};
-
-type DeckListResponse = {
-  ok?: boolean;
-  decks?: Array<{
-    id?: unknown;
-    name?: unknown;
-    meta?: {
-      deckRevision?: unknown;
-      deckSavedAt?: unknown;
-    } | null;
-  }>;
 };
 
 function parseDeckResponse(value: unknown): {
@@ -55,40 +43,6 @@ function parseDeckResponse(value: unknown): {
         typeof response.meta?.deckRevision === 'string' ? response.meta.deckRevision : null,
       deckSavedAt:
         typeof response.meta?.deckSavedAt === 'string' ? response.meta.deckSavedAt : null,
-    },
-  };
-}
-
-export async function getV3ProjectBlob(projectId: string): Promise<V3ProjectBlob> {
-  const listValue = await requestPythonRailsJson(
-    `/domain/decks/${encodeURIComponent(projectId)}`,
-    { method: 'GET' },
-  );
-  const list = listValue && typeof listValue === 'object'
-    ? listValue as DeckListResponse
-    : {};
-  if (list.ok !== true || !Array.isArray(list.decks)) {
-    throw new Error('python_deck_list_response_invalid');
-  }
-  const entries = await Promise.all(list.decks.map(async (item) => {
-    const deckId = typeof item.id === 'string' ? item.id.trim() : '';
-    if (!deckId) throw new Error('python_deck_list_response_invalid');
-    const result = await getDeckDocument(projectId, deckId);
-    const deck = result.deck;
-    if (!deck) throw new Error('python_deck_list_integrity_error');
-    return [deckId, { deck, meta: result.meta }] as const;
-  }));
-  return {
-    decks: Object.fromEntries(entries.map(([deckId, result]) => [deckId, result.deck])),
-    meta: {
-      decks: Object.fromEntries(entries.flatMap(([deckId, result]) =>
-        result.meta.deckRevision
-          ? [[deckId, {
-              revision: result.meta.deckRevision,
-              savedAt: result.meta.deckSavedAt,
-            }]]
-          : [],
-      )),
     },
   };
 }

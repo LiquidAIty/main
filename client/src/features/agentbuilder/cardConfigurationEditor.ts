@@ -1,4 +1,4 @@
-import type { AgentCardRuntimeOptions, CardRuntime } from '../../types/agentgraph';
+import type { CardRuntime, SavedCardConfiguration } from '../../types/agentgraph';
 
 export type CardEditorModelOption = {
   key: string;
@@ -60,7 +60,7 @@ export type DisplayedToolRow = {
 
 export type CardEditorConfiguration = {
   runtime: CardRuntime;
-  runtime_options?: AgentCardRuntimeOptions | null;
+  runtime_options?: SavedCardConfiguration | null;
   parent_graph_id?: string | null;
   role?: string | null;
   output_contract?: unknown;

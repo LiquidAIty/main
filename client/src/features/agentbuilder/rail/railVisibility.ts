@@ -3,7 +3,7 @@
 // Extracted verbatim from pages/agentbuilder.tsx (decomposition pass
 // 2026-07-08). Behavior unchanged.
 import type {
-  AgentCardInstance,
+  DeckCard,
   DeckDocument,
   DeckEdge,
 } from '../../../types/agentgraph';
@@ -12,18 +12,18 @@ import {
 } from '../deck/deckPrimitives';
 import { readCardSubsystemAttachments } from '../deck/cardSubsystems';
 
-function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
+function isTradingAgentCard(card: DeckCard | null | undefined): boolean {
   return card?.id === 'card_trading_workbench';
 }
 
 export function isWorldSignalsAgentCard(
-  card: AgentCardInstance | null | undefined,
+  card: DeckCard | null | undefined,
 ): boolean {
   return card?.id === 'card_worldsignals_agent';
 }
 
 export function isWorldViewCard(
-  card: AgentCardInstance | null | undefined,
+  card: DeckCard | null | undefined,
 ): boolean {
   return readCardSubsystemAttachments(card?.runtimeOptions)
     .some((attachment) => attachment.id === 'gods-eye');
@@ -37,7 +37,7 @@ type ProgressiveRailVisibility = {
 };
 
 function buildBusConnectedCardIds(
-  nodes: readonly AgentCardInstance[],
+  nodes: readonly DeckCard[],
   edges: readonly DeckEdge[],
 ): Set<string> {
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -78,9 +78,9 @@ function buildBusConnectedCardIds(
 /** A card's surface is reachable when the card is bus-connected — bus
  * connectivity is the only activation signal (PLAN.md §4). */
 function isBusConnectedCard(
-  nodes: readonly AgentCardInstance[],
+  nodes: readonly DeckCard[],
   edges: readonly DeckEdge[],
-  predicate: (card: AgentCardInstance) => boolean,
+  predicate: (card: DeckCard) => boolean,
 ): boolean {
   const busConnected = buildBusConnectedCardIds(nodes, edges);
   return nodes.some((node) => busConnected.has(node.id) && predicate(node));

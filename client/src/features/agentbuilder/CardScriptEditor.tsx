@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { AgentCardRuntimeOptions } from '../../types/agentgraph';
+import type { SavedCardConfiguration } from '../../types/agentgraph';
 import './CardScriptEditor.css';
 
 type MonacoApi = typeof import('monaco-editor/esm/vs/editor/editor.api');
@@ -11,7 +11,7 @@ type MonacoDisposable = import('monaco-editor/esm/vs/editor/editor.api').IDispos
 type MonacoWorkerHost = typeof globalThis & {
   MonacoEnvironment?: { getWorker(_moduleId: string, _label: string): Worker };
 };
-type CardScript = NonNullable<AgentCardRuntimeOptions['script']>;
+type CardScript = NonNullable<SavedCardConfiguration['script']>;
 
 type ScriptToolReference = {
   canonicalId: string;

@@ -60,7 +60,7 @@ function describeError(error) {
 
 function requiredElement(root, selector) {
   const element = root.querySelector(selector);
-  if (!element) throw new Error(`worldview_native_element_missing:${selector}`);
+  if (!element) throw new Error(`worldview_gods_eye_element_missing:${selector}`);
   return element;
 }
 

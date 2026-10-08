@@ -17,8 +17,8 @@ vi.mock('../../../components/builder/backendReadiness', () => ({
   waitForBackendReady: mocks.waitForBackendReady,
 }));
 
-vi.mock('./mainSessionClient', async () => {
-  const actual = await vi.importActual<typeof import('./mainSessionClient')>('./mainSessionClient');
+vi.mock('./sharedChatClient', async () => {
+  const actual = await vi.importActual<typeof import('./sharedChatClient')>('./sharedChatClient');
   return {
     ...actual,
     loadSessionHistory: mocks.loadSessionHistory,
@@ -30,8 +30,8 @@ vi.mock('./mainSessionClient', async () => {
   };
 });
 
-import useAgentBuilderMainChat from './useAgentBuilderMainChat';
-import { SessionStreamError } from './mainSessionClient';
+import useSharedCardChat from './useSharedCardChat';
+import { SessionStreamError } from './sharedChatClient';
 
 function messageText(messages: Array<{ role: string; text: string }>) {
   return messages.map(({ role, text }) => ({ role, text }));
@@ -68,7 +68,7 @@ beforeEach(() => {
   mocks.waitForBackendReady.mockReset().mockResolvedValue(false);
 });
 
-describe('Main chat live observation callbacks', () => {
+describe('Shared Card chat live observation callbacks', () => {
   it('loads Project history without a separate runtime-readiness poll', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
@@ -80,7 +80,7 @@ describe('Main chat live observation callbacks', () => {
       onEvent({ kind: 'session', runId: 'run-main', liveSessionId: 'hermes-main' });
       return { finalText: 'Main answer.' };
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
@@ -98,7 +98,7 @@ describe('Main chat live observation callbacks', () => {
       onEvent({ kind: 'text', runId: 'server-run', text: 'answer.' });
       return { finalText: 'Short answer.' };
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1',
+    const { result } = renderHook(() => useSharedCardChat({ canvasProjectId: 'project-1',
       deckId: 'deck_builder', conversationId: 'main' }));
     await act(async () => { await result.current.requestMainText('Question'); });
 
@@ -131,7 +131,7 @@ describe('Main chat live observation callbacks', () => {
       });
       return { finalText: 'BUILDER_DIRECT_OK' };
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
     }));
 
@@ -155,7 +155,7 @@ describe('Main chat live observation callbacks', () => {
       mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     mocks.streamSession.mockResolvedValue({ finalText: 'Done.' });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
@@ -200,7 +200,7 @@ describe('Main chat live observation callbacks', () => {
       name: 'chart.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=',
       kind: 'user-upload',
     }];
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
@@ -237,7 +237,7 @@ describe('Main chat live observation callbacks', () => {
     const images = [uploadedImage];
     const prepareRunImages = vi.fn().mockResolvedValue([viewportRecord]);
     mocks.streamSession.mockResolvedValue({ finalText: 'Both images received.' });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
@@ -267,7 +267,7 @@ describe('Main chat live observation callbacks', () => {
     }];
     const prepareRunImages = vi.fn().mockRejectedValue(new Error('viewport unmounted'));
     mocks.streamSession.mockResolvedValue({ finalText: 'Uploaded image received.' });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
@@ -301,7 +301,7 @@ describe('Main chat live observation callbacks', () => {
     ];
     const prepareRunImages = vi.fn().mockResolvedValue(viewportRecords);
     mocks.streamSession.mockResolvedValue({ finalText: 'Images received.' });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
@@ -349,7 +349,7 @@ describe('Main chat live observation callbacks', () => {
         else args.signal?.addEventListener('abort', () => resolve(), { once: true });
       });
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets, prepareRunImages,
     }));
@@ -396,7 +396,7 @@ describe('Main chat live observation callbacks', () => {
         else args.signal?.addEventListener('abort', () => resolve(), { once: true });
       });
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
@@ -421,7 +421,7 @@ describe('Main chat live observation callbacks', () => {
       mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
     });
     mocks.streamSession.mockResolvedValue({ finalText: 'WorldSignals reply.' });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
@@ -456,7 +456,7 @@ describe('Main chat live observation callbacks', () => {
         return new Promise((resolve) => { finishFirst = resolve; });
       })
       .mockResolvedValueOnce({ finalText: 'Builder second reply.' });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
@@ -506,7 +506,7 @@ describe('Main chat live observation callbacks', () => {
       kind: 'user-upload', metadata: { caption: 'Original caption' },
     };
     const images = [uploadedImage];
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
     }));
@@ -519,6 +519,12 @@ describe('Main chat live observation callbacks', () => {
     await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(1));
     act(() => {
       result.current.setCurrentResponderCardId('builder');
+    });
+    await act(async () => {
+      finishFirst({ finalText: 'WorldSignals first reply.' });
+      await Promise.resolve();
+    });
+    act(() => {
       result.current.handleSend('Image for Builder.', { images });
       uploadedImage.name = 'changed.png';
       uploadedImage.dataUrl = 'data:image/png;base64,Y2hhbmdlZA==';
@@ -528,11 +534,6 @@ describe('Main chat live observation callbacks', () => {
     });
     await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
     expect(result.current.currentResponderCardId).toBe('card_worldview');
-
-    await act(async () => {
-      finishFirst({ finalText: 'WorldSignals first reply.' });
-      await Promise.resolve();
-    });
     expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
       message: 'Image for Builder.', targetCardId: 'builder',
       images: [{
@@ -560,7 +561,7 @@ describe('Main chat live observation callbacks', () => {
       });
       return { finalText: 'Builder reply.' };
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
       directChatTargets,
       dataAnchors: [{
@@ -584,7 +585,7 @@ describe('Main chat live observation callbacks', () => {
       code: 'addressed_card_turn_failed',
       message: 'The Hermes Builder turn failed.',
     }));
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
     }));
 
@@ -619,7 +620,7 @@ describe('Main chat live observation callbacks', () => {
     mocks.loadSessionHistory.mockReturnValue(new Promise((resolve) => {
       resolveHistory = resolve;
     }));
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
@@ -652,7 +653,7 @@ describe('Main chat live observation callbacks', () => {
   it('keeps a history failure out of the transcript and clears the loading state', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockRejectedValue(new Error('history unavailable'));
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
@@ -677,7 +678,11 @@ describe('Main chat live observation callbacks', () => {
       messages: [],
     });
     mocks.subscribeSessionEvents.mockReturnValue(closeSessionEvents);
-    const { result, unmount } = renderHook(() => useAgentBuilderMainChat({
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({ kind: 'session', runId: 'run-main', liveSessionId: 'hermes-main' });
+      return { finalText: 'Main answer.' };
+    });
+    const { result, unmount } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'main',
@@ -719,7 +724,7 @@ describe('Main chat live observation callbacks', () => {
       args.onEvent({ kind: 'text', text: '\n\nHermes answer.' });
       return { finalText: 'Hermes answer.' };
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-exact',
@@ -748,7 +753,7 @@ describe('Main chat live observation callbacks', () => {
       if (conversationId === 'conversation-b') resolveB = resolve;
     }));
     const { result, rerender } = renderHook(
-      ({ conversationId }) => useAgentBuilderMainChat({
+      ({ conversationId }) => useSharedCardChat({
         canvasProjectId: 'project-1',
         deckId: 'deck_builder',
         conversationId,
@@ -792,7 +797,7 @@ describe('Main chat live observation callbacks', () => {
       message: 'provider failed',
       correlationId: 'req_failure',
     }));
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-failure',
@@ -815,7 +820,7 @@ describe('Main chat live observation callbacks', () => {
       onEvent({ kind: 'tool_result', runId: 'another-run', output: 'another Run output' });
       return { finalText: 'must not complete' };
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1',
+    const { result } = renderHook(() => useSharedCardChat({ canvasProjectId: 'project-1',
       deckId: 'deck_builder', conversationId: 'main' }));
     await act(async () => { await expect(result.current.requestMainText('Question')).rejects.toThrow('Run identity changed'); });
     expect(result.current.technicalError).toBe('main_run_identity_mismatch');
@@ -833,7 +838,7 @@ describe('Main chat live observation callbacks', () => {
         correlationId: 'req_partial_failure',
       });
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-partial-failure',
@@ -860,7 +865,7 @@ describe('Main chat live observation callbacks', () => {
       code: 'no_active_turn',
       message: 'no active turn',
     }));
-    const { result } = renderHook(() => useAgentBuilderMainChat({
+    const { result } = renderHook(() => useSharedCardChat({
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-stale-working',

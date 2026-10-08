@@ -1,6 +1,6 @@
 // Deck document logic: structural validation and exact saved-state loading.
 import type {
-  AgentCardInstance,
+  DeckCard,
   DeckDocument,
 } from '../../../types/agentgraph';
 import {
@@ -28,7 +28,7 @@ import {
 export function buildQuickAddAssistCard(
   deck: DeckDocument,
   runtime: { kind: 'hermes'; mode: 'delegate' },
-): { nextDeck: DeckDocument; nextNode: AgentCardInstance } {
+): { nextDeck: DeckDocument; nextNode: DeckCard } {
   const template =
     INITIAL_AGENT_TEMPLATES.find((entry) => entry.id === 'template_assist') || null;
   const promptContent =
@@ -56,7 +56,7 @@ export function buildQuickAddAssistCard(
   ).length;
 
   const identity = uid();
-  const nextNode: AgentCardInstance = {
+  const nextNode: DeckCard = {
     id: `card_assist_${identity}`,
     kind: 'agent',
     templateId: template?.id || 'template_assist',

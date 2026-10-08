@@ -1468,7 +1468,7 @@ def _backend_bridge_timeout_seconds(path: str) -> float:
 _BACKEND_ROUTES = {
     "external_main_context": "/api/main/context",
     "external_main_chat": "/api/main/chat",
-    "saved_specialist_card": "/api/main/session/internal/specialists",
+    "saved_specialist_card": "/api/saved-specialists/invoke",
     "worldview_action": "/api/worldview/internal/actions",
 }
 

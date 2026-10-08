@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { AgentCardInstance, DeckDocument } from '../types';
+import type { DeckCard, DeckDocument } from '../types';
 import type { HermesGatewayClient } from './hermesGateway';
 import {
   cardSession,
@@ -31,7 +31,7 @@ afterEach(() => {
   }
 });
 
-const mainCard: AgentCardInstance = {
+const mainCard: DeckCard = {
   id: 'card_main_chat',
   templateId: 'main',
   title: 'Main',
@@ -51,7 +51,7 @@ const mainCard: AgentCardInstance = {
   position: { x: 0, y: 0 },
 };
 
-function target(id: string, profile: string): AgentCardInstance {
+function target(id: string, profile: string): DeckCard {
   return {
     id,
     templateId: 'assistant',
@@ -73,7 +73,7 @@ function target(id: string, profile: string): AgentCardInstance {
   };
 }
 
-function authority(projectMarker: string, rosterTarget: AgentCardInstance): SharedChatAuthority {
+function authority(projectMarker: string, rosterTarget: DeckCard): SharedChatAuthority {
   const deck: DeckDocument = {
     id: 'deck_builder',
     name: `Deck ${projectMarker}`,

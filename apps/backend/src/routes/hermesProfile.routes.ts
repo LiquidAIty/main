@@ -1,10 +1,9 @@
 import { Router, type Request } from 'express';
 
 import { getDeckDocument } from '../decks/store';
-import { materializeSavedCardProfile } from '../hermes/profileMaterialization';
-import { getProject } from '../services/projectStore';
+import { getOwnedProjectByReference } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
-import type { AgentCardInstance } from '../types';
+import type { DeckCard } from '../types';
 
 type RequestHermes = (
   method: string,
@@ -40,7 +39,7 @@ async function resolveCard(
   projectIdValue: unknown,
   deckIdValue: unknown,
   cardIdValue: unknown,
-): Promise<{ projectId: string; card: AgentCardInstance }> {
+): Promise<{ projectId: string; card: DeckCard }> {
   const projectId = requiredText(projectIdValue, 'project_id_required');
   const deckId = requiredText(deckIdValue, 'deck_id_required');
   const cardId = requiredText(cardIdValue, 'card_id_required');
@@ -124,12 +123,12 @@ function safeMcpTestResult(value: unknown): Record<string, unknown> {
 
 async function readProfile(
   requestHermes: RequestHermes,
-  card: AgentCardInstance,
+  card: DeckCard,
 ) {
   const request = <T>(method: string, params: Record<string, unknown> = {}) => (
     requestHermes(method, params) as Promise<T>
   );
-  const profile = record(await materializeSavedCardProfile(request, card));
+  const profile = record(await request('profiles.describe', { name: card.runtime.profile }));
   const learning = record(await request('learning.frames', {
     profile: card.runtime.profile,
     cols: 80,
@@ -183,7 +182,7 @@ const defaultDependencies: Dependencies = {
   authorizeProject: async (req, projectId) => {
     const userId = String((req as Request & { userId?: string }).userId || '').trim();
     if (!userId) return false;
-    const project = await getProject(projectId, userId);
+    const project = await getOwnedProjectByReference(projectId, userId);
     return Boolean(project && project.ownerUserId === userId);
   },
 };

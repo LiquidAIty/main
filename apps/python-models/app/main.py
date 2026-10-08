@@ -12,7 +12,6 @@ from app.python_models.card_domain import (
     begin_run,
     delete_card,
     finish_run,
-    list_decks,
     load_deck,
     read_run,
     read_run_history,
@@ -444,15 +443,6 @@ def domain_deck_read(project_id: str, deck_id: str):
         return {"ok": True, **load_deck(project_id, deck_id)}
     except CardDomainError as err:
         status = 404 if str(err) in {"project_not_found", "deck_not_found"} else 409
-        raise HTTPException(status_code=status, detail=str(err)) from err
-
-
-@app.get("/domain/decks/{project_id}")
-def domain_deck_list(project_id: str):
-    try:
-        return {"ok": True, **list_decks(project_id)}
-    except CardDomainError as err:
-        status = 404 if str(err) == "project_not_found" else 409
         raise HTTPException(status_code=status, detail=str(err)) from err
 
 

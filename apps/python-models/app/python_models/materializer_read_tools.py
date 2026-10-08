@@ -24,17 +24,17 @@ _MATERIALIZER_TOKEN_LIFETIME_SECONDS = 60
 def _required_secret() -> str:
     secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "").strip()
     if len(secret) < 32:
-        raise RuntimeError("internal_mcp_secret_missing")
+        raise RuntimeError("materializer_mcp_secret_missing")
     return secret
 
 
-def internal_mcp_url() -> str:
+def materializer_mcp_url() -> str:
     value = os.environ.get("LIQUIDAITY_INTERNAL_MCP_URL", _DEFAULT_INTERNAL_MCP_URL).strip()
     parsed = httpx.URL(value)
     if parsed.scheme != "http" or parsed.host not in {"127.0.0.1", "localhost"}:
-        raise RuntimeError("internal_mcp_url_must_be_loopback_http")
+        raise RuntimeError("materializer_mcp_url_must_be_loopback_http")
     if parsed.path != "/mcp":
-        raise RuntimeError("internal_mcp_url_path_invalid")
+        raise RuntimeError("materializer_mcp_url_path_invalid")
     return value
 
 
@@ -65,7 +65,7 @@ def create_materializer_read_token(
         **({"conversationId": conversation_id} if conversation_id else {}),
     }
     if any(not principal[field] for field in ("projectId", "deckId", "callerCardId")):
-        raise RuntimeError("internal_mcp_materializer_principal_incomplete")
+        raise RuntimeError("materializer_mcp_principal_incomplete")
     now = int(time.time())
     return jwt.encode(
         {
@@ -86,7 +86,7 @@ def _json_result(result: Any, tool_name: str) -> dict[str, Any]:
     content = list(getattr(result, "content", None) or [])
     text = str(getattr(content[0], "text", "") or "").strip() if content else ""
     if not text:
-        raise RuntimeError(f"internal_mcp_empty_result: {tool_name}")
+        raise RuntimeError(f"materializer_mcp_empty_result: {tool_name}")
     try:
         parsed = json.loads(text)
     except (TypeError, ValueError) as error:
@@ -94,13 +94,13 @@ def _json_result(result: Any, tool_name: str) -> dict[str, Any]:
         # JSON search/trace responses. Its reader validates those columns.
         if tool_name == "cbm.query_graph":
             return {"text": text}
-        raise RuntimeError(f"internal_mcp_invalid_json_result: {tool_name}") from error
+        raise RuntimeError(f"materializer_mcp_invalid_json_result: {tool_name}") from error
     if not isinstance(parsed, dict):
-        raise RuntimeError(f"internal_mcp_invalid_result: {tool_name}")
+        raise RuntimeError(f"materializer_mcp_invalid_result: {tool_name}")
     return parsed
 
 
-async def _call_read_tools_via_mcp_async(
+async def _call_materializer_read_tools_async(
     *,
     project_id: str,
     deck_id: str,
@@ -126,13 +126,13 @@ async def _call_read_tools_via_mcp_async(
         raise ValueError("materializer_deadline_invalid")
     started = time.monotonic()
     results = [{"ok": False, "error": "read_timeout"} for _ in calls]
-    mcp_url = internal_mcp_url()
+    mcp_url = materializer_mcp_url()
 
     async def read():
         async with httpx2.AsyncClient(
             headers={"Authorization": f"Bearer {token}"},
             timeout=httpx2.Timeout(deadline_seconds or 30.0),
-            # internal_mcp_url rejects HTTPS and non-loopback hosts. There is
+            # materializer_mcp_url rejects HTTPS and non-loopback hosts. There is
             # no TLS connection here; loading the Windows CA store is wasted.
             **({"verify": False} if deadline_seconds is not None else {}),
         ) as http_client:
@@ -184,7 +184,7 @@ async def _call_read_tools_via_mcp_async(
     return results
 
 
-def call_read_tools_via_mcp(
+def call_materializer_read_tools(
     *,
     project_id: str,
     deck_id: str,
@@ -197,7 +197,7 @@ def call_read_tools_via_mcp(
     """Use one authenticated session on the one official MCP host."""
     if not calls:
         return []
-    return asyncio.run(_call_read_tools_via_mcp_async(
+    return asyncio.run(_call_materializer_read_tools_async(
         project_id=project_id,
         deck_id=deck_id,
         card_id=card_id,

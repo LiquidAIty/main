@@ -11,7 +11,7 @@ import { resolveRepoRoot } from '../services/workingDirectories';
  * and it ignores unrelated files so an unrelated change never reads as stale.
  */
 export type EmbedBundleFreshness = {
-  status: 'fresh' | 'stale' | 'missing';
+  status: 'fresh' | 'stale' | 'missing' | 'unverified';
   bundlePath: string;
   bundleMtimeMs: number | null;
   newestSourceMtimeMs: number | null;
@@ -67,9 +67,12 @@ export function computeEmbedBundleFreshness(
   const bundleMtimeMs = statSync(bundlePath).mtimeMs;
   const newest = newestSourceMtime(sourceDir);
   if (!newest) {
-    // No source found (e.g. vendor tree absent): the bundle exists and nothing
-    // proves it stale, so it is fresh — never guess stale without evidence.
-    return { ...base, status: 'fresh', bundleMtimeMs, message: 'embed bundle present; no vendor source to compare' };
+    return {
+      ...base,
+      status: 'unverified',
+      bundleMtimeMs,
+      message: 'embed bundle present; source tree unavailable, so freshness cannot be verified',
+    };
   }
   if (newest.ms > bundleMtimeMs) {
     return {

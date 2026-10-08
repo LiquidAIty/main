@@ -46,14 +46,6 @@ app.use((_req, res, next) => {
   return next();
 });
 
-// Debug logging for non-GET requests to active project/deck routes.
-app.use((req, _res, next) => {
-  if (req.path.includes('/api/projects') && req.method !== 'GET') {
-    console.log('[REQ]', req.method, req.path);
-  }
-  next();
-});
-
 // Ensure all responses are JSON
 app.use((_req, res, next) => {
   res.setHeader('Content-Type', 'application/json');
@@ -91,11 +83,8 @@ function logStartupBanner() {
   console.log("───────────────────────────────────────────────────");
 }
 
-declare global {
-  // Preserve a single backend listener across in-process watch reloads.
-  var __liquidaityBackendServer__: Server | undefined;
-  var __liquidaityBackendShutdownHooksInstalled__: boolean | undefined;
-}
+let backendServer: Server | null = null;
+let shutdownHooksInstalled = false;
 
 function closeServer(server: Server): Promise<void> {
   if (!server.listening) {
@@ -149,25 +138,18 @@ function listenOnPort(port: number): Promise<Server> {
 }
 
 function installShutdownHooks() {
-  if (globalThis.__liquidaityBackendShutdownHooksInstalled__) {
-    return;
-  }
-  globalThis.__liquidaityBackendShutdownHooksInstalled__ = true;
+  if (shutdownHooksInstalled) return;
+  shutdownHooksInstalled = true;
 
   const shutdown = async () => {
-    const activeServer = globalThis.__liquidaityBackendServer__;
     try {
-      if (activeServer) {
-        await closeServer(activeServer);
-      }
+      if (backendServer) await closeServer(backendServer);
       closeHermesGateway();
       await closeToolCatalogMcpClient();
     } catch {
       // ignore shutdown close errors
     } finally {
-      if (activeServer && globalThis.__liquidaityBackendServer__ === activeServer) {
-        globalThis.__liquidaityBackendServer__ = undefined;
-      }
+      backendServer = null;
     }
   };
 
@@ -180,16 +162,6 @@ function installShutdownHooks() {
 }
 
 async function startServer() {
-  const existingServer = globalThis.__liquidaityBackendServer__;
-  if (existingServer) {
-    await closeServer(existingServer).catch(() => undefined);
-    closeHermesGateway();
-    await closeToolCatalogMcpClient().catch(() => undefined);
-    if (globalThis.__liquidaityBackendServer__ === existingServer) {
-      globalThis.__liquidaityBackendServer__ = undefined;
-    }
-  }
-
   let server: Server;
   try {
     server = await listenAfterRequiredMigrations(async () => {
@@ -209,11 +181,9 @@ async function startServer() {
   }
 
   server.on('close', () => {
-    if (globalThis.__liquidaityBackendServer__ === server) {
-      globalThis.__liquidaityBackendServer__ = undefined;
-    }
+    if (backendServer === server) backendServer = null;
   });
-  globalThis.__liquidaityBackendServer__ = server;
+  backendServer = server;
   installShutdownHooks();
 }
 

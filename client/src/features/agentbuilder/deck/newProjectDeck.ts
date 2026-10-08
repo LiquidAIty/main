@@ -1,7 +1,7 @@
 // The one-time new-project Agent Canvas template. Persisted ids
 // (card_*, template_*, prompt_*, deck_builder) are stable saved-deck identity.
 import type {
-  AgentTemplate,
+  CardTemplate,
   DeckDocument,
   PromptTemplate,
 } from '../../../types/agentgraph';
@@ -308,7 +308,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
 ];
 
-export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
+export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
   {
     id: 'template_magentic',
     name: 'Magnetic',

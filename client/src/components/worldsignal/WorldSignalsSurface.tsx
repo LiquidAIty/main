@@ -120,7 +120,7 @@ function loadEmbedModule(): Promise<WorldSignalsEmbedModule> {
   return embedModulePromise;
 }
 
-type WorldSignalSurfaceProps = {
+type WorldSignalsSurfaceProps = {
   /** Identity for the temporary per-project/per-card layer persistence. */
   projectId: string | null;
   cardId: string | null;
@@ -132,13 +132,13 @@ type WorldSignalSurfaceProps = {
   onBridgeChange?: (bridge: WorldSignalsInspectorBridge | null) => void;
 };
 
-export default function WorldSignalSurface({
+export default function WorldSignalsSurface({
   projectId,
   cardId,
   onInspectorSectionRequest,
   onLayerStateChange,
   onBridgeChange,
-}: WorldSignalSurfaceProps): React.ReactElement {
+}: WorldSignalsSurfaceProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<WorldSignalsMountHandle | null>(null);
   const [health, setHealth] = useState<WorldSignalsHealth | null>(null);
@@ -152,7 +152,7 @@ export default function WorldSignalSurface({
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/worldsignal/health', { signal: controller.signal })
+    fetch('/api/worldsignals/health', { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`worldsignals_health_http_${response.status}`);
         setHealth((await response.json()) as WorldSignalsHealth);

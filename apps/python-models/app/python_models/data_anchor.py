@@ -18,7 +18,7 @@ from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from app.python_models.internal_mcp import call_read_tools_via_mcp
+from app.python_models.materializer_read_tools import call_materializer_read_tools
 from app.python_models.jev_validation import (
     validate_rounded_choice_winner,
     validate_rounded_probability_distribution,
@@ -320,7 +320,7 @@ def _read_codegraph_projection(project_id: str, deck_id: str, card_id: str,
         f"MATCH (a)-[r]->(b) WHERE {endpoints} "
         f"RETURN {', '.join(edge_columns)} LIMIT 300",
     ]
-    responses = call_read_tools_via_mcp(project_id=project_id, deck_id=deck_id, card_id=card_id,
+    responses = call_materializer_read_tools(project_id=project_id, deck_id=deck_id, card_id=card_id,
         calls=[("cbm.query_graph", {
             "project": _CODEGRAPH_PROJECT,
             "query": query,
@@ -905,7 +905,7 @@ def read_codegraph_exact(
     *,
     bounded_expansion: int = 0,
     result_limit: int = 24,
-    mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
+    materializer_reader: Callable[..., list[dict[str, Any]]] = call_materializer_read_tools,
 ) -> dict[str, Any] | None:
     """Read one qualified current symbol through the official MCP/CBM seam."""
     if bounded_expansion < 0 or bounded_expansion > 3:
@@ -935,7 +935,7 @@ def read_codegraph_exact(
             "format": "json",
         }))
     try:
-        results = mcp_reader(
+        results = materializer_reader(
             project_id=project_id,
             deck_id=deck_id,
             card_id=card_id,
@@ -1162,7 +1162,7 @@ def search_knowgraph_hybrid(
     max_nodes: int = 8,
     max_facts: int = 8,
     bounded_expansion: int = 1,
-    mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
+    materializer_reader: Callable[..., list[dict[str, Any]]] = call_materializer_read_tools,
     episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] = read_knowgraph_episodes_exact,
 ) -> dict[str, Any]:
     """Resolve one bounded hybrid KnowGraph search through the official MCP host."""
@@ -1191,7 +1191,7 @@ def search_knowgraph_hybrid(
         if value:
             fact_args[key] = value
 
-    initial = mcp_reader(
+    initial = materializer_reader(
         project_id=project_id,
         deck_id=deck_id,
         card_id=card_id,
@@ -1234,7 +1234,7 @@ def search_knowgraph_hybrid(
     if bounded_expansion and strongest_node_id:
         centered_node_args = {**node_args, "center_node_uuid": strongest_node_id}
         centered_fact_args = {**fact_args, "center_node_uuid": strongest_node_id}
-        centered = mcp_reader(
+        centered = materializer_reader(
             project_id=project_id,
             deck_id=deck_id,
             card_id=card_id,

@@ -3,7 +3,7 @@ import { Handle } from '@xyflow/react';
 import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@xyflow/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentCardInstance, DeckDocument, DeckEdge } from '../../types/agentgraph';
+import type { DeckCard, DeckDocument, DeckEdge } from '../../types/agentgraph';
 import {
   buildDeckEdgeFromConnection,
   isPlainConnectionAllowedForDocument,
@@ -26,7 +26,7 @@ import {
   buildPresentationLandingViewport,
 } from '../../features/agentbuilder/core/agentBuilderViewportMath';
 import { buildDeckEdgeIdentityKey } from './deckEdgeIdentity';
-import MagenticBusNode from './nodes/MagenticBusNode';
+import MagneticWorkerBusNode from './nodes/MagneticWorkerBusNode';
 import { INITIAL_DECK } from '../../features/agentbuilder/deck/newProjectDeck';
 
 describe('canvas connection validation', () => {
@@ -245,7 +245,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           kind: 'agent',
           templateId: 'template_magentic',
           runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
-          title: 'Magentic-One',
+          title: 'Magnetic',
           position: { x: 140, y: 120 },
         },
         {
@@ -300,7 +300,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           kind: 'agent',
           templateId: 'template_magentic',
           runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
-          title: 'Magentic-One',
+          title: 'Magnetic',
           position: { x: 140, y: 120 },
         },
         {
@@ -336,7 +336,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           kind: 'agent',
           templateId: 'template_magentic',
           runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
-          title: 'Magentic-One',
+          title: 'Magnetic',
           position: { x: 140, y: 120 },
         },
       ],
@@ -373,14 +373,14 @@ describe('BuilderCanvas runtime-truth helpers', () => {
   it('reduces persisted canvas changes synchronously before React state callbacks run', () => {
     const currentNodes: Node[] = [{
       id: 'card_assist',
-      type: 'agentCard',
+      type: 'deckCard',
       position: { x: 24, y: 48 },
       data: {},
     }];
     const nodeResult = reduceCanvasNodeChanges(
       [{ item: {
         id: 'card_second',
-        type: 'agentCard',
+        type: 'deckCard',
         position: { x: 240, y: 120 },
         data: {},
       }, type: 'add' }],
@@ -402,7 +402,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
   });
 
   it('preserves saved node prompt while updating position', () => {
-    const savedNodes: AgentCardInstance[] = [
+    const savedNodes: DeckCard[] = [
       {
         id: 'card_assist',
         kind: 'agent',
@@ -416,7 +416,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const staleFlowNodes: Node[] = [
       {
         id: 'card_assist',
-        type: 'agentCard',
+        type: 'deckCard',
         position: { x: 240, y: 120 },
         data: {
           ...savedNodes[0],
@@ -474,7 +474,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const currentNodes: Node[] = [
       {
         id: 'card_main',
-        type: 'agentCard',
+        type: 'deckCard',
         position: { x: 120, y: 80 },
         width: 320,
         height: 180,
@@ -486,7 +486,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const nextNodes: Node[] = [
       {
         id: 'card_main',
-        type: 'agentCard',
+        type: 'deckCard',
         position: { x: 120, y: 80 },
         selected: true,
         style: { opacity: 0.44 },
@@ -510,14 +510,14 @@ describe('BuilderCanvas runtime-truth helpers', () => {
   it('keeps pointer-owned coordinates during non-layout refreshes', () => {
     const currentNodes: Node[] = [{
       id: 'card_main',
-      type: 'agentCard',
+      type: 'deckCard',
       position: { x: 318.5, y: -42.25 },
       dragging: true,
       data: { title: 'Main', activeAgentCount: 0 },
     }];
     const nextNodes: Node[] = [{
       id: 'card_main',
-      type: 'agentCard',
+      type: 'deckCard',
       position: { x: -24, y: -24 },
       data: { title: 'Main', activeAgentCount: 1 },
     }];
@@ -833,7 +833,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ]);
   });
 
-  it('maps only the Magnetic card to the magenticBus node type', () => {
+  it('maps only the Magnetic Card to the magneticWorkerBus node type', () => {
     const nodes = toFlowNodes(
       createBusTestDocument(),
       null,
@@ -843,21 +843,21 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     );
 
     expect(nodes.find((node) => node.id === 'card_magentic')).toMatchObject({
-      type: 'magenticBus',
+      type: 'magneticWorkerBus',
       position: { x: 40, y: 120 },
       draggable: false,
       selectable: true,
     });
     expect(nodes.find((node) => node.id === 'card_worker_a')).toMatchObject({
-      type: 'agentCard',
+      type: 'deckCard',
       position: { x: 180, y: 140 },
       draggable: true,
       selectable: true,
     });
   });
 
-  it('renders one ordinary Card handle plus twelve side availability handles on MagenticBusNode', () => {
-    const handles = collectHandleElements(MagenticBusNode());
+  it('renders one ordinary Card handle plus twelve side availability handles on MagneticWorkerBusNode', () => {
+    const handles = collectHandleElements(MagneticWorkerBusNode());
 
     expect(handles).toHaveLength(13);
     expect(handles.map((handle) => handle.props.id)).toEqual([

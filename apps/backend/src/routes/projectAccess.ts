@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { getProject } from '../services/projectStore';
+import { getOwnedProjectByReference } from '../services/projectStore';
 
 export function authenticatedUserId(req: Request): string | null {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
@@ -16,7 +16,7 @@ export async function requireOwnedProject(
     res.status(401).json({ ok: false, error: 'project_owner_session_required' });
     return null;
   }
-  const project = await getProject(projectId, ownerUserId);
+  const project = await getOwnedProjectByReference(projectId, ownerUserId);
   if (!project) {
     res.status(404).json({ ok: false, error: 'project_not_found' });
     return null;

@@ -94,7 +94,7 @@ export function resolveBuilderProjectCodeDirectory(
   const root = path.resolve(configuredRoot || path.join(
     process.env.LOCALAPPDATA || os.homedir(),
     'LiquidAIty',
-    'builder-projects',
+    'project-code',
   ));
   const repoRoot = realpathSync(resolveRepoRoot());
   const temporaryRoot = realpathSync(os.tmpdir());
@@ -114,11 +114,11 @@ export function resolveBuilderProjectCodeDirectory(
     throw new Error('builder_project_code_folder_invalid');
   }
 
-  const repositoryDirectory = path.join(resolvedProjectDirectory, folder);
-  mkdirSync(repositoryDirectory, { recursive: true });
-  const resolvedRepositoryDirectory = realpathSync(repositoryDirectory);
-  if (!isInside(resolvedProjectDirectory, resolvedRepositoryDirectory)) {
+  const codeDirectory = path.join(resolvedProjectDirectory, folder);
+  mkdirSync(codeDirectory, { recursive: true });
+  const resolvedCodeDirectory = realpathSync(codeDirectory);
+  if (!isInside(resolvedProjectDirectory, resolvedCodeDirectory)) {
     throw new Error('builder_project_code_folder_invalid');
   }
-  return resolvedRepositoryDirectory;
+  return resolvedCodeDirectory;
 }

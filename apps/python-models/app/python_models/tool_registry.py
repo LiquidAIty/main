@@ -1,4 +1,4 @@
-"""T001 ToolRegistry: typed, loud-failing runtime tool resolution.
+"""Canonical typed, loud-failing runtime tool resolution.
 
 The Card and Run select both reads and effects. The registry resolves that set,
 validates every selected name, and fails loudly for unknown, disabled,

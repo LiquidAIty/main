@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import type { AgentCardInstance, CardRuntime, DeckDocument } from '../types/agentgraph';
+import type { CardRuntime, DeckCard, DeckDocument } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
 import {
@@ -17,8 +17,8 @@ import {
 function createCard(
   id: string,
   runtime: CardRuntime,
-  overrides: Partial<AgentCardInstance> = {},
-): AgentCardInstance {
+  overrides: Partial<DeckCard> = {},
+): DeckCard {
   return {
     id,
     kind: 'agent',
@@ -32,7 +32,7 @@ function createCard(
   };
 }
 
-function createDeck(nodes: AgentCardInstance[]): DeckDocument {
+function createDeck(nodes: DeckCard[]): DeckDocument {
   return {
     id: 'deck_setup',
     name: 'Deck Setup',
@@ -339,7 +339,7 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('preserves saved cards and prompts instead of applying hidden tombstones', () => {
-    const retiredCodeCard: AgentCardInstance = {
+    const retiredCodeCard: DeckCard = {
       id: 'card_code_workbench',
       kind: 'agent',
       templateId: 'template_code_workbench',

@@ -10,12 +10,12 @@ import {
 } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
-import type { DirectChatTarget } from "../../features/agentbuilder/console/mainSessionClient";
+import type { DirectChatTarget } from "../../features/agentbuilder/console/sharedChatClient";
 import {
   MAX_MAIN_CHAT_IMAGES,
   type MainChatRunInput,
   type MainChatVoicePhase,
-} from "../../features/agentbuilder/console/useAgentBuilderMainChat";
+} from "../../features/agentbuilder/console/useSharedCardChat";
 import UploadAttachment from "../knowledge/UploadAttachment";
 import {
   prepareChatBubbleText,
@@ -26,7 +26,7 @@ import type {
   CanonicalSubjectMatcher,
 } from "./canonicalSubjectLinks";
 
-type BuilderChatColors = {
+type SharedCardChatColors = {
   primary: string;
   bg: string;
   panel: string;
@@ -53,7 +53,7 @@ export function chatDisplayText(value: unknown): string {
   return safeText(value);
 }
 
-type BuilderChatMessage = {
+type SharedCardChatDisplayMessage = {
   role: "assistant" | "user";
   text: string;
   speaker: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
@@ -61,7 +61,7 @@ type BuilderChatMessage = {
   status?: "pending" | "complete" | "error";
 };
 
-function shouldRenderMessage(message: BuilderChatMessage): boolean {
+function shouldRenderMessage(message: SharedCardChatDisplayMessage): boolean {
   return message.role !== "assistant" || Boolean(safeText(message.text).trim());
 }
 
@@ -122,7 +122,7 @@ export function followLatestOutput(atBottom: boolean): "auto" | false {
 
 function linkedChatText(
   text: string,
-  role: BuilderChatMessage["role"],
+  role: SharedCardChatDisplayMessage["role"],
   subjectMatcher: CanonicalSubjectMatcher | null | undefined,
   onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
   keyPrefix: string,
@@ -152,7 +152,7 @@ function safeMarkdownUrl(value: string): string | null {
 
 function inlineChatMarkdown(
   text: string,
-  role: BuilderChatMessage["role"],
+  role: SharedCardChatDisplayMessage["role"],
   subjectMatcher: CanonicalSubjectMatcher | null | undefined,
   onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
   keyPrefix: string,
@@ -245,7 +245,7 @@ function inlineChatMarkdown(
 
 function renderChatMarkdown(
   text: string,
-  role: BuilderChatMessage["role"],
+  role: SharedCardChatDisplayMessage["role"],
   subjectMatcher: CanonicalSubjectMatcher | null | undefined,
   onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
 ): ReactNode[] {
@@ -266,7 +266,7 @@ function renderChatMarkdown(
   });
 }
 
-function BuilderChatMessageBubble({
+function SharedCardChatMessageBubble({
   colors,
   laneWidth,
   mainCardId,
@@ -274,10 +274,10 @@ function BuilderChatMessageBubble({
   subjectMatcher,
   onSubjectFocus,
 }: {
-  colors: BuilderChatColors;
+  colors: SharedCardChatColors;
   laneWidth: number | null;
   mainCardId?: string;
-  message: BuilderChatMessage;
+  message: SharedCardChatDisplayMessage;
   subjectMatcher?: CanonicalSubjectMatcher | null;
   onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
 }) {
@@ -320,7 +320,7 @@ function BuilderChatMessageBubble({
       }}
     >
       <div
-        data-testid="builder-chat-message-frame"
+        data-testid="shared-card-chat-message-frame"
         style={{
           maxWidth: isUser ? "min(82%, 560px)" : "min(92%, 640px)",
           width: measuredBubbleWidth == null ? "fit-content" : measuredBubbleWidth,
@@ -328,7 +328,7 @@ function BuilderChatMessageBubble({
       >
         {showSpeaker ? (
           <div
-            data-testid="builder-chat-speaker"
+            data-testid="shared-card-chat-speaker"
             style={{
               color: message.status === "error" ? "#FF9B9B" : colors.neutral,
               fontSize: 10.5,
@@ -377,7 +377,7 @@ function BuilderChatMessageBubble({
   );
 }
 
-export default function BuilderChat({
+export default function SharedCardChat({
   messages,
   mainCardId,
   directChatTargets = [],
@@ -398,14 +398,14 @@ export default function BuilderChat({
   subjectMatcher,
   onSubjectFocus,
 }: {
-  messages: BuilderChatMessage[];
+  messages: SharedCardChatDisplayMessage[];
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
   mainCardId?: string;
   directChatTargets?: DirectChatTarget[];
   onSend: (t: string, runInput?: MainChatRunInput) => void;
   onKnowledgeUploaded?: () => void;
   knowledgeProjectId: string;
-  colors: BuilderChatColors;
+  colors: SharedCardChatColors;
   /** The real Hermes turn is still open; the composer remains available. */
   busy?: boolean;
   /** The request is connecting to the saved Card's Hermes session. */
@@ -547,9 +547,9 @@ export default function BuilderChat({
     return () => observer.disconnect();
   }, []);
 
-  const renderMessage = useCallback((index: number, message: BuilderChatMessage) => (
+  const renderMessage = useCallback((index: number, message: SharedCardChatDisplayMessage) => (
     <div
-      data-testid="builder-chat-message-row"
+      data-testid="shared-card-chat-message-row"
       style={{
         boxSizing: "border-box",
         width: "100%",
@@ -560,7 +560,7 @@ export default function BuilderChat({
         }px`,
       }}
     >
-      <BuilderChatMessageBubble
+      <SharedCardChatMessageBubble
         colors={colors}
         laneWidth={messageLaneWidth}
         mainCardId={mainCardId}
@@ -595,26 +595,26 @@ export default function BuilderChat({
     setValue("");
   };
   return (
-    <div data-testid="builder-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>
+    <div data-testid="shared-card-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>
       <style>
         {`
-          .builder-chat-scroll {
+          .shared-card-chat-scroll {
             scrollbar-width: thin;
             scrollbar-color: #4E4E4E transparent;
           }
-          .builder-chat-scroll::-webkit-scrollbar { width: 7px; }
-          .builder-chat-scroll::-webkit-scrollbar-track { background: transparent; }
-          .builder-chat-scroll::-webkit-scrollbar-thumb {
+          .shared-card-chat-scroll::-webkit-scrollbar { width: 7px; }
+          .shared-card-chat-scroll::-webkit-scrollbar-track { background: transparent; }
+          .shared-card-chat-scroll::-webkit-scrollbar-thumb {
             background: #4E4E4E;
             border-radius: 999px;
             border: 1px solid rgba(0, 0, 0, 0.25);
           }
-          .builder-chat-scroll::-webkit-scrollbar-thumb:hover {
+          .shared-card-chat-scroll::-webkit-scrollbar-thumb:hover {
             background: #616161;
           }
-          .builder-chat-composer { scrollbar-width: none; }
-          .builder-chat-composer::-webkit-scrollbar { display: none; }
-          @keyframes builder-chat-active-pulse {
+          .shared-card-chat-composer { scrollbar-width: none; }
+          .shared-card-chat-composer::-webkit-scrollbar { display: none; }
+          @keyframes shared-card-chat-active-pulse {
             0%, 100% { opacity: 0.3; transform: scale(0.82); }
             50% { opacity: 1; transform: scale(1); }
           }
@@ -622,7 +622,7 @@ export default function BuilderChat({
       </style>
       <div
         ref={messageViewportRef}
-        data-testid="builder-chat-message-viewport"
+        data-testid="shared-card-chat-message-viewport"
         className="flex-1"
         style={{
           position: "relative",
@@ -633,8 +633,8 @@ export default function BuilderChat({
         <Virtuoso
           ref={virtuosoRef}
           data={renderableMessages}
-          data-testid="builder-chat-message-list"
-          className="builder-chat-scroll"
+          data-testid="shared-card-chat-message-list"
+          className="shared-card-chat-scroll"
           style={{ height: "100%", width: "100%" }}
           alignToBottom
           initialTopMostItemIndex={{
@@ -649,7 +649,7 @@ export default function BuilderChat({
         {!isAtBottom && renderableMessages.length > 0 ? (
           <button
             type="button"
-            data-testid="builder-chat-return-to-latest"
+            data-testid="shared-card-chat-return-to-latest"
             aria-label="Return to latest"
             title="Return to latest"
             onClick={returnToLatest}
@@ -690,7 +690,7 @@ export default function BuilderChat({
       <div className="px-4 pb-4">
         {imageError || error || voiceError ? (
           <div
-            data-testid="builder-chat-error"
+            data-testid="shared-card-chat-error"
             role="status"
             style={{
               color: "#FF9B9B",
@@ -704,7 +704,7 @@ export default function BuilderChat({
           </div>
         ) : null}
         {images.length ? (
-          <div data-testid="builder-chat-images" className="builder-chat-composer"
+          <div data-testid="shared-card-chat-images" className="shared-card-chat-composer"
             style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "5px 5px 8px", maxHeight: 144, overflowY: "auto" }}>
             {images.map((image, index) => (
               <div key={`${image.name}:${index}`} style={{ position: "relative", width: 64, height: 64 }}>
@@ -756,7 +756,7 @@ export default function BuilderChat({
           <textarea
             ref={inputRef}
             rows={1}
-            data-testid="builder-chat-input"
+            data-testid="shared-card-chat-input"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onPaste={(event) => {
@@ -793,7 +793,7 @@ export default function BuilderChat({
               }
             }}
             aria-label="Message"
-            className="builder-chat-composer flex-1"
+            className="shared-card-chat-composer flex-1"
             style={{
               boxSizing: "border-box",
               minWidth: 0,
@@ -814,7 +814,7 @@ export default function BuilderChat({
           />
           {addressSuggestions.length > 0 ? (
             <div
-              data-testid="builder-chat-address-suggestions"
+              data-testid="shared-card-chat-address-suggestions"
               role="listbox"
               aria-label="Available agents"
               style={{
@@ -836,7 +836,7 @@ export default function BuilderChat({
                   type="button"
                   role="option"
                   aria-selected={index === boundedAddressIndex}
-                  data-testid={`builder-chat-address-${agent.address}`}
+                  data-testid={`shared-card-chat-address-${agent.address}`}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     completeAddress(index);
@@ -865,26 +865,26 @@ export default function BuilderChat({
           ) : null}
           {busy || connecting ? (
             <span
-              data-testid="builder-chat-active-indicator"
+              data-testid="shared-card-chat-active-indicator"
               aria-hidden="true"
               style={{
                 width: 8,
                 height: 8,
                 borderRadius: "50%",
                 background: colors.primary,
-                animation: "builder-chat-active-pulse 1.1s ease-in-out infinite",
+                animation: "shared-card-chat-active-pulse 1.1s ease-in-out infinite",
               }}
             />
           ) : null}
           {busy && onStop ? (
-            <button type="button" data-testid="builder-chat-stop" onClick={onStop}>
+            <button type="button" data-testid="shared-card-chat-stop" onClick={onStop}>
               Stop
             </button>
           ) : null}
           {onVoiceStart && onVoiceStop ? (
             <button
               type="button"
-              data-testid="builder-chat-voice"
+              data-testid="shared-card-chat-voice"
               aria-label={voicePhase === "idle" || voicePhase === "error"
                 ? "Start voice"
                 : voicePhase === "listening"

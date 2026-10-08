@@ -1,5 +1,5 @@
 import type {
-  AgentCardInstance,
+  DeckCard,
 } from '../../types/agentgraph';
 
 export type SavedCardEditorValues = {
@@ -10,7 +10,7 @@ export type SavedCardEditorValues = {
   tools: string[];
 };
 
-export function readSavedCardEditorValues(card: AgentCardInstance): SavedCardEditorValues {
+export function readSavedCardEditorValues(card: DeckCard): SavedCardEditorValues {
   // Templates are construction data, not an alternate saved Card definition.
   // Older saved override values remain readable when the Card has no current
   // field for that value.

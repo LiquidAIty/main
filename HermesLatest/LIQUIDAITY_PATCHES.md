@@ -1,7 +1,7 @@
 # LiquidAIty HermesLatest patch overlay
 
 This file is the update contract for the two LiquidAIty task extensions and
-four narrow application-integration patches carried on top of Hermes Agent.
+five narrow application-integration patches carried on top of Hermes Agent.
 It is an inventory, not runtime authority.
 
 ## Upstream baseline
@@ -105,8 +105,9 @@ existing queue and execution behavior.
 | `tests/tui_gateway/test_auto_continue.py` | exact-submission interruption proof | Proves a stale caller cannot interrupt a later turn and the matching caller still can. |
 
 The application consumer is
-`apps/backend/src/routes/mainSession.routes.ts::submitTurn`, which waits for the
-matching `prompt.submission.started` event and ignores unrelated completions.
+`apps/backend/src/services/savedCardRun.ts::submitHermesTurn`, reached by the
+literal shared-chat/saved-specialist routes; it waits for the matching
+`prompt.submission.started` event and ignores unrelated completions.
 
 ## Integration patch 4: Card profile fields and profile-scoped learning selection
 
@@ -128,6 +129,37 @@ profile rather than cloning it.
 | `tui_gateway/methods_tools.py` | profile-scoped learning RPC forwarding | Delegates the request to Hermes's existing learning implementation for that profile; it does not add another learning store. |
 | `tests/tui_gateway/test_profiles_bot_roster.py` | Card execution/profile preservation proof | Proves model runtime, delegation and Team mode read back while unknown and Hermes-owned state survives configuration. |
 | `tests/tui_gateway/test_profiles_toolset_pin.py`, `tests/tui_gateway/test_tui_gateway_server.py` | empty/missing/nonempty toolset-selection proof | Proves an explicit empty profile pin survives save/readback and reaches the runtime as `[]`, while missing and nonempty selections retain Hermes behavior. |
+
+## Integration patch 5: Builder Project-code Docker policy
+
+Purpose: keep the saved Builder profile useful as Hermes's coding agent while
+preventing its terminal and file tools from seeing the LiquidAIty application
+checkout. LiquidAIty supplies one Project-owned code folder; Hermes's shipped
+Docker backend mounts only that folder at `/workspace` in a nonpersistent,
+per-session container. The Project folder remains durable on the host.
+
+### Compatibility hunks in upstream files
+
+| File | Symbols / hunk | Why required |
+| --- | --- | --- |
+| `tui_gateway/methods_config_set.py` | `_set_terminal_backend`, `_set_terminal_boolean`, `_clear_terminal_string_list`, `_clear_terminal_mapping`; terminal keys in `_CONFIG_SETTERS` | The existing generic, profile-scoped `config.set` RPC did not expose Hermes's existing terminal backend and isolation settings. These bounded keys select the shipped Docker backend, enable the shipped current-directory mount, force per-session containers, and clear alternate host mounts/extra Docker arguments/forwarded environment. No new terminal, container, profile writer, RPC method, or generated contract is introduced. |
+| `tests/tui_gateway/test_config_profile_scope.py` | `test_config_set_applies_builder_docker_policy_only_to_target_profile` | Proves every setting lands only in the addressed profile through Hermes's existing atomic config writer while the launch profile remains byte-semantically unchanged. |
+
+### Application consumer
+
+`apps/backend/src/hermes/profileMaterialization.ts::materializeBuilderTerminalPolicy`
+reads the addressed Builder profile through `config.get {key: "full"}`, writes
+only mismatched declared settings through `config.set`, and requires exact
+readback. `apps/backend/src/services/hermesCardSession.ts` supplies the resolved
+Project code directory to Hermes session creation or `session.workspace.move`
+and refuses a Builder session whose reported terminal backend is not Docker.
+
+### Maintenance consequence
+
+This is one dispatcher allowlist hunk plus one focused upstream test. Remove it
+when upstream `profiles.configure` exposes the same terminal policy fields; the
+application consumer can then move to that shipped profile API without changing
+saved Cards, Projects, sessions, or code-folder data.
 
 ## Generated contract artifacts
 
@@ -233,6 +265,7 @@ apps\python-models\.venv\Scripts\python.exe -m pytest `
   HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py `
   HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py `
   HermesLatest/tests/tui_gateway/test_auto_continue.py `
+  HermesLatest/tests/tui_gateway/test_config_profile_scope.py `
   HermesLatest/tests/tui_gateway/contracts/test_generated.py `
   HermesLatest/tests/hermes_cli/test_kanban_team.py `
   HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py `
@@ -250,7 +283,7 @@ results must therefore be reported separately from upstream-script parity.
 
 1. Resolve and record the new official tag object and source commit.
 2. Produce a clean checkout/worktree of that exact commit.
-3. Generate a path-bounded overlay containing only the six seams listed
+3. Generate a path-bounded overlay containing only the seven seams listed
    above, their generated contracts and this register.
 4. Apply-check the overlay against the clean checkout before changing the
    production tree.

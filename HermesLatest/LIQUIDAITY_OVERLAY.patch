@@ -1,13 +1,13 @@
 diff --git a/.codex-temp/hermes-overlay-tree/LIQUIDAITY_PATCHES.md b/.codex-temp/hermes-overlay-tree/LIQUIDAITY_PATCHES.md
 new file mode 100644
-index 000000000..27c30bc06
+index 000000000..18967a8c5
 --- /dev/null
 +++ b/.codex-temp/hermes-overlay-tree/LIQUIDAITY_PATCHES.md
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,298 @@
 +# LiquidAIty HermesLatest patch overlay
 +
 +This file is the update contract for the two LiquidAIty task extensions and
-+four narrow application-integration patches carried on top of Hermes Agent.
++five narrow application-integration patches carried on top of Hermes Agent.
 +It is an inventory, not runtime authority.
 +
 +## Upstream baseline
@@ -111,8 +111,9 @@ index 000000000..27c30bc06
 +| `tests/tui_gateway/test_auto_continue.py` | exact-submission interruption proof | Proves a stale caller cannot interrupt a later turn and the matching caller still can. |
 +
 +The application consumer is
-+`apps/backend/src/routes/mainSession.routes.ts::submitTurn`, which waits for the
-+matching `prompt.submission.started` event and ignores unrelated completions.
++`apps/backend/src/services/savedCardRun.ts::submitHermesTurn`, reached by the
++literal shared-chat/saved-specialist routes; it waits for the matching
++`prompt.submission.started` event and ignores unrelated completions.
 +
 +## Integration patch 4: Card profile fields and profile-scoped learning selection
 +
@@ -134,6 +135,37 @@ index 000000000..27c30bc06
 +| `tui_gateway/methods_tools.py` | profile-scoped learning RPC forwarding | Delegates the request to Hermes's existing learning implementation for that profile; it does not add another learning store. |
 +| `tests/tui_gateway/test_profiles_bot_roster.py` | Card execution/profile preservation proof | Proves model runtime, delegation and Team mode read back while unknown and Hermes-owned state survives configuration. |
 +| `tests/tui_gateway/test_profiles_toolset_pin.py`, `tests/tui_gateway/test_tui_gateway_server.py` | empty/missing/nonempty toolset-selection proof | Proves an explicit empty profile pin survives save/readback and reaches the runtime as `[]`, while missing and nonempty selections retain Hermes behavior. |
++
++## Integration patch 5: Builder Project-code Docker policy
++
++Purpose: keep the saved Builder profile useful as Hermes's coding agent while
++preventing its terminal and file tools from seeing the LiquidAIty application
++checkout. LiquidAIty supplies one Project-owned code folder; Hermes's shipped
++Docker backend mounts only that folder at `/workspace` in a nonpersistent,
++per-session container. The Project folder remains durable on the host.
++
++### Compatibility hunks in upstream files
++
++| File | Symbols / hunk | Why required |
++| --- | --- | --- |
++| `tui_gateway/methods_config_set.py` | `_set_terminal_backend`, `_set_terminal_boolean`, `_clear_terminal_string_list`, `_clear_terminal_mapping`; terminal keys in `_CONFIG_SETTERS` | The existing generic, profile-scoped `config.set` RPC did not expose Hermes's existing terminal backend and isolation settings. These bounded keys select the shipped Docker backend, enable the shipped current-directory mount, force per-session containers, and clear alternate host mounts/extra Docker arguments/forwarded environment. No new terminal, container, profile writer, RPC method, or generated contract is introduced. |
++| `tests/tui_gateway/test_config_profile_scope.py` | `test_config_set_applies_builder_docker_policy_only_to_target_profile` | Proves every setting lands only in the addressed profile through Hermes's existing atomic config writer while the launch profile remains byte-semantically unchanged. |
++
++### Application consumer
++
++`apps/backend/src/hermes/profileMaterialization.ts::materializeBuilderTerminalPolicy`
++reads the addressed Builder profile through `config.get {key: "full"}`, writes
++only mismatched declared settings through `config.set`, and requires exact
++readback. `apps/backend/src/services/hermesCardSession.ts` supplies the resolved
++Project code directory to Hermes session creation or `session.workspace.move`
++and refuses a Builder session whose reported terminal backend is not Docker.
++
++### Maintenance consequence
++
++This is one dispatcher allowlist hunk plus one focused upstream test. Remove it
++when upstream `profiles.configure` exposes the same terminal policy fields; the
++application consumer can then move to that shipped profile API without changing
++saved Cards, Projects, sessions, or code-folder data.
 +
 +## Generated contract artifacts
 +
@@ -239,6 +271,7 @@ index 000000000..27c30bc06
 +  HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py `
 +  HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py `
 +  HermesLatest/tests/tui_gateway/test_auto_continue.py `
++  HermesLatest/tests/tui_gateway/test_config_profile_scope.py `
 +  HermesLatest/tests/tui_gateway/contracts/test_generated.py `
 +  HermesLatest/tests/hermes_cli/test_kanban_team.py `
 +  HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py `
@@ -256,7 +289,7 @@ index 000000000..27c30bc06
 +
 +1. Resolve and record the new official tag object and source commit.
 +2. Produce a clean checkout/worktree of that exact commit.
-+3. Generate a path-bounded overlay containing only the six seams listed
++3. Generate a path-bounded overlay containing only the seven seams listed
 +   above, their generated contracts and this register.
 +4. Apply-check the overlay against the clean checkout before changing the
 +   production tree.
@@ -3664,6 +3697,53 @@ index 83b7905bc..8eb453b77 100644
  
  # ── End to end: continuation runs a real turn and clears the marker ────
 -
+diff --git a/.codex-temp/hermes-baseline-tree/tests/tui_gateway/test_config_profile_scope.py b/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_config_profile_scope.py
+index 1325eb8b6..eed42aaba 100644
+--- a/.codex-temp/hermes-baseline-tree/tests/tui_gateway/test_config_profile_scope.py
++++ b/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_config_profile_scope.py
+@@ -105,6 +105,42 @@ def test_config_set_persistent_write_lands_on_params_profile_yaml(tmp_path, monk
+     assert worker_cfg["terminal"]["cwd"] == WORKER_CWD
+ 
+ 
++def test_config_set_applies_builder_docker_policy_only_to_target_profile(tmp_path, monkeypatch):
++    launch, worker = _homes(tmp_path)
++    _bind_homes(monkeypatch, launch, worker)
++
++    backend = _set({"key": "terminal.backend", "value": "docker", "profile": "code"})
++    mount = _set({
++        "key": "terminal.docker_mount_cwd_to_workspace", "value": True, "profile": "code",
++    })
++    persistent = _set({
++        "key": "terminal.container_persistent", "value": False, "profile": "code",
++    })
++    volumes = _set({"key": "terminal.docker_volumes", "value": [], "profile": "code"})
++    extra_args = _set({"key": "terminal.docker_extra_args", "value": [], "profile": "code"})
++    forwarded = _set({"key": "terminal.docker_forward_env", "value": [], "profile": "code"})
++    container_env = _set({"key": "terminal.docker_env", "value": {}, "profile": "code"})
++
++    assert backend["result"]["value"] == "docker"
++    assert mount["result"]["value"] is True
++    assert persistent["result"]["value"] is False
++    assert volumes["result"]["value"] == []
++    assert extra_args["result"]["value"] == []
++    assert forwarded["result"]["value"] == []
++    assert container_env["result"]["value"] == {}
++    assert _read_yaml(worker)["terminal"] == {
++        "cwd": WORKER_CWD,
++        "backend": "docker",
++        "docker_mount_cwd_to_workspace": True,
++        "container_persistent": False,
++        "docker_volumes": [],
++        "docker_extra_args": [],
++        "docker_forward_env": [],
++        "docker_env": {},
++    }
++    assert _read_yaml(launch)["terminal"] == {"cwd": LAUNCH_CWD}
++
++
+ def test_config_set_without_profile_still_writes_launch_home(tmp_path, monkeypatch):
+     launch, worker = _homes(tmp_path)
+     _bind_homes(monkeypatch, launch, worker)
 diff --git a/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_profiles_bot_roster.py b/.codex-temp/hermes-overlay-tree/tests/tui_gateway/test_profiles_bot_roster.py
 new file mode 100644
 index 000000000..084014777
@@ -4383,6 +4463,70 @@ index 35e268911..af31e8925 100644
      id: str | None = None
  
  
+diff --git a/.codex-temp/hermes-baseline-tree/tui_gateway/methods_config_set.py b/.codex-temp/hermes-overlay-tree/tui_gateway/methods_config_set.py
+index 7e5f2d4ff..647ad489c 100644
+--- a/.codex-temp/hermes-baseline-tree/tui_gateway/methods_config_set.py
++++ b/.codex-temp/hermes-overlay-tree/tui_gateway/methods_config_set.py
+@@ -421,6 +421,45 @@ def _set_cwd(rid, params, key, value, session):
+     return _kv(rid, "terminal.cwd", cwd, cwd=cwd, branch=git_probe.branch(cwd))
+ 
+ 
++_TERMINAL_BACKENDS = {
++    "local", "docker", "singularity", "modal", "daytona", "vercel_sandbox", "ssh",
++}
++
++
++def _set_terminal_backend(rid, params, key, value, session):
++    backend = _word(value)
++    if backend not in _TERMINAL_BACKENDS:
++        return _err(rid, 4002, f"unknown terminal backend: {value}")
++    _write_config_key("terminal.backend", backend)
++    return _kv(rid, key, backend)
++
++
++def _set_terminal_boolean(rid, params, key, value, session):
++    raw = _raw_word(value)
++    resolved = {
++        "true": True, "1": True, "yes": True, "on": True,
++        "false": False, "0": False, "no": False, "off": False,
++    }.get(raw)
++    if resolved is None:
++        return _err(rid, 4002, f"{key} takes true or false")
++    _write_config_key(key, resolved)
++    return _kv(rid, key, resolved)
++
++
++def _clear_terminal_string_list(rid, params, key, value, session):
++    if value != []:
++        return _err(rid, 4002, f"{key} may only be cleared through this RPC")
++    _write_config_key(key, [])
++    return _kv(rid, key, [])
++
++
++def _clear_terminal_mapping(rid, params, key, value, session):
++    if value != {}:
++        return _err(rid, 4002, f"{key} may only be cleared through this RPC")
++    _write_config_key(key, {})
++    return _kv(rid, key, {})
++
++
+ @_cfgset_guarded
+ def _set_prompt(rid, params, key, value, session):
+     cfg = _load_cfg_raw()  # write-back round-trip
+@@ -469,6 +508,13 @@ _CONFIG_SETTERS = {
+     "density": _set_toggle, "battery": _set_toggle, "theme": _set_word,
+     "statusbar": _set_toggle, "mouse": _set_toggle, "indicator": _set_word, "voice.voice_chat_mode": _set_word,
+     "cwd": _set_cwd, "terminal.cwd": _set_cwd, "workdir": _set_cwd,
++    "terminal.backend": _set_terminal_backend,
++    "terminal.docker_mount_cwd_to_workspace": _set_terminal_boolean,
++    "terminal.container_persistent": _set_terminal_boolean,
++    "terminal.docker_volumes": _clear_terminal_string_list,
++    "terminal.docker_extra_args": _clear_terminal_string_list,
++    "terminal.docker_forward_env": _clear_terminal_string_list,
++    "terminal.docker_env": _clear_terminal_mapping,
+     "prompt": _set_prompt, "personality": _set_personality, "skin": _set_skin}
+ 
+ # Keys whose sessionless branch writes a different, wider scope than the session branch (config.yaml's
 diff --git a/.codex-temp/hermes-baseline-tree/tui_gateway/methods_profiles.py b/.codex-temp/hermes-overlay-tree/tui_gateway/methods_profiles.py
 index f0c0374f3..a28ef081e 100644
 --- a/.codex-temp/hermes-baseline-tree/tui_gateway/methods_profiles.py

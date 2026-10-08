@@ -9,7 +9,7 @@ import {
   subscribeSessionEvents,
   streamSession,
   streamVoiceCapture,
-} from './mainSessionClient';
+} from './sharedChatClient';
 
 function sseResponse(frames: string[]): Response {
   const encoder = new TextEncoder();
@@ -210,7 +210,7 @@ describe('streamSession', () => {
 
   it('rejects an SSE error frame with the route and correlation evidence', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      'event: error\ndata: {"code":"harness_turn_failed","message":"The chat run failed.","correlationId":"req_123","route":"/api/main/session/chat","status":502}\n\n',
+      'event: error\ndata: {"code":"harness_turn_failed","message":"The chat run failed.","correlationId":"req_123","route":"/api/shared-chat/turn","status":502}\n\n',
       'event: end\ndata: {}\n\n',
     ])));
 
@@ -224,7 +224,7 @@ describe('streamSession', () => {
       name: 'SessionStreamError',
       code: 'harness_turn_failed',
       correlationId: 'req_123',
-      route: '/api/main/session/chat',
+      route: '/api/shared-chat/turn',
       status: 502,
     } satisfies Partial<SessionStreamError>);
   });
@@ -361,7 +361,7 @@ describe('subscribeSessionEvents', () => {
     });
 
     expect(EventSourceMock).toHaveBeenCalledWith(
-      '/api/main/session/events?projectId=project-1&deckId=deck_builder'
+      '/api/shared-chat/events?projectId=project-1&deckId=deck_builder'
         + '&conversationId=main&liveSessionId=hermes-main',
       { withCredentials: true },
     );
@@ -499,7 +499,7 @@ describe('loadSessionHistory', () => {
     })).rejects.toMatchObject({
       code: 'conversation_history_read_failed',
       status: 500,
-      route: '/api/main/session/history',
+      route: '/api/shared-chat/history',
     });
   });
 
@@ -516,7 +516,7 @@ describe('loadSessionHistory', () => {
       timeoutMs: 5,
     })).rejects.toMatchObject({
       code: 'conversation_history_timeout',
-      route: '/api/main/session/history',
+      route: '/api/shared-chat/history',
     });
   });
 });

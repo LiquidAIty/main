@@ -1,6 +1,6 @@
 # @graph entity: KnowGraph API
 # @graph role: ingest-entrypoint
-# @graph relates_to: KnowGraph Ingest, Magentic-One Runtime
+# @graph relates_to: KnowGraph Ingest, Graphiti
 # @graph depends_on: FastAPI
 # @graph feeds_to: KnowGraph Ingest
 """FastAPI entrypoint for KnowGraph ingestion."""

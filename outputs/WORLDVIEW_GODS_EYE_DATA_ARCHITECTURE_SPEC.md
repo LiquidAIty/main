@@ -85,15 +85,15 @@ C-Projects-LiquidAIty-main
 C:/Projects/LiquidAIty/main
 ```
 
-The projection policy is now:
+The current imported product roots are:
 
 ```text
-God's Eye and the LiquidAIty stack
-→ indexed
-
-worldsignal/Shadowbroker-main
-→ deliberately excluded in .cbmignore
+agent-products/gods-eye-view/
+agent-products/shadowbroker/
+agent-products/kronos/
 ```
+
+All three imported roots are excluded from the derived CBM projection by `.cbmignore`.
 
 The earlier blanket `/worldsignal/` exclusion is superseded. A final full projection is performed only after the implementation tree stops changing; no tracked hook, model turn, or extra frontend owns reindexing.
 
@@ -113,7 +113,7 @@ Vendored-project packet:
 
 ```text
 VENDORED PROJECT
-worldsignal/gods-eye-view-main
+agent-products/gods-eye-view
 
 PURPOSE
 Complete its existing supervised bridge and enforce the Phase 1 camera/source contract.
@@ -364,6 +364,9 @@ There is no predetermined USGS migration, ShadowBroker map retirement, provider 
 ---
 
 ## 8. Phase 1 file ledger
+
+The file paths below are preserved from the Phase 1 implementation checkout. The controlled product
+roots have since moved; use the current roots above and in `ARCHITECTURE.md` for live source paths.
 
 ### LiquidAIty client
 

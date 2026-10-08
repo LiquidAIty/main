@@ -1,7 +1,7 @@
 import { setApplicationRoot } from './viewport.js';
 import { configureRuntimeBaseUrl, runtimeUrl } from '../runtimeUrl.js';
 
-const ROOT_ID = 'worldview-native-root';
+const ROOT_ID = 'worldview-gods-eye-root';
 const INSPECTOR_CONTROL_IDS = Object.freeze([
   'left-panel-stack',
   'right-context-rail',
@@ -18,7 +18,7 @@ const INSPECTOR_TABS = Object.freeze({
   cameras: ['cctv-panel'],
   selection: [],
 });
-const NATIVE_BODY_CLASSES = Object.freeze([
+const GODS_EYE_BODY_CLASSES = Object.freeze([
   'cockpit-mode',
   'ui-clean-view',
   'recording-mode',
@@ -37,22 +37,22 @@ let fontUsers = 0;
 function installFonts() {
   fontUsers += 1;
   for (const href of FONT_LINKS) {
-    if (document.head.querySelector(`link[data-worldview-native-font][href="${href}"]`)) continue;
+    if (document.head.querySelector(`link[data-worldview-gods-eye-font][href="${href}"]`)) continue;
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = href;
-    link.dataset.worldviewNativeFont = 'true';
+    link.dataset.worldviewGodsEyeFont = 'true';
     document.head.appendChild(link);
   }
   return () => {
     fontUsers = Math.max(0, fontUsers - 1);
     if (fontUsers === 0) {
-      document.head.querySelectorAll('link[data-worldview-native-font]').forEach((link) => link.remove());
+      document.head.querySelectorAll('link[data-worldview-gods-eye-font]').forEach((link) => link.remove());
     }
   };
 }
 
-function nativeBodyFragment(documentMarkup) {
+function godsEyeBodyFragment(documentMarkup) {
   const parsed = new DOMParser().parseFromString(String(documentMarkup || ''), 'text/html');
   parsed.querySelectorAll('script').forEach((script) => script.remove());
   const fragment = document.createDocumentFragment();
@@ -72,11 +72,11 @@ function nativeBodyFragment(documentMarkup) {
 
 function installDocumentStateMirror(root) {
   const originalClassState = new Map(
-    NATIVE_BODY_CLASSES.map((name) => [name, document.body.classList.contains(name)]),
+    GODS_EYE_BODY_CLASSES.map((name) => [name, document.body.classList.contains(name)]),
   );
   const originalStyle = document.documentElement.dataset.gevStyle;
   const sync = () => {
-    for (const name of NATIVE_BODY_CLASSES) {
+    for (const name of GODS_EYE_BODY_CLASSES) {
       root.classList.toggle(name, document.body.classList.contains(name));
     }
     const style = document.documentElement.dataset.gevStyle;
@@ -103,16 +103,16 @@ function installDocumentStateMirror(root) {
 
 function prepareRoot(root, { documentMarkup, scopedStyles }) {
   if (!root?.replaceChildren) throw new TypeError('A caller-owned WorldView root is required');
-  if (!documentMarkup?.trim()) throw new Error('worldview_native_markup_required');
-  if (!scopedStyles?.trim()) throw new Error('worldview_native_styles_required');
-  if (root.id && root.id !== ROOT_ID) throw new Error('worldview_native_root_id_invalid');
+  if (!documentMarkup?.trim()) throw new Error('worldview_gods_eye_markup_required');
+  if (!scopedStyles?.trim()) throw new Error('worldview_gods_eye_styles_required');
+  if (root.id && root.id !== ROOT_ID) throw new Error('worldview_gods_eye_root_id_invalid');
   root.id = ROOT_ID;
   root.dataset.worldviewMounted = 'true';
   root.classList.add('supervised-embed');
   const style = document.createElement('style');
-  style.dataset.worldviewNativeStyles = 'true';
+  style.dataset.worldviewGodsEyeStyles = 'true';
   style.textContent = scopedStyles;
-  root.replaceChildren(style, nativeBodyFragment(documentMarkup));
+  root.replaceChildren(style, godsEyeBodyFragment(documentMarkup));
   return () => {
     root.replaceChildren();
     root.classList.remove('supervised-embed');
@@ -122,16 +122,16 @@ function prepareRoot(root, { documentMarkup, scopedStyles }) {
 
 async function createMountedRuntime(root, config) {
   const cleanups = [];
-  cleanups.push(configureRuntimeBaseUrl(config.runtimeBaseUrl || '/worldview-native/'));
+  cleanups.push(configureRuntimeBaseUrl(config.runtimeBaseUrl || '/worldview-gods-eye/'));
   try {
     cleanups.push(prepareRoot(root, config));
     cleanups.push(setApplicationRoot(root));
     cleanups.push(installDocumentStateMirror(root));
     cleanups.push(installFonts());
-    // Configure the native provider base before evaluating the controlled
+    // Configure the God's Eye provider base before evaluating the controlled
     // fork. Several retained upstream modules own module-scope endpoint
     // constants; importing earlier would freeze them against LiquidAIty's
-    // ordinary /api instead of the native provider proxy.
+    // ordinary /api instead of the God's Eye provider proxy.
     const { createWorldViewApplication } = await import('./directApplication.js');
     const app = createWorldViewApplication({
       root,
@@ -185,7 +185,7 @@ async function createMountedRuntime(root, config) {
         });
         const syncPresentation = () => {
           host.classList.toggle('supervised-embed', root.classList.contains('supervised-embed'));
-          for (const name of NATIVE_BODY_CLASSES) {
+          for (const name of GODS_EYE_BODY_CLASSES) {
             host.classList.toggle(name, root.classList.contains(name));
           }
           if (root.dataset.gevStyle) host.dataset.gevStyle = root.dataset.gevStyle;
@@ -218,7 +218,7 @@ async function createMountedRuntime(root, config) {
             for (const { anchor, element } of records) anchor.replaceWith(element);
             presentationObserver.disconnect();
             host.classList.remove('supervised-embed');
-            host.classList.remove(...NATIVE_BODY_CLASSES);
+            host.classList.remove(...GODS_EYE_BODY_CLASSES);
             delete host.dataset.gevStyle;
             delete host.dataset.activeTab;
             if (inspectorAttachment === attachment) inspectorAttachment = null;
@@ -248,7 +248,7 @@ async function createMountedRuntime(root, config) {
 }
 
 /**
- * Mount exactly one native runtime into a caller-owned element. A replacement
+ * Mount exactly one God's Eye runtime into a caller-owned element. A replacement
  * is serialized behind full teardown so WebGL, voice and module globals never
  * overlap across React/project remounts.
  */
@@ -262,7 +262,7 @@ export function mountWorldView(root, config = {}) {
       return handle;
     } catch (error) {
       config.callbacks?.onError?.({
-        code: 'worldview_native_start_failed',
+        code: 'worldview_gods_eye_start_failed',
         message: error?.message || String(error),
       });
       await handle.destroy().catch(() => {});

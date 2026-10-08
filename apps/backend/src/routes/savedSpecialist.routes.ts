@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 
-import { getProject } from '../services/projectStore';
+import { getInternalProjectById } from '../services/projectStore';
 import { hermesGateway, type HermesGatewayClient, type HermesGatewayEvent } from '../services/hermesGateway';
 import {
   internalMcpAuthorization,
@@ -37,7 +37,7 @@ const SPECIALIST_TARGETS: Record<SavedSpecialistOperation, string> = {
 
 export function createSavedSpecialistRouter(): Router {
   const router = Router();
-  router.post('/internal/specialists', async (req, res) => {
+  router.post('/invoke', async (req, res) => {
     if (!isLoopbackSocketRequest(req)
       || !internalMcpProcessSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
       return res.status(403).json({ ok: false, error: 'saved_specialist_authorization_required' });
@@ -77,7 +77,7 @@ export function createSavedSpecialistRouter(): Router {
     let target: AddressableCard;
     let ownerUserId: string;
     try {
-      const project = await getProject(projectId);
+      const project = await getInternalProjectById(projectId);
       ownerUserId = String(project?.ownerUserId || '').trim();
       if (!ownerUserId) throw new Error('saved_specialist_project_unavailable');
       authority = await sharedChatAuthority(projectId, deckId);

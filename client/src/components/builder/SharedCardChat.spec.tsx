@@ -6,10 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import BuilderChat, {
+import SharedCardChat, {
   CANONICAL_SUBJECT_LINK_STYLE,
   followLatestOutput,
-} from './BuilderChat';
+} from './SharedCardChat';
 
 const colors = {
   primary: '#4fa2ad',
@@ -21,7 +21,7 @@ const colors = {
 };
 
 function scrollVirtualViewportToBottom(totalCount: number, itemHeight: number, viewportHeight: number) {
-  const scroller = screen.getByTestId('builder-chat-message-list');
+  const scroller = screen.getByTestId('shared-card-chat-message-list');
   const scrollHeight = Math.max(viewportHeight, totalCount * itemHeight);
   Object.defineProperties(scroller, {
     offsetHeight: { configurable: true, value: viewportHeight },
@@ -31,7 +31,7 @@ function scrollVirtualViewportToBottom(totalCount: number, itemHeight: number, v
   fireEvent.scroll(scroller);
 }
 
-describe('BuilderChat', () => {
+describe('SharedCardChat', () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
       configurable: true,
@@ -52,7 +52,7 @@ describe('BuilderChat', () => {
   it('shows only a visual indicator for the real active turn', () => {
     const onSend = vi.fn();
     render(
-      <BuilderChat
+      <SharedCardChat
         busy
         messages={[]}
         onSend={onSend}
@@ -61,7 +61,7 @@ describe('BuilderChat', () => {
       />,
     );
 
-    expect(screen.getByTestId('builder-chat-active-indicator').textContent).toBe('');
+    expect(screen.getByTestId('shared-card-chat-active-indicator').textContent).toBe('');
     expect(screen.queryByText('Working…')).toBeNull();
     expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
     const send = screen.getByRole('button', { name: 'Send' });
@@ -112,7 +112,7 @@ describe('BuilderChat', () => {
     } as any;
     render(
       <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
-        <BuilderChat
+        <SharedCardChat
           messages={[{
             role: 'assistant',
             text: '**Electron** and *Neutron* refine the Rocket Lab, thesis.',
@@ -136,14 +136,14 @@ describe('BuilderChat', () => {
     expect(electron.closest('strong')).not.toBeNull();
     expect(neutron.closest('em')).not.toBeNull();
     expect(rocket.parentElement?.textContent).toContain('Rocket Lab, thesis.');
-    expect(screen.getByTestId('builder-chat-message-frame').textContent).not.toContain('*');
+    expect(screen.getByTestId('shared-card-chat-message-frame').textContent).not.toContain('*');
     fireEvent.click(rocket);
     expect(onSubjectFocus).toHaveBeenCalledWith(targets.get('Rocket Lab'));
   });
 
   it('shows a quiet activity indicator while the provider turn is connecting', () => {
     render(
-      <BuilderChat
+      <SharedCardChat
         connecting
         messages={[]}
         onSend={vi.fn()}
@@ -153,7 +153,7 @@ describe('BuilderChat', () => {
     );
 
     expect(screen.queryByText('Connecting…')).toBeNull();
-    expect(screen.queryByTestId('builder-chat-active-indicator')).not.toBeNull();
+    expect(screen.queryByTestId('shared-card-chat-active-indicator')).not.toBeNull();
     expect(screen.queryByText('Working…')).toBeNull();
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled)
       .toBe(true);
@@ -163,7 +163,7 @@ describe('BuilderChat', () => {
     const onVoiceStart = vi.fn();
     const onVoiceStop = vi.fn();
     const { rerender } = render(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         onSend={vi.fn()}
         knowledgeProjectId="project-1"
@@ -178,7 +178,7 @@ describe('BuilderChat', () => {
     expect(onVoiceStart).toHaveBeenCalledOnce();
 
     rerender(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         onSend={vi.fn()}
         knowledgeProjectId="project-1"
@@ -195,7 +195,7 @@ describe('BuilderChat', () => {
   it('keeps the composer usable while persisted history rejoins', () => {
     const onSend = vi.fn();
     render(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         onSend={onSend}
         knowledgeProjectId="project-1"
@@ -204,7 +204,7 @@ describe('BuilderChat', () => {
     );
 
     expect(screen.queryByText('Loading conversation…')).toBeNull();
-    expect(screen.queryByTestId('builder-chat-active-indicator')).toBeNull();
+    expect(screen.queryByTestId('shared-card-chat-active-indicator')).toBeNull();
     expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(false);
     const send = screen.getByRole('button', { name: 'Send' });
     expect((send as HTMLButtonElement).disabled).toBe(false);
@@ -214,7 +214,7 @@ describe('BuilderChat', () => {
 
   it('keeps conversation identity and navigation out of Main Chat', () => {
     render(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         onSend={vi.fn()}
         knowledgeProjectId="project-1"
@@ -222,7 +222,7 @@ describe('BuilderChat', () => {
       />,
     );
 
-    expect(screen.queryByTestId('builder-chat-conversation-bar')).toBeNull();
+    expect(screen.queryByTestId('shared-card-chat-conversation-bar')).toBeNull();
     expect(screen.queryByRole('button', { name: /new chat|rejoin|conversation/i })).toBeNull();
     expect(screen.queryByRole('combobox')).toBeNull();
     const page = readFileSync(path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'), 'utf8');
@@ -234,7 +234,7 @@ describe('BuilderChat', () => {
 
   it('keeps delegation and preview controls out of the chat composer', () => {
     render(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         onSend={vi.fn()}
         knowledgeProjectId="project-1"
@@ -246,7 +246,7 @@ describe('BuilderChat', () => {
     expect(screen.getAllByRole('button')).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Attach images' })).not.toBeNull();
     expect(screen.getByRole('textbox', { name: 'Message' })).not.toBeNull();
-    expect(screen.queryByTestId('builder-chat-current-responder')).toBeNull();
+    expect(screen.queryByTestId('shared-card-chat-current-responder')).toBeNull();
   });
 
   it('uses the parent-owned draft so an imported Main task reaches the one chat composer', () => {
@@ -254,7 +254,7 @@ describe('BuilderChat', () => {
     function ControlledChat() {
       const [draft, setDraft] = React.useState('Imported Main task.');
       return (
-        <BuilderChat
+        <SharedCardChat
           messages={[]}
           onSend={onSend}
           knowledgeProjectId="project-1"
@@ -265,16 +265,16 @@ describe('BuilderChat', () => {
       );
     }
     render(<ControlledChat />);
-    expect((screen.getByTestId('builder-chat-input') as HTMLTextAreaElement).value).toBe('Imported Main task.');
+    expect((screen.getByTestId('shared-card-chat-input') as HTMLTextAreaElement).value).toBe('Imported Main task.');
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(onSend).toHaveBeenCalledWith('Imported Main task.');
-    expect((screen.getByTestId('builder-chat-input') as HTMLTextAreaElement).value).toBe('');
+    expect((screen.getByTestId('shared-card-chat-input') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('sends the exact non-empty user text without trimming it', () => {
     const onSend = vi.fn();
     render(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         onSend={onSend}
         knowledgeProjectId="project-1"
@@ -282,7 +282,7 @@ describe('BuilderChat', () => {
       />,
     );
 
-    fireEvent.change(screen.getByTestId('builder-chat-input'), {
+    fireEvent.change(screen.getByTestId('shared-card-chat-input'), {
       target: { value: '  Exact user text.  ' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -291,8 +291,8 @@ describe('BuilderChat', () => {
 
   it('wraps multiline drafts, sends on Enter and preserves Shift+Enter and composing input', () => {
     const onSend = vi.fn();
-    render(<BuilderChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
-    const input = screen.getByTestId('builder-chat-input') as HTMLTextAreaElement;
+    render(<SharedCardChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
+    const input = screen.getByTestId('shared-card-chat-input') as HTMLTextAreaElement;
     expect(input.tagName).toBe('TEXTAREA');
     expect(input.style.whiteSpace).toBe('pre-wrap');
     expect(input.style.overflowX).toBe('hidden');
@@ -315,8 +315,8 @@ describe('BuilderChat', () => {
       observe: (element: Element) => resizeCallbacks.set(element, () => callback([], {} as ResizeObserver)),
       unobserve: vi.fn(), disconnect: vi.fn(),
     })));
-    render(<BuilderChat messages={[]} onSend={vi.fn()} knowledgeProjectId="project-1" colors={colors} />);
-    const input = screen.getByTestId('builder-chat-input') as HTMLTextAreaElement;
+    render(<SharedCardChat messages={[]} onSend={vi.fn()} knowledgeProjectId="project-1" colors={colors} />);
+    const input = screen.getByTestId('shared-card-chat-input') as HTMLTextAreaElement;
     expect(input.style.height).toBe('72px');
     neededHeight = 120;
     fireEvent.change(input, { target: { value: 'A wrapped draft with several lines.' } });
@@ -337,7 +337,7 @@ describe('BuilderChat', () => {
 
   it('previews removable image files and sends the selected records through the existing composer while retaining PDF ingestion', async () => {
     const onSend = vi.fn();
-    render(<BuilderChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
+    render(<SharedCardChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
     expect(screen.getByRole('button', { name: 'Attach knowledge PDF' })).not.toBeNull();
     const files = screen.getByLabelText('Image files');
     fireEvent.change(files, { target: { files: [new File(['pixels'], 'scene.png', { type: 'image/png' })] } });
@@ -346,7 +346,7 @@ describe('BuilderChat', () => {
     expect(screen.queryByAltText('scene.png')).toBeNull();
     fireEvent.change(files, { target: { files: [new File(['pixels'], 'scene.png', { type: 'image/png' })] } });
     await screen.findByAltText('scene.png');
-    fireEvent.change(screen.getByTestId('builder-chat-input'), { target: { value: '@WorldView Inspect this image.' } });
+    fireEvent.change(screen.getByTestId('shared-card-chat-input'), { target: { value: '@WorldView Inspect this image.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(onSend).toHaveBeenCalledWith('@WorldView Inspect this image.', {
       images: [{ name: 'scene.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,cGl4ZWxz', kind: 'user-upload' }],
@@ -356,9 +356,9 @@ describe('BuilderChat', () => {
 
   it('accepts pasted images and rejects unsupported, oversized and over-count selections before sending', async () => {
     const onSend = vi.fn();
-    render(<BuilderChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
+    render(<SharedCardChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
     const pasted = new File(['pixels'], 'pasted.png', { type: 'image/png' });
-    fireEvent.paste(screen.getByTestId('builder-chat-input'), {
+    fireEvent.paste(screen.getByTestId('shared-card-chat-input'), {
       clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => pasted }] },
     });
     await screen.findByAltText('pasted.png');
@@ -377,7 +377,7 @@ describe('BuilderChat', () => {
 
   it('filters the saved callable roster and completes the selected address with Tab', () => {
     render(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         directChatTargets={[
           {
@@ -397,10 +397,10 @@ describe('BuilderChat', () => {
       />,
     );
 
-    const input = screen.getByTestId('builder-chat-input') as HTMLTextAreaElement;
+    const input = screen.getByTestId('shared-card-chat-input') as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: '@b' } });
-    expect(screen.getByTestId('builder-chat-address-Builder').textContent).toContain('@Builder');
-    expect(screen.queryByTestId('builder-chat-address-Trading')).toBeNull();
+    expect(screen.getByTestId('shared-card-chat-address-Builder').textContent).toContain('@Builder');
+    expect(screen.queryByTestId('shared-card-chat-address-Trading')).toBeNull();
     fireEvent.keyDown(input, { key: 'Tab' });
     expect(input.value).toBe('@Builder ');
   });
@@ -408,7 +408,7 @@ describe('BuilderChat', () => {
   it('keeps routing metadata out of the user bubble and renders the replying Card identity', async () => {
     render(
       <VirtuosoMockContext.Provider value={{ viewportHeight: 420, itemHeight: 72 }}>
-        <BuilderChat
+        <SharedCardChat
           messages={[
             {
               role: 'assistant', text: 'Main answer', status: 'complete',
@@ -439,11 +439,11 @@ describe('BuilderChat', () => {
     expect(await screen.findByText('@builder Reply exactly BUILDER_DIRECT_OK')).not.toBeNull();
     expect(screen.queryByText('You → Builder')).toBeNull();
     expect(screen.queryByText('You')).toBeNull();
-    expect(screen.getAllByTestId('builder-chat-speaker')).toHaveLength(1);
-    expect(screen.getByTestId('builder-chat-speaker').textContent).toBe('@Builder');
+    expect(screen.getAllByTestId('shared-card-chat-speaker')).toHaveLength(1);
+    expect(screen.getByTestId('shared-card-chat-speaker').textContent).toBe('@Builder');
     expect(screen.queryByText('Main Chat')).toBeNull();
     expect(screen.getByText('Main answer')).not.toBeNull();
-    expect(screen.getAllByTestId('builder-chat-message-frame').some(
+    expect(screen.getAllByTestId('shared-card-chat-message-frame').some(
       frame => frame.textContent?.endsWith('BUILDER_DIRECT_OK'),
     )).toBe(true);
   });
@@ -462,7 +462,7 @@ describe('BuilderChat', () => {
 
     const renderChat = (items: typeof messages) => (
       <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 64 }}>
-        <BuilderChat
+        <SharedCardChat
           messages={items}
           mainCardId="card_main_chat"
           onSend={vi.fn()}
@@ -477,13 +477,13 @@ describe('BuilderChat', () => {
 
     await screen.findByText('Trading message 113');
     await waitFor(() => {
-      const mountedRows = screen.getAllByTestId('builder-chat-message-row').length;
+      const mountedRows = screen.getAllByTestId('shared-card-chat-message-row').length;
       expect(mountedRows).toBeGreaterThan(0);
       expect(mountedRows).toBeLessThan(114);
     });
     expect(screen.queryByText('Trading message 0')).toBeNull();
 
-    const scroller = screen.getByTestId('builder-chat-message-list');
+    const scroller = screen.getByTestId('shared-card-chat-message-list');
     scroller.scrollTop = 3200;
     fireEvent.scroll(scroller);
     expect(await screen.findByRole('button', { name: 'Return to latest' })).not.toBeNull();
@@ -517,7 +517,7 @@ describe('BuilderChat', () => {
 
     render(
       <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
-        <BuilderChat
+        <SharedCardChat
           messages={[{
             role: 'assistant',
             text: 'This variable-height answer reflows through Pretext as Main changes width without replacing the conversation.',
@@ -533,9 +533,9 @@ describe('BuilderChat', () => {
     );
     scrollVirtualViewportToBottom(1, 96, 300);
 
-    const frame = await screen.findByTestId('builder-chat-message-frame');
+    const frame = await screen.findByTestId('shared-card-chat-message-frame');
     const wideWidth = Number.parseFloat(frame.style.width);
-    const scroller = screen.getByTestId('builder-chat-message-list');
+    const scroller = screen.getByTestId('shared-card-chat-message-list');
     scroller.scrollTop = 37;
     const readerPosition = scroller.scrollTop;
     viewportWidth = 300;
@@ -549,7 +549,7 @@ describe('BuilderChat', () => {
 
   it('shows a provider transport failure as status instead of assistant speech', () => {
     render(
-      <BuilderChat
+      <SharedCardChat
         messages={[]}
         error="card_tools_unavailable:cbm.search_graph"
         onSend={vi.fn()}
@@ -558,7 +558,7 @@ describe('BuilderChat', () => {
       />,
     );
 
-    expect(screen.getByTestId('builder-chat-error').textContent)
+    expect(screen.getByTestId('shared-card-chat-error').textContent)
       .toBe('card_tools_unavailable:cbm.search_graph');
     expect(screen.queryAllByText('card_tools_unavailable:cbm.search_graph')).toHaveLength(1);
   });

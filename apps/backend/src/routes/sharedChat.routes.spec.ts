@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   getMessages: vi.fn(async () => []),
   listConversations: vi.fn(async () => []),
   getDeck: vi.fn(),
-  getProject: vi.fn(async () => ({ ownerUserId: 'owner-1' })),
+  getOwnedProjectByReference: vi.fn(async () => ({ ownerUserId: 'owner-1' })),
+  getInternalProjectById: vi.fn(async () => ({ ownerUserId: 'owner-1' })),
   requestRails: vi.fn(),
   readCatalog: vi.fn(async () => ({
     state: 'ready', unavailableFamilies: [], toolFailures: [], tools: [],
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   materializeProfile: vi.fn(async (_request, card) => ({
     model: { provider: 'openai-codex', default: card.runtimeOptions.providerModelId },
   })),
+  materializeBuilderTerminalPolicy: vi.fn(async () => undefined),
   savedRoster: vi.fn(() => []),
   authorizeTool: vi.fn(() => 'Bearer target-run'),
   resolveToolUrl: vi.fn(() => 'http://127.0.0.1:9009/mcp'),
@@ -38,7 +40,8 @@ vi.mock('../decks/defaultProjectDeck', () => ({
   DEFAULT_PROJECT_DECK_ID: 'deck_builder',
 }));
 vi.mock('../services/projectStore', () => ({
-  getProject: mocks.getProject,
+  getOwnedProjectByReference: mocks.getOwnedProjectByReference,
+  getInternalProjectById: mocks.getInternalProjectById,
 }));
 vi.mock('../services/pythonRailsClient', () => ({
   requestPythonRailsJson: mocks.requestRails,
@@ -50,6 +53,7 @@ vi.mock('../services/hermesGateway', () => ({
   hermesGateway: mocks.gateway,
 }));
 vi.mock('../hermes/profileMaterialization', () => ({
+  materializeBuilderTerminalPolicy: mocks.materializeBuilderTerminalPolicy,
   materializeSavedCardProfile: mocks.materializeProfile,
   savedCardBotRoster: mocks.savedRoster,
 }));
@@ -69,8 +73,10 @@ type GatewayEvent = {
 };
 
 class FakeGateway {
+  readonly connectionState = 'open';
   calls: Array<{ method: string; params: Record<string, any> }> = [];
   listeners = new Set<(event: GatewayEvent) => void>();
+  stateListeners = new Set<(state: string) => void>();
   blockTarget = false;
   failTarget = false;
   responsesByProfile = new Map<string, string>();
@@ -80,6 +86,11 @@ class FakeGateway {
   onEvent(listener: (event: GatewayEvent) => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onState(listener: (state: string) => void) {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
   }
 
   emit(event: GatewayEvent) {
@@ -307,14 +318,14 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
     (req as typeof req & { userId?: string }).userId = 'owner-1';
     next();
   });
-  app.use('/main/session', savedSpecialistRoutes);
-  app.use('/main/session', sharedChatRoutes);
+  app.use('/saved-specialists', savedSpecialistRoutes);
+  app.use('/shared-chat', sharedChatRoutes);
   const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
   servers.push(server);
   return {
-    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}/main/session`,
+    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     begins,
     finishes,
     mainBegins,
@@ -342,7 +353,7 @@ describe('fixed saved specialist Card tools', () => {
     const { base, finishes, mainBegins } = await start(gateway);
     mocks.gateway.mockRejectedValueOnce(new Error('hermes_gateway_unavailable'));
 
-    const response = await fetch(`${base}/chat`, {
+    const response = await fetch(`${base}/shared-chat/turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -371,7 +382,7 @@ describe('fixed saved specialist Card tools', () => {
     mocks.appendReply.mockRejectedValueOnce(new Error('conversation_reply_write_failed'));
     const { base, finishes, mainBegins } = await start(gateway);
 
-    const response = await fetch(`${base}/chat`, {
+    const response = await fetch(`${base}/shared-chat/turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -412,7 +423,7 @@ describe('fixed saved specialist Card tools', () => {
     const {
       base, begins, finishes, mainBegins, pairPreparations, pairSettlements,
     } = await start(gateway);
-    const response = await fetch(`${base}/chat`, {
+    const response = await fetch(`${base}/shared-chat/turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -469,7 +480,7 @@ describe('fixed saved specialist Card tools', () => {
     const gateway = new FakeGateway();
     gateway.responsesByProfile.set('builder', 'Builder answer.');
     const { base, pairPreparations } = await start(gateway);
-    const response = await fetch(`${base}/chat`, {
+    const response = await fetch(`${base}/shared-chat/turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -492,7 +503,7 @@ describe('fixed saved specialist Card tools', () => {
   it('runs the exact saved ThinkGraph Card as a normal child Run without shared-chat writes', async () => {
     const gateway = new FakeGateway();
     const { base, begins, finishes } = await start(gateway);
-    const response = await fetch(`${base}/internal/specialists`, {
+    const response = await fetch(`${base}/saved-specialists/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -542,7 +553,7 @@ describe('fixed saved specialist Card tools', () => {
     gateway.blockTarget = true;
     const { base, begins, finishes } = await start(gateway);
     const controller = new AbortController();
-    const pending = fetch(`${base}/internal/specialists`, {
+    const pending = fetch(`${base}/saved-specialists/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -580,7 +591,7 @@ describe('fixed saved specialist Card tools', () => {
     const gateway = new FakeGateway();
     gateway.failTarget = true;
     const { base, begins, finishes } = await start(gateway);
-    const response = await fetch(`${base}/internal/specialists`, {
+    const response = await fetch(`${base}/saved-specialists/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -609,7 +620,7 @@ describe('fixed saved specialist Card tools', () => {
   it('keeps source Stop scoped to the exact source submission', async () => {
     const gateway = new FakeGateway();
     const { base } = await start(gateway);
-    const response = await fetch(`${base}/stop`, {
+    const response = await fetch(`${base}/shared-chat/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -639,7 +650,7 @@ describe('fixed saved specialist Card tools', () => {
     const { base, begins, finishes } = await start(gateway);
     const results = [];
     for (let index = 0; index < 2; index += 1) {
-      const response = await fetch(`${base}/internal/specialists`, {
+      const response = await fetch(`${base}/saved-specialists/invoke`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -669,7 +680,7 @@ describe('fixed saved specialist Card tools', () => {
         conversationId: 'conversation-1', cardId: 'builder', state: 'completed',
       },
     }));
-    const response = await fetch(`${base}/internal/specialists`, {
+    const response = await fetch(`${base}/saved-specialists/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -691,7 +702,7 @@ describe('fixed saved specialist Card tools', () => {
   it('rejects a specialist self-call before beginning a child Run', async () => {
     const gateway = new FakeGateway();
     const { base, begins, finishes } = await start(gateway);
-    const response = await fetch(`${base}/internal/specialists`, {
+    const response = await fetch(`${base}/saved-specialists/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -726,7 +737,7 @@ describe('fixed saved specialist Card tools', () => {
       const target = savedDeck.nodes.find((node) => node.id === targetId)!;
       (target.runtimeOptions as Record<string, unknown>)[field] = [...value];
       const { base, begins, finishes } = await start(gateway, savedDeck);
-      const response = await fetch(`${base}/internal/specialists`, {
+      const response = await fetch(`${base}/saved-specialists/invoke`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

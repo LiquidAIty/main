@@ -66,7 +66,7 @@ describe('WorldView Inspector control attachment', () => {
     });
     mounted = await mountWorldView(root, {
       documentMarkup,
-      scopedStyles: '#worldview-native-root { display: block; }',
+      scopedStyles: '#worldview-gods-eye-root { display: block; }',
     });
     expect(getActiveWorldViewMountCount()).toBe(1);
     const original = new Map(controlIds.map((id) => [id, root.querySelector(`#${id}`)]));

@@ -60,7 +60,7 @@ describe('WorldView direct WorldView runtime mount', () => {
     render(<GodsEyeSurface {...scope} />);
     await waitFor(() => expect(runtime.load).toHaveBeenCalledTimes(1));
     const [root, config] = runtime.load.mock.calls[0];
-    expect(root).toBe(document.getElementById('worldview-native-root'));
+    expect(root).toBe(document.getElementById('worldview-gods-eye-root'));
     expect(config).toEqual(expect.objectContaining(scope));
     expect(document.querySelector('iframe')).toBeNull();
     expect(screen.queryByText('Starting WorldView…')).toBeNull();
@@ -124,7 +124,7 @@ describe('WorldView direct WorldView runtime mount', () => {
   it('destroys the WorldView lifecycle on React unmount', async () => {
     const view = render(<GodsEyeSurface {...scope} />);
     await waitFor(() => expect(runtime.load).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(document.getElementById('worldview-native-root')).toBeTruthy());
+    await waitFor(() => expect(document.getElementById('worldview-gods-eye-root')).toBeTruthy());
     view.unmount();
     expect(runtime.destroy).toHaveBeenCalledTimes(1);
   });

@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import { createHash } from 'crypto';
 import { getDeckDocument } from '../decks/store';
-import { getProject } from '../services/projectStore';
+import { getOwnedProjectByReference } from '../services/projectStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { listToolCatalog } from '../services/mcp/toolCatalogMcpClient';
 import {
@@ -59,7 +59,7 @@ function runMetricsProjection(run: Record<string, any> | undefined) {
 async function authorizeCardProject(req: Request, projectId: string): Promise<boolean> {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
   if (!userId) return false;
-  const project = await getProject(projectId, userId);
+  const project = await getOwnedProjectByReference(projectId, userId);
   return Boolean(project && project.ownerUserId === userId);
 }
 

@@ -3,7 +3,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import AgentCardNode from './AgentCardNode';
+import DeckCardNode from './DeckCardNode';
 
 vi.mock('@xyflow/react', () => ({
   Handle: ({
@@ -35,15 +35,15 @@ const baseCard = {
   position: { x: 0, y: 0 },
 };
 
-describe('AgentCardNode shared Card geometry', () => {
+describe('DeckCardNode shared Card geometry', () => {
   it('shows one orange connector only on saved orchestrators and keeps ordinary Card inputs on the normal port', () => {
     const card = { ...baseCard, runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'receiver' } };
-    const { rerender } = render(<AgentCardNode data={card} />);
+    const { rerender } = render(<DeckCardNode data={card} />);
     expect(screen.queryByLabelText('Test Agent orchestrator connector')).toBeNull();
     expect(screen.getByLabelText('Test Agent Magnetic worker output')).not.toBeNull();
     expect(screen.queryByLabelText('Test Agent bot input')).toBeNull();
     expect(screen.getByLabelText('Test Agent input').getAttribute('data-handle-type')).toBe('target');
-    rerender(<AgentCardNode data={{
+    rerender(<DeckCardNode data={{
       ...card,
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
@@ -51,12 +51,12 @@ describe('AgentCardNode shared Card geometry', () => {
     const directHandle = screen.getByLabelText('Main orchestrator connector');
     expect(directHandle.getAttribute('data-handle-id')).toBe('card-control');
     expect(directHandle.getAttribute('data-handle-type')).toBe('source');
-    rerender(<AgentCardNode data={{
+    rerender(<DeckCardNode data={{
       ...card,
       runtimeOptions: { orchestrator: true },
     }} />);
     expect(screen.getByLabelText('Test Agent orchestrator connector').getAttribute('data-handle-id')).toBe('card-control');
-    rerender(<AgentCardNode data={{
+    rerender(<DeckCardNode data={{
       ...card,
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
@@ -67,7 +67,7 @@ describe('AgentCardNode shared Card geometry', () => {
 
   it('keeps Main and ordinary agents on the same compact rounded Card geometry', () => {
     const { container, rerender } = render(
-      <AgentCardNode
+      <DeckCardNode
         data={{ ...baseCard, runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' } }}
       />,
     );
@@ -77,7 +77,7 @@ describe('AgentCardNode shared Card geometry', () => {
     expect(card.dataset.cardShape).toBe('rounded');
     expect(screen.queryByTestId('main-card-hexagon')).toBeNull();
 
-    rerender(<AgentCardNode data={{
+    rerender(<DeckCardNode data={{
       ...baseCard,
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
@@ -90,14 +90,14 @@ describe('AgentCardNode shared Card geometry', () => {
   });
 
   it('keeps ordinary Cards rounded and never enables Magnetic orange output', () => {
-    const { container, rerender } = render(<AgentCardNode data={{
+    const { container, rerender } = render(<DeckCardNode data={{
       ...baseCard,
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal' },
     }} />);
     expect((container.firstElementChild as HTMLElement).dataset.cardShape).toBe('rounded');
     expect(screen.queryByLabelText('Test Agent orchestrator connector')).toBeNull();
 
-    rerender(<AgentCardNode data={{
+    rerender(<DeckCardNode data={{
       ...baseCard,
       title: 'Magnetic',
       runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
@@ -107,7 +107,7 @@ describe('AgentCardNode shared Card geometry', () => {
 
   it('shows only the live numeric agent count beside the Card name', () => {
     render(
-      <AgentCardNode
+      <DeckCardNode
         data={{
           ...baseCard,
           runtime: { kind: 'hermes', mode: 'delegate', profile: 'test-agent' },
@@ -129,7 +129,7 @@ describe('AgentCardNode shared Card geometry', () => {
 
   it('shows no badge when dormant or finished and preserves the existing runtime glow', () => {
     const { container, rerender } = render(
-      <AgentCardNode
+      <DeckCardNode
         data={{
           ...baseCard,
           runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
@@ -145,7 +145,7 @@ describe('AgentCardNode shared Card geometry', () => {
     expect(activeShadow).not.toContain('242, 166, 74');
 
     rerender(
-      <AgentCardNode
+      <DeckCardNode
         data={{
           ...baseCard,
           runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
@@ -160,7 +160,7 @@ describe('AgentCardNode shared Card geometry', () => {
 
   it('does not project historical learning counts as live Card activity', () => {
     render(
-      <AgentCardNode
+      <DeckCardNode
         data={{
           ...baseCard,
           runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },

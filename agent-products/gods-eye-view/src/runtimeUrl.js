@@ -2,7 +2,7 @@ let configuredBaseUrl = null;
 
 /**
  * Configure the one native application's provider/asset base. Direct-mount
- * uses LiquidAIty's same-origin `/worldview-native/` proxy; standalone keeps
+ * uses LiquidAIty's same-origin `/worldview-gods-eye/` proxy; standalone keeps
  * the vendor origin. The returned disposer makes remount ownership explicit.
  */
 export function configureRuntimeBaseUrl(baseUrl) {
@@ -17,7 +17,7 @@ export function configureRuntimeBaseUrl(baseUrl) {
   };
 }
 
-/** Resolve vendor-owned endpoints against the active native runtime host. */
+/** Resolve vendor-owned endpoints against the active God's Eye runtime host. */
 export function runtimeUrl(path) {
   const value = String(path || '');
   if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(value)) return value;

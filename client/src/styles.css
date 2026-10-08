@@ -20,7 +20,7 @@
   }
 
   /* One scrollbar look everywhere: small, neutral grey, transparent track —
-     the same recipe BuilderChat already proved locally. Kills the default
+     the same recipe SharedCardChat already proved locally. Kills the default
      chunky white Windows scrollbars on every panel, drawer, console, and
      graph surface. */
   * {

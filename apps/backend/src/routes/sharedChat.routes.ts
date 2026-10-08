@@ -9,7 +9,7 @@ import {
   type ConversationMessage,
 } from '../conversations/store';
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
-import { getProject } from '../services/projectStore';
+import { getOwnedProjectByReference } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
 import { internalMcpAuthorization, resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 import {
@@ -53,7 +53,7 @@ async function authorizeProject(
     res.status(401).json({ ok: false, error: 'main_owner_authentication_required' });
     return null;
   }
-  const project = await getProject(projectId, userId);
+  const project = await getOwnedProjectByReference(projectId, userId);
   if (!project || project.ownerUserId !== userId) {
     res.status(403).json({ ok: false, error: 'main_project_access_denied' });
     return null;
@@ -67,7 +67,7 @@ function writeSse(res: Response, eventName: string, payload: Record<string, unkn
   return true;
 }
 
-sharedChatRoutes.post('/chat', async (req, res) => {
+sharedChatRoutes.post('/turn', async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || DEFAULT_PROJECT_DECK_ID).trim();
   const conversationId = String(req.body?.conversationId || 'main').trim();
@@ -284,7 +284,7 @@ sharedChatRoutes.post('/chat', async (req, res) => {
       code: error instanceof Error ? error.message : 'hermes_turn_failed',
       message: error instanceof Error ? error.message : 'The Hermes turn failed.',
       correlationId: run.runId,
-      route: '/api/main/session/chat',
+      route: '/api/shared-chat/turn',
       status: 502,
     });
   } finally {

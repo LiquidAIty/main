@@ -1,5 +1,5 @@
 /**
- * Frontend client for shared chat over saved Cards' persistent Hermes Gateway
+ * Frontend client for shared saved-Card chat over persistent Hermes Gateway
  * sessions. Omitting `targetCardId` resolves to Main; an exact selected Card ID
  * or matching leading address resolves to that saved Project Card before any
  * inference. The browser consumes backend SSE while each Card-owned Gateway
@@ -9,7 +9,7 @@
  * resolves with the Hermes completion text. Stable event IDs are delivered
  * once per connection; semantic classification remains server-owned.
  */
-import type { AgentCardInstance } from '../../../types/agentgraph';
+import type { DeckCard } from '../../../types/agentgraph';
 
 export type HermesSessionEvent = {
   kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
@@ -67,14 +67,14 @@ const DIRECT_CHAT_ADDRESS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
  */
 export function projectCardChatTargets(
   cards: readonly Pick<
-    AgentCardInstance,
+    DeckCard,
     'id' | '_cardRevisionId' | 'title' | 'runtime' | 'runtimeOptions'
   >[],
 ): DirectChatTarget[] {
   return cards.flatMap((card) => {
     const record = card as typeof card & { enabled?: boolean };
     const runtimeOptions = card.runtimeOptions as (
-      NonNullable<AgentCardInstance['runtimeOptions']> & { enabled?: boolean }
+      NonNullable<DeckCard['runtimeOptions']> & { enabled?: boolean }
     ) | null | undefined;
     const cardId = card.id.trim();
     const cardRevisionId = String(card._cardRevisionId || '').trim();
@@ -103,7 +103,7 @@ export type SharedChatMessage = {
   target?: SharedChatParticipant;
 };
 
-const BASE = '/api/main/session';
+const BASE = '/api/shared-chat';
 
 export type GraphRecordIdentity =
   | { engraphisMemoryId: string }
@@ -164,7 +164,7 @@ export async function streamSession(args: {
   onEvent: (event: HermesSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
-  const res = await fetch(`${BASE}/chat`, {
+  const res = await fetch(`${BASE}/turn`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -192,7 +192,7 @@ export async function streamSession(args: {
       correlationId: typeof payload?.correlationId === 'string'
         ? payload.correlationId
         : undefined,
-      route: `${BASE}/chat`,
+      route: `${BASE}/turn`,
       status: res.status,
     });
   }
@@ -242,7 +242,7 @@ export async function streamSession(args: {
     throw new SessionStreamError({
       code: 'session_stream_incomplete',
       message: 'The chat stream ended before reporting completion.',
-      route: `${BASE}/chat`,
+      route: `${BASE}/turn`,
     });
   }
   return { finalText };

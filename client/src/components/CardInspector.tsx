@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import type { AgentCardRuntimeOptions } from '../types/agentgraph';
-import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
+import type { SavedCardConfiguration } from '../types/agentgraph';
 import {
   assertUniqueCanonicalPromptSections,
   buildCardConfigurationFromEditorFields,
   buildInputDictionarySelectedRows,
-  cardPromptFieldRanges,
   parseCardListEditorText,
   parseCardEditorOptions,
   parseCardPromptTemplate,
@@ -16,10 +14,17 @@ import {
   type CardEditorModelOption,
   type CardPromptFields,
   type InputDictionaryEditorField,
-  type InputDictionaryEditorOption,
   type InputDictionaryToolPage,
 } from '../features/agentbuilder/cardConfigurationEditor';
-import { CardRunMetrics } from './CardRunMetrics';
+import {
+  CardInspectorPromptView,
+  CardInspectorRuntimeView,
+} from './CardInspectorPromptRuntime';
+import {
+  CardInspectorMemoryView,
+  CardInspectorSkillsView,
+  CardInspectorToolsView,
+} from './CardInspectorCapabilities';
 import {
   applyHermesCardOperation,
   loadHermesCardProfile,
@@ -28,11 +33,10 @@ import {
   type HermesCardProfileView,
 } from '../features/agentbuilder/hermesCardProfile';
 
-type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
-type SavedSubagentType = NonNullable<AgentCardRuntimeOptions['subagentType']>;
-type SavedCardScript = NonNullable<AgentCardRuntimeOptions['script']>;
-type SavedJevContext = NonNullable<AgentCardRuntimeOptions['jevContext']>;
-type JevContextMode = NonNullable<SavedJevContext['autoTools']>;
+type SavedSubagentModel = NonNullable<SavedCardConfiguration['subagentModel']>;
+type SavedSubagentType = NonNullable<SavedCardConfiguration['subagentType']>;
+type SavedCardScript = NonNullable<SavedCardConfiguration['script']>;
+type SavedJevContext = NonNullable<SavedCardConfiguration['jevContext']>;
 const DEFAULT_JEV_CONTEXT: Required<SavedJevContext> = {
   autoTools: 'inherited',
   modelChoice: 'inherited',
@@ -480,7 +484,7 @@ export function CardInspector({
       toolsetsText,
       mcpConnectionIdsText,
     });
-    const runtimeOptions: AgentCardRuntimeOptions = {
+    const runtimeOptions: SavedCardConfiguration = {
       ...(localConfig.runtime_options || {}),
       ...(
         runtimeKind === 'hermes' && runtimeMode === 'magentic_one'
@@ -711,26 +715,12 @@ export function CardInspector({
     (option) => (modelsByProvider[option.value] || []).length > 0,
   );
   const legacyTeam = (
-    localConfig?.runtime_options as (AgentCardRuntimeOptions & { team?: { mode?: unknown } }) | null | undefined
+    localConfig?.runtime_options as (SavedCardConfiguration & { team?: { mode?: unknown } }) | null | undefined
   )?.team;
   const preservesHermesAutoTeam = runtimeKind === 'hermes'
     && localConfig?.runtime_options?.subagentType === undefined
     && legacyTeam?.mode === 'auto';
   const accessModeOptions = accessModeField?.options || [];
-  const jevContextLabel = (mode: JevContextMode) => ({
-    inherited: 'Inherited / current behavior',
-    request_card: 'Current request + saved Card',
-    conversation_window: 'Add bounded conversation window',
-    selected_graph_context: 'Add selected graph context',
-  })[mode];
-  const supportedJevContextOptions = (field: InputDictionaryEditorField | undefined) => (
-    (field?.options || []).filter((option): option is InputDictionaryEditorOption & { value: JevContextMode } => (
-      option.value === 'inherited'
-      || option.value === 'request_card'
-      || option.value === 'conversation_window'
-      || option.value === 'selected_graph_context'
-    ))
-  );
   const runtimeDictionaryReady = Boolean(
     runtimeOptionsStatus === 'ready'
     && providerField
@@ -821,1166 +811,6 @@ export function CardInspector({
     toolDictionaryQuery,
   ]);
 
-  const renderSectionBody = (sectionTab: string) => {
-    if (sectionTab === 'Prompt') {
-      const orchestratorOn = runtimeKind === 'hermes'
-        && runtimeMode !== 'magentic_one'
-        && (runtimeMode === 'main' || orchestratorEnabled);
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {runtimeKind === 'hermes' && runtimeMode !== 'magentic_one' ? (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#E0DED5', fontSize: 12 }}>
-              <input
-                type="checkbox"
-                aria-label="Orchestrator"
-                checked={orchestratorOn}
-                disabled={runtimeMode === 'main'}
-                onChange={(event) => {
-                  setOrchestratorEnabled(event.target.checked);
-                  setOrchestratorTouched(true);
-                  markDraftDirty();
-                }}
-              />
-              Orchestrator
-            </label>
-          ) : null}
-
-          {orchestratorOn && outboundOrangeConnections.length > 0 ? (
-            <label style={{ display: 'grid', gap: 7, color: '#E0DED5', fontSize: 12 }}>
-              <span style={{ fontWeight: 700 }}>All connected agents</span>
-              <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {outboundOrangeConnections.map((connection) => (
-                  <span
-                    key={`${connection.direction}:${connection.cardId}`}
-                    style={{
-                      padding: '3px 7px',
-                      borderRadius: 999,
-                      border: '1px solid rgba(242,166,74,.28)',
-                      background: 'rgba(242,166,74,.08)',
-                      color: '#F0D2A9',
-                      fontSize: 10,
-                    }}
-                  >
-                    {connection.title}
-                  </span>
-                ))}
-              </span>
-              <textarea
-                aria-label="All connected agents"
-                value={promptParts.connectedAgents}
-                placeholder={outboundOrangeConnections
-                  .map((connection) => (
-                    `${connection.title} is a connected teammate. Describe when and why this Card should call it.`
-                  ))
-                  .join('\n')}
-                onChange={(event) => {
-                  setPromptParts((current) => ({ ...current, connectedAgents: event.target.value }));
-                  setPromptPartsTouched((current) => ({ ...current, connectedAgents: true }));
-                  markDraftDirty();
-                }}
-                rows={Math.max(5, Math.min(10, outboundOrangeConnections.length + 3))}
-                style={{
-                  width: '100%',
-                  padding: 10,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid rgba(242,166,74,.26)',
-                  borderRadius: 8,
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                  resize: 'vertical',
-                }}
-              />
-            </label>
-          ) : null}
-
-          {onChangeCardName ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {onChangeCardName ? (
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    Name
-                  </label>
-                  <input
-                    type="text"
-                    value={cardNameDraft}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      setCardNameDraft(nextValue);
-                      onChangeCardName(nextValue);
-                    }}
-                    placeholder="Enter agent name"
-                    style={{
-                      width: '100%',
-                      padding: 8,
-                      background: '#2B2B2B',
-                      color: '#FFF',
-                      border: '1px solid #3A3A3A',
-                      borderRadius: 8,
-                    }}
-                  />
-                </div>
-              ) : null}
-
-            </div>
-          ) : null}
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Role
-            </label>
-            <textarea
-              aria-label="Role"
-              value={promptParts.role}
-              onChange={(event) => {
-                setPromptParts((current) => ({ ...current, role: event.target.value }));
-                setPromptPartsTouched((current) => ({ ...current, role: true }));
-                markDraftDirty();
-              }}
-              rows={5}
-              style={{
-                width: '100%',
-                padding: 10,
-                background: '#2B2B2B',
-                color: '#FFF',
-                border: '1px solid #3A3A3A',
-                borderRadius: 8,
-                fontFamily: 'monospace',
-                fontSize: 13,
-                resize: 'vertical',
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Goal
-            </label>
-            <textarea
-              aria-label="Goal"
-              value={promptParts.goal}
-              onChange={(event) => {
-                setPromptParts((current) => ({ ...current, goal: event.target.value }));
-                setPromptPartsTouched((current) => ({ ...current, goal: true }));
-                markDraftDirty();
-              }}
-              rows={5}
-              style={{
-                width: '100%',
-                padding: 10,
-                background: '#2B2B2B',
-                color: '#FFF',
-                border: '1px solid #3A3A3A',
-                borderRadius: 8,
-                fontFamily: 'monospace',
-                fontSize: 13,
-                resize: 'vertical',
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Constraints
-            </label>
-            <textarea
-              aria-label="Constraints"
-              value={promptParts.constraints}
-              onChange={(event) => {
-                setPromptParts((current) => ({ ...current, constraints: event.target.value }));
-                setPromptPartsTouched((current) => ({ ...current, constraints: true }));
-                markDraftDirty();
-              }}
-              rows={5}
-              style={{
-                width: '100%',
-                padding: 10,
-                background: '#2B2B2B',
-                color: '#FFF',
-                border: '1px solid #3A3A3A',
-                borderRadius: 8,
-                fontFamily: 'monospace',
-                fontSize: 13,
-                resize: 'vertical',
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Input schema
-            </label>
-            <textarea
-              aria-label="Input schema"
-              value={promptParts.ioSchema}
-              onChange={(event) => {
-                setPromptParts((current) => ({ ...current, ioSchema: event.target.value }));
-                setPromptPartsTouched((current) => ({ ...current, ioSchema: true }));
-                markDraftDirty();
-              }}
-              rows={5}
-              style={{
-                width: '100%',
-                padding: 10,
-                background: '#2B2B2B',
-                color: '#FFF',
-                border: '1px solid #3A3A3A',
-                borderRadius: 8,
-                fontFamily: 'monospace',
-                fontSize: 13,
-                resize: 'vertical',
-              }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Output expectations
-            </label>
-            <textarea
-              aria-label="Output expectations"
-              value={promptParts.outputExpectations}
-              onChange={(event) => {
-                setPromptParts((current) => ({ ...current, outputExpectations: event.target.value }));
-                setPromptPartsTouched((current) => ({ ...current, outputExpectations: true }));
-                markDraftDirty();
-              }}
-              rows={5}
-              style={{
-                width: '100%',
-                padding: 10,
-                background: '#2B2B2B',
-                color: '#FFF',
-                border: '1px solid #3A3A3A',
-                borderRadius: 8,
-                fontFamily: 'monospace',
-                fontSize: 13,
-                resize: 'vertical',
-              }}
-            />
-          </div>
-
-          {cardPromptFieldRanges(promptText).filter((block) => (
-            !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations', 'connectedAgents'].includes(block.key)
-            && (block.start !== block.end || promptPartsTouched[block.key])
-          )).map((block) => (
-            <label key={block.key} style={{ display: 'grid', gap: 6, color: '#E0DED5', fontSize: 12 }}>
-              {block.key === 'memoryPolicy' ? 'Memory policy' : block.label}
-              <textarea
-                aria-label={block.key === 'memoryPolicy' ? 'Memory policy' : block.label}
-                value={promptParts[block.key] ?? ''}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setPromptParts((current) => ({ ...current, [block.key]: value }));
-                  setPromptPartsTouched((current) => ({ ...current, [block.key]: true }));
-                  markDraftDirty();
-                }}
-                rows={5}
-                style={{ width: '100%', padding: 10, background: '#2B2B2B', color: '#FFF',
-                  border: '1px solid #3A3A3A', borderRadius: 8, fontFamily: 'monospace',
-                  fontSize: 13, resize: 'vertical' }}
-              />
-            </label>
-          ))}
-
-        </div>
-      );
-    }
-    if (sectionTab === 'Script' && localConfig) {
-      return (
-        <CardScriptEditor
-          cardId={cardId}
-          runtimeKind={localConfig.runtime.kind}
-          script={scriptDraft}
-          selectedTools={savedToolNames}
-          onChange={updateScriptDraft}
-        />
-      );
-    }
-    if (sectionTab === 'Skills') {
-      return (
-        <section
-          data-testid="card-inspector-skills"
-          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
-        >
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Skills</div>
-          <textarea
-            aria-label="Card skill grants"
-            value={skillsText}
-            onChange={(event) => {
-              setSkillsText(event.target.value);
-              markDraftDirty();
-            }}
-            placeholder="One skill ID per line"
-            rows={5}
-          />
-          {runtimeKind !== 'hermes' ? null : hermesProfileStatus === 'failed' ? (
-            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {hermesProfileError || 'Skills unavailable.'}
-            </div>
-          ) : hermesProfileState ? (
-            <>
-              <details data-testid="effective-hermes-skills">
-                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Loaded
-                </summary>
-                <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
-                  {hermesProfileState.profile.skills.map((skill) => (
-                    <div key={skill.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
-                      {skill.name} · {skill.enabled ? 'enabled' : 'disabled'}
-                    </div>
-                  ))}
-                </div>
-              </details>
-              {hermesProfileState.profile.learning.buckets.some((bucket) => bucket.nodes.length > 0) ? (
-                <section aria-label="Learning" style={{ display: 'grid', gap: 7 }}>
-                  <div style={{ color: '#D5E4E8', fontSize: 11.5, fontWeight: 600 }}>Learning</div>
-                  {hermesProfileState.profile.learning.buckets.map((bucket) => (
-                    bucket.nodes.length ? (
-                      <div key={`${bucket.index}:${bucket.date}`} style={{ display: 'grid', gap: 5 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#80969F', fontSize: 10.5 }}>
-                          <span aria-hidden="true" style={{ width: 5, height: 5, borderRadius: '50%', background: bucket.color || '#80969F' }} />
-                          <span>{bucket.label || bucket.date}</span>
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                          {bucket.nodes.map((node) => (
-                            <button
-                              key={node.id}
-                              type="button"
-                              aria-label={`Open ${node.fullLabel || node.label}`}
-                              title={node.meta || node.fullLabel || node.label}
-                              onClick={() => void openHermesLearningNode(node.id)}
-                              style={{
-                                minWidth: 0,
-                                padding: '4px 7px',
-                                border: '1px solid #3A4A4F',
-                                borderRadius: 999,
-                                background: '#18201F',
-                                color: '#B8C8CD',
-                                fontSize: 10.5,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {node.glyph ? `${node.glyph} ` : ''}{node.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null
-                  ))}
-                </section>
-              ) : null}
-              {hermesLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening…</div> : null}
-              {hermesLearningStatus === 'failed' ? (
-                <div role="alert" style={{ color: '#FFA2A2' }}>{hermesLearningError}</div>
-              ) : null}
-              {hermesLearningDetail ? (
-                <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
-                  <strong>{hermesLearningDetail.kind}: {hermesLearningDetail.label}</strong>
-                  <textarea
-                    aria-label="Learning"
-                    value={hermesLearningDraft}
-                    onChange={(event) => {
-                      setHermesLearningDraft(event.target.value);
-                      learningEditsRef.current.set(hermesLearningDetail.id, event.target.value);
-                      markProfileDraftDirty();
-                    }}
-                    rows={10}
-                    style={{ width: '100%', minWidth: 0, padding: 10, background: '#161A1B', color: '#D5E4E8', border: '1px solid #42565C', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
-                  />
-                </section>
-              ) : null}
-            </>
-          ) : (
-            <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Loading…</div>
-          )}
-        </section>
-      );
-    }
-
-    if (sectionTab === 'Memory') {
-      return (
-        <section
-          data-testid="card-inspector-memory"
-          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
-        >
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Memory</div>
-          {runtimeKind === 'hermes' && hermesProfileStatus === 'failed' ? (
-            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {hermesProfileError || 'Memory unavailable.'}
-            </div>
-          ) : null}
-        </section>
-      );
-    }
-
-    if (sectionTab === 'Runtime') {
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {onSetProjectCodeFolder ? (
-            <form
-              aria-label="Builder Project code folder"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void setProjectCodeFolder();
-              }}
-              style={{
-                display: 'grid',
-                gap: 8,
-                padding: 10,
-                border: '1px solid #3A4A50',
-                borderRadius: 8,
-                background: '#20292D',
-              }}
-            >
-              <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-                Project code folder
-                <input
-                  aria-label="Project code folder"
-                  type="text"
-                  value={projectFolderDraft}
-                  onChange={(event) => {
-                    setProjectFolderDraft(event.target.value);
-                    setProjectFolderStatus('idle');
-                    setProjectFolderError(null);
-                  }}
-                  placeholder="worker-agent-ui"
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-              </label>
-              <div style={{ color: '#91A9B8', fontSize: 11 }}>
-                Name one folder in this Project's managed storage. Builder uses it for worker-agent code, agent UIs, hosted webapps, and its Hermes terminal.
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button type="submit" disabled={projectFolderStatus === 'saving'}>
-                  {projectFolderStatus === 'saving' ? 'Setting…' : 'Set folder'}
-                </button>
-                {projectFolderStatus === 'saved' ? (
-                  <span role="status" style={{ color: '#8ED0AE', fontSize: 11 }}>Folder path saved.</span>
-                ) : null}
-                {projectFolderStatus === 'failed' ? (
-                  <span role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-                    {projectFolderError || 'Could not save the Project code folder.'}
-                  </span>
-                ) : null}
-              </div>
-            </form>
-          ) : null}
-          {!runtimeDictionaryReady ? (
-            <div role={runtimeOptionsStatus === 'loading' ? 'status' : 'alert'} style={{ color: '#E0DED5', fontSize: 12 }}>
-              {runtimeOptionsStatus === 'loading'
-                ? 'Loading runtime options… Saved values are unchanged.'
-                : 'Runtime options unavailable. Saved values are unchanged.'}
-            </div>
-          ) : null}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    Provider
-                  </label>
-                  <select
-                    aria-label="Provider"
-                    disabled={!runtimeDictionaryReady}
-                    value={provider}
-                    onChange={(event) => {
-                      setProvider(event.target.value as typeof provider);
-                      markDraftDirty();
-                    }}
-                  >
-                    <option value="">Unset</option>
-                    {provider && !providerOptions.some((option) => option.value === provider) ? (
-                      <option value={provider}>{provider} (unavailable — saved)</option>
-                    ) : null}
-                    {providerOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    Access mode
-                  </label>
-                  <select
-                    data-testid="agent-access-mode"
-                    aria-label="Access mode"
-                    disabled={!runtimeDictionaryReady}
-                    value={accessMode}
-                    onChange={(event) => {
-                      setAccessMode(event.target.value as typeof accessMode);
-                      markDraftDirty();
-                    }}
-                  >
-                    <option value="">Select access mode</option>
-                    {accessMode && !accessModeOptions.some((option) => option.value === accessMode) ? (
-                      <option value={accessMode}>{accessMode} (saved)</option>
-                    ) : null}
-                    {accessModeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    Model
-                  </label>
-                  <select
-                    aria-label="Model"
-                    disabled={!runtimeDictionaryReady}
-                    value={modelKey}
-                    onChange={(event) => {
-                      const key = event.target.value;
-                      const selected = availableModels.find((model) => model.key === key);
-                      if (key && !selected) return;
-                      setModel({ key, providerModelId: selected?.providerModelId ?? null });
-                      setAutoSelect(false);
-                      markDraftDirty();
-                    }}
-                  >
-                    <option value="">Select model</option>
-                    {modelKey && !availableModels.some((model) => model.key === modelKey) ? (
-                      <option value={modelKey}>{modelKey} (unavailable — saved)</option>
-                    ) : null}
-                    {availableModels.map((model) => (
-                      <option key={model.key} value={model.key}>{model.label}</option>
-                    ))}
-                  </select>
-                  {runtimeDictionaryReady && !availableModels.length ? (
-                    <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
-                      No configured models available for this provider. Saved selection is unchanged.
-                    </div>
-                  ) : null}
-                  {runtimeKind === 'hermes' ? (
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, color: '#91A9B8', fontSize: 11 }}>
-                      <input
-                        type="checkbox"
-                        aria-label="Auto-select model with Jev"
-                        checked={autoSelect}
-                        onChange={(event) => {
-                          setAutoSelect(event.target.checked);
-                          markDraftDirty();
-                        }}
-                      />
-                      Auto-select with Jev
-                    </label>
-                  ) : null}
-                </div>
-                {runtimeKind === 'hermes'
-                && runtimeMode !== 'magentic_one'
-                && !preservesHermesAutoTeam
-                && subagentTypeField?.control === 'select' ? (
-                  <div>
-                    <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                      {subagentTypeField.label}
-                    </label>
-                    <select
-                      aria-label={subagentTypeField.label}
-                      disabled={!runtimeDictionaryReady}
-                      value={subagentType}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        if (value !== 'none' && value !== 'leaf' && value !== 'recursive') return;
-                        setSubagentType(value);
-                        setSubagentTypeTouched(true);
-                        markDraftDirty();
-                      }}
-                    >
-                      {(subagentTypeField.options || [])
-                        .filter((option) => (
-                          option.value === 'none'
-                          || option.value === 'leaf'
-                          || option.value === 'recursive'
-                        ))
-                        .map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.value === 'none'
-                              ? 'None'
-                              : option.value === 'leaf'
-                                ? 'Leaf'
-                                : 'Recursive'}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                ) : null}
-              </>
-
-            {runtimeKind !== 'hermes' ? <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Reasoning effort
-              </label>
-              <select
-                aria-label="Reasoning effort"
-                disabled={!runtimeDictionaryReady}
-                value={reasoningEffort}
-                onChange={(event) => {
-                  setReasoningEffort(
-                    event.target.value as 'low' | 'medium' | 'high' | 'xhigh' | '',
-                  );
-                  markDraftDirty();
-                }}
-                style={{
-                  width: '100%',
-                  padding: 8,
-                  background: '#2B2B2B',
-                  color: '#FFF',
-                  border: '1px solid #3A3A3A',
-                  borderRadius: 8,
-                }}
-              >
-                <option value="">Model default</option>
-                {reasoningEffort && !reasoningEffortField?.options?.some((option) => option.value === reasoningEffort) ? (
-                  <option value={reasoningEffort}>{reasoningEffort} (saved)</option>
-                ) : null}
-                {(reasoningEffortField?.options || []).map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </div> : null}
-          </div>
-          {runtimeKind === 'hermes' ? (
-            <details style={{ padding: 9, border: '1px solid #3A4A4F', borderRadius: 7,
-              background: '#1A2221' }}>
-              <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 12, fontWeight: 600 }}>
-                Jev context
-              </summary>
-              <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-                <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                  These choices add bounded semantic evidence to this Card&apos;s model-choice and Auto-tools decisions.
-                  The current request, saved Card contract, candidates, and grants always remain required. No choice grants data or tools.
-                </div>
-                {[{
-                  key: 'modelChoice' as const,
-                  label: jevModelChoiceContextField?.label || 'Model-choice context',
-                  field: jevModelChoiceContextField,
-                }, {
-                  key: 'autoTools' as const,
-                  label: jevAutoToolsContextField?.label || 'Auto-tools context',
-                  field: jevAutoToolsContextField,
-                }].map(({ key, label, field }) => {
-                  const options = supportedJevContextOptions(field);
-                  const current = jevContext[key];
-                  return (
-                    <label key={key} style={{ display: 'grid', gap: 5, color: '#B9CDD2', fontSize: 11 }}>
-                      {label}
-                      <select
-                        aria-label={label}
-                        disabled={!runtimeDictionaryReady || !options.length}
-                        value={current}
-                        onChange={(event) => {
-                          const selected = event.target.value as JevContextMode;
-                          if (!options.some((option) => option.value === selected)) return;
-                          setJevContext((value) => ({ ...value, [key]: selected }));
-                          setJevContextTouched(true);
-                          markDraftDirty();
-                        }}
-                      >
-                        {current && !options.some((option) => option.value === current) ? (
-                          <option value={current}>{jevContextLabel(current)} (saved)</option>
-                        ) : null}
-                        {options.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {jevContextLabel(option.value)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  );
-                })}
-                {!supportedJevContextOptions(jevModelChoiceContextField).length
-                || !supportedJevContextOptions(jevAutoToolsContextField).length ? (
-                  <div role="status" style={{ color: '#D2A86B', fontSize: 10.5 }}>
-                    Jev context choices are unavailable from the current Input Data Dictionary; saved policy is unchanged.
-                  </div>
-                ) : null}
-                <div style={{ color: '#71878D', fontSize: 10 }}>
-                  Graph Focus, Think/Know relationship classification, and fulfillment scoring keep their purpose-specific provider inputs;
-                  they are not silently reconfigured by these Card-level choices.
-                </div>
-              </div>
-            </details>
-          ) : null}
-          {runtimeKind !== 'hermes' ? <>
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-              Advanced runtime
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-              <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Temperature
-              </label>
-              <input
-                aria-label="Temperature"
-                disabled={!runtimeDictionaryReady}
-                type="number"
-                min={temperatureField?.minimum}
-                max={temperatureField?.maximum}
-                step={temperatureField?.step}
-                value={temperature}
-                onChange={(event) => {
-                  setTemperature(event.target.value === '' ? '' : event.target.valueAsNumber);
-                  markDraftDirty();
-                }}
-              />
-              </div>
-              <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Max tokens
-              </label>
-              <input
-                aria-label="Max tokens"
-                disabled={!runtimeDictionaryReady}
-                type="number"
-                min={maxTokensField?.minimum}
-                max={maxTokensField?.maximum}
-                step={maxTokensField?.step}
-                value={maxTokens}
-                onChange={(event) => {
-                  setMaxTokens(event.target.value === '' ? '' : event.target.valueAsNumber);
-                  markDraftDirty();
-                }}
-              />
-              </div>
-              <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Max turns
-              </label>
-              <input
-                aria-label="Max turns"
-                disabled={!runtimeDictionaryReady}
-                type="number"
-                min={maxTurnsField?.minimum}
-                max={maxTurnsField?.maximum}
-                step={maxTurnsField?.step}
-                value={maxTurns}
-                onChange={(event) => {
-                  setMaxTurns(event.target.value === '' ? '' : event.target.valueAsNumber);
-                  markDraftDirty();
-                }}
-              />
-              </div>
-            </div>
-          </> : null}
-
-        </div>
-      );
-    }
-
-    if (sectionTab === 'Tools') {
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Application capabilities
-          </div>
-          {runtimeKind === 'hermes' ? (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#91A9B8', fontSize: 11 }}>
-              <input
-                type="checkbox"
-                aria-label="Auto-tools with Jev"
-                checked={autoTools}
-                onChange={(event) => {
-                  setAutoTools(event.target.checked);
-                  markDraftDirty();
-                }}
-              />
-              Auto-tools · choose only from this Card's selected authorized tools
-            </label>
-          ) : null}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-            <input
-              value={toolDictionaryQuery}
-              onChange={(event) => {
-                setToolDictionaryQuery(event.target.value);
-                setToolDictionaryOffset(0);
-              }}
-              placeholder="Search ID, name, namespace, or description"
-              aria-label="Search tools"
-            />
-            <select
-              value={toolDictionaryNamespace}
-              onChange={(event) => {
-                setToolDictionaryNamespace(event.target.value);
-                setToolDictionaryOffset(0);
-              }}
-              aria-label="Filter tools by namespace"
-            >
-              <option value="">All namespaces</option>
-              {toolDictionaryPage.namespaces.map((namespace) => (
-                <option key={namespace} value={namespace}>{namespace}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ color: '#91A9B8', fontSize: 11 }}>
-              <input
-                type="checkbox"
-                checked={showSelectedToolsOnly}
-                onChange={(event) => setShowSelectedToolsOnly(event.target.checked)}
-              />{' '}
-              Selected only
-            </label>
-            <button
-              type="button"
-              disabled={!savedToolNames.length}
-              onClick={() => {
-                setToolsText('');
-                markDraftDirty();
-              }}
-            >
-              Clear selected
-            </button>
-            <span style={{ color: '#80969F', fontSize: 11 }}>
-              {toolDictionaryBusy ? 'Loading tools…' : !toolOptionsError ? `${toolDictionaryPage.total.toLocaleString()} tools` : null}
-            </span>
-          </div>
-          {toolOptionsError ? (
-            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              Tool options unavailable. Saved selections are unchanged.
-            </div>
-          ) : null}
-          {selectedToolRows.length ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Selected · {selectedToolRows.length}
-              </div>
-              {selectedToolRows.map((tool) => (
-                <label
-                  key={tool.name}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '18px 1fr',
-                    gap: 8,
-                    alignItems: 'start',
-                    padding: '7px 8px',
-                    border: '1px solid #3A4A4F',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={savedToolNames.includes(tool.name)}
-                    onChange={(event) => {
-                      if (!event.target.checked || tool.availability === 'available') {
-                        toggleTool(tool.name, event.target.checked);
-                      }
-                    }}
-                    aria-label={`Include ${tool.title || tool.name}`}
-                  />
-                  <span>
-                    <span title={tool.description} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
-                      {tool.title || tool.name}
-                    </span>
-                    <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
-                      {tool.availability === 'stale' ? ' · Unavailable in current catalog' : ''}
-                      {tool.availability === 'disabled' ? ' · Currently unavailable' : ''}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : null}
-          {!showSelectedToolsOnly && availableToolRows.length ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Available
-              </div>
-              {availableToolRows.map((tool) => (
-                <label
-                  key={tool.canonicalId}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '18px 1fr',
-                    gap: 8,
-                    alignItems: 'start',
-                    padding: '7px 8px',
-                    border: '1px solid #3A4A4F',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={savedToolNames.includes(tool.canonicalId)}
-                    disabled={!tool.available}
-                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
-                    aria-label={`Include ${tool.displayName || tool.canonicalId}`}
-                  />
-                  <span>
-                    <span title={tool.description} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
-                      {tool.displayName || tool.canonicalId}
-                    </span>
-                    <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
-                      {!tool.available ? ' · Unavailable in current catalog' : ''}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : !selectedToolRows.length && !toolDictionaryBusy && !toolOptionsError ? (
-            <div style={{ color: '#91A9B8', fontSize: 11 }}>
-              {showSelectedToolsOnly
-                ? 'No tools are selected for this card.'
-                : 'No tools match this search.'}
-            </div>
-          ) : null}
-          {!showSelectedToolsOnly && !toolDictionaryBusy && !toolOptionsError ? (
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <button
-                type="button"
-                disabled={toolDictionaryOffset <= 0}
-                onClick={() => setToolDictionaryOffset(Math.max(0, toolDictionaryOffset - 100))}
-              >
-                Previous
-              </button>
-              <span style={{ color: '#80969F', fontSize: 11 }}>
-                {toolDictionaryPage.total
-                  ? `${toolDictionaryPage.offset + 1}-${Math.min(toolDictionaryPage.offset + toolDictionaryPage.limit, toolDictionaryPage.total)}`
-                  : '0'}
-              </span>
-              <button
-                type="button"
-                disabled={!toolDictionaryPage.hasMore}
-                onClick={() => setToolDictionaryOffset(toolDictionaryPage.offset + toolDictionaryPage.limit)}
-              >
-                Next
-              </button>
-            </div>
-          ) : null}
-          {runtimeKind === 'hermes' ? (
-            <section
-              aria-label="Hermes capabilities"
-              data-testid="hermes-toolsets"
-              style={{
-                display: 'grid',
-                gap: 8,
-                padding: '10px 12px',
-                border: '1px solid #3A4A4F',
-                borderRadius: 8,
-              }}
-            >
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Hermes capabilities
-              </div>
-              <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                Hermes toolsets saved on this Card. These are not MCP tools.
-              </div>
-              {hermesProfileStatus === 'failed' ? (
-                <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-                  {hermesProfileError || 'Hermes capabilities unavailable. Saved selections are unchanged.'}
-                </div>
-              ) : hermesProfileState ? (
-                hermesProfileState.profile.toolsets.length ? (
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    {hermesProfileState.profile.toolsets.map((toolset) => {
-                      const label = toolset.label || toolset.name;
-                      return (
-                        <label
-                          key={toolset.name}
-                          style={{
-                            display: 'grid',
-                            gridTemplateColumns: '18px 1fr',
-                            gap: 8,
-                            alignItems: 'start',
-                            padding: '7px 8px',
-                            border: '1px solid #344542',
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            aria-label={`Enable Hermes ${label}`}
-                            checked={savedHermesToolsetNames.includes(toolset.name)}
-                            onChange={(event) => {
-                              setToolsetsText(toggleSavedToolAssignment(
-                                savedHermesToolsetNames,
-                                toolset.name,
-                                event.target.checked,
-                              ).join('\n'));
-                              markDraftDirty();
-                            }}
-                          />
-                          <span>
-                            <span title={toolset.description} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
-                              {label}{label !== toolset.name ? ` · ${toolset.name}` : ''}
-                            </span>
-                            <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
-                              {typeof toolset.tool_count === 'number' ? `${toolset.tool_count} tools · ` : ''}
-                              Profile readback: {toolset.enabled ? 'enabled' : 'disabled'}
-                            </span>
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ color: '#80969F', fontSize: 11 }}>
-                    No Hermes toolsets are available for this profile.
-                  </div>
-                )
-              ) : (
-                <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
-                  Loading Hermes capabilities…
-                </div>
-              )}
-            </section>
-          ) : null}
-          {renderSectionBody('Script')}
-          <section
-            aria-label="External connections"
-            style={{ display: 'grid', gap: 8, padding: '10px 12px', border: '1px solid #3A4A4F', borderRadius: 8 }}
-          >
-            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>External connections</div>
-            <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-              External MCP connection references
-              <textarea
-                aria-label="External MCP connection references"
-                value={mcpConnectionIdsText}
-                onChange={(event) => {
-                  setMcpConnectionIdsText(event.target.value);
-                  markDraftDirty();
-                }}
-                placeholder="One configured connection ID per line"
-                rows={4}
-              />
-            </label>
-          </section>
-          {runtimeKind === 'hermes' && hermesProfileState ? (
-            <section
-              data-testid="effective-hermes-runtime"
-              style={{
-                display: 'grid',
-                gap: 8,
-                padding: '10px 12px',
-                border: '1px solid #3A4A4F',
-                borderRadius: 8,
-                background: '#202827',
-              }}
-            >
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                Effective runtime / diagnostics
-              </div>
-              <div style={{ color: '#91A9B8', fontSize: 11 }}>
-                Profile {hermesProfileState.binding.profile} · saved Card authority materializes at Run start. Effective Hermes profile values are read-only here.
-              </div>
-              {hermesProfileState.profile.mcpServers.length ? hermesProfileState.profile.mcpServers.map((server) => {
-                const checked = hermesMcpChecks[server.name];
-                return (
-                  <div
-                    key={server.name}
-                    style={{
-                      display: 'grid',
-                      gap: 5,
-                      padding: '8px 9px',
-                      border: '1px solid #344542',
-                      borderRadius: 6,
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ color: '#D5E4E8', fontSize: 11.5 }}>
-                        {server.name} · {server.enabled ? 'enabled' : 'disabled'} · {server.credentialStatus.replace('_', ' ')}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void checkHermesMcpServer(server.name)}
-                        disabled={!server.enabled || checked?.status === 'checking'}
-                      >
-                        {checked?.status === 'checking' ? 'Checking…' : 'Check connection'}
-                      </button>
-                    </div>
-                    <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                      {server.transport}
-                      {server.toolFilter.length ? ` · ${server.toolFilter.join(', ')}` : ''}
-                    </div>
-                    {checked ? (
-                      <div style={{ color: checked.status === 'connected' ? '#72D7C7' : checked.status === 'failed' ? '#FFA2A2' : '#80969F', fontSize: 10.5 }}>
-                        {checked.status === 'connected'
-                          ? `Connected · ${checked.toolCount} MCP tools discovered`
-                          : checked.status === 'failed'
-                            ? checked.error || 'Connection failed.'
-                            : 'Checking connection…'}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              }) : (
-                <div style={{ color: '#80969F', fontSize: 11 }}>No Hermes MCP connections are configured.</div>
-              )}
-            </section>
-          ) : null}
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const sectionBody = activeTab === 'Prompt'
-    ? (
-        <div data-testid="card-inspector-prompt-surface" style={{ display: 'grid', gap: 16 }}>
-          <section aria-label="Prompt configuration">{renderSectionBody('Prompt')}</section>
-        </div>
-      )
-    : activeTab === 'Runtime'
-      ? (
-          <div data-testid="card-inspector-runtime-surface" style={{ display: 'grid', gap: 16 }}>
-            {projectId && deckId && cardId ? (
-              <CardRunMetrics projectId={projectId} deckId={deckId} cardId={cardId} />
-            ) : null}
-            <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>
-            {runtimeKind === 'hermes'
-            && runtimeMode !== 'magentic_one'
-            && (subagentType !== 'none' || preservesHermesAutoTeam) ? (
-              <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-                Subagent model
-                <select
-                  aria-label="Subagent model"
-                  value={`${subagentModel.provider}\u0000${subagentModel.modelKey}`}
-                  onChange={(event) => {
-                    const [selectedProvider, selectedKey] = event.target.value.split('\u0000');
-                    const selected = subagentCatalogOptions.find((option) => (
-                      option.provider === selectedProvider && option.key === selectedKey
-                    ));
-                    if (!selected) return;
-                    setSubagentTouched(true);
-                    setSubagentModel({
-                      provider: selectedProvider,
-                      accessMode: subagentAccessMode(selectedProvider),
-                      modelKey: selected.key,
-                      providerModelId: selected.providerModelId,
-                    });
-                    markDraftDirty();
-                  }}
-                >
-                  {!subagentCatalogOptions.some((option) => option.provider === subagentModel.provider
-                    && option.key === subagentModel.modelKey) ? (
-                    <option value={`${subagentModel.provider}\u0000${subagentModel.modelKey}`}>
-                      {subagentModel.providerModelId} (unavailable — saved)
-                    </option>
-                  ) : null}
-                  {subagentCatalogOptions.map((option) => (
-                    <option key={`${option.provider}:${option.key}`} value={`${option.provider}\u0000${option.key}`}>
-                      {option.provider} · {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-          </div>
-        )
-      : activeTab === 'Memory'
-        ? renderSectionBody('Memory')
-        : activeTab === 'Skills'
-          ? renderSectionBody('Skills')
-          : activeTab === 'Tools'
-            ? (
-                <div data-testid="card-inspector-tools-surface" style={{ display: 'grid', gap: 16 }}>
-                  {renderSectionBody('Tools')}
-                </div>
-              )
-            : null;
-
   if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) {
     return (
       <div
@@ -1997,6 +827,284 @@ export function CardInspector({
       </div>
     );
   }
+
+  const sectionBody = activeTab === 'Prompt'
+    ? (
+        <CardInspectorPromptView
+          view={{
+            runtime: {
+              kind: runtimeKind,
+              mode: runtimeMode,
+              orchestratorEnabled,
+            },
+            outboundConnections: outboundOrangeConnections,
+            cardName: {
+              editable: Boolean(onChangeCardName),
+              draft: cardNameDraft,
+            },
+            prompt: {
+              text: promptText,
+              parts: promptParts,
+              touched: promptPartsTouched,
+            },
+          }}
+          actions={{
+            changeOrchestrator: (enabled) => {
+              setOrchestratorEnabled(enabled);
+              setOrchestratorTouched(true);
+              markDraftDirty();
+            },
+            changeCardName: (value) => {
+              setCardNameDraft(value);
+              onChangeCardName?.(value);
+            },
+            changePromptField: (field, value) => {
+              setPromptParts((current) => ({ ...current, [field]: value }));
+              setPromptPartsTouched((current) => ({ ...current, [field]: true }));
+              markDraftDirty();
+            },
+          }}
+        />
+      )
+    : activeTab === 'Runtime'
+      ? (
+          <CardInspectorRuntimeView
+            view={{
+              identity: { projectId, deckId, cardId },
+              projectFolder: {
+                editable: Boolean(onSetProjectCodeFolder),
+                draft: projectFolderDraft,
+                status: projectFolderStatus,
+                error: projectFolderError,
+              },
+              runtime: {
+                kind: runtimeKind,
+                mode: runtimeMode,
+                dictionaryReady: runtimeDictionaryReady,
+                optionsStatus: runtimeOptionsStatus,
+              },
+              modelSelection: {
+                provider,
+                accessMode,
+                modelKey,
+                autoSelect,
+                providerOptions,
+                accessModeOptions,
+                availableModels,
+              },
+              subagents: {
+                type: subagentType,
+                typeField: subagentTypeField,
+                preservesHermesAutoTeam,
+                model: subagentModel,
+                catalogOptions: subagentCatalogOptions,
+              },
+              jev: {
+                context: jevContext,
+                modelChoiceField: jevModelChoiceContextField,
+                autoToolsField: jevAutoToolsContextField,
+              },
+              reasoning: {
+                effort: reasoningEffort,
+                field: reasoningEffortField,
+              },
+              advanced: {
+                temperature,
+                maxTokens,
+                maxTurns,
+                temperatureField,
+                maxTokensField,
+                maxTurnsField,
+              },
+            }}
+            actions={{
+              submitProjectFolder: setProjectCodeFolder,
+              changeProjectFolder: (value) => {
+                setProjectFolderDraft(value);
+                setProjectFolderStatus('idle');
+                setProjectFolderError(null);
+              },
+              changeProvider: (value) => {
+                setProvider(value as typeof provider);
+                markDraftDirty();
+              },
+              changeAccessMode: (value) => {
+                setAccessMode(value as typeof accessMode);
+                markDraftDirty();
+              },
+              changeModel: (key) => {
+                const selected = availableModels.find((model) => model.key === key);
+                if (key && !selected) return;
+                setModel({ key, providerModelId: selected?.providerModelId ?? null });
+                setAutoSelect(false);
+                markDraftDirty();
+              },
+              changeAutoSelect: (enabled) => {
+                setAutoSelect(enabled);
+                markDraftDirty();
+              },
+              changeSubagentType: (type) => {
+                setSubagentType(type);
+                setSubagentTypeTouched(true);
+                markDraftDirty();
+              },
+              changeReasoningEffort: (effort) => {
+                setReasoningEffort(effort);
+                markDraftDirty();
+              },
+              changeJevContext: (key, mode) => {
+                setJevContext((value) => ({ ...value, [key]: mode }));
+                setJevContextTouched(true);
+                markDraftDirty();
+              },
+              changeTemperature: (value) => {
+                setTemperature(value);
+                markDraftDirty();
+              },
+              changeMaxTokens: (value) => {
+                setMaxTokens(value);
+                markDraftDirty();
+              },
+              changeMaxTurns: (value) => {
+                setMaxTurns(value);
+                markDraftDirty();
+              },
+              changeSubagentModel: (selectedProvider, selectedKey) => {
+                const selected = subagentCatalogOptions.find((option) => (
+                  option.provider === selectedProvider && option.key === selectedKey
+                ));
+                if (!selected) return;
+                setSubagentTouched(true);
+                setSubagentModel({
+                  provider: selectedProvider,
+                  accessMode: subagentAccessMode(selectedProvider),
+                  modelKey: selected.key,
+                  providerModelId: selected.providerModelId,
+                });
+                markDraftDirty();
+              },
+            }}
+          />
+        )
+      : activeTab === 'Memory'
+        ? (
+            <CardInspectorMemoryView
+              view={{
+                runtimeKind,
+                profileStatus: hermesProfileStatus,
+                profileError: hermesProfileError,
+              }}
+            />
+          )
+        : activeTab === 'Skills'
+          ? (
+              <CardInspectorSkillsView
+                view={{
+                  runtimeKind,
+                  skillsText,
+                  profile: {
+                    state: hermesProfileState,
+                    status: hermesProfileStatus,
+                    error: hermesProfileError,
+                  },
+                  learning: {
+                    detail: hermesLearningDetail,
+                    draft: hermesLearningDraft,
+                    status: hermesLearningStatus,
+                    error: hermesLearningError,
+                  },
+                }}
+                actions={{
+                  changeSkillGrants: (value) => {
+                    setSkillsText(value);
+                    markDraftDirty();
+                  },
+                  openLearningNode: openHermesLearningNode,
+                  changeLearningDraft: (value) => {
+                    setHermesLearningDraft(value);
+                    if (hermesLearningDetail) {
+                      learningEditsRef.current.set(hermesLearningDetail.id, value);
+                      markProfileDraftDirty();
+                    }
+                  },
+                }}
+              />
+            )
+          : activeTab === 'Tools'
+            ? (
+                <CardInspectorToolsView
+                  view={{
+                    runtimeKind: localConfig.runtime.kind,
+                    autoTools,
+                    dictionary: {
+                      query: toolDictionaryQuery,
+                      namespace: toolDictionaryNamespace,
+                      page: toolDictionaryPage,
+                      showSelectedOnly: showSelectedToolsOnly,
+                      busy: toolDictionaryBusy,
+                      error: toolOptionsError,
+                      savedToolNames,
+                      selectedRows: selectedToolRows,
+                      availableRows: availableToolRows,
+                    },
+                    hermes: {
+                      profileState: hermesProfileState,
+                      profileStatus: hermesProfileStatus,
+                      profileError: hermesProfileError,
+                      savedToolsetNames: savedHermesToolsetNames,
+                      mcpChecks: hermesMcpChecks,
+                    },
+                    script: {
+                      cardId,
+                      runtimeKind: localConfig.runtime.kind,
+                      script: scriptDraft,
+                      selectedTools: savedToolNames,
+                    },
+                    mcpConnectionIdsText,
+                  }}
+                  actions={{
+                    changeAutoTools: (enabled) => {
+                      setAutoTools(enabled);
+                      markDraftDirty();
+                    },
+                    changeToolQuery: (value) => {
+                      setToolDictionaryQuery(value);
+                      setToolDictionaryOffset(0);
+                    },
+                    changeToolNamespace: (value) => {
+                      setToolDictionaryNamespace(value);
+                      setToolDictionaryOffset(0);
+                    },
+                    changeShowSelectedOnly: setShowSelectedToolsOnly,
+                    clearSelectedTools: () => {
+                      setToolsText('');
+                      markDraftDirty();
+                    },
+                    toggleTool,
+                    showPreviousToolPage: () => {
+                      setToolDictionaryOffset(Math.max(0, toolDictionaryOffset - 100));
+                    },
+                    showNextToolPage: () => {
+                      setToolDictionaryOffset(toolDictionaryPage.offset + toolDictionaryPage.limit);
+                    },
+                    toggleHermesToolset: (name, enabled) => {
+                      setToolsetsText(toggleSavedToolAssignment(
+                        savedHermesToolsetNames,
+                        name,
+                        enabled,
+                      ).join('\n'));
+                      markDraftDirty();
+                    },
+                    changeScript: updateScriptDraft,
+                    changeMcpConnections: (value) => {
+                      setMcpConnectionIdsText(value);
+                      markDraftDirty();
+                    },
+                    checkMcpServer: checkHermesMcpServer,
+                  }}
+                />
+              )
+            : null;
 
   if (!sectionBody) {
     return null;

@@ -75,7 +75,7 @@ describe('product Card working directories', () => {
   );
 });
 
-describe('Builder managed Project repository folder', () => {
+describe('Builder managed Project code folder', () => {
   const createdRoots: string[] = [];
   const previousRoot = process.env.BUILDER_PROJECT_CODE_ROOT;
 

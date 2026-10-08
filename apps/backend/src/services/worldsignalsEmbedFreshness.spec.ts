@@ -75,10 +75,10 @@ describe('computeEmbedBundleFreshness', () => {
     expect(computeEmbedBundleFreshness(bundle, sourceDir).status).toBe('fresh');
   });
 
-  it('is fresh (not stale) when the vendor source tree is absent', () => {
+  it('reports unverified when the source tree is absent', () => {
     writeFileSync(bundle, 'built');
     const r = computeEmbedBundleFreshness(bundle, path.join(tmp, 'nonexistent'));
-    expect(r.status).toBe('fresh');
+    expect(r.status).toBe('unverified');
     expect(r.newestSourceMtimeMs).toBeNull();
   });
 });
