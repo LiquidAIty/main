@@ -3,6 +3,7 @@ export type ProviderToolContract = {
   providerToolName: string;
   connectionKind: string;
   available: boolean;
+  title?: string;
   description: string;
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;

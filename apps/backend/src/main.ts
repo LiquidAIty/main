@@ -7,11 +7,6 @@ import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 import { listenAfterRequiredMigrations } from "./db/migrations";
-import {
-  requestConnectedCardRuntimeReconcile,
-  runPythonOwnedStartupTasks,
-} from "./startup/pythonOwnedStartup";
-import { cardRuntimeManager } from "./hermes/cardRuntimeManager";
 
 const app = express();
 app.set('etag', false);
@@ -161,7 +156,6 @@ function installShutdownHooks() {
   const shutdown = async () => {
     const activeServer = globalThis.__liquidaityBackendServer__;
     try {
-      cardRuntimeManager.stopAll();
       if (activeServer) {
         await closeServer(activeServer);
       }
@@ -187,7 +181,6 @@ async function startServer() {
   const existingServer = globalThis.__liquidaityBackendServer__;
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
-    cardRuntimeManager.stopAll();
     await closePythonAgentMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;
@@ -219,20 +212,6 @@ async function startServer() {
   });
   globalThis.__liquidaityBackendServer__ = server;
   installShutdownHooks();
-  void runPythonOwnedStartupTasks({
-    isActive: () => globalThis.__liquidaityBackendServer__ === server,
-    startCardRuntimes: async () => {
-      const runtimes = await requestConnectedCardRuntimeReconcile();
-      for (const runtime of runtimes) {
-        console.log(`[BOOT] Hermes Card ready card=${runtime.cardId} profile=${runtime.profile} gatewayPid=${runtime.gatewayPid}`);
-      }
-    },
-  }).catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message !== 'python_owned_startup_cancelled') {
-      console.error(`[BOOT] Python-owned startup failed: ${message}`);
-    }
-  });
 }
 
 // Mount all routes under /api

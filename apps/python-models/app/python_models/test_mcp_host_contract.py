@@ -44,6 +44,8 @@ def test_public_mcp_identity_is_liquidaity():
 
     options = mcp_host.server.create_initialization_options()
     assert options.server_name == "LiquidAIty"
+    assert options.server_version == mcp_host._PUBLIC_MCP_VERSION
+    assert options.server_version == f"source-{mcp_host._STARTUP_SOURCE_SHA256[:12]}"
     assert options.instructions == (
         "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
         "ThinkGraph, KnowGraph, and supported agent runtimes. "
@@ -560,6 +562,8 @@ def test_graphiti_is_optional_when_provider_credentials_are_absent(monkeypatch):
     monkeypatch.setattr(mcp_host, "_GRAPHITI_TOOLS", None)
     monkeypatch.setattr(mcp_host, "_GRAPHITI_NAMES", frozenset())
     monkeypatch.setattr(mcp_host, "_GRAPHITI_UNAVAILABLE", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_COMPLETED_FAMILIES", ())
+    monkeypatch.setattr(mcp_host, "_CATALOG_UNAVAILABLE_FAMILIES", ())
     provider_initialization = []
     monkeypatch.setattr(
         mcp_host,
@@ -578,6 +582,10 @@ def test_graphiti_is_optional_when_provider_credentials_are_absent(monkeypatch):
         "dependency": "graphiti",
         "detail": "Graphiti provider credentials are not configured.",
     }
+    assert asyncio.run(
+        mcp_host._materialize_requested_provider_catalog(("graphiti",))
+    ) == []
+    assert mcp_host._CATALOG_UNAVAILABLE_FAMILIES == ("graphiti",)
 
 
 def test_graphiti_initialization_failure_never_leaks_secrets_or_kills_mcp(monkeypatch):
@@ -621,6 +629,16 @@ def test_graphiti_catalog_discovery_does_not_open_provider_connections(monkeypat
     for module_name in list(sys.modules):
         if module_name == "utils" or module_name.startswith("utils."):
             monkeypatch.delitem(sys.modules, module_name, raising=False)
+    # Another contract suite imports the vendored Hermes root, which contains a
+    # top-level utils.py. Keep that unrelated test-only path from shadowing the
+    # installed Graphiti distribution's required utils package.
+    hermes_root = os.path.normcase(os.path.abspath(
+        os.path.join(_APP_DIR, "..", "..", "..", "Hermes")
+    ))
+    monkeypatch.setattr(sys, "path", [
+        entry for entry in sys.path
+        if os.path.normcase(os.path.abspath(entry or os.curdir)) != hermes_root
+    ])
     import graphiti_mcp_server as graphiti_provider
     import mcp_host
 
@@ -1739,18 +1757,26 @@ def test_unfamiliar_cbm_tool_without_annotations_is_restricted_not_rejected(
 
     assert bound.description is None
     assert bound.inputSchema == providerTool.inputSchema
-    assert bound.annotations is None
+    assert bound.annotations.model_dump(exclude_none=True) == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    }
     assert bound.meta["liquidaityAccess"] == "write"
 
 
 @pytest.mark.parametrize("name", ["engraphis_recall_context", "engraphis_get_memory"])
-def test_operation_access_does_not_overwrite_provider_side_effect_annotations(name):
+def test_operation_access_preserves_provider_hints_and_completes_missing_metadata(name):
     import mcp_host
 
     providerTool = mcp_host.Tool(name=name, inputSchema={"type": "object"},
                           annotations={"readOnlyHint": False, "destructiveHint": False})
     bound = mcp_host._bind_operation_access(providerTool)
-    assert bound.annotations == providerTool.annotations
+    assert bound.annotations.readOnlyHint is False
+    assert bound.annotations.destructiveHint is False
+    assert bound.annotations.idempotentHint is True
+    assert bound.annotations.openWorldHint is False
     assert bound.meta["liquidaityAccess"] == "read"
 
 
@@ -2194,7 +2220,10 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
             assert tool.title == fixture.title
             assert tool.description == fixture.description
             assert tool.outputSchema == fixture.outputSchema
-            assert tool.annotations == fixture.annotations
+            expected_annotations = fixture.annotations.model_dump(exclude_none=True)
+            if namespace == "cbm" and "readOnlyHint" not in expected_annotations:
+                expected_annotations["readOnlyHint"] = False
+            assert tool.annotations.model_dump(exclude_none=True) == expected_annotations
             assert tool.meta["canonicalFixture"] == fixture.meta["canonicalFixture"]
             assert tool.inputSchema["properties"]["probe"] == {"type": "string"}
     assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
@@ -3610,8 +3639,18 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Provider search description."
     assert by_name["cbm.search_graph"].inputSchema == cbm_tools[0].inputSchema
-    assert by_name["cbm.search_graph"].annotations == cbm_tools[0].annotations
-    assert by_name["graphiti.search_nodes"].annotations == graphiti_tools[1].annotations
+    assert by_name["cbm.search_graph"].annotations.model_dump(exclude_none=True) == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+    assert by_name["graphiti.search_nodes"].annotations.model_dump(exclude_none=True) == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
     assert by_name["cbm.search_graph"].meta["liquidaityAccess"] == "read"
 
     active_scopes[:] = ["main"]

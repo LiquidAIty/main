@@ -16,7 +16,6 @@ const decks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(),
   saveDeckDocument: vi.fn(),
 }));
-const startup = vi.hoisted(() => ({ reconcile: vi.fn() }));
 const access = vi.hoisted(() => ({
   requireOwnedProject: vi.fn(),
   resolveProjectOwnerUserId: vi.fn(),
@@ -28,9 +27,6 @@ vi.mock('../services/agentBuilderStore', () => ({
   SYSTEM6_PROJECT_EDGES: systemEdges,
 }));
 vi.mock('../decks/store', () => decks);
-vi.mock('../startup/pythonOwnedStartup', () => ({
-  requestConnectedCardRuntimeReconcile: startup.reconcile,
-}));
 vi.mock('./projectAccess', () => access);
 vi.mock('../db/pool', () => ({ pool: database }));
 
@@ -67,7 +63,6 @@ beforeEach(() => {
     deck: { id: 'deck_builder', edges: systemEdges },
     meta: { deckRevision: 'topology-revision' },
   });
-  startup.reconcile.mockResolvedValue([]);
 });
 
 describe('POST /api/projects', () => {
@@ -89,7 +84,6 @@ describe('POST /api/projects', () => {
       expect.objectContaining({ edges: systemEdges }),
       { expectedRevision: 'seed-revision' },
     );
-    expect(startup.reconcile).toHaveBeenCalledOnce();
     expect(store.discardFreshProject).not.toHaveBeenCalled();
   });
 
@@ -107,20 +101,4 @@ describe('POST /api/projects', () => {
     expect(store.discardFreshProject).toHaveBeenCalledWith('project-new', 'owner-one');
   });
 
-  it('returns the durable Project even when runtime reconciliation is deferred', async () => {
-    startup.reconcile.mockRejectedValueOnce(new Error('runtime_temporarily_unavailable'));
-
-    const response = await request('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'New Project', project_type: 'agent' }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(expect.objectContaining({
-      ok: true,
-      project: expect.objectContaining({ id: 'project-new' }),
-    }));
-    expect(store.discardFreshProject).not.toHaveBeenCalled();
-  });
 });

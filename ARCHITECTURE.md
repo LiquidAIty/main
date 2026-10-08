@@ -100,208 +100,38 @@ signed runtime boundary and are mounted separately from browser authentication.
 
 | Route family | Current responsibility |
 | --- | --- |
-| `/api/cards` | Card editor choices, saved Card execution, connected relationships, Run inspection, and Stop |
-| `/api/main` | Shared-chat address resolution, saved-Card streaming turns, Main context/driver state, participant-aware history, native attention, completed-pair ThinkGraph lifecycle transport/revision push, and exact-Run Stop |
-| `/api/agent-terminals` | Authenticated open, SSE events, input, resize/detach, and Stop for the Card's native TUI |
-| `/api/hermes-profile` | Saved-Card-scoped native profile projection and explicit native profile operations |
+| `/api/cards` | Card editor choices only; the former execution route is removed |
 | `/api/idd` | IDD-backed Card editor and tool projections |
 | `/api/codegraph` | Authenticated interactive CodeGraph UI reads through Python rails |
 | `/api/thinkgraph` and `/api/knowgraph` | Native graph projections/operations without merging authority |
 | `/api/projects` | Project and deck transport |
 
 Route names are transport addresses, not agent identities or separate runtimes.
+The former `/api/main`, `/api/agent-terminals`, `/api/hermes-profile`, and
+`/api/hermes-card-tools` families are currently absent during the Hermes integration reset below.
 
-## Hermes Card execution
+## Hermes integration reset
 
-Main, Builder, and ordinary Hermes-backed Cards use the native Gateway/TUI path:
+The application-owned Hermes execution substitute has been removed. There is currently no
+LiquidAIty backend owner for Card sessions, Gateway connections, turns, queues, retries, terminal
+processes, Bot delivery, tool forwarding, or startup reconciliation. The former Main/Card run,
+terminal, profile-control, and Card-tool host routes are not mounted.
 
-1. Python rails resolves the exact saved Card, validates grants, creates the Run, and materializes
-   its canonical IDF.
-2. The backend resolves the authenticated `{userId, projectId, deckId, cardId}` owner tuple.
-3. `AgentTerminalManager` starts one isolated, profile-scoped Hermes Gateway with that profile's
-   `HERMES_HOME`, connects through its tokenized loopback WebSocket, and refuses competing owners.
-4. The backend reads the native profile and applies the saved parent model, selected skills, and
-   desired native subagent model. A missing profile fails closed; it is not silently created or
-   replaced.
-5. The manager resumes the one matching durable native session or creates it, then optionally attaches
-   the native TUI through a PTY.
-6. `AgentTerminalExecution` validates the prepared Run identity and saved provider, stages one active
-   turn, and the manager submits the exact materialized message to the native session.
-7. Gateway events drive streaming output. The completed native text, session references, provider
-   identity, available usage, cost, duration, and failure/cancellation state finish the same saved Run.
+The deletion intentionally preserves the durable product boundary:
 
-Each saved Card's native session remains the authority for its runtime history. The browser shared-chat
-history route additionally reads an exact completed-turn presentation projection from the existing
-normalized conversation tables so user, target, and replying Card identities survive reload across
-multiple native Card sessions. That projection is not another runtime, delivery queue, or agent registry;
-it is written only after the real target turn completes. History deletion remains deliberately
-unavailable. The terminal surface streams real PTY bytes; a mounted component, queued UI item, or running
-process is not proof that a turn executed.
+- saved Cards, revisions, prompts, provider/model/profile selections, skills, tool ON/OFF selections,
+  and orange/blue topology;
+- PostgreSQL conversation, Run, artifact, and AGE observation data;
+- Python rails IDF, graph, deterministic-computation, and saved-Card authorities;
+- the checked-in Hermes fork, its profiles and session stores, Bot Mode, TUI, Gateway contract,
+  tools, skills, and task/dependency implementation;
+- the existing React surfaces and client queue contract.
 
-### Removed LiquidAIty ACP path
-
-The following are not current architecture and have no retained fallback:
-
-- the backend `mainAdapter` ACP process/session owner;
-- LiquidAIty ACP callback and internal Kanban callback routes;
-- the host execution-context registry and worker bearer bridge;
-- the external editable `liquidaity-hermes-plugin` package;
-- the Python `hermes_acp_bridge`;
-- ACP transcript, snapshot, synthetic native-event, and Team-receipt projections;
-- LiquidAIty-specific private ACP host-profile/Script-execution/tool-refresh hooks;
-- the orphan ACP MCP-connection projection left after `mainAdapter` was removed;
-- an abandoned frontend deck-workspace helper left by the removed Agent Builder operation surface;
-- an uncalled ThinkGraph NetworkX community/gap projection and its application-only dependency pin.
-
-Hermes' own `acp_adapter/` source and upstream ACP tests remain vendor functionality. Their presence
-does not authorize LiquidAIty to use ACP as a Card runtime or restore the removed integration.
-
-## Hermes modes and delegation
-
-`main`, `delegate`, and `magentic_one` are the supported saved Hermes Card execution modes. The retired
-saved-Card runtime mode literally named `kanban` is neither accepted nor recovered. Historical revisions
-and completed Run evidence, if any, remain immutable and inert; schema migration preflight rejects a
-current Card or active Run in that state before narrowing the insertion constraints.
-
-Native Hermes delegation remains model-selected within the Card's native capability ceiling:
-
-- upstream `leaf` and `orchestrator` use Hermes' temporary child execution;
-- retained `team` creates one durable native Auto-Kanban root and lets Hermes own decomposition,
-  dispatch, workers, retry, review, synthesis, notification, and rejoin.
-
-Saved-Card conversation is not delegation. A non-Magnetic Hermes Card gains direct Bot/Card orchestration
-only from its explicit saved `Orchestrator` setting. Each enabled outbound orange `flow` connection then
-authorizes that source Card to contact the exact saved target through native `message_agent`; the target
-receives no reverse roster from that edge. Main is the seeded and currently configured orchestrator, but a
-deliberately configured target may own its own outbound roster, allowing a bounded series without symmetric
-peer authority. Hermes owns the receiving profile's canonical `Bot Chat` and conversation.
-
-Direct user addressing in shared chat is a separate entrance. A leading saved-roster address such as
-`@builder` resolves before inference, prepares the addressed saved Card's ordinary canonical Run/IDF,
-and submits the exact user text to that Card's own profile-scoped Gateway session. Main is not invoked,
-does not acknowledge the turn, and does not inspect the result. Only the actual addressed Card response
-is rendered and persisted with that Card's identity. An unaddressed turn invokes Main; only then may its
-  IDF include the bounded preceding shared conversation. Main's independent native `message_agent` route
-  remains the model-chosen Main-to-Card communication path.
-
-LiquidAIty has no TypeScript participant classifier, task-count router, callback scheduler, copied
-Kanban database, Team receipt product, or saved-mode recovery loop. Hermes' native Kanban task vocabulary,
-SQLite task/dependency ledger, worker execution, and `kanban.task_mode` remain retained Magnetic machinery.
-
-The complete Hermes fork scope and rollback contract is
-[`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`](Hermes/LIQUIDAITY_VENDOR_PATCHES.md). It records the
-previously retained Hermes extensions, the profile-scoped direct-agent roster, and the nullable root-scoped
-assignee ceiling used only when Mag One submits a bounded native execution.
-
-## Native Hermes Bot Mode
-
-Bot Mode is substantial first-party Hermes functionality under `Hermes/apps/desktop`,
-`Hermes/tools/bot_mode_*`, the Gateway, profile/session stores, cron delivery, peer relay, and the
-checked-in Hermes documentation. It is not ACP residue and must not be deleted or rewritten during
-LiquidAIty cleanup.
-
-The current working tree projects saved Bot authority through one native chain:
-
-```text
-one saved non-Magnetic Orchestrator Card + its enabled outbound orange targets
-  -> Python Card-domain ordered source-owned target projection
-  -> existing Hermes profile materialization owner
-  -> profile-scoped bot_mode.roster write and exact readback
-  -> native resolve_bot_roster
-  -> application Card plugin maps unique visible titles within that exact roster
-  -> canonical Bot Chat prompt and stock message_agent profile validation
-  -> unchanged stock live-owner or quiet-CLI delivery
-```
-
-Missing or empty roster configuration grants no local target. The resolver preserves configured order,
-deduplicates without sorting, excludes self, and filters malformed, unknown, deleted, or tombstoned
-profiles. The default profile is available only when explicitly listed. A target Card receives an explicit
-empty roster unless its own saved Orchestrator setting and outbound orange edges grant its separate roster,
-so no edge grants reverse authority. Blue Magnetic topology does not enter this projection; a Card may
-independently be both an orange orchestrator target and a blue Magnetic worker.
-
-The former Card Bot-DM delivery plugin, backend host/authentication route, and Python per-message target
-resolver are removed. The existing application Card-tools plugin performs only a bounded visible-title to
-stable-profile argument mapping inside the exact native roster; it does not forward a Gateway credential,
-choose live versus offline delivery, wait for a reply, reconstruct a transcript, or create a Card Run for
-that native Card-to-Card conversation. Hermes owns the canonical Bot Chat,
-acknowledgement, delivery choice, queueing, ordering, completion, receipts, attributed replies, silence,
-retries, and background notification. The direct user-addressed shared-chat entrance above uses the
-existing ordinary saved-Card Run/Gateway path; it does not replace or proxy `message_agent`.
-
-`delegate_task` remains ordinary native in-Card subagent work; it is not a profile-to-profile Card
-conversation entrance and exposes no Team role. The saved Team profile enters the existing task ledger
-only through its structural task-mode marker. Loaded ordinary-Main and real Main-to-Card attributed-reply acceptance remain a
-separate proof tier until the canonical stack is started from this source.
-
-## Profile materialization and memory
-
-Saved Card configuration remains the authority. The native Hermes profile is an execution projection,
-not another Card database. Before a Gateway turn, the backend:
-
-- resolves the exact saved provider/model without environment or availability fallback;
-- applies and rereads a mismatched parent model;
-- verifies selected skills exist and enables only those plus Hermes' required operating skill;
-- applies the desired bounded native subagent provider/model without changing background review;
-- fails before inference when the profile, selected skill, or required application is unavailable.
-
-Hermes owns profile-local credentials, sessions, native memory, skills, and background review.
-LiquidAIty exposes Honcho setup/status only for Main; it does not project a general Card memory-provider
-field or copy memory between profiles.
-
-## Python rails and Mag One
-
-Python rails owns deterministic runtime preparation, saved Card/Run persistence, IDF
-materialization, native graph hydration, tool execution, parameterized SQL/Cypher, research/data
-processing, and the structured Mag One boundary into Hermes' existing execution machinery.
-
-## Internal Card tools and external MCP
-
-The current working tree separates publication from execution without duplicating tool ownership:
-
-```text
-saved Card and current execution authority
-  -> protocol-neutral Python operation owner
-     -> native Hermes plugin registration for internal Card use
-     -> official MCP publication for external clients
-```
-
-`OperationDefinition` in Python is the canonical owner of LiquidAIty operation IDs, descriptions,
-parameter schemas, handlers, availability, and permitted publishers. Existing Python modules continue to
-contribute their own definitions. Saved Cards grant canonical IDs; the profile-scoped native Hermes plugin
-receives only selected `internal-plugin` definitions directly from that registry, the MCP host publishes
-only `external-mcp` definitions, and IDD receives derived Builder-facing metadata. No publisher discovery
-is fed back into the canonical registry, and `tool_manifest()` is a derived view rather than another owner.
-
-For Hermes-backed Cards, the profile-scoped plugin registers model-facing LiquidAIty tools through the
-public plugin registry using Hermes' exact `{name, description, parameters}` schema. Hermes continues to
-own tool presentation, selection, validation, guardrails, approvals, hooks, dispatch, and result delivery.
-Each invocation crosses one authenticated LiquidAIty host boundary; the host derives the source Card/runtime
-from process and native session identity, and Python rails enforces the saved grant and current revision.
-The plugin does not own grants, load IDD, cache a second catalog, copy implementations, launch a helper
-service, or route internal operations through MCP.
-
-MCP remains correct for external GPT clients and deliberately configured third-party/external servers.
-It is not the internal execution bus for LiquidAIty tools inside Hermes. Both publishers reuse the same
-Python definitions and implementations. A saved individual external-tool grant derives only its required
-backing MCP connection; a separate connection checkbox is not required and sibling tools on that server
-do not become granted. Stock `tools.configure` is durable profile projection and session rebuilding only;
-it is never invocation-time authorization. Loaded proof shows Main using its selected internal
-`engraphis_recall_context` operation through the native plugin and Python handler. External CBM/Graphiti
-invocation and the incomplete Bot reply retain their separate proof boundaries in `PLAN.md`.
-
-The native TUI and Bot Chat are proof surfaces for the same plugin-backed Card runtime, not reasons to
-create separate tool paths. A public-contract failure stops the implementation; it does not authorize an
-ACP-like host execution layer, callback protocol, session mirror, transcript owner, or worker runtime.
-
-The existing Mag One Card remains the LiquidAIty bus authority. Saved `magentic_option` topology is
-projected into one exact roster of enabled current Card revisions and Hermes profile bindings. The
-headless adapter submits the reloaded canonical mission to Hermes' existing SQLite task/dependency
-runtime with a root-scoped blue assignee ceiling. Root-created assignments are checked against that
-scope; manually created worker descendants are self-scoped rather than inheriting the complete roster.
-The adapter observes only outer execution state and returns the one verified native final-synthesis
-summary. LiquidAIty does not copy native task, dependency,
-attempt, or event rows into PostgreSQL/AGE; TypeScript does not schedule workers or fabricate a transcript.
+Those preserved records and interfaces are not proof of a loaded execution path. Saved
+`run_mag_one` grants and client transport addresses remain durable product contracts, but their
+deleted backend/MCP execution path is unavailable until a separately approved direct Hermes
+integration is implemented. No fallback, compatibility wrapper, replacement manager, or hidden
+process owner is retained.
 
 ## MCP and Codebase Memory
 

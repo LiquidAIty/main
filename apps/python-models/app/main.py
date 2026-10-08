@@ -14,7 +14,6 @@ from app.python_models.alpaca_market_data import (
 from app.python_models.card_domain import (
     CardDomainError,
     resolve_hermes_bot_rosters,
-    resolve_hermes_card_tools,
     accept_run_request,
     begin_main_chat_run,
     begin_run,
@@ -477,30 +476,6 @@ def card_script_header(payload: dict[str, Any]):
 # These internal rails endpoints never persist prompts, provider bodies,
 # selected context, or ordinary model output.
 # ---------------------------------------------------------------------------
-
-
-@app.post("/domain/hermes-card-tools/resolve")
-def domain_hermes_card_tools_resolve(payload: dict[str, Any]):
-    expected_fields = {
-        "projectId", "deckId", "cardId", "cardRevisionId", "discoveredTools",
-        "discoveredToolCatalogState", "unavailableToolCatalogFamilies",
-    }
-    try:
-        if set(payload) != expected_fields:
-            raise CardDomainError("hermes_card_tools_resolution_payload_invalid")
-        return resolve_hermes_card_tools(payload)
-    except CardDomainError as err:
-        message = str(err)
-        status = (
-            404 if message in {"project_not_found", "deck_not_found", "card_not_found"}
-            else 409 if message in {
-                "card_disabled",
-                "hermes_card_tools_card_revision_stale",
-                "hermes_card_tools_runtime_required",
-            } or message.startswith("hermes_card_tool_")
-            else 400
-        )
-        raise HTTPException(status_code=status, detail=message) from err
 
 
 @app.get("/domain/decks/{project_id}/{deck_id}")

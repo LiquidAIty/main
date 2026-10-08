@@ -14,14 +14,10 @@ const membership = vi.hoisted(() => ({
   discardFreshMembership: vi.fn(),
   listSavedCardsForProject: vi.fn(),
 }));
-const startup = vi.hoisted(() => ({ reconcile: vi.fn() }));
 const access = vi.hoisted(() => ({ requireOwnedProject: vi.fn() }));
 
 vi.mock('../decks/store', () => decks);
 vi.mock('../services/agentBuilderStore', () => membership);
-vi.mock('../startup/pythonOwnedStartup', () => ({
-  requestConnectedCardRuntimeReconcile: startup.reconcile,
-}));
 vi.mock('./projectAccess', () => access);
 
 import decksRouter from './decks.routes';
@@ -71,7 +67,6 @@ beforeEach(() => {
   membership.discardFreshMembership.mockResolvedValue(undefined);
   decks.getDeckDocument.mockResolvedValue(loadedBefore);
   decks.saveDeckDocument.mockResolvedValue(loadedAfter);
-  startup.reconcile.mockResolvedValue([]);
 });
 
 function attachRequest(): RequestInit {
@@ -88,19 +83,6 @@ function attachRequest(): RequestInit {
 }
 
 describe('POST saved Card membership', () => {
-  it('returns the durable Python result even when runtime reconciliation is deferred', async () => {
-    startup.reconcile.mockRejectedValueOnce(new Error('runtime_temporarily_unavailable'));
-
-    const response = await request(attachRequest());
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(expect.objectContaining({
-      ok: true,
-      meta: { deckRevision: 'deck-after' },
-    }));
-    expect(membership.discardFreshMembership).not.toHaveBeenCalled();
-  });
-
   it('compensates an uncommitted Python failure without leaving a fresh Card presence', async () => {
     decks.saveDeckDocument.mockRejectedValueOnce(new Error('python_save_failed'));
 

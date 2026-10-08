@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "6530ff62f25e8cacb194edcbda77e012d3ddac0a",
-    "indexed_at": "2026-10-07T06:01:05Z",
+    "commit": "8ea07bd447bef2efca3285806dc1f175ace05741",
+    "indexed_at": "2026-10-08T02:04:15Z",
     "project": "C-Projects-LiquidAIty-main",
-    "nodes": 17428,
-    "edges": 63153,
-    "original_size": 69795840,
-    "compressed_size": 13690321,
+    "nodes": 16633,
+    "edges": 59080,
+    "original_size": 68222976,
+    "compressed_size": 13464728,
     "compression_level": 3
 }

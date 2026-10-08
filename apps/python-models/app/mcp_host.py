@@ -7,8 +7,6 @@ per-turn spawn or fallback host exists.
 Exposes this application tool surface plus the process-owned Engraphis
 ThinkGraph adapter and dynamically discovered Codebase Memory and official
 Graphiti MCP registries:
-  * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
-  * run_mag_one                      (Main-only transient Mag One mission)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.create / card.update_configuration / canvas.upsert_wire
                                       (handlers live in app.control_plane — Python)
@@ -31,7 +29,6 @@ import asyncio
 import atexit
 import copy
 import hashlib
-import hmac
 import inspect
 from importlib import metadata as importlib_metadata
 import json
@@ -167,6 +164,7 @@ _CBM_STARTUP_TIMEOUT_SECONDS = 35.0
 _CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
+_PUBLIC_MCP_VERSION = f"source-{_STARTUP_SOURCE_SHA256[:12]}"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
     "ThinkGraph, KnowGraph, and supported agent runtimes. "
@@ -854,6 +852,7 @@ class AgentRuntimeServer(Server):
 
 server = AgentRuntimeServer(
     _PUBLIC_MCP_NAME,
+    version=_PUBLIC_MCP_VERSION,
     instructions=_PUBLIC_MCP_DESCRIPTION,
 )
 
@@ -935,12 +934,18 @@ def _register_cbm_catalog(tools: list[Tool]) -> None:
     definitions: list[OperationDefinition] = []
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
-        annotations = payload.get("annotations")
+        annotations = dict(payload.get("annotations") or {})
         read_only = (
             annotations.get("readOnlyHint")
-            if isinstance(annotations, dict)
-            else None
         )
+        if read_only is None:
+            # Unknown provider effects stay on the restricted/write side. This
+            # is an explicit fail-closed annotation, never a safe/read label.
+            read_only = False
+            annotations["readOnlyHint"] = False
+        annotations.setdefault("destructiveHint", read_only is not True)
+        annotations.setdefault("idempotentHint", read_only is True)
+        annotations.setdefault("openWorldHint", False)
         definitions.append(OperationDefinition(
             canonical_id=tool.name,
             description=str(tool.description or "").strip(),
@@ -956,6 +961,12 @@ def _register_cbm_catalog(tools: list[Tool]) -> None:
                 if tool.outputSchema is not None
                 else None
             ),
+            title=str(
+                tool.title
+                or (payload.get("annotations") or {}).get("title")
+                or tool.name
+            ),
+            annotations=copy.deepcopy(annotations),
         ))
     replace_discovered_external_operations("cbm", definitions)
 
@@ -976,10 +987,25 @@ def _bind_repo_tool_source(tool: Tool) -> Tool:
 
 def _bind_operation_access(tool: Tool) -> Tool:
     """Attach access from the canonical operation or provider definition."""
-    access = tool_access(tool.name)
+    from app.python_models.tool_registry import operation_definition
+
+    definition = operation_definition(tool.name)
+    access = definition.access if definition is not None else None
     if access is None:
         raise RuntimeError(f"mcp_tool_missing_operation_access:{tool.name}")
     payload = tool.model_dump(by_alias=True, exclude_none=True)
+    if definition.title and not payload.get("title"):
+        payload["title"] = definition.title
+    annotations = dict(payload.get("annotations") or {})
+    for key, value in (definition.annotations or {}).items():
+        annotations.setdefault(key, copy.deepcopy(value))
+    required_hints = {
+        "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
+    }
+    if not required_hints.issubset(annotations):
+        missing = ",".join(sorted(required_hints - set(annotations)))
+        raise RuntimeError(f"mcp_tool_annotations_missing:{tool.name}:{missing}")
+    payload["annotations"] = annotations
     meta = dict(payload.get("_meta") or {})
     meta["liquidaityAccess"] = access
     payload["_meta"] = meta
@@ -1883,7 +1909,7 @@ atexit.register(_close_cbm)
 
 
 def _backend_bridge_timeout_seconds(path: str) -> float:
-    if path in {"run_configured_card", "external_main_chat"}:
+    if path == "external_main_chat":
         return _CBM_REQUEST_TIMEOUT_SECONDS
     if path == "worldview_action":
         return 40.0
@@ -1893,18 +1919,16 @@ def _backend_bridge_timeout_seconds(path: str) -> float:
 _BACKEND_ROUTES = {
     "external_main_context": "/api/main/context",
     "external_main_chat": "/api/main/chat",
-    "describe_connected_agents": "/api/cards/connected",
-    "run_configured_card": "/api/cards/run",
     "worldview_action": "/api/worldview/internal/actions",
 }
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
     headers = {"Content-Type": "application/json"}
-    if path in {"run_configured_card", "worldview_action"} and len(INTERNAL_MCP_SECRET) < 32:
+    if path == "worldview_action" and len(INTERNAL_MCP_SECRET) < 32:
         raise RuntimeError("internal_mcp_secret_missing")
     if path in {
-        "external_main_context", "external_main_chat", "run_configured_card",
+        "external_main_context", "external_main_chat",
         "worldview_action",
     } and INTERNAL_MCP_SECRET:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
@@ -2180,6 +2204,14 @@ def _application_tools() -> list[Tool]:
     return [
         Tool(
             name="main.context",
+            title="Read Main request context",
+            annotations={
+                "title": "Read Main request context",
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description=(
                 "Read the compact server-owned Main entry context for this authenticated "
                 "Main request: project, deck, conversation, parent run, and saved "
@@ -2190,6 +2222,14 @@ def _application_tools() -> list[Tool]:
         ),
         Tool(
             name="worldview.set_capability",
+            title="Set a WorldView capability",
+            annotations={
+                "title": "Set a WorldView capability",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description=(
                 "Main only: set Main's ON/OFF choice for one exact capability in the "
                 "current authenticated Project WorldView. The server supplies Project "
@@ -2217,6 +2257,14 @@ def _application_tools() -> list[Tool]:
         ),
         Tool(
             name="worldview.action",
+            title="Run a WorldView action",
+            annotations={
+                "title": "Run a WorldView action",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": False,
+            },
             description=(
                 "Saved WorldView Hermes Card only: execute one existing God's Eye action "
                 "against the currently mounted WorldView in this Project. Examples: "
@@ -2255,6 +2303,14 @@ def _application_tools() -> list[Tool]:
         ),
         Tool(
             name="agentgraph.inspect",
+            title="Inspect AgentGraph",
+            annotations={
+                "title": "Inspect AgentGraph",
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description=(
                 "Read a bounded, authenticated Project-scoped view of current PostgreSQL/AGE "
                 "Card relationships plus available run, lineage, "
@@ -2282,49 +2338,15 @@ def _application_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="mag_one.describe_connected_agents",
-            description=(
-                "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
-                "their actual capabilities before writing a run_mag_one prompt: cardId, title, "
-                "role/capability, selected model, configured Python tools, and connected status. "
-                "Read-only and deck-authentic — never invents agents, tools, models, or outputs. "
-                "deckId is optional and defaults to the one canonical Agent Canvas deck; never "
-                "guess a deckId."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                },
-                "required": ["projectId"],
-            },
-        ),
-        Tool(
-            name="run_mag_one",
-            description=(
-                "Main only: submit one explicit mission and any deliberately selected provider graph anchors "
-                "to the AGE-connected Mag One "
-                "Card and invoke its Hermes task execution. Python materializes the saved "
-                "Card plus this input exactly once before execution. "
-                "The authenticated Card runtime supplies the saved project, deck, and conversation identity; "
-                "never include or guess those identifiers. "
-                "The backend resolves the live worker roster from blue SIDE connections; never type "
-                "a roster. Use only for the current user-directed mission. This tool executes "
-                "immediately unless optional Card-editor review was explicitly requested first."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "input": {"type": "string"},
-                    "dataAnchors": _grounded_data_anchors_schema(),
-                },
-                "required": ["input"],
-                "additionalProperties": False,
-            },
-        ),
-        Tool(
             name="write_mag_one_instructions",
+            title="Stage Magnetic instructions for review",
+            annotations={
+                "title": "Stage Magnetic instructions for review",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description=(
                 "Optional review only: place one exact mission and its resolved provider graph projection "
                 "into the receiving saved Card's existing Invocation and Knowledge "
@@ -2344,6 +2366,14 @@ def _application_tools() -> list[Tool]:
         ),
         Tool(
             name="card.load_graph_references",
+            title="Load graph references into a Card",
+            annotations={
+                "title": "Load graph references into a Card",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description=(
                 "Resolve one bounded current ThinkGraph, KnowGraph, or CodeGraph reference "
                 "into a saved target Card's transient Knowledge context. The server injects "
@@ -2381,21 +2411,53 @@ def _application_tools() -> list[Tool]:
         ),
         Tool(
             name="canvas.inspect",
+            title="Inspect the saved Canvas",
+            annotations={
+                "title": "Inspect the saved Canvas",
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description='Read the saved deck; optionally inspect one exact Card with its editable configuration, revisions and current IDD/catalog choices.',
             inputSchema=card_tool_schema("canvas.inspect"),
         ),
         Tool(
             name="card.create",
+            title="Create a saved Card",
+            annotations={
+                "title": "Create a saved Card",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": False,
+                "openWorldHint": False,
+            },
             description='Create one saved Card with explicit configuration and expected deck revision. Honor its requested Hermes profile. Does not run the Card or create wires.',
             inputSchema=card_tool_schema("card.create"),
         ),
         Tool(
             name="card.update_configuration",
+            title="Update saved Card configuration",
+            annotations={
+                "title": "Update saved Card configuration",
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description='Update one exact saved Card using current deck and Card revision IDs. Preserve unspecified fields. Does not run the Card.',
             inputSchema=card_tool_schema("card.update_configuration"),
         ),
         Tool(
             name="canvas.upsert_wire",
+            title="Change a saved Canvas wire",
+            annotations={
+                "title": "Change a saved Canvas wire",
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
             description=(
                 "Create/update/remove ONE saved canvas wire. Supported wire types only: 'flow' and "
                 "'magentic_option'. Blue means worker availability to Magnetic and endpoint order has no runtime meaning. "
@@ -2435,8 +2497,6 @@ _APPLICATION_OPERATION_ACCESS = {
     "worldview.set_capability": "write",
     "worldview.action": "write",
     "agentgraph.inspect": "read",
-    "mag_one.describe_connected_agents": "read",
-    "run_mag_one": "write",
     "write_mag_one_instructions": "write",
     "card.load_graph_references": "write",
     "canvas.inspect": "read",
@@ -2458,6 +2518,7 @@ def application_operation_definitions() -> list[OperationDefinition]:
         async def dispatch(*, _name: str = tool.name, **arguments: Any) -> Any:
             return await _dispatch_tool(_name, arguments)
 
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
         definitions.append(OperationDefinition(
             canonical_id=tool.name,
             description=tool.description or tool.name,
@@ -2472,9 +2533,20 @@ def application_operation_definitions() -> list[OperationDefinition]:
             access=access,
             namespace="worldview" if tool.name == "worldview.action" else "main",
             external_source_id="main_mcp",
+            output_schema=(
+                copy.deepcopy(tool.outputSchema)
+                if tool.outputSchema is not None
+                else None
+            ),
+            title=str(
+                tool.title
+                or (payload.get("annotations") or {}).get("title")
+                or tool.name
+            ),
+            annotations=copy.deepcopy(payload.get("annotations") or {}),
             required_caller_runtime=(
                 ("hermes", "main")
-                if tool.name in {"run_mag_one", "worldview.set_capability"}
+                if tool.name == "worldview.set_capability"
                 else ("hermes", "delegate") if tool.name == "worldview.action"
                 else None
             ),
@@ -2489,8 +2561,11 @@ async def _materialize_complete_catalog() -> list[Tool]:
     tools = [
         _bind_repo_tool_source(Tool(
             name=descriptor["name"],
+            title=descriptor.get("title"),
             description=descriptor["description"],
             inputSchema=copy.deepcopy(descriptor["inputSchema"]),
+            outputSchema=copy.deepcopy(descriptor.get("outputSchema")),
+            annotations=copy.deepcopy(descriptor.get("annotations")),
         ))
         for descriptor in external_descriptors
     ]
@@ -2600,6 +2675,19 @@ async def _materialize_requested_provider_catalog(
                 provider,
                 failure_code=failure_code,
                 failure_summary=failure_summary,
+            )
+            continue
+        if provider == "graphiti" and not provider_tools and _GRAPHITI_UNAVAILABLE:
+            _mark_catalog_family_unavailable(
+                provider,
+                failure_code=str(
+                    _GRAPHITI_UNAVAILABLE.get("failureCode")
+                    or "optional_capability_unavailable"
+                ),
+                failure_summary=str(
+                    _GRAPHITI_UNAVAILABLE.get("detail")
+                    or "Graphiti catalog is unavailable."
+                ),
             )
             continue
         _complete_catalog_family(provider)
@@ -2927,10 +3015,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "limit",
         "projectWide",
     },
-    "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {
-        "projectId", "deckId", "input", "conversationId", "dataAnchors",
-    },
     "write_mag_one_instructions": {
         "projectId", "deckId", "conversationId", "targetCardId", "mission",
         "dataAnchors", "_sourceCardId",
@@ -2967,9 +3051,7 @@ for _trading_name in (
 ):
     _ALLOWED_KEYS[_trading_name].update({"projectId", "deckId", "_sourceRunId"})
 
-_BRIDGE_PATHS: dict[str, str] = {
-    "mag_one.describe_connected_agents": "describe_connected_agents",
-}
+_BRIDGE_PATHS: dict[str, str] = {}
 
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
 # Imported lazily so bridge-only usage never requires the psycopg dependency chain.
@@ -3155,48 +3237,6 @@ async def _dispatch_tool(
             structuredContent={"result": result_text},
             isError=result.get("ok") is False or bool(result.get("error")),
         )
-    if name == "run_mag_one":
-        from app.python_models.card_domain import (
-            CardDomainError,
-            resolve_magentic_target_card,
-        )
-
-        raw_anchors = args.get("dataAnchors")
-        data_anchors = [
-            {**anchor, "required": True}
-            if isinstance(anchor, dict)
-            else anchor
-            for anchor in raw_anchors
-        ] if isinstance(raw_anchors, list) else raw_anchors
-        try:
-            target = await asyncio.to_thread(
-                resolve_magentic_target_card,
-                str(args.get("projectId") or ""),
-                str(args.get("deckId") or ""),
-            )
-        except CardDomainError as error:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"ok": False, "error": str(error)}),
-            )]
-        return await _bridge(
-            "run_configured_card",
-            {
-                "action": "execute",
-                "projectId": target["projectId"],
-                "deckId": target["deckId"],
-                "cardId": target["cardId"],
-                "senderCardId": caller_card_id,
-                "correlationId": f"mag_one:{uuid4()}",
-                "conversationId": str(args.get("conversationId") or "main"),
-                "input": str(args.get("input") or ""),
-                **(
-                    {"dataAnchors": data_anchors}
-                    if isinstance(data_anchors, list)
-                    else {}
-                ),
-            },
-        )
     if name == "main.context":
         if context is None:
             return [
@@ -3264,11 +3304,18 @@ async def _dispatch_tool(
     if name == "web_search":
         from app.python_models.web_search import web_search
 
-        result = await web_search(
+        result_text = await web_search(
             query=str(args.get("query") or ""),
             max_results=int(args.get("max_results") or 5),
         )
-        return [TextContent(type="text", text=result)]
+        result = json.loads(result_text)
+        if not isinstance(result, dict):
+            raise RuntimeError("web_search_result_invalid")
+        return CallToolResult(
+            content=[TextContent(type="text", text=result_text)],
+            structuredContent=result,
+            isError=result.get("ok") is False,
+        )
     if name == "worldsignals.package":
         from app.python_models.worldsignals_client import collect_worldsignals_signal_package
 
@@ -3478,10 +3525,7 @@ def _mcp_tool_timeout_seconds(name: str) -> float:
         # Ingest includes the extractor's 135-second account transport before storage.
         # Optional Main preload remains governed by its separate two-second budget.
         return 190.0
-    if name in {
-        "cbm.index_repository",
-        "run_mag_one",
-    }:
+    if name == "cbm.index_repository":
         return _CBM_REQUEST_TIMEOUT_SECONDS
     return _MCP_CALL_TIMEOUT_SECONDS
 
@@ -3583,75 +3627,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         granted_tools=None,
         transport="mcp",
     )
-
-
-def _card_tool_output(result: Any) -> str:
-    blocks = result.content if isinstance(result, CallToolResult) else result
-    if not isinstance(blocks, list):
-        return str(result)
-    texts = [
-        str(getattr(block, "text", "") or "")
-        for block in blocks
-        if str(getattr(block, "text", "") or "")
-    ]
-    return "\n".join(texts)
-
-
-async def execute_card_tool_request(payload: dict[str, Any]) -> dict[str, Any]:
-    expected = {
-        "projectId", "deckId", "cardId", "cardRevisionId",
-        "configurationFingerprint", "runtimeMode", "toolName", "arguments",
-        "conversationId", "parentRunId",
-    }
-    if not isinstance(payload, dict) or set(payload) != expected:
-        raise ValueError("hermes_card_tool_request_invalid")
-    arguments = payload.get("arguments")
-    if not isinstance(arguments, dict):
-        raise ValueError("hermes_card_tool_arguments_invalid")
-    if not re.fullmatch(
-        r"[a-f0-9]{64}", str(payload.get("configurationFingerprint") or "")
-    ):
-        raise ValueError("hermes_card_tool_configuration_invalid")
-    from app.python_models.card_domain import authorize_hermes_card_plugin_invocation
-
-    authorized = await asyncio.to_thread(
-        authorize_hermes_card_plugin_invocation,
-        {
-            "projectId": payload.get("projectId"),
-            "deckId": payload.get("deckId"),
-            "cardId": payload.get("cardId"),
-            "cardRevisionId": payload.get("cardRevisionId"),
-            "runtimeMode": payload.get("runtimeMode"),
-            "toolName": payload.get("toolName"),
-        },
-    )
-    runtime = authorized.get("runtime")
-    if (
-        not isinstance(runtime, dict)
-        or runtime.get("kind") != "hermes"
-        or runtime.get("mode") != payload.get("runtimeMode")
-    ):
-        raise PermissionError("hermes_card_tool_runtime_stale")
-    tool_name = str(payload.get("toolName") or "").strip()
-    context = {
-        "projectId": str(authorized["projectId"]),
-        "deckId": str(authorized["deckId"]),
-        "conversationId": str(payload.get("conversationId") or ""),
-        "parentRunId": str(payload.get("parentRunId") or ""),
-        "mainCardId": str(authorized["cardId"]),
-        "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": str(runtime["mode"]),
-        "principalKind": "card-runtime",
-        "grantedTools": [tool_name],
-    }
-    result = await _execute_tool_request(
-        tool_name,
-        arguments,
-        authenticated_context=context,
-        granted_tools={tool_name},
-        transport="hermes-plugin",
-    )
-    return {"ok": True, "output": _card_tool_output(result)}
 
 
 async def _run_stdio() -> None:
@@ -3831,44 +3806,12 @@ async def _run_streamable_http() -> None:
             status_code=200 if ready else 503,
         )
 
-    async def card_tool_endpoint(request: Any) -> JSONResponse:
-        client_host = str(getattr(getattr(request, "client", None), "host", "") or "")
-        if client_host not in {"127.0.0.1", "::1"}:
-            return JSONResponse({"ok": False, "error": "loopback_required"}, status_code=403)
-        supplied = str(request.headers.get("x-liquidaity-internal-mcp-secret") or "")
-        if (
-            len(INTERNAL_MCP_SECRET) < 32
-            or not hmac.compare_digest(supplied, INTERNAL_MCP_SECRET)
-        ):
-            return JSONResponse({"ok": False, "error": "authentication_failed"}, status_code=401)
-        raw = await request.body()
-        if len(raw) > 768 * 1024:
-            return JSONResponse({"ok": False, "error": "request_too_large"}, status_code=413)
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-            result = await execute_card_tool_request(payload)
-            return JSONResponse(result, status_code=200)
-        except (ValueError, PermissionError, KeyError) as error:
-            code = _sanitize_failure_detail(error)
-            status = 409 if any(term in code for term in (
-                "configuration_stale", "card_revision_stale", "runtime_stale",
-                "card_disabled", "not_found", "tool_not_granted",
-            )) else 400
-            return JSONResponse({"ok": False, "error": code}, status_code=status)
-        except Exception:
-            return JSONResponse(
-                {"ok": False, "error": "card_tool_internal_failure"},
-                status_code=500,
-            )
-
     health_routes = [
         Route("/health", endpoint=health_endpoint, methods=["GET"]),
         Route("/health/catalog", endpoint=catalog_readiness_endpoint, methods=["GET"]),
         Route("/health/ready", endpoint=readiness_endpoint, methods=["GET"]),
     ]
-    internal_routes = [
-        Route("/internal/card-tool", endpoint=card_tool_endpoint, methods=["POST"]),
-    ]
+    internal_routes: list[Any] = []
 
     if OAUTH_ENFORCED:
         class ScopedRequireAuthMiddleware(RequireAuthMiddleware):

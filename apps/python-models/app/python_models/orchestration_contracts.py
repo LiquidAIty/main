@@ -28,6 +28,8 @@ class ToolSpec(BaseModel):
     access: Literal["read", "write"]
     inputSchema: dict[str, Any]
     outputSchema: dict[str, Any]
+    title: str = ""
+    annotations: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("inputSchema", "outputSchema")
     @classmethod
@@ -36,6 +38,16 @@ class ToolSpec(BaseModel):
             raise ValueError("tool_schema_missing")
         if not str(value.get("type") or "").strip():
             raise ValueError("tool_schema_incomplete: missing type")
+        return value
+
+    @field_validator("annotations")
+    @classmethod
+    def _validate_annotations(cls, value: dict[str, Any]) -> dict[str, Any]:
+        for key in (
+            "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
+        ):
+            if key in value and not isinstance(value[key], bool):
+                raise ValueError(f"tool_annotation_invalid:{key}")
         return value
 
 

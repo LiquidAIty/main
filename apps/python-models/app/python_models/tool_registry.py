@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import json
 import operator
 import re
 import inspect
@@ -69,6 +70,8 @@ class OperationDefinition:
     external_source_id: str = "main_mcp"
     output_schema: dict[str, Any] | None = None
     required_caller_runtime: tuple[str, str] | None = None
+    title: str | None = None
+    annotations: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.canonical_id.strip():
@@ -91,6 +94,16 @@ class OperationDefinition:
             raise RuntimeError(f"operation_namespace_missing:{self.canonical_id}")
         if "external-mcp" in self.publishers and not self.external_source_id.strip():
             raise RuntimeError(f"operation_external_source_missing:{self.canonical_id}")
+        if self.title is not None and not self.title.strip():
+            raise RuntimeError(f"operation_title_invalid:{self.canonical_id}")
+        if self.annotations is not None:
+            for key in (
+                "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
+            ):
+                if key in self.annotations and not isinstance(self.annotations[key], bool):
+                    raise RuntimeError(
+                        f"operation_annotation_invalid:{self.canonical_id}:{key}"
+                    )
 
 
 def _external_operation_unavailable(**_arguments: Any) -> Any:
@@ -124,6 +137,12 @@ def _external_operation_definitions() -> list[OperationDefinition]:
         ("graphiti", _GRAPHITI_READ_OPERATIONS, _GRAPHITI_WRITE_OPERATIONS),
     ):
         for canonical_id in sorted(reads | writes):
+            read_only = canonical_id in reads
+            destructive = canonical_id in {
+                "graphiti.clear_graph",
+                "graphiti.delete_entity_edge",
+                "graphiti.delete_episode",
+            }
             definitions.append(OperationDefinition(
                 canonical_id=canonical_id,
                 description=f"{canonical_id} from its configured {source_id} MCP owner.",
@@ -134,6 +153,13 @@ def _external_operation_definitions() -> list[OperationDefinition]:
                 access="read" if canonical_id in reads else "write",
                 namespace=source_id,
                 external_source_id=source_id,
+                title=canonical_id,
+                annotations={
+                    "readOnlyHint": read_only,
+                    "destructiveHint": destructive,
+                    "idempotentHint": read_only or destructive,
+                    "openWorldHint": False,
+                },
             ))
     return definitions
 
@@ -177,7 +203,7 @@ def _operation_references() -> dict[str, dict[str, Any]]:
             "kind": "tool",
             "namespace": definition.namespace,
             "sourceIds": list(dict.fromkeys(source_ids)),
-            "displayName": definition.canonical_id,
+            "displayName": definition.title or definition.canonical_id,
             "shortDescription": definition.description,
             "availability": "disabled",
             "access": definition.access,
@@ -281,10 +307,13 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
         ):
             raise IddValidationError("idd_tool_discovery_contract_invalid")
         output_schema = raw.get("outputSchema")
+        title = raw.get("title")
         annotations = raw.get("annotations")
         security_schemes = raw.get("securitySchemes")
         if output_schema is not None and not isinstance(output_schema, dict):
             raise IddValidationError("idd_tool_discovery_output_schema_invalid")
+        if title is not None and (not isinstance(title, str) or not title.strip()):
+            raise IddValidationError("idd_tool_discovery_title_invalid")
         if annotations is not None and not isinstance(annotations, dict):
             raise IddValidationError("idd_tool_discovery_annotations_invalid")
         if security_schemes is not None and (
@@ -308,6 +337,8 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
             "description": raw.get("description", ""),
             "inputSchema": deepcopy(input_schema),
         }
+        if title is not None:
+            contract["title"] = title
         if output_schema is not None:
             contract["outputSchema"] = deepcopy(output_schema)
         if annotations is not None:
@@ -320,7 +351,7 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
                 raise IddValidationError("liquidaity_effect_unclassified")
             reference = {
                 "canonicalId": canonical_id, "kind": kind, "namespace": namespace,
-                "sourceIds": [], "displayName": canonical_id,
+                "sourceIds": [], "displayName": title or canonical_id,
                 "shortDescription": raw.get("description", ""),
                 "availability": "disabled", "publication": "provider",
                 "access": "read" if (annotations or {}).get("readOnlyHint") is True else "write",
@@ -333,6 +364,8 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
         if source_id not in reference["sourceIds"]:
             reference["sourceIds"].append(source_id)
         reference["contracts"].append(contract)
+        if title:
+            reference["displayName"] = title
         reference["shortDescription"] = raw.get("description", reference["shortDescription"])
         if available and reference["publication"] != "private-admin":
             reference["availability"] = "available"
@@ -377,6 +410,15 @@ def tool_calculator(expression: str) -> str:
     """Evaluate a basic arithmetic expression (+ - * / // % ** and parentheses)."""
     parsed = ast.parse(expression, mode="eval")
     return str(_eval_arithmetic(parsed))
+
+
+async def web_search_tool(query: str, max_results: int = 5) -> dict[str, Any]:
+    """Return the existing Tavily JSON result as its truthful structured object."""
+
+    payload = json.loads(await web_search(query=query, max_results=max_results))
+    if not isinstance(payload, dict):
+        raise RuntimeError("web_search_result_invalid")
+    return payload
 
 
 
@@ -526,6 +568,8 @@ class ToolRegistry:
                 namespace="python",
                 external_source_id=self._external_sources[name],
                 output_schema=deepcopy(spec.outputSchema),
+                title=spec.title or spec.name,
+                annotations=deepcopy(spec.annotations),
             ))
         return definitions
 
@@ -583,6 +627,11 @@ def build_default_tool_registry() -> ToolRegistry:
         (
             ToolSpec(
                 name="worldsignals.capabilities",
+                title="WorldSignals capabilities",
+                annotations={
+                    "readOnlyHint": True, "destructiveHint": False,
+                    "idempotentHint": True, "openWorldHint": True,
+                },
                 description=(
                     "Read a bounded live WorldSignals capability/command view. Filter by domain, "
                     "exact command, keyword, or read/write operation class; an exact command match "
@@ -606,10 +655,15 @@ def build_default_tool_registry() -> ToolRegistry:
             ),
             worldsignals_capabilities,
         ),
-        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, access="write", inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_command),
+        (ToolSpec(name="worldsignals.command", title="Run a WorldSignals command", annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True}, description="Run one real command from the WorldSignals command manifest.", enabled=True, access="write", inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_command),
         (
             ToolSpec(
                 name="worldsignals.batch",
+                title="Run WorldSignals commands",
+                annotations={
+                    "readOnlyHint": False, "destructiveHint": True,
+                    "idempotentHint": False, "openWorldHint": True,
+                },
                 description="Run up to twenty real WorldSignals commands through its batch channel.",
                 enabled=True,
                 access="write",
@@ -637,11 +691,16 @@ def build_default_tool_registry() -> ToolRegistry:
             ),
             worldsignals_batch,
         ),
-        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, access="read", inputSchema={"type": "object", "properties": {}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_poll),
-        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, access="read", inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_stream_events),
+        (ToolSpec(name="worldsignals.poll", title="Poll WorldSignals results", annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True}, description="Destructively read and consume completed command results and pending WorldSignals tasks.", enabled=True, access="write", inputSchema={"type": "object", "properties": {}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_poll),
+        (ToolSpec(name="worldsignals.stream_events", title="Stream WorldSignals events", annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}, description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, access="read", inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_stream_events),
         (
             ToolSpec(
                 name="worldsignals.package",
+                title="Collect a WorldSignals evidence package",
+                annotations={
+                    "readOnlyHint": True, "destructiveHint": False,
+                    "idempotentHint": True, "openWorldHint": True,
+                },
                 description=(
                     "Run one live WorldSignals command only when its manifest classifies it "
                     "as read-only, then return one provenance-bound signal.package.v1 envelope. "
@@ -688,6 +747,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="current_datetime",
+            title="Current date and time",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": False,
+            },
             description="Return the current UTC date and time in ISO-8601 format.",
             enabled=True,
             access="read",
@@ -699,6 +763,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="calculator",
+            title="Calculator",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": False,
+            },
             description="Evaluate a basic arithmetic expression and return the numeric result.",
             enabled=True,
             access="read",
@@ -714,6 +783,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="web_search",
+            title="Search the web",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": True,
+            },
             description=(
                 "Real web search via Tavily. Returns real result pages (url, title, domain, "
                 "content excerpt, published date) for the agent to read and select. Read-only "
@@ -732,16 +806,28 @@ def build_default_tool_registry() -> ToolRegistry:
                 "required": ["query"],
             },
             outputSchema={
-                "type": "string",
-                "description": "JSON { ok, query, result_count, results[] } with per-result source metadata",
+                "type": "object",
+                "description": "Web-search result with per-result source metadata.",
+                "properties": {
+                    "ok": {"type": "boolean"},
+                    "query": {"type": "string"},
+                    "result_count": {"type": "integer"},
+                    "results": {"type": "array"},
+                    "error": {"type": "string"},
+                },
             },
         ),
-        web_search,
+        web_search_tool,
         publishers=frozenset({"internal-plugin", "external-mcp"}),
     )
     registry.register(
         ToolSpec(
             name="find_recent_sec_filing_signals",
+            title="Find recent SEC filing signals",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": True,
+            },
             description=(
                 "Find recent SEC filings for an EXPLICITLY supplied issuer, form types, and "
                 "bounded time window via the SEC filing provider. Read-only WorldSignals lane: "
@@ -792,6 +878,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="get_market_snapshot",
+            title="Get a market snapshot",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": True,
+            },
             description=(
                 "Read-only Alpaca latest market snapshot for an EXPLICITLY supplied symbol "
                 "(paper data feed). Returns provider/feed identity, latest trade/quote, observed "
@@ -828,6 +919,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="get_historical_bars",
+            title="Get historical market bars",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": True,
+            },
             description=(
                 "Read-only Alpaca bounded historical bars for an EXPLICITLY supplied symbol and "
                 "timeframe (paper data feed). Returns provider/feed identity, the bars, and "
@@ -866,6 +962,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="get_paper_account_readiness",
+            title="Check paper account readiness",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": True,
+            },
             description=(
                 "Confirm Alpaca PAPER account availability and status only. Read-only: it returns "
                 "no positions, no orders, no balances, and mutates nothing. Use only to verify the "
@@ -890,6 +991,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="trading.get_state",
+            title="Read paper trading state",
+            annotations={
+                "readOnlyHint": True, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": False,
+            },
             description=(
                 "Read this authenticated Trading Card's durable paper Trade Jobs, typed "
                 "decisions, evidence, execution-block state, and recorded portfolio outcomes."
@@ -904,6 +1010,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="trading.accept_assignment",
+            title="Accept a paper trade assignment",
+            annotations={
+                "readOnlyHint": False, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": False,
+            },
             description=(
                 "Validate and persist one complete structured paper trade assignment as a "
                 "Trade Job. Missing execution terms fail closed. This never submits an order."
@@ -926,6 +1037,11 @@ def build_default_tool_registry() -> ToolRegistry:
     registry.register(
         ToolSpec(
             name="trading.record_decision",
+            title="Record a paper trading decision",
+            annotations={
+                "readOnlyHint": False, "destructiveHint": False,
+                "idempotentHint": True, "openWorldHint": False,
+            },
             description=(
                 "Journal one WAIT, ENTER, HOLD, REDUCE, EXIT, PAUSE, or FAIL_SAFE outcome "
                 "against a durable Trade Job with evidence. A decision is not an order and "
@@ -1105,7 +1221,13 @@ def operation_catalog_metadata() -> list[dict[str, Any]]:
             "sourceIds": list(dict.fromkeys(source_ids)),
             "namespace": definition.namespace,
             "kind": "tool",
+            "title": definition.title or definition.canonical_id,
+            "description": definition.description,
+            "inputSchema": deepcopy(definition.parameters_schema),
+            "annotations": deepcopy(definition.annotations or {}),
         }
+        if definition.output_schema is not None:
+            item["outputSchema"] = deepcopy(definition.output_schema)
         if definition.required_caller_runtime is not None:
             item["callerKind"] = definition.required_caller_runtime[0]
             item["callerMode"] = definition.required_caller_runtime[1]
@@ -1130,8 +1252,18 @@ def _publisher_manifest(
         if publisher == "external-mcp" and definition.external_source_id != "main_mcp":
             continue
         source_id = "python_runtime" if publisher == "internal-plugin" else "main_mcp"
+        annotations = deepcopy(definition.annotations or {})
+        required_hints = {
+            "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
+        }
+        if not required_hints.issubset(annotations):
+            missing = ",".join(sorted(required_hints - set(annotations)))
+            raise RuntimeError(
+                f"operation_annotations_missing:{definition.canonical_id}:{missing}"
+            )
         manifest.append({
             "name": definition.canonical_id,
+            "title": definition.title or definition.canonical_id,
             "providerToolName": definition.canonical_id,
             "kind": "tool",
             "sourceId": source_id,
@@ -1142,9 +1274,7 @@ def _publisher_manifest(
             "description": definition.description,
             "enabled": definition.available,
             "access": definition.access,
-            "annotations": {
-                "readOnlyHint": definition.access == "read",
-            },
+            "annotations": annotations,
             "inputSchema": deepcopy(definition.parameters_schema),
             **(
                 {"outputSchema": deepcopy(definition.output_schema)}

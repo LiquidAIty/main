@@ -11,7 +11,6 @@ import {
   discardFreshMembership,
   listSavedCardsForProject,
 } from '../services/agentBuilderStore';
-import { requestConnectedCardRuntimeReconcile } from '../startup/pythonOwnedStartup';
 import { requireOwnedProject } from './projectAccess';
 
 const router = Router();
@@ -52,7 +51,6 @@ router.post('/:projectId/decks', async (req, res) => {
       document as DeckDocument,
       { expectedRevision: typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : null },
     );
-    await requestConnectedCardRuntimeReconcile();
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     const status =
@@ -94,7 +92,6 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
         expectedRevision: typeof expectedRevision === 'string' ? expectedRevision : null,
       },
     );
-    await requestConnectedCardRuntimeReconcile();
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     const message = String(err?.message || 'deck_save_failed');
@@ -131,7 +128,6 @@ router.delete('/:projectId/decks/:deckId/cards/:cardId', async (req, res) => {
       req.params.cardId,
       { expectedDeckRevision, expectedCardRevisionId, deletionIntent },
     );
-    await requestConnectedCardRuntimeReconcile();
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     const message = String(err?.message || 'card_delete_failed');
@@ -201,17 +197,6 @@ router.post('/:projectId/decks/:deckId/memberships', async (req, res) => {
       loaded.deck,
       { expectedRevision: loaded.meta.deckRevision },
     );
-    // The membership and Python-owned graph presence are already durable.
-    // Runtime reconciliation is recoverable startup work and must not turn a
-    // successful attachment into a false 500 followed by destructive cleanup.
-    void requestConnectedCardRuntimeReconcile().catch((error) => {
-      console.warn('[saved-card] runtime reconcile deferred', {
-        projectId: req.params.projectId,
-        deckId: req.params.deckId,
-        cardId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     if (attachment && access) {
@@ -228,7 +213,6 @@ router.post('/:projectId/decks/:deckId/memberships', async (req, res) => {
       if (recovered?.deck && recovered.meta.deckRevision
         && recovered.meta.deckRevision !== expectedDeckRevision
         && recoveredCard) {
-        void requestConnectedCardRuntimeReconcile().catch(() => undefined);
         return res.json({ ok: true, deck: recovered.deck, meta: recovered.meta });
       }
       try {

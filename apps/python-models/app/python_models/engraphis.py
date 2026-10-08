@@ -1709,6 +1709,12 @@ def operation_definitions() -> list[Any]:
                 namespace="engraphis",
                 external_source_id="main_mcp",
                 output_schema=deepcopy(item.get("outputSchema")),
+                title=str(
+                    item.get("title")
+                    or (item.get("annotations") or {}).get("title")
+                    or name
+                ),
+                annotations=deepcopy(item.get("annotations") or {}),
             ))
         _OPERATION_DEFINITIONS = tuple(definitions)
         return list(_OPERATION_DEFINITIONS)

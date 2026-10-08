@@ -1,634 +1,366 @@
 # LiquidAIty Hermes divergence register
 
-This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly nine LiquidAIty-owned runtime extensions: durable Team delegation,
-execution-scoped native Bot target and exact-session resolution, a nullable
-root-scoped assignee ceiling used by headless Mag One execution, Codex-owned
-authentication for detached workers whose saved profile selects the native app-server
-runtime, exact saved-profile toolset pins for native CLI execution, saved-SOUL
-refresh on persistent-session resume, native Codex thread/turn receipts on
-Gateway completion events, detached-worker Gateway-bearer isolation, and
-invocation-local Card tool/model routing with observable completion evidence.
-This register describes source scope; loaded product acceptance is reported separately.
-
-## Verified upstream base
-
-- Project: `NousResearch/hermes-agent`
-- Official repository: `https://github.com/NousResearch/hermes-agent.git`
-- Version: `0.21.3`
-- Commit: `73521a8e375a867fae14ec0579f2dfb47aa0017e`
-- Commit subject: `fix(update): one bad workspaces glob no longer aborts the lockfile-churn cleanup`
-- Task-start resolution: one `git ls-remote origin refs/heads/main` resolved the
-  exact commit above. The detached verification snapshot's `FETCH_HEAD` was
-  written at `2026-09-16T20:44:57.3367113-04:00`.
-- Import proof: every one of the 13,698 upstream-tracked paths was compared by
-  SHA-256 after the mirror and before the feature port: zero missing, zero
-  mismatched, and zero old tracked-only paths remained.
-
-Upstream Hermes owns Bot delivery, Gateway and session ownership, native queueing,
-delivery and receipts, `prompt.submit`, CLI/TUI behavior, tools, plugins, memory,
-profiles, and lifecycle. Upstream ACP source remains present but is not a
-LiquidAIty Card runtime boundary. The target-resolution extension below changes only native
-target/session authority and prompt presentation; no LiquidAIty Bot delivery, Gateway,
-ACP, credential, completion-correlation, queue, or lifecycle patch is retained.
-
-Any production difference outside the entries below is unexplained residue
-and blocks publication.
-
-## 1. Saved Team profile on the existing task ledger
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: let one explicitly saved profile marked `kanban.task_mode: team` create
-one durable root in Hermes' existing task ledger. The existing Kanban owners retain
-decomposition, dispatch, worker execution, retry, final synthesis, notification,
-Stop, and rejoin. `delegate_task` keeps its ordinary upstream `tasks[]` contract
-and exposes no Team role.
-
-EXTERNAL ALTERNATIVE CHECK: upstream temporary subagents do not create a durable
-task graph. A LiquidAIty scheduler, queue, worker process owner, task database, or
-TypeScript planner would duplicate native owners and is rejected.
-
-FILES AND SYMBOLS:
-
-- `tools/kanban_tools.py`: routes an ordinary task assigned to the exact marked
-  profile into the shared Team-root creator after normal task authorization.
-- `tools/bot_mode_dm.py`: routes an authorized direct orange `message_agent`
-  target with the exact marker into the same Team-root creator.
-- `hermes_cli/kanban_team.py`: validates the exact profile marker and saved
-  parent/worker model policy, creates or rejoins one Triage root, supports one
-  explicitly staged blocked root before external Run binding, performs the exact
-  blocked-to-Triage activation, and subscribes the durable originating session.
-- `hermes_cli/config_defaults.py`: declares only the structural per-profile task
-  mode; worker provider/model/reasoning remains the profile's saved delegation config.
-- `hermes_cli/kanban_db.py`: persists workflow/step fields, the depth-one task
-  guard, and final-synthesis worker context.
-- `hermes_cli/kanban_db_graph.py`: propagates the Team workflow, depth-one worker
-  route, retry limit, and root synthesis step through native decomposition.
-- `hermes_cli/kanban_decompose.py`: applies the configured Team worker policy to
-  native decomposed children and requires actual fan-out for Team missions.
-- `hermes_cli/kanban_db_dispatch.py`: marks Team worker processes and adds Team
-  workflow/provider/model facts to the existing native spawned event.
-
-UPSTREAM BEHAVIOR PRESERVED: temporary subagent `tasks[]`, ordinary Kanban tasks,
-manual decomposition, dispatch, worker processes, task/run persistence, retries,
-and notifications remain upstream-owned. Team adds no Card identity, IDF, graph,
-LiquidAIty Run, scheduler, or queue to Hermes.
-
-CONTRACTS:
-
-- exact `kanban.task_mode: team` on the assigned saved profile;
-- one non-empty task body and one `auto-team-v1` Triage root;
-- an externally bound Team root may be committed as non-dispatchable `blocked`
-  and becomes Triage only through `activate_staged_team_root` after binding;
-- saved profile parent model plus saved delegation worker model/provider/reasoning;
-- durable notification route before direct Bot submission;
-- native depth-one workers and a separate final synthesis pass;
-- bounded decomposition failure exits Triage once instead of retrying forever;
-- no nested Team task or `delegate_task` from a Team worker.
-
-TESTS:
-
-- `tests/hermes_cli/test_kanban_team.py`
-- `tests/tools/test_bot_mode_dm.py`
-- affected upstream coverage in `tests/tools/test_delegate.py`
-
-FORK COST: one small Team policy module and bounded branches in the existing
-Kanban/Bot owners. There is no second scheduler, process owner, queue,
-Gateway, or callback runtime.
-
-ROLLBACK: remove the structural Team marker, `kanban_team.py`, workflow
-propagation/worker marker/synthesis hunks, Bot/task entry branches, and
-corresponding tests together. Leave upstream temporary delegation and ordinary
-Kanban intact.
-
-## 2. Execution-scoped native Bot target and exact session
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: let an embedding application resolve one `message_agent` target at the
-actual native delivery boundary from the calling stored session, then pin both
-live-owner and cold-CLI delivery to the resolved target's exact stored session.
-LiquidAIty's signed Card-tools plugin supplies Project/deck/Card/conversation
-authority; orange outbound `flow` is the only roster source. Stable profiles are
-never cloned and blue Magnetic membership never enters this hook. Hermes retains
-delivery, receipts, replies, retries, and notifications.
-
-EXTERNAL ALTERNATIVE CHECK: pinned Hermes 0.21.3 resolves local delivery from a
-profile roster and canonical `Bot Chat` title. Profile configuration cannot
-represent concurrent Projects or conversations sharing one stable profile, and a
-model-argument rewrite is forgeable. The smallest generic extension is one native
-resolver hook plus exact stored-session live/cold selection.
-
-FILES AND SYMBOLS:
-
-- `hermes_cli/plugins.py`: declares the value-returning
-  `resolve_message_agent_target` Python-plugin hook; shell hooks cannot register it.
-- `tools/bot_mode_probe.py`: recognizes stock `Bot Chat` and deterministic suffixed
-  application Bot Chat titles without making a title an authority source.
-- `tools/bot_mode_dm.py`: invokes the resolver at the native delivery boundary,
-  validates one exact live saved profile and target stored session, fails closed
-  when a registered resolver is unavailable, and forwards the stored identity
-  through live and cold delivery.
-- `tools/bot_live_delivery.py`: selects an advertised live owner by the authorized
-  stored session and its compression tip rather than by canonical title.
-
-UPSTREAM BEHAVIOR PRESERVED: with no resolver registered, canonical Bot Chat
-identity/history, native roster discovery, `message_agent` acknowledgement,
-live-owner admission, quiet-CLI offline delivery,
-queueing, ordering, retries, receipts, attributed replies, silence handling,
-background notification, remote peer relay, Gateway, terminal, and TUI ownership
-are unchanged.
-
-CONTRACTS:
-
-- no registered resolver preserves stock native behavior;
-- a registered resolver must return exactly one profile, exact roster, and stored
-  target session or delivery is refused without native-roster fallback;
-- the resolved profile must already be live on the install and belong to the
-  returned exact roster;
-- live delivery matches only that stored session (or its compression tip);
-- cold delivery uses `--resume <stored-session-id>` and never title selection;
-- deterministic suffixed Bot Chat titles enable the native tool but grant no target.
-
-TESTS:
-
-- `tests/tools/test_bot_mode_dm.py`
-- `tests/tools/test_bot_live_owner_delivery.py`
-- `packages/hermes-card-tools/tests/test_plugin.py`
-- `apps/backend/src/routes/hermesCardTools.routes.spec.ts`
-- `apps/backend/src/hermes/agentTerminal.spec.ts`
-
-FORK COST: one generic plugin hook, one native target-resolution branch, one optional
-stored-session argument through existing delivery helpers, and exact live-owner
-lookup. There is no new queue, waiter, callback, correlator, profile, or runtime owner.
-
-ROLLBACK: remove the resolver hook/title predicate/exact-session arguments and the
-Card-tools callback together; stock profile roster and canonical Bot Chat delivery
-remain. The extension is removable when upstream exposes equivalent exact-session
-target resolution or saved-Card direct messaging is retired. No saved Card, profile,
-session, message, or delivery data requires migration.
-
-## 3. Root-scoped assignee ceiling for Mag One
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: let the existing headless Mag One adapter restrict one native creator tree
-to the saved Mag One profile and the exact enabled blue-connected Card profiles.
-Hermes continues to own decomposition, dependencies, dispatch, retries, task runs,
-and summaries. LiquidAIty does not add a scheduler, worker registry, or task store.
-
-EXTERNAL ALTERNATIVE CHECK: upstream direct task submission accepts one root
-assignee but exposes no per-root assignment ceiling. Its install-wide dispatcher
-profile filter is not mission-scoped, and prompt text alone cannot enforce the
-saved topology boundary. A nullable field on the existing task rows is the
-smallest native enforcement point.
-
-FILES AND SYMBOLS:
-
-- `hermes_cli/kanban_db.py`: nullable `Task.allowed_assignees`, canonical ordered
-  normalization, creator-scope assignment validation, self-only scope for manually
-  created descendants, operator reassignment and triage checks, schema storage,
-  readback, and creation event payload.
-- `hermes_cli/kanban_db_connect.py`: additive nullable column migration for existing
-  Hermes task databases.
-- `hermes_cli/kanban_db_graph.py`: atomic decomposition inherits the same ceiling
-  and rejects an out-of-scope root or child assignment.
-- `hermes_cli/kanban_db_dispatch.py`: the existing default-assignee write observes
-  the ceiling if it encounters a bounded task.
-
-UPSTREAM BEHAVIOR PRESERVED: `NULL` keeps ordinary task creation unrestricted.
-Existing dispatcher, worker processes, task tools, retries, dependencies, events,
-summaries, CLI/TUI, and profile discovery remain upstream-owned. The model-facing
-task-creation schema cannot set, replace, or widen the ceiling.
-
-CONTRACTS:
-
-- omission means unrestricted upstream behavior;
-- an explicit list is canonicalized, order-preserving, and duplicate-free;
-- the root assignee must be present in an explicit ceiling;
-- a manually created direct child must be assigned inside its creator's scope;
-- that child receives a self-only local scope, so it can subdivide its own work but
-  cannot recruit a sibling or another persistent profile;
-- a child cannot replace or widen that derived local scope;
-- an operator reassignment is checked against the creator's scope and moves the
-  task's local self scope to the new assignee;
-- review handoff remains inside the task's current local scope;
-- native automatic triage/decomposition retains its existing bounded shared scope,
-  preserving the separate automatic-Team behavior;
-- the application supplies the field only on the structured Mag One root call.
-
-TESTS:
-
-- `tests/hermes_cli/test_kanban_creator_origin.py`
-- application integration coverage in
-  `apps/python-models/app/python_models/test_magentic_execution.py`
-
-FORK COST: one nullable task column and bounded validation in the existing task
-creator. There is no alternate dispatcher, process owner, queue, database, or UI.
-
-ROLLBACK: remove the nullable column from new schema definitions and the later-column
-migration, remove normalization/scope enforcement and focused tests, and stop passing
-the field from the Mag One adapter. Existing rows with `NULL` already behave like
-upstream; SQLite column removal is unnecessary for functional rollback.
-
-## 4. Codex app-server route for detached native workers
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: let a detached native task worker start when its exact saved profile selects
-`model.openai_runtime: codex_app_server`. The Codex subprocess owns authentication;
-the enclosing Hermes profile does not also require a copied `openai-codex` OAuth grant.
-The worker process receives a complete process-local `hermes-tools` MCP transport entry,
-including the JSON-encoded allowed writable root for its native task tree. Global Codex
-configuration remains untouched.
-
-The same existing app-server route preserves user-attached image pixels: native
-vision policy is respected by the Gateway, and rich image parts are projected as
-typed `turn/start.input` image items rather than text-only attachment markers.
-
-EXTERNAL ALTERNATIVE CHECK: copying the already-signed-in Codex CLI refresh grant into
-multiple named profiles forks one single-use OAuth grant and is explicitly prohibited by
-Hermes credential hygiene. Requiring a separate interactive device login for every worker
-duplicates authentication for a runtime that already delegates inference to Codex. A single
-early runtime-provider branch is the smallest coherent repair.
-
-FILES AND SYMBOLS:
-
-- `hermes_cli/runtime_provider.py`: `_configured_codex_app_server_runtime` returns the
-  configured app-server route before profile credential-pool/OAuth resolution. Its non-secret
-  marker key satisfies the existing resolved-runtime constructor contract and is never sent to
-  an inference endpoint because the app-server owns the turn.
-- `agent/transports/codex_app_server.py`: the existing worker-specific MCP override builder
-  supplies the complete native `hermes-tools` command, arguments, base environment, startup
-  and call timeouts before adding the exact task/profile environment.
-- `tui_gateway/prompt_turn.py::_route_turn_images`: keeps the existing native/text
-  image-policy result instead of forcing app-server turns into text references.
-- `agent/transports/codex_app_server_session.py::_coerce_turn_input_items,run_turn`:
-  mechanically forwards image URLs/bytes and local-image paths through the existing
-  app-server input union. The separate text projection retains input-echo attribution.
-
-UPSTREAM BEHAVIOR PRESERVED: profiles using `openai_runtime: auto`, every non-OpenAI
-provider, profile-local credential pools, refresh behavior, fallbacks, text turns,
-tool dispatch, session history, and Codex authentication remain unchanged. Explicit
-text image policy is still respected.
-
-CONTRACTS:
-
-- only `openai` and `openai-codex` profiles explicitly configured for
-  `codex_app_server` use the branch;
-- no OAuth credential is copied, linked, persisted, or inherited;
-- the Codex subprocess remains the authentication and inference owner;
-- no global Codex configuration is created or modified;
-- missing Codex installation/sign-in still fails through the existing native transport;
-- an initialize failure or timeout remains a visible native worker failure;
-- ordinary Hermes provider resolution is unchanged when the runtime is `auto`.
-- attached image bytes remain in native image inputs; an image record with no
-  source fails validation rather than silently becoming a text-only turn.
-
-TESTS:
-
-- `tests/agent/transports/test_codex_app_server_runtime.py`
-- `tests/agent/transports/test_codex_worker_mcp_overrides.py`
-- `tests/agent/transports/test_codex_app_server_session.py`
-- `tests/tui_gateway/test_image_routing_stale_model.py`
-- loaded Mag One proof through the native dispatcher.
-
-FORK COST: one bounded pre-credential resolution branch, one complete worker-local MCP
-entry, a bounded image-input projection and removal of one forced-text branch,
-and focused tests. No new provider, credential store, task runner, scheduler, or
-process owner is added.
-
-ROLLBACK: remove `_configured_codex_app_server_runtime`, its first ladder rung, the
-worker-local `hermes-tools` MCP entry, and their focused tests together. Profiles then again
-require profile-local OAuth before a detached app-server task process can start, and workers
-again depend on a separately complete global Codex MCP entry.
-The image repair is independently removable by restoring the forced-text branch
-and text-only app-server input projection together. No saved data changes are required.
-
-## 5. Exact saved-profile toolset pin for native CLI execution
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: make the existing native `profiles.configure` call persist one exact saved Card
-toolset selection both for profile editing/readback and for the CLI execution surface. An
-explicit empty selection remains deny-all instead of falling back to the global default.
-
-EXTERNAL ALTERNATIVE CHECK: the application previously needed a second TypeScript-owned
-config-file writer because the native profile RPC updated only the editor-facing field. That
-duplicated profile-write authority. Extending the existing native RPC to its execution field
-lets the application use one owner and removes the embedded writer.
-
-FILES AND SYMBOLS:
-
-- `tui_gateway/methods_profiles.py`: `_save_toolset_pin` writes both
-  `tools.enabled_toolsets` and `platform_toolsets.cli` from the same ordered selection,
-  including explicit `[]`.
-
-UPSTREAM BEHAVIOR PRESERVED: omission leaves existing profile/global toolset behavior
-unchanged. Profile creation, prompt/model configuration, Gateway ownership, CLI startup,
-tool discovery, and execution remain native Hermes behavior.
-
-CONTRACTS:
-
-- only an explicitly supplied `enabledToolsets` value writes either field;
-- ordering and explicit empty selection are preserved;
-- one native profile RPC owns both saved representations;
-- the application does not edit Hermes configuration files directly.
-
-TESTS:
-
-- `tests/tui_gateway/test_profiles_toolset_pin.py`
-- application coverage in `apps/backend/src/hermes/agentTerminal.spec.ts`.
-
-FORK COST: one bounded write in the existing profile configure owner and focused tests. No
-new route, profile abstraction, runtime, tool registry, or file writer is added.
-
-ROLLBACK: remove `_save_toolset_pin`, restore the former editor-only assignment, and restore
-an external execution-pin writer if exact Card-owned toolset execution is still required.
-
-## 6. Saved-SOUL refresh on persistent-session resume
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: make a persistent native Card session adopt the exact current saved profile
-`SOUL.md` after that Card prompt changes, while preserving the existing session and
-conversation history. An unchanged SOUL continues to reuse the stored system prompt
-byte-for-byte.
-
-EXTERNAL ALTERNATIVE CHECK: creating a new application or Hermes session would discard
-the required persistent-session continuity. MCP reload does not own stable Card
-instructions, and prompt markers would pollute model-visible content. Comparing the
-current native identity with the stored prompt before reuse is the smallest coherent
-change in the existing restore owner.
-
-FILES AND SYMBOLS:
-
-- `agent/system_prompt.py`: `resolve_stable_identity` shares the exact profile SOUL or
-  stock-default identity path with fresh prompt construction.
-- `agent/conversation_loop.py`: `_stored_prompt_matches_runtime` requires the stored
-  prompt to begin with the exact current stable identity and canonical blank-line
-  boundary in addition to the existing runtime metadata checks.
-
-UPSTREAM BEHAVIOR PRESERVED: unchanged SOUL, provider, model, working directory, and
-surface reuse the existing stored prompt and history without a write. Fresh prompt
-construction, default identity, context sections, and runtime metadata remain native
-Hermes behavior.
-
-CONTRACTS:
-
-- a byte-identical current identity preserves the stored prompt byte-for-byte;
-- a changed profile SOUL causes one rebuild and persistence through the existing owner;
-- a shorter old identity cannot prefix-match a longer replacement;
-- no marker, version tag, dynamic task, or application prompt copy is added to model
-  instructions;
-- provider, model, working-directory, and surface checks remain required.
-
-TESTS:
-
-- `tests/agent/test_system_prompt.py`
-- `tests/agent/test_system_prompt_restore.py`
-- `tests/agent/transports/test_codex_app_server_session.py`
-
-FORK COST: one shared stable-identity resolver and one bounded resume comparison. There
-is no alternate prompt store, session owner, history lifecycle, or application-side
-prompt assembler.
-
-ROLLBACK: restore the former identity assembly inside `build_system_prompt_parts`, remove
-the leading-identity resume check, and remove the focused tests together. Persistent
-sessions would again retain an old SOUL until another native rebuild condition occurs.
-
-## 7. Native Codex thread and turn receipts on Gateway completion
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: preserve the real Codex App Server thread and turn identities already returned
-by the native transport when the Gateway emits `message.complete`. LiquidAIty can then
-persist a truthful completed Run receipt instead of rejecting an otherwise completed
-Card turn as identity-free.
-
-EXTERNAL ALTERNATIVE CHECK: the application cannot reconstruct provider-native IDs from
-answer text, the Hermes session ID is not a Codex thread/turn pair, and weakening Python
-rails receipt validation would permit false completion. Adding the existing result fields
-to the existing completion event is the smallest truthful transport change.
-
-FILES AND SYMBOLS:
-
-- `tui_gateway/prompt_turn.py`: `_complete_turn_payload` maps non-empty
-  `codex_thread_id` and `codex_turn_id` from the completed native result to
-  `nativeRootId` and `nativeRunId`.
-- `tui_gateway/contracts/events.py`: `MessageCompletePayload` declares the two optional
-  native receipt fields.
-
-UPSTREAM BEHAVIOR PRESERVED: text, usage, status, reasoning, billing, error, rendering,
-history persistence, streaming, and non-Codex completion payloads remain unchanged.
-Ordinary runtimes omit both optional fields.
-
-CONTRACTS:
-
-- only real non-empty transport IDs are emitted;
-- no identifier is inferred from prompt text, session title, or application state;
-- the existing Codex transport remains the sole owner of thread and turn IDs;
-- non-Codex and identity-free results retain their former payload shape;
-- Python rails continues to fail closed when required native evidence is missing.
-
-TESTS:
-
-- `tests/tui_gateway/test_bot_mode_silence_delivery.py`
-- `tests/agent/test_codex_app_server_integration.py`
-- application receipt coverage in `apps/backend/src/hermes/agentTerminalExecution.spec.ts`.
-
-FORK COST: two optional event fields and one bounded projection from existing result
-data. There is no second receipt store, provider call, correlator, or inferred identity.
-
-ROLLBACK: remove the two optional event fields, their projection, and the focused test
-together. Codex-backed application Runs would again fail completion receipt validation.
-
-## 8. Detached worker Gateway-bearer isolation
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: guarantee that a detached native worker cannot inherit the saved Card Gateway
-bearer while retaining the native task, run, claim, profile, and tenant capability that
-the existing dispatcher assigned to that worker. Each default native task claim is an
-unguessable per-task-run capability, so sibling workers owned by the same dispatcher do
-not share Card-tool signing authority.
-
-EXTERNAL ALTERNATIVE CHECK: the application plugin hook runs inside the spawned worker
-and therefore cannot enforce the child process environment. `_default_spawn` is the one
-supported native worker spawn boundary, so an explicit removal there is the smallest
-complete hardening for multiplex and non-multiplex dispatch.
-
-FILES AND SYMBOLS:
-
-- `hermes_cli/kanban_db_dispatch.py`: `_default_spawn` removes
-  `HERMES_DASHBOARD_SESSION_TOKEN` before the detached worker is started.
-- `hermes_cli/kanban_db.py`: default task and review claims extend the existing
-  host/process owner identity with 32 random bytes for one task run; the same exact
-  `claim_lock` continues to own native heartbeat and terminal compare-and-set behavior.
-
-UPSTREAM BEHAVIOR PRESERVED: native task claim, task/run/profile/tenant assignment,
-profile-scoped home and toolsets, process/session ownership, lifecycle, workspace, and
-dispatch behavior remain unchanged. The existing non-secret managed Card-tool loopback
-route remains available to the worker.
-
-CONTRACTS:
-
-- the saved Gateway bearer is absent in both multiplex and non-multiplex worker spawns;
-- `CARD_TOOLS_MANAGED` and `CARD_TOOLS_HOST_URL` remain non-secret route metadata;
-- the exact native task, run, unique claim capability, profile, and tenant assignment
-  remain intact;
-- sibling tasks claimed by one dispatcher receive different capabilities;
-- no process, registry, database, session, callback, scheduler, or shell fallback is added.
-
-TESTS:
-
-- `tests/hermes_cli/test_kanban_worker_spawn_toolsets.py`
-- companion saved Card plugin envelope coverage in
-  `packages/hermes-card-tools/tests/test_plugin.py`.
-
-FORK COST: one explicit environment removal at the existing native spawn boundary and
-focused coverage. No runtime or persistence owner is added.
-
-ROLLBACK: remove the worker-only v2 plugin helper/branch, restore the default claim value
-to the host/process identity, and remove the explicit environment removal together if the
-end-to-end saved Card worker acceptance path is later replaced.
-
-## 9. Invocation-local Card routing and observable completion evidence
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: let one saved Card invocation atomically narrow only its Card-managed
-tools, apply one eligible model for that turn, and return the actual provider,
-model, exposed tools, and exact current-turn tool calls/results on the existing
-Gateway completion event. LiquidAIty uses those receipts to verify dispatch and
-to assess the completed response without inferring execution from prose.
-
-EXTERNAL ALTERNATIVE CHECK: persistent profile reconfiguration would leak a
-route into later turns, while filtering only in the TypeScript caller would not
-change Hermes' actual model/tool surface. The existing `/model --once`, prompt
-turn lifecycle, and completion event are the smallest native atomic boundary.
-
-FILES AND SYMBOLS:
-
-- `tui_gateway/contracts/prompt_voice.py`: optional `managed_tools`,
-  `allowed_tools`, and `model_once` prompt fields.
-- `tui_gateway/methods_prompt.py::_run_after_agent_ready`: validated one-turn
-  model application and pre-start restoration after any partial switch.
-- `tui_gateway/prompt_turn.py::_apply_turn_tool_selection`,
-  `_restore_turn_tool_selection`, `_observable_turn_evidence`, and
-  `_complete_turn_payload`: invocation-local tool narrowing/restoration and
-  truthful completion receipts.
-- `tui_gateway/contracts/events.py::MessageCompletePayload` plus generated
-  OpenRPC/TypeScript contracts: typed actual-dispatch and evidence fields.
-
-UPSTREAM BEHAVIOR PRESERVED: callers that omit the new optional fields retain
-the complete upstream tool surface, normal configured model, history, session,
-streaming, cancellation, and completion behavior. Unmanaged native facilities
-remain present. No saved profile, global configuration, or tool grant is
-mutated by a turn-scoped route.
-
-CONTRACTS:
-
-- allowed tools must be an exact subset of the named managed tools and must
-  exist before the turn starts;
-- omitted managed tools cannot reappear in the actual exposed-tool receipt;
-- model selection is validated and applied through native `--once` semantics;
-- model and tool snapshots restore after success, error, cancellation, or a
-  pre-dispatch failure;
-- evidence contains only current-turn assistant tool calls and tool results;
-  changed history, invalid values, or an oversized capture is explicitly
-  incomplete rather than partial-success-shaped.
-
-TESTS:
-
-- `tests/tui_gateway/test_turn_scoped_card_routing.py`
-- `tests/tui_gateway/contracts/test_generated.py`
-- LiquidAIty adapter coverage in
-  `apps/backend/src/hermes/agentTerminal.spec.ts` and
-  `apps/backend/src/hermes/agentTerminalExecution.spec.ts`
-
-FORK COST: four small existing Gateway/TUI owner seams and regenerated public
-contracts. There is no second session, dispatcher, tool registry, model router,
-or evidence store.
-
-ROLLBACK: remove the optional prompt fields, turn-local model/tool application,
-completion evidence fields, generated-contract deltas, and focused tests
-together. Upstream prompt submission and persistent model/tool behavior then
-remain unchanged.
-
-## Complete upstream-relative difference manifest
-
-Production files:
-
-- `tools/delegate_tool.py` — Team
-- `hermes_cli/config_defaults.py` — Team and native Bot roster field
-- `hermes_cli/kanban_team.py` — Team
-- `hermes_cli/kanban_db.py` — Team, root-scoped assignee ceiling, and unique native
-  per-task-run claim capabilities
-- `hermes_cli/kanban_db_connect.py` — nullable assignee-ceiling migration
-- `hermes_cli/kanban_db_graph.py` — Team and assignee-ceiling inheritance
-- `hermes_cli/kanban_decompose.py` — Team
-- `hermes_cli/kanban_db_dispatch.py` — Team, bounded default-assignee enforcement, and
-  detached-worker Gateway-bearer isolation
-- `hermes_cli/runtime_provider.py` — Codex app-server route without duplicate profile OAuth
-- `agent/transports/codex_app_server.py` — complete process-local worker MCP transport
-- `hermes_cli/config_migrations.py` — Bot roster/lifecycle enumeration split
-- `hermes_cli/plugins.py` — generic native message-target resolver hook
-- `tools/bot_mode_probe.py` — native roster fallback plus application-scoped Bot Chat title predicate
-- `tools/bot_mode_dm.py` — exact target/session validation through the resolver
-- `tools/bot_live_delivery.py` — exact stored-session live-owner lookup
-- `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` — typed Bot roster RPC field
-- `tui_gateway/methods_profiles.py` — Bot roster configure/describe and exact CLI toolset pin
-- `tui_gateway/methods_bot_relay.py` — exact inbound live-profile resolution
-- `agent/system_prompt.py` — shared saved-SOUL identity resolution
-- `agent/conversation_loop.py` — persistent-session saved-SOUL refresh guard
-- `tui_gateway/methods_prompt.py` — invocation-local model application and
-  pre-dispatch restoration
-- `tui_gateway/prompt_turn.py` — native Codex receipt projection plus
-  invocation-local tool narrowing/restoration and observable completion evidence
-- `tui_gateway/contracts/prompt_voice.py` — optional turn-local tool/model fields
-- `tui_gateway/contracts/events.py` — optional native completion receipt and
-  observable execution fields
-- `apps/shared/src/gateway-contract.generated.ts` and
-  `apps/shared/src/gateway-contract.openrpc.json` — generated public contracts
-
-Focused tests:
-
-- `tests/tools/test_delegate.py` — adjusted public-schema assertions only
-- `tests/hermes_cli/test_kanban_team.py` — Team
-- `tests/hermes_cli/test_kanban_creator_origin.py` — assignee-ceiling inheritance and unrestricted behavior
-- `tests/tools/test_bot_mode_probe.py` — native Bot roster resolution/prompt
-- `tests/tools/test_bot_mode_dm.py` — native Bot target and unchanged delivery selection
-- `tests/tui_gateway/test_profiles_bot_roster.py` — profile roster write/readback
-- `tests/agent/transports/test_codex_app_server_runtime.py` — detached app-server credential routing
-- `tests/agent/transports/test_codex_worker_mcp_overrides.py` — complete worker MCP transport
-- `tests/tui_gateway/test_profiles_toolset_pin.py` — saved profile and CLI execution toolset pin
-- `tests/agent/test_system_prompt.py` — changed and unchanged saved-SOUL resume behavior
-- `tests/agent/test_system_prompt_restore.py` — stored-prompt reuse contract
-- `tests/agent/transports/test_codex_app_server_session.py` — exact stable/dynamic prompt split
-- `tests/tui_gateway/test_bot_mode_silence_delivery.py` — native completion receipt projection
-- `tests/tui_gateway/test_turn_scoped_card_routing.py` — exact tool exposure,
-  restoration, evidence bounds, and partial model-switch restoration
-- `tests/tui_gateway/contracts/test_generated.py` — generated-contract parity
-- `tests/agent/test_codex_app_server_integration.py` — Codex result thread/turn identity
-- `tests/hermes_cli/test_kanban_worker_spawn_toolsets.py` — exact worker toolsets and
-  Gateway-bearer isolation
-
-Metadata:
-
-- `LIQUIDAITY_VENDOR_PATCHES.md` — this register
-
-Ignored runtime state beneath the vendor directory, including virtual
-environments, profile homes, history/databases, caches, bytecode, egg metadata,
-and test-duration caches, is neither upstream source nor a local source
-divergence and must not be reset as part of a vendor update.
+Status: **audit checkpoint — current divergence is not accepted as the target**.
+
+This file records what differs from the pinned upstream source. It does not grant
+approval merely because code exists. The approved target is:
+
+1. update the vendored tree to an explicitly selected current upstream Hermes revision;
+2. retain only two LiquidAIty patch families, after re-porting and proof:
+   - **AutoTeam** — a saved profile may turn an ordinary Hermes Kanban assignment
+     into the bounded automatic decompose/work/synthesize workflow;
+   - **TaskGraph/Magnetic** — one submitted Hermes task tree may enforce the exact
+     saved blue-connected assignee ceiling;
+3. use upstream profile, session, tool, Skill, MCP, Bot, transport, replay, TUI,
+   provider and lifecycle behavior everywhere else.
+
+No other Hermes modification is approved. A supporting hunk may remain only when
+focused evidence proves it is strictly required by one of those two patch families;
+it must then be documented inside that family, not as a third extension.
+
+## Authoritative comparison
+
+- Official project: `NousResearch/hermes-agent`
+- Pinned comparison revision: `0.21.3`, commit
+  `73521a8e375a867fae14ec0579f2dfb47aa0017e`
+- Current LiquidAIty repository commit at audit:
+  `8ea07bd447bef2efca3285806dc1f175ace05741`
+- Current `Hermes/` working-tree diff before this documentation correction: clean
+- Historical reset checkpoint used only as a secondary chronology reference:
+  `1bc5cd12b3690a810a7a4e304f6b71997352f898`
+- Comparison method: GitHub's official recursive Git tree for the pinned commit
+  versus the blob identities in `git ls-tree -r HEAD -- Hermes`.
+- Official upstream blobs: `13,698`
+- LiquidAIty vendored blobs: `13,678`
+- Same-path blobs with different content: `48`
+- LiquidAIty-only blobs: `10`
+- Upstream blobs missing from LiquidAIty: `30`
+
+The previous register's statement that the tree was upstream plus “exactly nine”
+extensions was false. The exact inventory below replaces it.
+
+## Newer-upstream inspection
+
+The latest tagged release visible during this audit is still `0.21.3`. Upstream
+`main` is newer than the pinned source; the inspected head was
+`05eecbcd972c8737ebc7722ea08aab47fb538043` (2026-10-06), and its package release
+date is `2026.9.24`.
+
+Newer upstream already provides behavior that can replace several local changes:
+
+- `profiles.configure` writes the execution-facing `platform_toolsets.cli` pin;
+- MCP enablement uses the runtime's current `enabled` representation;
+- `model.openai_runtime: codex_app_server` is applied after provider resolution,
+  and the app-server owns its own login rather than requiring copied profile OAuth;
+- Bot delivery has durable delivery IDs, live-owner admission, retry handling,
+  completion notification/poll fallback, and transcript persistence;
+- the shipped WebSocket client has stronger per-session replay barriers and
+  server-request replay;
+- canonical Bot Chats rebuild their persisted prompt when the upstream capability
+  fingerprint changes;
+- `prompt.submit` has the ordinary client `queued` contract.
+
+Newer upstream still does **not** provide:
+
+- an exact per-source Bot roster derived from LiquidAIty orange topology;
+- delivery to a LiquidAIty Project/conversation-specific stored target session;
+- `prompt.submit.managed_tools`, `allowed_tools`, or `model_once`;
+- LiquidAIty's completion fields (`nativeRootId`, `nativeRunId`, actual model/tool
+  exposure, or captured tool-call evidence);
+- AutoTeam's `auto-team-v1` workflow;
+- TaskGraph/Magnetic's `allowed_assignees` ceiling.
+
+Therefore an upstream update materially reduces the fork, but it does not by
+itself satisfy the orange Bot boundary or dynamic per-Run tool narrowing.
+
+## Approved patch family A — AutoTeam
+
+Required outcome: an explicitly configured saved Team profile uses Hermes's one
+Kanban database, dispatcher, task rows, dependencies, workers, retries and final
+synthesis. LiquidAIty must not add a scheduler, worker registry, queue, task store
+or transcript owner.
+
+Current candidate production paths (mixed files must be split during re-port):
+
+- `gateway/kanban_watchers_dispatcher.py` — bounded Team decomposition failure handling;
+- `hermes_cli/config_defaults.py` — `kanban.task_mode` only;
+- `hermes_cli/kanban_team.py` — Team policy/root/decomposition/synthesis helpers;
+- `hermes_cli/kanban_db.py` — Team workflow and step fields;
+- `hermes_cli/kanban_db_graph.py` — Team child and synthesis propagation;
+- `hermes_cli/kanban_decompose.py` — Team worker route and required fan-out;
+- `hermes_cli/kanban_db_dispatch.py` — Team worker process marker/receipt handling;
+- `tools/kanban_tools.py` — ordinary saved-profile Team root entry;
+- `tools/bot_mode_dm.py` — **candidate only**: the Team-target branch must be
+  proven necessary after stock Bot delivery is restored; all Project-roster and
+  target-session code is outside this family;
+- `tools/delegate_tool.py` and `run_agent.py` — mixed historical cleanup around
+  retired `role="team"` / profile delegation; rebase to upstream first, then keep
+  only a proven AutoTeam delta.
+
+Required proof before this family is accepted:
+
+- ordinary Hermes Kanban remains unchanged when `kanban.task_mode` is empty;
+- one marked saved profile creates one bounded Team root;
+- decomposition produces real worker tasks and one final synthesis step;
+- retry, Stop, failure and rejoin remain Hermes-owned;
+- no Bot, profile, tool, session or provider patch is smuggled into this family.
+
+## Approved patch family B — TaskGraph/Magnetic
+
+Required outcome: the existing Hermes task tree for one Magnetic root may assign
+work only to the exact saved blue-connected profiles. Omission remains ordinary
+unrestricted Hermes behavior.
+
+Current candidate production paths:
+
+- `hermes_cli/kanban_db.py` — nullable `allowed_assignees`, canonical validation,
+  creator/child/review/reassignment enforcement and readback;
+- `hermes_cli/kanban_db_connect.py` — additive nullable column migration;
+- `hermes_cli/kanban_db_graph.py` — inheritance and decomposition enforcement;
+- `hermes_cli/kanban_db_dispatch.py` — bounded default-assignee enforcement.
+
+Required proof before this family is accepted:
+
+- `NULL` preserves upstream task behavior;
+- the root assignee must belong to an explicit ceiling;
+- automatic decomposition cannot assign outside the ceiling;
+- manually created descendants cannot widen their creator scope;
+- ordinary boards, review, retries and dispatcher behavior remain unchanged;
+- no application scheduler, process owner or copied task ledger appears.
+
+## Unapproved or mixed production differences
+
+These differences must be replaced by newer upstream behavior or removed. If a
+LiquidAIty requirement remains unsupported, implementation stops at that boundary
+until the owner approves a concrete design. They are not silently folded into the
+two Kanban families.
+
+### Bot roster, Project target and exact-session modifications
+
+- `hermes_cli/plugins.py`
+- `hermes_cli/config_migrations.py`
+- `tools/bot_mode_probe.py`
+- `tools/bot_mode_dm.py` (mixed with the AutoTeam candidate branch)
+- `tools/bot_live_delivery.py`
+- `tui_gateway/methods_bot_relay.py`
+- `tui_gateway/methods_profiles.py` (mixed with a toolset change now supplied upstream)
+- `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py`
+- `apps/shared/src/gateway-contract.generated.ts`
+- `apps/shared/src/gateway-contract.openrpc.json`
+- `agent/inline_tool_executors.py`
+
+These add suffixed `Bot Chat:<digest>` recognition, per-profile `bot_mode.roster`,
+the `resolve_message_agent_target` hook, a Project-owned target stored-session
+argument, exact live-owner selection and Team delivery correlation. Stock and
+newer Hermes use one canonical `Bot Chat` per profile and an install-wide live
+profile roster. The application resolver has already been deleted, so the dormant
+vendor hook is not an accepted fallback.
+
+### Card/Codex dynamic tools, MCP projection, images and receipts
+
+- `agent/codex_runtime.py`
+- `agent/transports/codex_app_server.py`
+- `agent/transports/codex_app_server_session.py`
+- `tui_gateway/contracts/prompt_voice.py`
+- `tui_gateway/contracts/events.py`
+- `tui_gateway/methods_prompt.py`
+- `tui_gateway/prompt_turn.py`
+- `apps/shared/src/gateway-contract.generated.ts`
+- `apps/shared/src/gateway-contract.openrpc.json`
+
+These add Codex app-server Dynamic Tools, a Hermes tool callback executor,
+Run-scoped MCP projection, image-item projection, turn-local model/tool selection,
+and completion evidence/provider IDs. They may relate to Cards using the Codex
+CLI and to IDF-selected context, but that relationship is not approval. Static
+saved Card tool ON/OFF behavior already has a standard mechanism: each profile's
+application plugin is materialized with only that Card's selected `tools.json`,
+while Hermes profile configuration owns Skills, toolsets and MCP servers. Dynamic
+AutoTools narrowing is a separate unsupported boundary.
+
+### Profile prompt refresh
+
+- `agent/system_prompt.py`
+- `agent/conversation_loop.py`
+
+These compare the current SOUL identity with a stored prompt for every persisted
+session. Newer upstream has a capability-epoch rebuild for canonical Bot Chats,
+but not for LiquidAIty's suffixed Project sessions. This remains tied to the
+unapproved multi-conversation Bot design and must not survive as an independent
+extension without approval.
+
+### Provider and worker-environment changes
+
+- `hermes_cli/runtime_provider.py` — Codex app-server routing without copied OAuth;
+  newer upstream now owns the equivalent provider resolution.
+- `agent/transports/codex_app_server.py` — mixed Magnetic shell disablement and
+  removal/replacement of worker MCP environment projection.
+- `hermes_cli/kanban_db_dispatch.py` — mixed Team/TaskGraph changes plus explicit
+  dashboard-bearer removal. The latter may remain only if focused proof shows it
+  is necessary inside one approved Kanban patchset after the upstream update.
+
+### Other changed production paths requiring upstream rebase or removal
+
+- `tools/delegate_tool.py` — large removal of historical Team/profile delegation;
+- `run_agent.py` — companion removal of profile-delegation arguments;
+- `tui_gateway/methods_voice.py` — speaking/idle event additions unrelated to either
+  approved Kanban family;
+- `contributors/emails/uperLu@users.noreply.github.com` — blob identity differs
+  from upstream while the ordinary textual diff is empty; treat as line-ending or
+  metadata drift until a clean upstream rebase resolves it.
+
+## Exact changed-blob inventory versus pinned upstream
+
+The following 48 same-path blobs differ from upstream:
+
+```text
+agent/codex_runtime.py
+agent/conversation_loop.py
+agent/inline_tool_executors.py
+agent/system_prompt.py
+agent/transports/codex_app_server.py
+agent/transports/codex_app_server_session.py
+apps/shared/src/gateway-contract.generated.ts
+apps/shared/src/gateway-contract.openrpc.json
+contributors/emails/uperLu@users.noreply.github.com
+gateway/kanban_watchers_dispatcher.py
+hermes_cli/config_defaults.py
+hermes_cli/config_migrations.py
+hermes_cli/kanban_db.py
+hermes_cli/kanban_db_connect.py
+hermes_cli/kanban_db_dispatch.py
+hermes_cli/kanban_db_graph.py
+hermes_cli/kanban_decompose.py
+hermes_cli/plugins.py
+hermes_cli/runtime_provider.py
+run_agent.py
+tests/agent/test_system_prompt.py
+tests/agent/test_system_prompt_restore.py
+tests/agent/transports/test_codex_app_server_runtime.py
+tests/agent/transports/test_codex_app_server_session.py
+tests/agent/transports/test_codex_worker_mcp_overrides.py
+tests/hermes_cli/test_kanban_creator_origin.py
+tests/hermes_cli/test_kanban_worker_spawn_toolsets.py
+tests/tools/test_bot_live_owner_delivery.py
+tests/tools/test_bot_mode_dm.py
+tests/tools/test_bot_mode_probe.py
+tests/tools/test_delegate.py
+tests/tools/test_kanban_tools.py
+tests/tui_gateway/test_bot_mode_silence_delivery.py
+tests/tui_gateway/test_hud_surface_note.py
+tests/tui_gateway/test_image_routing_stale_model.py
+tools/bot_live_delivery.py
+tools/bot_mode_dm.py
+tools/bot_mode_probe.py
+tools/delegate_tool.py
+tools/kanban_tools.py
+tui_gateway/contracts/events.py
+tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py
+tui_gateway/contracts/prompt_voice.py
+tui_gateway/methods_bot_relay.py
+tui_gateway/methods_profiles.py
+tui_gateway/methods_prompt.py
+tui_gateway/methods_voice.py
+tui_gateway/prompt_turn.py
+```
+
+## Exact LiquidAIty-only blob inventory
+
+The following 10 blobs do not exist in pinned upstream:
+
+```text
+%SystemDrive%/ProgramData/Microsoft/Windows/Caches/{6AF0698E-D558-4F6E-9B3C-3716689AF493}.2.ver0x0000000000000001.db
+%SystemDrive%/ProgramData/Microsoft/Windows/Caches/{DDF571F2-BE98-426D-8288-1A9A39C3FDA2}.2.ver0x0000000000000001.db
+%SystemDrive%/ProgramData/Microsoft/Windows/Caches/cversions.2.db
+LIQUIDAITY_VENDOR_PATCHES.md
+hermes_cli/kanban_team.py
+tests/agent/test_codex_native_mcp_projection.py
+tests/hermes_cli/test_kanban_team.py
+tests/tui_gateway/test_profiles_bot_roster.py
+tests/tui_gateway/test_profiles_toolset_pin.py
+tests/tui_gateway/test_turn_scoped_card_routing.py
+```
+
+The three `%SystemDrive%` database blobs are unexplained tracked residue and are
+not part of either approved patch family.
+
+## Exact missing-upstream blob inventory
+
+The following 30 upstream blobs are absent from LiquidAIty:
+
+```text
+apps/desktop/src/plugins/hello-runtime/plugin.runtime.js
+optional-skills/creative/concept-diagrams/examples/apartment-floor-plan-conversion.md
+optional-skills/creative/concept-diagrams/examples/automated-password-reset-flow.md
+optional-skills/creative/concept-diagrams/examples/autonomous-llm-research-agent-flow.md
+optional-skills/creative/concept-diagrams/examples/banana-journey-tree-to-smoothie.md
+optional-skills/creative/concept-diagrams/examples/commercial-aircraft-structure.md
+optional-skills/creative/concept-diagrams/examples/cpu-ooo-microarchitecture.md
+optional-skills/creative/concept-diagrams/examples/electricity-grid-flow.md
+optional-skills/creative/concept-diagrams/examples/feature-film-production-pipeline.md
+optional-skills/creative/concept-diagrams/examples/hospital-emergency-department-flow.md
+optional-skills/creative/concept-diagrams/examples/ml-benchmark-grouped-bar-chart.md
+optional-skills/creative/concept-diagrams/examples/place-order-uml-sequence.md
+optional-skills/creative/concept-diagrams/examples/smart-city-infrastructure.md
+optional-skills/creative/concept-diagrams/examples/smartphone-layer-anatomy.md
+optional-skills/creative/concept-diagrams/examples/sn2-reaction-mechanism.md
+optional-skills/creative/concept-diagrams/examples/wind-turbine-structure.md
+plugins/hermes-achievements/dashboard/dist/index.js
+plugins/hermes-achievements/dashboard/dist/style.css
+plugins/kanban/dashboard/dist/index.js
+plugins/kanban/dashboard/dist/style.css
+skills/creative/p5js/references/export-pipeline.md
+skills/creative/p5js/scripts/export-frames.js
+web/public/fonts/Collapse-Bold.woff2
+web/public/fonts/Collapse-Regular.woff2
+web/public/fonts/Mondwest-Regular.woff2
+web/public/fonts/RulesCompressed-Medium.woff2
+web/public/fonts/RulesCompressed-Regular.woff2
+web/public/fonts/RulesExpanded-Bold.woff2
+web/public/fonts/RulesExpanded-Regular.woff2
+website/src/data/userStories.json
+```
+
+No absence above is accepted merely because it is non-runtime or generated.
+The controlled upstream update must restore the exact selected revision first;
+only a separately justified build-output policy may remove a restored path later.
+
+## Current tests outside the pinned upstream tree
+
+LiquidAIty-only tests correspond to unapproved behavior as well as the approved
+Kanban work. They do not prove approval:
+
+- `tests/agent/test_codex_native_mcp_projection.py` — Card/Codex MCP projection;
+- `tests/hermes_cli/test_kanban_team.py` — AutoTeam (approved family A);
+- `tests/tui_gateway/test_profiles_bot_roster.py` — unapproved Bot roster;
+- `tests/tui_gateway/test_profiles_toolset_pin.py` — now supplied by newer upstream;
+- `tests/tui_gateway/test_turn_scoped_card_routing.py` — unapproved turn routing.
+
+Changed upstream tests in the 48-blob list must be rebased with their production
+owners. `tests/tools/test_delegate_team.py` is deleted relative to the historical
+LiquidAIty reset checkpoint but is not an upstream-tree addition; its history must
+not be used as permission to restore `delegate_task(role="team")`.
+
+## Controlled update and reduction plan
+
+No update, restore or source edit is authorized by this document. When explicitly
+approved, the coherent operation is:
+
+1. pin one exact upstream target (latest stable tag, or an explicitly approved
+   upstream-head commit);
+2. reproduce a clean upstream tree and verify every upstream blob before porting;
+3. re-port AutoTeam as one bounded patch family;
+4. re-port TaskGraph/Magnetic as one bounded patch family;
+5. include a supporting hunk only when a focused failing test proves one of those
+   two families cannot work without it;
+6. delete every other current Hermes difference, including Bot target/session,
+   Card turn-routing, prompt/receipt, provider, voice and tracked-cache residue;
+7. regenerate contracts only if one of the two approved patch families changes a
+   declared wire contract;
+8. run upstream tests first, then the two patch-family tests, then LiquidAIty
+   integration proof;
+9. keep saved Cards, profiles, sessions, data, UI, queue and Run records untouched.
+
+The unresolved product boundaries—orange-authorized `message_agent`,
+Project/conversation-specific Bot delivery, dynamic AutoTools narrowing, and
+provider receipt fields—must be presented for owner approval. They must not be
+recreated as application controllers or retained as undeclared vendor residue.

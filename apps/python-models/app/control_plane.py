@@ -217,11 +217,6 @@ def _validate_card_runtime_authority(
 
 def _backend_json(method: str, path: str, payload: dict | None = None) -> dict[str, Any]:
     headers = {"Content-Type": "application/json"}
-    if method == "POST" and path == "/api/cards/run":
-        secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "").strip()
-        if len(secret) < 32:
-            raise ControlPlaneError("internal_mcp_secret_missing")
-        headers["X-LiquidAIty-Internal-MCP-Secret"] = secret
     request = Request(
         f"{_BACKEND}{path}",
         data=json.dumps(payload).encode("utf-8") if payload is not None else None,

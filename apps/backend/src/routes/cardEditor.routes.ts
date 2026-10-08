@@ -5,11 +5,15 @@ import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import { indexToolCatalogReferences, resolveScriptToolReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
-import { hydrateHermesCardProfile } from '../hermes/cardProfileProjection';
-import { cardRuntimeManager } from '../hermes/cardRuntimeManager';
 
 const router = Router();
 export const iddRoutes = Router();
+
+function safeToolCatalogFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const match = /^([a-z][a-z0-9_]{2,80})(?::\s*([A-Za-z0-9_.:-]{1,160}))?/.exec(message);
+  return match ? [match[1], match[2]].filter(Boolean).join(':') : 'tool_catalog_read_failed';
+}
 
 function commaSeparatedIds(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
@@ -56,36 +60,6 @@ async function cardCatalogOptions(projectId: string, deckId: string, cardId: str
     id: tool.name, kind: 'tool', owner: tool.sourceId, source: tool.sourceId,
     schema: tool.inputSchema, available: tool.available !== false,
   }));
-  if (card.runtime.kind !== 'hermes') return { catalogOptions: options, selectedIds };
-  const cardProfile = card.runtime.profile;
-  const requestHermes = (method: string, params: Record<string, unknown> = {}, profile?: string) => (
-    cardRuntimeManager.requestProfile<any>(profile || cardProfile, method, params)
-  );
-  const { profile: profileState } = await hydrateHermesCardProfile(card, deck, requestHermes);
-  const [tools, plugins] = await Promise.all([
-    requestHermes('tools.show', {}, cardProfile),
-    requestHermes('plugins.list', {}, cardProfile),
-  ]) as Array<Record<string, any>>;
-  options.push({ id: 'profile:' + profileState.name, kind: 'profile', owner: 'Hermes',
-    source: 'profiles.describe', schema: { name: profileState.name, model: profileState.model }, available: true });
-  selectedIds.push('profile:' + cardProfile);
-  for (const [kind, values] of [
-    ['skill', profileState.skills], ['toolset', profileState.toolsets], ['mcp', profileState.mcpServers],
-    ['plugin', Array.isArray(plugins.plugins) ? plugins.plugins : []],
-  ] as const) {
-    for (const item of values) {
-      options.push({ id: kind + ':' + item.name, kind, owner: 'Hermes',
-        source: 'profile:' + profileState.name, schema: item, available: item.enabled !== false });
-      if (item.enabled === true) selectedIds.push(kind + ':' + item.name);
-    }
-  }
-  for (const section of Array.isArray(tools.sections) ? tools.sections : []) {
-    for (const tool of section.tools || []) options.push({
-      id: 'hermes:tool:' + tool.name, kind: 'tool', owner: 'Hermes', source: 'tools.show:' + profileState.name,
-      // Hermes tools.show does not expose schemas. Do not invent a callable signature.
-      schema: { providerToolName: tool.name }, available: true,
-    });
-  }
   return { catalogOptions: options, selectedIds: [...new Set(selectedIds)] };
 }
 
@@ -129,10 +103,13 @@ iddRoutes.get('/card-editor', async (req, res) => {
       throw new Error('input_data_dictionary_card_editor_invalid');
     }
     return res.json({ ok: true, ...materialized });
-  } catch {
+  } catch (error) {
+    const reason = safeToolCatalogFailureReason(error);
+    console.warn(`[idd-card-editor] catalog unavailable reason=${reason}`);
     return res.status(503).json({
       ok: false,
       error: 'input_data_dictionary_card_editor_unavailable',
+      reason,
       fields: [],
       catalogs: { 'configured-models': [] },
     });
@@ -156,10 +133,13 @@ iddRoutes.get('/tools', async (req, res) => {
         limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined,
       }),
     });
-  } catch {
+  } catch (error) {
+    const reason = safeToolCatalogFailureReason(error);
+    console.warn(`[idd-tools] catalog unavailable reason=${reason}`);
     return res.status(503).json({
       ok: false,
       error: 'input_data_dictionary_tool_catalog_unavailable',
+      reason,
       references: [],
       selectedKnownReferences: [],
       unresolvedSelectedIds: [],

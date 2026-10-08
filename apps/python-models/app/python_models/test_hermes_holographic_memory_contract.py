@@ -4,13 +4,54 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 HERMES_ROOT = REPO_ROOT / "Hermes"
-if str(HERMES_ROOT) not in sys.path:
+_HERMES_PATH_ADDED = str(HERMES_ROOT) not in sys.path
+if _HERMES_PATH_ADDED:
     sys.path.insert(0, str(HERMES_ROOT))
 
 from plugins.memory.holographic import HolographicMemoryProvider  # noqa: E402
+
+if _HERMES_PATH_ADDED:
+    sys.path.remove(str(HERMES_ROOT))
+# The plugin has already bound the helper it needs. Do not leave Hermes' flat
+# utils.py occupying the installed Graphiti package's top-level `utils` name for
+# unrelated tests in the same interpreter.
+for _module_name in list(sys.modules):
+    if _module_name == "utils" or _module_name.startswith("utils."):
+        _module = sys.modules.get(_module_name)
+        _origin = Path(str(getattr(_module, "__file__", "") or ""))
+        try:
+            _from_hermes = _origin.resolve().is_relative_to(HERMES_ROOT.resolve())
+        except (OSError, ValueError):
+            _from_hermes = False
+        if _from_hermes:
+            sys.modules.pop(_module_name, None)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_hermes_import_path():
+    sys.path.insert(0, str(HERMES_ROOT))
+    try:
+        yield
+    finally:
+        try:
+            sys.path.remove(str(HERMES_ROOT))
+        except ValueError:
+            pass
+        for module_name in list(sys.modules):
+            if module_name == "utils" or module_name.startswith("utils."):
+                module = sys.modules.get(module_name)
+                origin = Path(str(getattr(module, "__file__", "") or ""))
+                try:
+                    from_hermes = origin.resolve().is_relative_to(HERMES_ROOT.resolve())
+                except (OSError, ValueError):
+                    from_hermes = False
+                if from_hermes:
+                    sys.modules.pop(module_name, None)
 
 
 def _provider(db_path: Path, session_id: str) -> HolographicMemoryProvider:

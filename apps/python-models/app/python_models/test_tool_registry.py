@@ -13,6 +13,7 @@ from app.python_models.tool_registry import (
     tool_calculator,
     tool_current_datetime,
     tool_manifest,
+    web_search_tool,
 )
 from app.python_models.orchestration_contracts import ToolSpec
 import pytest
@@ -31,6 +32,16 @@ def test_registry_never_injects_unselected_reads():
 def test_current_datetime_returns_iso_like_string():
     value = tool_current_datetime()
     assert isinstance(value, str) and len(value) >= 10
+
+
+def test_web_search_adapter_returns_the_declared_structured_object(monkeypatch):
+    async def search(**_arguments):
+        return json.dumps({"ok": True, "query": "rk", "result_count": 0, "results": []})
+
+    monkeypatch.setattr("app.python_models.tool_registry.web_search", search)
+    result = __import__("asyncio").run(web_search_tool("rk"))
+    assert result == {"ok": True, "query": "rk", "result_count": 0, "results": []}
+    assert build_default_tool_registry().spec("web_search").outputSchema["type"] == "object"
 
 
 def test_default_registry_exposes_known_tools():
@@ -106,6 +117,34 @@ def test_manifest_publishes_only_factual_private_runtime_contracts():
     assert calculator["outputSchema"]
     assert "capability" not in calculator
     assert "agentCompatibility" not in calculator
+
+
+def test_every_code_owned_publisher_contract_has_complete_effect_metadata():
+    required_hints = {
+        "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
+    }
+    for item in [*tool_manifest(), *external_mcp_manifest()]:
+        assert item["title"]
+        assert item["description"]
+        assert item["inputSchema"]["type"] == "object"
+        assert required_hints.issubset(item["annotations"]), item["name"]
+        assert item["annotations"]["readOnlyHint"] is (item["access"] == "read")
+
+
+def test_materialized_catalog_preserves_title_security_and_effect_metadata():
+    source = next(item for item in external_mcp_manifest() if item["name"] == "run_mag_one")
+    source["securitySchemes"] = [{"type": "oauth2", "scopes": ["liquidaity.main"]}]
+    reference = next(
+        item for item in materialize_tool_catalog([source])
+        if item["canonicalId"] == "run_mag_one"
+    )
+    assert reference["displayName"] == "Run an approved Magnetic mission"
+    contract = reference["contracts"][0]
+    assert contract["title"] == source["title"]
+    assert contract["description"] == source["description"]
+    assert contract["inputSchema"] == source["inputSchema"]
+    assert contract["annotations"] == source["annotations"]
+    assert contract["securitySchemes"] == source["securitySchemes"]
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
