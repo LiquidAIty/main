@@ -488,13 +488,18 @@ def _persist_session_row_for_submit(rid, session, text=None, display_kind=None):
 
 
 def _run_after_agent_ready(
-    rid, sid, session, text, display_kind, display_metadata, hosted_terminal_callback, turn_author=None
+    rid, sid, session, text, display_kind, display_metadata, hosted_terminal_callback,
+    turn_author=None, submission_id=None, dynamic_tools=None, tool_endpoint=None,
+    tool_authorization=None
 ):
     """Turn thread body: patient wait for a deferred build (a slow build must not eat the
     accepted in-flight message), then run."""
     # The wait delivers the prompt when the still-running build completes, honors a cancel promptly, notices
     # the user once past the slow threshold, and only errors when the build itself fails or the bounded cap
     # expires. See #63078.
+    with session["history_lock"]:
+        if submission_id:
+            session["_active_submission_id"] = submission_id
     err = _wait_agent_for_prompt(session, rid, sid)
     if err:
         # Terminal frame + retained snapshot (not a bare "error" event): the snapshot is
@@ -506,6 +511,9 @@ def _run_after_agent_ready(
             session["running"] = False
             session["last_active"] = time.time()
         _emit("session.info", sid, _session_info(session.get("agent"), session))
+        with session["history_lock"]:
+            if session.get("_active_submission_id") == submission_id:
+                session.pop("_active_submission_id", None)
         return
     with session["history_lock"]:
         if session.get("_turn_cancel_requested") or not session.get("running"):
@@ -515,11 +523,16 @@ def _run_after_agent_ready(
             _emit("error", sid, {"message": (
                 "Turn cancelled before the agent was ready"
                 if session.get("_turn_cancel_requested")
-                else "Session no longer running before the agent was ready")})
+                else "Session no longer running before the agent was ready"),
+                **({"submission_id": submission_id} if submission_id else {})})
+            if session.get("_active_submission_id") == submission_id:
+                session.pop("_active_submission_id", None)
             return
     _run_prompt_submit(
         rid, sid, session, text, display_kind=display_kind, display_metadata=display_metadata,
-        terminal_callback=hosted_terminal_callback, turn_author=turn_author)
+        terminal_callback=hosted_terminal_callback, turn_author=turn_author,
+        submission_id=submission_id, dynamic_tools=dynamic_tools,
+        tool_endpoint=tool_endpoint, tool_authorization=tool_authorization)
 
 
 _TRUNCATION_PARAMS = (
@@ -567,6 +580,14 @@ def _(rid, params: dict) -> dict:
     sid = params.get("session_id", "")
     raw_text = params.get("text", "")
     text = sanitize_user_prompt_text(raw_text) if isinstance(raw_text, str) else raw_text
+    submission_id = str(params.get("submission_id") or "").strip() or None
+    dynamic_tools = params.get("dynamic_tools")
+    tool_endpoint = str(params.get("tool_endpoint") or "").strip() or None
+    tool_authorization = str(params.get("tool_authorization") or "").strip() or None
+    if any(value is not None for value in (dynamic_tools, tool_endpoint, tool_authorization)) and not (
+        isinstance(dynamic_tools, list) and dynamic_tools and tool_endpoint and tool_authorization
+    ):
+        return _err(rid, -32602, "dynamic tool context is incomplete")
     # Off-screen sends (widget intents) type the row so no client renders a bubble;
     # whitelisted to "hidden" — this RPC must not mint kinds.
     display_kind = "hidden" if params.get("display_kind") == "hidden" else None
@@ -620,6 +641,8 @@ def _(rid, params: dict) -> dict:
     turn_isolation = _session_uses_compute_host(session, _load_dashboard_process_isolation_config())
     if internal_hosted_submit and turn_isolation:
         return _err(rid, 4121, "hosted room turns do not support isolated compute workers yet")
+    if turn_isolation and dynamic_tools:
+        return _err(rid, 4125, "Codex Dynamic Tools do not support isolated compute workers")
     # Re-bind to the current transport: streaming must stay on the active websocket even
     # if a disconnect/fallback moved the session to stdio. Through _rebind_live_transport so a
     # socket that already closed cannot cancel the orphan reap without coming back (#116464).
@@ -649,7 +672,10 @@ def _(rid, params: dict) -> dict:
             # for `running` to clear and resubmits with the truncation intact.
             return _err(rid, 4009, "session busy")
         busy_response = _handle_busy_submit(
-            rid, sid, session, text, busy_transport, queued=bool(params.get("queued")), turn_author=turn_author)
+            rid, sid, session, text, busy_transport, queued=bool(params.get("queued")),
+            turn_author=turn_author, submission_id=submission_id,
+            dynamic_tools=dynamic_tools, tool_endpoint=tool_endpoint,
+            tool_authorization=tool_authorization)
         if busy_response is not None:
             return busy_response
     raw_rebind_ids = params.get("rebind_survivor_row_ids")
@@ -692,12 +718,18 @@ def _(rid, params: dict) -> dict:
         _start_agent_build(sid, session)
     run_thread = threading.Thread(
         target=lambda: _run_after_agent_ready(
-            rid, sid, session, text, display_kind, display_metadata, hosted_terminal_callback, turn_author),
+            rid, sid, session, text, display_kind, display_metadata,
+            hosted_terminal_callback, turn_author, submission_id, dynamic_tools,
+            tool_endpoint, tool_authorization),
         daemon=True)
     # Handle lets session.interrupt tell a live turn from a stuck `running` flag.
     session["_run_thread"] = run_thread
     run_thread.start()
-    return _ok(rid, {"status": "streaming", **survivor_fields})
+    return _ok(rid, {
+        "status": "streaming",
+        **({"submission_id": submission_id} if submission_id else {}),
+        **survivor_fields,
+    })
 
 
 # ── attachments ─────────────────────────────────────────────────────────────

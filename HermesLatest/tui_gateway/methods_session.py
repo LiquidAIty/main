@@ -331,11 +331,33 @@ def _create_overrides(params: dict) -> tuple:
     return model_override, reasoning_override, service_tier_override
 
 
+def _session_bot_roster(params: dict, profile_home) -> list[str] | None:
+    """Canonical session-scoped Bot authority, or ``None`` when the caller omitted it."""
+    if "bot_mode_roster" not in params:
+        return None
+    from tui_gateway.methods_profiles import _canonical_bot_roster
+
+    profile_dir = Path(profile_home) if profile_home is not None else Path(_hermes_home)
+    return _canonical_bot_roster(profile_dir, params.get("bot_mode_roster") or [])
+
+
+def _apply_session_bot_roster(session: dict, roster: list[str] | None) -> None:
+    if roster is None:
+        return
+    session["bot_mode_roster"] = list(roster)
+    if (agent := session.get("agent")) is not None:
+        agent._bot_mode_roster = list(roster)
+
+
 def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> dict:
     """``session.create``; ``copy_parent_history`` (``session.branch_stored``) reads the parent's
     transcript server-side and omits it from the reply."""
     # ``profile`` (app-global remote mode): stored so the build and every turn re-bind HERMES_HOME.
     profile_home = _profile_home(profile := (params.get("profile") or "").strip() or None)
+    try:
+        bot_mode_roster = _session_bot_roster(params, profile_home)
+    except ValueError as exc:
+        return _err(rid, -32602, str(exc))
     # Reject an incoherent model×provider pair BEFORE any state exists: minting it only defers the
     # failure to the first turn's provider 404 (#96817). Custom/unknown providers stay permissive.
     from .methods_session_model_guard import model_override_conflict
@@ -386,6 +408,7 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
             "pending_hidden": _flag(params, "hidden"), "room_plumbing": _flag(params, "room_plumbing"),
             "follow_profile_config": _flag(params, "follow_profile_config"),
             "profile_home": str(profile_home) if profile_home is not None else None,
+            "bot_mode_roster": bot_mode_roster,
             "running": False, "session_key": key, "show_reasoning": _load_show_reasoning(), "source": source,
             "slash_worker": None, "tool_progress_mode": _load_tool_progress_mode(), "tool_started_at": {},
             "transport": current_transport() or _stdio_transport,
@@ -551,6 +574,11 @@ class _Resume:
         # ``profile`` (app-global remote mode): resume from another local profile's state.db.
         self.profile = (params.get("profile") or "").strip() or None
         self.profile_home = _profile_home(self.profile)
+        self.bot_mode_roster_error = None
+        try:
+            self.bot_mode_roster = _session_bot_roster(params, self.profile_home)
+        except ValueError as exc:
+            self.bot_mode_roster, self.bot_mode_roster_error = None, str(exc)
         self.lazy, self.defer_history = _flag(params, "lazy"), _flag(params, "defer_history")
         # Desktop hydrates over REST; suppress the duplicate WS copy only when asked.
         self.omit_messages, self.eager_build = _flag(params, "omit_messages"), _flag(params, "eager_build")
@@ -574,7 +602,8 @@ class _Resume:
         record = _deferred_session_record(
             self.target, cols=self.cols, cwd=cwd, history=history, lease=None, source=source,
             close_on_disconnect=_flag(self.params, "close_on_disconnect"),
-            profile_home=self.profile_home, explicit_cwd=bool(self.profile_resume_cwd), **extra)
+            profile_home=self.profile_home, explicit_cwd=bool(self.profile_resume_cwd),
+            bot_mode_roster=self.bot_mode_roster, **extra)
         if follows_profile:
             record.update(
                 follow_profile_config=True,
@@ -642,6 +671,7 @@ def _resume_live_unpersisted(ctx: _Resume, live_sid: str, live: dict) -> dict:
         else:
             _cancel_ws_orphan_reap(live_sid)
     messages = ctx.messages(live.get("history") or [])  # count the wire, as every other resume path does
+    _apply_session_bot_roster(live, ctx.bot_mode_roster)
     # The chat's own pick, not the profile default: a warm reattach that reported `_resolve_model()` flipped the
     # Desktop picker on every reload while the session was still live, and back once it had been dropped.
     model, provider = _live_session_identity(live)
@@ -752,6 +782,7 @@ def _resume_reuse_live_locked(ctx: _Resume, sid: str, session: dict) -> dict:
     if (refusal := _reattach_refusal(ctx.rid, sid, session)) is not None:
         return refusal
     _cancel_ws_orphan_reap(sid)  # unconditionally: the fast path must never race the reap Timer
+    _apply_session_bot_roster(session, ctx.bot_mode_roster)
     payload = _live_session_payload(sid, session, cols=ctx.cols, touch=True, omit_messages=ctx.omit_messages,
                                     transport=current_transport() or _stdio_transport)
     payload["resumed"] = ctx.target
@@ -877,7 +908,8 @@ def _resume_eager(ctx: _Resume) -> dict:
         try:
             with _profile_build_scope(ctx.profile_home):
                 _init_session(sid, ctx.target, agent, history, cols=ctx.cols, cwd=ctx.profile_resume_cwd,
-                              session_db=ctx.db, source=source, explicit_cwd=bool(ctx.profile_resume_cwd))
+                              session_db=ctx.db, source=source, explicit_cwd=bool(ctx.profile_resume_cwd),
+                              bot_mode_roster=ctx.bot_mode_roster)
                 # Ownership TRANSFER: the agent holds the handle for life (AIAgent.close() releases it). The
                 # owns_db drop is UNCONDITIONAL — the session is registered against the handle, so the finally
                 # must not close it even if the transfer was refused (a leak beats "closed database" every
@@ -917,6 +949,8 @@ def _(rid, params: dict) -> dict:
     if not (target := params.get("session_id", "")):
         return _err(rid, 4006, "session_id required")
     ctx = _Resume(rid, params, target)
+    if ctx.bot_mode_roster_error:
+        return _err(rid, -32602, ctx.bot_mode_roster_error)
     # Profile scope: a DEDICATED handle we own until the agent takes it; else the shared launch db.
     ctx.db, ctx.owns_db = _profile_session_db(ctx.profile_home)
     try:
@@ -1019,6 +1053,13 @@ def _(rid, params: dict) -> dict:
 def _(rid, params: dict, session: dict) -> dict:
     """Attach the frontend to a live TUI session without closing the previously focused one."""
     sid = str(params.get("session_id") or "")
+    try:
+        _apply_session_bot_roster(
+            session,
+            _session_bot_roster(params, session.get("profile_home")),
+        )
+    except ValueError as exc:
+        return _err(rid, -32602, str(exc))
     # Only the rebind is atomic with grace expiry; the payload (a DB history read unless
     # ``omit_messages``) must not hold the process-wide resume lock.
     with _session_resume_lock:

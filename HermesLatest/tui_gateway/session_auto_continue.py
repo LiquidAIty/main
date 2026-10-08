@@ -134,7 +134,9 @@ def _ac_inflight_original(session: dict) -> str:
 
 
 def _enqueue_prompt(session: dict, text: Any, transport: Any, image_paths: list[str] | None = None,
-                    turn_author: dict | None = None) -> None:
+                    turn_author: dict | None = None, submission_id: str | None = None,
+                    dynamic_tools: list[dict] | None = None, tool_endpoint: str | None = None,
+                    tool_authorization: str | None = None) -> None:
     """Queue a message for the next turn. Text-only arrivals share a slot and merge losslessly (like the
     consecutive-user merge in ``repair_message_sequence``); image-bearing and authored ones stay separate
     envelopes so attachment chronology and the sender survive. ``transport`` is pinned so the drained turn
@@ -149,9 +151,14 @@ def _enqueue_prompt(session: dict, text: Any, transport: Any, image_paths: list[
     if text_only and not turn_author and text.strip() == _ac_inflight_original(session) != "":
         return
     queued = {"text": text, "transport": transport, **({"image_paths": image_paths} if image_paths else {}),
+              **({"submission_id": submission_id} if submission_id else {}),
+              **({"dynamic_tools": dynamic_tools} if dynamic_tools is not None else {}),
+              **({"tool_endpoint": tool_endpoint} if tool_endpoint else {}),
+              **({"tool_authorization": tool_authorization} if tool_authorization else {}),
               **({"turn_author": turn_author} if turn_author else {})}
     existing = session.get("queued_prompt")
-    if (existing and text_only and not turn_author and isinstance(existing.get("text"), str)
+    if (existing and text_only and not turn_author and not submission_id and not existing.get("submission_id")
+            and isinstance(existing.get("text"), str)
             and not existing.get("image_paths") and not existing.get("turn_author")
             and not session.get("queued_prompts")):
         prev = existing["text"]
@@ -246,7 +253,9 @@ def _ac_try_correction(rid, session: dict, agent: Any, method: str, plain_text: 
 
 
 def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any, queued: bool = False,
-                        turn_author: dict | None = None) -> dict | None:
+                        turn_author: dict | None = None, submission_id: str | None = None,
+                        dynamic_tools: list[dict] | None = None, tool_endpoint: str | None = None,
+                        tool_authorization: str | None = None) -> dict | None:
     """Apply ``display.busy_input_mode`` to a mid-turn prompt instead of rejecting it (rejection made clients busy-retry
     and drop sends): ``interrupt`` (default) → redirect, falling back to hard interrupt + queue; ``queue`` → queue only;
     ``steer`` → inject after the current atomic action. ``queued=True`` (client queue drain) forces queue mode: a "run
@@ -277,7 +286,11 @@ def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any,
             if image_paths:
                 session["attached_images"] = image_paths + list(session.get("attached_images", []))
             return None
-        _enqueue_prompt(session, text, transport, image_paths=image_paths, turn_author=turn_author)
+        _enqueue_prompt(
+            session, text, transport, image_paths=image_paths,
+            turn_author=turn_author, submission_id=submission_id,
+            dynamic_tools=dynamic_tools, tool_endpoint=tool_endpoint,
+            tool_authorization=tool_authorization)
         session["last_active"] = time.time()
     # Attachments need their own model invocation: queue without cancelling so the user gets both results in order.
     # ``steer`` must NEVER escalate to a hard interrupt: it would kill the live turn AND drop ``AIAgent._pending_steer``
@@ -288,7 +301,7 @@ def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any,
     # pending steer buffer — silently destroying the earlier messages of the burst. See #86134.
     if mode == "interrupt" and not image_paths:
         _interrupt_busy_session(sid, session, agent)
-    return _ok(rid, {"status": "queued"})
+    return _ok(rid, {"status": "queued", **({"submission_id": submission_id} if submission_id else {})})
 
 
 def _drain_queued_prompt(rid, sid: str, session: dict) -> bool:
@@ -318,6 +331,11 @@ def _drain_queued_prompt(rid, sid: str, session: dict) -> bool:
             session["running"] = False
             return True
     kwargs: dict = {"queued_prompt_generation": queue_generation}
+    if queued.get("submission_id"):
+        kwargs["submission_id"] = queued["submission_id"]
+    for field in ("dynamic_tools", "tool_endpoint", "tool_authorization"):
+        if queued.get(field) is not None:
+            kwargs[field] = queued[field]
     if queued.get("image_paths"):
         kwargs["image_paths"] = queued["image_paths"]
     # The compute-host frame has no author field, so only the inline runner receives it.
@@ -398,6 +416,8 @@ def _emit_terminal_turn_error(
         rendered = render_message(text, cols)
     payload = {"text": text, "usage": _get_usage(agent) if agent is not None else {}, "status": "error",
                "error": message, "recoverable": True, **({"error_surface": error_surface} if error_surface else {}),
+               **({"submission_id": session.get("_active_submission_id")}
+                  if session.get("_active_submission_id") else {}),
                **({"partial": True} if partial else {}), **({"rendered": rendered} if rendered else {})}
     if retire_marker:
         _retire_turn_marker(session)

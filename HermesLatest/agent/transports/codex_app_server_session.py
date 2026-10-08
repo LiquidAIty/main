@@ -10,6 +10,9 @@ reader threads feed queues that this adapter polls, like the chat_completions lo
 from __future__ import annotations
 
 import contextlib
+import copy
+import hashlib
+import json
 import logging
 import os
 import threading
@@ -218,6 +221,8 @@ class CodexAppServerSession:
         model: Optional[str] = None, model_provider: Optional[str] = None,
         developer_instructions: Optional[str] = None, resume_thread_id: Optional[str] = None,
         history_seed: Optional[str] = None,
+        dynamic_tools: Optional[list[dict[str, Any]]] = None,
+        tool_executor: Optional[Callable[[str, dict[str, Any], str], dict[str, Any]]] = None,
     ) -> None:
         self._cwd = cwd or os.getcwd()
         self._codex_bin = codex_bin
@@ -237,6 +242,47 @@ class CodexAppServerSession:
         # Hermes' prior transcript, appended to developerInstructions ONLY when a thread is started from
         # scratch: a resumed thread already holds the conversation (agent/codex_runtime_history_seed.py).
         self._history_seed = history_seed
+        raw_dynamic_tools = copy.deepcopy(dynamic_tools or [])
+        self._dynamic_tools_fingerprint = hashlib.sha256(json.dumps(
+            raw_dynamic_tools,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")).hexdigest()
+        self._tool_executor = tool_executor
+        self._dynamic_tools: list[dict[str, Any]] = []
+        self._dynamic_canonical_names: dict[str, str] = {}
+        self._dynamic_schemas: dict[str, Any] = {}
+        self._dynamic_call_responses: dict[tuple[str, str], tuple[dict, dict]] = {}
+        if dynamic_tools is not None:
+            from jsonschema.validators import validator_for
+
+            for raw in copy.deepcopy(dynamic_tools):
+                if not isinstance(raw, dict):
+                    raise ValueError("dynamic_tool_definition_invalid")
+                name = str(raw.get("name") or "")
+                canonical_name = str(raw.get("canonicalName") or "")
+                schema = raw.get("inputSchema")
+                if (
+                    raw.get("type") != "function"
+                    or not name
+                    or not canonical_name
+                    or not isinstance(schema, dict)
+                    or name in self._dynamic_schemas
+                ):
+                    raise ValueError("dynamic_tool_definition_invalid")
+                validator = validator_for(schema)
+                validator.check_schema(schema)
+                self._dynamic_schemas[name] = validator(schema)
+                self._dynamic_canonical_names[name] = canonical_name
+                self._dynamic_tools.append({
+                    "type": "function",
+                    "name": name,
+                    "description": str(raw.get("description") or ""),
+                    "inputSchema": schema,
+                })
+            if self._dynamic_schemas and tool_executor is None:
+                raise ValueError("dynamic_tool_executor_required")
         self._permission_profile = permission_profile or _HERMES_TO_CODEX_PERMISSION_PROFILE.get(
             os.environ.get("HERMES_TERMINAL_SECURITY_MODE", "auto"), "workspace-write"
         )
@@ -255,6 +301,10 @@ class CodexAppServerSession:
         self._pending_file_changes: dict[str, str] = {}
         self._closed = False
 
+    @property
+    def dynamic_tools_fingerprint(self) -> str:
+        return self._dynamic_tools_fingerprint
+
     def ensure_started(self) -> str:
         """Spawn, handshake, and ``thread/start`` (or ``thread/resume`` for a stored id); idempotent, returns
         the codex thread id. A failed resume raises :class:`CodexThreadResumeError` once; the next call
@@ -263,12 +313,19 @@ class CodexAppServerSession:
             return self._thread_id
         if self._client is None:
             self._client = self._client_factory(codex_bin=self._codex_bin, codex_home=self._codex_home)
-            self._client.initialize(client_name="hermes", client_title="Hermes Agent", client_version=_get_hermes_version())
+            self._client.initialize(
+                client_name="hermes",
+                client_title="Hermes Agent",
+                client_version=_get_hermes_version(),
+                **({"capabilities": {"experimentalApi": True}} if self._dynamic_tools else {}),
+            )
         # Permissions are NOT sent on thread/start: codex gates ``thread/start.permissions``
         # behind experimentalApi + a matching ``[permissions]`` table in ~/.codex/config.toml.
         # Hermes supplies the agent identity through its own system prompt; ``personality: "none"`` strips
         # codex's built-in "# Personality" section from the base instructions so it cannot compete (#72104).
         params: dict[str, Any] = {"cwd": self._cwd, "personality": "none"}
+        if self._dynamic_tools:
+            params["dynamicTools"] = copy.deepcopy(self._dynamic_tools)
         if self._developer_instructions and self._developer_instructions.strip():
             params["developerInstructions"] = self._developer_instructions
         if self._model_provider:
@@ -421,6 +478,13 @@ class CodexAppServerSession:
 
         Returns (projection, aborted); aborted = agent text carried a terminal ``<turn_aborted>`` marker.
         """
+        params = note.get("params") if isinstance(note, dict) else None
+        item = params.get("item") if isinstance(params, dict) else None
+        if isinstance(item, dict) and item.get("type") == "dynamicToolCall":
+            canonical = self._dynamic_canonical_names.get(str(item.get("tool") or ""))
+            if canonical:
+                note = copy.deepcopy(note)
+                note["params"]["item"]["tool"] = canonical
         if self._on_event is not None:
             try:
                 self._on_event(note)
@@ -690,12 +754,97 @@ class CodexAppServerSession:
         method = req.get("method", "")
         rid = req.get("id")
         params = req.get("params") or {}
+        if method == "item/tool/call":
+            self._handle_dynamic_tool_call(rid, params)
+            return
         handler = self._SERVER_REQUEST_HANDLERS.get(method)
         if handler is None:
             logger.warning("Unknown codex server request: %s", method)
             client.respond_error(rid, code=-32601, message=f"Unsupported method: {method}")
             return
         client.respond(rid, handler(self, params))
+
+    def _handle_dynamic_tool_call(self, request_id: Any, params: dict) -> None:
+        """Validate and execute one turn-scoped Codex Dynamic Tool call."""
+
+        client = self._client
+        if client is None:
+            return
+        name = params.get("tool")
+        arguments = params.get("arguments")
+        call_id = params.get("callId")
+        error = None
+        if (
+            not self._active_turn_id
+            or params.get("threadId") != self._thread_id
+            or params.get("turnId") != self._active_turn_id
+        ):
+            error = "dynamic_tool_scope_mismatch"
+        elif self._interrupt_event.is_set():
+            error = "dynamic_tool_cancelled"
+        elif (
+            params.get("namespace") is not None
+            or not isinstance(name, str)
+            or name not in self._dynamic_schemas
+        ):
+            error = "dynamic_tool_not_selected"
+        elif (
+            not isinstance(arguments, dict)
+            or not isinstance(call_id, str)
+            or not call_id
+            or not self._dynamic_schemas[name].is_valid(arguments)
+        ):
+            error = "dynamic_tool_arguments_invalid"
+        if error is not None:
+            client.respond(request_id, {
+                "success": False,
+                "contentItems": [{
+                    "type": "inputText",
+                    "text": json.dumps({"error": error}),
+                }],
+            })
+            return
+
+        call_key = (self._active_turn_id, call_id)
+        original_call = {"tool": name, "arguments": copy.deepcopy(arguments)}
+        previous = self._dynamic_call_responses.get(call_key)
+        if previous is not None:
+            if previous[0] == original_call:
+                client.respond(request_id, copy.deepcopy(previous[1]))
+            else:
+                client.respond(request_id, {
+                    "success": False,
+                    "contentItems": [{
+                        "type": "inputText",
+                        "text": json.dumps({"error": "dynamic_tool_call_id_conflict"}),
+                    }],
+                })
+            return
+        try:
+            response = self._tool_executor(name, arguments, call_id)
+            if (
+                not isinstance(response, dict)
+                or not isinstance(response.get("success"), bool)
+                or not isinstance(response.get("contentItems"), list)
+            ):
+                raise ValueError("dynamic_tool_result_invalid")
+        except Exception as exc:
+            logger.error("Dynamic tool owner failed: %s (%s)", name, type(exc).__name__)
+            response = {
+                "success": False,
+                "contentItems": [{
+                    "type": "inputText",
+                    "text": json.dumps({
+                        "error": "dynamic_tool_execution_failed",
+                        "type": type(exc).__name__,
+                    }),
+                }],
+            }
+        self._dynamic_call_responses[call_key] = (
+            original_call,
+            copy.deepcopy(response),
+        )
+        client.respond(request_id, response)
 
     def _respond_elicitation(self, params: dict) -> dict:
         """MCP elicitation: auto-accept our own hermes-tools server (opted in by enabling the runtime;

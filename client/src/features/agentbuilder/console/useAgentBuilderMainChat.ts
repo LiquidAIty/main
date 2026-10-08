@@ -84,6 +84,8 @@ function participantFromEvent(value: unknown): SharedChatParticipant | null {
 type PreparedChatSubmission = {
   key: string;
   text: string;
+  userMessageId: string;
+  assistantMessageId: string;
   targetCardId: string | null;
   participant: SharedChatParticipant;
   runInput?: MainChatRunInput;
@@ -121,6 +123,8 @@ function prepareChatSubmission({
   currentResponderCardId: string | null;
   targets: DirectChatTarget[];
 }): PreparedChatSubmission & { nextResponderCardId?: string | null } {
+  const userMessageId = `msg_${globalThis.crypto.randomUUID()}`;
+  const assistantMessageId = `msg_${globalThis.crypto.randomUUID()}`;
   const mainTarget = uniqueCardTarget(targets, mainCardId);
   const mainParticipant = mainTarget
     ? participantForTarget(mainTarget)
@@ -134,6 +138,8 @@ function prepareChatSubmission({
     return {
       key: conversationKey,
       text,
+      userMessageId,
+      assistantMessageId,
       targetCardId: fallbackTargetCardId,
       participant: selectedTarget ? participantForTarget(selectedTarget) : mainParticipant,
     };
@@ -146,6 +152,8 @@ function prepareChatSubmission({
     return {
       key: conversationKey,
       text,
+      userMessageId,
+      assistantMessageId,
       targetCardId: fallbackTargetCardId,
       participant: { kind: 'card', label: `@${address}`, address },
     };
@@ -155,17 +163,27 @@ function prepareChatSubmission({
   return {
     key: conversationKey,
     text,
+    userMessageId,
+    assistantMessageId,
     targetCardId: targetsMain ? null : target.cardId,
     participant: participantForTarget(target),
     nextResponderCardId: targetsMain ? null : target.cardId,
   };
 }
 
-function lastUserMessageIndex(messages: AgentBuilderChatMessage[], text: string): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === 'user' && messages[index].text === text) return index;
-  }
-  return -1;
+function messageIndex(messages: AgentBuilderChatMessage[], messageId: string): number {
+  return messages.findIndex((message) => message.messageId === messageId);
+}
+
+function reconcileHistory(
+  persisted: AgentBuilderChatMessage[],
+  visible: AgentBuilderChatMessage[],
+): AgentBuilderChatMessage[] {
+  const persistedIds = new Set(persisted.flatMap((message) => message.messageId ? [message.messageId] : []));
+  return [
+    ...persisted,
+    ...visible.filter((message) => !message.messageId || !persistedIds.has(message.messageId)),
+  ];
 }
 
 export default function useAgentBuilderMainChat({
@@ -212,8 +230,6 @@ export default function useAgentBuilderMainChat({
     key: conversationKey,
     ids: new Set(),
   });
-  const queuedInputsRef = useRef<PreparedChatSubmission[]>([]);
-  const [queuedInputCount, setQueuedInputCount] = useState(0);
   const [responderState, setResponderState] = useState<{
     key: string;
     cardId: string | null;
@@ -292,6 +308,8 @@ export default function useAgentBuilderMainChat({
     return {
       key: prepared.key,
       text: prepared.text,
+      userMessageId: prepared.userMessageId,
+      assistantMessageId: prepared.assistantMessageId,
       targetCardId: prepared.targetCardId,
       participant: prepared.participant,
       ...(runInput?.images?.length ? { runInput: { images: structuredClone(runInput.images) } } : {}),
@@ -357,8 +375,6 @@ export default function useAgentBuilderMainChat({
     setSharedAuthority({ key: conversationKey, mainCardId: '', agents: [] });
     setTechnical({ key: conversationKey, events: [], error: null });
     observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
-    queuedInputsRef.current = [];
-    setQueuedInputCount(0);
     responderRef.current = { key: conversationKey, cardId: null };
     setResponderState({ key: conversationKey, cardId: null });
     setTurnState({ key: conversationKey, phase: 'idle' });
@@ -390,7 +406,13 @@ export default function useAgentBuilderMainChat({
       })
       .then((history) => {
         if (cancelled || !history) return;
-        setTranscript({ key: conversationKey, messages: history.messages });
+        setTranscript((current) => ({
+          key: conversationKey,
+          messages: reconcileHistory(
+            history.messages,
+            current.key === conversationKey ? current.messages : [],
+          ),
+        }));
         setSharedAuthority({
           key: conversationKey,
           mainCardId: history.mainCardId,
@@ -427,14 +449,13 @@ export default function useAgentBuilderMainChat({
 
   const requestPreparedText = useCallback(
     async (submission: PreparedChatSubmission): Promise<string> => {
-      const { text, targetCardId } = submission;
+      const { text, targetCardId, userMessageId, assistantMessageId } = submission;
       if (!text.trim()) throw new Error('main_prompt_empty');
       if (submission.key !== conversationKey) throw new Error('main_conversation_changed');
       if (!canvasProjectId) {
         setTurnState({ key: conversationKey, phase: 'idle' });
         throw new Error('main_project_required');
       }
-      if (sessionPending) throw new Error('main_session_busy');
 
       let turnParticipant = submission.participant;
       setTranscript((current) => ({
@@ -443,6 +464,7 @@ export default function useAgentBuilderMainChat({
           ...(current.key === conversationKey ? current.messages : []),
           {
             role: 'user',
+            messageId: userMessageId,
             text,
             speaker: SHARED_CHAT_USER,
             target: turnParticipant,
@@ -466,16 +488,19 @@ export default function useAgentBuilderMainChat({
         setTranscript((current) => {
           if (current.key !== conversationKey) return current;
           const copy = [...current.messages];
-          const last = copy[copy.length - 1];
-          if (last?.role === 'assistant') {
-            copy[copy.length - 1] = {
+          const existingIndex = messageIndex(copy, assistantMessageId);
+          const existing = existingIndex >= 0 ? copy[existingIndex] : null;
+          if (existing?.role === 'assistant') {
+            copy[existingIndex] = {
+              ...existing,
               role: 'assistant',
-              text: last.text + chunk,
+              text: existing.text + chunk,
               speaker: turnParticipant,
               status: 'pending',
             };
           } else {
             copy.push({
+              messageId: assistantMessageId,
               role: 'assistant', text: chunk, speaker: turnParticipant, status: 'pending',
             });
           }
@@ -486,13 +511,16 @@ export default function useAgentBuilderMainChat({
         setTranscript((current) => {
           if (current.key !== conversationKey) return current;
           const copy = [...current.messages];
-          const last = copy[copy.length - 1];
-          if (last?.role === 'assistant') {
-            copy[copy.length - 1] = {
+          const existingIndex = messageIndex(copy, assistantMessageId);
+          const existing = existingIndex >= 0 ? copy[existingIndex] : null;
+          if (existing?.role === 'assistant') {
+            copy[existingIndex] = {
+              ...existing,
               role: 'assistant', text: finalText, speaker: turnParticipant, status: 'complete',
             };
           } else {
             copy.push({
+              messageId: assistantMessageId,
               role: 'assistant', text: finalText, speaker: turnParticipant, status: 'complete',
             });
           }
@@ -516,6 +544,8 @@ export default function useAgentBuilderMainChat({
           deckId,
           conversationId,
           message: text,
+          clientMessageId: userMessageId,
+          clientReplyMessageId: assistantMessageId,
           ...(targetCardId ? { targetCardId } : {}),
           images,
           dataAnchors: (targetCardId ? [] : dataAnchors).map(({ order, ...anchor }) => ({
@@ -553,7 +583,7 @@ export default function useAgentBuilderMainChat({
               setTranscript((current) => {
                 if (current.key !== conversationKey) return current;
                 const copy = [...current.messages];
-                const userIndex = lastUserMessageIndex(copy, text);
+                const userIndex = messageIndex(copy, userMessageId);
                 if (userIndex >= 0) copy[userIndex] = { ...copy[userIndex], target: observedParticipant };
                 return { key: conversationKey, messages: copy };
               });
@@ -627,7 +657,7 @@ export default function useAgentBuilderMainChat({
           return {
             key: conversationKey,
             messages: current.messages.map((item) => (
-              item.role === 'user' && item.text === text && item.status === 'pending'
+              item.messageId === userMessageId && item.role === 'user' && item.status === 'pending'
                 ? { ...item, status: 'complete' as const }
                 : item
             )),
@@ -638,8 +668,9 @@ export default function useAgentBuilderMainChat({
         setTranscript((current) => {
           if (current.key !== conversationKey) return current;
           const messages = [...current.messages];
-          if (messages[messages.length - 1]?.role === 'assistant') messages.pop();
-          const userIndex = lastUserMessageIndex(messages, text);
+          const assistantIndex = messageIndex(messages, assistantMessageId);
+          if (assistantIndex >= 0) messages.splice(assistantIndex, 1);
+          const userIndex = messageIndex(messages, userMessageId);
           if (userIndex >= 0) messages[userIndex] = { ...messages[userIndex], status: 'error' };
           return { key: conversationKey, messages };
         });
@@ -663,7 +694,6 @@ export default function useAgentBuilderMainChat({
       dataAnchors,
       deckId,
       mainCardId,
-      sessionPending,
       prepareRunImages,
       subscribeToHermesSession,
     ],
@@ -678,16 +708,11 @@ export default function useAgentBuilderMainChat({
     (text: string, runInput?: MainChatRunInput) => {
       if (!text.trim()) return;
       const submission = prepareSubmission(text, runInput);
-      if (sessionPending || activeStreamRef.current?.key === conversationKey) {
-        queuedInputsRef.current.push(submission);
-        setQueuedInputCount(queuedInputsRef.current.length);
-        return;
-      }
       void requestPreparedText(submission).catch(() => {
-        // Runtime failure remains transport telemetry and never transcript text.
+        // Transport failure remains visible telemetry and never assistant speech.
       });
     },
-    [conversationKey, sessionPending, prepareSubmission, requestPreparedText],
+    [prepareSubmission, requestPreparedText],
   );
 
   const endVoiceSession = useCallback(async (
@@ -820,6 +845,8 @@ export default function useAgentBuilderMainChat({
         const submission: PreparedChatSubmission = {
           key: conversationKey,
           text: transcriptText,
+          userMessageId: `msg_${globalThis.crypto.randomUUID()}`,
+          assistantMessageId: `msg_${globalThis.crypto.randomUUID()}`,
           targetCardId,
           participant,
         };
@@ -916,18 +943,6 @@ export default function useAgentBuilderMainChat({
     }
   }, [canvasProjectId, conversationId, conversationKey, deckId]);
 
-  useEffect(() => {
-    if (sessionPending || sessionHistoryLoading) return;
-    const next = queuedInputsRef.current[0];
-    if (!next || next.key !== conversationKey) return;
-    queuedInputsRef.current.shift();
-    setQueuedInputCount(queuedInputsRef.current.length);
-    void requestPreparedText(next).catch(() => {
-      // The queued turn retains its exact responder snapshot on the same shared-chat route.
-      // Failures remain transport telemetry.
-    });
-  }, [conversationKey, sessionPending, queuedInputCount, requestPreparedText, sessionHistoryLoading]);
-
   const stopMainTurn = useCallback(async () => {
     if (!sessionPending || !canvasProjectId) return;
     const active = activeStreamRef.current;
@@ -971,7 +986,6 @@ export default function useAgentBuilderMainChat({
     setCurrentResponderCardId,
     sessionActive,
     sessionConnecting,
-    queuedInputCount,
     sessionHistoryLoading,
     requestMainText,
     startVoiceSession,

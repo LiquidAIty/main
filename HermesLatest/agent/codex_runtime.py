@@ -5,6 +5,7 @@ AIAgent first: ``run_codex_app_server_turn`` drives one ``codex app-server`` sub
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 import os
@@ -442,6 +443,60 @@ def _close_codex_session(agent) -> None:
     agent._codex_session = None
 
 
+def _dynamic_tools_configuration(agent) -> tuple[list[dict], dict[str, str]]:
+    definitions = getattr(agent, "_dynamic_tools", None)
+    if not isinstance(definitions, list):
+        return [], {}
+    projected: list[dict] = []
+    canonical_names: dict[str, str] = {}
+    for value in definitions:
+        if not isinstance(value, dict):
+            raise ValueError("dynamic_tool_definition_invalid")
+        name = str(value.get("name") or "")
+        canonical_name = str(value.get("canonical_name") or "")
+        schema = value.get("input_schema")
+        if (
+            value.get("type") != "function"
+            or not name
+            or not canonical_name
+            or not isinstance(schema, dict)
+            or name in canonical_names
+        ):
+            raise ValueError("dynamic_tool_definition_invalid")
+        canonical_names[name] = canonical_name
+        projected.append({
+            "type": "function",
+            "name": name,
+            "canonicalName": canonical_name,
+            "description": str(value.get("description") or ""),
+            "inputSchema": schema,
+        })
+    return projected, canonical_names
+
+
+def _dynamic_tool_executor(agent, canonical_names: dict[str, str]):
+    if not canonical_names:
+        return None
+    authorization = str(getattr(agent, "_dynamic_tool_authorization", "") or "")
+    endpoint = str(getattr(agent, "_dynamic_tool_endpoint", "") or "")
+    if not authorization or not endpoint:
+        def unavailable(_name: str, _arguments: dict, _call_id: str) -> dict:
+            return {
+                "success": False,
+                "contentItems": [{
+                    "type": "inputText",
+                    "text": json.dumps({"error": "dynamic_tool_authorization_unavailable"}),
+                }],
+            }
+        return unavailable
+    from agent.transports.dynamic_tools_mcp import build_dynamic_tool_executor
+    return build_dynamic_tool_executor(
+        endpoint=endpoint,
+        authorization=authorization,
+        canonical_names=canonical_names,
+    )
+
+
 def _consume_user_interrupt(agent, active: bool = True) -> tuple[bool, Any]:
     """(user_interrupted, interrupt_message); clears the agent-level interrupt so a hard
     stop cannot poison the next turn (mirrors the conversation-loop finalizer)."""
@@ -507,10 +562,23 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
     today's fresh-thread behaviour and overwrites the binding once its turn is committed. ``messages`` is the
     turn's transcript (current user row last); a thread started from scratch is seeded with the prior turns."""
     developer_instructions = _codex_developer_instructions(agent)
+    dynamic_tools, canonical_names = _dynamic_tools_configuration(agent)
+    dynamic_fingerprint = hashlib.sha256(json.dumps(
+        dynamic_tools,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")).hexdigest()
     if getattr(agent, "_codex_session", None) is not None:
         # Only a session whose recorded composition differs is stale; one attached without a record is kept.
         recorded = getattr(agent, "_codex_session_prompt", None)
-        if recorded is None or recorded == developer_instructions:
+        if (
+            (recorded is None or recorded == developer_instructions)
+            and getattr(agent._codex_session, "dynamic_tools_fingerprint", None)
+            == dynamic_fingerprint
+        ):
+            agent._codex_session._tool_executor = _dynamic_tool_executor(
+                agent, canonical_names)
             return
         _close_codex_session(agent)
     resume_thread_id = None if getattr(agent, "_codex_session_prompt", None) is not None else _stored_codex_thread_id(agent)
@@ -560,6 +628,8 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
         developer_instructions=developer_instructions or None,
         model=getattr(agent, "model", None) if model_provider else None, model_provider=model_provider,
         resume_thread_id=resume_thread_id, history_seed=history_seed,
+        dynamic_tools=dynamic_tools,
+        tool_executor=_dynamic_tool_executor(agent, canonical_names),
     )
 
 

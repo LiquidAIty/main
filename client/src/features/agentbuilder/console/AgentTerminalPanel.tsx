@@ -38,6 +38,7 @@ export default function AgentTerminalPanel({
   const terminalRef = useRef<Terminal | null>(null);
   const sizeRef = useRef(DEFAULT_SIZE);
   const sessionRef = useRef<AgentTerminalSession | null>(null);
+  const streamRef = useRef<ReturnType<AgentTerminalClient['stream']> | null>(null);
   const lastResizeRef = useRef('');
   const pendingOpenRef = useRef<PendingOpen | null>(null);
   const identityKeyRef = useRef('');
@@ -48,8 +49,9 @@ export default function AgentTerminalPanel({
     projectId: identity.projectId,
     deckId: identity.deckId,
     cardId: identity.cardId,
-  }), [identity.cardId, identity.deckId, identity.projectId]);
-  const identityKey = `${stableIdentity.projectId}:${stableIdentity.deckId}:${stableIdentity.cardId}`;
+    conversationId: identity.conversationId,
+  }), [identity.cardId, identity.conversationId, identity.deckId, identity.projectId]);
+  const identityKey = `${stableIdentity.projectId}:${stableIdentity.deckId}:${stableIdentity.cardId}:${stableIdentity.conversationId}`;
 
   sessionRef.current = session;
   identityKeyRef.current = identityKey;
@@ -85,15 +87,7 @@ export default function AgentTerminalPanel({
           const sizeKey = `${terminal.cols}x${terminal.rows}`;
           if (isAttached(active) && lastResizeRef.current !== sizeKey) {
             lastResizeRef.current = sizeKey;
-            const resizeIdentityKey = identityKey;
-            const resizeSessionId = active.sessionId;
-            void client.resize(stableIdentity, active.sessionId, terminal.cols, terminal.rows).catch((cause) => {
-              if (lastResizeRef.current === sizeKey) lastResizeRef.current = '';
-              if (
-                identityKeyRef.current === resizeIdentityKey
-                && sessionRef.current?.sessionId === resizeSessionId
-              ) setError(cause instanceof Error ? cause.message : String(cause));
-            });
+            streamRef.current?.resize(terminal.cols, terminal.rows);
           }
         }
       } catch {
@@ -109,6 +103,7 @@ export default function AgentTerminalPanel({
     };
     terminal.loadAddon(fit);
     terminal.open(container);
+    const input = terminal.onData((data) => streamRef.current?.write(data));
     terminalRef.current = terminal;
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleResize);
     observer?.observe(container);
@@ -120,6 +115,7 @@ export default function AgentTerminalPanel({
       if (frame !== null) window.cancelAnimationFrame(frame);
       observer?.disconnect();
       window.removeEventListener('resize', scheduleResize);
+      input.dispose();
       terminal.dispose();
       terminalRef.current = null;
       setTerminalReady(false);
@@ -154,11 +150,7 @@ export default function AgentTerminalPanel({
     if (!session) return;
     let lastSequence = 0;
     const streamIdentityKey = identityKey;
-    const stream = client.stream(
-      stableIdentity,
-      session.sessionId,
-      lastSequence,
-      {
+    const stream = client.stream(session, {
       onOutput: ({ sequence, data }) => {
         if (identityKeyRef.current !== streamIdentityKey || sequence <= lastSequence) return;
         lastSequence = sequence;
@@ -172,10 +164,14 @@ export default function AgentTerminalPanel({
         if (typeof next.error === 'string' && next.error) setError(next.error);
       },
       onTransportError: () => undefined,
-      },
-    );
-    return () => stream.close();
-  }, [client, identityKey, session?.sessionId, stableIdentity]);
+      });
+    streamRef.current = stream;
+    stream.resize(sizeRef.current.cols, sizeRef.current.rows);
+    return () => {
+      if (streamRef.current === stream) streamRef.current = null;
+      stream.close();
+    };
+  }, [client, identityKey, session]);
 
   const runtimeStatus = session?.status || (error ? 'failed' : 'opening');
   return (

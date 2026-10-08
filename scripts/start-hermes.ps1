@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$hermesRoot = Join-Path $repoRoot 'Hermes'
-$python = Join-Path $hermesRoot 'venv\Scripts\python.exe'
+$hermesRoot = Join-Path $repoRoot 'HermesLatest'
+$python = Join-Path $hermesRoot '.venv\Scripts\python.exe'
 $profileRoot = Join-Path $hermesRoot '.hermes'
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {

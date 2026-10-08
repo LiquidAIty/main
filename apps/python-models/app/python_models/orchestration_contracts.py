@@ -191,42 +191,6 @@ class DataAnchorReference(GraphRecordReference):
     required: bool
 
 
-class GraphAnchor(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    engraphisMemoryId: RequiredRuntimeString | None = None
-    engraphisEntityId: RequiredRuntimeString | None = None
-    engraphisRelationshipId: RequiredRuntimeString | None = None
-    graphitiEpisodeId: RequiredRuntimeString | None = None
-    graphitiEntityId: RequiredRuntimeString | None = None
-    graphitiRelationshipId: RequiredRuntimeString | None = None
-    cbmQualifiedName: RequiredRuntimeString | None = None
-    reason: str
-    order: int
-    boundedExpansion: int
-    resultLimit: int = 24
-    required: bool
-    searchDynamicInput: bool = False
-    entityTypes: list[str] = Field(default_factory=list)
-    edgeTypes: list[str] = Field(default_factory=list)
-    validAtAfter: str | None = None
-    validAtBefore: str | None = None
-    invalidAtAfter: str | None = None
-    invalidAtBefore: str | None = None
-    maxNodes: int = 8
-    maxFacts: int = 8
-
-    @model_validator(mode="after")
-    def require_exact_record_or_search(self):
-        _validate_graph_record(self, allow_missing=True)
-        has_record = any(
-            str(getattr(self, field, None) or "").strip()
-            for field in GRAPH_RECORD_ID_FIELDS
-        )
-        if not has_record and not self.searchDynamicInput:
-            raise ValueError("graph_anchor_record_or_search_required")
-        return self
-
-
 class GraphReference(GraphRecordReference):
     reason: RequiredRuntimeString
     asOf: RequiredRuntimeString

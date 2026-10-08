@@ -118,17 +118,17 @@ def message_agent_tool_schema() -> dict:
 
 
 def message_agent_authorized(agent: Any) -> bool:
-    """The ``message_agent`` gate: a protocol-enabled agent whose session is a managed
-    Bot-Mode canonical Bot Chat. Session-stable, so it is prompt-cache safe to re-evaluate
-    on every tool-snapshot rebuild. Never raises."""
+    """The ``message_agent`` gate for canonical Bot Chat or explicit profile authority."""
     try:
         if not getattr(agent, "_bot_mode_protocol", True):
             return False
-        from tools.bot_mode_probe import BOT_CHAT_TITLE, is_bot_mode_managed
+        from tools.bot_mode_probe import bot_mode_session_authorized
 
-        # Managed-install check, NOT section non-emptiness: a SOUL.md carrying the
-        # legacy protocol text gets an empty section but must still get the tool.
-        return _session_title(agent) == BOT_CHAT_TITLE and is_bot_mode_managed(_agent_home(agent))
+        return bot_mode_session_authorized(
+            _agent_home(agent),
+            _session_title(agent),
+            getattr(agent, "_bot_mode_roster", None),
+        )
     except Exception:  # pragma: no cover — must never break a turn
         logger.debug("message_agent_authorized failed", exc_info=True)
         return False
@@ -181,6 +181,7 @@ def _resolve_local_name(target: str, roster: list[str], root: Path | None = None
 
     aliases = local_alias_map(root)
     hits = set().union(*(aliases.get(form, set()) for form in alias_forms(want) | {want}))
+    hits &= set(roster)
     return next(iter(hits)) if len(hits) == 1 else None
 
 
@@ -201,24 +202,22 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     home = _agent_home(agent)
     try:
         from tools.bot_mode_probe import (
-            BOT_CHAT_TITLE, _display_name, _handle, _hermes_root, _peers, _profile_name as _self_profile_name,
-            _roster, is_bot_mode_managed,
+            _display_name, _handle, _hermes_root, _peers, _profile_name as _self_profile_name,
+            bot_mode_session_authorized, configured_bot_roster, resolve_bot_roster,
         )
         from tools.bot_relay import BOT_CHAT_TURN_ARGS, _hermes_cli
 
-        if _session_title(agent) != BOT_CHAT_TITLE:
-            return _err("message_agent is only available in a Bot Mode 'Bot Chat' session. "
-                        "This session is not one; do not retry.")
-        if not is_bot_mode_managed(home):
-            return _err("This install is not Bot-Mode-managed (no bot roster); "
-                        "message_agent is unavailable. Do not retry.")
+        roster_override = getattr(agent, "_bot_mode_roster", None)
+        if not bot_mode_session_authorized(home, _session_title(agent), roster_override):
+            return _err("message_agent is unavailable for this profile/session; do not retry.")
     except Exception as exc:  # pragma: no cover — defensive
         return _err(f"Bot Mode gate check failed: {exc}")
 
     root, me = _hermes_root(Path(home)), _self_profile_name(Path(home))
-    roster_homes = dict(_roster(root))
+    restricted = roster_override is not None or configured_bot_roster(home) is not None
+    roster_homes = dict(resolve_bot_roster(home, roster_override))
     roster = list(roster_homes)
-    peers = _peers(root)
+    peers = [] if restricted else _peers(root)
     teammates = [_handle(n) for n in roster if n != me]
 
     def _roster_err(msg: str) -> str:
@@ -242,7 +241,7 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
 
     # Peer target: '<peer>/<agent>' or a bare registered peer name.
     peer_match = _PEER_TARGET_RE.match(raw_target)
-    if peer_match or raw_target.lower() in peers:
+    if not restricted and (peer_match or raw_target.lower() in peers):
         peer_name, peer_profile = peer_match.groups() if peer_match else (raw_target.lower(), None)
         if peer_name not in peers:
             return _roster_err(f"No registered peer named '{peer_name}'.")
@@ -271,7 +270,7 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         # Unknown locally, or same-name target on ANOTHER connection (this gateway's 'default'
         # messaging the cloud 'default'): every Desktop-connected gateway is reachable via the
         # relay roster, so try that before reporting a resolution failure / self-message.
-        relayed = _try_relay_delivery(root, raw_target, content, me, **delivery)
+        relayed = None if restricted else _try_relay_delivery(root, raw_target, content, me, **delivery)
         if relayed is not None:
             return relayed
         if resolved == me:

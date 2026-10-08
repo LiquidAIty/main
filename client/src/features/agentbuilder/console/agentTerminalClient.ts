@@ -9,6 +9,7 @@ export type AgentTerminalSession = {
   status: AgentTerminalStatus;
   cols: number;
   rows: number;
+  websocketUrl: string;
   exitCode?: number | null;
   error?: string | null;
 };
@@ -17,10 +18,13 @@ export type AgentTerminalIdentity = {
   projectId: string;
   deckId: string;
   cardId: string;
+  conversationId: string;
 };
 
 export type AgentTerminalStream = {
   close(): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
 };
 
 type StreamHandlers = {
@@ -61,6 +65,8 @@ function sessionFrom(payload: Record<string, unknown>): AgentTerminalSession {
     typeof payload.sessionId !== 'string'
     || typeof payload.cardId !== 'string'
     || typeof payload.profile !== 'string'
+    || typeof payload.websocketUrl !== 'string'
+    || !payload.websocketUrl.startsWith('ws://127.0.0.1:9119/api/pty?')
     || !['running', 'exited', 'failed'].includes(String(payload.status))
     || !Number.isInteger(payload.cols)
     || !Number.isInteger(payload.rows)
@@ -72,57 +78,66 @@ function sessionFrom(payload: Record<string, unknown>): AgentTerminalSession {
 
 export type AgentTerminalClient = {
   open(identity: AgentTerminalIdentity, size: { cols: number; rows: number }): Promise<AgentTerminalSession>;
-  stream(
-    identity: AgentTerminalIdentity,
-    sessionId: string,
-    after: number,
-    handlers: StreamHandlers,
-  ): AgentTerminalStream;
-  resize(identity: AgentTerminalIdentity, sessionId: string, cols: number, rows: number): Promise<void>;
+  stream(session: AgentTerminalSession, handlers: StreamHandlers): AgentTerminalStream;
 };
 
 export const agentTerminalClient: AgentTerminalClient = {
   async open(identity, size) {
-    return sessionFrom(await post(`${endpoint(identity)}/open`, size));
+    return sessionFrom(await post(`${endpoint(identity)}/open`, {
+      ...size,
+      conversationId: identity.conversationId,
+    }));
   },
 
-  stream(identity, sessionId, after, handlers) {
-    const query = new URLSearchParams({ after: String(Math.max(0, after)) });
-    const source = new EventSource(
-      `${endpoint(identity)}/${encodeURIComponent(sessionId)}/events?${query.toString()}`,
-      { withCredentials: true },
-    );
+  stream(session, handlers) {
+    const socket = new WebSocket(session.websocketUrl);
+    socket.binaryType = 'arraybuffer';
     let closed = false;
-    source.addEventListener('output', (event) => {
-      try {
-        const payload = JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>;
-        if (!Number.isInteger(payload.sequence) || typeof payload.data !== 'string') return;
-        handlers.onOutput({ sequence: payload.sequence as number, data: payload.data });
-      } catch {
-        handlers.onTransportError();
-      }
-    });
-    source.addEventListener('state', (event) => {
-      try {
-        const payload = JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>;
-        handlers.onState(payload as Partial<AgentTerminalSession>);
-        if (payload.status === 'exited' || payload.status === 'failed') {
-          closed = true;
-          source.close();
+    let sequence = 0;
+    const decoder = new TextDecoder();
+    socket.onopen = () => handlers.onState({ status: 'running' });
+    socket.onmessage = (event) => {
+      let data = '';
+      if (typeof event.data === 'string') {
+        if (event.data.startsWith('{')) {
+          try {
+            const control = JSON.parse(event.data) as Record<string, unknown>;
+            if (control.type === 'resume') return;
+          } catch {
+            /* Raw terminal output may legitimately begin with an opening brace. */
+          }
         }
-      } catch {
-        handlers.onTransportError();
+        data = event.data;
+      } else if (event.data instanceof ArrayBuffer) {
+        data = decoder.decode(event.data);
       }
-    });
-    source.onerror = () => {
-      // EventSource retains this exact session stream and reconnects with its
-      // Last-Event-ID. The initial `after` also gives the server a bounded replay.
+      if (data) handlers.onOutput({ sequence: ++sequence, data });
+    };
+    socket.onerror = () => {
       if (!closed) handlers.onTransportError();
     };
-    return { close: () => { closed = true; source.close(); } };
-  },
-
-  async resize(identity, sessionId, cols, rows) {
-    await post(`${endpoint(identity)}/${encodeURIComponent(sessionId)}/resize`, { cols, rows });
+    socket.onclose = (event) => {
+      if (closed) return;
+      closed = true;
+      handlers.onState({
+        status: event.code === 1000 ? 'exited' : 'failed',
+        exitCode: event.code,
+        ...(event.reason ? { error: event.reason } : {}),
+      });
+    };
+    return {
+      close: () => {
+        closed = true;
+        socket.close();
+      },
+      write: (data) => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(data);
+      },
+      resize: (cols, rows) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(`\u001b[RESIZE:${cols};${rows}]`);
+        }
+      },
+    };
   },
 };

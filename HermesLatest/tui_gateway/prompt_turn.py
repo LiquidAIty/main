@@ -986,7 +986,9 @@ def _run_prompt_submit(
     display_metadata: dict | None = None, image_paths: list[str] | None = None,
     queued_prompt_generation: int | None = None,
     terminal_callback: Callable[[dict[str, Any]], None] | None = None,
-    turn_author: dict | None = None) -> bool:
+    turn_author: dict | None = None, submission_id: str | None = None,
+    dynamic_tools: list[dict] | None = None, tool_endpoint: str | None = None,
+    tool_authorization: str | None = None) -> bool:
     # Every dispatch binds the session's own row (session_key, real source) before the turn writes:
     # the synthesized turns that enter here directly (crash auto-continue, queued-prompt drain,
     # wake-ups) bypass prompt.submit's persist, and a row-less turn is otherwise materialized by
@@ -1000,6 +1002,10 @@ def _run_prompt_submit(
     if admitted is None:
         return False
     images, agent = admitted
+    if dynamic_tools is not None:
+        agent._dynamic_tools = list(dynamic_tools)
+        agent._dynamic_tool_endpoint = tool_endpoint
+    agent._dynamic_tool_authorization = tool_authorization
     from gateway.warning_notifications import diagnostic_turn_muted
     from agent.notification_presentation import notification_config_snapshot
     with _session_profile_runtime_scope(session):
@@ -1021,7 +1027,12 @@ def _run_prompt_submit(
         "kind=%s chars=%s images=%d",
         sid, session.get("session_key") or "", getattr(agent, "session_id", "") or "",
         display_kind or "user", len(text) if isinstance(text, str) else "-", len(images))
+    with session["history_lock"]:
+        if submission_id:
+            session["_active_submission_id"] = submission_id
     if not muted:
+        if submission_id:
+            _emit("prompt.submission.started", sid, {"submission_id": submission_id})
         _emit("message.start", sid)
 
     def run_body():
@@ -1051,6 +1062,8 @@ def _run_prompt_submit(
             status_note = _absorb_turn_result(
                 sid, session, st, text, display_kind, display_metadata)
             payload, raw, status = _complete_turn_payload(session, st, status_note, cols)
+            if submission_id:
+                payload["submission_id"] = submission_id
             _emit("message.complete", sid, payload)
             goal_followup = _goal_followup_after_turn(sid, session, st.result, status, raw)
             if status == "complete":
@@ -1069,9 +1082,12 @@ def _run_prompt_submit(
             with session["history_lock"]:
                 session["running"] = False
                 session["last_active"] = time.time()
+                if session.get("_active_submission_id") == submission_id:
+                    session.pop("_active_submission_id", None)
                 if not st.error_retained:
                     _clear_inflight_turn(session)
                 _release_hosted_room_turn_slot(session)
+            agent._dynamic_tool_authorization = None
             # Closing bookend of "tui prompt accepted" — exactly one per accepted prompt.
             # agent.session_id is re-read because compression may have rotated it (an
             # accepted/finished pair whose id changed IS a rotation trace).

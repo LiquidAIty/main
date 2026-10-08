@@ -1826,6 +1826,7 @@ export interface ProfilesDescribeResult {
   toolsets?: ToolsetEntry[]
   toolsets_pinned?: boolean
   mcp_servers?: McpServerEntry[]
+  bot_mode_roster?: string[] | null
 }
 export interface ProfileModelPin {
   provider?: string
@@ -1861,6 +1862,7 @@ export interface ProfilesConfigureParams {
   disabled_skills?: string[] | null
   enabled_toolsets?: string[] | null
   enabled_mcp_servers?: string[] | null
+  bot_mode_roster?: string[] | null
 }
 /** ``confirm_required`` mirrors ``config.set``: a guarded model pick wrote nothing yet. */
 export interface ProfilesConfigureResult {
@@ -1880,6 +1882,7 @@ export interface ProfilesConfigureApplied {
   skills?: boolean | null
   toolsets?: boolean | null
   mcp_servers?: boolean | null
+  bot_mode_roster?: boolean | null
 }
 export interface UiMetaConflict {
   expected?: unknown
@@ -2439,6 +2442,10 @@ export interface PromptSubmitParams {
   display_kind?: string | null
   interrupted?: boolean | null
   queued?: boolean | null
+  submission_id?: string | null
+  dynamic_tools?: DynamicToolDefinition[] | null
+  tool_endpoint?: string | null
+  tool_authorization?: string | null
   surface?: string | null
   voice_context?: string | null
   title_preview?: string | null
@@ -2449,9 +2456,18 @@ export interface PromptSubmitParams {
   confirm_empty_truncate?: boolean | null
   rebind_survivor_row_ids?: number[] | null
 }
+/** One exact Card-selected Codex Dynamic Tool. */
+export interface DynamicToolDefinition {
+  type: string
+  name: string
+  canonical_name: string
+  description: string
+  input_schema: unknown
+}
 /** ``status`` is absent only on the typed-stop-phrase reply (``voice_stopped``). After a truncation the survivor row ids let the client rebind its cached ``rowId``s (``None`` map entries: drop the cached id). ``turn_isolation`` marks a compute-host dispatch. */
 export interface PromptSubmitResult {
   status?: PromptSubmitStatus | null
+  submission_id?: string | null
   voice_stopped?: boolean | null
   user_row_id?: number | null
   survivor_user_row_ids?: (number | null)[] | null
@@ -2772,6 +2788,7 @@ export interface SessionCreateParams {
   hidden?: boolean
   room_plumbing?: boolean
   follow_profile_config?: boolean
+  bot_mode_roster?: string[] | null
 }
 /** One create-time transcript row (``session_history._coerce_seed_history``); ``text`` is the legacy alias of ``content``; only ``display_kind: "hidden"`` is accepted from the wire. Clients forward stored rows verbatim (``_row_id``, ``timestamp``, …) and the coercer drops what it does not use, so the row stays open. */
 export interface SeedMessage {
@@ -2842,6 +2859,7 @@ export interface SessionResumeParams {
   omit_messages?: boolean
   eager_build?: boolean
   close_on_disconnect?: boolean
+  bot_mode_roster?: string[] | null
 }
 export interface SessionResumeResult {
   session_id: string
@@ -2912,6 +2930,7 @@ export interface SessionActivateParams {
   profile?: string | null
   cols?: number | null
   omit_messages?: boolean
+  bot_mode_roster?: string[] | null
 }
 export interface SessionActivateResult {
   session_id: string
@@ -4335,10 +4354,15 @@ export interface SetupReadyPayload {
 /** Every ``_emit("error", …)`` site sets exactly ``message``. */
 export interface ErrorPayload {
   message: string
+  submission_id?: string | null
 }
 /** ``tui_gateway/model_switch.py`` capability-refresh notice. */
 export interface NoticePayload {
   message: string
+}
+/** Opaque identity of a caller-correlated prompt beginning its Hermes turn. */
+export interface SubmissionStartedPayload {
+  submission_id: string
 }
 /** ``prompt_turn._invoke_agent._stream`` (message.delta: ``text`` + optional ``rendered``), ``agent_callbacks._agent_cbs`` (reasoning.delta / thinking.delta), ``tool_progress._progress_reasoning`` (reasoning.available). ``verbose`` rides only when the session's verbose reasoning mode is on. */
 export interface StreamDeltaPayload {
@@ -4354,6 +4378,7 @@ export interface MessageInterimPayload {
 /** ``prompt_turn._complete_turn_payload`` / ``session_auto_continue._emit_terminal_turn_error`` / ``agent_callbacks._mirror_subagent_to_child`` (child watch mirror: ``text`` only) / ``compute_host_bridge`` (``text`` + ``status``). */
 export interface MessageCompletePayload {
   text?: string | unknown
+  submission_id?: string | null
   usage?: Usage | null
   status?: TurnStatus | null
   reasoning?: string | null
@@ -5512,6 +5537,8 @@ export interface BackendGatewayEventMap {
   'preview.restart.complete': SideAgentCompletePayload
   /** Progress line from the preview-restart agent. */
   'preview.restart.progress': PreviewRestartProgressPayload
+  /** A caller-correlated prompt began its Hermes turn. */
+  'prompt.submission.started': SubmissionStartedPayload
   /** Affection reaction detected in the user's message (hearts etc.). */
   reaction: ReactionPayload
   /** A completed reasoning block (non-streaming providers). */
@@ -5621,6 +5648,7 @@ export const GATEWAY_EVENT_TYPES = [
   'preview.open',
   'preview.restart.complete',
   'preview.restart.progress',
+  'prompt.submission.started',
   'reaction',
   'reasoning.available',
   'reasoning.delta',

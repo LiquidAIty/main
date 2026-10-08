@@ -23,6 +23,16 @@ class ClientSurface(WireEnum):
     voice_live = "voice-live"
 
 
+class DynamicToolDefinition(Params):
+    """One exact Card-selected Codex Dynamic Tool."""
+
+    type: str
+    name: str
+    canonical_name: str
+    description: str
+    input_schema: JsonValue
+
+
 class PromptSubmitParams(SessionParams):
     """``text`` is normally a string; the relay / hosted paths may hand a structured (parts list)
     payload, and the busy path renders it. Truncation (rewind / edit / regenerate) needs explicit
@@ -33,6 +43,11 @@ class PromptSubmitParams(SessionParams):
     display_kind: str | None = None  # only "hidden" is honoured; anything else renders as a user row
     interrupted: bool | None = None  # client-side barge-in: the turn's model message carries the note
     queued: bool | None = None  # client queue drain — the busy path must hold it, never redirect/steer
+    # Opaque caller identity for correlating an accepted or queued input with its later turn events.
+    submission_id: str | None = Field(default=None, min_length=1, max_length=128)
+    dynamic_tools: list[DynamicToolDefinition] | None = None
+    tool_endpoint: str | None = None
+    tool_authorization: str | None = None
     surface: str | None = None  # a ClientSurface value; unknown values clear the surface
     voice_context: str | None = None  # recent spoken transcript, model input only (voice-live)
     # Desktop-generated large-paste preview (first ~1000 chars); TITLE input only, never the model turn.
@@ -64,6 +79,7 @@ class PromptSubmitResult(Result):
     entries: drop the cached id). ``turn_isolation`` marks a compute-host dispatch."""
 
     status: PromptSubmitStatus | None = None
+    submission_id: str | None = None
     voice_stopped: bool | None = None
     # The row written for THIS accepted input, captured before the worker can consume it.
     # Absent on queued/steered/redirected inputs and whenever persistence is not yet proven.

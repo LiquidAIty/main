@@ -130,6 +130,7 @@ class SessionCreateParams(ProfileParams):
     hidden: bool = False
     room_plumbing: bool = False
     follow_profile_config: bool = False
+    bot_mode_roster: list[str] | None = None
 
 
 class SessionCreateResult(Result):
@@ -178,6 +179,7 @@ class SessionResumeParams(SessionParams):
     omit_messages: bool = False
     eager_build: bool = False
     close_on_disconnect: bool = False
+    bot_mode_roster: list[str] | None = None
 
 
 class SessionResumeResult(LiveSessionSnapshot):
@@ -191,6 +193,7 @@ method("session.resume", params=SessionResumeParams, result=SessionResumeResult,
 class SessionActivateParams(SessionParams):
     cols: int | None = None  # sent by the desktop; the handler keeps the session's current width
     omit_messages: bool = False
+    bot_mode_roster: list[str] | None = None
 
 
 class SessionActivateResult(LiveSessionSnapshot):

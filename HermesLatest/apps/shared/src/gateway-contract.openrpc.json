@@ -13002,6 +13002,40 @@
         "title": "DisplayThumbnailResult",
         "type": "object"
       },
+      "DynamicToolDefinition": {
+        "additionalProperties": false,
+        "description": "One exact Card-selected Codex Dynamic Tool.",
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "canonical_name": {
+            "title": "Canonical Name",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "input_schema": {
+            "title": "Input Schema"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "canonical_name",
+          "description",
+          "input_schema"
+        ],
+        "title": "DynamicToolDefinition",
+        "type": "object"
+      },
       "EmptyRequestParams": {
         "additionalProperties": false,
         "properties": {
@@ -13023,6 +13057,18 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "submission_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Submission Id"
           }
         },
         "required": [
@@ -17537,6 +17583,18 @@
             ],
             "default": "",
             "title": "Text"
+          },
+          "submission_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Submission Id"
           },
           "usage": {
             "anyOf": [
@@ -22907,6 +22965,18 @@
             ],
             "default": null,
             "title": "Mcp Servers"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
           }
         },
         "title": "ProfilesConfigureApplied",
@@ -23075,6 +23145,21 @@
             ],
             "default": null,
             "title": "Enabled Mcp Servers"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
           }
         },
         "title": "ProfilesConfigureParams",
@@ -23384,6 +23469,21 @@
             },
             "title": "Mcp Servers",
             "type": "array"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
           }
         },
         "required": [
@@ -25288,6 +25388,59 @@
             "default": null,
             "title": "Queued"
           },
+          "submission_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Submission Id"
+          },
+          "dynamic_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DynamicToolDefinition"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dynamic Tools"
+          },
+          "tool_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tool Endpoint"
+          },
+          "tool_authorization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tool Authorization"
+          },
           "surface": {
             "anyOf": [
               {
@@ -25420,6 +25573,18 @@
               }
             ],
             "default": null
+          },
+          "submission_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Submission Id"
           },
           "voice_stopped": {
             "anyOf": [
@@ -27301,6 +27466,21 @@
             "default": false,
             "title": "Omit Messages",
             "type": "boolean"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
           }
         },
         "required": [
@@ -28736,6 +28916,21 @@
             "default": false,
             "title": "Follow Profile Config",
             "type": "boolean"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
           }
         },
         "title": "SessionCreateParams",
@@ -30119,6 +30314,21 @@
             "default": false,
             "title": "Close On Disconnect",
             "type": "boolean"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
           }
         },
         "required": [
@@ -33104,6 +33314,21 @@
           "subagent_id"
         ],
         "title": "SubagentTailResult",
+        "type": "object"
+      },
+      "SubmissionStartedPayload": {
+        "additionalProperties": false,
+        "description": "Opaque identity of a caller-correlated prompt beginning its Hermes turn.",
+        "properties": {
+          "submission_id": {
+            "title": "Submission Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "submission_id"
+        ],
+        "title": "SubmissionStartedPayload",
         "type": "object"
       },
       "SubscriptionChangeEffect": {
@@ -38132,6 +38357,18 @@
           "name": "payload",
           "schema": {
             "$ref": "#/components/schemas/PreviewRestartProgressPayload"
+          }
+        }
+      ]
+    },
+    {
+      "name": "prompt.submission.started",
+      "summary": "A caller-correlated prompt began its Hermes turn.",
+      "params": [
+        {
+          "name": "payload",
+          "schema": {
+            "$ref": "#/components/schemas/SubmissionStartedPayload"
           }
         }
       ]

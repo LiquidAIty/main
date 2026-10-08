@@ -7,6 +7,7 @@ import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 import { listenAfterRequiredMigrations } from "./db/migrations";
+import { closeHermesGateway } from "./services/hermesGateway";
 
 const app = express();
 app.set('etag', false);
@@ -159,6 +160,7 @@ function installShutdownHooks() {
       if (activeServer) {
         await closeServer(activeServer);
       }
+      closeHermesGateway();
       await closePythonAgentMcpClient();
     } catch {
       // ignore shutdown close errors
@@ -181,6 +183,7 @@ async function startServer() {
   const existingServer = globalThis.__liquidaityBackendServer__;
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
+    closeHermesGateway();
     await closePythonAgentMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;

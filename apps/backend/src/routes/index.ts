@@ -13,6 +13,8 @@ import config from './config.routes';
 import tradingRoutes from './trading.routes';
 import worldviewRoutes, { worldviewInternalRoutes } from './worldview.routes';
 import graphRoutes from './graph.routes';
+import mainSessionRoutes from './mainSession.routes';
+import agentTerminalRoutes from './agentTerminal.routes';
 
 const router = Router();
 
@@ -25,6 +27,8 @@ router.use('/health', health);
 router.use('/worldview', worldviewInternalRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor);
+router.use('/main/session', authMiddleware, mainSessionRoutes);
+router.use('/agent-terminals', authMiddleware, agentTerminalRoutes);
 router.use('/idd', authMiddleware, iddRoutes);
 router.use('/graph', authMiddleware, graphRoutes);
 router.use('/codegraph', authMiddleware, codegraph);

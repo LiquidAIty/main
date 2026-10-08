@@ -31,7 +31,6 @@ from app.python_models.orchestration_contracts import (
     GRAPH_RECORD_ID_FIELDS,
     CardSubagentType,
     DataAnchorReference,
-    GraphAnchor,
     graph_record_fields,
     graph_record_identity,
 )
@@ -2856,68 +2855,6 @@ def load_card_graph_reference(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalized_graph_anchors(value: Any) -> list[dict[str, Any]]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise CardDomainError("graph_hooks_invalid")
-    if len(value) > _DATA_ANCHOR_LIMIT:
-        raise CardDomainError("data_anchor_limit_exceeded")
-    anchors: list[dict[str, Any]] = []
-    seen_exact: set[tuple[str, str]] = set()
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise CardDomainError("graph_hook_invalid")
-        try:
-            anchor = GraphAnchor.model_validate(item).model_dump(exclude_unset=True)
-        except ValidationError as error:
-            raise CardDomainError("graph_hook_invalid") from error
-        semantic_search = anchor.get("searchDynamicInput") is True
-        populated = [
-            field for field in GRAPH_RECORD_ID_FIELDS
-            if str(anchor.get(field) or "").strip()
-        ]
-        identity: tuple[str, str] | None = None
-        if populated:
-            try:
-                identity = graph_record_identity(anchor)
-            except ValueError as error:
-                raise CardDomainError("graph_anchor_identity_invalid") from error
-        if identity is None and not semantic_search:
-            raise CardDomainError("graph_anchor_record_or_search_required")
-        if semantic_search and identity is not None and not identity[0].startswith("graphiti"):
-            raise CardDomainError("graph_anchor_dynamic_search_requires_graphiti")
-        if identity is not None:
-            if identity in seen_exact:
-                raise CardDomainError("data_anchor_duplicate")
-            seen_exact.add(identity)
-        bounded_expansion = int(anchor.get("boundedExpansion", 0))
-        if bounded_expansion < 0 or bounded_expansion > 3:
-            raise CardDomainError("data_anchor_expansion_invalid")
-        max_nodes = int(anchor.get("maxNodes", 8))
-        max_facts = int(anchor.get("maxFacts", 8))
-        if not 1 <= max_nodes <= 20 or not 1 <= max_facts <= 20:
-            raise CardDomainError("graph_hook_result_limit_invalid")
-        anchors.append({
-            **(graph_record_fields(*identity) if identity is not None else {}),
-            "reason": _required_text(anchor.get("reason"), "data_anchor_reason")[:2_000],
-            "priority": -int(anchor.get("order", index)),
-            "boundedExpansion": bounded_expansion,
-            "required": anchor.get("required") is True,
-            "searchDynamicInput": semantic_search,
-            "entityTypes": _string_list(anchor.get("entityTypes"), "graph_hook_entity_types"),
-            "edgeTypes": _string_list(anchor.get("edgeTypes"), "graph_hook_edge_types"),
-            "validAtAfter": str(anchor.get("validAtAfter") or "").strip(),
-            "validAtBefore": str(anchor.get("validAtBefore") or "").strip(),
-            "invalidAtAfter": str(anchor.get("invalidAtAfter") or "").strip(),
-            "invalidAtBefore": str(anchor.get("invalidAtBefore") or "").strip(),
-            "maxNodes": max_nodes,
-            "maxFacts": max_facts,
-            "_inputOrder": index,
-        })
-    return sorted(anchors, key=lambda item: (-item["priority"], item["_inputOrder"]))
-
-
 def _prepare_invocation(
     payload: dict[str, Any],
     *,
@@ -2976,7 +2913,6 @@ def _prepare_invocation(
         if sender is None or not authorized:
             raise CardDomainError("card_invocation_edge_authority_required")
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
-    graph_anchors = _normalized_graph_anchors(options.get("graphHooks"))
     runtime = _card_runtime(card)
     ceiling = _string_list(options.get("tools"), "tools")
     requested_tools = ceiling
@@ -3258,7 +3194,6 @@ def _prepare_invocation(
         "_effectiveToolDefinitions": (
             effective_tool_definitions if include_tool_definitions else []
         ),
-        "_graphAnchors": graph_anchors,
         "_savedScript": options.get("script"),
     }
 
@@ -3525,14 +3460,13 @@ def _resolve_invocation_components(
     assignment = prepared.pop("assignment")
     tool_definitions = prepared.pop("_toolDefinitions")
     effective_tool_definitions = prepared.pop("_effectiveToolDefinitions")
-    graph_anchors = prepared.pop("_graphAnchors")
     saved_script_value = prepared.pop("_savedScript")
     references: list[dict[str, Any]] = []
     incoming_anchors = _normalized_data_anchors(
         payload.get("dataAnchors"), record_name="data-anchor-reference"
     )
     incoming_anchors.sort(key=lambda item: (-item["priority"], item["_inputOrder"]))
-    anchors = [*graph_anchors, *incoming_anchors]
+    anchors = incoming_anchors
     anchor_identities = [
         graph_record_identity(anchor)
         for anchor in anchors
@@ -5272,12 +5206,8 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
         codex_transport_incomplete = (
             expected_provider_api_mode == "codex_app_server"
             and (
-                not has_hermes_root
-                or not has_hermes_result
-                or (
-                    runtime_mode != "magentic_one"
-                    and not str(payload.get("hermesSessionRef") or "").strip()
-                )
+                runtime_mode != "magentic_one"
+                and not str(payload.get("hermesSessionRef") or "").strip()
             )
         )
         if (

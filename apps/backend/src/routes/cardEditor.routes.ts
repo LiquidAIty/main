@@ -22,7 +22,7 @@ function commaSeparatedIds(value: unknown): string[] {
     : [];
 }
 
-async function loadInputDictionaryToolCatalog() {
+export async function loadInputDictionaryToolCatalog() {
   const canonicalMcpTools = await listPythonAgentMcpCatalog();
   const privateRuntimeManifest = await requestPythonRailsJson('/tools/manifest', {
     method: 'GET',

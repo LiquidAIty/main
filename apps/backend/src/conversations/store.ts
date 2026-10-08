@@ -10,6 +10,7 @@ const PROJECTS_TABLE = 'ag_catalog.projects';
 const CONVERSATIONS_TABLE = 'ag_catalog.conversations';
 const MESSAGES_TABLE = 'ag_catalog.conversation_messages';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MESSAGE_ID_REGEX = /^msg_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ConversationRole = 'user' | 'assistant' | 'system' | 'tool' | 'question' | 'answer';
 export type ConversationMessageStatus = 'pending' | 'streaming' | 'complete' | 'error';
@@ -34,6 +35,7 @@ export type SharedChatParticipant = {
 };
 
 export type SharedChatMessageWrite = {
+  messageId?: string;
   role: 'user' | 'assistant';
   content: string;
   speaker: SharedChatParticipant;
@@ -219,6 +221,9 @@ export async function appendSharedConversationTurn(input: {
     const firstSequence = Number(sequence.rows[0].next_seq) - writes.length + 1;
     const inserted: ConversationMessage[] = [];
     for (const [index, write] of writes.entries()) {
+      if (write.messageId && !MESSAGE_ID_REGEX.test(write.messageId)) {
+        throw new Error('shared_conversation_message_id_invalid');
+      }
       const activities = [
         participantActivity('shared_chat_speaker', write.speaker),
         ...(write.target ? [participantActivity('shared_chat_target', write.target)] : []),
@@ -234,7 +239,7 @@ export async function appendSharedConversationTurn(input: {
         [
           canonicalProjectId,
           input.conversationId,
-          `msg_${randomUUID()}`,
+          write.messageId || `msg_${randomUUID()}`,
           write.role,
           write.content,
           firstSequence + index,
@@ -262,6 +267,9 @@ export async function appendSharedConversationReplyOnce(input: {
   const providerMessageId = input.message.providerMessageId.trim();
   if (!input.conversationId.trim() || !providerMessageId || !input.message.content.trim()) {
     throw new Error('shared_conversation_reply_invalid');
+  }
+  if (input.message.messageId && !MESSAGE_ID_REGEX.test(input.message.messageId)) {
+    throw new Error('shared_conversation_message_id_invalid');
   }
   return withTransaction(async (client) => {
     const canonicalProjectId = await resolveProjectId(client, input.projectId);
@@ -314,7 +322,7 @@ export async function appendSharedConversationReplyOnce(input: {
       [
         canonicalProjectId,
         input.conversationId,
-        `msg_${randomUUID()}`,
+        input.message.messageId || `msg_${randomUUID()}`,
         input.message.content,
         Number(sequence.rows[0].next_seq),
         input.message.providerContinuationRef ?? null,

@@ -507,7 +507,6 @@ export default function AgentBuilder(): React.ReactElement {
     setCurrentResponderCardId,
     sessionActive,
     sessionConnecting,
-    queuedInputCount,
     sessionHistoryLoading,
     startVoiceSession,
     stopMainTurn,
@@ -1171,11 +1170,12 @@ export default function AgentBuilder(): React.ReactElement {
         ) {
           return <AgentTerminalPanel
             key={`${canvasProjectId}:${BUILDER_DECK_ID}:${selectedCard.id}:${selectedCard.runtime.profile}`}
-            identity={{
-              projectId: canvasProjectId,
-              deckId: BUILDER_DECK_ID,
-              cardId: selectedCard.id,
-            }}
+              identity={{
+                projectId: canvasProjectId,
+                deckId: BUILDER_DECK_ID,
+                cardId: selectedCard.id,
+                conversationId,
+              }}
           />;
         }
         if (BUILDER_NODE_TABS.some((entry) => entry === tab)) {
@@ -1359,7 +1359,6 @@ export default function AgentBuilder(): React.ReactElement {
           colors={C}
           busy={sessionActive}
           connecting={sessionConnecting}
-          queuedCount={queuedInputCount}
           historyLoading={sessionHistoryLoading}
           error={technicalError}
           voiceError={voiceError}
@@ -1389,6 +1388,7 @@ export default function AgentBuilder(): React.ReactElement {
               projectId: canvasProjectId,
               deckId: BUILDER_DECK_ID,
               cardId: builderCard.id,
+              conversationId,
             }}
           />
         </div>

@@ -87,6 +87,7 @@ class ErrorPayload(Payload):
     """Every ``_emit("error", …)`` site sets exactly ``message``."""
 
     message: str
+    submission_id: str | None = None
 
 
 event("error", ErrorPayload, doc="A session-level failure outside a turn (agent init, model switch, compression, resume).")
@@ -105,6 +106,16 @@ event("notice", NoticePayload, doc="Informational one-liner for the session (cap
 
 
 event("message.start", None, doc="A turn began streaming; no payload.")
+
+
+class SubmissionStartedPayload(Payload):
+    """Opaque identity of a caller-correlated prompt beginning its Hermes turn."""
+
+    submission_id: str
+
+
+event("prompt.submission.started", SubmissionStartedPayload,
+      doc="A caller-correlated prompt began its Hermes turn.")
 
 
 class StreamDeltaPayload(Payload):
@@ -186,6 +197,7 @@ class MessageCompletePayload(Payload):
     ``compute_host_bridge`` (``text`` + ``status``)."""
 
     text: str | JsonValue = ""
+    submission_id: str | None = None
     usage: Usage | None = None
     status: TurnStatus | None = None
     reasoning: str | None = None

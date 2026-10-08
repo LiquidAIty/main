@@ -102,6 +102,8 @@ export function projectCardChatTargets(
 }
 
 export type SharedChatMessage = {
+  messageId?: string;
+  seq?: number;
   role: 'assistant' | 'user';
   text: string;
   speaker: SharedChatParticipant;
@@ -161,6 +163,8 @@ export async function streamSession(args: {
   deckId?: string;
   conversationId: string;
   message: string;
+  clientMessageId: string;
+  clientReplyMessageId: string;
   targetCardId?: string;
   images?: Array<Record<string, unknown>>;
   dataAnchors?: DataAnchor[];
@@ -176,6 +180,8 @@ export async function streamSession(args: {
       deckId: args.deckId,
       conversationId: args.conversationId,
       message: args.message,
+      clientMessageId: args.clientMessageId,
+      clientReplyMessageId: args.clientReplyMessageId,
       ...(args.targetCardId ? { targetCardId: args.targetCardId } : {}),
       dataAnchors: args.dataAnchors || [],
       ...(args.images?.length ? { images: args.images } : {}),
@@ -528,6 +534,8 @@ export async function loadSessionHistory(args: {
     mainCardId?: unknown;
     addressableAgents?: unknown[];
     messages?: {
+      messageId?: unknown;
+      seq?: unknown;
       role?: unknown;
       text?: unknown;
       speaker?: unknown;
@@ -572,6 +580,8 @@ export async function loadSessionHistory(args: {
       if (!speaker) return null;
       const target = participant(m.target);
       return {
+        ...(typeof m.messageId === 'string' && m.messageId ? { messageId: m.messageId } : {}),
+        ...(typeof m.seq === 'number' && Number.isSafeInteger(m.seq) ? { seq: m.seq } : {}),
         role: m.role === 'assistant' ? 'assistant' : 'user',
         text: typeof m.text === 'string' ? m.text : '',
         speaker,

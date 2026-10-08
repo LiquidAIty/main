@@ -113,3 +113,5 @@ client/public/worldsignals/
 /db/thinkgraph.sqlite*
 /db/.thinkgraph.sqlite.*
 
+
+.codebase-memory/graph.db.zst

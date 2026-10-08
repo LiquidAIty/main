@@ -386,7 +386,6 @@ export default function BuilderChat({
   colors,
   busy = false,
   connecting = false,
-  queuedCount = 0,
   historyLoading = false,
   error = null,
   voiceError = null,
@@ -406,13 +405,11 @@ export default function BuilderChat({
   onSend: (t: string, runInput?: MainChatRunInput) => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
-  /** The real SSE turn is still open; the composer remains available and submissions queue. */
+  /** The real Hermes turn is still open; the composer remains available. */
   busy?: boolean;
-  /** The send request is opening; additional submissions queue behind it. */
+  /** The request is connecting to the saved Card's Hermes session. */
   connecting?: boolean;
-  /** Inputs waiting to use the same canonical Main session after its active turn. */
-  queuedCount?: number;
-  /** Native conversation history is rejoining; prevent a send that could be overwritten by readback. */
+  /** Persisted conversation history is loading and reconciles with visible submissions by message ID. */
   historyLoading?: boolean;
   /** Visible transport/configuration failure; never represented as assistant speech. */
   error?: string | null;
@@ -436,7 +433,7 @@ export default function BuilderChat({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imageReadRef = useRef(false);
   const imageReadEpochRef = useRef(0);
-  const interactionDisabled = historyLoading;
+  const interactionDisabled = false;
   useEffect(() => {
     imageReadEpochRef.current += 1;
     imageReadRef.current = false;
@@ -878,15 +875,6 @@ export default function BuilderChat({
                 animation: "builder-chat-active-pulse 1.1s ease-in-out infinite",
               }}
             />
-          ) : null}
-          {queuedCount > 0 ? (
-            <span
-              data-testid="builder-chat-queued-count"
-              role="status"
-              style={{ color: colors.neutral, fontSize: 11, whiteSpace: "nowrap" }}
-            >
-              {queuedCount} queued
-            </span>
           ) : null}
           {busy && onStop ? (
             <button type="button" data-testid="builder-chat-stop" onClick={onStop}>

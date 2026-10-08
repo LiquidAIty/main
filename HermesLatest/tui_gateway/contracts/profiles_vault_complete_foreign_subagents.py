@@ -255,6 +255,7 @@ class ProfilesDescribeResult(Result):
     toolsets: list[ToolsetEntry] = Field(default_factory=list)
     toolsets_pinned: bool = False
     mcp_servers: list[McpServerEntry] = Field(default_factory=list)
+    bot_mode_roster: list[str] | None = None
 
 
 method("profiles.describe", params=ProfileNameParams, result=ProfilesDescribeResult,
@@ -275,6 +276,7 @@ class ProfilesConfigureParams(ProfileParams):
     disabled_skills: list[str] | None = None
     enabled_toolsets: list[str] | None = None
     enabled_mcp_servers: list[str] | None = None
+    bot_mode_roster: list[str] | None = None
 
 
 class UiMetaConflict(Result):
@@ -294,6 +296,7 @@ class ProfilesConfigureApplied(Result):
     skills: bool | None = None
     toolsets: bool | None = None
     mcp_servers: bool | None = None
+    bot_mode_roster: bool | None = None
 
 
 class ProfilesConfigureResult(Result):

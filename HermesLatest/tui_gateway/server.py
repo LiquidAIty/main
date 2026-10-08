@@ -1035,6 +1035,8 @@ def _attach_built_agent(current: dict, agent) -> None:
     # Bot Mode gate hint: the DB title lands post-first-turn but the system prompt builds at turn START.
     if _title_hint := str(current.get("pending_title") or "").strip():
         agent._session_title_hint = _title_hint
+    if isinstance(current.get("bot_mode_roster"), list):
+        agent._bot_mode_roster = list(current["bot_mode_roster"])
     current["agent"] = agent
     # A workspace move can land while construction is still in flight.
     _register_session_cwd(current)
@@ -2472,6 +2474,8 @@ def _make_agent(
         pass_session_id=is_truthy_value(os.environ.get("HERMES_TUI_PASS_SESSION_ID")),
         skip_context_files=ignore_rules, skip_memory=ignore_rules, fallback_model=_load_fallback_model(),
         **_agent_cbs(sid))
+    if session is not None and isinstance(session.get("bot_mode_roster"), list):
+        agent._bot_mode_roster = list(session["bot_mode_roster"])
     if context_cwd_is_launch_artifact is None:
         context_cwd_is_launch_artifact = _context_cwd_is_launch_artifact(session)
     agent._context_cwd_is_launch_artifact = bool(context_cwd_is_launch_artifact)
@@ -2516,7 +2520,7 @@ def _hydrate_session_cwd(sid: str, key: str, session_db, profile_home: str | Non
 def _init_session(
     sid: str, key: str, agent, history: list, cols: int = 80, cwd: str | None = None,
     session_db=None, source: str | None = None, profile_home: str | None = None,
-    explicit_cwd: bool = False):
+    explicit_cwd: bool = False, bot_mode_roster: list[str] | None = None):
     now = time.time()
     with _sessions_lock:
         _sessions[sid] = {
@@ -2528,6 +2532,7 @@ def _init_session(
             "tool_progress_mode": _load_tool_progress_mode(), "edit_snapshots": {}, "tool_started_at": {},
             # Profile-scoped HERMES_HOME (None = launch); SessionBranch copies the parent's (same state.db).
             "profile_home": profile_home,
+            "bot_mode_roster": list(bot_mode_roster) if bot_mode_roster is not None else None,
             # In-session /model switch, honored on rebuild (/new, resume) — never leaks to siblings via env vars.
             "model_override": None,
             # Async events go to the transport that created the session (stdio for Ink, WS for the dashboard).
@@ -2535,6 +2540,8 @@ def _init_session(
             "auth_user_id": _transport_auth_user_id(current_transport()),
         }
         _session_todo_state(_sessions[sid])
+    if bot_mode_roster is not None:
+        agent._bot_mode_roster = list(bot_mode_roster)
     _hydrate_session_cwd(sid, key, session_db, profile_home)
     _register_session_cwd(_sessions[sid])
     _wire_session_agent(sid, key, agent)  # no eager slash-worker pre-warm (see _start_agent_build)
@@ -2581,7 +2588,7 @@ def _deferred_session_record(
     close_on_disconnect: bool = False, display_history_prefix: list | None = None,
     profile_home: Path | None = None, lazy: bool = False, model_override=None,
     resume_runtime_overrides: dict | None = None, todo_state: dict | None = None,
-    explicit_cwd: bool = False) -> dict:
+    explicit_cwd: bool = False, bot_mode_roster: list[str] | None = None) -> dict:
     """A live-session record whose AIAgent is built later (lazy watch / cold resume) — _init_session's shape minus the agent."""
     now = time.time()
     return {
@@ -2592,6 +2599,7 @@ def _deferred_session_record(
         "history_lock": threading.Lock(), "history_version": 0, "image_counter": 0,
         "inflight_turn": None, "last_active": now, "lazy": lazy, "model_override": model_override,
         "pending_title": None,
+        "bot_mode_roster": list(bot_mode_roster) if bot_mode_roster is not None else None,
         "profile_home": str(profile_home) if profile_home is not None else None,
         "resume_runtime_overrides": resume_runtime_overrides, "resume_session_id": session_key,
         "running": False, "session_key": session_key, "show_reasoning": _load_show_reasoning(),
