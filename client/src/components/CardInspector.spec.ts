@@ -1,8 +1,5 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-
 import React from 'react';
 import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
@@ -18,37 +15,23 @@ import {
 } from '../features/agentbuilder/cardConfigurationEditor';
 import { CardInspector as CardInspectorComponent } from './CardInspector';
 
-const CLIENT_ROOT = path.basename(process.cwd()).toLowerCase() === 'client'
-  ? process.cwd()
-  : path.resolve(process.cwd(), 'client');
-const CARD_INSPECTOR_SOURCE = path.resolve(CLIENT_ROOT, 'src/components/CardInspector.tsx');
-const CARD_INSPECTOR_PROMPT_RUNTIME_SOURCE = path.resolve(
-  CLIENT_ROOT,
-  'src/components/CardInspectorPromptRuntime.tsx',
-);
-const CARD_INSPECTOR_CAPABILITIES_SOURCE = path.resolve(
-  CLIENT_ROOT,
-  'src/components/CardInspectorCapabilities.tsx',
-);
-const HERMES_CARD_PROFILE_SOURCE = path.resolve(
-  CLIENT_ROOT,
-  'src/features/agentbuilder/hermesCardProfile.ts',
-);
-const AGENT_BUILDER_PAGE_SOURCE = path.resolve(CLIENT_ROOT, 'src/pages/agentbuilder.tsx');
-
-function readCardInspectorSources() {
-  return [
-    CARD_INSPECTOR_SOURCE,
-    CARD_INSPECTOR_PROMPT_RUNTIME_SOURCE,
-    CARD_INSPECTOR_CAPABILITIES_SOURCE,
-  ]
-    .map((sourcePath) => readFileSync(sourcePath, 'utf8'))
-    .join('\n');
-}
-
 let leaveCard: (() => Promise<boolean>) | null = null;
-function CardInspector(props: React.ComponentProps<typeof CardInspectorComponent>) {
-  return React.createElement(CardInspectorComponent, { ...props, registerCardDraftFlush: (save) => { leaveCard = save; } });
+function CardInspector(
+  props: Partial<React.ComponentProps<typeof CardInspectorComponent>>
+    & Pick<React.ComponentProps<typeof CardInspectorComponent>, 'activeTab'>,
+) {
+  return React.createElement(CardInspectorComponent, {
+    cardId: 'card-one',
+    projectId: 'p',
+    deckId: 'd',
+    cardName: 'Agent',
+    onChangeCardName: () => undefined,
+    localConfig: savedConfig,
+    onSaveLocalConfig: () => undefined,
+    orangeConnections: [],
+    ...props,
+    registerCardDraftFlush: (save) => { leaveCard = save; },
+  });
 }
 async function leaveEditor() {
   expect(leaveCard).not.toBeNull();
@@ -67,10 +50,7 @@ const runtimeOptions = {
     { name: 'provider', options: ['openai', 'openrouter'] },
     { name: 'subagentType', label: 'Subagents', path: 'runtimeOptions.subagentType', control: 'select', options: ['none', 'leaf', 'recursive'] },
     { name: 'accessMode', options: ['chatgpt-account', 'openai-api', 'openrouter-api'] },
-    { name: 'reasoningEffort', options: ['low', 'medium', 'high', 'xhigh'] },
-    { name: 'jevModelChoiceContext', label: 'Model-choice context', options: ['inherited', 'request_card', 'conversation_window', 'selected_graph_context'] },
-    { name: 'jevAutoToolsContext', label: 'Auto-tools context', options: ['inherited', 'request_card', 'conversation_window', 'selected_graph_context'] },
-    ...['runtimeProfile', 'modelKey', 'temperature', 'maxTokens', 'maxTurns'].map((name) => ({ name, options: [] })),
+    ...['runtimeProfile', 'modelKey'].map((name) => ({ name, options: [] })),
   ].map((field) => ({
     ...field,
     label: field.label || field.name,
@@ -82,6 +62,9 @@ const runtimeOptions = {
     { provider: 'openai', key: 'model-a', label: 'Model A', providerModelId: 'model-a' },
     { provider: 'openrouter', key: 'model-b', label: 'Model B', providerModelId: 'model-b' },
   ] },
+  autoModelCandidates: [
+    { provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'model-a', eligible: true },
+  ],
 };
 
 function mockEditorFetch(optionsAvailable = true, toolsAvailable = true) {
@@ -108,6 +91,25 @@ const savedConfig: CardEditorConfiguration = {
 };
 
 describe('CardInspector active builder config', () => {
+  it('saves only the two Hermes non-Magnetic automatic switches', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    const view = render(React.createElement(CardInspector, {
+      activeTab: 'Runtime', localConfig: savedConfig, onSaveLocalConfig: onSave,
+    }));
+    await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Auto Model').disabled).toBe(false));
+    fireEvent.click(screen.getByLabelText('Auto Model'));
+    view.rerender(React.createElement(CardInspector, {
+      activeTab: 'Tools', localConfig: savedConfig, onSaveLocalConfig: onSave,
+    }));
+    fireEvent.click(screen.getByLabelText('AutoTools'));
+    await leaveEditor();
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      runtime_options: expect.objectContaining({ autoModel: true, autoTools: true }),
+    }));
+    expect(screen.queryByLabelText('autoSelect')).toBeNull();
+    expect(screen.queryByLabelText('jevContext')).toBeNull();
+  });
   it('does not mount or poll the Runtime dashboard while another tab is active', async () => {
     const fetchMock = mockEditorFetch();
     render(React.createElement(CardInspector, {
@@ -116,7 +118,7 @@ describe('CardInspector active builder config', () => {
     }));
     expect(await screen.findByLabelText('Role')).toBeTruthy();
     expect(screen.queryByTestId('card-run-metrics')).toBeNull();
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/cards/run')).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/cards/runs/read')).toBe(false);
   });
 
   it('places the latest Run receipt before configuration in the existing Runtime tab', async () => {
@@ -155,83 +157,6 @@ describe('CardInspector active builder config', () => {
 
     await waitFor(() => expect(onSetProjectCodeFolder).toHaveBeenCalledWith('new-agent-ui'));
     expect((await screen.findByText('Folder path saved.')).textContent).toBe('Folder path saved.');
-  });
-
-  it('persists independent Jev auto controls and disables model auto-select after a manual model choice', async () => {
-    mockEditorFetch();
-    const onSave = vi.fn();
-    const props = {
-      localConfig: {
-        ...savedConfig,
-        runtime_options: { autoSelect: true, autoTools: true },
-      },
-      onSaveLocalConfig: onSave,
-    };
-    const view = render(React.createElement(CardInspector, {
-      activeTab: 'Runtime',
-      ...props,
-    }));
-
-    const autoSelect = await screen.findByLabelText<HTMLInputElement>('Auto-select model with Jev');
-    await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>('Model').disabled).toBe(false));
-    expect(autoSelect.checked).toBe(true);
-
-    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'model-a' } });
-    expect(autoSelect.checked).toBe(false);
-
-    view.rerender(React.createElement(CardInspector, { activeTab: 'Tools', ...props }));
-    const autoTools = screen.getByLabelText<HTMLInputElement>('Auto-tools with Jev');
-    expect(autoTools.checked).toBe(true);
-    fireEvent.click(autoTools);
-    expect(autoTools.checked).toBe(false);
-
-    await leaveEditor();
-    expect(onSave).toHaveBeenCalledOnce();
-    expect(onSave.mock.calls[0][0]).toMatchObject({
-      model_key: 'model-a',
-      runtime_options: { autoSelect: false, autoTools: false },
-    });
-  });
-
-  it('persists bounded per-decision Jev context without an everything option', async () => {
-    mockEditorFetch();
-    const onSave = vi.fn();
-    render(React.createElement(CardInspector, {
-      activeTab: 'Runtime',
-      localConfig: { ...savedConfig, runtime_options: { autoSelect: true, autoTools: true } },
-      onSaveLocalConfig: onSave,
-    }));
-
-    await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>('Model-choice context').disabled).toBe(false));
-    const modelContext = screen.getByLabelText<HTMLSelectElement>('Model-choice context');
-    const toolContext = screen.getByLabelText<HTMLSelectElement>('Auto-tools context');
-    expect([...modelContext.options].map((option) => option.value)).not.toContain('everything');
-    fireEvent.change(modelContext, { target: { value: 'selected_graph_context' } });
-    fireEvent.change(toolContext, { target: { value: 'conversation_window' } });
-    await leaveEditor();
-
-    expect(onSave).toHaveBeenCalledOnce();
-    expect(onSave.mock.calls[0][0].runtime_options.jevContext).toEqual({
-      modelChoice: 'selected_graph_context',
-      autoTools: 'conversation_window',
-    });
-  });
-
-  it('does not materialize disabled Jev defaults during an unrelated legacy Card edit', async () => {
-    mockEditorFetch();
-    const onSave = vi.fn();
-    render(React.createElement(CardInspector, {
-      activeTab: 'Skills',
-      localConfig: savedConfig,
-      onSaveLocalConfig: onSave,
-    }));
-
-    fireEvent.change(screen.getByLabelText('Card skill grants'), { target: { value: 'research' } });
-    await leaveEditor();
-
-    expect(onSave).toHaveBeenCalledOnce();
-    expect(onSave.mock.calls[0][0].skills).toEqual(['research']);
-    expect(onSave.mock.calls[0][0].runtime_options).toBeUndefined();
   });
 
   it('shares one in-flight flush and drains edits made while the first save is pending', async () => {
@@ -305,7 +230,8 @@ describe('CardInspector active builder config', () => {
       const editor = useAgentBuilderCardEditor({ deck, setDeck, selectedCardId: card.id,
         persistDeck: persist, recordDeckWriteReason: () => undefined });
       return React.createElement(CardInspector, { activeTab: 'Runtime',
-        cardId: card.id, projectId: 'p', deckId: 'd', localConfig: editor.selectedCardConfig,
+        cardId: card.id, projectId: 'p', deckId: 'd',
+        localConfig: editor.selectedCardConfig || undefined,
         onSaveLocalConfig: editor.handleSaveSelectedCardConfig });
     }
     const view = render(React.createElement(Harness));
@@ -980,12 +906,8 @@ describe('CardInspector active builder config', () => {
       provider: 'openai',
       accessMode: 'chatgpt-account',
       modelKey: 'gpt-test',
-      reasoningEffort: 'medium',
-      temperature: 0.2,
-      maxTokens: 800,
-      maxTurns: 12,
       promptTemplate: 'test prompt',
-      toolsText: 'web\nhermes:tool:memory\nhermes:tool:terminal',
+      toolsText: 'web\ncanvas.inspect\ncard.update_configuration',
       skillsText: 'research\nplanning',
       toolsetsText: 'browser',
       mcpConnectionIdsText: 'github\nproject-research',
@@ -996,12 +918,8 @@ describe('CardInspector active builder config', () => {
       provider: 'openai',
       access_mode: 'chatgpt-account',
       model_key: 'gpt-test',
-      reasoning_effort: 'medium',
-      temperature: 0.2,
-      max_tokens: 800,
-      max_turns: 12,
       prompt_template: 'test prompt',
-      tools: ['web', 'hermes:tool:memory', 'hermes:tool:terminal'],
+      tools: ['web', 'canvas.inspect', 'card.update_configuration'],
       skills: ['research', 'planning'],
       toolsets: ['browser'],
       mcp_connection_ids: ['github', 'project-research'],
@@ -1016,10 +934,6 @@ describe('CardInspector active builder config', () => {
       provider: 'openai',
       accessMode: 'openai-api',
       modelKey: 'gpt-test',
-      reasoningEffort: '',
-      temperature: '',
-      maxTokens: '',
-      maxTurns: '',
       promptTemplate: '',
       toolsText: '',
       skillsText: '',
@@ -1033,146 +947,21 @@ describe('CardInspector active builder config', () => {
       provider: 'openai',
       accessMode: 'chatgpt-account',
       modelKey: 'gpt-test',
-      reasoningEffort: '',
-      temperature: '',
-      maxTokens: '',
-      maxTurns: '',
       promptTemplate: '',
-      toolsText: 'card.update_configuration\nhermes:tool:memory',
+      toolsText: 'card.update_configuration\ncanvas.inspect',
       skillsText: '',
       toolsetsText: 'file\nterminal',
       mcpConnectionIdsText: '',
     });
     expect(delegate.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'delegate' });
     expect(delegate.access_mode).toBe('chatgpt-account');
-    expect(delegate.tools).toEqual(['card.update_configuration', 'hermes:tool:memory']);
+    expect(delegate.tools).toEqual(['card.update_configuration', 'canvas.inspect']);
     expect(delegate.toolsets).toEqual(['file', 'terminal']);
   });
 
-  it('keeps Card Save separate from the bounded learning operations', () => {
-    const source = readCardInspectorSources();
-    const profileClient = readFileSync(HERMES_CARD_PROFILE_SOURCE, 'utf8');
-
-    expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
-    expect(source).not.toContain('Saving this Card cannot change the profile.');
-    expect(source).not.toMatch(/previewHermesCardProfile|buildHermesCardDraftFromLocalConfig/);
-    expect(source).not.toContain("method: 'profiles.configure'");
-    expect(profileClient).toContain('/operations`');
-    expect(profileClient).not.toMatch(/\/preview|expectedFingerprint|HermesCardDraft/);
-    expect(source).not.toContain('runProfileApply(buildCurrentLocalPayload');
-    expect(source).not.toContain('data-testid="profile-background-review"');
-    expect(source).not.toContain('aria-label="Memory provider"');
-    expect(source).not.toContain('Contextualized GPT-plugin Main turns report Honcho bypassed');
-    expect(source).not.toContain('hermesProfileState?.profile.honcho');
-    expect(source).not.toContain('CardSubagentsTab');
-    expect(source).not.toContain('Use account Luna');
-  });
-
-  it('keeps the general Card tabs configuration-only and leaves CLI ownership to the page', () => {
-    const source = readCardInspectorSources();
-    const pageSource = readFileSync(AGENT_BUILDER_PAGE_SOURCE, 'utf8');
-
-    expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;",
-    );
-    expect(pageSource).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
-    expect(source).toContain('card-inspector-prompt-surface');
-    expect(source).toContain('card-inspector-memory');
-    expect(source).toContain('card-inspector-skills');
-    expect(source).not.toContain("activeTab === 'Results'");
-    expect(source).not.toContain('Dynamic context / input');
-    expect(source).not.toContain('data-testid="card-inspector-run"');
-    expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
-    expect(source).not.toContain('saveRevisionAtStartRef');
-    expect(source.match(/setSaveCardStatus\('saved'\)/g)).toHaveLength(1);
-    expect(source).not.toContain('A short fallback covers the no-op save');
-    expect(pageSource).toContain("tab === 'CLI'");
-    expect(pageSource).toContain("selectedNode.runtime.mode === 'magentic_one'");
-    expect(pageSource).not.toContain('showTaskComposer');
-    expect(pageSource).not.toContain("['Invocation', 'Prompt', 'Knowledge', 'Capabilities', 'Runtime']");
-  });
-
-  it('keeps saved grants editable and profile state read-only on the existing Tools surface', () => {
-    const source = readCardInspectorSources();
-    const profileClient = readFileSync(HERMES_CARD_PROFILE_SOURCE, 'utf8');
-
-    expect(source).toContain('data-testid="card-inspector-skills"');
-    expect(source).toContain('data-testid="effective-hermes-skills"');
-    expect(source).not.toContain('data-testid="main-honcho-status"');
-    expect(source).toContain('data-testid="effective-hermes-runtime"');
-    expect(source).toContain('aria-label="Card skill grants"');
-    expect(source).toContain('aria-label="Hermes capabilities"');
-    expect(source).not.toContain('One Hermes toolset ID per line');
-    expect(source).not.toContain('Effective Hermes toolsets');
-    expect(source.indexOf('<CardInspectorScriptView')).toBeLessThan(
-      source.indexOf('aria-label="External connections"'),
-    );
-    expect(source).toContain('External MCP connection references');
-    expect(source).not.toContain('changes.disabled_skills');
-    expect(source).not.toContain('changes.enabled_toolsets');
-    expect(source).not.toContain('changes.enabled_mcp_servers');
-    expect(source).toContain('onClick={() => void actions.openLearningNode(node.id)}');
-    expect(source).toContain("change: { method: 'learning.edit', params: { id, content } }");
-    expect(profileClient).toContain("method: 'learning.detail'");
-    expect(source).not.toContain('Automatic learning');
-    expect(source).not.toContain('background_review');
-    expect(profileClient).not.toContain('backgroundReview');
-    expect(profileClient).not.toContain('StarmapGraph');
-    expect(source).toContain('const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true)');
-  });
-
-  it('keeps the card identity fields without adding another persistence path', () => {
-    const source = readCardInspectorSources();
-
-    expect(source).toContain('cardName');
-    expect(source).toContain('onChangeCardName');
-    expect(source).not.toMatch(/\bCard mode\b/);
-    expect(source).not.toContain('Runtime Type');
-    expect(source).not.toContain('aria-label="Runtime mode"');
-    expect(source).not.toContain('data-testid="agent-runtime-mode"');
-    expect(source).toContain('Advanced runtime');
-    expect(source).not.toContain('GlassInspectorSection');
-    expect(source).not.toContain('roleBadge');
-    expect(source).toContain('aria-label="Temperature"');
-    expect(source).toContain('aria-label="Max tokens"');
-    expect(source).toContain('aria-label="Max turns"');
-    expect(source).toContain('/api/cards/options');
-    expect(source).not.toContain('/api/idd/card-editor');
-    expect(source).not.toContain('/api/config/models');
-    expect(source).not.toContain('<option value="openai">');
-    expect(source).toContain('Card skill grants');
-    expect(source).toContain('aria-label="Hermes capabilities"');
-    expect(source).not.toContain('One Hermes toolset ID per line');
-    expect(source).not.toContain('Effective Hermes toolsets');
-    expect(source).toContain('External MCP connection references');
-    expect(source).not.toContain('params: { description: profileDescriptionDraft }');
-    expect(source).not.toContain('profileSoulDraft');
-    expect(source).not.toContain('changes.soul');
-    expect(source).not.toContain('agent-profile-soul');
-    expect(source).not.toContain("renderSectionBody('Soul')");
-    expect(source).not.toContain('profileProviderDraft');
-    expect(source).not.toContain('profileModelDraft');
-    expect(source).not.toContain('changes.disabled_skills');
-    expect(source).not.toContain('changes.enabled_toolsets');
-    expect(source).not.toContain('changes.enabled_mcp_servers');
-    expect(source).toContain('data-testid="effective-hermes-runtime"');
-    expect(source).not.toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
-    expect(source).not.toContain('Profile selector');
-    expect(source).not.toContain('HERMES_HOME');
-  });
-
-  it('consumes executable fields and configured provider models without redefining them', () => {
+  it('consumes configured provider models without redefining them', () => {
     const parsed = parseCardEditorOptions({
-      fields: [
-        {
-          name: 'temperature',
-          label: 'Temperature',
-          path: 'runtimeOptions.temperature',
-          control: 'number',
-          minimum: 0,
-          step: 0.1,
-        },
-      ],
+      fields: [],
       catalogs: {
         'configured-models': [
           {
@@ -1186,9 +975,7 @@ describe('CardInspector active builder config', () => {
       },
     });
 
-    expect(parsed.fields).toEqual([
-      expect.objectContaining({ name: 'temperature', minimum: 0, step: 0.1 }),
-    ]);
+    expect(parsed.fields).toEqual([]);
     expect(parsed.modelsByProvider.openrouter).toEqual([
       {
         key: 'provider/model',

@@ -39,7 +39,8 @@ class CardScript(BaseModel):
     """Optional data in the existing saved Card runtime-extension field."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    enabled: bool = False
+    # Read old saved bytes, but never persist or consult the retired switch.
+    enabled: bool = Field(default=False, exclude=True)
     source: str = Field(default="", max_length=SCRIPT_MAX_BYTES)
     version: int = Field(default=1, ge=1)
     author: dict[str, str] = Field(default_factory=dict)
@@ -48,8 +49,9 @@ class CardScript(BaseModel):
     paletteFingerprint: str = ""
     compiled: dict[str, Any] = Field(default_factory=dict)
     lastValidation: dict[str, Any] = Field(default_factory=dict)
-    hermesSupport: dict[str, Any] = Field(default_factory=dict)
-    rollback: dict[str, Any] = Field(default_factory=dict)
+    # Retired derived/display fields remain readable for old Card revisions.
+    hermesSupport: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    rollback: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
 
 def _canonical(value: Any) -> str:
@@ -63,21 +65,11 @@ def _python_identifier(value: str) -> str:
     return identifier
 
 
-def generate_card_script_header(
-    *,
+def _canonical_header_catalog(
     catalog_tools: list[dict[str, Any]],
     selected_tools: list[str],
-    default_agent_tools: list[str] | None = None,
-    card_id: str,
-) -> dict[str, Any]:
-    """Generate the read-only editor/compiler stub from canonical live inputs.
-
-    This text is never saved as Card source and never enters model context.  It
-    exists solely to expose stable IDD objects plus the live catalog's grant
-    state to the editor in ordinary Python names.
-    """
-
-    dictionary = load_input_data_dictionary()
+    default_agent_tools: list[str] | None,
+) -> tuple[dict[str, dict[str, Any]], set[str], set[str]]:
     selected = set(selected_tools)
     catalog_by_id: dict[str, dict[str, Any]] = {}
     for item in catalog_tools:
@@ -94,6 +86,87 @@ def generate_card_script_header(
     unknown_default = next((name for name in default_agent if name not in selected), None)
     if unknown_default:
         raise ValueError(f"card_script_default_agent_tool_not_selected:{unknown_default}")
+    return catalog_by_id, selected, default_agent
+
+
+def _append_idd_type_declarations(
+    lines: list[str], definitions: dict[str, dict[str, Any]], dictionary: dict[str, Any],
+) -> None:
+    idd_type_names = {
+        name: _python_identifier(name) for name in sorted(dictionary.get("types", {}))
+    }
+    for name, python_name in idd_type_names.items():
+        definition = dictionary["types"][name]
+        lines.append(f"class {python_name}(TypedDict, total=False):")
+        fields = definition.get("fields") if isinstance(definition, dict) else None
+        if isinstance(fields, list) and fields:
+            for field in fields:
+                field_name = _python_identifier(str(field.get("id") or "value"))
+                field_type = idd_type_names.get(str(field.get("type") or ""), "Any")
+                lines.append(f"    {field_name}: {field_type}")
+        else:
+            lines.append("    value: Any")
+        definitions[f"types.{name}"] = {"line": len(lines) - 1, "kind": "idd-type"}
+        lines.append("")
+
+
+def _append_tool_declarations(
+    lines: list[str], definitions: dict[str, dict[str, Any]],
+    catalog_by_id: dict[str, dict[str, Any]], selected: set[str],
+    default_agent: set[str],
+) -> None:
+    grouped: dict[str, list[str]] = {}
+    for canonical_id in sorted(catalog_by_id):
+        namespace, _, leaf = canonical_id.rpartition(".")
+        if not namespace:
+            namespace, leaf = "root", canonical_id
+        grouped.setdefault(namespace, []).append(leaf)
+    for namespace, leaves in sorted(grouped.items()):
+        class_name = f"_{''.join(part.title() for part in _python_identifier(namespace).split('_'))}Tools"
+        lines.append(f"class {class_name}(Protocol):")
+        for leaf in leaves:
+            canonical_id = leaf if namespace == "root" else f"{namespace}.{leaf}"
+            item = catalog_by_id[canonical_id]
+            granted = canonical_id in selected
+            handle_type = "SelectedToolHandle" if granted else "UngrantedToolHandle"
+            access = str(item.get("access") or "read").upper()
+            availability = "AVAILABLE" if item.get("available") is True else "DISABLED"
+            state = "AGENT" if canonical_id in default_agent else "OFF" if granted else "UNGRANTED"
+            lines.append(
+                f"    {_python_identifier(leaf)}: {handle_type}  # {canonical_id} | {access} | {availability} | {state}"
+            )
+            definitions[f"tools.{canonical_id}"] = {
+                "line": len(lines), "kind": "tool", "canonicalId": canonical_id,
+                "selected": granted, "access": str(item.get("access") or "read"),
+                "availability": "available" if item.get("available") is True else "disabled",
+            }
+        lines.append("")
+    lines.append("class ToolControls(Protocol):")
+    for namespace in sorted(grouped):
+        class_name = f"_{''.join(part.title() for part in _python_identifier(namespace).split('_'))}Tools"
+        attribute = "root" if namespace == "root" else _python_identifier(namespace)
+        lines.append(f"    {attribute}: {class_name}")
+    lines.extend(("", "tools: Final[ToolControls]", ""))
+
+
+def generate_card_script_header(
+    *,
+    catalog_tools: list[dict[str, Any]],
+    selected_tools: list[str],
+    default_agent_tools: list[str] | None = None,
+    card_id: str,
+) -> dict[str, Any]:
+    """Generate the read-only editor/compiler typing header from canonical live inputs.
+
+    This text is never saved as Card source and never enters model context.  It
+    exists solely to expose stable IDD objects plus the live catalog's grant
+    state to the editor in ordinary Python names.
+    """
+
+    dictionary = load_input_data_dictionary()
+    catalog_by_id, selected, default_agent = _canonical_header_catalog(
+        catalog_tools, selected_tools, default_agent_tools,
+    )
 
     identity = {
         "schemaVersion": "liquidaity.card-script.header.v1",
@@ -145,59 +218,8 @@ def generate_card_script_header(
         "",
     ]
     definitions: dict[str, dict[str, Any]] = {}
-    idd_type_names = {
-        name: _python_identifier(name) for name in sorted(dictionary.get("types", {}))
-    }
-    for name, python_name in idd_type_names.items():
-        definition = dictionary["types"][name]
-        lines.extend((f"class {python_name}(TypedDict, total=False):",))
-        fields = definition.get("fields") if isinstance(definition, dict) else None
-        if isinstance(fields, list) and fields:
-            for field in fields:
-                field_name = _python_identifier(str(field.get("id") or "value"))
-                field_type = idd_type_names.get(str(field.get("type") or ""), "Any")
-                lines.append(f"    {field_name}: {field_type}")
-        else:
-            lines.append("    value: Any")
-        definitions[f"types.{name}"] = {"line": len(lines) - 1, "kind": "idd-type"}
-        lines.append("")
-    grouped: dict[str, list[str]] = {}
-    for canonical_id in sorted(catalog_by_id):
-        namespace, _, leaf = canonical_id.rpartition(".")
-        if not namespace:
-            namespace, leaf = "root", canonical_id
-        grouped.setdefault(namespace, []).append(leaf)
-    for namespace, leaves in sorted(grouped.items()):
-        class_name = f"_{''.join(part.title() for part in _python_identifier(namespace).split('_'))}Tools"
-        lines.append(f"class {class_name}(Protocol):")
-        for leaf in leaves:
-            canonical_id = leaf if namespace == "root" else f"{namespace}.{leaf}"
-            item = catalog_by_id[canonical_id]
-            granted = canonical_id in selected
-            handle_type = "SelectedToolHandle" if granted else "UngrantedToolHandle"
-            access = str(item.get("access") or "read").upper()
-            availability = "AVAILABLE" if item.get("available") is True else "DISABLED"
-            state = "AGENT" if canonical_id in default_agent else "OFF" if granted else "UNGRANTED"
-            lines.append(
-                f"    {_python_identifier(leaf)}: {handle_type}  # {canonical_id} | {access} | {availability} | {state}"
-            )
-            definitions[f"tools.{canonical_id}"] = {
-                "line": len(lines),
-                "kind": "tool",
-                "canonicalId": canonical_id,
-                "selected": granted,
-                "access": str(item.get("access") or "read"),
-                "availability": (
-                    "available" if item.get("available") is True else "disabled"
-                ),
-            }
-        lines.append("")
-    lines.append("class ToolControls(Protocol):")
-    for namespace in sorted(grouped):
-        class_name = f"_{''.join(part.title() for part in _python_identifier(namespace).split('_'))}Tools"
-        attribute = "root" if namespace == "root" else _python_identifier(namespace)
-        lines.append(f"    {attribute}: {class_name}")
-    lines.extend(("", "tools: Final[ToolControls]", ""))
+    _append_idd_type_declarations(lines, definitions, dictionary)
+    _append_tool_declarations(lines, definitions, catalog_by_id, selected, default_agent)
     source = "\n".join(lines)
     return {
         "schemaVersion": "liquidaity.card-script.header.v1",
@@ -209,7 +231,6 @@ def generate_card_script_header(
         "catalogToolCount": len(catalog_by_id),
         "cardId": card_id,
     }
-
 
 def _json_schema(value: Any, field: str) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("type") != "object":
@@ -440,14 +461,20 @@ def saved_script(
     selected_tools: list[str] | None = None,
     default_agent_tools: list[str] | None = None,
     palette_fingerprint: str = "",
-    hermes_available: bool = False,
 ) -> dict[str, Any]:
-    """Normalize source and record honest activation/fallback state."""
+    """Normalize and structurally validate one saved Card Python recipe.
+
+    The legacy ``enabled`` byte remains readable, but it is not retained or
+    consulted. Blank or invalid source is inert; valid source is the
+    complete activation condition for the Hermes child-process owner.
+    """
 
     try:
         script = CardScript.model_validate(value)
     except ValidationError as error:
         raise CardScriptValidationError("card_script_configuration_invalid") from error
+    if len(script.source.encode("utf-8")) > SCRIPT_MAX_BYTES:
+        raise CardScriptValidationError("card_script_source_too_large")
     # Saved Script data is not an authorization source. When a stable Card is
     # merely read or re-saved without a live catalog, use the last compiler
     # palette only to preserve and re-check its source. Invocation always
@@ -485,18 +512,10 @@ def saved_script(
         status = "invalid"
     else:
         status = "valid"
-    active = bool(script.enabled and status == "valid" and hermes_available)
     script.lastValidation = {
         "status": status,
-        "executionTested": False,
         "errors": errors,
         "toolHandles": list(script.compiled.get("toolHandles") or []),
-    }
-    script.hermesSupport = {
-        "available": hermes_available,
-        "executor": "hermes-python" if hermes_available else None,
-        "active": active,
-        **({"reason": "card_script_hermes_runner_unavailable"} if not hermes_available else {}),
     }
     return script.model_dump()
 
@@ -506,31 +525,22 @@ def script_presentation(
     *,
     selected_tools: list[str],
     default_agent_tools: list[str] | None = None,
-    hermes_available: bool = False,
 ) -> dict[str, Any]:
-    """Choose Script or exact selected-MCP presentation without widening grants."""
+    """Project a valid recipe as one compact tool without widening grants."""
 
     script = saved_script(
         value or {},
         selected_tools=selected_tools,
         default_agent_tools=default_agent_tools,
-        hermes_available=hermes_available,
     )
-    if script["hermesSupport"]["active"]:
+    if script["lastValidation"]["status"] == "valid":
         return {
             "mode": "script",
             # A Script takes over only its literal handles. Other exact
             # Tools-tab selections remain ordinary model-callable MCP tools.
             "presentedTools": list(script["compiled"].get("agentToolIds") or []),
             "script": script,
-            "fallbackReason": None,
         }
-    reason = None
-    if script["enabled"]:
-        if script["lastValidation"]["status"] != "valid":
-            reason = "card_script_validation_failed"
-        elif not script["hermesSupport"]["available"]:
-            reason = "card_script_hermes_runner_unavailable"
     return {
         "mode": "selected-mcp",
         "presentedTools": list(
@@ -539,5 +549,4 @@ def script_presentation(
             else selected_tools
         ),
         "script": script,
-        "fallbackReason": reason,
     }

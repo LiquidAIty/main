@@ -233,7 +233,7 @@ def _stub_rebuild_env(monkeypatch, server, launch) -> list[str]:
 def test_bot_capability_rebuild_stays_on_the_profile_store(homes, monkeypatch):
     """A Bot Chat capability refresh must not migrate the session onto the launch profile.
 
-    ``_sync_bot_capabilities`` swaps in a fresh agent for a LIVE session at turn start. It used to call
+    ``_sync_profile_capabilities`` swaps in a fresh agent for a LIVE session at turn start. It used to call
     ``_make_agent`` with neither the session's ``state.db`` handle nor its HERMES_HOME, so the replacement
     agent bound the launch ``_get_db()`` handle and built its prompt/skills from the launch profile: every
     later turn of a named-profile bot appended to ``~/.hermes/state.db`` under the same session id while the
@@ -247,7 +247,10 @@ def test_bot_capability_rebuild_stays_on_the_profile_store(homes, monkeypatch):
     homes_seen = _stub_rebuild_env(monkeypatch, server, launch)
     monkeypatch.setattr(server, "_session_cwd", lambda _s: str(root))
     monkeypatch.setattr(server, "_session_source", lambda _s: "desktop")
-    monkeypatch.setattr("tools.bot_mode_probe.capability_fingerprint", lambda _home: "caps-v2")
+    monkeypatch.setattr(
+        "tools.bot_mode_probe.capability_fingerprint",
+        lambda _home, roster_override=None: "caps-v2",
+    )
 
     old_agent = SimpleNamespace(
         _session_db=profile_db, _owns_session_db=True, _session_title_hint="Bot Chat")
@@ -255,10 +258,10 @@ def test_bot_capability_rebuild_stays_on_the_profile_store(homes, monkeypatch):
         "session_key": "key-bot",
         "profile_home": str(profile),
         "agent": old_agent,
-        "bot_caps_seen": "caps-v1",  # a CHANGED fingerprint is what triggers the rebuild
+        "profile_capabilities_seen": "caps-v1",  # a CHANGED fingerprint triggers the rebuild
     }
     try:
-        server._sync_bot_capabilities("sid-bot", session)
+        server._sync_profile_capabilities("sid-bot", session)
 
         new_agent = session["agent"]
         assert new_agent is not old_agent, "capability change must have rebuilt the agent"

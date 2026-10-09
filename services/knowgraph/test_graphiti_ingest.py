@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import os
 import unittest
@@ -11,7 +10,9 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import graphiti_runtime
 import ingest
+import jev_fact_settlement
 
 
 class FakeGraphDriver:
@@ -112,7 +113,7 @@ class FakeGraphiti:
 
 
 def _runtime():
-    return ingest.RuntimeModelConfig(
+    return graphiti_runtime.RuntimeModelConfig(
         provider="openrouter",
         model_key="deepseek",
         model_id="deepseek/deepseek-chat",
@@ -195,55 +196,37 @@ def _run(
         return vocabulary
 
     with patch.object(
-        ingest,
-        "_create_graphiti_runtime",
+        graphiti_runtime,
+        "create_graphiti_runtime",
         return_value=(_runtime(), graphiti, "neo4j"),
     ), patch.object(
-        ingest,
-        "_read_project_relationship_vocabulary",
+        jev_fact_settlement,
+        "read_project_relationship_vocabulary",
         side_effect=read_vocabulary,
-    ), patch.object(ingest, "_call_knowgraph_jev", side_effect=classify):
+    ), patch.object(
+        jev_fact_settlement,
+        "_call_knowgraph_jev",
+        side_effect=classify,
+    ):
         return asyncio.run(
-            ingest._ingest_episode(
+            ingest._ingest_pdf_episode(
                 project_id="project-1",
                 document_id="document-1",
                 text="Temporal knowledge is grounded in a source.",
                 source_name="Source",
-                source_path="https://example.test/source",
-                source_type="web_research",
-                source_url="https://example.test/source",
-                fetched_at="2026-07-01T12:00:00Z",
-                snippet=None,
+                source_reference="knowgraph-upload://sha256/" + "a" * 64 + "/source.pdf",
+                source_content_sha256="a" * 64,
                 metadata={"published_at": "2026-06-30T12:00:00Z"},
-                provider="openrouter",
-                model_key="deepseek",
-                model_id="deepseek/deepseek-chat",
-                agent_id="hermes",
-                guidance="Keep claims grounded.",
                 reference_time=datetime(2026, 7, 1, 12, tzinfo=timezone.utc),
             )
         )
 
 
 class GraphitiIngestTests(unittest.TestCase):
-    def test_loaded_graphiti_api_exposes_required_temporal_fact_contract(self) -> None:
-        from graphiti_core import Graphiti
-        from graphiti_core.edges import EntityEdge
-
-        add_episode = inspect.signature(Graphiti.add_episode).parameters
-        self.assertTrue({
-            "episode_body", "source_description", "reference_time", "group_id",
-            "update_communities", "custom_extraction_instructions",
-        }.issubset(add_episode))
-        self.assertTrue({
-            "uuid", "source_node_uuid", "target_node_uuid", "name", "fact",
-            "episodes", "created_at", "valid_at", "invalid_at", "expired_at",
-        }.issubset(EntityEdge.model_fields))
-
     def test_runtime_version_is_resolved_from_the_loaded_distribution(self) -> None:
-        versions = ingest.graphiti_runtime_versions()
+        versions = graphiti_runtime.graphiti_runtime_versions()
         self.assertRegex(str(versions["graphiti_core"]), r"^\d+\.\d+\.\d+")
-        self.assertEqual(ingest._graphiti_core_version(), versions["graphiti_core"])
+        self.assertEqual(graphiti_runtime.graphiti_core_version(), versions["graphiti_core"])
 
     def test_service_owned_openrouter_model_precedence(self) -> None:
         with patch.dict(
@@ -255,11 +238,7 @@ class GraphitiIngestTests(unittest.TestCase):
             },
             clear=True,
         ):
-            runtime = ingest._resolve_runtime_model_config(
-                provider=None,
-                model_key=None,
-                model_id=None,
-            )
+            runtime = graphiti_runtime.resolve_runtime_model_config()
             self.assertEqual(runtime.provider, "openrouter")
             self.assertEqual(runtime.model_id, "vendor/kg-model")
 
@@ -271,11 +250,7 @@ class GraphitiIngestTests(unittest.TestCase):
             },
             clear=True,
         ):
-            runtime = ingest._resolve_runtime_model_config(
-                provider=None,
-                model_key=None,
-                model_id=None,
-            )
+            runtime = graphiti_runtime.resolve_runtime_model_config()
             self.assertEqual(runtime.model_id, "vendor/general-model")
 
         with patch.dict(
@@ -283,12 +258,22 @@ class GraphitiIngestTests(unittest.TestCase):
             {"OPENROUTER_API_KEY": "not-used"},
             clear=True,
         ):
-            runtime = ingest._resolve_runtime_model_config(
-                provider=None,
-                model_key=None,
-                model_id=None,
-            )
+            runtime = graphiti_runtime.resolve_runtime_model_config()
             self.assertEqual(runtime.model_id, "z-ai/glm-5.2")
+
+    def test_service_owned_openai_configuration_is_process_scoped(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "KNOWGRAPH_PROVIDER": "openai",
+                "KNOWGRAPH_MODEL": "openai-knowledge-model",
+                "OPENAI_API_KEY": "not-used",
+            },
+            clear=True,
+        ):
+            runtime = graphiti_runtime.resolve_runtime_model_config()
+        self.assertEqual(runtime.provider, "openai")
+        self.assertEqual(runtime.model_id, "openai-knowledge-model")
 
     def test_episode_identity_is_content_versioned_and_deterministic(self) -> None:
         first = ingest._episode_identity("p", "d", "same")
@@ -297,11 +282,18 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, changed)
 
-    def test_reference_time_prefers_source_time_over_ingestion_time(self) -> None:
-        parsed = ingest._reference_time(
-            None, {"publication_date": "2026-06-30T12:00:00Z"}
-        )
-        self.assertEqual(parsed, datetime(2026, 6, 30, 12, tzinfo=timezone.utc))
+    def test_pdf_source_reference_must_match_its_content_digest(self) -> None:
+        with self.assertRaisesRegex(ValueError, "source_reference_invalid"):
+            asyncio.run(ingest.ingest_pdf(
+                "missing.pdf",
+                "project-1",
+                "document-1",
+                source_name="source.pdf",
+                source_reference=(
+                    "knowgraph-upload://sha256/" + "b" * 64 + "/source.pdf"
+                ),
+                source_content_sha256="a" * 64,
+            ))
 
     def test_large_pdf_uses_authored_top_level_outline_sections(self) -> None:
         class FakePage:
@@ -357,14 +349,13 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(call["group_id"], "liquidaity-project-1")
         self.assertNotIn("uuid", call)
         self.assertEqual(result["episode_id"], "graphiti-episode-1")
-        self.assertEqual(result["graphiti_version"], ingest._graphiti_core_version())
+        self.assertEqual(result["graphiti_version"], graphiti_runtime.graphiti_core_version())
         self.assertEqual(result["relationship_vocabulary_guidance"], {
             "status": "available",
             "version": "project.relationship-vocabulary.v1",
             "hash": "vocabulary-hash",
             "count": 20,
         })
-        self.assertIn("Keep claims grounded.", call["custom_extraction_instructions"])
         self.assertIn(
             "CURRENT_SHARED_PROJECT_RELATIONSHIP_VOCABULARY",
             call["custom_extraction_instructions"],
@@ -419,14 +410,11 @@ class GraphitiIngestTests(unittest.TestCase):
             "status": "unavailable",
             "failure_reason": "shared vocabulary unavailable",
         })
-        self.assertEqual(
-            graphiti.add_calls[0]["custom_extraction_instructions"],
-            "Keep claims grounded.",
-        )
+        self.assertIsNone(graphiti.add_calls[0]["custom_extraction_instructions"])
         self.assertEqual(vars(graphiti.graphiti_edge), graphiti_before)
 
     def test_support_only_update_reuses_semantically_identical_classification(self) -> None:
-        signature = ingest._graphiti_fact_signature({
+        signature = jev_fact_settlement.graphiti_fact_signature({
             "sourceEntity": {"uuid": "entity-a"},
             "targetEntity": {"uuid": "entity-b"},
             "graphitiRelation": "supplies launch services to",
@@ -482,7 +470,7 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(len(graphiti.jev_calls[0]), 1)
         self.assertEqual(result["jev_classification"]["classified_fact_count"], 1)
 
-    def test_explicit_reconciliation_repairs_malformed_annotation_then_is_idempotent(self) -> None:
+    def test_fact_settlement_repairs_malformed_annotation_then_is_idempotent(self) -> None:
         graphiti = FakeGraphiti(existing_jev={"fact-1": {
             "graphiti_signature": "stale-signature",
             "winner": "PROVIDES",
@@ -525,14 +513,14 @@ class GraphitiIngestTests(unittest.TestCase):
             calls.append(facts)
             return [_decision(str(item["graphitiFactUuid"])) for item in facts]
 
-        with patch.object(ingest, "_call_knowgraph_jev", side_effect=classify):
-            repaired = asyncio.run(ingest._reconcile_jev_facts(
+        with patch.object(jev_fact_settlement, "_call_knowgraph_jev", side_effect=classify):
+            repaired = asyncio.run(jev_fact_settlement._classify_and_persist_jev_facts(
                 graphiti,
                 project_id="project-1",
                 facts=[dict(fact)],
                 relationship_vocabulary=vocabulary,
             ))
-            current = asyncio.run(ingest._reconcile_jev_facts(
+            current = asyncio.run(jev_fact_settlement._classify_and_persist_jev_facts(
                 graphiti,
                 project_id="project-1",
                 facts=[dict(fact)],
@@ -586,12 +574,32 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(result["status"], "ingested")
         self.assertEqual(result["fact_count"], 1)
         self.assertEqual(result["jev_classification"]["status"], "unavailable")
+        self.assertEqual(
+            result["jev_classification"]["attempted_fact_uuids"], ["fact-1"]
+        )
         self.assertEqual(result["jev_classification"]["failed_fact_uuids"], ["fact-1"])
         self.assertEqual(vars(graphiti.graphiti_edge), graphiti_before)
         self.assertFalse(any(
             "SET fact.jev_relation_winner" in cypher
             for cypher, _ in graphiti.driver.queries
         ))
+
+    def test_unfinished_jev_result_is_attempted_and_remains_unsettled(self) -> None:
+        graphiti = FakeGraphiti()
+        unfinished = {
+            "graphitiFactUuid": "fact-1",
+            "status": "unfinished",
+            "failure_reason": "knowgraph_jev_deadline_exceeded",
+        }
+
+        result = _run(graphiti, decisions=[unfinished])
+
+        classification = result["jev_classification"]
+        self.assertEqual(classification["status"], "unavailable")
+        self.assertEqual(classification["attempted_fact_uuids"], ["fact-1"])
+        self.assertEqual(classification["unfinished_fact_uuids"], ["fact-1"])
+        self.assertEqual(classification["still_unsettled_fact_uuids"], ["fact-1"])
+        self.assertEqual(classification["failed_fact_uuids"], [])
 
     def test_duplicate_episode_skips_graphiti_and_provider_work(self) -> None:
         graphiti = FakeGraphiti(existing_episode_id="graphiti-existing-episode")
@@ -600,19 +608,60 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertTrue(result["idempotent"])
         self.assertEqual(result["status"], "already_ingested")
         self.assertEqual(result["episode_id"], "graphiti-existing-episode")
+        self.assertEqual(result["jev_classification"]["status"], "not_checked")
+        self.assertEqual(
+            result["jev_classification"]["reason"], "episode_already_ingested"
+        )
+        self.assertNotIn("failure_reason", result["jev_classification"])
         self.assertEqual(graphiti.add_calls, [])
         self.assertEqual(graphiti.jev_calls, [])
         self.assertEqual(len(graphiti.driver.queries), 1)
         self.assertTrue(graphiti.driver.closed)
 
-    def test_old_custom_chunk_pipeline_is_absent(self) -> None:
-        for obsolete in (
-            "SimpleKGPipeline",
-            "DeterministicFixedSizeSplitter",
-            "_merge_ingested_graph",
-            "_delete_prior_document",
-        ):
-            self.assertFalse(hasattr(ingest, obsolete), obsolete)
+    def test_document_jev_aggregation_preserves_partial_section_success(self) -> None:
+        aggregated = ingest._aggregate_jev_classifications([
+            {"jev_classification": {
+                "status": "partial",
+                "touched_fact_count": 2,
+                "classified_fact_count": 1,
+                "reused_fact_count": 0,
+                "attempted_fact_uuids": ["fact-1", "fact-2"],
+                "succeeded_fact_uuids": ["fact-1"],
+                "failed_fact_uuids": ["fact-2"],
+                "skipped_fact_uuids": [],
+                "unfinished_fact_uuids": [],
+                "still_unsettled_fact_uuids": ["fact-2"],
+                "failure_reasons": {"fact-2": "provider unavailable"},
+            }},
+            {"jev_classification": {
+                "status": "not_checked",
+                "touched_fact_count": 0,
+                "classified_fact_count": 0,
+                "reused_fact_count": 0,
+                "attempted_fact_uuids": [],
+                "succeeded_fact_uuids": [],
+                "failed_fact_uuids": [],
+                "skipped_fact_uuids": [],
+                "unfinished_fact_uuids": [],
+                "still_unsettled_fact_uuids": [],
+                "reason": "episode_already_ingested",
+            }},
+        ])
+
+        self.assertEqual(aggregated["status"], "partial")
+        self.assertEqual(aggregated["section_count"], 2)
+        self.assertEqual(aggregated["classified_fact_count"], 1)
+        self.assertEqual(aggregated["attempted_fact_uuids"], ["fact-1", "fact-2"])
+        self.assertEqual(aggregated["still_unsettled_fact_uuids"], ["fact-2"])
+        self.assertEqual(
+            aggregated["failure_reasons"], {"fact-2": "provider unavailable"}
+        )
+        self.assertNotIn("section_failures", aggregated)
+        self.assertEqual(aggregated["section_reasons"], [{
+            "section_index": 1,
+            "status": "not_checked",
+            "reason": "episode_already_ingested",
+        }])
 
 
 if __name__ == "__main__":

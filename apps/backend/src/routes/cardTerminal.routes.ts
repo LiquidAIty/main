@@ -7,7 +7,7 @@ import { hermesGateway } from '../services/hermesGateway';
 import { sharedChatAuthority } from '../services/savedCardAuthority';
 import { cardSession } from '../services/hermesCardSession';
 
-export const cardTerminalRoutes = Router();
+const cardTerminalRoutes = Router();
 
 async function authorizeProject(req: Request, res: Response, projectId: string): Promise<string | null> {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
@@ -66,7 +66,7 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
     }
     const target = matches[0];
     const client = await hermesGateway();
-    const binding = await cardSession(client, authority, target, {
+    const binding = await cardSession(client, target, {
       userId,
       projectId,
       deckId,

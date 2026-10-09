@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 import { createHash } from 'crypto';
-import { getDeckDocument } from '../decks/store';
+import { getDeckDocument } from '../decks/deckDomainClient';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { listToolCatalog } from '../services/mcp/toolCatalogMcpClient';
@@ -10,10 +10,11 @@ import {
   searchToolCatalogDefinitions,
   type ToolCatalogDefinition,
 } from '../cards/toolCatalogProjection';
-import { listConfiguredModelOptions } from '../llm/models.config';
+import { autoModelCandidates, listConfiguredModelOptions } from '../llm/models.config';
 
 const router = Router();
 export const iddRoutes = Router();
+const TERMINAL_RUN_STATES = new Set(['completed', 'failed', 'blocked', 'cancelled']);
 
 function objectValue(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -22,11 +23,11 @@ function objectValue(value: unknown): Record<string, any> {
 }
 
 function finiteNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function elapsedMilliseconds(run: Record<string, any>): number | null {
-  const start = Date.parse(String(run.startedAt || run.acceptedAt || ''));
+  const start = Date.parse(String(run.startedAt || ''));
   const end = Date.parse(String(run.finishedAt || ''));
   if (!Number.isFinite(start)) return null;
   return Math.max(0, (Number.isFinite(end) ? end : Date.now()) - start);
@@ -34,26 +35,127 @@ function elapsedMilliseconds(run: Record<string, any>): number | null {
 
 function runMetricsProjection(run: Record<string, any> | undefined) {
   if (!run) return null;
-  const tokenValues = [
-    run.inputTokens,
-    run.outputTokens,
-    run.cachedTokens,
-    run.reasoningTokens,
-  ].map(finiteNumber);
-  const totalTokens = tokenValues.some((value) => value !== null)
-    ? tokenValues.reduce<number>((sum, value) => sum + (value || 0), 0)
-    : null;
   const costUsd = finiteNumber(run.costUsd);
+  const providerCostStatus = String(run.costStatus || '').trim();
+  const costStatus = ['actual', 'estimated', 'included'].includes(providerCostStatus)
+    ? providerCostStatus
+    : 'unavailable';
   return {
     state: String(run.state || ''),
-    acceptedAt: typeof run.acceptedAt === 'string' ? run.acceptedAt : null,
+    startedAt: typeof run.startedAt === 'string' ? run.startedAt : null,
     model: typeof run.model === 'string' ? run.model : null,
     elapsedMs: elapsedMilliseconds(run),
-    totalTokens,
+    inputTokens: finiteNumber(run.inputTokens),
+    outputTokens: finiteNumber(run.outputTokens),
+    cachedTokens: finiteNumber(run.cachedTokens),
+    reasoningTokens: finiteNumber(run.reasoningTokens),
+    totalTokens: finiteNumber(run.providerTotalTokens),
     costUsd,
-    costStatus: costUsd === null ? 'unavailable' : 'estimated',
+    costStatus,
     toolCallCount: finiteNumber(run.toolCallCount),
+    autoToolsDecision: objectValue(run.autoToolsDecision),
+    autoModelDecision: objectValue(run.autoModelDecision),
   };
+}
+
+function magneticTaskMetrics(value: Record<string, any>): {
+  tasksCompleted: number | null;
+  tasksTotal: number | null;
+  activeWorkers: number | null;
+} {
+  if (!Array.isArray(value.hermesTasks)) {
+    return { tasksCompleted: null, tasksTotal: null, activeWorkers: null };
+  }
+  const rootId = String(value.hermesRootId || '').trim();
+  const tasks = value.hermesTasks.map(objectValue);
+  return {
+    tasksCompleted: tasks.filter((task) => String(task.status || '').trim() === 'done').length,
+    tasksTotal: tasks.length,
+    activeWorkers: tasks
+      .filter((task) => (
+        String(task.taskId || '').trim() !== rootId
+        && String(task.status || '').trim() === 'running'
+      )).length,
+  };
+}
+
+function magneticFailure(value: Record<string, any>, state: string): {
+  errorCode?: string;
+  errorSummary?: string;
+} {
+  if (state === 'completed') return {};
+  const summary = String(value.error || '').trim();
+  const code = /^([a-z][a-z0-9_]{2,120})(?::|$)/.exec(summary)?.[1]
+    || `magnetic_taskgraph_${state}`;
+  return { errorCode: code, errorSummary: summary || code };
+}
+
+async function reconcileMagneticRunState(
+  latest: Record<string, any>,
+  magnetic: Record<string, any>,
+  metrics: ReturnType<typeof magneticTaskMetrics>,
+): Promise<string> {
+  const persistedState = String(latest.state || '').trim();
+  const observedState = String(magnetic.state || '').trim();
+  if (TERMINAL_RUN_STATES.has(persistedState)) {
+    return persistedState;
+  }
+  if (!TERMINAL_RUN_STATES.has(observedState)) {
+    const visibleState = String(magnetic.hermesStatus || '').trim() === 'running'
+      || (metrics.activeWorkers !== null && metrics.activeWorkers > 0)
+      ? 'running'
+      : 'pending';
+    if (visibleState === 'running') {
+      const progress = objectValue(await requestPythonRailsJson('/domain/runs/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId: String(latest.runId || ''),
+          hermesRootId: String(magnetic.hermesRootId || '').trim(),
+          hermesRunId: magnetic.hermesRunId,
+          hermesStatus: String(magnetic.hermesStatus || '').trim(),
+          tasksCompleted: metrics.tasksCompleted,
+          tasksTotal: metrics.tasksTotal,
+          activeWorkers: metrics.activeWorkers,
+        }),
+      }));
+      if (
+        progress.ok !== true
+        || String(progress.runId || '') !== String(latest.runId || '')
+        || String(progress.hermesRootId || '') !== String(magnetic.hermesRootId || '')
+      ) {
+        throw new Error('magnetic_taskgraph_outer_run_progress_invalid');
+      }
+    }
+    return visibleState;
+  }
+  if (!['pending', 'running'].includes(persistedState)) return persistedState;
+  const settled = objectValue(await requestPythonRailsJson('/domain/runs/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      runId: String(latest.runId || ''),
+      state: observedState,
+      finalResult: observedState === 'completed' ? magnetic.finalResult : undefined,
+      ...magneticFailure(magnetic, observedState),
+      providerThreadRef: String(magnetic.hermesRootId || '').trim() || undefined,
+      providerTurnRef: String(magnetic.hermesRunId || '').trim() || undefined,
+      hermesStatus: String(magnetic.hermesStatus || '').trim() || undefined,
+      tasksCompleted: metrics.tasksCompleted,
+      tasksTotal: metrics.tasksTotal,
+      activeWorkers: metrics.activeWorkers,
+    }),
+  }));
+  const runRecord = objectValue(settled.runRecord);
+  const settledState = String(runRecord.state || settled.state || '').trim();
+  if (
+    settled.ok !== true
+    || String(settled.runId || '') !== String(latest.runId || '')
+    || !TERMINAL_RUN_STATES.has(settledState)
+  ) {
+    throw new Error('magnetic_taskgraph_outer_run_settlement_invalid');
+  }
+  return settledState;
 }
 
 async function authorizeCardProject(req: Request, projectId: string): Promise<boolean> {
@@ -120,13 +222,18 @@ router.get('/options', async (_req, res) => {
     if (!Array.isArray(options?.fields) || !options.catalogs || typeof options.catalogs !== 'object') {
       throw new Error('runtime_options_invalid');
     }
-    return res.json({ ok: true, fields: options.fields, catalogs: options.catalogs });
+    return res.json({
+      ok: true,
+      fields: options.fields,
+      catalogs: options.catalogs,
+      autoModelCandidates,
+    });
   } catch {
     return res.status(503).json({ ok: false, error: 'runtime_options_unavailable' });
   }
 });
 
-router.post('/run', async (req, res) => {
+router.post('/runs/read', async (req, res) => {
   const action = String(req.body?.action || '').trim();
   const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || '').trim();
@@ -162,14 +269,22 @@ router.post('/run', async (req, res) => {
     if (!latest) return res.json({ ok: true, result: null });
     const hermesRootId = String(latest.hermesRootId || '').trim();
     if (String(latest.runtimeMode || '') === 'magentic_one' && hermesRootId) {
-      const magnetic = objectValue(await requestPythonRailsJson('/magentic/execution/status', {
+      const magnetic = objectValue(await requestPythonRailsJson('/magnetic/taskgraph/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hermesRootId }),
       }));
+      const metrics = magneticTaskMetrics(magnetic);
+      const state = await reconcileMagneticRunState(latest, magnetic, metrics);
       return res.json({
         ok: true,
-        result: { ...magnetic, runId: String(latest.runId || ''), cardId },
+        result: {
+          ...magnetic,
+          runId: String(latest.runId || ''),
+          cardId,
+          state,
+          activeWorkers: metrics.activeWorkers,
+        },
       });
     }
     return res.json({
@@ -178,7 +293,7 @@ router.post('/run', async (req, res) => {
         cardId,
         runId: String(latest.runId || ''),
         state: String(latest.state || ''),
-        activeWorkers: finiteNumber(latest.activeWorkers) || 0,
+        activeWorkers: finiteNumber(latest.activeWorkers),
       },
     });
   } catch (error) {

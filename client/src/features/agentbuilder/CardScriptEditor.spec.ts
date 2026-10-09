@@ -1,16 +1,14 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
 import {
-  editorOptions,
   SCRIPT_EXAMPLES,
   SCRIPT_SECTIONS,
   STARTER_SCRIPT,
   TOOL_MODE_COMPLETIONS,
+  changedSourceDraft,
   symbolAtPosition,
-} from './CardScriptEditor';
+} from './cardScriptLanguage';
+import { editorOptions } from './cardScriptMonaco';
 
 describe('CardScriptEditor Monaco contract', () => {
   it('keeps the executable starter limited to the three model-tool recipe sections', () => {
@@ -41,7 +39,7 @@ describe('CardScriptEditor Monaco contract', () => {
 
   it('uses the compact code-first Monaco feature set', () => {
     const options = editorOptions();
-    expect(options.theme).toBe('liquidaity-sublime');
+    expect(options.theme).toBe('card-script-sublime');
     expect(options.minimap).toMatchObject({
       enabled: true,
       size: 'fit',
@@ -78,51 +76,30 @@ describe('CardScriptEditor Monaco contract', () => {
     }
   });
 
-  it('lazy-loads one pinned Monaco engine and owns bounded model disposal', () => {
-    const source = readFileSync(
-      path.resolve(process.cwd(), 'client/src/features/agentbuilder/CardScriptEditor.tsx'),
-      'utf8',
-    );
-    const clientPackage = JSON.parse(readFileSync(
-      path.resolve(process.cwd(), 'client/package.json'),
-      'utf8',
-    )) as { dependencies: Record<string, string> };
-    const builderPage = readFileSync(
-      path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
-      'utf8',
-    );
-    const managerSource = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/CardInspector.tsx'),
-      'utf8',
-    );
+  it('invalidates compiled identity without inventing a second enable state', () => {
+    const source = changedSourceDraft({
+      source: 'old',
+      version: 3,
+      author: {},
+      sourceHash: 'source-hash',
+      compiledHash: 'compiled-hash',
+      paletteFingerprint: 'palette',
+      compiled: {
+        schemaVersion: 'liquidaity.card-script.compiled.v1',
+        mode: 'tool_recipe',
+      },
+      lastValidation: { status: 'valid', errors: [], toolHandles: [] },
+    }, 'new');
 
-    expect(clientPackage.dependencies['monaco-editor']).toBe('0.52.2');
-    expect(source).not.toMatch(/^import .*monaco-editor/m);
-    expect(source).toContain("import('monaco-editor/esm/vs/editor/editor.api')");
-    expect(source).toContain('loadMonacoFeatures');
-    expect(source).toContain('findController.js');
-    expect(source).toContain('folding.js');
-    expect(source).not.toContain('editor.main.js');
-    expect(source).toContain('let monacoLoadPromise');
-    expect(source).toContain('let activeEditor');
-    expect(source).toContain('HEADER_CACHE_LIMIT = 4');
-    expect(source).toContain('sourceModel.dispose()');
-    expect(source).toContain('entry.model.dispose()');
-    expect(source).not.toContain('{header.source}');
-    expect(builderPage).toContain("['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools']");
-    expect(builderPage).not.toContain("'Results'");
-    expect(builderPage).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
-    expect(builderPage).toContain('key="deck-card-editor"');
-    expect(builderPage).not.toContain('key={`deck-card:${selectedCard.id}:${tab}`}');
-    expect(managerSource).toContain('scriptDraftCacheRef');
-    expect(managerSource).toContain('preserveUnsavedScript');
-    expect(managerSource).toContain('version: changed ? Number(saved?.version || 0) + 1');
-    expect(managerSource).toContain("sourceHash: saved.sourceHash || ''");
-    expect(managerSource).toContain("compiledHash: saved.compiledHash || ''");
-    expect(managerSource).toContain('script: scriptDraft');
-    expect(source).toContain("fetch('/api/cards/script/validate'");
-    expect(source).toContain('body: JSON.stringify({ runtimeKind, selectedTools, script })');
-    expect(source).toContain('Card Python Script runtime execution is not currently connected.');
-    expect(source).toContain('Editing, validation, and saving remain available');
+    expect(source).toMatchObject({
+      source: 'new',
+      sourceHash: '',
+      compiledHash: '',
+      compiled: {},
+      lastValidation: { status: 'invalid' },
+    });
+    expect(source).not.toHaveProperty('enabled');
+    expect(source).not.toHaveProperty('hermesSupport');
+    expect(source).not.toHaveProperty('rollback');
   });
 });

@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 
-import { BUILDER_CARD_ID } from '../decks/store';
+import { BUILDER_CARD_ID } from '../decks/deckDomainClient';
 import {
-  materializeBuilderTerminalPolicy,
   materializeSavedCardProfile,
   savedCardBotRoster,
 } from '../hermes/profileMaterialization';
 import type { HermesGatewayClient } from './hermesGateway';
 import {
   objectRecord,
+  sharedChatAuthority,
   type AddressableCard,
   type SharedChatAuthority,
 } from './savedCardAuthority';
@@ -22,7 +22,32 @@ export type SessionBinding = {
   sessionId: string;
   storedSessionId: string;
   info: Record<string, unknown>;
+  botModeRoster: string[];
+  profileCapabilityFingerprint: string;
 };
+
+// Serialize only the list/create critical section for one deterministic Card
+// conversation. This map caches no session identity and never reports runtime
+// state; Hermes remains the sole session authority.
+const profileMaterializationTails = new Map<string, Promise<void>>();
+
+async function withProfileMaterializationLock<T>(
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = profileMaterializationTails.get(key) || Promise.resolve();
+  let release!: () => void;
+  const completion = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.catch(() => undefined).then(() => completion);
+  profileMaterializationTails.set(key, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (profileMaterializationTails.get(key) === tail) profileMaterializationTails.delete(key);
+  }
+}
 
 function savedCardSessionTitle(args: {
   userId: string;
@@ -70,15 +95,25 @@ function hermesSessionRows(value: unknown): Array<Record<string, any>> {
   return rows.map(objectRecord);
 }
 
-function hermesSessionResult(value: unknown): SessionBinding {
+function hermesSessionResult(
+  value: unknown,
+  botModeRoster: string[],
+  profileCapabilityFingerprint: string,
+): SessionBinding {
   const result = objectRecord(value);
   const sessionId = String(result.session_id || '').trim();
   const storedSessionId = String(result.stored_session_id || result.session_key || '').trim();
   if (!sessionId || !storedSessionId) throw new Error('hermes_session_binding_invalid');
-  return { sessionId, storedSessionId, info: objectRecord(result.info) };
+  return {
+    sessionId,
+    storedSessionId,
+    info: objectRecord(result.info),
+    botModeRoster: [...botModeRoster],
+    profileCapabilityFingerprint,
+  };
 }
 
-export async function cardSession(
+async function bindCardSession(
   client: HermesGatewayClient,
   authority: SharedChatAuthority,
   card: AddressableCard,
@@ -90,21 +125,18 @@ export async function cardSession(
   const profileState = objectRecord(await materializeSavedCardProfile(
     (method, params = {}) => client.request(method, params),
     card.card,
+    roster,
   ));
-  await materializeBuilderTerminalPolicy(
-    (method, params = {}) => client.request(method, params),
-    card.card,
-  );
   const profileModel = objectRecord(profileState.model);
+  const profileCapabilityFingerprint = String(
+    profileState.capability_fingerprint || '',
+  );
   const completeBinding = (binding: SessionBinding): SessionBinding => {
     const info: Record<string, unknown> = {
       provider: String(profileModel.provider || ''),
       model: String(profileModel.default || ''),
       ...binding.info,
     };
-    if (card.card.id === BUILDER_CARD_ID && String(info.terminal_backend || '') !== 'docker') {
-      throw new Error('builder_terminal_policy_not_loaded');
-    }
     return { ...binding, info };
   };
   const listed = hermesSessionRows(await client.request('session.list', {
@@ -143,8 +175,7 @@ export async function cardSession(
       profile,
       omit_messages: true,
       close_on_disconnect: false,
-      bot_mode_roster: roster,
-    })));
+    }), roster, profileCapabilityFingerprint));
   }
   return completeBinding(hermesSessionResult(await client.request('session.create', {
     profile,
@@ -161,7 +192,31 @@ export async function cardSession(
     close_on_disconnect: false,
     follow_profile_config: true,
     bot_mode_roster: roster,
-  })));
+  }), roster, profileCapabilityFingerprint));
+}
+
+export async function cardSession(
+  client: HermesGatewayClient,
+  card: AddressableCard,
+  owner: { userId: string; projectId: string; deckId: string; conversationId: string },
+): Promise<SessionBinding> {
+  return withProfileMaterializationLock(
+    card.profile,
+    async () => {
+      const currentAuthority = await sharedChatAuthority(owner.projectId, owner.deckId);
+      const currentCards = currentAuthority.cards.filter(
+        (candidate) => candidate.card.id === card.card.id,
+      );
+      if (
+        currentCards.length !== 1
+        || currentCards[0].cardRevisionId !== card.cardRevisionId
+        || currentCards[0].profile !== card.profile
+      ) {
+        throw new Error('card_revision_changed');
+      }
+      return bindCardSession(client, currentAuthority, currentCards[0], owner);
+    },
+  );
 }
 
 

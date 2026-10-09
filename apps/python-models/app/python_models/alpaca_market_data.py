@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ from typing import Any, Callable, Mapping, Optional
 # provider module consumes it and never reads os.getenv directly.
 from app.python_models.provider_config import (
     AlpacaCredentials,
+    MODE_PAPER,
+    MODE_UNAVAILABLE,
     resolve_alpaca_credentials,
 )
 
@@ -186,7 +189,9 @@ def get_market_snapshot(
             provider=PROVIDER, feed=None, symbol=symbol, status=blocking,
             fetchedAt=fetched, diagnostics="alpaca paper credentials not configured",
         )
-    url = f"{creds.data_url}/v2/stocks/{symbol}/snapshot?feed={feed}"
+    encoded_symbol = urllib.parse.quote(symbol, safe="")
+    query = urllib.parse.urlencode({"feed": feed})
+    url = f"{creds.data_url}/v2/stocks/{encoded_symbol}/snapshot?{query}"
     send = transport or _default_get
     try:
         payload = send(url, _auth_headers(creds))
@@ -242,12 +247,20 @@ def get_historical_bars(
         return HistoricalBars(provider=PROVIDER, feed=None, symbol=symbol, timeframe=timeframe,
                               status=blocking, fetchedAt=fetched, start=start, end=end,
                               diagnostics="alpaca paper credentials not configured")
-    params = [f"timeframe={timeframe}", f"limit={limit}", f"feed={feed}"]
+    params: list[tuple[str, str]] = [
+        ("timeframe", timeframe),
+        ("limit", str(limit)),
+        ("feed", feed),
+    ]
     if start:
-        params.append(f"start={start}")
+        params.append(("start", start))
     if end:
-        params.append(f"end={end}")
-    url = f"{creds.data_url}/v2/stocks/{symbol}/bars?{'&'.join(params)}"
+        params.append(("end", end))
+    encoded_symbol = urllib.parse.quote(symbol, safe="")
+    url = (
+        f"{creds.data_url}/v2/stocks/{encoded_symbol}/bars?"
+        f"{urllib.parse.urlencode(params)}"
+    )
     send = transport or _default_get
     try:
         payload = send(url, _auth_headers(creds))

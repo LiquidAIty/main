@@ -394,10 +394,10 @@ def get_bot_mode_protocol_section(
 
 
 # ── capability epoch ─────────────────────────────────────────────────────────
-# Bot Chat sessions are effectively eternal, so "build the prompt once" would strand
-# capability changes (skills, toolsets, MCP, SOUL, roster, peers) forever. The fingerprint
-# hashes exactly that surface; the built prompt embeds it and agent/conversation_loop.py
-# rebuilds only when the stored epoch differs from disk — once per change, never per-turn drift.
+# Long-lived profile-following sessions would strand capability changes (skills, toolsets,
+# MCP, SOUL, roster, peers) if they built the prompt once. The fingerprint hashes exactly
+# that surface; Bot Chat embeds it in the prompt and the TUI gateway also compares it at
+# turn admission — once per change, never per-turn drift.
 
 _EPOCH_PREFIX = "Capability epoch: "
 _EPOCH_RE_TEXT = r"Capability epoch: ([0-9a-f]{12})"
@@ -429,9 +429,29 @@ def capability_fingerprint(
         finally:
             reset_hermes_home_override(token)
         skills_cfg = cfg.get("skills") if isinstance(cfg.get("skills"), dict) else {}
-        tools_cfg = cfg.get("tools") if isinstance(cfg.get("tools"), dict) else {}
+        platform_toolsets = (
+            cfg.get("platform_toolsets")
+            if isinstance(cfg.get("platform_toolsets"), dict)
+            else {}
+        )
+        agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+        delegation_cfg = cfg.get("delegation") if isinstance(cfg.get("delegation"), dict) else {}
+        kanban_cfg = cfg.get("kanban") if isinstance(cfg.get("kanban"), dict) else {}
+        model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
         surface["disabled_skills"] = sorted(str(s).lower() for s in (skills_cfg.get("disabled") or []))
-        surface["enabled_toolsets"] = sorted(str(t) for t in (tools_cfg.get("enabled_toolsets") or []))
+        cli_toolsets = platform_toolsets.get("cli")
+        surface["toolset_pin_present"] = "cli" in platform_toolsets
+        surface["enabled_toolsets"] = (
+            sorted(str(t) for t in cli_toolsets)
+            if isinstance(cli_toolsets, list)
+            else cli_toolsets
+        )
+        surface["disabled_toolsets"] = json.dumps(
+            agent_cfg.get("disabled_toolsets"), sort_keys=True, default=str,
+        )
+        surface["delegation"] = json.dumps(delegation_cfg, sort_keys=True, default=str)
+        surface["task_mode"] = str(kanban_cfg.get("task_mode") or "")
+        surface["openai_runtime"] = str(model_cfg.get("openai_runtime") or "")
         mcp = cfg.get("mcp_servers")
         surface["mcp"] = json.dumps(mcp, sort_keys=True, default=str) if isinstance(mcp, dict) else ""
     except Exception:
@@ -472,12 +492,17 @@ def capability_fingerprint(
     # Protocol-text version salt: bumping it refreshes every eternal Bot Chat
     # prompt ONCE so existing bots adopt a new protocol section.
     surface["protocol_version"] = 2
-    # Peer gateways and the Desktop relay roster are part of the messaging
-    # surface too: registering a peer or (dis)connecting a machine must show up.
-    surface["peers"] = _peers(root)
-    surface["remote_roster"] = sorted(
-        f"{r['connection_id']}:{r['profile']}:{r['title']}" for r in _remote_roster(root)
-    )
+    # The install-wide Bot Chat can reach peer/relay targets. An explicit
+    # session roster is authoritative and contains only its declared local profiles,
+    # so unrelated remote connection churn must not invalidate that Card turn.
+    if roster_override is None:
+        surface["peers"] = _peers(root)
+        surface["remote_roster"] = sorted(
+            f"{r['connection_id']}:{r['profile']}:{r['title']}" for r in _remote_roster(root)
+        )
+    else:
+        surface["peers"] = []
+        surface["remote_roster"] = []
     return _swallow(
         lambda: hashlib.sha256(json.dumps(surface, sort_keys=True).encode("utf-8")).hexdigest()[:12],
         "unavailable",
@@ -492,17 +517,33 @@ def epoch_line(
     return f"{_EPOCH_PREFIX}{capability_fingerprint(home, roster_override)}"
 
 
-def stored_prompt_capability_stale(stored_prompt: str, home: str | os.PathLike | None = None) -> bool:
-    """True when ``stored_prompt`` is a Bot Chat prompt whose embedded epoch no
-    longer matches disk. Unstamped prompts are never stale. Fails closed to
-    "not stale" — a broken probe must not become a rebuild-every-turn cache burner."""
+def stored_prompt_capability_stale(
+    stored_prompt: str,
+    home: str | os.PathLike | None = None,
+    roster_override: list[str] | None = None,
+) -> bool:
+    """True when a stamped profile prompt no longer matches its capability surface.
+
+    Unstamped prompts are handled by the explicit one-time upgrade checks. Probe
+    failures remain non-stale so a broken read cannot become a rebuild-every-turn
+    cache burner.
+    """
     import re
 
     m = re.search(_EPOCH_RE_TEXT, stored_prompt or "")
     if not m:
         return False
-    current = _swallow(lambda: capability_fingerprint(home), "unavailable")
+    current = _swallow(
+        lambda: capability_fingerprint(home, roster_override),
+        "unavailable",
+    )
     return current != "unavailable" and m.group(1) != current
+
+
+def stored_profile_prompt_needs_upgrade(stored_prompt: str) -> bool:
+    """Whether a profile-following session predates the capability epoch stamp."""
+
+    return _EPOCH_PREFIX not in (stored_prompt or "")
 
 
 def stored_bot_chat_prompt_needs_upgrade(stored_prompt: str, home: str | os.PathLike | None = None) -> bool:

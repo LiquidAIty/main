@@ -2,24 +2,24 @@ import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DeckCard } from '../types';
 
 const mocks = vi.hoisted(() => ({
   appendReply: vi.fn(),
   appendTurn: vi.fn(),
   getMessages: vi.fn(async () => []),
-  listConversations: vi.fn(async () => []),
   getDeck: vi.fn(),
   getOwnedProjectByReference: vi.fn(async () => ({ ownerUserId: 'owner-1' })),
   getInternalProjectById: vi.fn(async () => ({ ownerUserId: 'owner-1' })),
   requestRails: vi.fn(),
   readCatalog: vi.fn(async () => ({
-    state: 'ready', unavailableFamilies: [], toolFailures: [], tools: [],
+    state: 'available', unavailableFamilies: [], toolFailures: {}, tools: [],
   })),
   gateway: vi.fn(),
   materializeProfile: vi.fn(async (_request, card) => ({
     model: { provider: 'openai-codex', default: card.runtimeOptions.providerModelId },
+    capability_fingerprint: '0123456789ab',
   })),
-  materializeBuilderTerminalPolicy: vi.fn(async () => undefined),
   savedRoster: vi.fn(() => []),
   authorizeTool: vi.fn(() => 'Bearer target-run'),
   resolveToolUrl: vi.fn(() => 'http://127.0.0.1:9009/mcp'),
@@ -30,9 +30,8 @@ vi.mock('../conversations/store', () => ({
   appendSharedConversationReplyOnce: mocks.appendReply,
   appendSharedConversationUserMessageOnce: mocks.appendTurn,
   getConversationMessages: mocks.getMessages,
-  listConversations: mocks.listConversations,
 }));
-vi.mock('../decks/store', () => ({
+vi.mock('../decks/deckDomainClient', () => ({
   BUILDER_CARD_ID: 'builder',
   getDeckDocument: mocks.getDeck,
 }));
@@ -53,7 +52,6 @@ vi.mock('../services/hermesGateway', () => ({
   hermesGateway: mocks.gateway,
 }));
 vi.mock('../hermes/profileMaterialization', () => ({
-  materializeBuilderTerminalPolicy: mocks.materializeBuilderTerminalPolicy,
   materializeSavedCardProfile: mocks.materializeProfile,
   savedCardBotRoster: mocks.savedRoster,
 }));
@@ -79,6 +77,7 @@ class FakeGateway {
   stateListeners = new Set<(state: string) => void>();
   blockTarget = false;
   failTarget = false;
+  structuredFailure: Record<string, unknown> | null = null;
   responsesByProfile = new Map<string, string>();
   promptIssuedResolve!: () => void;
   promptIssued = new Promise<void>((resolve) => { this.promptIssuedResolve = resolve; });
@@ -132,11 +131,17 @@ class FakeGateway {
             payload: { submission_id: params.submission_id },
           });
           this.emit({
-            type: this.failTarget ? 'error' : 'message.complete',
+            type: this.failTarget && !this.structuredFailure ? 'error' : 'message.complete',
             session_id: params.session_id,
             payload: {
               submission_id: params.submission_id,
-              ...(this.failTarget
+              ...(this.structuredFailure
+                ? {
+                    status: 'error',
+                    error: 'Tool execution failed honestly.',
+                    error_surface: this.structuredFailure,
+                  }
+                : this.failTarget
                 ? { message: 'target failed honestly' }
                 : {
                     status: 'complete',
@@ -160,7 +165,7 @@ function card(
   profile: string,
   mode: 'main' | 'delegate',
   runtimeOptions: Record<string, unknown> = {},
-) {
+): DeckCard {
   return {
     id,
     _cardRevisionId: `revision-${id}`,
@@ -210,10 +215,14 @@ afterEach(async () => {
   })));
 });
 
-async function start(gateway: FakeGateway, savedDeck = deck()) {
+async function start(gateway: FakeGateway, savedDeck = deck(), completedPairDeck = savedDeck) {
   mocks.gateway.mockResolvedValue(gateway);
-  mocks.getDeck.mockResolvedValue({ deck: savedDeck });
+  let deckReadCount = 0;
+  mocks.getDeck.mockImplementation(async () => ({
+    deck: deckReadCount++ === 0 ? savedDeck : completedPairDeck,
+  }));
   const finishes: Array<Record<string, any>> = [];
+  const starts: Array<Record<string, any>> = [];
   const begins: Array<Record<string, any>> = [];
   const mainBegins: Array<Record<string, any>> = [];
   const pairPreparations: Array<Record<string, any>> = [];
@@ -238,6 +247,7 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
       const canonicalId = isThink ? 'engraphis_recall_context' : 'graphiti.add_memory';
       return {
         runId: payload.runId,
+        cardRevisionId: payload.cardRevisionId,
         hermesTransport: {
           cardIdentity: { cardId: payload.cardId },
           request: {
@@ -264,6 +274,7 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
       mainBegins.push(payload);
       return {
         runId: payload.runId,
+        cardRevisionId: payload.cardRevisionId,
         hermesTransport: {
           cardIdentity: { cardId: 'card_main_chat' },
           request: {
@@ -303,12 +314,26 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
         changedNodeIds: ['think-node'],
         changedEdgeIds: ['think-edge'],
         affectedNodeIds: ['think-node'],
-        newMainSubjects: [],
       };
     }
     if (path === '/domain/runs/finish') {
       finishes.push(payload);
-      return { ok: true, runId: payload.runId };
+      return {
+        ok: true,
+        runId: payload.runId,
+        state: payload.state,
+        runRecord: { state: payload.state },
+      };
+    }
+    if (path === '/domain/runs/start') {
+      starts.push(payload);
+      return {
+        ok: true,
+        runId: payload.runId,
+        correlationId: payload.correlationId,
+        submissionId: payload.submissionId,
+        state: 'running',
+      };
     }
     throw new Error(`unexpected_rails_path:${path}`);
   });
@@ -328,6 +353,7 @@ async function start(gateway: FakeGateway, savedDeck = deck()) {
     base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     begins,
     finishes,
+    starts,
     mainBegins,
     pairPreparations,
     pairSettlements,
@@ -350,7 +376,7 @@ function specialistBody(operation: 'thinkgraph.reason' | 'knowgraph.research') {
 describe('fixed saved specialist Card tools', () => {
   it('settles an accepted Main Run once when Hermes fails before a session binding exists', async () => {
     const gateway = new FakeGateway();
-    const { base, finishes, mainBegins } = await start(gateway);
+    const { base, finishes, starts, mainBegins } = await start(gateway);
     mocks.gateway.mockRejectedValueOnce(new Error('hermes_gateway_unavailable'));
 
     const response = await fetch(`${base}/shared-chat/turn`, {
@@ -367,12 +393,64 @@ describe('fixed saved specialist Card tools', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain('hermes_gateway_unavailable');
+    const stream = await response.text();
+    expect(stream).toContain('hermes_gateway_unavailable');
+    expect(stream).not.toContain('"state":"running"');
     expect(mainBegins).toHaveLength(1);
+    expect(starts).toEqual([]);
+    expect(mainBegins[0]).toMatchObject({
+      cardId: 'card_main_chat',
+      cardRevisionId: 'revision-card_main_chat',
+    });
     expect(finishes).toEqual([expect.objectContaining({
       runId: mainBegins[0].runId,
       state: 'failed',
+      errorCode: 'hermes_gateway_unavailable',
       errorSummary: 'hermes_gateway_unavailable',
+    })]);
+  });
+
+  it('rejects a mismatched Python Card revision before profile or session work', async () => {
+    const gateway = new FakeGateway();
+    const { base, finishes } = await start(gateway);
+    mocks.requestRails.mockImplementationOnce(async (_path: string, init: RequestInit) => {
+      const payload = JSON.parse(String(init.body || '{}'));
+      return {
+        runId: payload.runId,
+        cardRevisionId: 'revision-other',
+        hermesTransport: {
+          cardIdentity: { cardId: 'card_main_chat' },
+          request: {
+            runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+            message: payload.message,
+          },
+        },
+      };
+    });
+
+    const response = await fetch(`${base}/shared-chat/turn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId: 'conversation-1',
+        message: 'Question.',
+        clientMessageId: 'msg_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        clientReplyMessageId: 'msg_ffffffff-ffff-4fff-8fff-ffffffffffff',
+      }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: 'saved_card_preparation_identity_mismatch',
+    });
+    expect(gateway.calls).toHaveLength(0);
+    expect(finishes).toEqual([expect.objectContaining({
+      state: 'failed',
+      errorCode: 'saved_card_preparation_identity_mismatch',
+      errorSummary: 'saved_card_preparation_identity_mismatch',
     })]);
   });
 
@@ -380,7 +458,7 @@ describe('fixed saved specialist Card tools', () => {
     const gateway = new FakeGateway();
     gateway.responsesByProfile.set('main', 'Completed answer.');
     mocks.appendReply.mockRejectedValueOnce(new Error('conversation_reply_write_failed'));
-    const { base, finishes, mainBegins } = await start(gateway);
+    const { base, finishes, starts, mainBegins } = await start(gateway);
 
     const response = await fetch(`${base}/shared-chat/turn`, {
       method: 'POST',
@@ -396,13 +474,68 @@ describe('fixed saved specialist Card tools', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain('conversation_reply_write_failed');
+    const stream = await response.text();
+    expect(stream).toContain('conversation_reply_write_failed');
     expect(mainBegins).toHaveLength(1);
+    expect(starts).toEqual([expect.objectContaining({
+      runId: mainBegins[0].runId,
+      correlationId: mainBegins[0].runId,
+      submissionId: mainBegins[0].runId,
+      hermesSessionRef: 'stored-main',
+    })]);
+    expect(stream.indexOf('"state":"preparing"')).toBeLessThan(
+      stream.indexOf('"state":"running"'),
+    );
     expect(finishes).toEqual([expect.objectContaining({
       runId: mainBegins[0].runId,
       state: 'completed',
       finalResult: 'Completed answer.',
+      effectiveProvider: 'openai-codex',
+      providerApiMode: 'codex_app_server',
+      provider: 'openai-codex',
+      model: 'gpt-5.6-sol',
+      toolCallCount: 0,
     })]);
+  });
+
+  it('marks the exact Main Run failed and surfaces settlement failure when completion cannot settle', async () => {
+    const gateway = new FakeGateway();
+    gateway.responsesByProfile.set('main', 'Completed answer.');
+    const { base, finishes, mainBegins } = await start(gateway);
+    const normalRails = mocks.requestRails.getMockImplementation()!;
+    let rejectFirstSettlement = true;
+    mocks.requestRails.mockImplementation(async (path: string, init: RequestInit) => {
+      if (path === '/domain/runs/finish' && rejectFirstSettlement) {
+        rejectFirstSettlement = false;
+        throw new Error('python_settlement_unavailable');
+      }
+      return normalRails(path, init);
+    });
+
+    const response = await fetch(`${base}/shared-chat/turn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId: 'conversation-1',
+        message: 'Question.',
+        clientMessageId: 'msg_77777777-7777-4777-8777-777777777777',
+        clientReplyMessageId: 'msg_88888888-8888-4888-8888-888888888888',
+      }),
+    });
+    const stream = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(stream).toContain('saved_card_settlement_failed:python_settlement_unavailable');
+    expect(mainBegins).toHaveLength(1);
+    expect(finishes).toEqual([expect.objectContaining({
+      runId: mainBegins[0].runId,
+      state: 'failed',
+      errorCode: 'saved_card_settlement_failed',
+      errorSummary: 'saved_card_settlement_failed:python_settlement_unavailable',
+    })]);
+    expect(mocks.appendReply).not.toHaveBeenCalled();
   });
 
   it('runs one automatic saved ThinkGraph child only after an ordinary Main completion', async () => {
@@ -420,9 +553,14 @@ describe('fixed saved specialist Card tools', () => {
         think: { summary: 'Rocket Lab uses Electron.' },
       }],
     }));
+    const currentThinkGraphDeck = deck();
+    const currentThinkGraphCard = currentThinkGraphDeck.nodes.find(
+      (item) => item.id === 'card_thinkgraph',
+    )!;
+    currentThinkGraphCard._cardRevisionId = 'revision-card_thinkgraph-current';
     const {
       base, begins, finishes, mainBegins, pairPreparations, pairSettlements,
-    } = await start(gateway);
+    } = await start(gateway, deck(), currentThinkGraphDeck);
     const response = await fetch(`${base}/shared-chat/turn`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -448,11 +586,11 @@ describe('fixed saved specialist Card tools', () => {
       cardId: 'card_main_chat',
       userMessage: 'Explain Rocket Lab.',
       mainResponse: 'Main answer naming Rocket Lab.',
-      mainSubjects: [],
     })]);
     expect(begins).toHaveLength(1);
     expect(begins[0]).toMatchObject({
       cardId: 'card_thinkgraph',
+      cardRevisionId: 'revision-card_thinkgraph-current',
       senderCardId: 'card_main_chat',
       originatingRunId: mainBegins[0].runId,
       sharedConversation: [],
@@ -464,9 +602,10 @@ describe('fixed saved specialist Card tools', () => {
       cardRun: {
         runId: begins[0].runId,
         cardId: 'card_thinkgraph',
-        revisionId: 'revision-card_thinkgraph',
+        revisionId: 'revision-card_thinkgraph-current',
         profile: 'thinkgraph',
         hermesSessionId: 'live-thinkgraph',
+        resolvedProvider: 'openai-codex',
         resolvedModel: 'gpt-5.6-sol',
       },
     });
@@ -474,6 +613,15 @@ describe('fixed saved specialist Card tools', () => {
       [mainBegins[0].runId, 'completed'],
       [begins[0].runId, 'completed'],
     ]);
+    const promptSubmissions = gateway.calls.filter(
+      ({ method }) => method === 'prompt.submit',
+    );
+    expect(promptSubmissions).toHaveLength(2);
+    expect(promptSubmissions.every(({ params }) => (
+      Array.isArray(params.bot_mode_roster)
+      && params.bot_mode_roster.length === 0
+      && params.expected_profile_capability_fingerprint === '0123456789ab'
+    ))).toBe(true);
   });
 
   it('does not run completed-pair intake for a directly addressed non-Main Card', async () => {
@@ -580,14 +728,15 @@ describe('fixed saved specialist Card tools', () => {
     ]);
     expect(finishes).toEqual([expect.objectContaining({
       runId: childRunId,
-      state: 'failed',
+      state: 'cancelled',
+      errorCode: 'hermes_turn_cancelled',
       errorSummary: 'hermes_turn_cancelled',
     })]);
     expect(mocks.appendTurn).not.toHaveBeenCalled();
     expect(mocks.appendReply).not.toHaveBeenCalled();
   });
 
-  it('returns only the bounded failed target receipt after a begun target failure', async () => {
+  it('returns only the bounded failed target result after a begun target failure', async () => {
     const gateway = new FakeGateway();
     gateway.failTarget = true;
     const { base, begins, finishes } = await start(gateway);
@@ -613,8 +762,75 @@ describe('fixed saved specialist Card tools', () => {
     expect(finishes).toEqual([expect.objectContaining({
       runId: targetRunId,
       state: 'failed',
+      errorCode: 'hermes_session_error',
       errorSummary: 'target failed honestly',
     })]);
+  });
+
+  it('marks the exact specialist Run failed when its completion settlement fails', async () => {
+    const gateway = new FakeGateway();
+    const { base, begins, finishes } = await start(gateway);
+    const normalRails = mocks.requestRails.getMockImplementation()!;
+    let rejectFirstSettlement = true;
+    mocks.requestRails.mockImplementation(async (path: string, init: RequestInit) => {
+      if (path === '/domain/runs/finish' && rejectFirstSettlement) {
+        rejectFirstSettlement = false;
+        throw new Error('python_settlement_unavailable');
+      }
+      return normalRails(path, init);
+    });
+
+    const response = await fetch(`${base}/saved-specialists/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-liquidaity-internal-mcp-secret': 'test-internal-secret',
+      },
+      body: JSON.stringify(specialistBody('knowgraph.research')),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.error).toBe('saved_card_settlement_failed:python_settlement_unavailable');
+    expect(finishes).toEqual([expect.objectContaining({
+      runId: begins[0].runId,
+      state: 'failed',
+      errorCode: 'saved_card_settlement_failed',
+      errorSummary: 'saved_card_settlement_failed:python_settlement_unavailable',
+    })]);
+  });
+
+  it('persists Hermes structured tool failure identity without a generic turn code', async () => {
+    const gateway = new FakeGateway();
+    gateway.failTarget = true;
+    gateway.structuredFailure = {
+      layer: 'tool',
+      code: 'tool_execution_failed',
+      retryable: false,
+      provider: 'openai-codex',
+      model: 'gpt-5.6-sol',
+    };
+    const { base, begins, finishes } = await start(gateway);
+    const response = await fetch(`${base}/saved-specialists/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-liquidaity-internal-mcp-secret': 'test-internal-secret',
+      },
+      body: JSON.stringify(specialistBody('knowgraph.research')),
+    });
+
+    expect(response.status).toBe(502);
+    expect(finishes).toEqual([expect.objectContaining({
+      runId: begins[0].runId,
+      state: 'failed',
+      errorCode: 'tool_execution_failed',
+      errorSummary: 'Tool execution failed honestly.',
+      effectiveProvider: 'openai-codex',
+      providerApiMode: 'codex_app_server',
+      model: 'gpt-5.6-sol',
+    })]);
+    expect(finishes[0]).not.toHaveProperty('toolCallCount');
   });
 
   it('keeps source Stop scoped to the exact source submission', async () => {
@@ -725,17 +941,20 @@ describe('fixed saved specialist Card tools', () => {
   });
 
   it.each([
-    ['thinkgraph.reason', 'card_thinkgraph', 'tools', [], 'thinkgraph_recall_grant_required'],
-    ['knowgraph.research', 'card_knowgraph', 'toolsets', [], 'knowgraph_web_toolset_required'],
-    ['knowgraph.research', 'card_knowgraph', 'skills', [], 'knowgraph_grounded_citations_skill_required'],
-    ['knowgraph.research', 'card_knowgraph', 'tools', [], 'knowgraph_add_memory_grant_required'],
+    ['thinkgraph.reason', 'card_thinkgraph'],
+    ['knowgraph.research', 'card_knowgraph'],
   ] as const)(
-    'requires the saved specialist configuration for %s (%s)',
-    async (operation, targetId, field, value, expectedError) => {
+    'does not impose hard-coded tool or skill gates on %s',
+    async (operation, targetId) => {
       const gateway = new FakeGateway();
       const savedDeck = deck();
       const target = savedDeck.nodes.find((node) => node.id === targetId)!;
-      (target.runtimeOptions as Record<string, unknown>)[field] = [...value];
+      target.runtimeOptions = {
+        ...target.runtimeOptions,
+        tools: [],
+        toolsets: [],
+        skills: [],
+      };
       const { base, begins, finishes } = await start(gateway, savedDeck);
       const response = await fetch(`${base}/saved-specialists/invoke`, {
         method: 'POST',
@@ -746,11 +965,11 @@ describe('fixed saved specialist Card tools', () => {
         body: JSON.stringify(specialistBody(operation)),
       });
 
-      expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({ ok: false, error: expectedError });
-      expect(begins).toHaveLength(0);
-      expect(finishes).toHaveLength(0);
-      expect(gateway.calls).toHaveLength(0);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ ok: true, status: 'completed' });
+      expect(begins).toHaveLength(1);
+      expect(finishes).toHaveLength(1);
+      expect(gateway.calls.some((call) => call.method === 'prompt.submit')).toBe(true);
     },
   );
 });

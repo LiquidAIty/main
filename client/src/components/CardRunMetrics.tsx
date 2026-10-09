@@ -2,13 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type LastRun = {
   state: string;
-  acceptedAt: string | null;
+  startedAt: string | null;
   model: string | null;
   elapsedMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedTokens: number | null;
+  reasoningTokens: number | null;
   totalTokens: number | null;
   costUsd: number | null;
-  costStatus: 'estimated' | 'unavailable';
+  costStatus: 'actual' | 'estimated' | 'included' | 'unavailable';
   toolCallCount: number | null;
+  autoToolsDecision: Record<string, unknown>;
+  autoModelDecision: Record<string, unknown>;
 };
 
 type LastRunPayload = {
@@ -17,8 +23,6 @@ type LastRunPayload = {
 };
 
 type Props = { projectId: string; deckId: string; cardId: string };
-
-const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled', 'blocked', 'interrupted']);
 
 function formatDuration(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return 'unavailable';
@@ -36,9 +40,52 @@ function formatCount(value: number | null): string {
 }
 
 function formatCost(value: number | null, status: LastRun['costStatus']): string {
-  return value === null || !Number.isFinite(value) || status !== 'estimated'
-    ? 'unavailable'
-    : `~$${value.toFixed(2)} estimated`;
+  if (status === 'included') return '$0.00 included';
+  if (value === null || !Number.isFinite(value) || status === 'unavailable') return 'unavailable';
+  const amount = value > 0 && value < 0.00005
+    ? '<0.0001'
+    : value > 0 && value < 0.01
+      ? value.toFixed(4)
+      : value.toFixed(2);
+  return `${status === 'estimated' ? '~' : ''}$${amount} ${status}`;
+}
+
+function confidence(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? ` · ${value}%` : '';
+}
+
+function decisionRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function autoModelText(value: unknown): string | null {
+  const decision = decisionRecord(value);
+  if (!Object.keys(decision).length) return null;
+  const status = String(decision.status || 'unavailable');
+  return `${status}${confidence(decision.selectedConfidencePercentage)}`;
+}
+
+function autoToolsText(value: unknown): string | null {
+  const decision = decisionRecord(value);
+  if (!Object.keys(decision).length) return null;
+  const selected = Array.isArray(decision.selectedToolIds) ? decision.selectedToolIds : [];
+  const candidateCount = typeof decision.candidateCount === 'number' ? decision.candidateCount : null;
+  const decisionStatus = String(decision.status || 'unavailable');
+  const confidences = decision.selectedConfidencePercentages
+    && typeof decision.selectedConfidencePercentages === 'object'
+    ? selected.flatMap((id) => {
+      const value = (decision.selectedConfidencePercentages as Record<string, unknown>)[String(id)];
+      return typeof value === 'number' ? [`${String(id)} ${value}%`] : [];
+    })
+    : [];
+  const selection = decisionStatus === 'unavailable'
+    ? `unavailable${candidateCount === null ? '' : ` · full ${candidateCount}`}`
+    : candidateCount === null
+      ? decisionStatus
+    : `${selected.length}/${candidateCount} selected`;
+  return `${selection}${confidences.length ? ` · USE ${confidences.join(', ')}` : ''}`;
 }
 
 export function CardRunMetrics({ projectId, deckId, cardId }: Props) {
@@ -52,7 +99,7 @@ export function CardRunMetrics({ projectId, deckId, cardId }: Props) {
     if (!projectId || !deckId || !cardId) return;
     const request = ++requestRef.current;
     try {
-      const response = await fetch('/api/cards/run', {
+      const response = await fetch('/api/cards/runs/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'history', projectId, deckId, cardId, limit: 1 }),
@@ -82,7 +129,7 @@ export function CardRunMetrics({ projectId, deckId, cardId }: Props) {
   }, [load]);
 
   const latest = payload?.latest || null;
-  const running = Boolean(latest && !TERMINAL_STATES.has(latest.state));
+  const running = latest?.state === 'running';
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 2_000);
@@ -98,9 +145,11 @@ export function CardRunMetrics({ projectId, deckId, cardId }: Props) {
   const elapsedMs = useMemo(() => {
     if (!latest) return null;
     if (!running) return latest.elapsedMs;
-    const accepted = Date.parse(latest.acceptedAt || '');
-    return Number.isFinite(accepted) ? Math.max(0, clock - accepted) : latest.elapsedMs;
+    const started = Date.parse(latest.startedAt || '');
+    return Number.isFinite(started) ? Math.max(0, clock - started) : latest.elapsedMs;
   }, [clock, latest, running]);
+  const autoModel = latest ? autoModelText(latest.autoModelDecision) : null;
+  const autoTools = latest ? autoToolsText(latest.autoToolsDecision) : null;
 
   return (
     <section aria-label="Last run" data-testid="card-run-metrics"
@@ -112,11 +161,11 @@ export function CardRunMetrics({ projectId, deckId, cardId }: Props) {
       {status === 'ready' && !latest ? <div>No runs yet.</div> : null}
       {latest ? (
         <div style={{ display: 'grid', gap: 5 }}>
-          <div>Model: {latest.model || 'unavailable'}</div>
+          <div>Model: {latest.model || 'unavailable'}{autoModel ? ` · Auto Model: ${autoModel}` : ''}</div>
           <div>Time: {formatDuration(elapsedMs)}</div>
           <div>Tokens: {formatCount(latest.totalTokens)}</div>
           <div>Cost: {formatCost(latest.costUsd, latest.costStatus)}</div>
-          <div>Tools: {formatCount(latest.toolCallCount)}</div>
+          <div>Tools: {formatCount(latest.toolCallCount)}{autoTools ? ` · AutoTools: ${autoTools}` : ''}</div>
         </div>
       ) : null}
     </section>

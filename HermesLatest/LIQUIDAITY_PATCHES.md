@@ -1,8 +1,8 @@
-# LiquidAIty HermesLatest patch overlay
+# HermesLatest application patch overlay
 
-This file is the update contract for the two LiquidAIty task extensions and
-five narrow application-integration patches carried on top of Hermes Agent.
-It is an inventory, not runtime authority.
+This register is the update contract for seven bounded extension families carried on top of Hermes
+Agent. It describes current source; it is not runtime authority and it does not permit unrelated vendor
+cleanup.
 
 ## Upstream baseline
 
@@ -13,286 +13,178 @@ It is an inventory, not runtime authority.
 - Release date: `2026.9.24`
 - Annotated tag object: `e3dd27ee2d8b011737a4eea8e3eb3d711ab78690`
 - Source commit: `f97608f178d1ffeca59860195ab7da295f7c8e5f`
-- Imported into LiquidAIty by repository commit:
+- Imported into the application repository by commit:
   `68b2014e7dbdf502d176e36fc4817a857ae1ce2c`
 
-Git history is the comparison authority for the deleted former Hermes tree.
-Production must not recreate, import, launch, or use that superseded tree as a
-profile source or fallback.
+Git history is the comparison source. Production uses only `HermesLatest/`; no second Hermes source tree
+or fallback checkout is retained.
 
-## Integration patch 1: Codex App Server experimental Dynamic Tools
+## Extension families
 
-Purpose: present one saved Card's exact effective tool schemas to Hermes's
-existing Codex App Server thread and return each `item/tool/call` through the
-authenticated LiquidAIty MCP dispatcher. No alternate App Server, provider,
-login, thread owner, or tool executor is introduced. The existing turn interrupt
-also cancels and awaits an in-flight Dynamic Tool MCP request so its HTTP and MCP
-contexts close before the Codex turn unwinds.
+1. Experimental Dynamic Tools: project one accepted turn's exact authorized tool schemas into Hermes,
+   dispatch each call through the authenticated MCP callback, and cancel the exact in-flight call on Stop.
+2. Card Python: present one valid saved Script as `card_python`, execute it through Hermes's existing
+   child-process Python path, and route only its declared nested tool calls through the same callback.
+3. Bot roster scoping: constrain Hermes `message_agent` to the exact Project-session orange roster.
+4. Card profile capability fencing: apply/read only Card-owned profile fields, scope learning reads to the
+   addressed profile, preserve unknown/learned state, and rebuild a session only when its capability
+   fingerprint is stale.
+5. Exact turn evidence: correlate submission, Stop, completion, actual provider/model and turn-local usage
+   without replacing Hermes queue/session ownership.
+6. AutoTeam / Team TaskGraph: mark an ordinary saved Team profile, create one bounded Team root, use
+   temporary workers, and synthesize on that same root through Hermes's task ledger.
+7. TaskGraph / Magnetic: persist and enforce the exact blue-worker assignment ceiling and creator lineage
+   while leaving ordinary Hermes tasks unrestricted.
 
-### Vendored change record
+## New production files
 
-- **VENDORED PROJECT:** `HermesLatest`, at the upstream baseline recorded above.
-- **PURPOSE:** make the already-approved Codex Dynamic Tool transport honor the existing exact turn interrupt while an MCP request is in flight.
-- **EXTERNAL ALTERNATIVE CHECK:** application-only cancellation cannot unblock the synchronous Codex server-request handler; the transport must receive the session's existing interrupt event.
-- **FILES AND SYMBOLS:** `agent/transports/codex_app_server_session.py::_handle_dynamic_tool_call`; `agent/transports/dynamic_tools_mcp.py::_call` and `build_dynamic_tool_executor`; their two focused test modules.
-- **UPSTREAM BEHAVIOR PRESERVED:** normal Dynamic Tool validation, exactly-once response caching, MCP result projection, turn interruption, and every non-Dynamic-Tool request path remain unchanged.
-- **CONTRACTS:** executor callables receive one additional internal `threading.Event`; no Gateway RPC or generated contract changes.
-- **TESTS:** focused session propagation plus in-flight MCP cancellation/context-closure tests.
-- **FORK COST:** two small transport hunks and one focused test module must be reconciled on an upstream refresh.
-- **ROLLBACK:** revert these cancellation hunks and their tests, then keep saved-specialist Dynamic Tools disabled because Stop would no longer cancel their in-flight work.
-
-### New files
-
-| File | Symbols | Purpose |
+| File | Family | Current responsibility |
 | --- | --- | --- |
-| `agent/transports/dynamic_tools_mcp.py` | `build_dynamic_tool_executor`, `_call`, and its bounded HTTP callback helpers | Sends one authenticated Dynamic Tool call to the existing LiquidAIty MCP endpoint, races the exact session interrupt, closes the active HTTP/MCP contexts on cancellation, and mechanically returns the real MCP result or `dynamic_tool_cancelled`. |
+| `agent/transports/dynamic_tools_mcp.py` | Dynamic Tools / Card Python | Validates the loopback endpoint, performs one signed MCP call, projects the real result, and closes the exact HTTP/MCP contexts when the turn interrupt fires. |
+| `agent/dynamic_tools.py` | Dynamic Tools / Card Python | Installs and restores the current turn's exact definitions/executors for Codex and ordinary providers; it creates no global tool registry. |
+| `agent/card_script_tool.py` | Card Python | Validates the immutable Script contract, hashes, schemas, aliases, tool states and budgets; exposes one `card_python` tool and one bounded output. |
+| `hermes_cli/kanban_team.py` | AutoTeam | Owns the explicit Team task mode/policy, root construction/readback, activation and bounded decomposition-failure settlement. |
 
-### Compatibility hunks in upstream files
+## Compatibility hunks in upstream production files
 
-| File | Symbols / hunk | Why required |
+Files may appear in more than one family because one accepted turn carries all of its authority together.
+
+| File | Family | Symbols / reason |
 | --- | --- | --- |
-| `agent/codex_runtime.py` | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session` | Reads the already-authorized Card definitions, fingerprints them for thread reuse, and supplies the callback to the existing Codex runtime. |
-| `agent/transports/codex_app_server_session.py` | constructor Dynamic Tool validation, `dynamic_tools_fingerprint`, `ensure_started`, `_handle_server_request`, `_handle_dynamic_tool_call`, event projection | Advertises only `experimentalApi` when tools are present, sends exact `dynamicTools`, validates thread/turn/schema/call IDs, executes once, passes the existing session interrupt event into that exact call, and answers the original JSON-RPC request. No other App Server behavior is changed. |
-| `tui_gateway/contracts/prompt_voice.py` | `DynamicToolDefinition`; `PromptSubmitParams.dynamic_tools`, `tool_endpoint`, `tool_authorization` | Declares the exact turn transport fields. |
-| `tui_gateway/methods_prompt.py` | Dynamic Tool triple validation and forwarding | Rejects partial configuration and passes the exact definitions/authorization into the accepted turn. |
-| `tui_gateway/prompt_turn.py` | Dynamic Tool turn binding | Binds the accepted definitions to the existing agent turn without changing saved profile authority. |
-| `tui_gateway/session_auto_continue.py` | queued-envelope Dynamic Tool fields | Preserves the same accepted definition set when Hermes itself queues a busy-session turn. |
-| `tests/agent/transports/test_codex_app_server_session.py` | Dynamic Tool binding and interrupt tests | Proves experimental handshake, exact schema projection, request scoping, argument validation, conflict rejection, exactly-once callback behavior, and propagation of the existing interrupt event into a blocked executor. |
-| `tests/agent/transports/test_dynamic_tools_mcp.py` | in-flight cancellation test | Proves an interrupted MCP call is cancelled and its ClientSession, stream, and HTTP contexts all close before the result returns. |
+| `agent/codex_runtime.py` | Dynamic Tools / Card Python | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session`: fingerprint exact turn tools and retire/reuse Codex sessions accordingly. |
+| `agent/conversation_loop.py` | Profile fencing | `_profile_capability_prompt_stale`, `_persist_system_prompt`, `_restore_or_build_system_prompt`: refresh profile-following prompts when the real capability epoch changes. |
+| `agent/inline_tool_executors.py` | Dynamic Tools / Card Python | `resolve_invoke_tool_executor`: prefer the current turn's exact executor before shipped memory/registry lookup. |
+| `agent/system_prompt.py` | Bot roster / profile fencing | `_profile_capability_parts`, `_post_workspace_parts`: describe only the authorized Bot roster and bind the prompt to the profile capability epoch. |
+| `agent/tool_executor.py` | Dynamic Tools / Card Python | `_resolve_sequential_dispatch`: route current-turn tools through agent-local authority, never a replacement global registry. |
+| `agent/transports/codex_app_server_session.py` | Dynamic Tools | Validate the experimental handshake, definitions, thread/turn/call identity and exactly-once server-request response; propagate the existing interrupt event. |
+| `gateway/kanban_watchers_dispatcher.py` | AutoTeam | `_record_team_decomposition_failure`, `_decompose_one`: apply the breaker only to marked Team roots. |
+| `hermes_cli/config_defaults.py` | AutoTeam | `kanban.task_mode`: empty preserves shipped behavior; `team` is explicit profile configuration. |
+| `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling and build same-root Team synthesis context. No custom claim capability is retained. |
+| `hermes_cli/kanban_db_connect.py` | Magnetic | Additive `allowed_assignees` column migration for existing Hermes task databases. |
+| `hermes_cli/kanban_db_dispatch.py` | AutoTeam / Magnetic / turn evidence | Record Team step/provider/model facts, enforce default-assignee ceiling, and mark Team worker processes. |
+| `hermes_cli/kanban_db_graph.py` | AutoTeam / Magnetic | Enforce/inherit the ceiling during decomposition and move a marked Team root to synthesis. |
+| `hermes_cli/kanban_decompose.py` | AutoTeam | Use the saved Team profile for bounded depth-one worker fanout and mandatory worker tasks. |
+| `tools/bot_mode_dm.py` | Bot roster | Keep `message_agent` internal to Hermes and reject a local target outside the explicit roster. |
+| `tools/bot_mode_probe.py` | Bot roster / profile fencing | Resolve explicit absent/empty/nonempty rosters and compute the capability epoch from roster, tools, delegation, task mode and runtime. |
+| `tools/code_execution_tool.py` | Card Python | Generate child-only `input/tools/output`, enforce aliases/states/budgets, and inject the signed nested dispatcher. |
+| `tools/code_kernel.py` | Card Python | Carry per-cell authority into a disposable local kernel and dispose it after execution. |
+| `tools/delegate_tool.py` | AutoTeam | Prevent a temporary Team worker from opening a second delegation tree. |
+| `tools/kanban_tools.py` | AutoTeam / Magnetic | Create the structurally marked Team root and preserve creator identity/assignment ceiling. |
+| `tui_gateway/agent_callbacks.py` | Profile fencing / turn evidence | Rebuild from exact stored profile/session overrides and reject capability drift during the build. |
+| `tui_gateway/contracts/events.py` | Turn evidence | Declare submission identity and `MessageCompletePayload.turn_usage`. |
+| `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` | Bot roster / profile fencing / AutoTeam | Declare Card-owned runtime/delegation/task-mode fields, roster-aware describe, and `capability_fingerprint`. |
+| `tui_gateway/contracts/prompt_voice.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Declare exact tool, Script, callback, roster, fingerprint and submission fields on `prompt.submit`. Voice behavior is otherwise unchanged. |
+| `tui_gateway/contracts/sessions.py` | Bot roster / exact Stop | Declare session roster input and `expected_submission_id`. |
+| `tui_gateway/contracts/tools_mcp_plugins.py` | Profile fencing | Add explicit profile identity to Hermes learning reads/edits. |
+| `tui_gateway/methods_profiles.py` | Bot roster / profile fencing / AutoTeam | Configure/read only declared Card fields, preserve explicit empty toolset pins, canonicalize session rosters and return the capability fingerprint. |
+| `tui_gateway/methods_prompt.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Validate one complete callback/Script/roster/fingerprint envelope and forward the exact accepted authority. |
+| `tui_gateway/methods_session.py` | Bot roster / exact Stop | Apply the roster to create/resume/activate and refuse interruption of a different submission. |
+| `tui_gateway/methods_tools.py` | Profile fencing | Forward learning operations to Hermes's existing implementation for the exact profile. |
+| `tui_gateway/model_switch.py` | Profile fencing / model evidence | Rebuild only against the expected capability fingerprint and clear stale resume overrides without choosing a model for the application. |
+| `tui_gateway/prompt_turn.py` | All turn-scoped families | Fence before provider work, install/restore exact tools and Script, emit submission events, and calculate the turn-local usage delta. |
+| `tui_gateway/server.py` | Bot roster / profile fencing / turn evidence | Preserve explicit empty toolsets, carry roster/session authority, fence profile builds, and expose available Hermes usage evidence. |
+| `tui_gateway/session_auto_continue.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Preserve the accepted envelope and submission identity when Hermes queues and later drains a busy-session turn. |
 
-## Integration patch 2: saved orange-roster scoping for Bot Mode
-
-Purpose: constrain each orchestrator session's Hermes `message_agent` targets
-to the exact saved outbound orange roster supplied by that Project deck. The
-application remains the authorization owner; Hermes validates and enforces the
-supplied profile names during its normal Bot Mode delivery. Project topology is
-never persisted in the reusable profile.
-
-### Compatibility hunks in upstream files
-
-| File | Symbols / hunk | Why required |
-| --- | --- | --- |
-| `tools/bot_mode_probe.py` | `configured_bot_roster`, `resolve_bot_roster`, `bot_mode_session_authorized`; prompt/probe roster use | Makes an explicit roster, including `[]`, authoritative without broadening to every installed profile. |
-| `tools/bot_mode_dm.py` | schema injection gate and local target resolution | Keeps `message_agent` internal to Hermes while rejecting targets outside the supplied roster. |
-| `agent/system_prompt.py` | Bot protocol injection | Describes only the session's allowed targets and injects the internal tool only for an authorized roster. |
-| `tui_gateway/methods_profiles.py` | `_canonical_bot_roster` | Canonicalizes live profile identities for a supplied session roster and rejects self/unknown/malformed entries without writing profile configuration. |
-| `tui_gateway/contracts/sessions.py` | create/resume/activate roster fields | Declares the session-scoped roster input. |
-| `tui_gateway/methods_session.py` | `_session_bot_roster`, `_apply_session_bot_roster`; create/resume/activate integration | Validates and attaches the exact roster to the intended session. |
-| `tui_gateway/server.py` | agent/session roster attachment | Carries the validated roster into the existing agent build and reattachment paths. |
-| `tests/tui_gateway/test_profiles_bot_roster.py` | session roster and profile preservation tests | Proves absent versus empty, stable order/deduplication, no profile write, rejection of self/unknown/malformed entries, and reusable profile preservation. |
-
-This patch does not include the old Project target opener, suffixed Bot Chats,
-relay replacement, or `resolve_message_agent_target` application hook.
-
-## Integration patch 3: submitted-turn correlation
-
-Purpose: correlate one accepted or Hermes-queued user submission with the
-events and terminal result for that same turn. LiquidAIty uses the opaque Run
-ID to avoid settling a different active/queued turn; Hermes still owns its
-existing queue and execution behavior.
-
-### Compatibility hunks in upstream files
-
-| File | Symbols / hunk | Why required |
-| --- | --- | --- |
-| `tui_gateway/contracts/events.py` | `SubmissionStartedPayload`; `ErrorPayload.submission_id`; `MessageCompletePayload.submission_id` | Declares the correlation evidence on start, failure, and completion. |
-| `tui_gateway/contracts/prompt_voice.py` | `PromptSubmitParams.submission_id`, `PromptSubmitResult.submission_id` | Accepts and acknowledges one opaque caller identity. |
-| `tui_gateway/methods_prompt.py` | submit validation/acknowledgement and `_active_submission_id` | Carries the accepted identity into the existing turn without interpreting it. |
-| `tui_gateway/prompt_turn.py` | `prompt.submission.started` and completion propagation | Emits start/completion evidence for the exact accepted turn. |
-| `tui_gateway/session_auto_continue.py` | queue envelope and terminal-error propagation | Preserves the identity when Hermes queues and later drains a busy-session input. |
-| `tui_gateway/contracts/sessions.py` | `SessionInterruptParams.expected_submission_id` | Declares the exact accepted submission that a caller intends to interrupt. |
-| `tui_gateway/methods_session.py` | exact-submission interrupt guard | Refuses to stop a different active or queued turn while retaining Hermes's existing interrupt behavior for the matching submission. |
-| `tests/tui_gateway/test_auto_continue.py` | exact-submission interruption proof | Proves a stale caller cannot interrupt a later turn and the matching caller still can. |
-
-The application consumer is
-`apps/backend/src/services/savedCardRun.ts::submitHermesTurn`, reached by the
-literal shared-chat/saved-specialist routes; it waits for the matching
-`prompt.submission.started` event and ignores unrelated completions.
-
-## Integration patch 4: Card profile fields and profile-scoped learning selection
-
-Purpose: let the existing LiquidAIty Card/profile adapter configure only the
-Card-owned Hermes profile fields, including an explicit empty toolset selection,
-and read them back, while leaving Hermes-owned
-learning, memory, unknown profile keys, execution, and session state intact.
-One Card remains one reusable profile; Projects create sessions against that
-profile rather than cloning it.
-
-### Compatibility hunks in upstream files
-
-| File | Symbols / hunk | Why required |
-| --- | --- | --- |
-| `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` | `ProfileModelPin.openai_runtime`, `ProfileDelegationSettings`, profile describe/configure delegation and task-mode fields | Declares the existing profile configuration values that saved Cards actually own and need to read back. |
-| `tui_gateway/methods_profiles.py` | `_profile_delegation_settings`, `_configure_model`, `_configure_card_execution`, `_save_toolset_pin`, describe/configure integration | Writes only declared Card-owned fields into the selected profile, preserves an explicit empty `platform_toolsets.cli` pin, and preserves every unrelated config key and profile file. |
-| `tui_gateway/server.py` | `_load_enabled_toolsets` explicit-empty profile pin | Keeps `platform_toolsets.cli: []` distinct from a missing key so a Card can select no ordinary Hermes toolsets; missing, nonempty, environment-pin, session-fold-in, and Kanban-worker paths retain their existing behavior. |
-| `tui_gateway/contracts/tools_mcp_plugins.py` | profile on learning frame/node requests | Makes learning reads and edits address the exact saved Card profile instead of an ambient profile. |
-| `tui_gateway/methods_tools.py` | profile-scoped learning RPC forwarding | Delegates the request to Hermes's existing learning implementation for that profile; it does not add another learning store. |
-| `tests/tui_gateway/test_profiles_bot_roster.py` | Card execution/profile preservation proof | Proves model runtime, delegation and Team mode read back while unknown and Hermes-owned state survives configuration. |
-| `tests/tui_gateway/test_profiles_toolset_pin.py`, `tests/tui_gateway/test_tui_gateway_server.py` | empty/missing/nonempty toolset-selection proof | Proves an explicit empty profile pin survives save/readback and reaches the runtime as `[]`, while missing and nonempty selections retain Hermes behavior. |
-
-## Integration patch 5: Builder Project-code Docker policy
-
-Purpose: keep the saved Builder profile useful as Hermes's coding agent while
-preventing its terminal and file tools from seeing the LiquidAIty application
-checkout. LiquidAIty supplies one Project-owned code folder; Hermes's shipped
-Docker backend mounts only that folder at `/workspace` in a nonpersistent,
-per-session container. The Project folder remains durable on the host.
-
-### Compatibility hunks in upstream files
-
-| File | Symbols / hunk | Why required |
-| --- | --- | --- |
-| `tui_gateway/methods_config_set.py` | `_set_terminal_backend`, `_set_terminal_boolean`, `_clear_terminal_string_list`, `_clear_terminal_mapping`; terminal keys in `_CONFIG_SETTERS` | The existing generic, profile-scoped `config.set` RPC did not expose Hermes's existing terminal backend and isolation settings. These bounded keys select the shipped Docker backend, enable the shipped current-directory mount, force per-session containers, and clear alternate host mounts/extra Docker arguments/forwarded environment. No new terminal, container, profile writer, RPC method, or generated contract is introduced. |
-| `tests/tui_gateway/test_config_profile_scope.py` | `test_config_set_applies_builder_docker_policy_only_to_target_profile` | Proves every setting lands only in the addressed profile through Hermes's existing atomic config writer while the launch profile remains byte-semantically unchanged. |
-
-### Application consumer
-
-`apps/backend/src/hermes/profileMaterialization.ts::materializeBuilderTerminalPolicy`
-reads the addressed Builder profile through `config.get {key: "full"}`, writes
-only mismatched declared settings through `config.set`, and requires exact
-readback. `apps/backend/src/services/hermesCardSession.ts` supplies the resolved
-Project code directory to Hermes session creation or `session.workspace.move`
-and refuses a Builder session whose reported terminal backend is not Docker.
-
-### Maintenance consequence
-
-This is one dispatcher allowlist hunk plus one focused upstream test. Remove it
-when upstream `profiles.configure` exposes the same terminal policy fields; the
-application consumer can then move to that shipped profile API without changing
-saved Cards, Projects, sessions, or code-folder data.
+`tui_gateway/methods_config_set.py` is not part of the overlay. The rejected Builder Docker/configuration
+patch is absent and this file is byte-equal to the imported upstream baseline.
 
 ## Generated contract artifacts
 
-| File | Source | Purpose |
+| File | Source | Rule |
 | --- | --- | --- |
-| `apps/shared/src/gateway-contract.openrpc.json` | Hermes contract generator | Generated schemas for Dynamic Tools, Bot roster, submission correlation, exact interruption, profile configuration, and profile-scoped learning. |
-| `apps/shared/src/gateway-contract.generated.ts` | Hermes contract generator | Generated TypeScript types for the same declared RPC/event fields. |
+| `apps/shared/src/gateway-contract.openrpc.json` | Hermes Gateway contract generator | Must exactly contain the declared Dynamic Tool, Card Script, roster, capability-fingerprint, submission/Stop and turn-usage fields. |
+| `apps/shared/src/gateway-contract.generated.ts` | Same generator | Must be byte-derived from the same Python declarations; never hand-edit. |
 
-## Extension family 1: AutoTeam / Team TaskGraph
+These artifacts are regenerated once after authored source freezes. A later source defect that requires a
+second generation must stop for owner approval.
 
-Purpose: an explicitly configured saved Team profile runs one bounded Hermes
-Kanban workflow with a decomposition pass, temporary worker tasks, and a
-separate final synthesis pass. Hermes remains the task, dependency, attempt,
-dispatcher, worker, retry, and result owner.
+Current frozen generation (2026-10-09):
 
-### New files
+- `gateway-contract.generated.ts` SHA-256
+  `D9E4CF7AF28B41759592ADE6EDCD0970F9D536A9B36F9EF5EACDB956705412C9`
+- `gateway-contract.openrpc.json` SHA-256
+  `9AD016F4695A7A4ECB1BBB5316061ED20DBF802B11827477E01F767C61446DDB`
 
-| File | Symbols | Purpose |
-| --- | --- | --- |
-| `hermes_cli/kanban_team.py` | `TEAM_WORKFLOW_ID`, `TEAM_DECOMPOSITION_STEP`, `TEAM_WORKER_STEP`, `TEAM_SYNTHESIS_STEP`, `profile_task_mode`, `is_team_profile`, `team_profile_policy`, `create_team_root`, `activate_staged_team_root`, `record_decomposition_failure` | The existing LiquidAIty AutoTeam workflow migrated from the former Hermes comparison tree without redesign. |
-| `tests/hermes_cli/test_kanban_team.py` | complete test module | The migrated AutoTeam behavior contract. |
+## Focused proof files
 
-### Compatibility hunks in upstream files
+```text
+tests/agent/test_card_script_dynamic_tools.py
+tests/agent/test_system_prompt.py
+tests/agent/test_system_prompt_restore.py
+tests/agent/transports/test_codex_app_server_session.py
+tests/agent/transports/test_dynamic_tools_mcp.py
+tests/hermes_cli/test_kanban_creator_origin.py
+tests/hermes_cli/test_kanban_team.py
+tests/hermes_state/test_named_profile_session_db.py
+tests/tools/test_bot_mode_probe.py
+tests/tools/test_card_script_code_execution.py
+tests/tools/test_kanban_tools.py
+tests/tui_gateway/test_auto_continue.py
+tests/tui_gateway/test_fallback_chain_hot_reload.py
+tests/tui_gateway/test_profile_rebuild_commit.py
+tests/tui_gateway/test_profiles_bot_roster.py
+tests/tui_gateway/test_profiles_toolset_pin.py
+tests/tui_gateway/test_tui_gateway_server.py
+```
 
-| File | Symbols / hunk | Why required |
-| --- | --- | --- |
-| `hermes_cli/config_defaults.py` | `DEFAULT_CONFIG["kanban"]["task_mode"]` | Stores the explicit per-profile `team` marker; empty preserves ordinary Hermes behavior. |
-| `hermes_cli/kanban_db.py` | `create_task` Team-worker nesting guard; workflow fields in creation; `build_worker_context` synthesis contract | Carries the existing Team workflow marker and prevents recursive Team trees. |
-| `hermes_cli/kanban_db_graph.py` | `decompose_triage_task`, `_insert_decomposed_child` Team branches | Moves a marked Team root from decomposition to synthesis and marks its worker rows. |
-| `hermes_cli/kanban_decompose.py` | `_apply_fanout`, `decompose_task` Team branches | Uses the saved Team profile/model for bounded temporary workers while preserving ordinary decomposition. |
-| `hermes_cli/kanban_db_dispatch.py` | `_set_worker_pid`, `_default_spawn` Team branches | Records the Team step/model receipt and marks dispatched Team worker processes. |
-| `gateway/kanban_watchers_dispatcher.py` | `_record_team_decomposition_failure`, `_decompose_one` | Applies the existing bounded decomposition breaker only to Team roots. |
-| `tools/kanban_tools.py` | `_handle_create` Team-root branch | An ordinary saved profile marked `team` creates the existing Team root without exposing a workflow selector to the model. |
-| `tools/delegate_tool.py` | `delegate_task` Team-worker guard | Prevents a temporary Team worker from creating another delegation tree. |
-
-### Mechanical compatibility choices
-
-- HermesLatest's newer ordinary decomposition fallback to the root assignee is
-  preserved. The old Team branch was added beside it rather than replacing it.
-- HermesLatest's newer persisted author/session resolution is preserved in
-  `kanban_create`; only the old Team-root choice was added.
-- HermesLatest's current worker environment and secret-scope handling is
-  preserved. Old Card-tools-host and dashboard-bearer plumbing was not copied.
-
-## Extension family 2: TaskGraph / Magnetic
-
-Purpose: one explicitly bounded Magnetic creator tree may assign work only to
-the exact saved blue-connected profile ceiling. `NULL` remains ordinary,
-unrestricted upstream Kanban behavior.
-
-### New files
-
-None. This family is an additive schema and enforcement overlay on the shipped
-Kanban ledger.
-
-### Compatibility hunks in upstream files
-
-| File | Symbols / hunk | Why required |
-| --- | --- | --- |
-| `hermes_cli/kanban_db_connect.py` | `_LATER_TASK_COLUMNS.allowed_assignees` | Additive migration for existing Kanban databases. |
-| `hermes_cli/kanban_db.py` | `Task.allowed_assignees`, `_normalize_allowed_assignees`, `_stored_allowed_assignees`, `_require_allowed_assignee`, `_creator_allowed_assignees`, `_creator_task_id`, `create_task`, `assign_task`, `request_review`, `specify_triage_task` | Stores, inherits, narrows, and enforces the exact creator-tree assignment ceiling. |
-| `hermes_cli/kanban_db.py` | `_new_claim_capability`, `claim_task`, `claim_review_task` | Gives each claimed run a distinct capability used by the existing authenticated Magnetic worker-tool envelope. |
-| `hermes_cli/kanban_db_graph.py` | `decompose_triage_task`, `_insert_decomposed_child` ceiling checks and inheritance | Prevents automatic decomposition from escaping the blue-worker ceiling. |
-| `hermes_cli/kanban_db_dispatch.py` | `_apply_default_assignee` ceiling check | Prevents default assignment from bypassing the explicit ceiling. |
-| `tests/hermes_cli/test_kanban_creator_origin.py` | three `allowed_assignees` tests | Existing TaskGraph lineage, null-preservation, and bounded-decomposition proof. |
-| `tests/tools/test_kanban_tools.py` | `test_bounded_worker_can_recurse_to_self_but_cannot_recruit_another_profile` | Existing model-tool boundary proof for a Magnetic worker. |
-
-### Mechanical compatibility choices
-
-- HermesLatest refuses adding a dependency to a running child without the
-  child's current run identity. The LiquidAIty adapter test now supplies that
-  existing `expected_child_run_id`; production already reaches this API through
-  Hermes's run-bound `kanban_link` tool.
-- HermesLatest rejects an empty completion before a task can become `done`.
-  The LiquidAIty adapter proof now expects that earlier failure instead of
-  manufacturing a completed root with no result.
+`evals/desktop_bug_campaign/rebuild_observer.py` follows the renamed profile-capability synchronization
+symbol used by the focused rebuild observer; it is proof support, not product behavior.
 
 ## Explicit exclusions
 
-This overlay does not contain:
+The overlay does not contain:
 
-- any Codex App Server change beyond the experimental Dynamic Tool fields and request handler listed above;
-- an alternate Codex App Server, Codex runtime, provider, or login path;
-- application-owned Gateway, process, session, queue, or retry ownership;
-- Bot roster, target-session resolver, suffixed Bot Chat, or message fallback;
-- IDD tool ownership, tool aliases, or runtime validation through IDD;
+- a Builder Docker policy, terminal backend setter, custom PTY or voice/HUD patch;
+- another Codex App Server, provider, login, thread/session owner or compatibility server;
+- an application-owned Gateway/process/session/queue/retry manager;
+- a Bot target opener, suffixed Bot Chat, delivery replacement or catalog-visible Bot tool;
+- an IDD tool registry, alias map, source-hash protocol identity or plugin-specific catalog;
 - Project orange/blue topology persisted into a reusable profile;
-- old Card-tools-host, environment preload, lifecycle-hook, or cache code;
-- generated Gateway contracts, build artifacts, credentials, or `%SystemDrive%`
-  cache databases;
-- voice/HUD/WorldView bridge experiments; upstream Hermes voice mode is retained unchanged;
-- a PTY implementation patch; upstream `win_pty_bridge.py` remains the Windows terminal owner;
-- the removed `delegate_task(role="team")` design.
+- a custom Magnetic claim capability, duplicate task store, scheduler or worker registry;
+- old Card-tools-host, environment preload, lifecycle hook or hidden fallback code;
+- credentials, generated build output, profile data or cache databases.
 
-## Focused proof
+## Focused Windows proof
 
-Run from the LiquidAIty repository root:
+From the repository root, with the application Python environment:
 
 ```powershell
 $env:PYTHONPATH = "C:\Projects\LiquidAIty\main\HermesLatest"
 apps\python-models\.venv\Scripts\python.exe -m pytest `
+  HermesLatest/tests/agent/test_card_script_dynamic_tools.py `
+  HermesLatest/tests/agent/test_system_prompt.py `
+  HermesLatest/tests/agent/test_system_prompt_restore.py `
   HermesLatest/tests/agent/transports/test_codex_app_server_session.py `
   HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py `
-  HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py `
-  HermesLatest/tests/tui_gateway/test_auto_continue.py `
-  HermesLatest/tests/tui_gateway/test_config_profile_scope.py `
-  HermesLatest/tests/tui_gateway/contracts/test_generated.py `
-  HermesLatest/tests/hermes_cli/test_kanban_team.py `
   HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py `
-  HermesLatest/tests/tools/test_kanban_tools.py -q
-
-apps\python-models\.venv\Scripts\python.exe -m pytest `
-  apps/python-models/app/python_models/test_magentic_execution.py -q
+  HermesLatest/tests/hermes_cli/test_kanban_team.py `
+  HermesLatest/tests/hermes_state/test_named_profile_session_db.py `
+  HermesLatest/tests/tools/test_bot_mode_probe.py `
+  HermesLatest/tests/tools/test_card_script_code_execution.py `
+  HermesLatest/tests/tools/test_kanban_tools.py `
+  HermesLatest/tests/tui_gateway/test_auto_continue.py `
+  HermesLatest/tests/tui_gateway/test_fallback_chain_hot_reload.py `
+  HermesLatest/tests/tui_gateway/test_profile_rebuild_commit.py `
+  HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py `
+  HermesLatest/tests/tui_gateway/test_profiles_toolset_pin.py `
+  HermesLatest/tests/tui_gateway/test_tui_gateway_server.py -q
 ```
 
-Hermes's preferred `scripts/run_tests.sh` is unavailable on the current native
-Windows host because `/bin/bash` is absent. The Windows virtual-environment
-results must therefore be reported separately from upstream-script parity.
+Run the repository's current Magnetic/Team adapter proof separately from these vendor tests. Loaded
+Hermes, saved-Card execution and visible product acceptance remain higher proof tiers.
 
 ## Upstream refresh procedure
 
 1. Resolve and record the new official tag object and source commit.
-2. Produce a clean checkout/worktree of that exact commit.
-3. Generate a path-bounded overlay containing only the seven seams listed
-   above, their generated contracts and this register.
-4. Apply-check the overlay against the clean checkout before changing the
-   production tree.
-5. Resolve only unavoidable upstream API conflicts. Record every such
-   compatibility choice in this file; never replace newer upstream files
-   wholesale with historical snapshots from Git.
-6. Run upstream Kanban tests first, then the two extension-family tests, then
-   LiquidAIty adapter and real-product proof.
-7. Update the pinned revision only after the clean apply-check and focused
-   proof pass.
-8. Use Git history as the long-term comparison source. Do not recreate a second
-   Hermes source tree beside `HermesLatest`.
+2. Create a temporary clean checkout of that exact upstream revision outside production.
+3. Apply-check `LIQUIDAITY_OVERLAY.patch` against that clean source before changing `HermesLatest/`.
+4. Rebase only the seven families above; preserve newer upstream implementation and record every
+   unavoidable compatibility hunk here.
+5. Regenerate Gateway contracts once from the rebased authored declarations and inspect the entire diff.
+6. Run upstream focused tests, the application adapter proof, one loaded saved-Card turn and one exact
+   Stop/terminal/profile readback.
+7. Replace `HermesLatest/` only after every retained family and exclusion is accounted for.
+8. Update this baseline and regenerate the bounded overlay. Do not create a permanent comparison tree.
+
+Rollback is family-scoped: remove a family's listed hunks and tests together, then disable the dependent
+application capability honestly. Never retain a half-applied contract or add an application substitute.

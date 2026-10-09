@@ -199,6 +199,7 @@ class MessageCompletePayload(Payload):
     text: str | JsonValue = ""
     submission_id: str | None = None
     usage: Usage | None = None
+    turn_usage: Usage | None = None
     status: TurnStatus | None = None
     reasoning: str | None = None
     warning: str | None = None

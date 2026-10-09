@@ -6,18 +6,19 @@ from app.python_models.provider_config import ensure_env_loaded
 
 ensure_env_loaded()
 
-from app.python_models.card_domain import (
-    CardDomainError,
+from app.python_models.saved_card_contract import CardDomainError
+from app.python_models.saved_cards import (
+    load_deck,
+    save_deck,
+)
+from app.python_models.card_runs import (
     begin_main_chat_run,
     begin_run,
-    delete_card,
     finish_run,
-    load_deck,
     read_run,
     read_run_history,
-    read_run_input_files,
-    record_explicit_artifact,
-    save_deck,
+    start_run,
+    update_run_progress,
 )
 from app.python_models.card_script import (
     CardScriptValidationError,
@@ -29,23 +30,17 @@ from app.python_models.idd import (
     materialize_card_editor,
     materialize_runtime_options,
 )
-from app.python_models.magentic_execution import (
-    MagenticExecutionError,
-    authenticate_magentic_worker_tool_request,
-    read_magentic_execution,
-    stop_magentic_execution,
+from app.python_models.magnetic_taskgraph import (
+    MagneticTaskGraphError,
+    read_magnetic_taskgraph,
 )
-from app.python_models.tool_registry import (
+from app.python_models.tool_catalog import (
     ToolCatalogError,
     materialize_live_tool_catalog,
 )
-from app.python_models.trading_runtime import (
-    TradingRuntimeError,
-    intervene_trade_job,
-    lumibot_readiness,
-    read_trading_state,
-    run_trading_lifecycle_proof,
-)
+from app.python_models.trading_broker_observation import lumibot_readiness
+from app.python_models.trading_contract import TradingBoundaryError
+from app.python_models.trading_jobs import intervene_trade_job, read_trading_state
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -86,7 +81,7 @@ async def knowgraph_jev_classify(payload: dict[str, Any]):
         KnowGraphJevError,
         classify_knowgraph_facts,
     )
-    from app.python_models.engraphis import (
+    from app.python_models.thinkgraph_relationships import (
         ThinkGraphIntakeError,
         promote_project_relationship_label,
         read_project_relationship_vocabulary,
@@ -181,7 +176,7 @@ async def knowgraph_jev_classify(payload: dict[str, Any]):
 @app.post("/graph/relationship-vocabulary/read")
 async def graph_relationship_vocabulary_read(payload: dict[str, Any]):
     """Return one project's vocabulary for existing graph-writer prompts."""
-    from app.python_models.engraphis import (
+    from app.python_models.thinkgraph_relationships import (
         ThinkGraphIntakeError,
         read_project_relationship_vocabulary,
     )
@@ -205,7 +200,7 @@ async def graph_relationship_vocabulary_read(payload: dict[str, Any]):
 @app.post("/graph/jev-focus")
 async def graph_jev_focus(payload: dict[str, Any]):
     """Rerank one bounded client-supplied provider-entity neighborhood."""
-    from app.python_models.engraphis import JevGraphError, decide_graph_focus
+    from app.python_models.jev_graph_focus import JevGraphError, decide_graph_focus
     import asyncio
 
     source_revision = (
@@ -229,7 +224,7 @@ async def graph_jev_focus(payload: dict[str, Any]):
 
 @app.post("/thinkgraph/operation")
 async def thinkgraph_operation(payload: dict[str, Any]):
-    from app.python_models.engraphis import invoke_tool, private_operation
+    from app.python_models.engraphis_operations import invoke_tool, private_operation
     import asyncio
     try:
         project = str(payload.get("projectId") or "")
@@ -245,10 +240,8 @@ async def thinkgraph_operation(payload: dict[str, Any]):
 @app.post("/thinkgraph/completed-pair/prepare")
 async def thinkgraph_completed_pair_prepare(payload: dict[str, Any]):
     """Prepare one completed Main pair for its saved ThinkGraph Card pass."""
-    from app.python_models.engraphis import (
-        ThinkGraphIntakeError,
-        prepare_completed_pair,
-    )
+    from app.python_models.thinkgraph_completed_pair import prepare_completed_pair
+    from app.python_models.thinkgraph_relationships import ThinkGraphIntakeError
     import asyncio
     try:
         return await asyncio.to_thread(prepare_completed_pair, payload)
@@ -261,10 +254,8 @@ async def thinkgraph_completed_pair_prepare(payload: dict[str, Any]):
 @app.post("/thinkgraph/completed-pair/settle")
 async def thinkgraph_completed_pair_settle(payload: dict[str, Any]):
     """Persist the saved Card's structured facts through Engraphis."""
-    from app.python_models.engraphis import (
-        ThinkGraphIntakeError,
-        settle_completed_pair,
-    )
+    from app.python_models.thinkgraph_completed_pair import settle_completed_pair
+    from app.python_models.thinkgraph_relationships import ThinkGraphIntakeError
     import asyncio
     try:
         return await asyncio.to_thread(settle_completed_pair, payload)
@@ -307,7 +298,7 @@ def trading_state(
             timeframe=str(timeframe or "").strip(),
             selected_job_id=str(selectedJobId or "").strip() or None,
         )
-    except TradingRuntimeError as err:
+    except TradingBoundaryError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -323,22 +314,7 @@ def trading_intervene(payload: dict[str, Any]):
             reason=str(payload.get("reason") or "").strip(),
             actor=str(payload.get("actor") or "").strip(),
         )
-    except TradingRuntimeError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/trading/lifecycle/backtest")
-def trading_lifecycle_backtest(payload: dict[str, Any]):
-    """Run one bounded local LumiBot lifecycle; no live broker is selectable."""
-    try:
-        return run_trading_lifecycle_proof(
-            project_id=str(payload.get("projectId") or "").strip(),
-            deck_id=str(payload.get("deckId") or "").strip(),
-            card_id=str(payload.get("cardId") or "").strip(),
-            idempotency_key=str(payload.get("idempotencyKey") or "").strip(),
-            actor=str(payload.get("actor") or "").strip(),
-        )
-    except TradingRuntimeError as err:
+    except TradingBoundaryError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -398,9 +374,6 @@ def card_script_validate(payload: dict[str, Any]):
             selected_tools=list(dict.fromkeys(item.strip() for item in selected_tools)),
             default_agent_tools=list(dict.fromkeys(item.strip() for item in default_agent_tools)),
             palette_fingerprint=str(payload.get("paletteFingerprint") or ""),
-            # Activation stays disabled until its approved Hermes
-            # Script executor is connected.
-            hermes_available=False,
         )
     except CardScriptValidationError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
@@ -463,34 +436,6 @@ def domain_deck_write(project_id: str, deck_id: str, payload: dict[str, Any]):
         raise HTTPException(status_code=status, detail=str(err)) from err
 
 
-@app.delete("/domain/decks/{project_id}/{deck_id}/cards/{card_id}")
-def domain_card_delete(
-    project_id: str,
-    deck_id: str,
-    card_id: str,
-    payload: dict[str, Any],
-):
-    try:
-        return {"ok": True, **delete_card(
-            project_id,
-            deck_id,
-            card_id,
-            expected_deck_revision=str(payload.get("expectedDeckRevision") or "").strip(),
-            expected_card_revision_id=str(payload.get("expectedCardRevisionId") or "").strip(),
-            deletion_intent=str(payload.get("deletionIntent") or ""),
-        )}
-    except CardDomainError as err:
-        message = str(err)
-        status = (
-            404 if message in {"project_not_found", "deck_not_found", "card_not_found"}
-            else 403 if message.startswith("card_deletion_protected:")
-            else 409 if message in {"deck_conflict", "card_revision_conflict"}
-                or message.startswith("card_deletion_references_present:")
-            else 400
-        )
-        raise HTTPException(status_code=status, detail=message) from err
-
-
 @app.post("/domain/runs/begin")
 def domain_run_begin(payload: dict[str, Any]):
     try:
@@ -515,6 +460,22 @@ def domain_run_finish(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
+@app.post("/domain/runs/start")
+def domain_run_start(payload: dict[str, Any]):
+    try:
+        return start_run(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/runs/progress")
+def domain_run_progress(payload: dict[str, Any]):
+    try:
+        return update_run_progress(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 @app.post("/domain/runs/read")
 def domain_run_read(payload: dict[str, Any]):
     try:
@@ -531,43 +492,11 @@ def domain_run_history(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/domain/runs/input-files")
-def domain_run_input_files(payload: dict[str, Any]):
+@app.post("/magnetic/taskgraph/status")
+def magnetic_taskgraph_status(payload: dict[str, Any]):
     try:
-        return read_run_input_files(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/magentic/execution/status")
-def magentic_execution_status(payload: dict[str, Any]):
-    try:
-        return read_magentic_execution(payload)
-    except MagenticExecutionError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/magentic/execution/worker-tool-auth")
-def magentic_execution_worker_tool_auth(payload: dict[str, Any]):
-    try:
-        return authenticate_magentic_worker_tool_request(payload)
-    except MagenticExecutionError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/magentic/execution/stop")
-def magentic_execution_stop(payload: dict[str, Any]):
-    try:
-        return stop_magentic_execution(payload)
-    except MagenticExecutionError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/artifacts")
-def domain_artifact_record(payload: dict[str, Any]):
-    try:
-        return record_explicit_artifact(payload)
-    except CardDomainError as err:
+        return read_magnetic_taskgraph(payload)
+    except MagneticTaskGraphError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
@@ -576,7 +505,7 @@ def thinkgraph_projection(
     projectId: str,
 ):
     """Read the Engraphis projection for the selected project."""
-    from app.python_models.engraphis import projection
+    from app.python_models.thinkgraph_projection import projection
 
     project_id = str(projectId or "").strip()
     if not project_id:
@@ -589,10 +518,44 @@ def thinkgraph_projection(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.get("/knowgraph/projection")
+def knowgraph_projection_read(projectId: str, limit: int = 200):
+    """Read the bounded Graphiti projection for one canonical Project."""
+
+    from app.python_models.data_anchor_contract import DataAnchorError
+    from app.python_models.knowgraph_reference_reads import (
+        read_knowgraph_projection,
+    )
+
+    try:
+        return read_knowgraph_projection(projectId, limit)
+    except (DataAnchorError, ValueError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.get("/knowgraph/neighborhood")
+def knowgraph_neighborhood_read(
+    projectId: str,
+    nodeId: str,
+    limit: int = 50,
+):
+    """Read one bounded one-hop Graphiti neighborhood."""
+
+    from app.python_models.data_anchor_contract import DataAnchorError
+    from app.python_models.knowgraph_reference_reads import (
+        read_knowgraph_neighborhood,
+    )
+
+    try:
+        return read_knowgraph_neighborhood(projectId, nodeId, limit)
+    except (DataAnchorError, ValueError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 @app.get("/thinkgraph/neighborhood")
 def thinkgraph_neighborhood(projectId: str, canonicalId: str):
     """Read one exact Engraphis memory and its Engraphis neighborhood."""
-    from app.python_models.engraphis import projection
+    from app.python_models.thinkgraph_projection import projection
 
     project_id = str(projectId or "").strip()
     canonical_id = str(canonicalId or "").strip()

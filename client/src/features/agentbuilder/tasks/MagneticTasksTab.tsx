@@ -415,7 +415,7 @@ export default function MagneticTasksTab({
       requestController.abort();
     }, STATUS_REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch('/api/cards/run', {
+      const response = await fetch('/api/cards/runs/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

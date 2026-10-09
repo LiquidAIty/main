@@ -187,22 +187,58 @@ def test_fingerprint_changes_on_each_capability_axis(tmp_path):
     assert after_skill != base
 
     # toolset pin changed
-    (home / "config.yaml").write_text("tools:\n  enabled_toolsets: [web]\n", encoding="utf-8")
+    (home / "config.yaml").write_text(
+        "platform_toolsets:\n  cli: [web]\n",
+        encoding="utf-8",
+    )
     after_tools = bot_mode_probe.capability_fingerprint(home)
     assert after_tools != after_skill
 
     # MCP server added
+    mcp_config = (
+        "platform_toolsets:\n  cli: [web]\n"
+        "mcp_servers:\n  github:\n    preset: github\n"
+    )
     (home / "config.yaml").write_text(
-        "tools:\n  enabled_toolsets: [web]\nmcp_servers:\n  github:\n    preset: github\n",
+        mcp_config,
         encoding="utf-8",
     )
     after_mcp = bot_mode_probe.capability_fingerprint(home)
     assert after_mcp != after_tools
 
+    # Saved OpenAI runtime changed without another capability axis moving.
+    (home / "config.yaml").write_text(
+        mcp_config + "model:\n  openai_runtime: codex_app_server\n",
+        encoding="utf-8",
+    )
+    after_runtime = bot_mode_probe.capability_fingerprint(home)
+    assert after_runtime != after_mcp
+
+    # Saved delegation policy changed without another capability axis moving.
+    (home / "config.yaml").write_text(
+        mcp_config
+        + "model:\n  openai_runtime: codex_app_server\n"
+        + "delegation:\n  provider: openai-codex\n  model: gpt-test\n",
+        encoding="utf-8",
+    )
+    after_delegation = bot_mode_probe.capability_fingerprint(home)
+    assert after_delegation != after_runtime
+
+    # Saved Team task mode changed without another capability axis moving.
+    (home / "config.yaml").write_text(
+        mcp_config
+        + "model:\n  openai_runtime: codex_app_server\n"
+        + "delegation:\n  provider: openai-codex\n  model: gpt-test\n"
+        + "kanban:\n  task_mode: team\n",
+        encoding="utf-8",
+    )
+    after_task_mode = bot_mode_probe.capability_fingerprint(home)
+    assert after_task_mode != after_delegation
+
     # SOUL edited
     (home / "SOUL.md").write_text("# New identity\n", encoding="utf-8")
     after_soul = bot_mode_probe.capability_fingerprint(home)
-    assert after_soul != after_mcp
+    assert after_soul != after_task_mode
 
     # teammate added to the roster
     _make_bot_profile(home, "coder", managed=True)
@@ -226,9 +262,22 @@ def test_stored_prompt_staleness(tmp_path):
     restamped = "system stuff\n\n" + bot_mode_probe.epoch_line(home)
     assert not bot_mode_probe.stored_prompt_capability_stale(restamped, home)
 
-    # prompts without a stamp (every non-Bot-Chat session) are never stale
+    # Unstamped non-profile-following prompts are never stale.
     assert not bot_mode_probe.stored_prompt_capability_stale("ordinary prompt", home)
     assert not bot_mode_probe.stored_prompt_capability_stale("", home)
+
+    roster = ["researcher"]
+    roster_stamped = "system stuff\n\n" + bot_mode_probe.epoch_line(home, roster)
+    assert not bot_mode_probe.stored_prompt_capability_stale(
+        roster_stamped,
+        home,
+        roster_override=roster,
+    )
+    assert bot_mode_probe.stored_prompt_capability_stale(
+        roster_stamped,
+        home,
+        roster_override=[],
+    )
 
 
 def test_legacy_bot_chat_upgrade(tmp_path):

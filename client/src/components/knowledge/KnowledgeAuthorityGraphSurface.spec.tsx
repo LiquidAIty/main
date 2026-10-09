@@ -46,19 +46,18 @@ vi.mock('../../vendor/engraphis/engraphis-graph.js', () => {
   } };
   return {};
 });
-
 class ResizeObserverStub { observe() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
 import {
-  composeThinkKnowPresentation as composeProviderThinkKnowPresentation,
   JoinedKnowledgeGraphSurface,
-  KnowledgeGraphProjectionSurface,
-  graphitiFactIdentity,
-  sourceLinks,
-  type CanonicalSubjectHeader,
-  type GraphProjectionV1,
 } from './KnowledgeAuthorityGraphSurface';
+import { graphitiFactIdentity, sourceLinks } from './knowledgeGraphInspectorRecords';
+import {
+  composeThinkKnowPresentation as composeProviderThinkKnowPresentation,
+  type GraphProjectionV1,
+} from './joinedKnowledgeGraphProjection';
+import type { CanonicalSubjectHeader } from './canonicalSubjectDirectory';
 import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
 afterEach(() => {
@@ -142,6 +141,30 @@ describe('knowledge authority graph surfaces', () => {
     return composeProviderThinkKnowPresentation(
       projections.thinkgraph, projections.knowgraph,
     );
+  };
+
+  const renderJoinedProjection = ({
+    thinkgraph = empty('thinkgraph'),
+    knowgraph = empty('knowgraph'),
+    strict = false,
+    onRemoveThinkGraphEvidence,
+    onRemoveKnowGraphEvidence,
+  }: {
+    thinkgraph?: GraphProjectionV1;
+    knowgraph?: GraphProjectionV1;
+    strict?: boolean;
+    onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
+    onRemoveKnowGraphEvidence?: (graphitiFactUuid: string) => Promise<void>;
+  } = {}) => {
+    const projections = currentProjections(thinkgraph, knowgraph);
+    const surface = (
+      <JoinedKnowledgeGraphSurface
+        projections={projections}
+        onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
+        onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
+      />
+    );
+    return render(strict ? <StrictMode>{surface}</StrictMode> : surface);
   };
 
   it('uses only the portable Graphiti fact identity for atomic deletion', () => {
@@ -434,7 +457,6 @@ describe('knowledge authority graph surfaces', () => {
         thinkgraph: authority === 'thinkgraph' ? providerProjection : empty('thinkgraph'),
         knowgraph: authority === 'knowgraph' ? providerProjection : empty('knowgraph'),
       }}
-      onExpand={vi.fn()}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
@@ -491,7 +513,6 @@ describe('knowledge authority graph surfaces', () => {
     const removeKnow = vi.fn().mockResolvedValue(undefined);
     render(<JoinedKnowledgeGraphSurface
       projections={currentProjections(think, know)}
-      onExpand={vi.fn()}
       onRemoveThinkGraphEvidence={removeThink}
       onRemoveKnowGraphEvidence={removeKnow}
     />);
@@ -559,7 +580,6 @@ describe('knowledge authority graph surfaces', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     render(<JoinedKnowledgeGraphSurface
       projections={currentProjections(think, know)}
-      onExpand={vi.fn()}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     const node = (label: string) => graph.data.nodes.find((candidate: any) => candidate.label === label);
@@ -641,7 +661,6 @@ describe('knowledge authority graph surfaces', () => {
     render(<JoinedKnowledgeGraphSurface
       projections={currentProjections(think, know)}
       onReadProviderFocusNeighborhood={onReadProviderFocusNeighborhood}
-      onExpand={vi.fn()}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     const rendererCount = forceGraphMocks.instances.length;
@@ -741,7 +760,6 @@ describe('knowledge authority graph surfaces', () => {
     render(<JoinedKnowledgeGraphSurface
       projections={{ thinkgraph: think, knowgraph: empty('knowgraph') }}
       onReadProviderFocusNeighborhood={onReadProviderFocusNeighborhood}
-      onExpand={vi.fn()}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     const nodeIds = graph.data.nodes.map((node: any) => node.id);
@@ -766,7 +784,6 @@ describe('knowledge authority graph surfaces', () => {
       projections={{ thinkgraph: think, knowgraph: empty('knowgraph') }}
       statuses={{ thinkgraph: 'ready', knowgraph: 'error' }}
       errors={{ knowgraph: 'request timed out' }}
-      onExpand={vi.fn()}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.data.nodes.map((node: any) => node.label)).toEqual(['Healthy Think']);
@@ -775,9 +792,8 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.queryByText(/Graph failed/)).toBeNull();
   });
 
-  it.each(['knowgraph'] as const)('uses the selected Engraphis preset for %s with zoom and shared paper', (authority) => {
-    const { container } = render(<KnowledgeGraphProjectionSurface authority={authority}
-      projection={empty(authority)} status="ready" error={null} />);
+  it('uses the selected Engraphis preset for the joined graph with zoom and shared paper', () => {
+    const { container } = renderJoinedProjection();
     const graph = forceGraphMocks.instances.at(-1);
     expect(container.querySelector('[data-renderer="engraphis-1.7.1"]')).toBeTruthy();
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
@@ -834,8 +850,11 @@ describe('knowledge authority graph surfaces', () => {
         }],
       };
       const original = structuredClone(projection);
-      const { container } = render(<KnowledgeGraphProjectionSurface authority={authority}
-        projection={projection} status="ready" error={null} />);
+      const { container } = renderJoinedProjection({
+        ...(authority === 'thinkgraph'
+          ? { thinkgraph: projection }
+          : { knowgraph: projection }),
+      });
       const graph = forceGraphMocks.instances.at(-1);
       expect(graph.data.links[0]).toMatchObject({
         relationship_strength: 0.8,
@@ -865,44 +884,11 @@ describe('knowledge authority graph surfaces', () => {
     },
   );
 
-  it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
-    window.localStorage.setItem('liquidaity.graph.knowgraph.presentation.v1', JSON.stringify({
-      schemaVersion: 6,
-      style: 'cyber',
-    }));
-    const scene = {
-      nodes: [{ id: 'jev', label: 'Jev', semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2 }],
-      edges: [{
-        id: 'semantic-edge', source: 'jev', target: 'thinkgraph', predicate: 'QUALIFIES', relation: 'QUALIFIES',
-        relationship_strength: 0.82, label_confidence: 0.71,
-        spring_strength: 0.1744, rest_length: 16.16,
-      }],
-      communities: [], meta: { layout_seed: 7 },
-    };
-    render(<KnowledgeGraphProjectionSurface authority="knowgraph"
-      projection={{ ...empty('thinkgraph'), scene }} status="ready" error={null} />);
-    const graph = forceGraphMocks.instances.at(-1);
-    expect(scene.nodes[0]).not.toHaveProperty('material_kind');
-    expect(graph.setData.mock.calls[0][0]).toMatchObject({
-      meta: { layout_seed: 7 },
-      communities: [],
-    });
-    expect(graph.data.nodes[0]).toMatchObject({
-      semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2,
-    });
-    expect(graph.data.nodes[0].material_kind).toBeUndefined();
-    expect(graph.setThemeColors).toHaveBeenLastCalledWith({});
-    expect(graph.data.links[0]).toMatchObject({
-      relation: 'QUALIFIES', relationship_strength: 0.82,
-      spring_strength: 0.1744, rest_length: 16.16,
-    });
-  });
-
   it('starts KnowGraph empty without loading the complete Neo4j graph', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={empty('knowgraph')} status="ready" error={null} onExpand={vi.fn()} />);
-    await waitFor(() => expect(screen.getByTestId('knowledge-knowgraph-surface')).toBeTruthy());
+    renderJoinedProjection();
+    await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')).toBeTruthy());
     expect(screen.getByRole('button', { name: 'Open graph settings' })).toBeTruthy();
     expect(screen.getByText('No knowledge yet.')).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -913,9 +899,10 @@ describe('knowledge authority graph surfaces', () => {
       ...empty('knowgraph'),
       nodes: [{ id: 'entity-one', label: 'Existing entity', mentionCount: 1 }],
     };
-    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
+    renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
-    await waitFor(() => expect(graph.data.nodes.map((node: { id: string }) => node.id)).toEqual(['entity-one']));
+    await waitFor(() => expect(graph.data.nodes.map((node: { label: string }) => node.label))
+      .toEqual(['Existing entity']));
     expect(graph.data.links).toEqual([]);
     expect(screen.queryByRole('checkbox', { name: 'Hide unconnected entities' })).toBeNull();
     expect(projection.nodes).toEqual([{ id: 'entity-one', label: 'Existing entity', mentionCount: 1 }]);
@@ -924,9 +911,10 @@ describe('knowledge authority graph surfaces', () => {
 
   it('loads provider records into the replacement renderer after Strict Mode effect replay', () => {
     const projection = { ...empty('knowgraph'), nodes: [{ id: 'source', label: 'W3C', mentionCount: 1 }] };
-    render(<StrictMode><KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} /></StrictMode>);
+    renderJoinedProjection({ knowgraph: projection, strict: true });
     expect(forceGraphMocks.instances).toHaveLength(2);
-    expect(forceGraphMocks.instances.at(-1).data.nodes.map((node: { id: string }) => node.id)).toEqual(['source']);
+    expect(forceGraphMocks.instances.at(-1).data.nodes.map((node: { label: string }) => node.label))
+      .toEqual(['W3C']);
   });
 
   it('keeps CodeGraph out of the launch graph surface', () => {
@@ -937,7 +925,6 @@ describe('knowledge authority graph surfaces', () => {
           knowgraph: empty('knowgraph'),
         }}
         errors={{}}
-        onExpandNode={vi.fn()}
       />,
     );
 
@@ -946,7 +933,6 @@ describe('knowledge authority graph surfaces', () => {
   });
 
   it('does not expose the removed copy-into-chat action', async () => {
-    const onUseAsContext = vi.fn();
     const projection = {
       ...empty('knowgraph'),
       nodes: [{
@@ -954,19 +940,11 @@ describe('knowledge authority graph surfaces', () => {
         properties: {},
       }],
     };
-    render(
-      <KnowledgeGraphProjectionSurface
-        projection={projection}
-        status="ready"
-        error={null}
-        onUseAsContext={onUseAsContext}
-      />,
-    );
+    renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
-    expect(onUseAsContext).not.toHaveBeenCalled();
   });
 
   it('keeps the relationship word and probability hover-only on a ThinkGraph edge', () => {
@@ -980,11 +958,11 @@ describe('knowledge authority graph surfaces', () => {
         } }],
     };
     const before = JSON.stringify(projection);
-    render(<KnowledgeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
+    renderJoinedProjection({ thinkgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.data.links).toHaveLength(1);
     expect(graph.data.links[0]).toMatchObject({
-      ...projection.edges[0], relation: 'DEPENDS_ON', hover_label: 'DEPENDS_ON · .71',
+      predicate: 'DEPENDS_ON', relation: 'DEPENDS_ON', hover_label: 'DEPENDS_ON · .71',
       directional_arrow_length: 3, directional_arrow_rel_pos: 0.9,
     });
     expect(graph.data.links[0].label).toBe('');
@@ -997,7 +975,7 @@ describe('knowledge authority graph surfaces', () => {
   it('renders the joined knowledge surface in the existing canvas and binds the pull tab to Engraphis settings', async () => {
     const { container } = render(<KnowledgeGraphFramework
       projections={{ thinkgraph: empty('thinkgraph'), knowgraph: empty('knowgraph') }}
-      errors={{}} onExpandNode={vi.fn()} />);
+      errors={{}} />);
     await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')).toBeTruthy());
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.getByText('No knowledge yet.')).toBeTruthy();
@@ -1021,7 +999,7 @@ describe('knowledge authority graph surfaces', () => {
   });
 
   it('preserves a valid saved node size on load and visibly applies the current preset default on request', async () => {
-    const key = 'liquidaity.graph.thinkgraph.presentation.v1';
+    const key = 'liquidaity.graph.joined.presentation.v1';
     window.localStorage.setItem(key, JSON.stringify({
       schemaVersion: 6,
       layout: 'compact',
@@ -1029,8 +1007,7 @@ describe('knowledge authority graph surfaces', () => {
       physicsProfile: 'galaxy',
       settings: { size: 3, labels: true },
     }));
-    render(<KnowledgeGraphProjectionSurface authority="thinkgraph"
-      projection={empty('thinkgraph')} status="ready" error={null} />);
+    renderJoinedProjection();
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
 
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('3');
@@ -1057,7 +1034,6 @@ describe('knowledge authority graph surfaces', () => {
     }));
     render(<JoinedKnowledgeGraphSurface
       projections={currentProjections(empty('thinkgraph'), empty('knowgraph'))}
-      onExpand={vi.fn()}
     />);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
 
@@ -1100,7 +1076,6 @@ describe('knowledge authority graph surfaces', () => {
     };
     render(<JoinedKnowledgeGraphSurface
       projections={currentProjections(think, know)}
-      onExpand={vi.fn()}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     await waitFor(() => expect(graph.data.nodes).toHaveLength(3));
@@ -1156,17 +1131,15 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.queryByRole('group', { name: 'Solarpunk colors' })).toBeNull();
   });
 
-  it('validates and reloads per-authority preferences without reading or changing the old combined key', async () => {
-    const oldKey = 'liquidaity.graph.combined.presentation.v1';
-    const key = 'liquidaity.graph.thinkgraph.presentation.v1';
+  it('validates and reloads joined preferences without reading an old provider key', async () => {
+    const oldKey = 'liquidaity.graph.thinkgraph.presentation.v1';
+    const key = 'liquidaity.graph.joined.presentation.v1';
     window.localStorage.setItem(oldKey, 'leave-this-untouched');
     const projection = {
       ...empty('thinkgraph'),
       nodes: [{ id: 'subject', label: 'Subject', properties: {} }],
     };
-    const first = render(<KnowledgeGraphProjectionSurface
-      authority="thinkgraph" projection={projection} status="ready" error={null}
-    />);
+    const first = renderJoinedProjection({ thinkgraph: projection });
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '7' } });
     fireEvent.change(screen.getByLabelText('Think nodes'), { target: { value: '#123456' } });
@@ -1175,9 +1148,7 @@ describe('knowledge authority graph surfaces', () => {
     }));
     first.unmount();
 
-    render(<KnowledgeGraphProjectionSurface
-      authority="thinkgraph" projection={projection} status="ready" error={null}
-    />);
+    renderJoinedProjection({ thinkgraph: projection });
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('7');
@@ -1186,7 +1157,7 @@ describe('knowledge authority graph surfaces', () => {
   });
 
   it('rejects invalid persisted presentation values and keeps bounded defaults', () => {
-    window.localStorage.setItem('liquidaity.graph.knowgraph.presentation.v1', JSON.stringify({
+    window.localStorage.setItem('liquidaity.graph.joined.presentation.v1', JSON.stringify({
       style: 'unknown', layout: 'everything', physicsProfile: 'unsafe',
       settings: { size: 99, font: 0, linkw: -1, labelDensity: 101, repel: -2,
         link: 1000, gravity: Infinity, labels: 'yes', arbitrary: 'kept' },
@@ -1195,9 +1166,7 @@ describe('knowledge authority graph surfaces', () => {
         thinkRelationship: '#12345678', knowRelationship: 'orange',
       },
     }));
-    render(<KnowledgeGraphProjectionSurface
-      authority="knowgraph" projection={empty('knowgraph')} status="ready" error={null}
-    />);
+    renderJoinedProjection();
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
 
     expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
@@ -1232,7 +1201,6 @@ describe('knowledge authority graph surfaces', () => {
     render(<KnowledgeGraphFramework
       projections={{ thinkgraph: think, knowgraph: know }}
       errors={{}}
-      onExpandNode={vi.fn()}
     />);
     await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')).toBeTruthy());
     const graph = forceGraphMocks.instances.at(-1);
@@ -1254,7 +1222,7 @@ describe('knowledge authority graph surfaces', () => {
         summary: 'Saved Think.',
         metadata: { thinkgraph_origin: { authority: 'thinkgraph' }, relations: [] } }],
     } }] };
-    render(<KnowledgeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
+    renderJoinedProjection({ thinkgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved Think.');
@@ -1288,8 +1256,7 @@ describe('knowledge authority graph surfaces', () => {
         { id: 'memory-old', title: 'Earlier retained Think', summary: 'Earlier saved Think.', ingestedAt: 100,
           metadata: { thinkgraph_origin: { authority: 'thinkgraph' }, relations: [] } },
       ] } }] };
-    render(<KnowledgeGraphProjectionSurface authority="thinkgraph" projection={projection}
-      status="ready" error={null} onRemoveEvidence={remove} />);
+    renderJoinedProjection({ thinkgraph: projection, onRemoveThinkGraphEvidence: remove });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByText('Recent Thinks')).toBeTruthy();
@@ -1332,7 +1299,7 @@ describe('knowledge authority graph surfaces', () => {
       edges: [{ id: 'evidence', source: 'source', target: 'claim', predicate: 'SUPPORTS', mentionCount: 1,
         properties: { fact: 'This source supports this claim within the recorded scope.' } }],
     };
-    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
+    renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.linkClick(graph.data.links[0]));
     const inspector = screen.getByTestId('knowgraph-edge-inspector');
@@ -1374,8 +1341,11 @@ describe('knowledge authority graph surfaces', () => {
         },
       }],
     };
-    render(<KnowledgeGraphProjectionSurface authority={authority} projection={projection}
-      status="ready" error={null} />);
+    renderJoinedProjection({
+      ...(authority === 'thinkgraph'
+        ? { thinkgraph: projection }
+        : { knowgraph: projection }),
+    });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.linkClick(graph.data.links[0]));
 
@@ -1422,7 +1392,7 @@ describe('knowledge authority graph surfaces', () => {
         jev: { status: 'success', winner: 'PROVIDES', distribution: { PROVIDES: 0.9, ASSOCIATED_WITH: 0.1 } },
       } }],
     };
-    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
+    renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.linkClick(graph.data.links[0]));
     fireEvent.click(screen.getByText('NASA launch report'));
@@ -1465,7 +1435,7 @@ describe('knowledge authority graph surfaces', () => {
         },
       }],
     };
-    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
+    renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
 
@@ -1513,7 +1483,7 @@ describe('knowledge authority graph surfaces', () => {
         } },
       ],
     };
-    render(<KnowledgeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} onExpand={vi.fn()} />);
+    renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.id === 'company')));
 
@@ -1555,7 +1525,11 @@ describe('knowledge authority graph surfaces', () => {
         properties: { portableKind: 'know', graphitiFactUuid: 'fact-one',
           fact: 'The complete original statement.', supportingEpisodeUuids: ['episode-one'] },
       }] };
-    const { container } = render(<KnowledgeGraphProjectionSurface authority={authority} projection={projection} status="ready" error={null} />);
+    const { container } = renderJoinedProjection({
+      ...(authority === 'thinkgraph'
+        ? { thinkgraph: projection }
+        : { knowgraph: projection }),
+    });
     const graph = forceGraphMocks.instances.at(-1);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '5' } });
@@ -1619,8 +1593,8 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
     expect(graph.setStyle).toHaveBeenCalledWith('cyber');
     expect(graph.fit).not.toHaveBeenCalled();
-    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(
-      authority === 'thinkgraph' ? ['entity-1'] : ['entity-1', 'entity-target'],
+    expect(graph.data.nodes.map((node: any) => node.label)).toEqual(
+      authority === 'thinkgraph' ? ['Recorded subject'] : ['Recorded subject', 'Recorded target'],
     );
     act(() => graph.nodeClick(graph.data.nodes[0]));
     act(() => graph.backgroundClick());

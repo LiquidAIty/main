@@ -218,9 +218,8 @@ export type ProjectWorldviewCapabilityStore = {
   set(
     projectId: string,
     capabilityId: string,
-    actor: 'user' | 'main' | 'worldview_card',
+    actor: 'user' | 'worldview_card',
     enabled: boolean,
-    reason?: string | null,
   ): Promise<ProjectWorldviewCapability>;
 };
 
@@ -259,31 +258,17 @@ export function createProjectWorldviewCapabilityStore(
       );
       return result.rows.map(projectCapability);
     },
-    async set(projectId, capabilityId, actor, enabled, reason = null) {
-      const userEnabled = actor === 'user' || actor === 'worldview_card' ? enabled : null;
-      const mainEnabled = actor === 'main' ? enabled : null;
-      const mainReason = actor === 'main' && reason ? reason.slice(0, 1000) : null;
+    async set(projectId, capabilityId, actor, enabled) {
       const result = await query(
         `INSERT INTO ag_catalog.project_worldview_capabilities
            (project_id, capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,NOW())
+         VALUES ($1,$2,NULL,NULL,$3,$4,NOW())
          ON CONFLICT (project_id, capability_id) DO UPDATE SET
-           main_enabled=CASE
-             WHEN $6='main' THEN EXCLUDED.main_enabled
-             ELSE ag_catalog.project_worldview_capabilities.main_enabled
-           END,
-           main_reason=CASE
-             WHEN $6='main' THEN EXCLUDED.main_reason
-             ELSE ag_catalog.project_worldview_capabilities.main_reason
-           END,
-           user_enabled=CASE
-             WHEN $6 IN ('user','worldview_card') THEN EXCLUDED.user_enabled
-             ELSE ag_catalog.project_worldview_capabilities.user_enabled
-           END,
+           user_enabled=EXCLUDED.user_enabled,
            last_origin=EXCLUDED.last_origin,
            updated_at=NOW()
          RETURNING capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at`,
-        [projectId, capabilityId, mainEnabled, mainReason, userEnabled, actor],
+        [projectId, capabilityId, enabled, actor],
       );
       if (result.rows.length !== 1) {
         throw new Error('project_worldview_capability_write_failed');
@@ -317,22 +302,12 @@ export function resolveWorldviewGlobeUrl(
   return url;
 }
 
-export function createWorldviewRouter({
-  fetcher = fetch,
-  capabilityStore = createProjectWorldviewCapabilityStore(),
-  projectAuthorizer = authorizeProject,
-  surfaceAuthorizer = authorizeWorldviewSurface,
-  channel = actionChannel,
-}: {
-  fetcher?: FetchLike;
-  capabilityStore?: ProjectWorldviewCapabilityStore;
-  projectAuthorizer?: ProjectAuthorizer;
-  surfaceAuthorizer?: typeof authorizeWorldviewSurface;
-  channel?: WorldviewActionChannel;
-} = {}) {
-  const router = Router();
-
-  router.get('/projects/:projectId/actions/stream', async (req, res) => {
+function worldviewActionStreamHandler(
+  projectAuthorizer: ProjectAuthorizer,
+  surfaceAuthorizer: typeof authorizeWorldviewSurface,
+  channel: WorldviewActionChannel,
+) {
+  return async (req: Request, res: Response) => {
     const projectId = String(req.params.projectId || '').trim();
     const cardId = typeof req.query.cardId === 'string' ? req.query.cardId.trim() : '';
     if (!projectId || !cardId || cardId.length > 200) {
@@ -350,9 +325,15 @@ export function createWorldviewRouter({
     } catch {
       return res.status(503).json({ ok: false, error: 'worldview_action_stream_unavailable' });
     }
-  });
+  };
+}
 
-  router.post('/projects/:projectId/actions/result', async (req, res) => {
+function worldviewActionResultHandler(
+  projectAuthorizer: ProjectAuthorizer,
+  capabilityStore: ProjectWorldviewCapabilityStore,
+  channel: WorldviewActionChannel,
+) {
+  return async (req: Request, res: Response) => {
     const projectId = String(req.params.projectId || '').trim();
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
       ? req.body as Record<string, unknown> : null;
@@ -397,9 +378,11 @@ export function createWorldviewRouter({
       });
       return res.status(503).json({ ok: false, error: 'worldview_action_result_unavailable' });
     }
-  });
+  };
+}
 
-  router.get('/readiness', async (_req, res) => {
+function worldviewReadinessHandler(fetcher: FetchLike) {
+  return async (_req: Request, res: Response) => {
     let globeUrl: URL;
     try {
       globeUrl = resolveWorldviewGlobeUrl();
@@ -426,13 +409,6 @@ export function createWorldviewRouter({
           ownership: 'supervised-upstream',
           automaticStart: false,
         },
-        subsystemAgents: {
-          realtimeVoice: {
-            policy: 'user-initiated',
-            active: null,
-            runtimeState: 'ui-handshake-required',
-          },
-        },
         diagnostics: null,
       });
     } catch (error) {
@@ -444,15 +420,17 @@ export function createWorldviewRouter({
           presentationOrigin: globeUrl.origin,
         },
         lifecycle: { ownership: 'supervised-upstream', automaticStart: false },
-        subsystemAgents: {
-          realtimeVoice: { policy: 'user-initiated', active: null },
-        },
         diagnostics: error instanceof Error ? error.message : 'worldview_globe_unavailable',
       });
     }
-  });
+  };
+}
 
-  router.get('/projects/:projectId/capabilities', async (req, res) => {
+function projectWorldviewCapabilitiesHandler(
+  projectAuthorizer: ProjectAuthorizer,
+  capabilityStore: ProjectWorldviewCapabilityStore,
+) {
+  return async (req: Request, res: Response) => {
     const projectId = String(req.params.projectId || '').trim();
     if (!projectId) return res.status(400).json({ ok: false, error: 'project_id_required' });
     try {
@@ -469,9 +447,14 @@ export function createWorldviewRouter({
         error: error instanceof Error ? error.message : 'project_worldview_read_failed',
       });
     }
-  });
+  };
+}
 
-  router.patch('/projects/:projectId/capabilities/:capabilityId', async (req, res) => {
+function patchProjectWorldviewCapabilityHandler(
+  projectAuthorizer: ProjectAuthorizer,
+  capabilityStore: ProjectWorldviewCapabilityStore,
+) {
+  return async (req: Request, res: Response) => {
     const projectId = String(req.params.projectId || '').trim();
     const capabilityId = String(req.params.capabilityId || '').trim();
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
@@ -500,7 +483,33 @@ export function createWorldviewRouter({
         error: error instanceof Error ? error.message : 'project_worldview_write_failed',
       });
     }
-  });
+  };
+}
+
+export function createWorldviewRouter({
+  fetcher = fetch,
+  capabilityStore = createProjectWorldviewCapabilityStore(),
+  projectAuthorizer = authorizeProject,
+  surfaceAuthorizer = authorizeWorldviewSurface,
+  channel = actionChannel,
+}: {
+  fetcher?: FetchLike;
+  capabilityStore?: ProjectWorldviewCapabilityStore;
+  projectAuthorizer?: ProjectAuthorizer;
+  surfaceAuthorizer?: typeof authorizeWorldviewSurface;
+  channel?: WorldviewActionChannel;
+} = {}) {
+  const router = Router();
+
+  router.get('/projects/:projectId/actions/stream',
+    worldviewActionStreamHandler(projectAuthorizer, surfaceAuthorizer, channel));
+  router.post('/projects/:projectId/actions/result',
+    worldviewActionResultHandler(projectAuthorizer, capabilityStore, channel));
+  router.get('/readiness', worldviewReadinessHandler(fetcher));
+  router.get('/projects/:projectId/capabilities',
+    projectWorldviewCapabilitiesHandler(projectAuthorizer, capabilityStore));
+  router.patch('/projects/:projectId/capabilities/:capabilityId',
+    patchProjectWorldviewCapabilityHandler(projectAuthorizer, capabilityStore));
 
   return router;
 }

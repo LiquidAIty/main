@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type {
-  GraphProjectionNode,
-  GraphProjectionV1,
-} from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/joinedKnowledgeGraphProjection';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 
 export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph';
@@ -29,25 +26,17 @@ export type ThinkGraphLifecycleError = {
   error: string;
 };
 
-type ExpandRequest = {
-  graph: KnowledgeGraphKind;
-  node: GraphProjectionNode;
-};
-
 export type KnowledgeGraphState = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses: Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>;
   refreshThinkGraph: () => Promise<void>;
   refreshKnowGraph: () => Promise<boolean>;
-  observeThinkGraphRevision: (event: ThinkGraphRevisionEvent) => void;
-  observeThinkGraphFailure: (event: ThinkGraphLifecycleError) => void;
   readProviderNeighborhood: (
     graph: KnowledgeGraphKind,
     providerId: string,
     signal?: AbortSignal,
   ) => Promise<GraphProjectionV1>;
-  expandNode: (request: ExpandRequest) => Promise<void>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
 };
@@ -160,40 +149,14 @@ export function knowGraphProjection(
   });
 }
 
-export function mergeGraphProjection(
-  current: GraphProjectionV1,
-  incoming: GraphProjectionV1,
-): GraphProjectionV1 {
-  const nodes = new Map(current.nodes.map((node) => [node.id, node]));
-  for (const node of incoming.nodes) nodes.set(node.id, { ...nodes.get(node.id), ...node });
-  const visibleNodeIds = new Set(nodes.keys());
-  const edges = new Map(current.edges.map((edge) => [edge.id, edge]));
-  for (const edge of incoming.edges) {
-    if (visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)) {
-      edges.set(edge.id, { ...edges.get(edge.id), ...edge });
-    }
-  }
-  const merged = {
-    ...current,
-    nodes: [...nodes.values()],
-    edges: [...edges.values()],
-    counts: { nodes: nodes.size, edges: edges.size },
-  };
-  return merged.authority === 'knowgraph'
-    ? applyKnowGraphJevPhysics(merged)
-    : merged;
-}
-
 export default function useAgentBuilderKnowledgeGraphs({
   projectId,
   deckId,
   conversationId,
-  selectedCardId = null,
 }: {
   projectId: string;
   deckId: string;
   conversationId: string;
-  selectedCardId?: string | null;
 }): KnowledgeGraphState {
   const [projections, setProjections] = useState(() => emptyGraphs(projectId));
   const [errors, setErrors] = useState<Partial<Record<KnowledgeGraphKind, string>>>({});
@@ -308,6 +271,31 @@ export default function useAgentBuilderKnowledgeGraphs({
     setErrors((current) => ({ ...current, thinkgraph: event.error }));
   }, [conversationId, deckId, projectId]);
 
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const query = new URLSearchParams({ projectId, deckId, conversationId });
+    const stream = new EventSource(
+      `/api/thinkgraph/revisions?${query.toString()}`,
+      { withCredentials: true },
+    );
+    stream.addEventListener('thinkgraph_revision', (event) => {
+      observeThinkGraphRevision(JSON.parse((event as MessageEvent).data));
+    });
+    stream.addEventListener('thinkgraph_error', (event) => {
+      observeThinkGraphFailure(JSON.parse((event as MessageEvent).data));
+    });
+    stream.onerror = (error) => {
+      console.warn('[THINKGRAPH_REVISION_STREAM]', error);
+    };
+    return () => stream.close();
+  }, [
+    conversationId,
+    deckId,
+    observeThinkGraphFailure,
+    observeThinkGraphRevision,
+    projectId,
+  ]);
+
   const readProviderNeighborhood = useCallback(async (
     graph: KnowledgeGraphKind,
     providerId: string,
@@ -334,27 +322,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     }
     return knowGraphProjection(payload, projectId);
   }, [projectId]);
-
-  const expandNode = useCallback(async ({ graph, node }: ExpandRequest) => {
-    if (selectedCardId) throw new Error('Deselect the Card to expand the overall graph.');
-    try {
-      const incoming = await readProviderNeighborhood(
-        graph,
-        graph === 'thinkgraph' ? String(node.canonicalId || node.id) : node.id,
-      );
-      setProjections((current) => ({
-        ...current,
-        [graph]: mergeGraphProjection(current[graph], incoming),
-      }));
-      setErrors((current) => ({ ...current, [graph]: undefined }));
-    } catch (error) {
-      setErrors((current) => ({
-        ...current,
-        [graph]: error instanceof Error ? error.message : String(error),
-      }));
-      throw error;
-    }
-  }, [readProviderNeighborhood, selectedCardId]);
 
   const removeThinkGraphEvidence = useCallback(async (memoryId: string) => {
     const response = await fetch('/api/thinkgraph/retire', {
@@ -386,10 +353,7 @@ export default function useAgentBuilderKnowledgeGraphs({
     statuses,
     refreshThinkGraph,
     refreshKnowGraph,
-    observeThinkGraphRevision,
-    observeThinkGraphFailure,
     readProviderNeighborhood,
-    expandNode,
     removeThinkGraphEvidence,
     removeKnowGraphEvidence,
   };

@@ -1,6 +1,6 @@
 import type { DeckDocument } from '../../../types/agentgraph';
 
-const MAGENTIC_BUS_BODY_WIDTH = 26;
+const MAGNETIC_BUS_BODY_WIDTH = 26;
 const LANDING_BUS_TOP_Y = 72;
 const LANDING_BUS_CENTER_X = 0;
 function isLandingWorkbenchNode(value: unknown): boolean {
@@ -30,7 +30,7 @@ export function buildInitialBusSeamViewport({
   zoom,
   desiredBusCenterX,
   desiredBusTopY,
-  busWidth = MAGENTIC_BUS_BODY_WIDTH,
+  busWidth = MAGNETIC_BUS_BODY_WIDTH,
 }: {
   busPosition: { x: number; y: number };
   zoom: number;
@@ -72,7 +72,7 @@ export function buildInitialWorkbenchLandingViewport(
     zoom: landingBaselineZoom,
     desiredBusCenterX: options?.desiredBusCenterX ?? LANDING_BUS_CENTER_X,
     desiredBusTopY: options?.desiredBusTopY ?? LANDING_BUS_TOP_Y,
-    busWidth: options?.busWidth ?? MAGENTIC_BUS_BODY_WIDTH,
+    busWidth: options?.busWidth ?? MAGNETIC_BUS_BODY_WIDTH,
   });
 }
 

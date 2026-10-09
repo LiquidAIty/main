@@ -598,8 +598,8 @@ visible failure, direct recovery, and no need for the user to supervise the mach
 - **Python functions**: Current lookup resolves covered functions. Missing dynamic calls and excluded paths still need source reads and focused searches.
 - **Route nodes**: file_path is empty. Read route files directly for handler mapping.
 - **Protected/excluded dirs**: the imported roots under `agent-products/` and EDGAR caches remain
-  off-limits for cleanup and may be outside graph coverage. `Hermes/` is intentionally indexed for
-  structural comparison and inverse-impact analysis, but remains a controlled vendored fork under
+  off-limits for cleanup and may be outside graph coverage. `HermesLatest/` is intentionally indexed for
+  structural discovery and inverse-impact analysis, but remains a controlled vendored fork under
   the repository's vendored-source law; graph coverage does not grant broad cleanup authority.
 - **search_code**: Working in the current official build. Use it for indexed code text; use `rg` for
   exhaustive exact matches, comments, configs, docs, and files outside CBM coverage.

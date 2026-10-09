@@ -1,27 +1,28 @@
 """Engraphis mechanics in a disposable store; never product acceptance data."""
 import asyncio
 import time
-from types import SimpleNamespace
-
 import pytest
 
-from app.python_models import engraphis as adapter
+from app.python_models import engraphis as service_adapter
+from app.python_models import engraphis_operations as operations
+from app.python_models import jev_graph_focus as graph_focus
+from app.python_models import thinkgraph_projection as projection_adapter
 
 
 @pytest.fixture(scope="module")
 def engraphis_adapter(tmp_path_factory):
-    original = adapter.DATABASE
-    adapter.DATABASE = tmp_path_factory.mktemp("engraphis") / "memory.sqlite"
+    original = service_adapter.DATABASE
+    service_adapter.DATABASE = tmp_path_factory.mktemp("engraphis") / "memory.sqlite"
     started = time.perf_counter()
-    adapter.get_service()
+    service_adapter.get_service()
     print(f"\nEngraphis cold initialization: {time.perf_counter() - started:.3f}s")
-    yield adapter
-    adapter.close_engine()
-    adapter.DATABASE = original
+    yield service_adapter
+    service_adapter.close_engine()
+    service_adapter.DATABASE = original
 
 
 def call(engraphis_adapter, name, **arguments):
-    return asyncio.run(engraphis_adapter.invoke_tool("project-one", name, arguments))
+    return asyncio.run(operations.invoke_tool("project-one", name, arguments))
 
 
 def test_service_keeps_engraphis_with_automatic_llm_extraction_disabled(engraphis_adapter):
@@ -35,27 +36,27 @@ def test_service_keeps_engraphis_with_automatic_llm_extraction_disabled(engraphi
 
 def test_private_workspace_deletion_requires_confirmation_and_preserves_other_workspace(engraphis_adapter):
     saved = call(engraphis_adapter, "engraphis_remember", content="Disposable erasure fixture.")
-    other = asyncio.run(engraphis_adapter.invoke_tool("project-two", "engraphis_remember",
+    other = asyncio.run(operations.invoke_tool("project-two", "engraphis_remember",
         {"content": "Unrelated workspace fixture."}))
     mid = saved["id"]
     with pytest.raises(ValueError):
-        engraphis_adapter.private_operation("project-one", "delete_workspace", {})
+        operations.private_operation("project-one", "delete_workspace", {})
     with pytest.raises(ValueError):
-        engraphis_adapter.private_operation("project-one", "delete_workspace", {"confirmed": True, "workspace": "project-two"})
-    assert engraphis_adapter.inspect(
+        operations.private_operation("project-one", "delete_workspace", {"confirmed": True, "workspace": "project-two"})
+    assert operations.inspect(
         "project-one", "engraphisMemoryId", mid,
     )["memory"]["content"]
-    result = engraphis_adapter.private_operation("project-one", "delete_workspace", {"confirmed": True})
+    result = operations.private_operation("project-one", "delete_workspace", {"confirmed": True})
     assert result["deleted"] is True
     assert result["workspace"] == "project-one"
     with pytest.raises(ValueError):
-        engraphis_adapter.inspect("project-one", "engraphisMemoryId", mid)
-    scene = engraphis_adapter.projection("project-one")
+        operations.inspect("project-one", "engraphisMemoryId", mid)
+    scene = projection_adapter.projection("project-one")
     assert scene["counts"] == {"nodes": 0, "edges": 0}
-    assert engraphis_adapter.inspect(
+    assert operations.inspect(
         "project-two", "engraphisMemoryId", other["id"],
     )["memory"]["content"]
-    assert "delete_workspace" not in engraphis_adapter.WRITE_TOOLS
+    assert "delete_workspace" not in operations.WRITE_TOOLS
 
 
 def test_catalog_matches_the_installed_smart_interface_without_added_graph_fields():
@@ -63,7 +64,7 @@ def test_catalog_matches_the_installed_smart_interface_without_added_graph_field
 
     async def inspect_catalog():
         original = {t.name: t for t in await smart_mcp.list_tools()}
-        exposed = {t["name"]: t for t in adapter._engraphis_tools_from_registrations()}
+        exposed = {t["name"]: t for t in operations.engraphis_tools_from_registrations()}
         return original, exposed
 
     original, exposed = asyncio.run(inspect_catalog())
@@ -76,27 +77,27 @@ def test_catalog_matches_the_installed_smart_interface_without_added_graph_field
             schema["required"].remove("workspace")
         schema["additionalProperties"] = False
         assert exposed[name] == expected
-    assert adapter.READ_TOOLS | adapter.WRITE_TOOLS == original.keys()
-    assert "engraphis_recall_context" in adapter.WRITE_TOOLS
+    assert operations.READ_TOOLS | operations.WRITE_TOOLS == original.keys()
+    assert "engraphis_recall_context" in operations.WRITE_TOOLS
     assert original["engraphis_recall_context"].annotations.model_dump(
         by_alias=True,
     )["readOnlyHint"] is False
 
 
 def test_operation_definitions_can_initialize_inside_an_active_event_loop():
-    previous = adapter._OPERATION_DEFINITIONS
-    adapter._OPERATION_DEFINITIONS = None
+    previous = operations.OPERATION_DEFINITIONS
+    operations.OPERATION_DEFINITIONS = None
 
     async def initialize():
-        return adapter.operation_definitions()
+        return operations.operation_definitions()
 
     try:
         definitions = asyncio.run(initialize())
     finally:
-        adapter._OPERATION_DEFINITIONS = previous
+        operations.OPERATION_DEFINITIONS = previous
 
     assert {definition.canonical_id for definition in definitions} == (
-        adapter.READ_TOOLS | adapter.WRITE_TOOLS
+        operations.READ_TOOLS | operations.WRITE_TOOLS
     )
 
 
@@ -114,7 +115,7 @@ def test_recall_paraphrase_scope_and_truthful_receipt_effect(engraphis_adapter):
     assert after > before
     assert recalled["semantic_support"] is True
     with pytest.raises(ValueError):
-        asyncio.run(engraphis_adapter.invoke_tool("project-two", "engraphis_get_memory", {"memory_id": saved["id"]}))
+        asyncio.run(operations.invoke_tool("project-two", "engraphis_get_memory", {"memory_id": saved["id"]}))
     with pytest.raises(ValueError, match="scope_is_owned"):
         call(engraphis_adapter, "engraphis_recall_context", query="parts", workspace="project-two")
 
@@ -147,12 +148,12 @@ def test_stats_result_is_engine_output(engraphis_adapter):
 def test_inspector_removal_retires_only_selected_memory(engraphis_adapter):
     saved = call(engraphis_adapter, "engraphis_remember", content="Disposable erasure fixture.")
     with pytest.raises(ValueError):
-        engraphis_adapter.private_operation("project-two", "retire", {"memoryId": saved["id"]})
-    result = engraphis_adapter.private_operation("project-one", "retire", {"memoryId": saved["id"]})
+        operations.private_operation("project-two", "retire", {"memoryId": saved["id"]})
+    result = operations.private_operation("project-one", "retire", {"memoryId": saved["id"]})
     assert result["status"] == "retired"
     recalled = call(engraphis_adapter, "engraphis_recall_context", query="Disposable erasure fixture", k=20)
     assert saved["id"] not in [item["id"] for item in recalled["sources"]]
-    projected = engraphis_adapter.projection("project-one")
+    projected = projection_adapter.projection("project-one")
     assert all(saved["id"] != evidence["id"] for node in projected["nodes"]
                for evidence in node["properties"]["evidence"])
 
@@ -227,7 +228,7 @@ def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
 ):
     payload = _focus_request()
     choice_ids = [
-        adapter._focus_choice_id(candidate["authority"], candidate["entityId"])
+        graph_focus._focus_choice_id(candidate["authority"], candidate["entityId"])
         for candidate in payload["candidates"]
     ]
     values = [0.24, 0.01, 0.18, 0.15, 0.12, 0.10, 0.075, 0.075, 0.04, 0.01]
@@ -242,7 +243,7 @@ def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
             return {
                 "id": "focus-decision-one",
                 "provider": "OpenRouter",
-                "model": adapter.JEV_MODEL,
+                "model": graph_focus.JEV_MODEL,
                 "answers": {
                     "focus": {
                         "type": "choice",
@@ -268,12 +269,12 @@ def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
             return Response()
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
+    monkeypatch.setattr(graph_focus.httpx, "Client", Client)
 
-    decision = adapter.decide_graph_focus(payload)
+    decision = graph_focus.decide_graph_focus(payload)
 
     assert len(calls) == 1
-    assert calls[0][0] == adapter.JEV_ENDPOINT
+    assert calls[0][0] == graph_focus.JEV_ENDPOINT
     body = calls[0][1]["json"]
     assert list(body["questions"]) == ["focus"]
     assert set(body["questions"]["focus"]["criteria"]) == set(choice_ids)
@@ -308,8 +309,8 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
         {"focus-one": 1.0},
         {"focus-one": 0.8, "focus-two": 0.3},
     ):
-        with pytest.raises(adapter.JevGraphError) as failure:
-            adapter._validate_jev_focus_response(
+        with pytest.raises(graph_focus.JevGraphError) as failure:
+            graph_focus._validate_jev_focus_response(
                 {
                     "id": "focus-decision",
                     "answers": {
@@ -326,8 +327,8 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
         assert failure.value.status == "invalid"
         assert failure.value.error_code == "jev_focus_response_invalid"
 
-    with pytest.raises(adapter.JevGraphError) as missing_id:
-        adapter._validate_jev_focus_response(
+    with pytest.raises(graph_focus.JevGraphError) as missing_id:
+        graph_focus._validate_jev_focus_response(
             {
                 "answers": {
                     "focus": {
@@ -342,8 +343,8 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
         )
     assert missing_id.value.error_code == "jev_focus_response_invalid"
 
-    with pytest.raises(adapter.JevGraphError) as null_id:
-        adapter._validate_jev_focus_response(
+    with pytest.raises(graph_focus.JevGraphError) as null_id:
+        graph_focus._validate_jev_focus_response(
             {
                 "id": None,
                 "answers": {
@@ -365,8 +366,8 @@ def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
 ):
     payload = _focus_request(1)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(adapter.JevGraphError) as unavailable:
-        adapter.decide_graph_focus(payload)
+    with pytest.raises(graph_focus.JevGraphError) as unavailable:
+        graph_focus.decide_graph_focus(payload)
     assert unavailable.value.status == "unavailable"
     assert unavailable.value.error_code == "jev_focus_openrouter_key_unavailable"
 
@@ -381,12 +382,12 @@ def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
             return False
 
         def post(self, *_args, **_kwargs):
-            raise adapter.httpx.ReadTimeout("slow focus decision")
+            raise graph_focus.httpx.ReadTimeout("slow focus decision")
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
-    with pytest.raises(adapter.JevGraphError) as timeout:
-        adapter.decide_graph_focus(payload)
+    monkeypatch.setattr(graph_focus.httpx, "Client", Client)
+    with pytest.raises(graph_focus.JevGraphError) as timeout:
+        graph_focus.decide_graph_focus(payload)
     assert timeout.value.status == "timeout"
     assert timeout.value.error_code == "jev_focus_timeout"
 
@@ -394,13 +395,13 @@ def test_focus_jev_reports_unavailable_and_timeout_without_fake_output(
 def test_focus_request_rejects_center_candidates_and_nonincident_records():
     payload = _focus_request(1)
     payload["candidates"][0]["entityId"] = "center-think"
-    with pytest.raises(adapter.JevGraphError, match="jev_focus_request_invalid"):
-        adapter._validated_focus_request(payload)
+    with pytest.raises(graph_focus.JevGraphError, match="jev_focus_request_invalid"):
+        graph_focus._validated_focus_request(payload)
 
     payload = _focus_request(1)
     payload["candidates"][0]["incidentRelationships"][0]["sourceVisualId"] = "other"
-    with pytest.raises(adapter.JevGraphError, match="jev_focus_request_invalid"):
-        adapter._validated_focus_request(payload)
+    with pytest.raises(graph_focus.JevGraphError, match="jev_focus_request_invalid"):
+        graph_focus._validated_focus_request(payload)
 
 
 def test_entity_id_projection_uses_only_bounded_direct_neighborhood(
@@ -473,17 +474,17 @@ def test_entity_id_projection_uses_only_bounded_direct_neighborhood(
             "valid_to": None,
         }
 
-    monkeypatch.setattr(adapter, "get_service", lambda: Service())
-    monkeypatch.setattr(adapter, "_bounded_graph_snapshot", bounded)
+    monkeypatch.setattr(projection_adapter, "get_service", lambda: Service())
+    monkeypatch.setattr(projection_adapter, "bounded_graph_snapshot", bounded)
     monkeypatch.setattr(
-        adapter,
-        "_endpoint_thinks",
+        projection_adapter,
+        "endpoint_thinks",
         lambda *args, canonical_id, **kwargs: [
             latest(*args, canonical_id=canonical_id, **kwargs),
         ],
     )
 
-    result = adapter.projection("project-one", "center")
+    result = projection_adapter.projection("project-one", "center")
 
     assert len(bounded_calls) == 1
     assert bounded_calls[0]["entity_ids"] == ["center"]

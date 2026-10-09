@@ -495,6 +495,14 @@ def _(rid, params: dict) -> dict:
             if isinstance(entry, dict)
         ], []) if isinstance(mcp_cfg, dict) else []
         model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+        roster_override = (
+            _canonical_bot_roster(profile_dir, params.get("bot_mode_roster") or [])
+            if "bot_mode_roster" in params
+            else None
+        )
+        capability_fingerprint = _lazy(
+            "tools.bot_mode_probe", "capability_fingerprint"
+        )(profile_dir, roster_override=roster_override)
         meta = _try(lambda: _lazy("hermes_cli.profiles", "read_profile_meta")(profile_dir), {})
         return _ok(rid, {
             "name": name, "description": str(meta.get("description") or ""), "soul": soul,
@@ -513,7 +521,9 @@ def _(rid, params: dict) -> dict:
                 if isinstance(cfg.get("kanban"), dict)
                 and cfg["kanban"].get("task_mode") == "team"
                 else None
-            )})
+            ),
+            "capability_fingerprint": capability_fingerprint,
+        })
 
 
 def _configure_ui_meta(profile_dir, params, applied) -> None:

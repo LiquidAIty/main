@@ -28,7 +28,7 @@ vi.mock('../decks/defaultProjectDeck', () => ({
   DEFAULT_PROJECT_DECK_ID: 'deck_builder',
   DEFAULT_PROJECT_EDGES: systemEdges,
 }));
-vi.mock('../decks/store', () => decks);
+vi.mock('../decks/deckDomainClient', () => decks);
 vi.mock('./projectAccess', () => access);
 vi.mock('../db/pool', () => ({ pool: database }));
 

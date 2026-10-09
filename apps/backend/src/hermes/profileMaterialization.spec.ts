@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { DeckCard, DeckDocument } from '../types';
 import {
-  materializeBuilderTerminalPolicy,
   materializeSavedCardProfile,
   savedCardBotRoster,
 } from './profileMaterialization';
@@ -39,6 +38,7 @@ const deck: DeckDocument = {
 function profileState() {
   return {
     name: 'main', description: 'learned description', soul: '# Old',
+    capability_fingerprint: '0123456789ab',
     model: { provider: 'openai', default: 'old', openai_runtime: 'auto' },
     skills: [
       { name: 'hermes-agent', enabled: true },
@@ -109,9 +109,16 @@ describe('saved Card to Hermes profile materialization', () => {
     const result = await materializeSavedCardProfile(
       request as unknown as Parameters<typeof materializeSavedCardProfile>[0],
       main,
+      ['worker'],
     );
 
     expect(request).toHaveBeenCalledTimes(3);
+    expect(request).toHaveBeenNthCalledWith(1, 'profiles.describe', {
+      name: 'main', bot_mode_roster: ['worker'],
+    });
+    expect(request).toHaveBeenNthCalledWith(3, 'profiles.describe', {
+      name: 'main', bot_mode_roster: ['worker'],
+    });
     const configured = request.mock.calls[1][1] as Record<string, unknown>;
     expect(configured).toMatchObject({
       name: 'main', soul: '# Main\nSaved prompt', provider: 'openai-codex',
@@ -134,68 +141,25 @@ describe('saved Card to Hermes profile materialization', () => {
   });
 
   it('derives only outbound enabled orange targets', () => {
+    const disabledWorker: DeckCard = {
+      ...worker,
+      id: 'card_disabled_worker',
+      runtime: { ...worker.runtime, profile: 'disabled-worker' },
+      runtimeOptions: { ...worker.runtimeOptions, enabled: false },
+    };
     const withNoise: DeckDocument = {
       ...deck,
+      nodes: [...deck.nodes, disabledWorker],
       edges: [
         ...deck.edges,
         { id: 'reverse', source: 'card_worker', target: 'card_main', edgeType: 'flow' },
         { id: 'blue', source: 'card_main', target: 'card_worker', edgeType: 'magentic_option' },
         { id: 'disabled', source: 'card_main', target: 'card_worker', edgeType: 'flow', enabled: false },
+        { id: 'disabled-card', source: 'card_main', target: disabledWorker.id, edgeType: 'flow' },
       ],
     };
     expect(savedCardBotRoster(withNoise, main)).toEqual(['worker']);
     expect(savedCardBotRoster(withNoise, worker)).toEqual([]);
   });
 
-  it('materializes Builder onto Hermes Docker with only its Project folder mount', async () => {
-    const builder: DeckCard = {
-      ...worker,
-      id: 'builder',
-      title: 'Builder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
-    };
-    const terminal: Record<string, unknown> = {
-      backend: 'local',
-      docker_mount_cwd_to_workspace: false,
-      container_persistent: true,
-      docker_volumes: ['C:/Projects/LiquidAIty/main:/app'],
-      docker_extra_args: ['--privileged'],
-      docker_forward_env: ['GITHUB_TOKEN'],
-      docker_env: { HOST_SECRET: 'not-allowed' },
-    };
-    const request = vi.fn(async <T>(
-      method: string,
-      params: Record<string, unknown> = {},
-    ): Promise<T> => {
-      if (method === 'config.get') return { config: { terminal: structuredClone(terminal) } } as T;
-      if (method !== 'config.set') throw new Error(`unexpected:${method}`);
-      const field = String(params.key).replace(/^terminal\./, '');
-      terminal[field] = structuredClone(params.value);
-      return { key: params.key, value: params.value } as T;
-    });
-
-    await materializeBuilderTerminalPolicy(
-      request as unknown as Parameters<typeof materializeBuilderTerminalPolicy>[0],
-      builder,
-    );
-
-    expect(terminal).toMatchObject({
-      backend: 'docker',
-      docker_mount_cwd_to_workspace: true,
-      container_persistent: false,
-      docker_volumes: [],
-      docker_extra_args: [],
-      docker_forward_env: [],
-      docker_env: {},
-    });
-    expect(request.mock.calls.filter(([method]) => method === 'config.set')).toHaveLength(7);
-    expect(request.mock.calls.filter(([method]) => method === 'config.get')).toHaveLength(2);
-
-    request.mockClear();
-    await materializeBuilderTerminalPolicy(
-      request as unknown as Parameters<typeof materializeBuilderTerminalPolicy>[0],
-      worker,
-    );
-    expect(request).not.toHaveBeenCalled();
-  });
 });

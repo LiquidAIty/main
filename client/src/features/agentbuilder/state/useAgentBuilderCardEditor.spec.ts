@@ -36,13 +36,13 @@ describe('Card settings and saved Bot wires', () => {
     }));
     const config = result.current.selectedCardConfig!;
     await act(async () => { await result.current.handleSaveSelectedCardConfig({
-      ...config, reasoning_effort: 'medium',
+      ...config, skills: ['research'],
     }); });
     expect(saved.edges).toEqual(deck.edges);
     expect(saved.edges).toContainEqual(deck.edges.find(edge => edge.id === 'incoming'));
     expect(saved.nodes.filter(card => card.id !== main.id)).toEqual(deck.nodes.filter(card => card.id !== main.id));
     const after = saved.nodes.find(card => card.id === main.id)!;
-    expect(after.runtimeOptions?.reasoningEffort).toBe('medium');
+    expect(after.runtimeOptions?.skills).toEqual(['research']);
     expect(after.runtime).toEqual(main.runtime);
     expect(after.prompt).toBe(main.prompt);
     expect(after.position).toEqual(main.position);
@@ -54,7 +54,7 @@ describe('Card settings and saved Bot wires', () => {
     const card = deck.nodes.find(node => node.id === 'card_worldsignals_agent')!;
     card.runtimeOptions = {
       ...card.runtimeOptions,
-      tools: ['graphiti.search_nodes', 'hermes:tool:memory', 'hermes:tool:terminal'],
+      tools: ['graphiti.search_nodes', 'canvas.inspect', 'card.update_configuration'],
       skills: ['research'],
       toolsets: ['browser'],
       mcpConnectionIds: ['project-research'],
@@ -73,7 +73,7 @@ describe('Card settings and saved Bot wires', () => {
     }));
 
     expect(result.current.selectedCardConfig).toMatchObject({
-      tools: ['graphiti.search_nodes', 'hermes:tool:memory', 'hermes:tool:terminal'],
+      tools: ['graphiti.search_nodes', 'canvas.inspect', 'card.update_configuration'],
       skills: ['research'],
       toolsets: ['browser'],
       mcp_connection_ids: ['project-research'],
@@ -85,7 +85,7 @@ describe('Card settings and saved Bot wires', () => {
 
     const after = saved.nodes.find(node => node.id === card.id)!;
     expect(after.runtimeOptions).toMatchObject({
-      tools: ['graphiti.search_nodes', 'hermes:tool:memory', 'hermes:tool:terminal'],
+      tools: ['graphiti.search_nodes', 'canvas.inspect', 'card.update_configuration'],
       skills: ['research'],
       toolsets: ['browser'],
       mcpConnectionIds: ['project-research'],

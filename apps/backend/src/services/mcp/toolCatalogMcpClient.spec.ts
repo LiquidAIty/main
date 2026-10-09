@@ -18,14 +18,13 @@ const canonicalHostAvailable = Boolean(
 );
 
 describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated HTTP discovery', () => {
-  it('keeps the idle catalog application-owned and free of external providers', async () => {
+  it('reads the complete canonical catalog through the catalog-reader principal', async () => {
     const names = (await listToolCatalog()).map((tool) => tool.name);
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(expect.arrayContaining([
       'canvas.inspect',
       'canvas.upsert_wire',
       'card.create',
-      'card.load_graph_references',
       'card.update_configuration',
       'engraphis_recall_context',
       'engraphis_get_memory',
@@ -34,7 +33,6 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       'mag_one.describe_connected_agents',
       'main.context',
       'run_mag_one',
-      'write_mag_one_instructions',
       'web_search',
     ]));
     // Obsolete model-facing graph and agent-fabric wrappers are all gone.
@@ -48,33 +46,6 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(names).not.toContain('codegraph.status');
     expect(names).not.toContain('card.run_assistant_agent');
     expect(names).not.toContain('card.run_agent');
-    expect(names.some((name) => name.startsWith('cbm.'))).toBe(false);
-    expect(names.some((name) => name.startsWith('graphiti.'))).toBe(false);
   }, 30_000);
-
-  it('late-binds only the provider family granted to an authorized Builder turn', async () => {
-    const catalog = await listToolCatalog({
-      kind: 'card-runtime',
-      projectId: 'project-one',
-      deckId: 'deck_builder',
-      conversationId: 'conversation-one',
-      parentRunId: 'run-one',
-      callerCardId: 'builder',
-      callerRuntimeKind: 'hermes',
-      callerRuntimeMode: 'delegate',
-      grantedTools: ['cbm.search_graph'],
-      presentedTools: ['cbm.search_graph'],
-    });
-    const search = catalog.find((tool) => tool.name === 'cbm.search_graph');
-    expect(search).toMatchObject({
-      sourceId: 'cbm',
-      namespace: 'cbm',
-      providerToolName: 'search_graph',
-      connectionKind: 'external-mcp',
-      inputSchema: expect.any(Object),
-    });
-    expect(search).not.toHaveProperty('capability');
-    expect(catalog.some((tool) => tool.name.startsWith('graphiti.'))).toBe(false);
-  }, 60_000);
 
 });

@@ -14,7 +14,7 @@ export const COMPANION_MIN_WIDTHS = Object.freeze({
   canvas: 520,
   knowledge: 520,
   trading: 520,
-  worldsignal: 360,
+  worldsignals: 360,
   worldview: 720,
 });
 
@@ -113,7 +113,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
   workspaceView,
 }: UseAgentBuilderWorkspaceLayoutArgs<T>) {
   const [standardChatPanelWidth, setStandardChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
-  const [worldviewChatPanelWidth, setWorldviewChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
+  const [worldViewChatPanelWidth, setWorldViewChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [splitterActive, setSplitterActive] = useState(false);
   const [splitterDragging, setSplitterDragging] = useState(false);
@@ -121,7 +121,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
   const resizeSessionRef = useRef<ResizeSession | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const chatPanelWidth = workspaceView === 'worldview'
-    ? worldviewChatPanelWidth
+    ? worldViewChatPanelWidth
     : standardChatPanelWidth;
   const companionMinWidth = companionMinimumWidth(workspaceView);
 
@@ -135,7 +135,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
 
   const setWidthForKind = useCallback((kind: 'standard' | 'worldview', width: number) => {
     if (kind === 'worldview') {
-      setWorldviewChatPanelWidth(width);
+      setWorldViewChatPanelWidth(width);
     } else {
       setStandardChatPanelWidth(width);
     }
@@ -218,7 +218,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
       const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
       setWorkspaceWidth(shellWidth);
       if (workspaceView === 'worldview') {
-        setWorldviewChatPanelWidth((current) => clampChatWidth(current));
+        setWorldViewChatPanelWidth((current) => clampChatWidth(current));
       } else {
         setStandardChatPanelWidth((current) => clampChatWidth(current));
       }

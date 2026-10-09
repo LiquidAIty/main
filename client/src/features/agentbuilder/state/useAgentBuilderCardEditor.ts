@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 import type { CardEditorConfiguration } from '../cardConfigurationEditor';
-import { readSavedCardEditorValues } from '../../../components/builder/savedCardEditorValues';
+import { readSavedCardEditorValues } from '../inspector/savedCardEditorValues';
 import type {
   DeckDocument,
 } from '../../../types/agentgraph';
@@ -75,11 +75,6 @@ export default function useAgentBuilderCardEditor({
           ? runtimeOptions.accessMode
           : '',
       model_key: runtimeOptions.modelKey ?? savedCardEditorValues?.model ?? null,
-      reasoning_effort: runtimeOptions.reasoningEffort ?? null,
-      temperature:
-        runtimeOptions.temperature ?? savedCardEditorValues?.temperature ?? null,
-      max_tokens: runtimeOptions.maxTokens ?? savedCardEditorValues?.maxTokens ?? null,
-      max_turns: runtimeOptions.maxTurns ?? null,
       prompt_template: selectedCard.prompt || '',
       tools: Array.isArray(runtimeOptions.tools)
         ? runtimeOptions.tools
@@ -115,35 +110,12 @@ export default function useAgentBuilderCardEditor({
           || nextConfig.access_mode === 'openrouter-api'
             ? nextConfig.access_mode
             : null;
-        const nextReasoningEffort =
-          nextConfig.reasoning_effort === 'low' ||
-          nextConfig.reasoning_effort === 'medium' ||
-          nextConfig.reasoning_effort === 'high' ||
-          nextConfig.reasoning_effort === 'xhigh'
-            ? nextConfig.reasoning_effort
-            : null;
-        const nextTemperature =
-          typeof nextConfig.temperature === 'number'
-            ? nextConfig.temperature
-            : null;
-        const nextMaxTokens =
-          typeof nextConfig.max_tokens === 'number'
-            ? nextConfig.max_tokens
-            : null;
-        const nextMaxTurns =
-          typeof nextConfig.max_turns === 'number'
-            ? nextConfig.max_turns
-            : null;
         const nextTools = normalizeStringList(nextConfig.tools);
         const nextRuntimeOptions = normalizeRuntimeOptions({
           ...(nextConfig.runtime_options || {}),
           provider: nextProvider,
           accessMode: nextAccessMode,
           modelKey: nextModel,
-          reasoningEffort: nextReasoningEffort,
-          temperature: nextTemperature,
-          maxTokens: nextMaxTokens,
-          maxTurns: nextMaxTurns,
           tools: nextTools,
           skills: normalizeStringList(nextConfig.skills),
           toolsets: normalizeStringList(nextConfig.toolsets),

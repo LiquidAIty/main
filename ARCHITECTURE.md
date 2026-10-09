@@ -27,35 +27,35 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 
 | Concern | Current owner | Contract |
 | --- | --- | --- |
-| Saved Card and deck state | `apps/python-models/app/python_models/card_domain.py` | Saved identity, revision, runtime binding, profile, provider/model, prompt, grants, topology, and Run state |
+| Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation.py`, `card_runs.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, invocation and IDF preparation, Run settlement/readback, AGE query/topology/observations, and read-only AgentGraph inspection |
 | Canonical Run input | `apps/python-models/app/python_models/idf.py::materialize_idf` | One UTF-8 `in.idf`, written and reread before execution |
 | Card Python Script | `apps/python-models/app/python_models/card_script.py` plus the existing Card editor transport | Saved Card-owned source, structural compilation, live selected-tool validation, honest provider availability, and retained receipt identity; no TypeScript executor |
 | Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, and no semantic routing |
 | Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; it does not own Hermes processes or sessions |
-| Saved Card chat routes | `apps/backend/src/routes/{sharedChat.routes.ts,savedSpecialist.routes.ts,thinkGraphRevision.routes.ts}` | Split ordinary shared chat, saved-specialist operations, and completed-pair ThinkGraph revision handling across the current route modules |
-| Saved Card execution services | `apps/backend/src/services/{savedCardAuthority,hermesCardSession,savedCardRun}.ts` plus `apps/backend/src/services/hermesGateway.ts` | Resolve saved Card authority, reuse or create the exact Project conversation session, submit the materialized Run through Hermes Gateway, and persist observed completion or failure |
+| Saved Card chat routes | `sharedChat.routes.ts`, `sharedChatTurn.ts`, `savedSpecialist.routes.ts`, `savedSpecialistRun.ts`, and `thinkGraphRevision.routes.ts` under `apps/backend/src/routes/` | Keep registration/history/events/Stop, ordinary turns, internal saved-specialist turns, and revision SSE as literal route owners rather than one generic Card-run router |
+| Saved Card execution services | `savedCardAuthority.ts`, `hermesCardSession.ts`, `savedCardRun.ts`, `hermesGateway.ts`, `thinkGraphCompletedPair.ts`, and `thinkGraphRevisionEvents.ts` under `apps/backend/src/services/` | Resolve saved authority, bind the exact Project conversation session, submit/settle one Hermes turn, and perform completed-pair ThinkGraph work without making a route file an execution service |
 | Hermes profile application | `apps/backend/src/hermes/profileMaterialization.ts` | Apply and read back only Card-owned Soul, model/runtime, skills, toolsets, MCP selection, delegation, and Team marker while preserving Hermes-owned and unknown profile state |
 | Hermes runtime | `HermesLatest/` | Hermes inference, profiles, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
-| Mag One execution | `apps/python-models/app/python_models/magentic_execution.py` | Headless structured submit, status/rejoin, stop, and final-result observation against Hermes' existing SQLite task/dependency runtime |
-| Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, provider availability, deterministic validation, and execution; transports do not duplicate these owners |
-| Official MCP host | `apps/python-models/app/mcp_host.py` | One authenticated projection of the canonical definitions for external clients and Hermes Dynamic Tool callbacks; protocol and transport are owned by the official Python MCP SDK |
-| CodeGraph | Native Codebase Memory through the official MCP host | Repository structure and source relationships; CBM is the sole graph writer |
-| ThinkGraph | Engraphis through `apps/python-models/app/python_models/engraphis.py` | Project reasoning, canonical entities, append-only temporal episodic Thinks, native structured incidence, and the sole persistent ThinkGraph store; Jev owns durable semantic edge admission/classification |
+| Magnetic TaskGraph | `apps/python-models/app/python_models/magnetic_taskgraph.py` | Headless structured submit, status/readback, and final-result observation against Hermes' existing SQLite task/dependency APIs |
+| Tool contracts and execution | `operation_definition.py`, literal contributor modules, `tool_registry.py`, and `tool_catalog.py` under `apps/python-models/app/python_models/` | One authored operation shape, exact Python/provider handlers, live lookup, and deterministic model-facing projection; transports do not duplicate these owners |
+| Official MCP host | `apps/python-models/app/{mcp_host,mcp_auth,mcp_catalog_runtime,mcp_provider_operations,mcp_observability}.py` | One SDK transport/dispatch host with literal owners for authentication, frozen catalog state, provider publication/calls, and diagnostics; external clients and Hermes callbacks consume the same canonical definitions |
+| CodeGraph | Official Codebase Memory MCP through the application host | Repository structure and source relationships; CBM is the sole graph writer |
+| ThinkGraph | Engraphis through `engraphis.py` and the responsibility-specific `engraphis_operations.py`, `thinkgraph_projection.py`, `thinkgraph_completed_pair.py`, and `thinkgraph_relationships.py` modules in `apps/python-models/app/python_models/` | Project reasoning, canonical entities, append-only temporal episodic Thinks, Engraphis structured incidence, and the sole persistent ThinkGraph store; Jev owns durable semantic edge admission/classification |
 | KnowGraph | Graphiti/Neo4j through `services/knowgraph` | Sourced knowledge and provenance |
-| AgentGraph | AGE/PostgreSQL through the Card-domain observation path | Saved Card relationships and truthful Run/reference/artifact observations |
+| AgentGraph | AGE/PostgreSQL through `agentgraph_topology.py` and `agentgraph_run_observations.py` | Saved Card relationships/authorization and truthful Run/reference/artifact observations remain separate writers over one AGE authority |
 
 ## Authority chain
 
 ```text
 saved Card revision
   + current dynamic mission
-  + deliberately selected native references and bounded data
+  + deliberately selected provider references and bounded data
   + effective saved grants
   -> Python materializes and rereads one in.idf
   -> saved runtime binding chooses the exact Hermes mode and profile
-  -> native runtime executes
+  -> HermesLatest executes
   -> PostgreSQL stores Run state and artifact metadata
-  -> AGE may observe stable identities and truthful native events
+  -> AGE may observe stable identities and truthful Hermes/provider events
 ```
 
 Callers do not supply replacement Card definitions. A model cannot enlarge its grants, change its
@@ -68,34 +68,33 @@ A saved Card is the permanent authority for:
 
 - stable identity and revision;
 - prompt;
-- provider, model, native profile, and desired native subagent model;
+- provider, model, Hermes profile, and desired Hermes subagent model;
 - runtime kind and mode;
 - enabled state;
 - selected skills, Hermes tools/toolsets, MCP tools, and other capability grants;
 - saved topology and presentation attachments.
 
-The sending user or Card supplies only the current task, images, and selected native references.
+The sending user or Card supplies only the current task, images, and selected provider references.
 `materialize_idf` is the only input materializer. It writes and rereads the exact bounded input before
 the runtime sees it. The Run artifact catalog retains the path, byte size, and hash. Receipts,
 approval state, provider lineage, AGE observations, and runtime status remain outside `in.idf`.
 
 The Project-owned `projectCodeFolder` selects a portable folder name under that Project's managed
-Builder storage. Source resolves it beneath the managed Project directory and mounts that directory
-into Hermes Docker only for the saved Builder Card. This contract is source-wired; loaded Builder
-product proof has not been established.
+Builder storage. Source resolves it beneath the managed Project directory and supplies it as the
+saved Builder Card's Hermes session workspace. HermesLatest's standard terminal/file behavior and PTY
+remain the owners; LiquidAIty applies no Docker policy. Loaded Builder product proof is not established.
 
-Each independently invoked saved Card owns its own root Run and IDF. Native temporary children remain
+Each independently invoked saved Card owns its own root Run and IDF. Hermes temporary children remain
 inside their owning Hermes Card. A Hermes Team is one root boundary: Hermes owns decomposition,
 worker prompts, retries, synthesis, and child context, so LiquidAIty does not manufacture per-worker
-IDFs from native child IDs.
+IDFs from Hermes child IDs.
 
 Card Python Scripts remain optional saved Card configuration. Python rails owns parsing, literal tool
-handle validation, hashes, and the compact presentation decision. The Agent Builder renders the editor
-below the Card's Tools selection; TypeScript only transports the draft and live palette. The removed ACP
-plugin/callback was not a valid reason to delete Script authoring, persistence, compilation, or
-validation. Until a separately approved Hermes-native owner exists, a valid enabled Script reports
-`card_script_native_bridge_unavailable` and the Run retains the Card's existing deliberate MCP
-presentation. No alternate executor or synthetic Script result is active.
+handle validation, hashes, and compact presentation. The Agent Builder renders the editor below the
+Card's Tools selection; TypeScript only transports the draft and live palette. A valid saved Script is
+presented as one `card_python` tool and executes through HermesLatest's existing child-process Python
+path; selected tools not wrapped by the Script remain ordinary Dynamic Tools. Blank or invalid source is
+inert, and no alternate executor or synthetic Script result exists.
 
 ## Application routes
 
@@ -105,16 +104,18 @@ signed runtime boundary and are mounted separately from browser authentication.
 
 | Route family | Current responsibility |
 | --- | --- |
-| `/api/cards` | Card configuration, Script validation, and read-only latest/current Run projection; it does not execute a Card |
+| `/api/cards` | Card configuration, Script validation, and `POST /runs/read` latest/history/status projection; it does not execute a Card |
 | `/api/idd` | Builder/editor-only IDD fields and deterministic live-catalog tool projections |
 | `/api/shared-chat` | Main/direct-Card saved Run preparation, exact Hermes submission/events/Stop, and conversation projection |
 | `/api/saved-specialists/invoke` | Process-secret saved ThinkGraph/KnowGraph child invocation |
 | `/api/thinkgraph/revisions` | Authenticated completed-pair ThinkGraph revision events |
-| `/api/agent-terminals` | Authenticated handoff to HermesLatest's existing PTY WebSocket for the exact Card session |
+| `/api/card-terminals` | Authenticated handoff to HermesLatest's existing PTY WebSocket for the exact Card session |
 | `/api/hermes-profile` | Thin saved-Card profile/learning/skills/MCP read and supported-operation adapter |
-| `/api/codegraph` | Authenticated interactive CodeGraph UI reads through Python rails |
-| `/api/thinkgraph` and `/api/knowgraph` | Native graph projections/operations without merging authority |
+| `/api/thinkgraph` and `/api/knowgraph` | Engraphis and Graphiti projections/operations without merging authority |
 | `/api/projects` | Project and deck transport |
+
+CodeGraph is reached through the saved Card's granted CBM operations in the canonical tool catalog;
+there is no separate CodeGraph backend route or graph owner.
 
 Route names are transport addresses, not agent identities or separate runtimes. The retired generic
 Card-runtime and loopback Hermes Card-tools routes remain absent.
@@ -154,7 +155,7 @@ protocol-neutral Python operation definitions through the Hermes Dynamic Tools c
 Catalog/readback tests and loaded internal-tool execution are proven separately from external-client live
 acceptance.
 
-Codebase Memory is a native MCP dependency of that host. Canonical startup resolves the current official
+Codebase Memory is an official MCP dependency of that host. Canonical startup resolves the current official
 `codebase-memory-mcp` command from the machine's normal installed PATH; the repository does not retain a
 versioned copy or checksum pin. LiquidAIty owns one long-lived application stdio frontend. Codex Desktop may own one separate
 frontend through its official direct registration, independent of LiquidAIty and GPT/plugin availability. Both
@@ -168,19 +169,19 @@ the official CBM provider through the application MCP host; saved Card grants re
 
 The canonical project is `C-Projects-LiquidAIty-main` at `C:/Projects/LiquidAIty/main`.
 
-## Graph authorities and native observations
+## Graph authorities and provider observations
 
 ```text
 ThinkGraph = Engraphis project reasoning and operational knowledge
 KnowGraph  = Graphiti/Neo4j sourced knowledge and provenance
-CodeGraph  = native CBM repository structure
+CodeGraph  = official CBM repository structure
 AgentGraph = AGE Card topology and truthful execution observations
 ```
 
-Each graph has one authority and one writer. Run-scoped Context Selections may carry bounded native
+Each graph has one authority and one writer. Run-scoped Context Selections may carry bounded provider
 IDs, data, and provenance together in `in.idf`; that transport is not another graph and does not copy
 ownership. Main retains explicit ThinkGraph writes and deliberate delegation. It also submits an exact
-completed User/Main pair to the approved Engraphis-native lifecycle only after the visible Main turn and
+completed User/Main pair to the approved Engraphis lifecycle only after the visible Main turn and
 conversation persistence complete:
 
 ```text
@@ -212,7 +213,7 @@ paths remain removed; there is no candidate system, approval state, shadow graph
 model edge writer, or whole-graph reclassification loop. This lifecycle does not write KnowGraph.
 
 Visual activity may be driven only by real reads, selections, deliveries, traversals, writes, Run
-completion, or failure. There is no native-attention compatibility graph or generic tool-event
+completion, or failure. There is no compatibility attention graph or generic tool-event
 normalizer. AGE may store stable Run/reference/artifact identities, but it does not authorize a
 runtime, hold raw IDFs, choose a Card, or control Hermes lifecycle.
 
@@ -220,7 +221,7 @@ runtime, hold raw IDFs, choose a Card, or control Hermes lifecycle.
 
 React/TypeScript renders Main Chat, Agent Canvas, graph views, Card/Run inspection, and Builder's lower
 terminal. It may validate structured transport and render status. It may not interpret task meaning,
-rank or route agents, merge graph semantics, infer knowledge access from prose, or fabricate native
+rank or route agents, merge graph semantics, infer knowledge access from prose, or fabricate provider
 activity.
 
 Builder is the saved Card with stable ID/profile `builder`; Agent Builder is the workspace that edits
@@ -232,7 +233,7 @@ create/edit mode, PLAN loader, semantic TypeScript router, or alternate prompt e
 
 - PostgreSQL stores saved Cards, decks, revisions, Runs, conversations, and artifact metadata.
 - AGE/PostgreSQL stores accepted Card relationships and execution observations.
-- Hermes profile homes store native configuration, sessions, memory, skills, and Kanban state.
+- Hermes profile homes store Hermes configuration, sessions, memory, skills, and Kanban state.
 - Engraphis, Graphiti/Neo4j, and CBM retain their own graph data.
 - Durable source-operation identities use repository root plus relative path and content hash, never
   a machine-specific absolute path as the permanent identity.
@@ -253,7 +254,7 @@ Evidence tiers remain separate:
 2. focused contract tests;
 3. production typecheck/build;
 4. loaded service health and source hashes;
-5. a real saved Card input and native output through Gateway/TUI;
+5. a real saved Card input and Hermes output through Gateway/TUI;
 6. external connector acceptance;
 7. Jeremiah's visual acceptance.
 
@@ -281,7 +282,7 @@ LiquidAIty execution boundary. No other Hermes customization is accepted by this
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The six bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Experimental Codex App Server Dynamic Tools, session-scoped Bot roster enforcement, exact-submission correlation, Card-owned profile fields and profile-scoped learning selection, AutoTeam/Team TaskGraph, and Magnetic assignment ceiling/lineage. Hermes retains execution, session, Bot delivery, learning, queue, task-ledger, and PTY ownership. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, IDD tool authority, and alternate Codex App Server paths. |
+| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The seven bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Experimental Dynamic Tools, Card Python, session-scoped Bot roster enforcement, Card-owned profile fields/capability fencing/profile-scoped learning, exact submission/Stop/model/usage evidence, AutoTeam/Team TaskGraph, and Magnetic assignment ceiling/lineage. Hermes retains execution, session, Bot delivery, learning, queue, task-ledger, and PTY ownership. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
 `HermesLatest/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
@@ -314,6 +315,7 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
 | `Coding-Dev-Tools/engraphis` `1.7.9` from upstream `main` at `619f49860f293ab1826aaf4e11a158bc22f03fcf` | `EngraphisLatest/pyproject.toml`, `requirements.txt`; `engraphis/mcp_server.py::{classic_mcp,smart_mcp,_safe_run_stdio_async}`; `engraphis/{mcp_http_cli,dashboard_app}.py`; `integrations/prime_agent/src/engraphis_prime_agent/mcp_client.py`; corresponding MCP/HTTP/package/Prime tests | Port only Engraphis's MCP binding and bundled client from SDK v1 `FastMCP`/`ClientSession` to official SDK v2 `MCPServer`/`Client(mode="auto")`. Preserve all 39 Classic compatibility handlers, the Smart 9 handlers, memory/Think semantics, schemas, storage, consent, authentication, stdio wire isolation, and HTTP DNS-rebinding protection. LiquidAIty publishes only the Smart 9; advanced Classic actions remain reachable only through Engraphis's own discover/execute gateway. | Upstream MCP, HTTP, consent, dispatch, packaging, contract, annotation, and Prime client tests pass; direct disposable modern (`2026-07-28`) and legacy (`2025-11-25`) clients list the same Smart 9 and complete remember/recall/get/update/discovery/read/conflict/session flows. Fork cost is one mechanical SDK-major port. Remove this row and return `apps/python-models/requirements.txt` to upstream Engraphis when upstream ships the equivalent v2 port; no memory database or saved Card migration is required. |
+| Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::resolve_capability`; `apps/python-models/app/python_models/engraphis_operations.py::_invoke_tool` | Promote the existing capability-ID/schema-digest resolver to a public function so the authenticated Project adapter can inspect the exact discovered Smart action schema and inject `workspace` only when that action declares it. The resolver body, TTL/HMAC validation, availability gate, LRU refresh, action selection and execution remain unchanged. | Required proof is the focused Engraphis Smart discovery/execute suite plus the application operation/catalog contract. Fork cost is one identifier/API promotion suitable for an upstream PR. Remove the application dependency when upstream exposes an equivalent public capability-inspection API; never copy or reimplement its capability index. |
 | Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: `semanticRelationshipStrength`, `semanticRelationshipWidth`, `semanticRelationshipDistance`, `semanticRelationshipSpring`, `turnHeatIntensity`, `preserveRefreshPosition`, `solarpunkMaterialRecipe`, `paintSolarpunkMaterial`, `materialCacheKey`, `handleNodeClick`, and the existing force/paint/`setData` call sites | Render Jev relationship strength through native edge width/spring/distance, preserve mature coordinates/camera across authoritative revisions, paint transient current-turn heat, and opt explicitly annotated render nodes into one cached Solarpunk material seam: blue-dominant Think with a soft green material accent, orange-dominant Know with a soft yellow material accent, or a unified dark paired surface with separate blue and orange authority treatment. Lavender marks recent turn activity; neutral cyan-white remains available for selection/Focus emphasis, and the opposite authority hue never decorates a single-authority node. Node-provided authority colors and active state key the cache without changing modality. When an embed supplies `onNodeDoubleClick`, the renderer resolves the click pair before either callback so a single-click inspector cannot move or cover the second hit; embeds without that option retain immediate upstream click behavior. Existing public style names, presets, palettes, shared node geometry, graph scene, inspectors, Galaxy black-hole authority/physics, controls, focus behavior, and layout engine remain authoritative. No second style, layout, or graph is introduced. | `ThinkGraphSemanticPhysics.spec.ts` exercises the real renderer internals for all three canonical-color modalities, single-authority secondary accents, lavender turn activity, unified paired material, and active exposure/cache identity; focused renderer and graph-state tests plus client production typecheck cover the retained seams. Sync cost is a small call-site rebase when deliberately adopting a later renderer asset. Rollback removes these helpers/call-site mappings and restores the upstream width/force/refresh behavior without changing graph data. |
 
 ## Current proof limits

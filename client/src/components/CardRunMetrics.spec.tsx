@@ -47,13 +47,17 @@ describe('CardRunMetrics', () => {
           cardId: 'builder',
           latest: {
             state: 'failed',
-            acceptedAt: '2026-10-03T12:00:00Z',
+            startedAt: '2026-10-03T12:00:00Z',
             model: 'gpt-5.6-sol',
             elapsedMs: 17_490,
             totalTokens: 12_340,
             costUsd: 0.08,
             costStatus: 'estimated',
             toolCallCount: 7,
+            autoModelDecision: { status: 'selected', selectedConfidencePercentage: 96.5 },
+            autoToolsDecision: { status: 'selected', candidateCount: 3,
+              selectedToolIds: ['search', 'read'],
+              selectedConfidencePercentages: { search: 92, read: 88 } },
           },
         },
       }),
@@ -63,13 +67,15 @@ describe('CardRunMetrics', () => {
     const view = await renderDashboard();
 
     expect(view.textContent).toContain('Model: gpt-5.6-sol');
+    expect(view.textContent).toContain('Auto Model: selected · 96.5%');
     expect(view.textContent).toContain('Time: 00:17.49');
     expect(view.textContent).toContain('Tokens: 12,340');
     expect(view.textContent).toContain('Cost: ~$0.08 estimated');
     expect(view.textContent).toContain('Tools: 7');
+    expect(view.textContent).toContain('AutoTools: 2/3 selected · USE search 92%, read 88%');
     expect(view.textContent).not.toMatch(/receipt/i);
     expect(view.textContent).not.toMatch(/history|provider|retry|artifact|reference|context|Jev/i);
-    expect(fetchMock).toHaveBeenCalledWith('/api/cards/run', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('/api/cards/runs/read', expect.objectContaining({
       body: JSON.stringify({ action: 'history', projectId: 'project-one', deckId: 'deck-one',
         cardId: 'builder', limit: 1 }),
     }));
@@ -78,7 +84,7 @@ describe('CardRunMetrics', () => {
   it('keeps unknown cancelled Run aggregates unavailable instead of zero', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ok: true,
       result: { cardId: 'builder', latest: {
-        state: 'cancelled', acceptedAt: null, model: null, elapsedMs: null,
+        state: 'cancelled', startedAt: null, model: null, elapsedMs: null,
         totalTokens: null, costUsd: null, costStatus: 'unavailable', toolCallCount: null,
       } },
     }) })));
@@ -110,16 +116,16 @@ describe('CardRunMetrics', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-03T12:00:01Z'));
     const responses = [
-      { state: 'running', acceptedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
+      { state: 'running', startedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
         elapsedMs: 1_000, totalTokens: null, costUsd: null, costStatus: 'unavailable',
         toolCallCount: null },
-      { state: 'running', acceptedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
+      { state: 'running', startedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
         elapsedMs: 3_000, totalTokens: 30, costUsd: 0.01, costStatus: 'estimated',
         toolCallCount: 2 },
-      { state: 'failed', acceptedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
+      { state: 'failed', startedAt: '2026-10-03T12:00:00Z', model: 'gpt-5.6-sol',
         elapsedMs: 3_500, totalTokens: 40, costUsd: 0.02, costStatus: 'estimated',
         toolCallCount: 3 },
-      { state: 'cancelled', acceptedAt: '2026-10-03T12:00:05Z', model: null,
+      { state: 'cancelled', startedAt: '2026-10-03T12:00:05Z', model: null,
         elapsedMs: 250, totalTokens: null, costUsd: null, costStatus: 'unavailable',
         toolCallCount: null },
     ];

@@ -127,7 +127,7 @@ async function serve(
 }
 
 describe('authenticated WorldView presentation readiness', () => {
-  it('reports the supervised subsystem-agent boundary without starting it', async () => {
+  it('reports the supervised presentation boundary without inventing a voice runtime', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response('<html/>', { status: 200 }));
     const base = await serve(fetcher);
     const response = await fetch(`${base}/readiness`);
@@ -137,14 +137,8 @@ describe('authenticated WorldView presentation readiness', () => {
     expect(body).toMatchObject({
       status: 'ready',
       lifecycle: { ownership: 'supervised-upstream', automaticStart: false },
-      subsystemAgents: {
-        realtimeVoice: {
-          policy: 'user-initiated',
-          active: null,
-          runtimeState: 'ui-handshake-required',
-        },
-      },
     });
+    expect(body).not.toHaveProperty('subsystemAgents');
     expect(fetcher).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ origin: 'http://127.0.0.1:4174' }),
       expect.objectContaining({ method: 'GET' }),
@@ -182,7 +176,7 @@ describe('Project WorldView capability authority', () => {
         mainReason: null, updatedAt: '2026-09-27T00:00:00.000Z',
       }]),
       set: vi.fn(async (_projectId, capabilityId, actor, enabled) => ({
-        capabilityId, enabled, controlledBy: actor === 'main' ? 'main' as const : 'user' as const,
+        capabilityId, enabled, controlledBy: 'user' as const,
         lastOrigin: actor,
         mainReason: null, updatedAt: '2026-09-27T00:00:01.000Z',
       })),
@@ -232,33 +226,24 @@ describe('Project WorldView capability authority', () => {
     expect(capabilityStore.set).not.toHaveBeenCalled();
   });
 
-  it('keeps an explicit user choice above a later Main suggestion', async () => {
-    const rows = new Map<string, any>();
-    const query = vi.fn(async (_sql: string, values: unknown[] = []) => {
-      const [projectId, capabilityId, mainEnabled, mainReason, userEnabled, actor] = values;
-      const key = `${projectId}:${capabilityId}`;
-      const prior = rows.get(key) || {
-        capability_id: capabilityId,
-        main_enabled: null,
-        main_reason: null,
-        user_enabled: null,
-      };
-      const next = {
-        ...prior,
-        main_enabled: actor === 'main' ? mainEnabled : prior.main_enabled,
-        main_reason: actor === 'main' ? mainReason : prior.main_reason,
-        user_enabled: actor === 'user' || actor === 'worldview_card'
-          ? userEnabled : prior.user_enabled,
-        last_origin: actor,
+  it('preserves Python-authored Main state while writing one user override', async () => {
+    const query = vi.fn(async (sql: string, values: unknown[] = []) => {
+      expect(sql).not.toContain('main_enabled=CASE');
+      expect(sql).not.toContain('main_reason=CASE');
+      expect(sql).toContain('user_enabled=EXCLUDED.user_enabled');
+      expect(values).toEqual(['project-a', 'weather', false, 'user']);
+      return { rows: [{
+        capability_id: 'weather',
+        main_enabled: true,
+        main_reason: 'Research task',
+        user_enabled: false,
+        last_origin: 'user',
         updated_at: new Date('2026-09-27T00:00:00.000Z'),
-      };
-      rows.set(key, next);
-      return { rows: [next] };
+      }] };
     });
     const store = createProjectWorldviewCapabilityStore(query);
 
-    await store.set('project-a', 'weather', 'user', false);
-    const result = await store.set('project-a', 'weather', 'main', true, 'Research task');
+    const result = await store.set('project-a', 'weather', 'user', false);
 
     expect(result).toMatchObject({
       capabilityId: 'weather',

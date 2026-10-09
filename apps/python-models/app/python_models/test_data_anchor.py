@@ -1,79 +1,47 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import pytest
 
 
-from app.python_models.data_anchor import (
+from app.python_models.canonical_subject_directory import (
     append_canonical_subject_directory,
     assemble_canonical_subject_directory,
-    DataAnchorError,
+)
+from app.python_models.data_anchor import (
     empty_graph_projection,
-    read_codegraph_exact,
+    resolve_data_anchors,
+)
+from app.python_models.data_anchor_contract import (
+    GRAPH_CONTEXT_BYTE_LIMIT,
+    DataAnchorError,
+    json_safe,
+)
+from app.python_models.codegraph_reference_reads import read_codegraph_exact
+from app.python_models.knowgraph_reference_reads import (
     read_knowgraph_episodes_exact,
     read_knowgraph_exact,
-    read_thinkgraph_exact,
-    resolve_data_anchors,
-    search_knowgraph_hybrid,
+    read_knowgraph_neighborhood,
+    read_knowgraph_projection,
 )
-from app.python_models import engraphis, data_anchor
+from app.python_models.thinkgraph_reference_reads import read_thinkgraph_exact
+from app.python_models import (
+    codegraph_reference_reads,
+    engraphis,
+    knowgraph_reference_reads,
+    thinkgraph_reference_reads,
+)
 
 
-def test_codegraph_projection_preserves_returned_ids_direction_and_type(monkeypatch):
-    prefix = "C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderKnowledgeGraphs."
-    source, target = prefix + "withSettlementHeat", prefix + "observeThinkGraphRevision"
-    node_columns = ["a.qualified_name", "a.name", "a.label", "id(a)"]
-    edge_columns = [
-        *node_columns,
-        "b.qualified_name", "b.name", "b.label", "id(b)", "id(r)", "type(r)",
-    ]
-    nodes = {"columns": node_columns, "rows": [[
-        source, "withSettlementHeat", "Function", 2130,
-    ]], "total": 1}
-    edges = {"columns": edge_columns, "rows": [[
-        source, "withSettlementHeat", "Function", 2130,
-        target, "observeThinkGraphRevision", "Function", 2131, 17367, "CALLS",
-    ]], "total": 1}
-    observed = []
-    def read(**kwargs):
-        observed.append(kwargs)
-        return [nodes, edges]
-    monkeypatch.setattr(data_anchor, "call_materializer_read_tools", read)
-    result = data_anchor._read_codegraph_projection("p", "d", "card", {"node_ids": [source], "expand": True})
-    assert [node["id"] for node in result["nodes"]] == [source, target]
-    assert result["edges"] == [{"id": "17367", "source": source, "target": target,
-        "predicate": "CALLS", "properties": {}, "provenance": {
-            "project": "C-Projects-LiquidAIty-main", "edgeId": "17367", "tool": "cbm.query_graph"}}]
-    assert result["nodes"][0]["provenance"]["nodeId"] == "2130"
-    assert all(name == "cbm.query_graph" for name, _ in observed[0]["calls"])
-    assert all(arguments["format"] == "json" for _, arguments in observed[0]["calls"])
-    assert "MATCH (a)-[r]->(b)" in observed[0]["calls"][1][1]["query"]
+def test_data_anchor_json_normalization_uses_python_datetime_contract() -> None:
+    value = datetime(2026, 10, 8, 12, 34, 56, tzinfo=timezone.utc)
 
-
-def test_codegraph_empty_and_changed_wire_format_do_not_create_records(monkeypatch):
-    def read(**kwargs):
-        results = []
-        for _, args in kwargs["calls"]:
-            columns = [
-                column.strip()
-                for column in args["query"].split(" RETURN ")[1].split(" LIMIT ")[0].split(",")
-            ]
-            results.append({"columns": columns, "rows": [], "total": 0})
-        return results
-    monkeypatch.setattr(data_anchor, "call_materializer_read_tools", read)
-    result = data_anchor._read_codegraph_projection("p", "d", "card", {"node_ids": ["absent"]})
-    assert result["nodes"] == result["edges"] == []
-    with pytest.raises(DataAnchorError, match="format_invalid"):
-        data_anchor._cbm_table({"columns": ["other"], "rows": []}, ["a"])
-    with pytest.raises(DataAnchorError, match="rows_invalid"):
-        data_anchor._cbm_table({"columns": ["a"], "rows": [["one"]], "total": 0}, ["a"])
+    assert json_safe(value) == "2026-10-08T12:34:56+00:00"
 
 
 @pytest.fixture
 def engraphis_graph(tmp_path, monkeypatch):
-    import io
-    import json
-    from urllib.error import HTTPError
     from engraphis.service import MemoryService
     # Engraphis persistence/relationship fixture; hash embedding is not semantic proof.
     service = MemoryService.create(str(tmp_path / "memory.sqlite"), embed_model="hash",
@@ -82,16 +50,6 @@ def engraphis_graph(tmp_path, monkeypatch):
     first = service.remember("Current Engraphis graph content", workspace="project-1", title="Current fact")["id"]
     second = service.remember("Project-scoped Engraphis engine content", workspace="project-1", title="Engraphis memory")["id"]
     service.link(first, second, workspace="project-1", relation="supports", reason="Retained Engraphis evidence")
-    def read(request, **kwargs):
-        assert request.full_url.endswith("/thinkgraph/operation")
-        payload = json.loads(request.data)
-        assert payload["operation"] == "inspect"
-        try:
-            result = engraphis.private_operation(payload["projectId"], "inspect", payload["arguments"])
-        except ValueError as error:
-            raise HTTPError(request.full_url, 409, str(error), {}, io.BytesIO())
-        return io.BytesIO(json.dumps(result).encode())
-    monkeypatch.setattr(data_anchor, "urlopen", read)
     yield service, first, second
     service.close()
 
@@ -123,9 +81,6 @@ def test_exact_thinkgraph_read_accepts_project_scoped_engraphis_id(engraphis_gra
 def test_think_handoff_prefers_self_contained_thinks_and_keeps_engraphis_evidence(
     monkeypatch,
 ) -> None:
-    import io
-    import json
-
     provider_payload = {
         "entity": {
             "canonical_id": "entity-one",
@@ -150,9 +105,9 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_engraphis_evidenc
         }
     }
     monkeypatch.setattr(
-        data_anchor,
-        "urlopen",
-        lambda *_args, **_kwargs: io.BytesIO(json.dumps(provider_payload).encode()),
+        thinkgraph_reference_reads,
+        "private_operation",
+        lambda *_args, **_kwargs: provider_payload,
     )
 
     record = read_thinkgraph_exact(
@@ -292,6 +247,159 @@ class _FakeNeo4jDriver:
         self.closed = True
 
 
+def _projection_node_rows() -> list[dict]:
+    return [{
+        "node_id": "entity-a",
+        "node_labels": ["Entity"],
+        "node_props": {
+            "name": "Alpha",
+            "source": "Graphiti",
+            "name_embedding": [0.1, 0.2],
+            "embedding": [0.3],
+            "embedding_1024": [0.4],
+            "nested": {"fact_embedding": [0.5], "retained": "yes"},
+        },
+    }, {
+        "node_id": "entity-b",
+        "node_labels": ["Company"],
+        "node_props": {"name": "Beta", "owlClass": "Organization"},
+    }]
+
+
+def _projection_relationship_rows() -> list[dict]:
+    return [{
+        "rel_id": "fact-1",
+        "rel_type": "RELATES_TO",
+        "rel_props": {
+            "name": "was awarded a launch services contract by",
+            "fact": "NASA awarded Rocket Lab a launch services contract.",
+            "episodes": ["episode-1"],
+            "created_at": "2026-09-23T12:00:00Z",
+            "reference_time": "2026-09-01T00:00:00Z",
+            "valid_at": "2026-09-01T00:00:00Z",
+            "jev_relation_winner": "PROVIDES",
+            "jev_relation_distribution_json": json.dumps({
+                "PROVIDES": 0.92,
+                "ASSOCIATED_WITH": 0.08,
+            }),
+            "jev_label_confidence": 0.92,
+            "jev_requested_model": "typesafe/jev-1.13",
+            "jev_resolved_model": "typesafe/jev-1.13",
+            "jev_evaluated_at": "2026-09-24T12:00:00Z",
+            "jev_question_schema_version": "knowgraph.relationship-choice.v2",
+            "jev_ontology_version": "jev.semantic-relationships.v1",
+            "jev_ontology_hash": "hash-1",
+        },
+        "from_id": "entity-a",
+        "from_labels": ["Entity"],
+        "from_props": {"name": "Alpha"},
+        "to_id": "entity-b",
+        "to_labels": ["Company"],
+        "to_props": {"name": "Beta", "owlClass": "Organization"},
+    }]
+
+
+def _projection_episode_rows() -> list[dict]:
+    return [{
+        "node_id": "episode-1",
+        "node_labels": ["Episodic"],
+        "node_props": {
+            "name": "Primary source",
+            "source_url": "https://example.test/source",
+            "content": "source body",
+            "content_embedding": [0.1, 0.2],
+        },
+    }]
+
+
+def test_knowgraph_projection_preserves_ui_shape_and_provider_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _FakeNeo4jDriver([
+        _projection_node_rows(),
+        _projection_relationship_rows(),
+        _projection_episode_rows(),
+    ])
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "_knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+    projection = read_knowgraph_projection("project-1", 200)
+
+    nodes = {node["id"]: node for node in projection["nodes"]}
+    assert list(nodes) == ["entity-a", "entity-b", "episode-1"]
+    assert nodes["entity-a"] == {
+        "id": "entity-a",
+        "label": "Alpha",
+        "type": "Entity",
+        "source": "know",
+        "properties": {
+            "name": "Alpha",
+            "source": "Graphiti",
+            "nested": {"retained": "yes"},
+        },
+    }
+    assert nodes["entity-b"]["type"] == "Organization"
+    assert nodes["episode-1"]["properties"]["source_url"] == (
+        "https://example.test/source"
+    )
+    assert "content_embedding" not in nodes["episode-1"]["properties"]
+    assert [
+        (
+            relationship["id"], relationship["from"], relationship["to"],
+            relationship["type"], relationship["source"],
+        )
+        for relationship in projection["relationships"]
+    ] == [("fact-1", "entity-a", "entity-b", "PROVIDES", "know")]
+    properties = projection["relationships"][0]["properties"]
+    assert properties["authority"] == "know"
+    assert properties["graphitiStore"] == "neo4j"
+    assert properties["portableKind"] == "know"
+    assert properties["graphitiFactUuid"] == "fact-1"
+    assert properties["graphitiRelationshipType"] == "RELATES_TO"
+    assert properties["graphitiRelation"] == "was awarded a launch services contract by"
+    assert properties["supportingEpisodeUuids"] == ["episode-1"]
+    assert properties["temporalStatus"] == "current"
+    assert properties["jevCanonicalRelation"] == "PROVIDES"
+    assert properties["relationship_strength"] == 0.92
+    assert properties["jev"]["distribution"] == {
+        "PROVIDES": 0.92, "ASSOCIATED_WITH": 0.08,
+    }
+    assert driver.calls[0][1]["projectScopeIds"] == ["liquidaity-project-1"]
+    assert driver.calls[0][1]["limit"] == 200
+    assert driver.closed is True
+
+
+def test_knowgraph_neighborhood_preserves_one_hop_direction_and_episode_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _FakeNeo4jDriver([
+        [_projection_node_rows()[0]],
+        _projection_relationship_rows(),
+        _projection_episode_rows(),
+    ])
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "_knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+    neighborhood = read_knowgraph_neighborhood("project-1", "entity-a", 50)
+
+    assert {node["id"] for node in neighborhood["nodes"]} == {
+        "entity-a", "entity-b", "episode-1",
+    }
+    assert neighborhood["relationships"][0]["from"] == "entity-a"
+    assert neighborhood["relationships"][0]["to"] == "entity-b"
+    assert "MATCH (a)-[r]-(b)" in driver.calls[1][0]
+    assert driver.calls[1][1] == {
+        "nodeId": "entity-a",
+        "projectScopeIds": ["liquidaity-project-1"],
+        "limit": 50,
+    }
+    assert driver.closed is True
+
+
 def _subject(graph_system: str, index: int) -> dict[str, str]:
     id_field = (
         "engraphisEntityId" if graph_system == "ThinkGraph" else "graphitiEntityId"
@@ -329,7 +437,7 @@ def test_complete_subject_directory_keeps_all_37_plus_11_headers_without_truncat
     )
     assert directory["bytes"] > 0
     assert directory["estimatedTokens"] == (directory["bytes"] + 3) // 4
-    assert directory["bytes"] < data_anchor._GRAPH_SEED_LIMIT
+    assert directory["bytes"] < GRAPH_CONTEXT_BYTE_LIMIT
     assert directory["readDurationMs"] == 12.346
     model_context = append_canonical_subject_directory("", directory)
     assert "Complete Cross-Graph Subject Directory" in model_context
@@ -434,10 +542,12 @@ def test_subject_directory_rejects_combined_context_over_existing_limit() -> Non
         {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
     )
     with pytest.raises(DataAnchorError, match="data_anchor_seed_limit_exceeded"):
-        append_canonical_subject_directory("x" * data_anchor._GRAPH_SEED_LIMIT, directory)
+        append_canonical_subject_directory("x" * GRAPH_CONTEXT_BYTE_LIMIT, directory)
 
 
-def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance() -> None:
+def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     driver = _FakeNeo4jDriver([[{
         "graphitiId": "entity-1",
         "labels": ["Entity"],
@@ -454,12 +564,16 @@ def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance
         "relationships": [],
     }]])
 
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "_knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
     record = read_knowgraph_exact(
         "project-1",
         "graphitiEntityId",
         "entity-1",
         bounded_expansion=1,
-        driver_factory=lambda: driver,
     )
 
     assert record is not None
@@ -471,7 +585,9 @@ def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance
     assert driver.closed is True
 
 
-def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope() -> None:
+def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     driver = _FakeNeo4jDriver([[{
         "uuid": "episode-2",
         "properties": {
@@ -487,9 +603,12 @@ def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
         "properties": {"group_id": "liquidaity-project-1"},
     }]])
 
-    episodes = read_knowgraph_episodes_exact(
-        "project-1", ["episode-1", "episode-2"], driver_factory=lambda: driver,
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "_knowgraph_driver",
+        lambda: (driver, "neo4j"),
     )
+    episodes = read_knowgraph_episodes_exact("project-1", ["episode-1", "episode-2"])
 
     assert [episode["uuid"] for episode in episodes] == ["episode-2"]
     assert episodes[0]["source_url"] == "https://example.test/source"
@@ -498,11 +617,13 @@ def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
     query, params = driver.calls[0]
     assert "MATCH (episode:Episodic)" in query
     assert params["episodeIds"] == ["episode-1", "episode-2"]
-    assert params["scopeIds"] == ["project-1", "liquidaity-project-1"]
+    assert params["scopeIds"] == ["liquidaity-project-1"]
     assert driver.closed is True
 
 
-def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None:
+def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     driver = _FakeNeo4jDriver([[], [{
         "graphitiId": "fact-1",
         "labels": ["RELATES_TO"],
@@ -535,11 +656,19 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
         "valid_at": "2026-09-01T00:00:00Z",
     }
 
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "_knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "read_knowgraph_episodes_exact",
+        lambda project_id, ids: [episode]
+        if project_id == "project-1" and ids == ["episode-1"] else [],
+    )
     record = read_knowgraph_exact(
         "project-1", "graphitiRelationshipId", "fact-1",
-        driver_factory=lambda: driver,
-        episode_reader=lambda project_id, ids: [episode]
-        if project_id == "project-1" and ids == ["episode-1"] else [],
     )
 
     assert record is not None
@@ -580,7 +709,9 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
     assert record["provenance"]["episodes"] == [episode]
 
 
-def test_knowgraph_exact_fact_preserves_graphiti_fact_when_jev_readback_is_malformed() -> None:
+def test_knowgraph_exact_fact_preserves_graphiti_fact_when_jev_readback_is_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     driver = _FakeNeo4jDriver([[], [{
         "graphitiId": "fact-malformed",
         "labels": ["RELATES_TO"],
@@ -604,13 +735,21 @@ def test_knowgraph_exact_fact_preserves_graphiti_fact_when_jev_readback_is_malfo
     }]])
     episode = {"uuid": "episode-1", "source_url": "https://example.test/source"}
 
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "_knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+    monkeypatch.setattr(
+        knowgraph_reference_reads,
+        "read_knowgraph_episodes_exact",
+        lambda project_id, ids: [episode]
+        if project_id == "project-1" and ids == ["episode-1"] else [],
+    )
     record = read_knowgraph_exact(
         "project-1",
         "graphitiRelationshipId",
         "fact-malformed",
-        driver_factory=lambda: driver,
-        episode_reader=lambda project_id, ids: [episode]
-        if project_id == "project-1" and ids == ["episode-1"] else [],
     )
 
     assert record is not None
@@ -658,7 +797,8 @@ def test_provider_projection_contains_only_ids_returned_in_model_bound_graph_dat
         "truncated": False,
     }
     monkeypatch.setattr(
-        "app.python_models.data_anchor.read_knowgraph_exact",
+        knowgraph_reference_reads,
+        "read_knowgraph_exact",
         lambda *_args, **_kwargs: record,
     )
     projection = empty_graph_projection("project-1")
@@ -682,13 +822,14 @@ def test_provider_projection_contains_only_ids_returned_in_model_bound_graph_dat
     assert references[0]["graphitiEntityId"] == "entity-1"
 
 
-def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> None:
+def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     observed = {}
 
     def reader(**kwargs):
         observed.update(kwargs)
         return [
-            {"project": "C-Projects-LiquidAIty-main", "status": "ready", "nodes": 8, "edges": 16},
             {
                 "qualified_name": "project.module.materialize_idf",
                 "name": "materialize_idf",
@@ -703,13 +844,17 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
             {"callers": [{"qualified_name": "project.module.caller"}], "callees": []},
         ]
 
+    monkeypatch.setattr(
+        codegraph_reference_reads,
+        "call_materializer_read_tools",
+        reader,
+    )
     record = read_codegraph_exact(
         "project-1",
         "deck_builder",
         "card_helper",
         "project.module.materialize_idf",
         bounded_expansion=1,
-        materializer_reader=reader,
     )
 
     assert record is not None
@@ -717,15 +862,16 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
     assert record["properties"]["file"] == "apps/python-models/app/python_models/idf.py"
     assert record["relationshipEvidence"]["callers"][0]["qualified_name"].endswith("caller")
     assert [name for name, _args in observed["calls"]] == [
-        "cbm.index_status", "cbm.get_code_snippet", "cbm.trace_path",
+        "cbm.get_code_snippet", "cbm.trace_path",
     ]
     assert all(arguments["format"] == "json" for _, arguments in observed["calls"])
 
 
-def test_codegraph_exact_read_normalizes_provider_grouped_trace_json() -> None:
+def test_codegraph_exact_read_normalizes_provider_grouped_trace_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def reader(**_kwargs):
         return [
-            {"project": "C-Projects-LiquidAIty-main", "status": "ready"},
             {
                 "qualified_name": "project.module.materialize_idf",
                 "name": "materialize_idf",
@@ -745,13 +891,17 @@ def test_codegraph_exact_read_normalizes_provider_grouped_trace_json() -> None:
             },
         ]
 
+    monkeypatch.setattr(
+        codegraph_reference_reads,
+        "call_materializer_read_tools",
+        reader,
+    )
     record = read_codegraph_exact(
         "project-1",
         "deck_builder",
         "card_helper",
         "project.module.materialize_idf",
         bounded_expansion=1,
-        materializer_reader=reader,
     )
 
     assert record is not None
@@ -762,101 +912,10 @@ def test_codegraph_exact_read_normalizes_provider_grouped_trace_json() -> None:
     }]
 
 
-def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced() -> None:
-    observed = []
-
-    def reader(**kwargs):
-        observed.append(kwargs)
-        calls = kwargs["calls"]
-        centered = "center_node_uuid" in calls[0][1]
-        if centered:
-            assert calls[0][1]["center_node_uuid"] == "explicit-1"
-            return [
-                {"nodes": [{"uuid": "entity-2", "name": "Nearby"}]},
-                {"facts": [{
-                    "uuid": "fact-2", "fact": "Nearby supports Alpha",
-                    "source_node_uuid": "entity-2", "target_node_uuid": "entity-1",
-                }]},
-            ]
-        assert kwargs["concurrent"] is True
-        assert calls[0][1]["entity_types"] == ["Company"]
-        assert calls[1][1]["edge_types"] == ["SUPPORTS"]
-        assert calls[1][1]["valid_at_after"] == "2026-01-01T00:00:00Z"
-        return [
-            {"nodes": [{"uuid": "entity-1", "name": "Alpha", "aliases": ["A"]}]},
-            {"facts": [{
-                "uuid": "fact-1", "fact": "Alpha is current",
-                "source_node_uuid": "entity-1", "target_node_uuid": "entity-2",
-                "valid_at": "2026-01-02T00:00:00Z", "episode_uuids": ["episode-1"],
-                "jev_relation_winner": "ASSOCIATED_WITH",
-                "jev_relation_distribution_json": json.dumps({"ASSOCIATED_WITH": 1.0}),
-                "jev_label_confidence": 1.0,
-            }]},
-        ]
-
-    result = search_knowgraph_hybrid(
-        "project-1", "deck_builder", "card-helper", "Alpha",
-        exact_records=[{
-            "graphSystem": "graphiti", "graphitiEntityId": "explicit-1",
-            "recordKind": "entity", "type": "Entity",
-            "title": "Explicit", "content": "{}", "properties": {},
-            "relationshipEvidence": [], "provenance": {}, "asOf": "current",
-            "readOperation": "neo4j.project_scoped_exact",
-            "_selectionReason": "passed by the prior Card",
-        }],
-        entity_types=["Company"], edge_types=["SUPPORTS"],
-        valid_at_after="2026-01-01T00:00:00Z",
-        max_nodes=3, max_facts=3, bounded_expansion=1,
-        materializer_reader=reader,
-        episode_reader=lambda project_id, ids: [{
-            "uuid": "episode-1", "name": "Source episode",
-            "source_description": "unit source",
-        }] if project_id == "project-1" and ids == ["episode-1"] else [],
-    )
-
-    assert [
-        record.get("graphitiEntityId") or record.get("graphitiRelationshipId")
-        for record in result["records"]
-    ] == [
-        "explicit-1", "entity-1", "fact-1", "fact-2", "entity-2",
-    ]
-    assert result["records"][2]["provenance"]["episodes"][0]["uuid"] == "episode-1"
-    assert result["records"][2]["jev"]["winner"] == "ASSOCIATED_WITH"
-    assert result["truncated"] is False
-    assert len(observed) == 2
-
-
-def test_optional_hybrid_search_returns_honest_empty_context(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.python_models.data_anchor.search_knowgraph_hybrid",
-        lambda *_args, **_kwargs: {
-            "query": "missing", "records": [], "truncated": False,
-            "bounds": {"maxNodes": 3, "maxFacts": 3, "maxExpansionDepth": 1},
-        },
-    )
-    anchor = {
-        "reason": "look for current context",
-        "boundedExpansion": 1, "required": False, "searchDynamicInput": True,
-        "maxNodes": 3, "maxFacts": 3,
-    }
-    seed, references = resolve_data_anchors(
-        "project-1", [anchor], deck_id="deck_builder", card_id="card-helper",
-        search_text="missing",
-    )
-    assert "No current project-scoped KnowGraph" in seed
-    assert references == []
-
-    anchor["required"] = True
-    with pytest.raises(DataAnchorError, match="data_anchor_required_search_empty"):
-        resolve_data_anchors(
-            "project-1", [anchor], deck_id="deck_builder", card_id="card-helper",
-            search_text="missing",
-        )
-
-
 def test_missing_required_anchor_fails_before_provider(engraphis_graph, monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.python_models.data_anchor.read_knowgraph_exact",
+        knowgraph_reference_reads,
+        "read_knowgraph_exact",
         lambda *_args, **_kwargs: None,
     )
     with pytest.raises(DataAnchorError, match="data_anchor_required_not_found"):

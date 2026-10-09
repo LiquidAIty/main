@@ -4,7 +4,6 @@ import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const decks = vi.hoisted(() => ({
-  deleteCardFromDeck: vi.fn(),
   getDeckDocument: vi.fn(),
   saveDeckDocument: vi.fn(),
 }));
@@ -15,7 +14,7 @@ const membership = vi.hoisted(() => ({
 }));
 const access = vi.hoisted(() => ({ requireOwnedProject: vi.fn() }));
 
-vi.mock('../decks/store', () => decks);
+vi.mock('../decks/deckDomainClient', () => decks);
 vi.mock('../services/projectStore', () => membership);
 vi.mock('./projectAccess', () => access);
 

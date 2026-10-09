@@ -8,14 +8,14 @@ const mocks = vi.hoisted(() => ({
   waitForBackendReady: vi.fn(),
 }));
 
-vi.mock('../../../components/builder/backendReadiness', () => ({
+vi.mock('../api/backendReadiness', () => ({
   waitForBackendReady: mocks.waitForBackendReady,
 }));
 
-vi.mock('../../../components/builder/requestGuards', async () => {
+vi.mock('../api/requestGuards', async () => {
   const actual = await vi.importActual<
-    typeof import('../../../components/builder/requestGuards')
-  >('../../../components/builder/requestGuards');
+    typeof import('../api/requestGuards')
+  >('../api/requestGuards');
   return {
     ...actual,
     guardedRequest: mocks.guardedRequest,
@@ -29,7 +29,7 @@ import {
 } from '../deck/deckDocument';
 import useAgentBuilderAutosave from './useAgentBuilderAutosave';
 import useAgentBuilderDeckLoad from './useAgentBuilderDeckLoad';
-import { useBuilderDeckPersistenceActions } from '../../../components/builder/useBuilderDeckPersistenceActions';
+import { useAgentBuilderDeckSave } from './useAgentBuilderDeckSave';
 import type { DeckDocument } from '../../../types/agentgraph';
 
 function canonicalDeck(): DeckDocument {
@@ -160,7 +160,7 @@ describe('canonical deck write guards', () => {
       deckLoadBusy: false,
       deckLoadError: null,
       stateLoaded: true,
-      layoutAutosaveAbortRef: { current: null },
+      deckSaveAbortRef: { current: null },
       lastPersistedBoardFingerprintRef: { current: null },
       lastPersistedBoardSnapshotRef: { current: null },
       lastDeckPersistReasonRef: { current: 'node-position' },
@@ -213,7 +213,7 @@ describe('canonical deck write guards', () => {
       deckLoadError: null,
       stateLoaded: true,
       transientCardIds,
-      layoutAutosaveAbortRef: { current: null as AbortController | null },
+      deckSaveAbortRef: { current: null as AbortController | null },
       lastPersistedBoardFingerprintRef: {
         current: JSON.stringify({ nodes: persisted.nodes, edges: persisted.edges }),
       },
@@ -283,7 +283,7 @@ describe('canonical deck write guards', () => {
         ok: true,
         text: async () => JSON.stringify({ meta: { deckRevision: 'revision-3' } }),
       } as Response);
-    const layoutAutosaveAbortRef = { current: null as AbortController | null };
+    const deckSaveAbortRef = { current: null as AbortController | null };
     const lastPersistedBoardFingerprintRef = { current: JSON.stringify({ nodes: [], edges: [] }) };
     const lastPersistedBoardSnapshotRef = { current: null as unknown };
     const setDeckRevision = vi.fn();
@@ -295,7 +295,7 @@ describe('canonical deck write guards', () => {
       deckLoadBusy: false,
       deckLoadError: null,
       stateLoaded: true,
-      layoutAutosaveAbortRef,
+      deckSaveAbortRef,
       lastPersistedBoardFingerprintRef,
       lastPersistedBoardSnapshotRef,
       lastDeckPersistReasonRef: { current: 'node-position' },
@@ -352,7 +352,7 @@ describe('canonical deck write guards', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const setDeckStatusMessage = vi.fn();
     const deck = canonicalDeck();
-    const { result } = renderHook(() => useBuilderDeckPersistenceActions({
+    const { result } = renderHook(() => useAgentBuilderDeckSave({
       builderDev: false,
       canvasProjectId: 'project-canonical',
       deck,
@@ -366,7 +366,6 @@ describe('canonical deck write guards', () => {
       setDeckSaveBusy: vi.fn(),
       setDeckStatusMessage,
       projectsApi: '/api/projects',
-      activeProjectLatestRef: { current: 'project-canonical' },
       recordDeckWriteReason: vi.fn(),
     }));
 

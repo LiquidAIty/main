@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -33,6 +34,7 @@ from app.python_models.provider_config import sec_api_key as sec_api_key_from_co
 PROVIDER = "sec_api"
 SIGNAL_TYPE = "sec_filing_published"
 SEC_API_QUERY_URL = "https://api.sec-api.io"  # sec-api.io Query API (token-authenticated)
+_SEC_SOURCE_HOSTS = frozenset({"sec.gov", "www.sec.gov"})
 MAX_RESULT_LIMIT = 50
 
 # WorldSignalEnvelope / provider statuses.
@@ -236,6 +238,29 @@ def _freshness(observed_at: str, fetched_at: str) -> Optional[str]:
         return None
 
 
+def _sec_source_url(value: Any) -> Optional[str]:
+    """Return one canonical SEC HTTPS filing URL, never a provider-claimed lookalike."""
+
+    candidate = str(value or "").strip()
+    if not candidate:
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(candidate)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or (parsed.hostname or "").lower() not in _SEC_SOURCE_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or not parsed.path.startswith("/Archives/")
+    ):
+        return None
+    return candidate
+
+
 def _map_filing_to_envelope(
     raw: dict[str, Any],
     *,
@@ -245,9 +270,12 @@ def _map_filing_to_envelope(
     accession = str(raw.get("accessionNo") or raw.get("accessionNumber") or "").strip()
     form_type = str(raw.get("formType") or "").strip()
     filed_at = str(raw.get("filedAt") or "").strip()
-    # linkToFilingDetails is the canonical SEC.gov filing-index URL.
-    filing_url = str(raw.get("linkToFilingDetails") or raw.get("filingUrl") or "").strip()
-    primary_doc = str(raw.get("linkToHtml") or raw.get("primaryDocumentUrl") or "").strip() or None
+    filing_url = _sec_source_url(
+        raw.get("linkToFilingDetails") or raw.get("filingUrl")
+    )
+    primary_doc = _sec_source_url(
+        raw.get("linkToHtml") or raw.get("primaryDocumentUrl")
+    )
     period = str(raw.get("periodOfReport") or "").strip() or None
     if not accession or not form_type or not filed_at or not filing_url:
         return None  # honest: incomplete filing record is skipped, never fabricated

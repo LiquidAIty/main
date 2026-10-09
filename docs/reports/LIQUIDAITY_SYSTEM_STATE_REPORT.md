@@ -1,7 +1,13 @@
-# LiquidAIty — Current System State Report
+# LiquidAIty — Historical Loaded-Product Report
 
 **Date:** October 1, 2026  
 **Purpose:** Show the functional product built today, the progress already demonstrated, and the work remaining before external launch and paper trading.
+
+> **Historical snapshot:** every use of “current” below refers to the October 1, 2026 loaded
+> application captured by this report. It is evidence, not current source or runtime authority. The
+> present implementation and remaining acceptance boundary are documented in repository-root
+> `AGENTS.md`, `DONT.md`, `PLAN.md`, and `ARCHITECTURE.md`; Git retains the removed runtime and route
+> generations.
 
 ## Executive Summary
 
@@ -391,7 +397,7 @@ Prior Run `req_794ef99c` completed through saved profile `worldview`, model `gpt
 | Native image-projection / prompt-turn repair | 46 passed | Contract/source proof; real viewport vision remains unproven |
 | Trading plan/configuration/order-identity/pause-resume validation | 7 passed, 4 deselected, 26.61s | No orders, forward trading, or replay proof |
 
-The Trading selection was `test_trading_runtime.py -k "trade_plan or trading_configuration or plan_is_rejected or plan_respects or future_paper_order_identity or pause_resume"`. No broad tests/builds were run by the read-only graph or inventory workers. The absence of a full regression run is not represented as a zero regression ratio.
+The Trading selection was `test_trading.py -k "trade_plan or trading_configuration or plan_is_rejected or plan_respects or future_paper_order_identity or pause_resume"`. No broad tests/builds were run by the read-only graph or inventory workers. The absence of a full regression run is not represented as a zero regression ratio.
 
 ### Native Read Evidence
 

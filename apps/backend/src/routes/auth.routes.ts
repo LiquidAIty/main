@@ -41,24 +41,6 @@ authRouter.post('/start', async (req, res) => {
   }
 });
 
-authRouter.get('/me', async (req, res) => {
-  try {
-    const sessionId = req.cookies.sid;
-    if (!sessionId) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    const user = await getUserBySessionId(sessionId);
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid session' });
-    }
-
-    return res.json({ userId: user.id });
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message || 'Internal server error' });
-  }
-});
-
 authRouter.post('/logout', async (req, res) => {
   try {
     const sessionId = req.cookies.sid;

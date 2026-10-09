@@ -340,8 +340,12 @@ def _auto_load_parts(agent: Any) -> List[str]:
     return [prompt] if prompt else []
 
 
-def _bot_mode_parts(agent: Any) -> List[str]:
-    """Bot Mode teammate protocol for a canonical Bot Chat or an explicitly rostered profile.
+def _profile_capability_parts(agent: Any) -> List[str]:
+    """Profile capability epoch plus optional Bot Mode teammate protocol.
+
+    Every profile-following session gets the epoch even when its exact roster is empty,
+    so a changed SOUL, skill, toolset, MCP selection or runtime policy invalidates the
+    stored prompt once. Bot Mode protocol text remains limited to authorized sessions.
     Marks the prompt timeless (the volatile date line is dropped) since a birth
     date pinned in a months-long session is misinformation."""
     parts: List[str] = []
@@ -363,11 +367,13 @@ def _bot_mode_parts(agent: Any) -> List[str]:
             if bot_mode_session_authorized(_home, _title, _roster)
             else None
         )
+        follows_profile = getattr(agent, "_follow_profile_config", False) is True
         if _bot_section:
             parts.append(_bot_section)
-            # Capability epoch lets the restore path rebuild ONCE per
-            # user-initiated capability change in an eternal session.
+        if _bot_section or follows_profile:
+            # Capability epoch lets the restore path rebuild once per profile change.
             parts.append(epoch_line(_home, _roster))
+        if _bot_section:
             agent._bot_chat_timeless_prompt = True
     except Exception:
         pass
@@ -710,7 +716,7 @@ def _post_workspace_parts(agent: Any) -> List[str]:
         except Exception:
             pass  # Probe failure must never block prompt build.
     if getattr(agent, "_bot_mode_protocol", True):
-        parts.extend(_bot_mode_parts(agent))
+        parts.extend(_profile_capability_parts(agent))
     parts += [_active_profile_line(agent), platform_hint(agent)]
     return parts
 

@@ -490,7 +490,8 @@ def _persist_session_row_for_submit(rid, session, text=None, display_kind=None):
 def _run_after_agent_ready(
     rid, sid, session, text, display_kind, display_metadata, hosted_terminal_callback,
     turn_author=None, submission_id=None, dynamic_tools=None, tool_endpoint=None,
-    tool_authorization=None
+    tool_authorization=None, card_script=None, bot_mode_roster=None,
+    expected_profile_capability_fingerprint=None,
 ):
     """Turn thread body: patient wait for a deferred build (a slow build must not eat the
     accepted in-flight message), then run."""
@@ -532,7 +533,10 @@ def _run_after_agent_ready(
         rid, sid, session, text, display_kind=display_kind, display_metadata=display_metadata,
         terminal_callback=hosted_terminal_callback, turn_author=turn_author,
         submission_id=submission_id, dynamic_tools=dynamic_tools,
-        tool_endpoint=tool_endpoint, tool_authorization=tool_authorization)
+        tool_endpoint=tool_endpoint, tool_authorization=tool_authorization,
+        card_script=card_script,
+        bot_mode_roster=bot_mode_roster,
+        expected_profile_capability_fingerprint=expected_profile_capability_fingerprint)
 
 
 _TRUNCATION_PARAMS = (
@@ -582,10 +586,19 @@ def _(rid, params: dict) -> dict:
     text = sanitize_user_prompt_text(raw_text) if isinstance(raw_text, str) else raw_text
     submission_id = str(params.get("submission_id") or "").strip() or None
     dynamic_tools = params.get("dynamic_tools")
+    card_script = params.get("card_script")
     tool_endpoint = str(params.get("tool_endpoint") or "").strip() or None
     tool_authorization = str(params.get("tool_authorization") or "").strip() or None
-    if any(value is not None for value in (dynamic_tools, tool_endpoint, tool_authorization)) and not (
-        isinstance(dynamic_tools, list) and dynamic_tools and tool_endpoint and tool_authorization
+    expected_profile_capability_fingerprint = str(
+        params.get("expected_profile_capability_fingerprint") or ""
+    ).strip() or None
+    script_uses_tools = bool(
+        isinstance(card_script, dict) and card_script.get("tool_aliases")
+    )
+    callback_required = bool(dynamic_tools) or script_uses_tools
+    if (
+        (tool_endpoint is not None or tool_authorization is not None or callback_required)
+        and not (callback_required and tool_endpoint and tool_authorization)
     ):
         return _err(rid, -32602, "dynamic tool context is incomplete")
     # Off-screen sends (widget intents) type the row so no client renders a bubble;
@@ -606,6 +619,20 @@ def _(rid, params: dict) -> dict:
     session, err = _sess_nowait(params, rid)
     if err:
         return err
+    try:
+        bot_mode_roster = (
+            _session_bot_roster(params, session.get("profile_home"))
+            if "bot_mode_roster" in params
+            else None
+        )
+    except ValueError as exc:
+        return _err(rid, -32602, str(exc))
+    if expected_profile_capability_fingerprint and (
+        len(expected_profile_capability_fingerprint) != 12
+        or any(character not in "0123456789abcdef"
+               for character in expected_profile_capability_fingerprint)
+    ):
+        return _err(rid, -32602, "profile capability fingerprint is invalid")
     from tools.bot_relay import DeliveryAuthor
 
     # Only the relay handler can build a DeliveryAuthor. A dict here is a client claiming a sender.
@@ -641,8 +668,14 @@ def _(rid, params: dict) -> dict:
     turn_isolation = _session_uses_compute_host(session, _load_dashboard_process_isolation_config())
     if internal_hosted_submit and turn_isolation:
         return _err(rid, 4121, "hosted room turns do not support isolated compute workers yet")
-    if turn_isolation and dynamic_tools:
-        return _err(rid, 4125, "Codex Dynamic Tools do not support isolated compute workers")
+    if turn_isolation and (dynamic_tools or card_script):
+        return _err(rid, 4125, "Per-turn Card tools do not support isolated compute workers")
+    if turn_isolation and expected_profile_capability_fingerprint:
+        return _err(
+            rid,
+            4125,
+            "Profile-fenced turns do not support isolated compute workers",
+        )
     # Re-bind to the current transport: streaming must stay on the active websocket even
     # if a disconnect/fallback moved the session to stdio. Through _rebind_live_transport so a
     # socket that already closed cannot cancel the orphan reap without coming back (#116464).
@@ -675,7 +708,10 @@ def _(rid, params: dict) -> dict:
             rid, sid, session, text, busy_transport, queued=bool(params.get("queued")),
             turn_author=turn_author, submission_id=submission_id,
             dynamic_tools=dynamic_tools, tool_endpoint=tool_endpoint,
-            tool_authorization=tool_authorization)
+            tool_authorization=tool_authorization,
+            card_script=card_script,
+            bot_mode_roster=bot_mode_roster,
+            expected_profile_capability_fingerprint=expected_profile_capability_fingerprint)
         if busy_response is not None:
             return busy_response
     raw_rebind_ids = params.get("rebind_survivor_row_ids")
@@ -720,7 +756,8 @@ def _(rid, params: dict) -> dict:
         target=lambda: _run_after_agent_ready(
             rid, sid, session, text, display_kind, display_metadata,
             hosted_terminal_callback, turn_author, submission_id, dynamic_tools,
-            tool_endpoint, tool_authorization),
+            tool_endpoint, tool_authorization, card_script, bot_mode_roster,
+            expected_profile_capability_fingerprint),
         daemon=True)
     # Handle lets session.interrupt tell a live turn from a stuck `running` flag.
     session["_run_thread"] = run_thread

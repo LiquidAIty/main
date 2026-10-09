@@ -254,7 +254,7 @@ class ProfileDelegationSettings(Params):
 
 
 class ProfilesDescribeResult(Result):
-    """Editor snapshot; ``toolsets_pinned`` says whether ``tools.enabled_toolsets`` is explicit."""
+    """Editor snapshot; ``toolsets_pinned`` says whether ``platform_toolsets.cli`` is explicit."""
 
     name: str
     description: str = ""
@@ -266,9 +266,14 @@ class ProfilesDescribeResult(Result):
     mcp_servers: list[McpServerEntry] = Field(default_factory=list)
     delegation: ProfileDelegationSettings
     task_mode: Literal["team"] | None = None
+    capability_fingerprint: str
 
 
-method("profiles.describe", params=ProfileNameParams, result=ProfilesDescribeResult,
+class ProfilesDescribeParams(ProfileNameParams):
+    bot_mode_roster: list[str] | None = None
+
+
+method("profiles.describe", params=ProfilesDescribeParams, result=ProfilesDescribeResult,
        doc="Everything the profile editor shows: soul, model pin, skills, toolsets, MCP servers.")
 
 

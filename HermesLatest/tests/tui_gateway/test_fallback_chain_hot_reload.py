@@ -46,7 +46,7 @@ def _admit_turn(monkeypatch, tmp_path, session, config_text: str) -> None:
     def stop(sid, session):
         raise _StopAfterSync()
 
-    monkeypatch.setattr(server, "_sync_bot_capabilities", stop)
+    monkeypatch.setattr(server, "_sync_profile_capabilities", stop)
     st = server._TurnRun(agent=None, one_turn_restore=None, terminal_callback=None, receipt_committed=False)
     with pytest.raises(_StopAfterSync):
         server._prepare_turn_input("sid", session, st, "hello", [])

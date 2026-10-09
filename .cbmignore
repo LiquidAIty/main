@@ -1,8 +1,11 @@
 /agent-products/shadowbroker/
 /agent-products/gods-eye-view/
 /agent-products/kronos/
-/HermesLatest/
 /EngraphisLatest/
+# HermesLatest source is indexed; only generated overlay/contracts stay out.
+/HermesLatest/LIQUIDAITY_OVERLAY.patch
+/HermesLatest/apps/shared/src/gateway-contract.generated.ts
+/HermesLatest/apps/shared/src/gateway-contract.openrpc.json
 client/src/vendor/codebase-memory-ui/
 /vendor/
 /neo4j-text2cypher/

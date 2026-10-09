@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 
-import { getDeckDocument } from '../decks/store';
+import { getDeckDocument } from '../decks/deckDomainClient';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
 import type { DeckCard } from '../types';

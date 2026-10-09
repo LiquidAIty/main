@@ -44,6 +44,40 @@ def _make_agent(session_db=None, prebuilt_prompt: str = "BUILT_PROMPT"):
     return agent
 
 
+def test_profile_following_card_rebuilds_unstamped_prompt_without_becoming_bot_chat():
+    db = MagicMock()
+    db.get_session.return_value = {
+        "system_prompt": "OLD CARD PROMPT",
+        "tool_names": json.dumps(["old_tool"]),
+    }
+    stamped_prompt = "NEW CARD PROMPT\n\nCapability epoch: abcdef123456"
+    agent = _make_agent(session_db=db, prebuilt_prompt=stamped_prompt)
+    agent._follow_profile_config = True
+    agent._session_title_hint = "Card Chat:stable"
+    agent._bot_mode_roster = []
+    agent.tools = [{"type": "function", "function": {"name": "new_tool", "parameters": {}}}]
+
+    with (
+        patch("agent.prompt_builder.clear_skills_system_prompt_cache") as clear_skills,
+        patch("tools.mcp_tool_agent.persist_agent_tool_names") as persist_tools,
+    ):
+        _restore_or_build_system_prompt(
+            agent,
+            None,
+            [{"role": "user", "content": "continue"}],
+        )
+
+    assert agent._cached_system_prompt == stamped_prompt
+    assert agent._session_title_hint == "Card Chat:stable"
+    agent._build_system_prompt.assert_called_once_with(None)
+    clear_skills.assert_called_once_with(clear_snapshot=True)
+    persist_tools.assert_called_once_with(agent)
+    db.update_system_prompt.assert_called_once_with(
+        agent.session_id,
+        stamped_prompt,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Surface switch (#104414)
 # ---------------------------------------------------------------------------

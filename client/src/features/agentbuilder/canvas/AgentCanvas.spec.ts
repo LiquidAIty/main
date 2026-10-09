@@ -1,0 +1,973 @@
+import React from 'react';
+import { Handle } from '@xyflow/react';
+import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@xyflow/react';
+import { describe, expect, it } from 'vitest';
+
+import type { DeckCard, DeckDocument, DeckEdge } from '../../../types/agentgraph';
+import {
+  buildDeckEdgeFromConnection,
+  isPlainConnectionAllowedForDocument,
+  mergeFlowEdgesIntoDeck,
+  mergeFlowNodesIntoDeck,
+  reduceCanvasEdgeChanges,
+  reduceCanvasNodeChanges,
+  shouldPersistEdgeChanges,
+  shouldPersistNodeChanges,
+  syncFlowEdgesForRender,
+  syncFlowNodesForRender,
+  toFlowEdges,
+  toFlowNodes,
+} from './agentCanvasDocumentProjection';
+// Viewport math remains separate from AgentCanvas presentation.
+// shared agentbuilder core module; the spec follows the live import path.
+import {
+  buildInitialBusSeamViewport,
+  buildInitialWorkbenchLandingViewport,
+  buildPresentationLandingViewport,
+} from '../core/agentBuilderViewportMath';
+import { buildDeckEdgeIdentityKey } from './deckEdgeIdentity';
+import MagneticWorkerBusNode from './nodes/MagneticWorkerBusNode';
+import { INITIAL_DECK } from '../deck/newProjectDeck';
+
+describe('canvas connection validation', () => {
+  it('keeps blue Magnetic availability identical in either endpoint order', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    for (const [cardId, busHandle] of [
+      ['card_team', 'bus-in-1'],
+      ['card_trading_workbench', 'bus-in-2'],
+    ] as const) {
+      const forward = { source: cardId, target: 'card_magentic', sourceHandle: null, targetHandle: busHandle };
+      const reverse = { source: forward.target, target: forward.source, sourceHandle: busHandle, targetHandle: null };
+      expect(isPlainConnectionAllowedForDocument(deck, forward, [])).toBe(true);
+      expect(isPlainConnectionAllowedForDocument(deck, reverse, [])).toBe(true);
+      const edges = [{ ...forward, id: 'existing', data: { edgeType: 'magentic_option' } }];
+      expect(isPlainConnectionAllowedForDocument(deck, reverse, edges)).toBe(false);
+      expect(isPlainConnectionAllowedForDocument(deck, { ...forward, source: 'card_worldsignals_agent' }, edges)).toBe(true);
+    }
+    const bus = deck.nodes.find(card => card.id === 'card_magentic')!;
+    deck.nodes.push({ ...bus, id: 'other-bus' });
+    expect(isPlainConnectionAllowedForDocument(deck, {
+      source: 'card_magentic', target: 'other-bus', sourceHandle: null, targetHandle: null,
+    }, [])).toBe(false);
+  });
+
+  it('classifies a Magnetic endpoint as blue regardless of the card-side handle', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const connection = {
+      source: 'card_trading_workbench',
+      target: 'card_magentic',
+      sourceHandle: 'card-control',
+      targetHandle: 'card-control',
+    };
+    expect(isPlainConnectionAllowedForDocument(deck, connection, [])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(deck, connection, [{
+      ...connection,
+      id: 'existing-worker-membership',
+      data: { edgeType: 'magentic_option' },
+    }])).toBe(false);
+    expect(isPlainConnectionAllowedForDocument(deck, {
+      source: 'builder',
+      target: 'card_magentic',
+      sourceHandle: 'card-control',
+      targetHandle: 'card-control',
+    }, [])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(deck, {
+      source: 'card_magentic',
+      target: 'card_main_chat',
+      sourceHandle: 'card-control',
+      targetHandle: 'card-control',
+    }, [])).toBe(false);
+  });
+
+  it('preserves disabled state and existing presentation fields through load and Canvas conversion', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const wire = { ...deck.edges[0], enabled: false, label: 'Existing label', style: { opacity: 0.4 } };
+    deck.edges = [wire];
+    const displayed = toFlowEdges(deck, null, null, new Set([wire.id]));
+    expect(displayed[0].data).toMatchObject({ enabled: false, isActive: false });
+    expect(mergeFlowEdgesIntoDeck(displayed, deck.edges)[0]).toMatchObject(wire);
+  });
+
+  it('rejects invalid creations and reconnections without changing blue membership', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const connect: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'> = {
+      source: 'card_main_chat', target: 'builder', sourceHandle: 'card-control', targetHandle: null,
+    };
+    const allowed = (value = connect, ignore?: string) => isPlainConnectionAllowedForDocument(deck, value, [], ignore);
+    expect(allowed()).toBe(true);
+    expect(allowed({ ...connect, source: connect.target, target: connect.source })).toBe(false);
+    const main = deck.nodes.find(card => card.id === connect.source)!;
+    const mainOptions = main.runtimeOptions as typeof main.runtimeOptions & { enabled?: boolean };
+    expect(allowed(connect)).toBe(true);
+    mainOptions!.enabled = false;
+    expect(allowed(connect)).toBe(false);
+    expect(allowed(connect, 'reconnected-edge')).toBe(false);
+    expect(allowed({ ...connect, target: 'card_magentic', targetHandle: 'card-control' as any })).toBe(false);
+    expect(allowed({ ...connect, sourceHandle: null, target: 'card_magentic', targetHandle: 'bus-in-6' as any })).toBe(false);
+    expect(allowed({ ...connect, source: 'card_trading_workbench', sourceHandle: null, target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
+    mainOptions!.enabled = true;
+    deck.nodes.find(card => card.id === connect.target)!.runtime = main.runtime;
+    expect(allowed(connect)).toBe(false);
+  });
+
+  it('allows independent orange and blue masters while preserving one master per topology', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const orange = {
+      id: 'team-master',
+      source: 'card_main_chat',
+      sourceHandle: 'card-control',
+      target: 'card_team',
+      targetHandle: null,
+      data: { edgeType: 'flow' as const },
+    };
+    const blue = {
+      source: 'card_team',
+      sourceHandle: null,
+      target: 'card_magentic',
+      targetHandle: 'bus-in-5',
+    };
+
+    expect(isPlainConnectionAllowedForDocument(deck, orange, [{
+      ...blue,
+      id: 'existing-blue',
+      data: { edgeType: 'magentic_option' },
+    }])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(deck, blue, [orange as Edge])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(
+      deck,
+      blue,
+      [{ ...blue, id: 'same-wire', data: { edgeType: 'magentic_option' } } as Edge],
+      'same-wire',
+    )).toBe(true);
+
+    const team = deck.nodes.find(card => card.id === 'card_team')!;
+    team.runtimeOptions = { ...(team.runtimeOptions || {}), orchestrator: true };
+    expect(isPlainConnectionAllowedForDocument(deck, blue, [orange as Edge])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(
+      deck,
+      {
+        source: team.id,
+        sourceHandle: 'card-control',
+        target: 'card_worldsignals_agent',
+        targetHandle: null,
+      },
+      [
+        orange as Edge,
+        { ...blue, id: 'existing-blue', data: { edgeType: 'magentic_option' } } as Edge,
+        {
+          id: 'existing-blue-target',
+          source: 'card_worldsignals_agent',
+          target: 'card_magentic',
+          data: { edgeType: 'magentic_option' },
+        } as Edge,
+      ],
+    )).toBe(true);
+
+    const secondMain = structuredClone(deck.nodes.find(card => card.id === 'builder')!);
+    secondMain.id = 'card_second_main';
+    secondMain.title = 'SecondMain';
+    secondMain.runtime = { kind: 'hermes', mode: 'delegate', profile: 'second-main' };
+    secondMain.runtimeOptions = { ...(secondMain.runtimeOptions || {}), orchestrator: true };
+    deck.nodes.push(secondMain);
+    expect(isPlainConnectionAllowedForDocument(
+      deck,
+      {
+        source: secondMain.id,
+        sourceHandle: 'card-control',
+        target: 'card_team',
+        targetHandle: null,
+      },
+      [orange as Edge],
+    )).toBe(false);
+  });
+});
+
+describe('AgentCanvas runtime-truth helpers', () => {
+  it('renders the real orange system topology beside the blue Trading worker topology', () => {
+    const nodes = toFlowNodes(
+      structuredClone(INITIAL_DECK),
+      null,
+      null,
+      false,
+      new Set(),
+    );
+    const byId = new Map(nodes.map((node) => [node.id, node] as const));
+    for (const cardId of ['card_main_chat', 'builder', 'card_thinkgraph', 'card_knowgraph']) {
+      expect(byId.get(cardId)?.hidden).not.toBe(true);
+    }
+    expect(byId.get('card_magentic')?.hidden).not.toBe(true);
+    expect(byId.get('card_team')?.hidden).not.toBe(true);
+    expect(byId.get('card_trading_workbench')?.hidden).not.toBe(true);
+    expect(byId.get('card_worldsignals_agent')?.hidden).not.toBe(true);
+
+    const edges = toFlowEdges(structuredClone(INITIAL_DECK), null, null, new Set());
+    const edgesById = new Map(edges.map((edge) => [edge.id, edge] as const));
+    expect(edgesById.get('edge_main_chat_thinkgraph')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_main_chat_agent_builder')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_main_chat_hermes')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_main_chat_magnetic')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_team_magentic_bus')?.hidden).not.toBe(true);
+  });
+
+  it('builds seam viewport math from the bus center rather than the bus left edge', () => {
+    expect(
+      buildInitialBusSeamViewport({
+        busPosition: { x: 140, y: 120 },
+        busWidth: 26,
+        zoom: 1,
+        desiredBusCenterX: 0,
+        desiredBusTopY: 72,
+      }),
+    ).toEqual({
+      x: -153,
+      y: -48,
+      zoom: 1,
+    });
+  });
+
+  it('builds the initial landing viewport around the bus and workbench side', () => {
+    const document: DeckDocument = {
+      id: 'deck_landing',
+      name: 'Landing',
+      promptTemplates: [],
+      version: 1,
+      nodes: [
+        {
+          id: 'card_worker_a',
+          kind: 'agent',
+          templateId: 'template_worker',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+          title: 'Worker A',
+          position: { x: -420, y: 140 },
+        },
+        {
+          id: 'card_magentic',
+          kind: 'agent',
+          templateId: 'template_magentic',
+          runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+          title: 'Magnetic',
+          position: { x: 140, y: 120 },
+        },
+        {
+          id: 'card_trading_workbench',
+          kind: 'agent',
+          templateId: 'template_trading_workbench',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+          title: 'Trading Agent',
+          position: { x: 220, y: 140 },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(buildInitialWorkbenchLandingViewport(document, 1)).toEqual({
+      x: -153,
+      y: -48,
+      zoom: 1,
+    });
+    expect(
+      buildInitialWorkbenchLandingViewport(document, 1, {
+        desiredBusCenterX: -10,
+      }),
+    ).toEqual({
+      x: -163,
+      y: -48,
+      zoom: 1,
+    });
+    expect(document.nodes[0].position).toEqual({ x: -420, y: 140 });
+  });
+
+  it('reuses the seam landing viewport for presentation restore actions', () => {
+    const seamHandle = {
+      getBoundingClientRect: () => ({ left: 474, top: 0, right: 484, bottom: 900, width: 10, height: 900 }),
+    };
+    const canvasRegion = {
+      previousElementSibling: seamHandle,
+      getBoundingClientRect: () => ({ left: 484, top: 0, right: 1600, bottom: 900, width: 1116, height: 900 }),
+    };
+    const canvasElement = {
+      closest: (selector: string) => (selector === '[data-testid="workspace-canvas-region"]' ? canvasRegion : null),
+    };
+
+    const documentModel: DeckDocument = {
+      id: 'deck_landing_restore',
+      name: 'Landing Restore',
+      promptTemplates: [],
+      version: 1,
+      nodes: [
+        {
+          id: 'card_magentic',
+          kind: 'agent',
+          templateId: 'template_magentic',
+          runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+          title: 'Magnetic',
+          position: { x: 140, y: 120 },
+        },
+        {
+          id: 'card_trading_workbench',
+          kind: 'agent',
+          templateId: 'template_trading_workbench',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+          title: 'Trading Agent',
+          position: { x: 220, y: 140 },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(
+      buildPresentationLandingViewport(documentModel, canvasElement as HTMLDivElement, 1),
+    ).toEqual({
+      x: -163,
+      y: -48,
+      zoom: 1,
+    });
+  });
+
+  it('does not build a workbench landing viewport when the workbench is absent', () => {
+    const document: DeckDocument = {
+      id: 'deck_landing_without_workbench',
+      name: 'Landing',
+      promptTemplates: [],
+      version: 1,
+      nodes: [
+        {
+          id: 'card_magentic',
+          kind: 'agent',
+          templateId: 'template_magentic',
+          runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+          title: 'Magnetic',
+          position: { x: 140, y: 120 },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(buildInitialWorkbenchLandingViewport(document, 1)).toBeNull();
+  });
+
+  it('does not persist selection-only node or edge changes', () => {
+    const nodeChanges: NodeChange[] = [{ id: 'card_magentic', type: 'select', selected: true }];
+    const edgeChanges: EdgeChange[] = [{ id: 'edge_magentic_graph', type: 'select', selected: true }];
+    expect(shouldPersistNodeChanges(nodeChanges)).toBe(false);
+    expect(shouldPersistEdgeChanges(edgeChanges)).toBe(false);
+  });
+
+  it('keeps drag movement local until the drag-stop handler commits the exact position', () => {
+    const nodeChanges: NodeChange[] = [{
+      id: 'card_magentic',
+      type: 'position',
+      position: { x: 314.5, y: -72.25 },
+      dragging: true,
+    }];
+    expect(shouldPersistNodeChanges(nodeChanges)).toBe(false);
+    const reduced = reduceCanvasNodeChanges(nodeChanges, [{
+      id: 'card_magentic',
+      position: { x: 0, y: 0 },
+      data: {},
+    }]);
+    expect(reduced.nextNodes[0]?.position).toEqual({ x: 314.5, y: -72.25 });
+    expect(reduced.nextNodesForPersistence).toBeNull();
+  });
+
+  it('ignores node removal because Card deletion has no Canvas operation', () => {
+    const currentNodes: Node[] = [{
+      id: 'card_assist',
+      type: 'deckCard',
+      position: { x: 24, y: 48 },
+      data: {},
+    }];
+    const changes: NodeChange[] = [{ id: 'card_assist', type: 'remove' }];
+
+    expect(shouldPersistNodeChanges(changes)).toBe(false);
+    expect(reduceCanvasNodeChanges(changes, currentNodes)).toEqual({
+      nextNodes: currentNodes,
+      nextNodesForPersistence: null,
+    });
+  });
+
+  it('reduces persisted canvas changes synchronously before React state callbacks run', () => {
+    const currentNodes: Node[] = [{
+      id: 'card_assist',
+      type: 'deckCard',
+      position: { x: 24, y: 48 },
+      data: {},
+    }];
+    const nodeResult = reduceCanvasNodeChanges(
+      [{ item: {
+        id: 'card_second',
+        type: 'deckCard',
+        position: { x: 240, y: 120 },
+        data: {},
+      }, type: 'add' }],
+      currentNodes,
+    );
+    expect(nodeResult.nextNodesForPersistence?.[1].position).toEqual({ x: 240, y: 120 });
+
+    const currentEdges: Edge[] = [{
+      id: 'edge_assist_next',
+      source: 'card_assist',
+      target: 'card_next',
+      data: { edgeType: 'flow' },
+    }];
+    const edgeResult = reduceCanvasEdgeChanges(
+      [{ id: 'edge_assist_next', type: 'remove' }],
+      currentEdges,
+    );
+    expect(edgeResult.nextEdgesForPersistence).toEqual([]);
+  });
+
+  it('preserves saved node prompt while updating position', () => {
+    const savedNodes: DeckCard[] = [
+      {
+        id: 'card_assist',
+        kind: 'agent',
+        templateId: 'template_assist',
+        prompt: 'saved prompt',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+        title: 'Assist',
+        position: { x: 24, y: 48 },
+      },
+    ];
+    const staleFlowNodes: Node[] = [
+      {
+        id: 'card_assist',
+        type: 'deckCard',
+        position: { x: 240, y: 120 },
+        data: {
+          ...savedNodes[0],
+          prompt: 'stale prompt',
+        },
+      },
+    ];
+
+    const mergedNodes = mergeFlowNodesIntoDeck(staleFlowNodes, savedNodes);
+    expect(mergedNodes[0].prompt).toBe('saved prompt');
+    expect(mergedNodes[0].position).toEqual({ x: 240, y: 120 });
+  });
+
+  it('preserves edge type through merge and sanitize', () => {
+    const flowEdges: Edge[] = [
+      {
+        id: 'edge_magentic_assist',
+        source: 'card_magentic',
+        target: 'card_assist',
+        data: { edgeType: 'magentic_option' },
+      },
+      {
+        id: 'edge_step_1_2',
+        source: 'card_step_1',
+        target: 'card_step_2',
+        data: { edgeType: 'flow' },
+      },
+    ];
+
+    const savedEdges = mergeFlowEdgesIntoDeck(flowEdges, []);
+    const loadedEdges = JSON.parse(JSON.stringify(savedEdges)) as DeckEdge[];
+
+    expect(savedEdges).toEqual<DeckEdge[]>([
+      {
+        id: 'edge_magentic_assist',
+        source: 'card_magentic',
+        sourceHandle: null,
+        target: 'card_assist',
+        targetHandle: null,
+        edgeType: 'magentic_option',
+      },
+      {
+        id: 'edge_step_1_2',
+        source: 'card_step_1',
+        sourceHandle: null,
+        target: 'card_step_2',
+        targetHandle: null,
+        edgeType: 'flow',
+      },
+    ]);
+    expect(loadedEdges).toEqual(savedEdges);
+  });
+
+  it('preserves measured node layout state during hover-only render sync', () => {
+    const currentNodes: Node[] = [
+      {
+        id: 'card_main',
+        type: 'deckCard',
+        position: { x: 120, y: 80 },
+        width: 320,
+        height: 180,
+        measured: { width: 326, height: 184 },
+        positionAbsolute: { x: 120, y: 80 },
+        data: { title: 'Main' },
+      } as Node,
+    ];
+    const nextNodes: Node[] = [
+      {
+        id: 'card_main',
+        type: 'deckCard',
+        position: { x: 120, y: 80 },
+        selected: true,
+        style: { opacity: 0.44 },
+        data: { title: 'Main', isHovered: true },
+      } as Node,
+    ];
+
+    const synced = syncFlowNodesForRender(currentNodes, nextNodes);
+
+    expect(synced[0]).toMatchObject({
+      width: 320,
+      height: 180,
+      measured: { width: 326, height: 184 },
+      positionAbsolute: { x: 120, y: 80 },
+      selected: true,
+      style: { opacity: 0.44 },
+      data: { title: 'Main', isHovered: true },
+    });
+  });
+
+  it('keeps pointer-owned coordinates during non-layout refreshes', () => {
+    const currentNodes: Node[] = [{
+      id: 'card_main',
+      type: 'deckCard',
+      position: { x: 318.5, y: -42.25 },
+      dragging: true,
+      data: { title: 'Main', activeAgentCount: 0 },
+    }];
+    const nextNodes: Node[] = [{
+      id: 'card_main',
+      type: 'deckCard',
+      position: { x: -24, y: -24 },
+      data: { title: 'Main', activeAgentCount: 1 },
+    }];
+
+    const synced = syncFlowNodesForRender(currentNodes, nextNodes);
+
+    expect(synced[0].position).toEqual({ x: 318.5, y: -42.25 });
+    expect(synced[0].data).toMatchObject({ activeAgentCount: 1 });
+    expect(synced[0].dragging).toBe(true);
+  });
+
+  it('preserves computed edge state during hover-only render sync', () => {
+    const currentEdges: Edge[] = [
+      {
+        id: 'edge_main_next',
+        source: 'card_main',
+        target: 'card_next',
+        data: { edgeType: 'flow' },
+        markerEnd: { type: 'arrowclosed', color: '#999' } as any,
+        style: { stroke: '#999', opacity: 1 },
+        selected: false,
+      } as Edge,
+    ];
+    const nextEdges: Edge[] = [
+      {
+        id: 'edge_main_next',
+        source: 'card_main',
+        target: 'card_next',
+        data: { edgeType: 'flow' },
+        markerEnd: { type: 'arrowclosed', color: '#fff' } as any,
+        style: { stroke: '#fff', opacity: 0.24 },
+        selected: true,
+        className: 'edge-flow',
+      } as Edge,
+    ];
+
+    const synced = syncFlowEdgesForRender(currentEdges, nextEdges);
+
+    expect(synced[0]).toMatchObject({
+      markerEnd: { color: '#fff' },
+      style: { stroke: '#fff', opacity: 0.24 },
+      selected: true,
+      className: 'edge-flow',
+    });
+  });
+
+  it('supports DeckEdge sourceHandle and targetHandle fields', () => {
+    const edge: DeckEdge = {
+      id: 'edge_bus_worker',
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-1',
+      target: 'card_worker_a',
+      targetHandle: 'agent-in',
+      edgeType: 'magentic_option',
+    };
+
+    expect(edge.sourceHandle).toBe('bus-out-1');
+    expect(edge.targetHandle).toBe('agent-in');
+  });
+
+  it('identifies blue membership by the Card pair rather than drawing order or port', () => {
+    const firstKey = buildDeckEdgeIdentityKey({
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-1',
+      target: 'card_worker_a',
+      targetHandle: null,
+      edgeType: 'magentic_option',
+    });
+    const secondKey = buildDeckEdgeIdentityKey({
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-2',
+      target: 'card_worker_a',
+      targetHandle: null,
+      edgeType: 'magentic_option',
+    });
+
+    expect(firstKey).toBe(secondKey);
+    expect(firstKey).toBe(buildDeckEdgeIdentityKey({
+      source: 'card_worker_a', target: 'card_magentic', targetHandle: 'bus-out-1', edgeType: 'magentic_option',
+    }));
+  });
+
+  it('rejects duplicate worker membership even through another port', () => {
+    const document = createBusTestDocument();
+    const currentEdges: Edge[] = [
+      {
+        id: 'edge_bus_worker_1',
+        source: 'card_magentic',
+        sourceHandle: 'bus-out-1',
+        target: 'card_worker_a',
+        targetHandle: null,
+        data: { edgeType: 'magentic_option' },
+      } as Edge,
+    ];
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-2',
+          target: 'card_worker_a',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(false);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-1',
+          target: 'card_worker_a',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(false);
+  });
+
+  it('allows orange bot-team connections only from a saved orchestrator and ignores card side', () => {
+    const document = createBusTestDocument();
+    for (const card of document.nodes.filter(card => card.id !== 'card_magentic')) {
+      card.runtime = { kind: 'hermes', mode: 'delegate', profile: card.id };
+      card.runtimeOptions = {};
+    }
+    const first = document.nodes.find(card => card.id === 'card_worker_a')!;
+    first.runtime = { kind: 'hermes', mode: 'delegate', profile: 'worker-a' };
+    first.runtimeOptions = { orchestrator: true };
+    const currentEdges: Edge[] = [
+      {
+        id: 'edge_main_worker',
+        source: 'card_worker_a',
+        sourceHandle: 'card-control',
+        target: 'card_worker_b',
+        targetHandle: null,
+        data: { edgeType: 'flow' },
+      } as Edge,
+    ];
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_worker_a',
+          sourceHandle: 'card-control',
+          target: 'card_worker_b',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(false);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_worker_b',
+          sourceHandle: 'card-control',
+          target: 'card_research_agent',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(false);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_worker_a',
+          sourceHandle: null,
+          target: 'card_research_agent',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(true);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-1',
+          target: 'card_worker_b',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(true);
+  });
+
+  it('passes handle ids through React Flow edge mapping', () => {
+    const [edge] = toFlowEdges(
+      createBusTestDocument([
+        {
+          id: 'edge_bus_worker',
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-3',
+          target: 'card_worker_a',
+          targetHandle: 'agent-in',
+          edgeType: 'magentic_option',
+        },
+      ]),
+      null,
+      null,
+      new Set(),
+    );
+
+    expect(edge).toMatchObject({
+      sourceHandle: 'bus-out-3',
+      targetHandle: 'agent-in',
+    });
+  });
+
+  it.each([undefined, 'card-control-target'])('maps existing orange edges with target %s to the ordinary visible input', (targetHandle) => {
+    const document = createBusTestDocument([{
+      id: 'edge_first_second',
+      source: 'card_worker_a',
+      target: 'card_worker_b',
+      edgeType: 'flow',
+      targetHandle,
+    }]);
+    document.nodes.find(card => card.id === 'card_worker_a')!.runtime = {
+      kind: 'hermes', mode: 'main', profile: 'main',
+    };
+    document.nodes.find(card => card.id === 'card_worker_b')!.runtime = {
+      kind: 'hermes', mode: 'delegate', profile: 'worker-b',
+    };
+
+    const [edge] = toFlowEdges(document, null, null, new Set());
+
+    expect(edge).toMatchObject({
+      hidden: false,
+      sourceHandle: 'card-control',
+    });
+    expect(edge.targetHandle).toBeUndefined();
+    expect(document.edges[0].targetHandle).toBe(targetHandle);
+  });
+
+  it('restores an incoming orange wire to the target Card orchestrator connector', () => {
+    const document = createBusTestDocument([{
+      id: 'edge_first_second',
+      source: 'card_worker_a',
+      target: 'card_worker_b',
+      edgeType: 'flow',
+      sourceHandle: 'card-control',
+      targetHandle: 'card-control',
+    }]);
+    const source = document.nodes.find(card => card.id === 'card_worker_a')!;
+    const target = document.nodes.find(card => card.id === 'card_worker_b')!;
+    source.runtime = { kind: 'hermes', mode: 'delegate', profile: 'worker-a' };
+    source.runtimeOptions = { orchestrator: true };
+    target.runtime = { kind: 'hermes', mode: 'delegate', profile: 'worker-b' };
+    target.runtimeOptions = { orchestrator: true };
+
+    const [edge] = toFlowEdges(document, null, null, new Set());
+
+    expect(edge).toMatchObject({
+      hidden: false,
+      sourceHandle: 'card-control',
+      targetHandle: 'card-control',
+    });
+  });
+
+  it('captures handle ids when converting React Flow edges back to DeckEdge', () => {
+    expect(
+      buildDeckEdgeFromConnection(
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-4',
+          target: 'card_research_agent',
+          targetHandle: 'agent-in',
+        },
+        'edge_bus_research',
+        'magentic_option',
+      ),
+    ).toEqual<DeckEdge>({
+      id: 'edge_bus_research',
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-4',
+      target: 'card_research_agent',
+      targetHandle: 'agent-in',
+      edgeType: 'magentic_option',
+    });
+
+    const savedEdges = mergeFlowEdgesIntoDeck(
+      [
+        {
+          id: 'edge_bus_research',
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-4',
+          target: 'card_research_agent',
+          targetHandle: 'agent-in',
+          data: { edgeType: 'magentic_option' },
+        } as Edge,
+      ],
+      [],
+    );
+
+    expect(savedEdges).toEqual<DeckEdge[]>([
+      {
+        id: 'edge_bus_research',
+        source: 'card_magentic',
+        sourceHandle: 'bus-out-4',
+        target: 'card_research_agent',
+        targetHandle: 'agent-in',
+        edgeType: 'magentic_option',
+      },
+    ]);
+  });
+
+  it('maps only the Magnetic Card to the magneticWorkerBus node type', () => {
+    const nodes = toFlowNodes(
+      createBusTestDocument(),
+      null,
+      null,
+      false,
+      new Set(),
+    );
+
+    expect(nodes.find((node) => node.id === 'card_magentic')).toMatchObject({
+      type: 'magneticWorkerBus',
+      position: { x: 40, y: 120 },
+      draggable: false,
+      selectable: true,
+    });
+    expect(nodes.find((node) => node.id === 'card_worker_a')).toMatchObject({
+      type: 'deckCard',
+      position: { x: 180, y: 140 },
+      draggable: true,
+      selectable: true,
+    });
+  });
+
+  it('renders one ordinary Card handle plus twelve side availability handles on MagneticWorkerBusNode', () => {
+    const handles = collectHandleElements(MagneticWorkerBusNode());
+
+    expect(handles).toHaveLength(13);
+    expect(handles.map((handle) => handle.props.id)).toEqual([
+      'card-control',
+      'bus-in-1',
+      'bus-in-2',
+      'bus-in-3',
+      'bus-in-4',
+      'bus-in-5',
+      'bus-in-6',
+      'bus-out-1',
+      'bus-out-2',
+      'bus-out-3',
+      'bus-out-4',
+      'bus-out-5',
+      'bus-out-6',
+    ]);
+    const sideHandles = handles.slice(1);
+    sideHandles.forEach((handle) => {
+      const style = handle.props.style as Record<string, unknown>;
+      expect(style.width).toBe(6);
+      expect(style.height).toBe(16);
+      expect(style.borderRadius).toBe(4);
+      expect(style.pointerEvents).toBe('all');
+      expect(style.zIndex).toBe(100);
+      expect(style.display).toBeUndefined();
+      expect(style.visibility).toBeUndefined();
+    });
+    sideHandles.slice(0, 6).forEach((handle) => {
+      expect((handle.props.style as Record<string, unknown>).left).toBe(-3);
+    });
+    sideHandles.slice(6).forEach((handle) => {
+      expect((handle.props.style as Record<string, unknown>).right).toBe(-3);
+    });
+  });
+});
+
+function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
+  return {
+    id: 'deck_bus_test',
+    name: 'Bus Test',
+    promptTemplates: [],
+    version: 1,
+    nodes: [
+      {
+        id: 'card_magentic',
+        kind: 'agent',
+        templateId: 'template_magentic',
+        runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+        title: 'Magnetic',
+        position: { x: 40, y: 120 },
+      },
+      {
+        id: 'card_worker_a',
+        kind: 'agent',
+        templateId: 'template_worker',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+        title: 'Worker A',
+        position: { x: 180, y: 140 },
+      },
+      {
+        id: 'card_worker_b',
+        kind: 'agent',
+        templateId: 'template_worker',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+        title: 'CodeGraph',
+        position: { x: 420, y: 140 },
+      },
+      {
+        id: 'card_research_agent',
+        kind: 'agent',
+        templateId: 'template_research_agent',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker' },
+        title: 'Research',
+        position: { x: 660, y: 140 },
+      },
+    ],
+    edges,
+  };
+}
+
+type HandleElement = React.ReactElement<{ id: string; style: Record<string, unknown> }>;
+
+function collectHandleElements(value: React.ReactNode): HandleElement[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectHandleElements(entry));
+  }
+  if (!React.isValidElement(value)) {
+    return [];
+  }
+
+  const children = (value.props as { children?: React.ReactNode }).children;
+  return [
+    ...(value.type === Handle ? [value as HandleElement] : []),
+    ...collectHandleElements(children),
+  ];
+}

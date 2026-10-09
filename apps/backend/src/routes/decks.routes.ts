@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import {
-  deleteCardFromDeck,
   getDeckDocument,
   saveDeckDocument,
-} from '../decks/store';
+} from '../decks/deckDomainClient';
 import type { DeckDocument } from '../types';
 import {
   attachSavedCardToProject,
@@ -55,40 +54,6 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
           ? 409
           : message.startsWith('deck_integrity_')
             ? 409
-          : 500;
-    return res.status(status).json({ ok: false, error: message });
-  }
-});
-
-router.delete('/:projectId/decks/:deckId/cards/:cardId', async (req, res) => {
-  const { expectedDeckRevision, expectedCardRevisionId, deletionIntent } = req.body || {};
-  if (
-    typeof expectedDeckRevision !== 'string'
-    || typeof expectedCardRevisionId !== 'string'
-    || deletionIntent !== 'delete-card'
-  ) {
-    return res.status(400).json({ ok: false, error: 'card_deletion_confirmation_required' });
-  }
-
-  try {
-    const access = await requireOwnedProject(req, res, req.params.projectId);
-    if (!access) return;
-    const result = await deleteCardFromDeck(
-      req.params.projectId,
-      req.params.deckId,
-      req.params.cardId,
-      { expectedDeckRevision, expectedCardRevisionId, deletionIntent },
-    );
-    return res.json({ ok: true, deck: result.deck, meta: result.meta });
-  } catch (err: any) {
-    const message = String(err?.message || 'card_delete_failed');
-    const status = message === 'project_not_found' || message === 'deck_not_found' || message === 'card_not_found'
-      ? 404
-      : message.startsWith('card_deletion_protected:')
-        ? 403
-        : message === 'deck_conflict' || message === 'card_revision_conflict'
-          || message.startsWith('card_deletion_references_present:')
-          ? 409
           : 500;
     return res.status(status).json({ ok: false, error: message });
   }

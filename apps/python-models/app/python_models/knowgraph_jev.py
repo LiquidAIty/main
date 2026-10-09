@@ -21,7 +21,7 @@ from .jev_edge_ontology import (
     SHARED_JEV_RELATIONSHIPS,
     SHARED_JEV_RELATIONSHIP_CRITERIA,
 )
-from .engraphis import (
+from .thinkgraph_relationships import (
     PROJECT_RELATIONSHIP_VOCABULARY_MAXIMUM,
     PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
     relationship_choice_plan,

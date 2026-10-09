@@ -2,7 +2,7 @@ import type {
   GraphProjectionEdge,
   GraphProjectionNode,
   GraphProjectionV1,
-} from './KnowledgeAuthorityGraphSurface';
+} from './joinedKnowledgeGraphProjection';
 
 export const JEV_GRAPH_PHYSICS_PROFILES = [
   'balanced',

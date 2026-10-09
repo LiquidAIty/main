@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { GodsEyeSourceDescriptor } from '../../components/worldsignal/GodsEyeSurface';
+import type { GodsEyeSourceDescriptor } from '../../components/worldsignals/GodsEyeSurface';
 import WorldViewSurface from './WorldViewSurface';
 
 // jsdom cannot parse the vendor's container-query stylesheet; visual layout
@@ -22,7 +22,7 @@ const directHost = vi.hoisted(() => ({
   prepareRunImages: vi.fn(),
 }));
 
-vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
+vi.mock('../../components/worldsignals/GodsEyeSurface', async () => {
   const React = await import('react');
   return {
     default: React.forwardRef((props: Record<string, any>, ref) => {

@@ -72,7 +72,7 @@ function logStartupBanner() {
     dbUser = url.username;
   } catch {}
 
-  console.log("────────────── LIQUIDAITY BACKEND START ─────────────");
+  console.log("──────────────── BACKEND START ────────────────────");
   console.log(`NODE_ENV:         ${nodeEnv}`);
   console.log(`OPENAI_BASE_URL:  ${baseUrl}`);
   console.log(`OPENAI_API_KEY:   ${redactedKey}`);

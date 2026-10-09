@@ -7,6 +7,8 @@ and voice / wake-word control (``methods_voice.py``).
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from .base import JsonValue, Params, Result, WireEnum
@@ -33,6 +35,28 @@ class DynamicToolDefinition(Params):
     input_schema: JsonValue
 
 
+class CardScriptDefinition(Params):
+    """One validated saved Card Python recipe for this exact turn.
+
+    ``enabled`` is deliberately absent: nonblank, valid saved source is the
+    activation condition. Tool aliases are the already-authorized per-turn
+    Dynamic Tool names, never a registry or discovery surface.
+    """
+
+    version: int = Field(ge=1)
+    source: str = Field(min_length=1, max_length=32_768)
+    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    compiled_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mode: Literal["tool_recipe"]
+    input_schema: dict[str, JsonValue]
+    output_schema: dict[str, JsonValue]
+    tool_aliases: dict[str, str]
+    tool_states: dict[str, int]
+    timeout_seconds: int = Field(ge=1, le=60)
+    max_tool_calls: int = Field(ge=1, le=32)
+    max_output_bytes: int = Field(ge=256, le=50_000)
+
+
 class PromptSubmitParams(SessionParams):
     """``text`` is normally a string; the relay / hosted paths may hand a structured (parts list)
     payload, and the busy path renders it. Truncation (rewind / edit / regenerate) needs explicit
@@ -46,8 +70,13 @@ class PromptSubmitParams(SessionParams):
     # Opaque caller identity for correlating an accepted or queued input with its later turn events.
     submission_id: str | None = Field(default=None, min_length=1, max_length=128)
     dynamic_tools: list[DynamicToolDefinition] | None = None
+    card_script: CardScriptDefinition | None = None
     tool_endpoint: str | None = None
     tool_authorization: str | None = None
+    bot_mode_roster: list[str] | None = None
+    expected_profile_capability_fingerprint: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{12}$"
+    )
     surface: str | None = None  # a ClientSurface value; unknown values clear the surface
     voice_context: str | None = None  # recent spoken transcript, model input only (voice-live)
     # Desktop-generated large-paste preview (first ~1000 chars); TITLE input only, never the model turn.

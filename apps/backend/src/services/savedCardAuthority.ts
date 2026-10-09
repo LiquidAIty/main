@@ -2,7 +2,7 @@ import type {
   ConversationMessage,
   SharedChatParticipant,
 } from '../conversations/store';
-import { getDeckDocument } from '../decks/store';
+import { getDeckDocument } from '../decks/deckDomainClient';
 import type { DeckCard, DeckDocument } from '../types';
 
 export const ADDRESS_PATTERN = /^@([A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:\s|$)/;
@@ -39,36 +39,20 @@ export function exactStrings(value: unknown): string[] {
     : [];
 }
 
-export function requireSpecialistConfiguration(
-  operation: SavedSpecialistOperation,
-  target: AddressableCard,
-): void {
-  if (target.card.runtime.kind !== 'hermes' || target.card.runtime.mode !== 'delegate') {
-    throw new Error('saved_specialist_runtime_invalid');
-  }
+export function requireSavedSpecialistRuntime(target: AddressableCard): void {
   const runtimeOptions = objectRecord(target.card.runtimeOptions);
-  const tools = new Set(exactStrings(runtimeOptions.tools));
-  if (operation === 'thinkgraph.reason') {
-    if (!tools.has('engraphis_recall_context')) {
-      throw new Error('thinkgraph_recall_grant_required');
-    }
-    return;
-  }
-  const skills = new Set(exactStrings(runtimeOptions.skills));
-  const toolsets = new Set(exactStrings(runtimeOptions.toolsets));
-  if (!toolsets.has('web')) throw new Error('knowgraph_web_toolset_required');
-  if (!skills.has('grounded-citations')) {
-    throw new Error('knowgraph_grounded_citations_skill_required');
-  }
-  if (!tools.has('graphiti.add_memory')) {
-    throw new Error('knowgraph_add_memory_grant_required');
+  if (
+    target.card.enabled === false
+    || runtimeOptions.enabled === false
+    || target.card.runtime.kind !== 'hermes'
+    || target.card.runtime.mode !== 'delegate'
+  ) {
+    throw new Error('saved_specialist_runtime_invalid');
   }
 }
 
 function enabledCard(card: DeckCard): boolean {
-  const saved = card.runtimeOptions as (Record<string, unknown> & { enabled?: boolean }) | null | undefined;
-  return (card as DeckCard & { enabled?: boolean }).enabled !== false
-    && saved?.enabled !== false;
+  return card.enabled !== false && card.runtimeOptions?.enabled !== false;
 }
 
 function addressableCard(card: DeckCard): AddressableCard {

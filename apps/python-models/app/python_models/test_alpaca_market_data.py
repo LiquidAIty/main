@@ -90,6 +90,15 @@ def test_snapshot_maps_fixture_with_feed_and_timestamp():
     assert "/orders" not in transport.urls[0]
     assert "api.alpaca.markets/v2/orders" not in transport.urls[0]
 
+    encoded = _RecordingTransport(SNAPSHOT_FIXTURE)
+    get_market_snapshot(
+        AlpacaInstrumentRef(symbol="BRK/B"),
+        feed="sip & test",
+        transport=encoded,
+        credentials=PAPER_CREDS,
+    )
+    assert "/v2/stocks/BRK%2FB/snapshot?feed=sip+%26+test" in encoded.urls[0]
+
 
 def test_snapshot_provider_error_on_transport_failure():
     def _boom(_u, _h):
@@ -134,6 +143,22 @@ def test_bars_map_fixture_and_honor_limit():
     assert result.bars[0].close == 11.8
     assert "data.alpaca.markets" in transport.urls[0]
     assert "/orders" not in transport.urls[0]
+
+    encoded = _RecordingTransport(BARS_FIXTURE)
+    get_historical_bars(
+        AlpacaInstrumentRef(symbol="BRK/B"),
+        "1Hour/adjusted",
+        start="2024-05-08T00:00:00Z",
+        end="2024-05-10T00:00:00Z",
+        feed="sip & test",
+        transport=encoded,
+        credentials=PAPER_CREDS,
+    )
+    assert "/v2/stocks/BRK%2FB/bars?" in encoded.urls[0]
+    assert "timeframe=1Hour%2Fadjusted" in encoded.urls[0]
+    assert "feed=sip+%26+test" in encoded.urls[0]
+    assert "start=2024-05-08T00%3A00%3A00Z" in encoded.urls[0]
+    assert "end=2024-05-10T00%3A00%3A00Z" in encoded.urls[0]
 
 
 # --- Paper account readiness (status only) ---------------------------------------

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import jwt
@@ -121,17 +120,17 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
         deck_id="deck_builder",
         card_id="card-helper",
         calls=[
-            ("cbm.index_status", {"project": "core"}),
+            ("cbm.search_graph", {"project": "core", "query": "symbol"}),
             ("cbm.get_code_snippet", {"project": "core", "qualified_name": "symbol"}),
         ],
     )
     assert results == [{"ok": True}, {"ok": True}]
     assert observed["sessions"] == 1
     assert [name for name, _args in observed["calls"]] == [
-        "cbm.index_status", "cbm.get_code_snippet",
+        "cbm.search_graph", "cbm.get_code_snippet",
     ]
     assert observed["principals"][0]["grantedTools"] == [
-        "cbm.get_code_snippet", "cbm.index_status",
+        "cbm.get_code_snippet", "cbm.search_graph",
     ]
     try:
         materializer_read_tools.call_materializer_read_tools(
@@ -190,7 +189,7 @@ def test_preload_deadline_preserves_successful_reads_and_cancels_slow_source(mon
     started = time.monotonic()
     results = materializer_read_tools.call_materializer_read_tools(
         project_id="p", deck_id="d", card_id="main", conversation_id="conversation-1",
-        calls=[("engraphis_recall_context", {}), ("graphiti.search_memory_facts", {}), ("cbm.search_graph", {})],
+        calls=[("cbm.get_code_snippet", {}), ("graphiti.search_memory_facts", {}), ("cbm.search_graph", {})],
         concurrent=True, deadline_seconds=0.1,
     )
     assert time.monotonic() - started < 1

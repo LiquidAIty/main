@@ -36,6 +36,10 @@ export type CardSubsystemAttachment = {
 };
 
 export type SavedCardConfiguration = {
+  autoTools?: boolean;
+  autoModel?: boolean;
+  /** Legacy-compatible Card availability persisted inside runtime options. */
+  enabled?: boolean;
   /** Saved outbound orange Card-to-Card delegation authority. Main has this
    * authority by its runtime role; another non-Magnetic Card must opt in. */
   orchestrator?: boolean;
@@ -43,11 +47,10 @@ export type SavedCardConfiguration = {
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
-   * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
+   * Python/Hermes capability. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;
   subsystems?: CardSubsystemAttachment[] | null;
   script?: {
-    enabled: boolean;
     source: string;
     version: number;
     author?: Record<string, string>;
@@ -71,20 +74,12 @@ export type SavedCardConfiguration = {
       compiledHash?: string;
     };
     lastValidation?: Record<string, unknown>;
-    hermesSupport?: Record<string, unknown>;
-    rollback?: Record<string, unknown>;
   } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   providerModelId?: string | null;
-  autoSelect?: boolean;
-  autoTools?: boolean;
-  jevContext?: {
-    autoTools?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_graph_context';
-    modelChoice?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_graph_context';
-  } | null;
   openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded Hermes delegated children and
    * background skill review. Hermes profile/readback remains effective truth. */
@@ -94,10 +89,6 @@ export type SavedCardConfiguration = {
     modelKey: string;
     providerModelId: string;
   } | null;
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
-  temperature?: number | null;
-  maxTokens?: number | null;
-  maxTurns?: number | null;
   tools?: string[] | null;
   /** Saved skill identities. Runtime homes materialize/cache them separately. */
   skills?: string[] | null;
@@ -115,13 +106,13 @@ export type CardTemplate = {
   promptTemplate?: string | null;
   model?: string | null;
   provider?: string | null;
-  temperature?: number | null;
-  maxTokens?: number | null;
   tools: string[];
 };
 
 export type DeckCard = {
   id: string;
+  /** Current top-level saved Card availability. */
+  enabled?: boolean;
   /** Current server-owned immutable revision identity returned with a loaded deck. */
   _cardRevisionId?: string;
   _cardRevision?: number;
@@ -141,6 +132,7 @@ export type DeckCard = {
   subtitle?: string;
   position: { x: number; y: number };
   overrides?: Partial<CardTemplate>;
+  /** Legacy persisted display value. Run state comes from the Run ledger; new Cards omit this field. */
   status?: 'idle' | 'ready' | 'running' | 'error';
 };
 

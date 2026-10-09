@@ -35,21 +35,9 @@
 }
 
 .card-script-ide__identity span,
-.card-script-ide__activation,
 .card-script-ide__notice {
   color: var(--script-muted);
   font-size: 10.5px;
-}
-
-.card-script-ide__activation {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.card-script-ide__activation input {
-  accent-color: var(--script-turquoise);
 }
 
 .card-script-ide__notice {
@@ -300,21 +288,6 @@
   background: #261718;
   font-family: 'Cascadia Code', Consolas, monospace;
   font-size: 10px;
-}
-
-.card-script-ide__receipt summary {
-  color: var(--script-muted);
-  cursor: pointer;
-  font-size: 10.5px;
-}
-
-.card-script-ide__receipt pre {
-  overflow: auto;
-  max-height: 280px;
-  color: #b8c8c6;
-  font-size: 10px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .monaco-editor .card-script-header-tool-selected {

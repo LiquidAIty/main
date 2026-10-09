@@ -4,6 +4,7 @@ type HermesRequest = <T>(method: string, params?: Record<string, unknown>) => Pr
 
 type ProfileState = {
   name: string;
+  capability_fingerprint?: string;
   description?: string;
   soul?: string;
   model?: { provider?: string; default?: string; openai_runtime?: string | null };
@@ -23,21 +24,15 @@ type ProfileState = {
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
 const TEAM_CARD_ID = 'card_team';
-const BUILDER_CARD_ID = 'builder';
-const BUILDER_TERMINAL_POLICY = [
-  { key: 'terminal.backend', field: 'backend', value: 'docker' },
-  { key: 'terminal.docker_mount_cwd_to_workspace', field: 'docker_mount_cwd_to_workspace', value: true },
-  { key: 'terminal.container_persistent', field: 'container_persistent', value: false },
-  { key: 'terminal.docker_volumes', field: 'docker_volumes', value: [] },
-  { key: 'terminal.docker_extra_args', field: 'docker_extra_args', value: [] },
-  { key: 'terminal.docker_forward_env', field: 'docker_forward_env', value: [] },
-  { key: 'terminal.docker_env', field: 'docker_env', value: {} },
-] as const;
 
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
     : {};
+}
+
+function cardEnabled(card: DeckCard): boolean {
+  return card.enabled !== false && card.runtimeOptions?.enabled !== false;
 }
 
 function strings(value: unknown): string[] {
@@ -48,10 +43,6 @@ function strings(value: unknown): string[] {
 
 function equalStrings(left: string[], right: string[]): boolean {
   return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
-}
-
-function equalJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function providerSelection(options: Record<string, any>): {
@@ -122,7 +113,9 @@ export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[]
   const orchestrator = card.runtime.mode === 'main' || options.orchestrator === true;
   if (!orchestrator) return [];
   const profiles = new Map(deck.nodes.flatMap((node) => (
-    node.runtime.kind === 'hermes' && PROFILE_PATTERN.test(node.runtime.profile)
+    cardEnabled(node)
+    && node.runtime.kind === 'hermes'
+    && PROFILE_PATTERN.test(node.runtime.profile)
       ? [[node.id, node.runtime.profile] as const]
       : []
   )));
@@ -206,11 +199,16 @@ function assertMaterialized(
 export async function materializeSavedCardProfile(
   request: HermesRequest,
   card: DeckCard,
+  botModeRoster: string[],
 ): Promise<ProfileState> {
   if (card.runtime.kind !== 'hermes' || !PROFILE_PATTERN.test(card.runtime.profile)) {
     throw new Error('hermes_profile_card_invalid');
   }
-  let current = await request<ProfileState>('profiles.describe', { name: card.runtime.profile });
+  const describeParams = {
+    name: card.runtime.profile,
+    bot_mode_roster: botModeRoster,
+  };
+  let current = await request<ProfileState>('profiles.describe', describeParams);
   if (String(current?.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()) {
     throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
   }
@@ -220,43 +218,11 @@ export async function materializeSavedCardProfile(
     if (configured.ok !== true || configured.confirm_required === true) {
       throw new Error(`hermes_profile_configuration_failed:${card.runtime.profile}`);
     }
-    current = await request<ProfileState>('profiles.describe', { name: card.runtime.profile });
+    current = await request<ProfileState>('profiles.describe', describeParams);
   }
   assertMaterialized(card, current);
+  if (!/^[0-9a-f]{12}$/.test(String(current.capability_fingerprint || ''))) {
+    throw new Error(`hermes_profile_capability_fingerprint_invalid:${card.runtime.profile}`);
+  }
   return current;
-}
-
-export async function materializeBuilderTerminalPolicy(
-  request: HermesRequest,
-  card: DeckCard,
-): Promise<void> {
-  if (card.id !== BUILDER_CARD_ID) return;
-  const readTerminal = async (): Promise<Record<string, unknown>> => {
-    const response = record(await request('config.get', {
-      profile: card.runtime.profile,
-      key: 'full',
-    }));
-    return record(record(response.config).terminal);
-  };
-
-  let terminal = await readTerminal();
-  for (const setting of BUILDER_TERMINAL_POLICY) {
-    if (equalJson(terminal[setting.field], setting.value)) continue;
-    const applied = record(await request('config.set', {
-      profile: card.runtime.profile,
-      key: setting.key,
-      value: setting.value,
-    }));
-    if (applied.key !== setting.key || !equalJson(applied.value, setting.value)) {
-      throw new Error(`builder_terminal_policy_configuration_failed:${setting.key}`);
-    }
-  }
-
-  terminal = await readTerminal();
-  const mismatch = BUILDER_TERMINAL_POLICY.find(
-    (setting) => !equalJson(terminal[setting.field], setting.value),
-  );
-  if (mismatch) {
-    throw new Error(`builder_terminal_policy_readback_mismatch:${mismatch.key}`);
-  }
 }

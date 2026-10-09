@@ -36,9 +36,8 @@ describe('internal MCP Card authentication', () => {
       callerCardId: 'card-main',
       callerRuntimeKind: 'hermes',
       callerRuntimeMode: 'main',
-      grantedTools: ['canvas.inspect', 'canvas.inspect', 'run_mag_one'],
-      hermesChildId: 'hermes-child-1',
-      hermesRunId: 'hermes-run-1',
+      grantedTools: ['canvas.inspect', 'run_mag_one'],
+      presentedTools: ['canvas.inspect'],
     }, env, 1000);
     const claims = verifyBearer(token);
     expect(claims).toMatchObject({
@@ -51,8 +50,7 @@ describe('internal MCP Card authentication', () => {
         callerRuntimeKind: 'hermes',
         callerRuntimeMode: 'main',
         grantedTools: ['canvas.inspect', 'run_mag_one'],
-        hermesChildId: 'hermes-child-1',
-        hermesRunId: 'hermes-run-1',
+        presentedTools: ['canvas.inspect'],
       },
     });
   });
@@ -67,44 +65,6 @@ describe('internal MCP Card authentication', () => {
     }, env, 100)).toThrow('internal_mcp_presentation_exceeds_grant');
   });
 
-  it('signs a runless materializer principal with the exact saved Card grants', () => {
-    const token = createInternalMcpBearer({
-      kind: 'materializer-read',
-      projectId: ' project-1 ',
-      deckId: ' deck_builder ',
-      callerCardId: ' builder ',
-      conversationId: ' main ',
-      grantedTools: ['cbm.search_graph', 'card.create', 'cbm.search_graph'],
-      grantedConnections: ['graphiti', 'cbm', 'graphiti'],
-    }, env, 1000);
-    const claims = verifyBearer(token);
-    expect(claims).toMatchObject({
-      sub: 'materializer-read:builder',
-      iat: 1000,
-      exp: 1060,
-      principal: {
-        kind: 'materializer-read',
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        callerCardId: 'builder',
-        conversationId: 'main',
-        grantedTools: ['card.create', 'cbm.search_graph'],
-        grantedConnections: ['cbm', 'graphiti'],
-      },
-    });
-    expect(claims.principal).not.toHaveProperty('parentRunId');
-  });
-
-  it('rejects an incomplete runless materializer identity', () => {
-    expect(() => createInternalMcpBearer({
-      kind: 'materializer-read',
-      projectId: 'project-1',
-      deckId: '',
-      callerCardId: 'builder',
-      grantedTools: ['cbm.search_graph'],
-    }, env)).toThrow('internal_mcp_principal_incomplete');
-  });
-
   it('rejects the replaced runless terminal principal', () => {
     expect(() => createInternalMcpBearer({ kind: 'agent-terminal' } as any, env))
       .toThrow('internal_mcp_principal_kind_invalid');
@@ -114,9 +74,9 @@ describe('internal MCP Card authentication', () => {
     kind: 'card-runtime' as const, projectId: 'project', deckId: 'deck',
     conversationId: 'conversation-1', parentRunId: 'persisted-run', callerCardId: 'saved-agent',
     callerRuntimeKind: 'hermes' as const, callerRuntimeMode: 'delegate' as const,
-    grantedTools: ['canvas.inspect'], hermesChildId: 'hermes-child', hermesRunId: 'hermes-run',
+    grantedTools: ['canvas.inspect'], presentedTools: ['canvas.inspect'],
   };
-  it('signs a real Card Run with direct saved authority and Hermes attribution', () => {
+  it('signs a real Card Run with direct saved authority', () => {
     const principal = verifyBearer(createInternalMcpBearer(terminalRun, env)).principal;
     expect(principal).toMatchObject(terminalRun);
   });
@@ -144,6 +104,20 @@ describe('internal MCP Card authentication', () => {
       .toThrow('internal_mcp_principal_incomplete');
     expect(() => createInternalMcpBearer({ ...terminalRun, presentedTools: ['card.create'] }, env))
       .toThrow('internal_mcp_presentation_exceeds_grant');
+  });
+
+  it('requires an explicit unique normalized presented-tool list', () => {
+    expect(() => createInternalMcpBearer({ ...terminalRun, presentedTools: undefined } as any, env))
+      .toThrow('internal_mcp_presented_tools_invalid');
+    expect(() => createInternalMcpBearer({
+      ...terminalRun,
+      presentedTools: ['canvas.inspect', ' canvas.inspect '],
+    }, env)).toThrow('internal_mcp_presented_tools_invalid');
+    const principal = verifyBearer(createInternalMcpBearer({
+      ...terminalRun,
+      presentedTools: [],
+    }, env)).principal;
+    expect(principal.presentedTools).toEqual([]);
   });
 
   it('accepts only the canonical loopback MCP seam', () => {

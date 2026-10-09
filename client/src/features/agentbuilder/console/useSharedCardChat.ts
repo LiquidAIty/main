@@ -1,187 +1,52 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { waitForBackendReady } from '../../../components/builder/backendReadiness';
-import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
+import { waitForBackendReady } from '../api/backendReadiness';
 import {
   loadSessionHistory,
-  type AddressableAgent,
   type DirectChatTarget,
   type GraphRecordIdentity,
   type MainHermesSessionEvent,
   SessionStreamError,
-  type SharedChatMessage,
   type SharedChatParticipant,
-  stopVoiceCapture,
-  streamVoiceCapture,
   subscribeSessionEvents,
   stopSession,
   streamSession,
 } from './sharedChatClient';
+import useSharedCardVoice from './useSharedCardVoice';
+import {
+  messageIndex,
+  participantForTarget,
+  participantFromEvent,
+  prepareChatSubmission,
+  reconcileHistory,
+  SHARED_CHAT_USER,
+  uniqueCardTarget,
+  type PreparedChatSubmission,
+  type SharedCardChatMessage,
+  type SharedCardRunInput,
+} from './sharedChatTranscript';
 
-export type SharedCardChatMessage = SharedChatMessage & { status?: 'pending' | 'complete' | 'error' };
-
-export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
-
-export type MainChatRunInput = { images?: Array<Record<string, unknown>> };
 // Matches the Hermes turn-image attachment count limit.
-export const MAX_MAIN_CHAT_IMAGES = 12;
+export const MAX_SHARED_CARD_CHAT_IMAGES = 12;
 
 type UseSharedCardChatArgs = {
   canvasProjectId: string;
   deckId: string;
   conversationId: string;
   directChatTargets?: DirectChatTarget[];
-  dataAnchors?: LoadedCardGraphReference['reference'][];
+  dataAnchors?: DataAnchorSelection[];
   prepareRunImages?: (targetCardId: string | null) => Promise<Array<Record<string, unknown>>>;
 };
 
-export type LoadedCardGraphReference = {
-  targetCardId: string;
-  sourceCardId?: string;
-  sourceRunId?: string;
-  reference: GraphRecordIdentity & {
-    reason: string;
-    order: number;
-    boundedExpansion: number;
-    resultLimit: number;
-    required: boolean;
-  };
-  resolvedReferences: Array<Record<string, unknown>>;
-  resolvedContextMarkdown: string;
-  graphProjection: GraphProjectionV1;
-  resolved: boolean;
-  ready: boolean;
-  observedAt?: string;
-  error?: string;
+type DataAnchorSelection = GraphRecordIdentity & {
+  reason: string;
+  order: number;
+  boundedExpansion: number;
+  resultLimit: number;
+  required: boolean;
 };
 
-const SHARED_CHAT_USER: SharedChatParticipant = { kind: 'user', label: 'You' };
 const NO_DIRECT_CHAT_TARGETS: DirectChatTarget[] = [];
-
-function participantFromEvent(value: unknown): SharedChatParticipant | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const participant = value as Record<string, unknown>;
-  if (
-    !['user', 'card'].includes(String(participant.kind))
-    || typeof participant.label !== 'string'
-    || !participant.label
-  ) return null;
-  return {
-    kind: participant.kind as 'user' | 'card',
-    label: participant.label,
-    ...(typeof participant.cardId === 'string' && participant.cardId
-      ? { cardId: participant.cardId } : {}),
-    ...(typeof participant.profile === 'string' && participant.profile
-      ? { profile: participant.profile } : {}),
-    ...(typeof participant.address === 'string' && participant.address
-      ? { address: participant.address } : {}),
-  };
-}
-
-type PreparedChatSubmission = {
-  key: string;
-  text: string;
-  userMessageId: string;
-  assistantMessageId: string;
-  targetCardId: string | null;
-  participant: SharedChatParticipant;
-  runInput?: MainChatRunInput;
-};
-
-function participantForTarget(target: DirectChatTarget): SharedChatParticipant {
-  return {
-    kind: 'card',
-    label: target.title,
-    cardId: target.cardId,
-    profile: target.profile,
-    ...(target.address ? { address: target.address } : {}),
-  };
-}
-
-function uniqueCardTarget(
-  targets: DirectChatTarget[],
-  cardId: string | null,
-): DirectChatTarget | null {
-  if (!cardId) return null;
-  const matches = targets.filter((target) => target.cardId === cardId);
-  return matches.length === 1 ? matches[0] : null;
-}
-
-function prepareChatSubmission({
-  conversationKey,
-  text,
-  mainCardId,
-  currentResponderCardId,
-  targets,
-}: {
-  conversationKey: string;
-  text: string;
-  mainCardId: string;
-  currentResponderCardId: string | null;
-  targets: DirectChatTarget[];
-}): PreparedChatSubmission & { nextResponderCardId?: string | null } {
-  const userMessageId = `msg_${globalThis.crypto.randomUUID()}`;
-  const assistantMessageId = `msg_${globalThis.crypto.randomUUID()}`;
-  const mainTarget = uniqueCardTarget(targets, mainCardId);
-  const mainParticipant = mainTarget
-    ? participantForTarget(mainTarget)
-    : { kind: 'card' as const, label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
-  const selectedTarget = uniqueCardTarget(targets, currentResponderCardId);
-  const fallbackTargetCardId = selectedTarget && selectedTarget.cardId !== mainCardId
-    ? selectedTarget.cardId
-    : null;
-  const addressMatch = /^\s*@([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/i.exec(text);
-  if (!addressMatch) {
-    return {
-      key: conversationKey,
-      text,
-      userMessageId,
-      assistantMessageId,
-      targetCardId: fallbackTargetCardId,
-      participant: selectedTarget ? participantForTarget(selectedTarget) : mainParticipant,
-    };
-  }
-  const address = addressMatch[1].toLowerCase();
-  const matches = targets.filter((target) => (
-    target.aliases.some((alias) => alias.toLowerCase() === address)
-  ));
-  if (matches.length !== 1) {
-    return {
-      key: conversationKey,
-      text,
-      userMessageId,
-      assistantMessageId,
-      targetCardId: fallbackTargetCardId,
-      participant: { kind: 'card', label: `@${address}`, address },
-    };
-  }
-  const target = matches[0];
-  const targetsMain = target.cardId === mainCardId;
-  return {
-    key: conversationKey,
-    text,
-    userMessageId,
-    assistantMessageId,
-    targetCardId: targetsMain ? null : target.cardId,
-    participant: participantForTarget(target),
-    nextResponderCardId: targetsMain ? null : target.cardId,
-  };
-}
-
-function messageIndex(messages: SharedCardChatMessage[], messageId: string): number {
-  return messages.findIndex((message) => message.messageId === messageId);
-}
-
-function reconcileHistory(
-  persisted: SharedCardChatMessage[],
-  visible: SharedCardChatMessage[],
-): SharedCardChatMessage[] {
-  const persistedIds = new Set(persisted.flatMap((message) => message.messageId ? [message.messageId] : []));
-  return [
-    ...persisted,
-    ...visible.filter((message) => !message.messageId || !persistedIds.has(message.messageId)),
-  ];
-}
 
 export default function useSharedCardChat({
   canvasProjectId,
@@ -229,24 +94,6 @@ export default function useSharedCardChat({
     key: conversationKey,
     cardId: null,
   });
-  const activeVoiceRef = useRef<{
-    key: string;
-    controller: AbortController;
-    targetCardId: string | null;
-    participant: SharedChatParticipant;
-    hasTranscript: boolean;
-    turnFinished: boolean;
-    sawSpeaking: boolean;
-    speechIdle: boolean;
-    tts: boolean;
-    audioAvailable: boolean | null;
-  } | null>(null);
-  const [voiceState, setVoiceState] = useState<{
-    key: string;
-    phase: MainChatVoicePhase;
-    error: string | null;
-  }>({ key: conversationKey, phase: 'idle', error: null });
-
   const messages = transcript.key === conversationKey ? transcript.messages : [];
   const sessionActive = turnState.key === conversationKey && turnState.phase === 'active';
   const sessionConnecting = turnState.key === conversationKey
@@ -256,20 +103,12 @@ export default function useSharedCardChat({
   const [sharedAuthority, setSharedAuthority] = useState<{
     key: string;
     mainCardId: string;
-    agents: AddressableAgent[];
-  }>({ key: conversationKey, mainCardId: '', agents: [] });
-  const addressableAgents = sharedAuthority.key === conversationKey ? sharedAuthority.agents : [];
+  }>({ key: conversationKey, mainCardId: '' });
   const mainCardId = sharedAuthority.key === conversationKey ? sharedAuthority.mainCardId : '';
   const selectedResponderTarget = uniqueCardTarget(
     directChatTargets,
     responderState.key === conversationKey ? responderState.cardId : null,
   );
-  const mainResponderTarget = uniqueCardTarget(directChatTargets, mainCardId);
-  const currentResponder: SharedChatParticipant = selectedResponderTarget
-    ? participantForTarget(selectedResponderTarget)
-    : mainResponderTarget
-      ? participantForTarget(mainResponderTarget)
-      : { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
 
   const setCurrentResponderCardId = useCallback((requestedCardId: string | null): boolean => {
     const requestedMain = !requestedCardId || requestedCardId === mainCardId;
@@ -283,12 +122,12 @@ export default function useSharedCardChat({
     return true;
   }, [conversationKey, directChatTargets, mainCardId]);
 
-  const prepareSubmission = useCallback((text: string, runInput?: MainChatRunInput): PreparedChatSubmission => {
+  const prepareSubmission = useCallback((text: string, runInput?: SharedCardRunInput): PreparedChatSubmission => {
     const prepared = prepareChatSubmission({
       conversationKey,
       text,
       mainCardId,
-      currentResponderCardId: responderRef.current.key === conversationKey
+      selectedResponderCardId: responderRef.current.key === conversationKey
         ? responderRef.current.cardId
         : null,
       targets: directChatTargets,
@@ -361,7 +200,7 @@ export default function useSharedCardChat({
       sessionEventsRef.current = null;
     }
     setTranscript({ key: conversationKey, messages: [] });
-    setSharedAuthority({ key: conversationKey, mainCardId: '', agents: [] });
+    setSharedAuthority({ key: conversationKey, mainCardId: '' });
     setTechnical({ key: conversationKey, error: null });
     responderRef.current = { key: conversationKey, cardId: null };
     setResponderState({ key: conversationKey, cardId: null });
@@ -404,7 +243,6 @@ export default function useSharedCardChat({
         setSharedAuthority({
           key: conversationKey,
           mainCardId: history.mainCardId,
-          agents: history.addressableAgents,
         });
         setTechnical({
           key: conversationKey,
@@ -432,15 +270,15 @@ export default function useSharedCardChat({
   const requestPreparedText = useCallback(
     async (submission: PreparedChatSubmission): Promise<string> => {
       const { text, targetCardId, userMessageId, assistantMessageId } = submission;
-      if (!text.trim()) throw new Error('main_prompt_empty');
-      if (submission.key !== conversationKey) throw new Error('main_conversation_changed');
+      if (!text.trim()) throw new Error('shared_chat_message_empty');
+      if (submission.key !== conversationKey) throw new Error('shared_chat_conversation_changed');
       if (!canvasProjectId) {
         setTurnState({ key: conversationKey, phase: 'idle' });
-        throw new Error('main_project_required');
+        throw new Error('shared_chat_project_required');
       }
       if (activeStreamRef.current?.key === conversationKey) {
         throw new SessionStreamError({
-          code: 'main_turn_already_active',
+          code: 'shared_chat_turn_already_active',
           message: 'Wait for the current Card turn to finish before sending another message.',
           route: '/api/shared-chat/turn',
         });
@@ -522,7 +360,7 @@ export default function useSharedCardChat({
         if (prepareRunImages) {
           try {
             const preparedImages = await prepareRunImages(targetCardId);
-            images.push(...preparedImages.slice(0, Math.max(0, MAX_MAIN_CHAT_IMAGES - images.length)));
+            images.push(...preparedImages.slice(0, Math.max(0, MAX_SHARED_CARD_CHAT_IMAGES - images.length)));
           } catch {
             // Surface perception is additive. A stale/unmounted viewport must
             // never turn an otherwise valid shared-chat message into a failed turn.
@@ -548,7 +386,10 @@ export default function useSharedCardChat({
               || (event.deckId && event.deckId !== deckId)
               || (event.conversationId && event.conversationId !== conversationId)
               || (observedRunId && runId && observedRunId !== runId)) {
-              throw new SessionStreamError({ code: 'main_run_identity_mismatch', message: 'Main stream Run identity changed.' });
+              throw new SessionStreamError({
+                code: 'shared_chat_run_identity_mismatch',
+                message: 'Shared-chat stream Run identity changed.',
+              });
             }
             const observedParticipant = participantFromEvent(event.participant);
             if (observedParticipant) {
@@ -572,7 +413,12 @@ export default function useSharedCardChat({
                 activeStreamRef.current.runId = runId;
               }
             }
-            if (event.kind === 'session' || event.kind === 'text') {
+            if (
+              event.kind === 'run'
+              && event.state === 'running'
+              && observedRunId
+              && observedRunId === runId
+            ) {
               setTurnState((current) => current.key === conversationKey
                 ? { ...current, phase: 'active' }
                 : current);
@@ -607,7 +453,7 @@ export default function useSharedCardChat({
         const completedText = finalText;
         if (!completedText.trim()) {
           setTurnState({ key: conversationKey, phase: 'idle' });
-          throw new Error('main_empty_response');
+          throw new Error('shared_chat_empty_response');
         }
         // The completion text is the exact persisted Hermes assistant
         // message. Replace the in-progress streamed bubble with those bytes so
@@ -636,7 +482,7 @@ export default function useSharedCardChat({
           return { key: conversationKey, messages };
         });
         setTechnical((current) => current.key === conversationKey ? { ...current,
-          error: error instanceof SessionStreamError ? error.code : 'main_turn_failed',
+          error: error instanceof SessionStreamError ? error.code : 'shared_chat_turn_failed',
         } : current);
         throw error;
       } finally {
@@ -660,251 +506,67 @@ export default function useSharedCardChat({
     ],
   );
 
-  const requestMainText = useCallback(
-    (text: string, runInput?: MainChatRunInput): Promise<string> => requestPreparedText(prepareSubmission(text, runInput)),
-    [prepareSubmission, requestPreparedText],
-  );
-
   const handleSend = useCallback(
-    (text: string, runInput?: MainChatRunInput) => {
+    (text: string, runInput?: SharedCardRunInput) => {
       if (!text.trim()) return;
       const submission = prepareSubmission(text, runInput);
-      void requestPreparedText(submission).catch(() => {
+      const request = requestPreparedText(submission);
+      void request.catch(() => {
         // Transport failure remains visible telemetry and never assistant speech.
       });
+      return request;
     },
     [prepareSubmission, requestPreparedText],
   );
 
-  const endVoiceSession = useCallback(async (
-    nextPhase: MainChatVoicePhase = 'idle',
-    error: string | null = null,
-  ) => {
-    const active = activeVoiceRef.current;
-    if (!active || active.key !== conversationKey) {
-      setVoiceState({ key: conversationKey, phase: nextPhase, error });
-      return;
-    }
-    activeVoiceRef.current = null;
-    active.controller.abort();
-    setVoiceState({ key: conversationKey, phase: nextPhase, error });
-    if (!canvasProjectId) return;
-    await stopVoiceCapture({
-      projectId: canvasProjectId,
-      deckId,
-      conversationId,
-      ...(active.targetCardId ? { targetCardId: active.targetCardId } : {}),
-      cancel: true,
-    }).catch(() => undefined);
-  }, [canvasProjectId, conversationId, conversationKey, deckId]);
-
-  const startVoiceSession = useCallback(() => {
-    if (!canvasProjectId || !mainCardId || sessionHistoryLoading) {
-      setVoiceState({
-        key: conversationKey,
-        phase: 'error',
-        error: 'Voice is unavailable until the Project conversation is ready.',
-      });
-      return;
-    }
-    if (sessionPending) {
-      setVoiceState({
-        key: conversationKey,
-        phase: 'error',
-        error: 'Wait for the current response before starting voice.',
-      });
-      return;
-    }
-    if (activeVoiceRef.current?.key === conversationKey) return;
-
+  const resolveVoiceTarget = useCallback(() => {
     const targetCardId = responderRef.current.key === conversationKey
       ? responderRef.current.cardId
       : null;
     const target = uniqueCardTarget(directChatTargets, targetCardId);
     const mainTarget = uniqueCardTarget(directChatTargets, mainCardId);
-    const participant = target
-      ? participantForTarget(target)
-      : mainTarget
-        ? participantForTarget(mainTarget)
-        : { kind: 'card' as const, label: 'Main', cardId: mainCardId };
-    const controller = new AbortController();
-    const active = {
-      key: conversationKey,
-      controller,
+    return {
       targetCardId,
-      participant,
-      hasTranscript: false,
-      turnFinished: false,
-      sawSpeaking: false,
-      speechIdle: false,
-      tts: true,
-      audioAvailable: null as boolean | null,
+      participant: target
+        ? participantForTarget(target)
+        : mainTarget
+          ? participantForTarget(mainTarget)
+          : { kind: 'card' as const, label: 'Main', cardId: mainCardId },
     };
-    activeVoiceRef.current = active;
-    setVoiceState({ key: conversationKey, phase: 'processing', error: null });
+  }, [conversationKey, directChatTargets, mainCardId]);
 
-    void streamVoiceCapture({
-      projectId: canvasProjectId,
-      deckId,
-      conversationId,
-      ...(targetCardId ? { targetCardId } : {}),
-      tts: true,
-      signal: controller.signal,
-      onEvent: (event) => {
-        const current = activeVoiceRef.current;
-        if (!current || current.controller !== controller || current.key !== conversationKey) return;
-        const expectedCardId = targetCardId || mainCardId;
-        if (event.cardId !== expectedCardId) {
-          void endVoiceSession('error', 'Voice connected to the wrong Card.');
-          return;
-        }
-        if (event.kind === 'ready') {
-          current.tts = event.state?.tts === true;
-          current.audioAvailable = typeof event.state?.audioAvailable === 'boolean'
-            ? event.state.audioAvailable
-            : null;
-          setVoiceState({ key: conversationKey, phase: 'listening', error: null });
-          return;
-        }
-        if (event.kind === 'error') {
-          void endVoiceSession('error', event.error || 'Voice transport failed.');
-          return;
-        }
-        if (event.kind === 'status') {
-          const statusPayload = (event.event?.payload || {}) as Record<string, unknown>;
-          const phase = String(statusPayload.state || '').toLowerCase();
-          if (phase === 'listening' || phase === 'recording') {
-            setVoiceState({ key: conversationKey, phase: 'listening', error: null });
-          } else if (phase === 'transcribing' || phase === 'processing') {
-            setVoiceState({ key: conversationKey, phase: 'processing', error: null });
-          } else if (phase === 'speaking') {
-            current.sawSpeaking = true;
-            setVoiceState({ key: conversationKey, phase: 'speaking', error: null });
-          } else if (phase === 'idle') {
-            if (current.sawSpeaking) current.speechIdle = true;
-            if (current.hasTranscript && current.turnFinished && current.speechIdle) {
-              void endVoiceSession();
-            } else if (!current.sawSpeaking) {
-              setVoiceState({ key: conversationKey, phase: 'processing', error: null });
-            }
-          }
-          return;
-        }
-        const payload = (event.event?.payload || {}) as Record<string, unknown>;
-        if (payload.stop_phrase === true) {
-          void endVoiceSession();
-          return;
-        }
-        if (payload.no_speech_limit === true) {
-          void endVoiceSession('error', 'No speech was detected.');
-          return;
-        }
-        const transcriptText = String(payload.text || '').trim();
-        if (!transcriptText || current.hasTranscript) return;
-        current.hasTranscript = true;
-        setVoiceState({ key: conversationKey, phase: 'processing', error: null });
-        const submission: PreparedChatSubmission = {
-          key: conversationKey,
-          text: transcriptText,
-          userMessageId: `msg_${globalThis.crypto.randomUUID()}`,
-          assistantMessageId: `msg_${globalThis.crypto.randomUUID()}`,
-          targetCardId,
-          participant,
-        };
-        void requestPreparedText(submission)
-          .then(() => {
-            const latest = activeVoiceRef.current;
-            if (!latest || latest.controller !== controller) return;
-            latest.turnFinished = true;
-            if (!latest.tts || latest.audioAvailable === false || latest.speechIdle) {
-              void endVoiceSession();
-            }
-          })
-          .catch((error: unknown) => {
-            if (controller.signal.aborted) return;
-            void endVoiceSession(
-              'error',
-              error instanceof Error ? error.message : 'Voice turn failed.',
-            );
-          });
-      },
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      void endVoiceSession(
-        'error',
-        error instanceof Error ? error.message : 'Voice transport failed.',
-      );
-    });
-  }, [
+  const submitVoiceTranscript = useCallback((
+    text: string,
+    targetCardId: string | null,
+    participant: SharedChatParticipant,
+  ): Promise<string> => requestPreparedText({
+    key: conversationKey,
+    text,
+    userMessageId: 'msg_' + globalThis.crypto.randomUUID(),
+    assistantMessageId: 'msg_' + globalThis.crypto.randomUUID(),
+    targetCardId,
+    participant,
+  }), [conversationKey, requestPreparedText]);
+
+  const {
+    startVoiceSession,
+    stopVoiceSession,
+    voiceError,
+    voicePhase,
+  } = useSharedCardVoice({
     canvasProjectId,
+    deckId,
     conversationId,
     conversationKey,
-    deckId,
-    directChatTargets,
-    endVoiceSession,
     mainCardId,
-    sessionPending,
+    selectedTargetCardId: selectedResponderTarget?.cardId || null,
     sessionHistoryLoading,
-    requestPreparedText,
-  ]);
+    sessionPending,
+    resolveTarget: resolveVoiceTarget,
+    submitTranscript: submitVoiceTranscript,
+  });
 
-  const stopVoiceSession = useCallback(async () => {
-    const active = activeVoiceRef.current;
-    if (!active || active.key !== conversationKey || !canvasProjectId) return;
-    const phase = voiceState.key === conversationKey ? voiceState.phase : 'idle';
-    if (phase === 'listening') {
-      setVoiceState({ key: conversationKey, phase: 'processing', error: null });
-      try {
-        await stopVoiceCapture({
-          projectId: canvasProjectId,
-          deckId,
-          conversationId,
-          ...(active.targetCardId ? { targetCardId: active.targetCardId } : {}),
-          cancel: false,
-        });
-      } catch (error) {
-        await endVoiceSession(
-          'error',
-          error instanceof Error ? error.message : 'Voice stop failed.',
-        );
-      }
-      return;
-    }
-    await endVoiceSession();
-  }, [
-    canvasProjectId,
-    conversationId,
-    conversationKey,
-    deckId,
-    endVoiceSession,
-    voiceState.key,
-    voiceState.phase,
-  ]);
-
-  const selectedVoiceTargetCardId = selectedResponderTarget?.cardId || null;
-  useEffect(() => {
-    const active = activeVoiceRef.current;
-    if (!active || active.key !== conversationKey) return;
-    if (active.targetCardId !== selectedVoiceTargetCardId) void endVoiceSession();
-  }, [conversationKey, endVoiceSession, selectedVoiceTargetCardId]);
-
-  useEffect(() => () => {
-    const active = activeVoiceRef.current;
-    if (!active || active.key !== conversationKey) return;
-    activeVoiceRef.current = null;
-    active.controller.abort();
-    if (canvasProjectId) {
-      void stopVoiceCapture({
-        projectId: canvasProjectId,
-        deckId,
-        conversationId,
-        ...(active.targetCardId ? { targetCardId: active.targetCardId } : {}),
-        cancel: true,
-      }).catch(() => undefined);
-    }
-  }, [canvasProjectId, conversationId, conversationKey, deckId]);
-
-  const stopMainTurn = useCallback(async () => {
+  const stopCurrentCardTurn = useCallback(async () => {
     if (!sessionPending || !canvasProjectId) return;
     const active = activeStreamRef.current;
     const expectedRunId = active?.key === conversationKey ? active.runId : null;
@@ -931,7 +593,6 @@ export default function useSharedCardChat({
         setTurnState({ key: conversationKey, phase: 'idle' });
         return;
       }
-      setTurnState({ key: conversationKey, phase: 'idle' });
       throw error;
     }
   }, [canvasProjectId, conversationId, conversationKey, deckId, sessionPending]);
@@ -940,17 +601,13 @@ export default function useSharedCardChat({
     technicalError: technical.key === conversationKey ? technical.error : null,
     handleSend,
     messages,
-    addressableAgents,
-    currentResponder,
-    currentResponderCardId: selectedResponderTarget?.cardId || null,
     setCurrentResponderCardId,
     sessionActive,
     sessionConnecting,
-    requestMainText,
     startVoiceSession,
-    stopMainTurn,
+    stopCurrentCardTurn,
     stopVoiceSession,
-    voiceError: voiceState.key === conversationKey ? voiceState.error : null,
-    voicePhase: voiceState.key === conversationKey ? voiceState.phase : 'idle',
+    voiceError,
+    voicePhase,
   };
 }

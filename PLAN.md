@@ -19,26 +19,30 @@ and topology.
 
 ## Current source
 
-The saved restoration baseline is commit `3cc61563cc81e1e4ae12867cf8b916bf867e77a3`. The current
-working tree contains the bounded inverse-residue cleanup that must pass static proof before one
-coordinated reload.
+The current working tree is the final source-cleanup and acceptance boundary. Git history retains the
+removed runtime/catalog generations; this file deliberately avoids pinning a working-tree claim to an
+older checkpoint SHA.
 
 - Saved Cards and orange/blue topology own durable identity, configuration, grants, and authority.
 - Python rails owns Card/Run preparation, the canonical operation registry, deterministic validation,
   the single IDF materializer, tool dispatch, graph adapters, and durable Run settlement.
 - The backend owns authenticated HTTP/SSE transport, exact Card/Project/conversation mapping, one
   shared Hermes Gateway client connection, submission correlation, and truthful result projection.
-- Saved Card execution is split across `sharedChat.routes.ts`, `savedSpecialist.routes.ts`, and
-  `thinkGraphRevision.routes.ts`, using the shared `savedCardAuthority`, `hermesCardSession`, and
-  `savedCardRun` services; the former generic Main-session router is deleted.
+- Saved Card execution enters through `sharedChatTurn.ts`, `savedSpecialistRun.ts`, or the completed-pair
+  handler in `thinkGraphRevision.routes.ts`, using the shared `savedCardAuthority`, `hermesCardSession`,
+  and `savedCardRun` services. Registration/history/event/Stop routes do not own execution.
 - Builder's Project-owned `projectCodeFolder` is source-wired to managed Project storage and a
-  Hermes Docker mount for Builder only. Loaded Builder product proof is not established.
+  Hermes session workspace for Builder only. HermesLatest's standard terminal and PTY remain the sole
+  terminal/process owner; LiquidAIty applies no Docker policy.
 - HermesLatest owns profiles, sessions, inference, its built-in tools, Bot delivery, queue behavior,
   retries, terminal/PTY, Team task execution, Magnetic task/dependency execution, and synthesis.
 - Dynamic Tools present only the current Run's authorized Card capabilities and call the existing
   authenticated Python dispatcher. Bot Mode is not a product tool.
 - The flat live catalog is the selectable product projection. IDD consumes that projection for
   Builder/editor choices and never authorizes, validates, or dispatches an ordinary Run.
+- `POST /api/cards/runs/read` is a read-only latest/history/status projection. Main and addressed-Card
+  execution use `/api/shared-chat/turn`; the internal saved-specialist bridge uses
+  `/api/saved-specialists/invoke`.
 - One durable Card maps to one reusable Hermes profile. Projects and conversations create distinct
   sessions; Project topology and private/session state are not written into the shared profile.
 - After an ordinary Main response is persisted and returned, the restored saved ThinkGraph Card
@@ -50,19 +54,19 @@ coordinated reload.
   time, token count, estimated cost, and tool-call count. They are a projection of durable Run data,
   not another runtime dashboard or event store.
 
-## Static proof already established
+## Source structure established; execution proof pending
 
 - The application-owned AgentTerminal/CardRuntime process, registry, reconciler, per-Card Gateway,
   loopback Card-tools plugin, and startup ownership generations are deleted.
-- Main, direct Card delivery, profile materialization, terminal attachment, Run history, Dynamic
-  Tools, Team/Magnetic preparation, graph projection, and catalog boundaries have focused source
-  tests from the restored baseline.
+- Current source has one shared Hermes Gateway client, one Card/profile/session binding service, one
+  Python Run authority, and one canonical operation-definition/catalog/dispatcher chain.
 - The catalog reduction and saved-grant reconciliation use the one canonical operation-definition
   set; Engraphis exposes the Smart surface selected for the product.
-- Production backend/client builds and typechecks passed at the saved restoration baseline.
-- A later `npm run dev:fresh` invocation compiled the backend and launched the local services, but MCP
-  readiness remained `503` because the application CBM dependency was unavailable; the public tunnel
-  therefore remained unpublished. That is a real remaining failure, not plugin acceptance.
+- The first-party TypeScript production import graph has no cycle after canonical subject-directory
+  validation was given one literal owner. The Python production module-level import graph has no cycle;
+  deferred catalog lookups remain covered by the catalog contract gate.
+- Ignored build/cache output from removed generations is not runtime proof and must be regenerated or
+  removed before the coordinated reload.
 
 Static tests, a successful process start, loaded runtime behavior, external MCP/plugin behavior, and
 visual acceptance remain separate proof tiers.
@@ -71,13 +75,16 @@ visual acceptance remain separate proof tiers.
 
 Before another reload:
 
-1. finish the inverse audit of the deleted runtime, catalog, graph-reference, and old-Hermes symbols;
-2. remove only proven dead callers, fields, tests, configuration, and stale current-state documents;
-3. keep checksum-bound recovery exports and append-only migrations unchanged;
-4. make `HermesLatest/LIQUIDAITY_PATCHES.md` and its generated overlay use Git history—not a deleted
-   comparison directory—as the update authority, then clean-apply-check the overlay;
-5. run focused control-plane, backend, client, and Hermes overlay proof;
-6. reindex the current first-party CBM scope once and repeat the inverse searches.
+1. finish the inverse audit of deleted runtime, route, catalog, graph-reference, and Hermes identities;
+2. remove only proven dead callers, generated residue, unsupported contract members, and stale
+   current-state documentation;
+3. keep checksum-bound recovery exports, append-only migrations, saved data, and provider stores unchanged;
+4. reconcile `HermesLatest/LIQUIDAITY_PATCHES.md` and its generated overlay with the actual bounded fork,
+   then clean-apply-check that overlay against the recorded upstream baseline;
+5. include `HermesLatest/` in the canonical CBM project, reindex once after source freeze, and repeat the
+   inverse searches;
+6. run focused Python, backend, client, catalog, shared-chat, profile/session, terminal, Team/Magnetic,
+   and Hermes overlay proof plus both TypeScript typechecks and production builds.
 
 ## One coordinated reload and real acceptance
 

@@ -1,5 +1,5 @@
 """Model switching for a live session: persist, snapshot/restore runtime, /model apply with
-guards, bot-capability + config sync. Bodies are rebound onto server.py's globals at install
+guards, profile-capability + config sync. Bodies are rebound onto server.py's globals at install
 time (method_ctx.bind_module), so they reference server.py globals bare."""
 
 from __future__ import annotations
@@ -371,42 +371,73 @@ def _apply_switch_reasoning(sid: str, session, agent, effort: str, *, persist_gl
         _emit_session_info(sid, session)  # the switch's own emit predates the effort change
 
 
-def _sync_bot_capabilities(sid: str, session: dict) -> None:
-    """Rebuild a Bot Chat session's agent when its capability surface changed. Bot Chats are
-    eternal sessions with toolsets/MCP baked in at construction, so a capability edit would
-    otherwise wait for /new: fingerprint at turn start and on change swap in a fresh agent for
-    the SAME session (history is DB-backed)."""
+def _sync_profile_capabilities(
+    sid: str,
+    session: dict,
+    expected_fingerprint: str | None = None,
+) -> None:
+    """Refresh a profile-following session when its capability surface changes.
+
+    Bot Chats and explicit ``follow_profile_config`` sessions keep one stored conversation while
+    profile-owned prompt, skills, toolsets, MCP and transport policy remain editable. Fingerprint
+    that surface at turn admission and replace only the live agent when it changes; the session
+    history and native session identity remain intact.
+    """
     agent = session.get("agent")
     if agent is None:
         return
+    follows_profile = session.get("follow_profile_config") is True
+    is_bot_chat = False
     try:
         title = str(getattr(agent, "_session_title_hint", "") or "").strip()
         if not title:
             db, key = getattr(agent, "_session_db", None), session.get("session_key") or ""
             title = str((db.get_session_title(key) if (db and key) else None) or "").strip()
-        if title != "Bot Chat":
+        is_bot_chat = title == "Bot Chat"
+        if not is_bot_chat and not follows_profile:
             return
         from tools.bot_mode_probe import capability_fingerprint
-        current = capability_fingerprint(session.get("profile_home") or None)
+        roster = session.get("bot_mode_roster")
+        roster_override = list(roster) if isinstance(roster, list) else None
+        current = capability_fingerprint(
+            session.get("profile_home") or None,
+            roster_override=roster_override,
+        )
         if current == "unavailable":
+            if expected_fingerprint or (follows_profile and not is_bot_chat):
+                raise RuntimeError("profile_capability_fingerprint_unavailable")
             return
-        seen = session.get("bot_caps_seen")
-        session["bot_caps_seen"] = current
-        if seen is None or seen == current:
+        if expected_fingerprint and current != expected_fingerprint:
+            raise RuntimeError("profile_capability_fingerprint_mismatch")
+        seen = session.get("profile_capabilities_seen")
+        if seen is None and not (follows_profile and not is_bot_chat):
+            session["profile_capabilities_seen"] = current
+            return
+        if seen == current:
             return
     except Exception:
+        if expected_fingerprint or (follows_profile and not is_bot_chat):
+            raise
         return
     try:
+        from tools.bot_mode_probe import invalidate_bot_mode_protocol_cache
+        invalidate_bot_mode_protocol_cache(session.get("profile_home") or None)
+        from agent.prompt_builder import clear_skills_system_prompt_cache
+        clear_skills_system_prompt_cache(clear_snapshot=True)
         tokens = _set_session_context(sid, cwd=_session_cwd(session))
         try:
             new_agent = _rebuild_session_agent(sid, session, session_id=session["session_key"],
                                                platform_override=_session_source(session))
         finally:
             _clear_session_context(tokens)
-        new_agent._session_title_hint = "Bot Chat"
-        _emit("notice", sid, {"message": "Capabilities updated — this bot's tools and prompt were refreshed."})
+        if is_bot_chat:
+            new_agent._session_title_hint = "Bot Chat"
+            _emit("notice", sid, {"message": "Capabilities updated — this bot's tools and prompt were refreshed."})
+        session["profile_capabilities_seen"] = current
     except Exception as e:
-        logger.warning("Bot capability sync failed for %s: %s", sid, e)
+        logger.warning("Profile capability sync failed for %s: %s", sid, e)
+        if expected_fingerprint or (follows_profile and not is_bot_chat):
+            raise RuntimeError("profile_capability_refresh_failed") from e
 
 
 def _sync_agent_model_with_config(sid: str, session: dict) -> None:
@@ -434,6 +465,7 @@ def _sync_agent_model_with_config(sid: str, session: dict) -> None:
         # the normal config-sync path switch now and prevents the old composer pick resurfacing on rebuild.
         superseded_pin = session.pop("model_override"), composer_profile
         session["composer_override_profile"] = None
+        session.pop("resume_runtime_overrides", None)
     # Record first so a broken config gets one attempt per edit, not per turn.
     session["config_model_seen"] = target
     model, provider = target

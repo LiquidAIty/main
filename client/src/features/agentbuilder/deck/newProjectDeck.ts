@@ -15,8 +15,8 @@ import {
   BUILDER_CARD_MODEL_KEY,
   MAIN_CARD_TOOLS,
   THINKGRAPH_CARD_TOOLS,
-  MAGENTIC_ONE_DEFAULT_MODEL_KEY,
-  MAGENTIC_ONE_DEFAULT_PROVIDER,
+  MAGNETIC_DEFAULT_MODEL_KEY,
+  MAGNETIC_DEFAULT_PROVIDER,
 } from './deckPrimitives';
 
 /** Stable saved identity of the surviving Builder Card. */
@@ -209,7 +209,6 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Supply an explicit episode UUID when writing. Treat add_memory as queued until exact Graphiti readback verifies the episode and its entities/facts; never describe queue acceptance as persisted completion.',
         'The authenticated runtime supplies the current project Graphiti scope. Creating the first sourced episode in a clean KnowGraph does not require a preexisting node, edge, target Card, or selected graph reference. Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake.',
         'Do not use CBM or become a coding worker. Do not initiate another saved Card, create recursive workers, or execute Magnetic.',
-        'Use card.load_graph_references only to hand exact persisted graph references to another saved Card after research; it does not create another input format or execute that Card. Builder alone stages Magnetic instructions.',
       ].join('\n'),
       ioSchema: [
         'Input: one bounded research assignment plus deliberately selected context and graph references.',
@@ -270,11 +269,8 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         '3. Pattern & Correlation — non-obvious cross-domain links for this subject (e.g. conflict+energy+inflation, sanctions+logistics, weather+shipping+supply chain); whether each is strengthening, stable, or fading, and what would invalidate it.',
         '4. Decision Board — best long, best hedge, best watchlist item, biggest unresolved question, what to monitor in the next 24-72h.',
         '5. Watches Set — the add_watch triggers you registered for this subject so it is re-checked.',
-        'Then append ONE JSON object with graphWriteProposals for the durable findings, each: {"target":"KnowGraph","operation":"upsert_node|upsert_edge|annotate_node|flag_uncertainty","confidence":0.0,"reason":"plain reason","payload":{...,"source":"<tool/command + layer>","observedAt":"<iso>"}}',
       ].join('\n'),
       memoryPolicy: [
-        'Durable knowledge lives in KnowGraph, reached only through graphWriteProposals — you never write graphs directly. KnowGraph or Main reviews and promotes them.',
-        'A KnowGraph proposal REQUIRES source + evidence in its payload (which WorldSignals command/layer, when observed). Findings without provenance are not proposed.',
         'Read prior findings for this subject before briefing so Pattern & Correlation is grounded in accumulated evidence, not one-shot guesses. This is what makes the briefing sharper every cycle.',
       ].join('\n'),
     }),
@@ -313,10 +309,8 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     id: 'template_magentic',
     name: 'Magnetic',
     promptTemplate: 'prompt_magentic',
-    model: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
-    provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1200,
+    model: MAGNETIC_DEFAULT_MODEL_KEY,
+    provider: MAGNETIC_DEFAULT_PROVIDER,
     tools: [],
   },
   {
@@ -325,8 +319,6 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     promptTemplate: 'prompt_main_chat',
     model: MAIN_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1200,
     tools: [],
   },
   {
@@ -335,8 +327,6 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     promptTemplate: 'prompt_assist',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1200,
     tools: [],
   },
   {
@@ -345,8 +335,6 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     promptTemplate: 'prompt_team',
     model: TEAM_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
     tools: [...TEAM_CARD_TOOLS],
   },
   {
@@ -355,8 +343,6 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     promptTemplate: 'prompt_thinkgraph',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
     tools: [...THINKGRAPH_CARD_TOOLS],
   },
   {
@@ -365,8 +351,6 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     promptTemplate: 'prompt_knowgraph',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
     tools: [],
   },
   {
@@ -375,8 +359,6 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     promptTemplate: 'prompt_worldsignals_agent',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
     tools: [],
   },
   {
@@ -385,11 +367,10 @@ export const INITIAL_AGENT_TEMPLATES: CardTemplate[] = [
     promptTemplate: 'prompt_trading_workbench',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
     tools: [
       'get_market_snapshot',
       'get_historical_bars',
+      'forecast_market_bars',
       'get_paper_account_readiness',
       'trading.get_state',
       'trading.accept_assignment',
@@ -431,7 +412,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Main',
       subtitle: 'Persistent conversation front door',
       position: { x: -24, y: -24 },
-      status: 'ready',
     },
     {
       id: BUILDER_CARD_ID,
@@ -458,7 +438,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Builder',
       subtitle: 'Prompts, agents, apps, and supporting code',
       position: { x: 360, y: -80 },
-      status: 'ready',
     },
     {
       id: 'card_thinkgraph',
@@ -478,13 +457,11 @@ export const INITIAL_DECK: DeckDocument = {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         openaiRuntime: 'codex_app_server',
-        reasoningEffort: 'low',
       },
       parentGraphId: null,
       title: 'ThinkGraph',
       subtitle: 'Project memory',
       position: { x: -260, y: 120 },
-      status: 'ready',
     },
     {
       id: 'card_magentic',
@@ -497,16 +474,14 @@ export const INITIAL_DECK: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
       runtimeOptions: {
         subagentType: 'none',
-        provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
+        provider: MAGNETIC_DEFAULT_PROVIDER,
         accessMode: 'chatgpt-account',
-        modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
-        maxTurns: 2,
+        modelKey: MAGNETIC_DEFAULT_MODEL_KEY,
       },
       parentGraphId: null,
       title: 'Magnetic',
       subtitle: 'Tasks',
       position: { x: 140, y: 120 },
-      status: 'ready',
     },
     {
       id: 'card_team',
@@ -532,7 +507,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Team',
       subtitle: 'Wildcard',
       position: { x: 600, y: 340 },
-      status: 'ready',
     },
     {
       id: 'card_knowgraph',
@@ -559,7 +533,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'KnowGraph',
       subtitle: 'Planning, memory, and KnowGraph research',
       position: { x: 260, y: 480 },
-      status: 'ready',
     },
     {
       id: 'card_trading_workbench',
@@ -575,6 +548,7 @@ export const INITIAL_DECK: DeckDocument = {
         tools: [
           'get_market_snapshot',
           'get_historical_bars',
+          'forecast_market_bars',
           'get_paper_account_readiness',
           'trading.get_state',
           'trading.accept_assignment',
@@ -631,7 +605,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Trading',
       subtitle: 'Hermes paper-trading decisions and deterministic Trade Jobs',
       position: { x: 520, y: 140 },
-      status: 'ready',
     },
     {
       id: 'card_worldsignals_agent',
@@ -664,7 +637,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'WorldSignals',
       subtitle: 'Live-world intelligence briefings',
       position: { x: 0, y: 260 },
-      status: 'ready',
     },
   ],
   // The two independent connection networks (explicit type + handle semantics;

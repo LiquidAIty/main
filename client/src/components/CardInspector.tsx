@@ -4,27 +4,25 @@ import type { SavedCardConfiguration } from '../types/agentgraph';
 import {
   assertUniqueCanonicalPromptSections,
   buildCardConfigurationFromEditorFields,
-  buildInputDictionarySelectedRows,
   parseCardListEditorText,
   parseCardEditorOptions,
   parseCardPromptTemplate,
   serializeCardPromptFields,
   toggleSavedToolAssignment,
   type CardEditorConfiguration,
+  type CardEditorAutoModelCandidate,
   type CardEditorModelOption,
   type CardPromptFields,
   type InputDictionaryEditorField,
-  type InputDictionaryToolPage,
 } from '../features/agentbuilder/cardConfigurationEditor';
+import { useCardToolOptions } from './useCardToolOptions';
 import {
-  CardInspectorPromptView,
-  CardInspectorRuntimeView,
-} from './CardInspectorPromptRuntime';
-import {
-  CardInspectorMemoryView,
-  CardInspectorSkillsView,
-  CardInspectorToolsView,
-} from './CardInspectorCapabilities';
+  CardInspectorPromptTab,
+} from './CardInspectorPromptTab';
+import { CardInspectorRuntimeTab } from './CardInspectorRuntimeTab';
+import { CardInspectorMemoryTab } from './CardInspectorMemoryTab';
+import { CardInspectorSkillsTab } from './CardInspectorSkillsTab';
+import { CardInspectorToolsTab } from './CardInspectorToolsTab';
 import {
   applyHermesCardOperation,
   loadHermesCardProfile,
@@ -36,11 +34,6 @@ import {
 type SavedSubagentModel = NonNullable<SavedCardConfiguration['subagentModel']>;
 type SavedSubagentType = NonNullable<SavedCardConfiguration['subagentType']>;
 type SavedCardScript = NonNullable<SavedCardConfiguration['script']>;
-type SavedJevContext = NonNullable<SavedCardConfiguration['jevContext']>;
-const DEFAULT_JEV_CONTEXT: Required<SavedJevContext> = {
-  autoTools: 'inherited',
-  modelChoice: 'inherited',
-};
 const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   provider: 'openai',
   accessMode: 'chatgpt-account',
@@ -50,7 +43,6 @@ const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
 
 function blankCardScript(): SavedCardScript {
   return {
-    enabled: false,
     source: '',
     version: 1,
     author: {},
@@ -59,15 +51,8 @@ function blankCardScript(): SavedCardScript {
     paletteFingerprint: '',
     compiled: {},
     lastValidation: {
-      status: 'blank', executionTested: false, errors: [], toolHandles: [],
+      status: 'blank', errors: [], toolHandles: [],
     },
-    hermesSupport: {
-      available: false,
-      active: false,
-      executor: null,
-      reason: 'card_script_hermes_runner_unavailable',
-    },
-    rollback: {},
   };
 }
 
@@ -77,18 +62,18 @@ function subagentAccessMode(provider: string): SavedSubagentModel['accessMode'] 
     : 'openai-api';
 }
 interface CardInspectorProps {
-  cardId?: string;
-  projectId?: string;
-  deckId?: string;
+  cardId: string;
+  projectId: string;
+  deckId: string;
   activeTab: string;
-  cardName?: string;
-  onChangeCardName?: (value: string) => void;
-  localConfig?: CardEditorConfiguration | null;
-  onSaveLocalConfig?: (config: CardEditorConfiguration) => void | Promise<void>;
+  cardName: string;
+  onChangeCardName: (value: string) => void;
+  localConfig: CardEditorConfiguration;
+  onSaveLocalConfig: (config: CardEditorConfiguration) => void | Promise<void>;
   projectCodeFolder?: string | null;
   onSetProjectCodeFolder?: (folder: string) => Promise<void>;
-  registerCardDraftFlush?: (save: (() => Promise<boolean>) | null) => void;
-  orangeConnections?: Array<{
+  registerCardDraftFlush: (save: (() => Promise<boolean>) | null) => void;
+  orangeConnections: Array<{
     cardId: string;
     title: string;
     direction: 'incoming' | 'outgoing';
@@ -98,20 +83,19 @@ interface CardInspectorProps {
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 export function CardInspector({
-  cardId = '',
-  projectId = '',
-  deckId = '',
+  cardId,
+  projectId,
+  deckId,
   activeTab,
-  cardName = '',
+  cardName,
   onChangeCardName,
   localConfig,
   onSaveLocalConfig,
   projectCodeFolder = null,
   onSetProjectCodeFolder,
   registerCardDraftFlush,
-  orangeConnections = [],
+  orangeConnections,
 }: CardInspectorProps) {
-  const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const outboundOrangeConnections = orangeConnections.filter(
     (connection) => connection.direction === 'outgoing',
   );
@@ -126,8 +110,7 @@ export function CardInspector({
   const profileDraftRevisionRef = useRef(0);
   const profileDraftDirtyRef = useRef(false);
   const profileReadbackRef = useRef<HermesCardProfileView | null>(null);
-  const runtimeKind = localConfig?.runtime.kind;
-  const runtimeMode = localConfig?.runtime.mode;
+  const runtimeMode = localConfig.runtime.mode;
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
   const [provider, setProvider] = useState<NonNullable<CardEditorConfiguration['provider']>>('');
   const [accessMode, setAccessMode] = useState<
@@ -136,12 +119,10 @@ export function CardInspector({
   const [{ key: modelKey, providerModelId }, setModel] = useState<{
     key: string; providerModelId?: string | null;
   }>({ key: '' });
-  const [autoSelect, setAutoSelect] = useState(false);
-  const [autoTools, setAutoTools] = useState(false);
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false);
+  const [autoToolsEnabled, setAutoToolsEnabled] = useState(false);
+  const [autoModelEnabled, setAutoModelEnabled] = useState(false);
   const [orchestratorTouched, setOrchestratorTouched] = useState(false);
-  const [jevContext, setJevContext] = useState<Required<SavedJevContext>>(DEFAULT_JEV_CONTEXT);
-  const [jevContextTouched, setJevContextTouched] = useState(false);
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
   const [subagentType, setSubagentType] = useState<SavedSubagentType>('none');
   const [subagentTouched, setSubagentTouched] = useState(false);
@@ -150,31 +131,10 @@ export function CardInspector({
   const [scriptDraft, setScriptDraft] = useState<SavedCardScript>(blankCardScript);
   const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
   const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
-  const [reasoningEffort, setReasoningEffort] = useState<
-    'low' | 'medium' | 'high' | 'xhigh' | ''
-  >('');
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, CardEditorModelOption[]>>({});
+  const [autoModelCandidates, setAutoModelCandidates] = useState<CardEditorAutoModelCandidate[]>([]);
   const [cardEditorFields, setCardEditorFields] = useState<InputDictionaryEditorField[]>([]);
   const [runtimeOptionsStatus, setRuntimeOptionsStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
-  const [toolDictionaryPage, setToolDictionaryPage] = useState<InputDictionaryToolPage>({
-    references: [],
-    selectedKnownReferences: [],
-    unresolvedSelectedIds: [],
-    namespaces: [],
-    total: 0,
-    offset: 0,
-    limit: 100,
-    hasMore: false,
-  });
-  const [toolDictionaryQuery, setToolDictionaryQuery] = useState('');
-  const [toolDictionaryNamespace, setToolDictionaryNamespace] = useState('');
-  const [toolDictionaryOffset, setToolDictionaryOffset] = useState(0);
-  const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true);
-  const [toolDictionaryBusy, setToolDictionaryBusy] = useState(true);
-  const [toolOptionsError, setToolOptionsError] = useState(false);
-  const [temperature, setTemperature] = useState<number | ''>('');
-  const [maxTokens, setMaxTokens] = useState<number | ''>('');
-  const [maxTurns, setMaxTurns] = useState<number | ''>('');
   const [promptText, setPromptText] = useState('');
   const [promptParts, setPromptParts] = useState<CardPromptFields & Record<string, string>>({
     role: '',
@@ -240,6 +200,7 @@ export function CardInspector({
     setRuntimeOptionsStatus('loading');
     setCardEditorFields([]);
     setModelsByProvider({});
+    setAutoModelCandidates([]);
     void fetch('/api/cards/options')
       .then(async (response) => {
         const payload = await response.json();
@@ -250,6 +211,7 @@ export function CardInspector({
         if (active) {
           setCardEditorFields(parsed.fields);
           setModelsByProvider(parsed.modelsByProvider);
+          setAutoModelCandidates(parsed.autoModelCandidates);
           setRuntimeOptionsStatus('ready');
         }
       })
@@ -257,6 +219,7 @@ export function CardInspector({
         if (active) {
           setCardEditorFields([]);
           setModelsByProvider({});
+          setAutoModelCandidates([]);
           setRuntimeOptionsStatus('failed');
         }
       });
@@ -266,13 +229,11 @@ export function CardInspector({
   }, [projectId, deckId, cardId]);
 
   useEffect(() => {
-    if (!isLocalConfigMode || !localConfig) return;
     // A response to an earlier save must not replace edits made while it was pending.
     if (draftDirtyRef.current || cardSaveInFlightRef.current) return;
     draftDirtyRef.current = false;
     setSubagentTouched(false);
     setSubagentTypeTouched(false);
-    setJevContextTouched(false);
     setOrchestratorTouched(false);
     setProvider(localConfig.provider || '');
     setAccessMode(
@@ -284,16 +245,12 @@ export function CardInspector({
     );
     setModel({ key: localConfig.model_key || '',
       providerModelId: localConfig.runtime_options?.providerModelId });
-    setAutoSelect(localConfig.runtime_options?.autoSelect === true);
-    setAutoTools(localConfig.runtime_options?.autoTools === true);
     setOrchestratorEnabled(
       localConfig.runtime.mode === 'main'
       || localConfig.runtime_options?.orchestrator === true,
     );
-    setJevContext({
-      autoTools: localConfig.runtime_options?.jevContext?.autoTools || 'inherited',
-      modelChoice: localConfig.runtime_options?.jevContext?.modelChoice || 'inherited',
-    });
+    setAutoToolsEnabled(localConfig.runtime_options?.autoTools === true);
+    setAutoModelEnabled(localConfig.runtime_options?.autoModel === true);
     const savedSubagentModel = localConfig.runtime_options?.subagentModel;
     const savedSubagentType = localConfig.runtime_options?.subagentType;
     setSubagentType(
@@ -301,11 +258,7 @@ export function CardInspector({
         ? savedSubagentType
         : 'none',
     );
-    setSubagentModel(
-      localConfig.runtime.kind === 'hermes' && savedSubagentModel
-        ? savedSubagentModel
-        : DEFAULT_SUBAGENT_MODEL,
-    );
+    setSubagentModel(savedSubagentModel || DEFAULT_SUBAGENT_MODEL);
     const savedScript = localConfig.runtime_options?.script
       ? structuredClone(localConfig.runtime_options.script)
       : blankCardScript();
@@ -313,10 +266,7 @@ export function CardInspector({
     const preserveUnsavedScript = Boolean(
       cachedScript
       && dirtyScriptCardsRef.current.has(cardId)
-      && (
-        cachedScript.source !== savedScript.source
-        || cachedScript.enabled !== savedScript.enabled
-      ),
+      && cachedScript.source !== savedScript.source,
     );
     if (preserveUnsavedScript && cachedScript) {
       setScriptDraft(structuredClone(cachedScript));
@@ -325,10 +275,6 @@ export function CardInspector({
       dirtyScriptCardsRef.current.delete(cardId);
       setScriptDraft(savedScript);
     }
-    setReasoningEffort(localConfig.reasoning_effort || '');
-    setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
-    setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
-    setMaxTurns(typeof localConfig.max_turns === 'number' ? localConfig.max_turns : '');
     setPromptText(localConfig.prompt_template || '');
     const parsedPrompt = parseCardPromptTemplate(localConfig.prompt_template || '');
     const legacyOutputExpectations = typeof localConfig.output_contract === 'string'
@@ -365,7 +311,7 @@ export function CardInspector({
             .join('\n')
         : '',
     );
-  }, [isLocalConfigMode, localConfig]);
+  }, [cardId, localConfig]);
 
   const acceptProfileReadback = useCallback((state: HermesCardProfileView | null) => {
     profileReadbackRef.current = state;
@@ -380,18 +326,6 @@ export function CardInspector({
   }, []);
 
   useEffect(() => {
-    if (
-      !isLocalConfigMode
-      || localConfig?.runtime.kind !== 'hermes'
-      || !projectId
-      || !deckId
-      || !cardId
-    ) {
-      acceptProfileReadback(null);
-      setHermesProfileStatus('idle');
-      setHermesProfileError(null);
-      return;
-    }
     const controller = new AbortController();
     acceptProfileReadback(null);
     setHermesProfileStatus('loading');
@@ -415,7 +349,7 @@ export function CardInspector({
     return () => controller.abort();
   // Hermes profile readback is identity-scoped and deliberately independent from
   // unsaved Card drafts. Card save never mutates the bound profile.
-  }, [isLocalConfigMode, projectId, deckId, cardId, acceptProfileReadback]);
+  }, [projectId, deckId, cardId, acceptProfileReadback]);
 
 
   const markDraftDirty = () => {
@@ -431,20 +365,14 @@ export function CardInspector({
   };
 
   const updateScriptDraft = (next: SavedCardScript) => {
-    const saved = localConfig?.runtime_options?.script || null;
+    const saved = localConfig.runtime_options?.script || null;
     const changed = !saved
-      ? Boolean(next.source.trim() || next.enabled)
-      : next.source !== saved.source || next.enabled !== saved.enabled;
+      ? Boolean(next.source.trim())
+      : next.source !== saved.source;
     const nextDraft = {
       ...next,
       version: changed ? Number(saved?.version || 0) + 1 : Number(saved?.version || next.version || 1),
       author: changed ? { kind: 'user', id: 'card-editor' } : (next.author || {}),
-      rollback: changed && saved ? {
-        version: saved.version,
-        sourceHash: saved.sourceHash || '',
-        compiledHash: saved.compiledHash || '',
-        enabled: saved.enabled,
-      } : (next.rollback || {}),
     };
     scriptDraftCacheRef.current.set(cardId, structuredClone(nextDraft));
     if (changed) dirtyScriptCardsRef.current.add(cardId);
@@ -454,7 +382,6 @@ export function CardInspector({
   };
 
   const buildCurrentLocalPayload = useCallback((): CardEditorConfiguration => {
-    if (!localConfig) throw new Error('card_config_missing');
     const originalPrompt = parseCardPromptTemplate(promptText);
     const migrateLegacyOutput = Boolean(
       localConfig.output_contract != null
@@ -474,20 +401,27 @@ export function CardInspector({
       provider,
       accessMode,
       modelKey,
-      reasoningEffort,
-      temperature,
-      maxTokens,
-      maxTurns,
       promptTemplate: serializedPrompt,
       toolsText,
       skillsText,
       toolsetsText,
       mcpConnectionIdsText,
     });
-    const runtimeOptions: SavedCardConfiguration = {
+    const retainedRuntimeOptions: SavedCardConfiguration = {
       ...(localConfig.runtime_options || {}),
+    };
+    if (runtimeMode === 'magentic_one') {
+      delete retainedRuntimeOptions.autoTools;
+      delete retainedRuntimeOptions.autoModel;
+    }
+    const runtimeOptions: SavedCardConfiguration = {
+      ...retainedRuntimeOptions,
+      ...(runtimeMode !== 'magentic_one' ? {
+        autoTools: autoToolsEnabled,
+        autoModel: autoModelEnabled,
+      } : {}),
       ...(
-        runtimeKind === 'hermes' && runtimeMode === 'magentic_one'
+        runtimeMode === 'magentic_one'
           ? { subagentType: 'none' as const }
           : subagentTypeTouched
             ? { subagentType }
@@ -495,33 +429,14 @@ export function CardInspector({
       ),
       ...(providerModelId !== undefined ? { providerModelId } : {}),
       ...(
-        runtimeKind === 'hermes'
-        && (autoSelect || localConfig.runtime_options?.autoSelect !== undefined)
-          ? { autoSelect }
-          : {}
-      ),
-      ...(
-        runtimeKind === 'hermes'
-        && (autoTools || localConfig.runtime_options?.autoTools !== undefined)
-          ? { autoTools }
-          : {}
-      ),
-      ...(
-        runtimeKind === 'hermes'
-        && runtimeMode === 'delegate'
+        runtimeMode === 'delegate'
         && (orchestratorTouched || localConfig.runtime_options?.orchestrator !== undefined)
           ? { orchestrator: orchestratorEnabled }
           : {}
       ),
       ...(subagentTouched ? { subagentModel } : {}),
       ...(
-        runtimeKind === 'hermes'
-        && (jevContextTouched || localConfig.runtime_options?.jevContext !== undefined)
-          ? { jevContext }
-          : {}
-      ),
-      ...(
-        localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
+        localConfig.runtime_options?.script || scriptDraft.source.trim()
           ? { script: scriptDraft }
           : {}
       ),
@@ -539,28 +454,21 @@ export function CardInspector({
     };
   }, [
     localConfig,
-    runtimeKind,
     runtimeMode,
     cardId,
     provider,
     accessMode,
     modelKey,
     providerModelId,
-    autoSelect,
-    autoTools,
     orchestratorEnabled,
+    autoToolsEnabled,
+    autoModelEnabled,
     orchestratorTouched,
-    jevContext,
-    jevContextTouched,
     subagentModel,
     subagentTouched,
     subagentType,
     subagentTypeTouched,
     scriptDraft,
-    reasoningEffort,
-    temperature,
-    maxTokens,
-    maxTurns,
     promptParts,
     promptPartsTouched,
     promptText,
@@ -572,7 +480,6 @@ export function CardInspector({
 
   const runSaveConfig = useCallback(async () => {
     if (!draftDirtyRef.current) return;
-    if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) throw new Error('card_config_missing');
     const revision = cardDraftRevisionRef.current;
     const payload = buildCurrentLocalPayload();
     await Promise.resolve(onSaveLocalConfig(payload));
@@ -580,14 +487,11 @@ export function CardInspector({
       draftDirtyRef.current = false;
     }
   }, [
-    isLocalConfigMode,
-    localConfig,
     onSaveLocalConfig,
     buildCurrentLocalPayload,
   ]);
 
   const openHermesLearningNode = useCallback(async (nodeId: string) => {
-    if (!projectId || !deckId || !cardId) return;
     setHermesLearningStatus('loading');
     setHermesLearningError(null);
     try {
@@ -602,7 +506,6 @@ export function CardInspector({
   }, [projectId, deckId, cardId]);
 
   const checkHermesMcpServer = useCallback(async (serverName: string) => {
-    if (!projectId || !deckId || !cardId) return;
     setHermesMcpChecks((current) => ({
       ...current,
       [serverName]: { status: 'checking', toolCount: 0, error: null },
@@ -634,7 +537,7 @@ export function CardInspector({
       const profileState = profileReadbackRef.current;
       const learningEdits = [...learningEditsRef.current];
       if (profileDraftDirtyRef.current) {
-        if (!profileState || !projectId || !deckId || !cardId) throw new Error('Hermes profile unavailable.');
+        if (!profileState) throw new Error('Hermes profile unavailable.');
       }
       await runSaveConfig();
       if (profileDraftDirtyRef.current) {
@@ -691,11 +594,14 @@ export function CardInspector({
   }, [draftRevision, flushCardDraft]);
 
   useEffect(() => {
-    registerCardDraftFlush?.(flushCardDraft);
-    return () => registerCardDraftFlush?.(null);
+    registerCardDraftFlush(flushCardDraft);
+    return () => registerCardDraftFlush(null);
   }, [registerCardDraftFlush, flushCardDraft]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
+  const autoModelAvailable = autoModelCandidates.some((candidate) => (
+    candidate.eligible && candidate.provider === provider && candidate.accessMode === accessMode
+  ));
   const subagentCatalogOptions = Object.entries(modelsByProvider).flatMap(([catalogProvider, models]) => (
     models.map((model) => ({ provider: catalogProvider, ...model }))
   ));
@@ -705,20 +611,13 @@ export function CardInspector({
   const subagentTypeField = editorField('subagentType');
   const accessModeField = editorField('accessMode');
   const modelKeyField = editorField('modelKey');
-  const jevModelChoiceContextField = editorField('jevModelChoiceContext');
-  const jevAutoToolsContextField = editorField('jevAutoToolsContext');
-  const reasoningEffortField = editorField('reasoningEffort');
-  const temperatureField = editorField('temperature');
-  const maxTokensField = editorField('maxTokens');
-  const maxTurnsField = editorField('maxTurns');
   const providerOptions = (providerField?.options || []).filter(
     (option) => (modelsByProvider[option.value] || []).length > 0,
   );
   const legacyTeam = (
-    localConfig?.runtime_options as (SavedCardConfiguration & { team?: { mode?: unknown } }) | null | undefined
+    localConfig.runtime_options as (SavedCardConfiguration & { team?: { mode?: unknown } }) | null | undefined
   )?.team;
-  const preservesHermesAutoTeam = runtimeKind === 'hermes'
-    && localConfig?.runtime_options?.subagentType === undefined
+  const preservesHermesAutoTeam = localConfig.runtime_options?.subagentType === undefined
     && legacyTeam?.mode === 'auto';
   const accessModeOptions = accessModeField?.options || [];
   const runtimeDictionaryReady = Boolean(
@@ -726,120 +625,32 @@ export function CardInspector({
     && providerField
     && subagentTypeField?.control === 'select'
     && accessModeField
-    && modelKeyField
-    && reasoningEffortField
-    && temperatureField
-    && maxTokensField
-    && maxTurnsField,
+    && modelKeyField,
   );
-  const savedToolNames = parseCardListEditorText(toolsText);
   const savedHermesToolsetNames = parseCardListEditorText(toolsetsText);
-  const selectedToolRows = buildInputDictionarySelectedRows(
-    toolDictionaryPage.selectedKnownReferences,
-    toolDictionaryPage.unresolvedSelectedIds,
-  );
-  const availableToolRows = toolDictionaryPage.references.filter((reference) =>
-    !savedToolNames.includes(reference.canonicalId)
-    && !showSelectedToolsOnly,
-  );
-  const toggleTool = (name: string, checked: boolean) => {
-    setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
-    markDraftDirty();
-  };
-
-  useEffect(() => {
-    if (!isLocalConfigMode || !localConfig) return;
-    const controller = new AbortController();
-    setToolDictionaryBusy(true);
-    setToolOptionsError(false);
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        setToolDictionaryBusy(true);
-        try {
-          const params = new URLSearchParams({
-            query: toolDictionaryQuery,
-            offset: String(toolDictionaryOffset),
-            limit: '100',
-          });
-          if (toolDictionaryNamespace) params.set('namespace', toolDictionaryNamespace);
-          if (savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
-          const response = await fetch(`/api/idd/tools?${params}`, {
-            signal: controller.signal,
-          });
-          const payload = await response.json();
-          if (!response.ok || !payload?.ok || !Array.isArray(payload.references)) {
-            throw new Error('Tool options unavailable');
-          }
-          setToolDictionaryPage({
-            references: payload.references,
-            selectedKnownReferences: Array.isArray(payload.selectedKnownReferences) ? payload.selectedKnownReferences : [],
-            unresolvedSelectedIds: Array.isArray(payload.unresolvedSelectedIds) ? payload.unresolvedSelectedIds : [],
-            namespaces: Array.isArray(payload.namespaces) ? payload.namespaces : [],
-            total: Number.isFinite(payload.total) ? payload.total : 0,
-            offset: Number.isFinite(payload.offset) ? payload.offset : toolDictionaryOffset,
-            limit: Number.isFinite(payload.limit) ? payload.limit : 100,
-            hasMore: payload.hasMore === true,
-          });
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            setToolOptionsError(true);
-            setToolDictionaryPage((current) => ({
-              ...current,
-              references: [],
-              selectedKnownReferences: [],
-              unresolvedSelectedIds: savedToolNames,
-              total: 0,
-              offset: 0,
-              hasMore: false,
-            }));
-          }
-        } finally {
-          if (!controller.signal.aborted) setToolDictionaryBusy(false);
-        }
-      })();
-    }, 150);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [
-    isLocalConfigMode,
-    localConfig,
-    savedToolNames.join('\u0000'),
-    toolDictionaryNamespace,
-    toolDictionaryOffset,
-    toolDictionaryQuery,
-  ]);
-
-  if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) {
-    return (
-      <div
-        style={{
-          padding: '12px 14px',
-          borderRadius: 8,
-          border: '1px solid #3A3A3A',
-          background: '#1F1F1F',
-          color: '#E0DED5',
-          fontSize: 12,
-        }}
-      >
-        Select an agent to edit.
-      </div>
-    );
-  }
+  const toolOptions = useCardToolOptions({ toolsText, setToolsText, markDraftDirty });
+  const {
+    page: toolDictionaryPage,
+    query: toolDictionaryQuery,
+    namespace: toolDictionaryNamespace,
+    showSelectedOnly: showSelectedToolsOnly,
+    busy: toolDictionaryBusy,
+    error: toolOptionsError,
+    savedToolNames,
+    selectedRows: selectedToolRows,
+    availableRows: availableToolRows,
+  } = toolOptions;
 
   const sectionBody = activeTab === 'Prompt'
     ? (
-        <CardInspectorPromptView
+        <CardInspectorPromptTab
           view={{
             runtime: {
-              kind: runtimeKind,
               mode: runtimeMode,
               orchestratorEnabled,
             },
             outboundConnections: outboundOrangeConnections,
             cardName: {
-              editable: Boolean(onChangeCardName),
               draft: cardNameDraft,
             },
             prompt: {
@@ -856,7 +667,7 @@ export function CardInspector({
             },
             changeCardName: (value) => {
               setCardNameDraft(value);
-              onChangeCardName?.(value);
+              onChangeCardName(value);
             },
             changePromptField: (field, value) => {
               setPromptParts((current) => ({ ...current, [field]: value }));
@@ -868,7 +679,7 @@ export function CardInspector({
       )
     : activeTab === 'Runtime'
       ? (
-          <CardInspectorRuntimeView
+          <CardInspectorRuntimeTab
             view={{
               identity: { projectId, deckId, cardId },
               projectFolder: {
@@ -877,9 +688,8 @@ export function CardInspector({
                 status: projectFolderStatus,
                 error: projectFolderError,
               },
-              runtime: {
-                kind: runtimeKind,
-                mode: runtimeMode,
+            runtime: {
+              mode: runtimeMode,
                 dictionaryReady: runtimeDictionaryReady,
                 optionsStatus: runtimeOptionsStatus,
               },
@@ -887,10 +697,11 @@ export function CardInspector({
                 provider,
                 accessMode,
                 modelKey,
-                autoSelect,
                 providerOptions,
                 accessModeOptions,
                 availableModels,
+                autoModelEnabled,
+                autoModelAvailable,
               },
               subagents: {
                 type: subagentType,
@@ -898,23 +709,6 @@ export function CardInspector({
                 preservesHermesAutoTeam,
                 model: subagentModel,
                 catalogOptions: subagentCatalogOptions,
-              },
-              jev: {
-                context: jevContext,
-                modelChoiceField: jevModelChoiceContextField,
-                autoToolsField: jevAutoToolsContextField,
-              },
-              reasoning: {
-                effort: reasoningEffort,
-                field: reasoningEffortField,
-              },
-              advanced: {
-                temperature,
-                maxTokens,
-                maxTurns,
-                temperatureField,
-                maxTokensField,
-                maxTurnsField,
               },
             }}
             actions={{
@@ -936,37 +730,15 @@ export function CardInspector({
                 const selected = availableModels.find((model) => model.key === key);
                 if (key && !selected) return;
                 setModel({ key, providerModelId: selected?.providerModelId ?? null });
-                setAutoSelect(false);
                 markDraftDirty();
               },
-              changeAutoSelect: (enabled) => {
-                setAutoSelect(enabled);
+              changeAutoModel: (enabled) => {
+                setAutoModelEnabled(enabled);
                 markDraftDirty();
               },
               changeSubagentType: (type) => {
                 setSubagentType(type);
                 setSubagentTypeTouched(true);
-                markDraftDirty();
-              },
-              changeReasoningEffort: (effort) => {
-                setReasoningEffort(effort);
-                markDraftDirty();
-              },
-              changeJevContext: (key, mode) => {
-                setJevContext((value) => ({ ...value, [key]: mode }));
-                setJevContextTouched(true);
-                markDraftDirty();
-              },
-              changeTemperature: (value) => {
-                setTemperature(value);
-                markDraftDirty();
-              },
-              changeMaxTokens: (value) => {
-                setMaxTokens(value);
-                markDraftDirty();
-              },
-              changeMaxTurns: (value) => {
-                setMaxTurns(value);
                 markDraftDirty();
               },
               changeSubagentModel: (selectedProvider, selectedKey) => {
@@ -988,9 +760,8 @@ export function CardInspector({
         )
       : activeTab === 'Memory'
         ? (
-            <CardInspectorMemoryView
+            <CardInspectorMemoryTab
               view={{
-                runtimeKind,
                 profileStatus: hermesProfileStatus,
                 profileError: hermesProfileError,
               }}
@@ -998,9 +769,8 @@ export function CardInspector({
           )
         : activeTab === 'Skills'
           ? (
-              <CardInspectorSkillsView
+              <CardInspectorSkillsTab
                 view={{
-                  runtimeKind,
                   skillsText,
                   profile: {
                     state: hermesProfileState,
@@ -1032,11 +802,11 @@ export function CardInspector({
             )
           : activeTab === 'Tools'
             ? (
-                <CardInspectorToolsView
+                <CardInspectorToolsTab
                   view={{
-                    runtimeKind: localConfig.runtime.kind,
-                    autoTools,
                     dictionary: {
+                      autoToolsEnabled,
+                      autoToolsVisible: runtimeMode !== 'magentic_one',
                       query: toolDictionaryQuery,
                       namespace: toolDictionaryNamespace,
                       page: toolDictionaryPage,
@@ -1056,37 +826,23 @@ export function CardInspector({
                     },
                     script: {
                       cardId,
-                      runtimeKind: localConfig.runtime.kind,
                       script: scriptDraft,
                       selectedTools: savedToolNames,
                     },
                     mcpConnectionIdsText,
                   }}
                   actions={{
+                    changeToolQuery: toolOptions.changeQuery,
                     changeAutoTools: (enabled) => {
-                      setAutoTools(enabled);
+                      setAutoToolsEnabled(enabled);
                       markDraftDirty();
                     },
-                    changeToolQuery: (value) => {
-                      setToolDictionaryQuery(value);
-                      setToolDictionaryOffset(0);
-                    },
-                    changeToolNamespace: (value) => {
-                      setToolDictionaryNamespace(value);
-                      setToolDictionaryOffset(0);
-                    },
-                    changeShowSelectedOnly: setShowSelectedToolsOnly,
-                    clearSelectedTools: () => {
-                      setToolsText('');
-                      markDraftDirty();
-                    },
-                    toggleTool,
-                    showPreviousToolPage: () => {
-                      setToolDictionaryOffset(Math.max(0, toolDictionaryOffset - 100));
-                    },
-                    showNextToolPage: () => {
-                      setToolDictionaryOffset(toolDictionaryPage.offset + toolDictionaryPage.limit);
-                    },
+                    changeToolNamespace: toolOptions.changeNamespace,
+                    changeShowSelectedOnly: toolOptions.changeShowSelectedOnly,
+                    clearSelectedTools: toolOptions.clearSelectedTools,
+                    toggleTool: toolOptions.toggleTool,
+                    showPreviousToolPage: toolOptions.showPreviousPage,
+                    showNextToolPage: toolOptions.showNextPage,
                     toggleHermesToolset: (name, enabled) => {
                       setToolsetsText(toggleSavedToolAssignment(
                         savedHermesToolsetNames,

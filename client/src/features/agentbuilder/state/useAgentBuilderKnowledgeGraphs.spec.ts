@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/joinedKnowledgeGraphProjection';
 import useAgentBuilderKnowledgeGraphs, {
   withSettlementHeat,
 } from './useAgentBuilderKnowledgeGraphs';
@@ -20,6 +20,36 @@ function projection(): GraphProjectionV1 {
     edges: [],
   };
 }
+
+class TestEventSource {
+  static instances: TestEventSource[] = [];
+  readonly listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  onerror: ((event: Event) => void) | null = null;
+  closed = false;
+
+  constructor(readonly url: string) {
+    TestEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    const callback = listener as (event: MessageEvent) => void;
+    this.listeners.set(type, [...(this.listeners.get(type) || []), callback]);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  emit(type: string, value: unknown) {
+    const event = new MessageEvent(type, { data: JSON.stringify(value) });
+    for (const listener of this.listeners.get(type) || []) listener(event);
+  }
+}
+
+beforeEach(() => {
+  TestEventSource.instances = [];
+  vi.stubGlobal('EventSource', TestEventSource);
+});
 
 describe('settled graph heat', () => {
   it('marks only exact nodes changed by the completed settlement', () => {
@@ -60,7 +90,7 @@ describe('settled graph heat', () => {
     }));
     await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
 
-    act(() => result.current.observeThinkGraphRevision({
+    act(() => TestEventSource.instances[0].emit('thinkgraph_revision', {
       projectId: 'project-one',
       deckId: 'deck-one',
       conversationId: 'conversation-one',

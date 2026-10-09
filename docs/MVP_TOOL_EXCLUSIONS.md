@@ -85,7 +85,7 @@ with the Graphiti provider rather than an application-side semantic merger.
 | Tool | Why it is excluded from the MVP Card catalog | Underlying owner / future route |
 | --- | --- | --- |
 | `web_search` | KnowGraph already receives Hermes's Web toolset and owns all outside research, citation, and Graphiti persistence. A second LiquidAIty search tool would create two research doorways. | Hermes Web on the saved KnowGraph profile. If that real path fails, report the gap instead of restoring a fallback automatically. |
-| `hermes:tool:message_agent` | Bot delivery is Hermes session behavior authorized by the saved orange roster, not a Card-catalog tool. | Hermes Bot Mode and saved Project topology. |
+| Hermes internal `message_agent` capability (not a catalog ID) | Bot delivery is Hermes session behavior authorized by the saved orange roster, not a Card-catalog tool. | Hermes Bot Mode and saved Project topology. |
 
 `current_datetime` and `calculator` remain ordinary Card-eligible utilities.
 They are available to every Card in the editor and stay OFF unless that Card's
@@ -147,8 +147,9 @@ ledger, blue-roster dispatch, retries, worker attempts, and final synthesis.
 
 ### Team and specialist Cards
 
-Team remains a fixed, explicitly reviewed wildcard selection for MVP; it does not
-receive an automatic all-tools ceiling or a Jev picker. Trader, WorldSignals,
+Team remains an explicitly reviewed wildcard selection for MVP. It may enable AutoTools to narrow
+its broad saved grant, but it never receives the whole catalog automatically and Jev cannot widen its
+saved ceiling. Trader, WorldSignals,
 WorldView, Analyst, and Quant keep their existing domain grants until their real
 workflows are separately exercised. Their preservation is not approval to add
 their tools to unrelated Cards.

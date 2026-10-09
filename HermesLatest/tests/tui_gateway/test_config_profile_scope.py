@@ -105,42 +105,6 @@ def test_config_set_persistent_write_lands_on_params_profile_yaml(tmp_path, monk
     assert worker_cfg["terminal"]["cwd"] == WORKER_CWD
 
 
-def test_config_set_applies_builder_docker_policy_only_to_target_profile(tmp_path, monkeypatch):
-    launch, worker = _homes(tmp_path)
-    _bind_homes(monkeypatch, launch, worker)
-
-    backend = _set({"key": "terminal.backend", "value": "docker", "profile": "code"})
-    mount = _set({
-        "key": "terminal.docker_mount_cwd_to_workspace", "value": True, "profile": "code",
-    })
-    persistent = _set({
-        "key": "terminal.container_persistent", "value": False, "profile": "code",
-    })
-    volumes = _set({"key": "terminal.docker_volumes", "value": [], "profile": "code"})
-    extra_args = _set({"key": "terminal.docker_extra_args", "value": [], "profile": "code"})
-    forwarded = _set({"key": "terminal.docker_forward_env", "value": [], "profile": "code"})
-    container_env = _set({"key": "terminal.docker_env", "value": {}, "profile": "code"})
-
-    assert backend["result"]["value"] == "docker"
-    assert mount["result"]["value"] is True
-    assert persistent["result"]["value"] is False
-    assert volumes["result"]["value"] == []
-    assert extra_args["result"]["value"] == []
-    assert forwarded["result"]["value"] == []
-    assert container_env["result"]["value"] == {}
-    assert _read_yaml(worker)["terminal"] == {
-        "cwd": WORKER_CWD,
-        "backend": "docker",
-        "docker_mount_cwd_to_workspace": True,
-        "container_persistent": False,
-        "docker_volumes": [],
-        "docker_extra_args": [],
-        "docker_forward_env": [],
-        "docker_env": {},
-    }
-    assert _read_yaml(launch)["terminal"] == {"cwd": LAUNCH_CWD}
-
-
 def test_config_set_without_profile_still_writes_launch_home(tmp_path, monkeypatch):
     launch, worker = _homes(tmp_path)
     _bind_homes(monkeypatch, launch, worker)

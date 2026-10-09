@@ -1,1324 +1,33 @@
-"""Read-only provider graph Data Anchor resolution before model dispatch.
+"""Resolve selected provider graph references before model dispatch.
 
-The resolver opens provider authorities in read-only mode and returns current
-objects plus exact provider identifiers. It never writes, recalls embeddings,
-copies a graph, or turns a reference into synthetic data.
+The coordinator calls each provider's read-only owner, renders the exact returned
+records, and returns stable references plus an optional transient projection. It
+never writes a graph, copies one into another authority, or materializes an IDF.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
-import math
-import os
-import time
-from pathlib import Path
-from typing import Any, Callable
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from typing import Any
 
-from app.python_models.materializer_read_tools import call_materializer_read_tools
-from app.python_models.jev_validation import (
-    validate_rounded_choice_winner,
-    validate_rounded_probability_distribution,
+from app.python_models import (
+    codegraph_reference_reads,
+    knowgraph_reference_reads,
+    thinkgraph_reference_reads,
 )
-from app.python_models.orchestration_contracts import (
+from app.python_models.data_anchor_contract import (
+    GRAPH_CONTEXT_BYTE_LIMIT,
+    MAX_GRAPH_REFERENCE_RESULTS,
+    DataAnchorError,
+    canonical_json,
+    json_safe,
+)
+from app.python_models.graph_reference_contracts import (
     GRAPH_RECORD_ID_FIELDS,
     graph_record_fields,
     graph_record_identity,
 )
-
-
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_ANCHOR_BODY_LIMIT = 12_000
-_GRAPH_SEED_LIMIT = 48_000
-_KNOWGRAPH_RESULT_LIMIT = 24
-_KNOWGRAPH_EPISODE_LIMIT = 50
-_KNOWGRAPH_EPISODE_PREVIEW_CHARS = 1_000
-_CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
-
-
-class DataAnchorError(ValueError):
-    """Typed failure before a provider can receive an ungrounded request."""
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-
-
-def _subject_directory_source(
-    id_field: str,
-    value: Any,
-) -> tuple[list[dict[str, str]], str]:
-    if not isinstance(value, dict) or value.get("complete") is not True:
-        raise DataAnchorError("subject_directory_authority_incomplete")
-    raw_subjects = value.get("subjects")
-    count = value.get("count")
-    revision = str(value.get("revision") or "").strip()
-    if (
-        not isinstance(raw_subjects, list)
-        or isinstance(count, bool)
-        or not isinstance(count, int)
-        or count < 0
-        or count != len(raw_subjects)
-        or not revision
-    ):
-        raise DataAnchorError("subject_directory_authority_invalid")
-    subjects: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    seen_names: set[tuple[str, str]] = set()
-    for raw in raw_subjects:
-        if not isinstance(raw, dict) or set(raw) != {
-            id_field, "canonicalName", "entityKind",
-        }:
-            raise DataAnchorError("subject_directory_subject_invalid")
-        record = {
-            key: str(raw.get(key) or "")
-            for key in (id_field, "canonicalName", "entityKind")
-        }
-        if (
-            not record[id_field].strip()
-            or len(record[id_field]) > 1_024
-            or not record["canonicalName"].strip()
-            or len(record["canonicalName"]) > 256
-            or not record["entityKind"].strip()
-            or len(record["entityKind"]) > 128
-        ):
-            raise DataAnchorError("subject_directory_subject_invalid")
-        identity = (id_field, record[id_field])
-        if identity in seen:
-            raise DataAnchorError("subject_directory_subject_duplicate")
-        name_identity = (id_field, record["canonicalName"])
-        if name_identity in seen_names:
-            raise DataAnchorError("subject_directory_subject_name_duplicate")
-        seen.add(identity)
-        seen_names.add(name_identity)
-        subjects.append(record)
-    return subjects, revision
-
-
-def assemble_canonical_subject_directory(
-    project_id: str,
-    think_source: Any,
-    know_source: Any,
-    *,
-    read_duration_ms: float = 0.0,
-) -> dict[str, Any]:
-    """Validate one complete compact directory without ranking or truncation."""
-
-    project_id = str(project_id or "").strip()
-    if not project_id:
-        raise DataAnchorError("subject_directory_project_invalid")
-    think_subjects, think_revision = _subject_directory_source(
-        "engraphisEntityId", think_source
-    )
-    know_subjects, know_revision = _subject_directory_source(
-        "graphitiEntityId", know_source
-    )
-    subjects = sorted(
-        [*think_subjects, *know_subjects],
-        key=lambda item: (
-            item["canonicalName"], *graph_record_identity(item)
-        ),
-    )
-    counts = {
-        "engraphis": len(think_subjects),
-        "graphiti": len(know_subjects),
-        "total": len(subjects),
-    }
-    identity = {
-        "schemaVersion": "graph-subject-directory",
-        "projectId": project_id,
-        "complete": True,
-        "counts": counts,
-        "revisions": {
-            "engraphis": think_revision,
-            "graphiti": know_revision,
-        },
-        "subjects": subjects,
-    }
-    identity_bytes = _canonical_json(identity).encode("utf-8")
-    directory = {
-        **identity,
-        "sha256": hashlib.sha256(identity_bytes).hexdigest(),
-        "bytes": len(identity_bytes),
-        "estimatedTokens": math.ceil(len(identity_bytes) / 4),
-        "readDurationMs": round(max(0.0, float(read_duration_ms)), 3),
-    }
-    if len(_canonical_json(directory).encode("utf-8")) > _GRAPH_SEED_LIMIT:
-        raise DataAnchorError("subject_directory_input_limit_exceeded")
-    return directory
-
-
-def _read_knowgraph_subject_directory(
-    project_id: str,
-    *,
-    driver_factory: Callable[[], Any] | None = None,
-) -> dict[str, Any]:
-    driver, database = _knowgraph_driver(driver_factory)
-    scope_ids = [project_id, f"liquidaity-{project_id}"]
-    try:
-        with driver.session(database=database) as session:
-            count_rows = _neo4j_rows(session.run(
-                """
-                MATCH (subject:Entity)
-                WHERE toString(subject.group_id) IN $scopeIds
-                RETURN count(DISTINCT coalesce(toString(subject.uuid), elementId(subject))) AS count
-                """,
-                scopeIds=scope_ids,
-            ))
-            rows = _neo4j_rows(session.run(
-                """
-                MATCH (subject:Entity)
-                WHERE toString(subject.group_id) IN $scopeIds
-                RETURN DISTINCT
-                       coalesce(toString(subject.uuid), elementId(subject)) AS entityId,
-                       coalesce(toString(subject.name), '') AS canonicalName,
-                       labels(subject) AS labels
-                ORDER BY entityId
-                """,
-                scopeIds=scope_ids,
-            ))
-    except Exception as error:
-        if isinstance(error, DataAnchorError):
-            raise
-        raise DataAnchorError("subject_directory_knowgraph_unavailable") from error
-    finally:
-        close = getattr(driver, "close", None)
-        if callable(close):
-            close()
-    if len(count_rows) != 1:
-        raise DataAnchorError("subject_directory_knowgraph_count_invalid")
-    raw_count = count_rows[0].get("count")
-    # Apache AGE agtype exposes the literal external method `to_native`; translate
-    # its value immediately and never project that dependency term outward.
-    if hasattr(raw_count, "to_native"):
-        raw_count = raw_count.to_native()
-    if hasattr(raw_count, "toNumber"):
-        raw_count = raw_count.toNumber()
-    if isinstance(raw_count, bool) or not isinstance(raw_count, (int, float)):
-        raise DataAnchorError("subject_directory_knowgraph_count_invalid")
-    subjects: list[dict[str, str]] = []
-    for row in rows:
-        labels = row.get("labels")
-        entity_labels = [
-            str(label).strip() for label in labels
-            if str(label).strip() and str(label).strip() != "Entity"
-        ] if isinstance(labels, list) else []
-        subjects.append({
-            "graphitiEntityId": str(row.get("entityId") or "").strip(),
-            "canonicalName": str(row.get("canonicalName") or ""),
-            "entityKind": entity_labels[0] if entity_labels else "Entity",
-        })
-    count = int(raw_count)
-    revision = hashlib.sha256(_canonical_json(subjects).encode("utf-8")).hexdigest()
-    return {
-        "complete": count == len(subjects),
-        "count": count,
-        "revision": revision,
-        "subjects": subjects,
-    }
-
-
-def build_canonical_subject_directory(
-    project_id: str,
-    *,
-    think_reader: Callable[[str], dict[str, Any]] | None = None,
-    know_reader: Callable[[str], dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Read every current subject header from both graph authorities."""
-
-    started = time.perf_counter()
-    if think_reader is None:
-        from app.python_models.engraphis import read_subject_directory
-        think_reader = read_subject_directory
-    think_source = think_reader(project_id)
-    know_source = (know_reader or _read_knowgraph_subject_directory)(project_id)
-    return assemble_canonical_subject_directory(
-        project_id,
-        think_source,
-        know_source,
-        read_duration_ms=(time.perf_counter() - started) * 1000,
-    )
-
-
-def render_canonical_subject_directory(directory: dict[str, Any]) -> str:
-    return "\n".join((
-        "### Complete Cross-Graph Subject Directory",
-        "This is the complete write-time subject-name directory. It is identity choice context, not evidence or agreement.",
-        _canonical_json(directory),
-    ))
-
-
-def append_canonical_subject_directory(
-    graph_context: str,
-    directory: dict[str, Any],
-) -> str:
-    rendered = render_canonical_subject_directory(directory)
-    combined = "\n\n".join(value for value in (graph_context.strip(), rendered) if value)
-    if len(combined.encode("utf-8")) > _GRAPH_SEED_LIMIT:
-        raise DataAnchorError("data_anchor_seed_limit_exceeded")
-    return combined
-
-
-def _cbm_table(result: dict[str, Any], columns: list[str]) -> list[list[str]]:
-    """Decode the official query_graph JSON table without parsing prose."""
-    returned_columns = result.get("columns")
-    if returned_columns != columns:
-        raise DataAnchorError("codegraph_query_format_invalid")
-
-    rows: list[Any] = list(result.get("rows") or [])
-    normalized: list[list[str]] = []
-    for row in rows:
-        if isinstance(row, dict):
-            if any(column not in row for column in columns):
-                raise DataAnchorError("codegraph_query_rows_invalid")
-            values = [row[column] for column in columns]
-        elif isinstance(row, list) and len(row) == len(columns):
-            values = row
-        else:
-            raise DataAnchorError("codegraph_query_rows_invalid")
-        normalized.append([
-            "null" if value is None else str(value)
-            for value in values
-        ])
-
-    total = result.get("total")
-    if isinstance(total, bool) or (
-        total is not None
-        and (not isinstance(total, (int, float)) or int(total) < len(normalized))
-    ):
-        raise DataAnchorError("codegraph_query_rows_invalid")
-    return normalized
-
-
-def _read_codegraph_projection(project_id: str, deck_id: str, card_id: str,
-                               arguments: dict[str, Any]) -> dict[str, Any]:
-    node_ids = arguments.get("node_ids", [])
-    if any(not isinstance(ids, list) or len(ids) > 200
-           or any(not isinstance(value, str) or not value or len(value) > 4096 for value in ids)
-           for ids in (node_ids,)):
-        raise DataAnchorError("codegraph_selection_invalid")
-    if not isinstance(arguments.get("expand", False), bool):
-        raise DataAnchorError("codegraph_expansion_invalid")
-    result = empty_graph_projection(project_id)
-    result["authority"] = "codegraph"
-    if not node_ids:
-        return result
-    # Values are Cypher string literals; no user-supplied predicate or query.
-    selected = json.dumps(node_ids, ensure_ascii=True)
-    a = f"a.qualified_name IN {selected}"
-    b = f"b.qualified_name IN {selected}"
-    endpoints = f"({a} OR {b})" if arguments.get("expand", False) else f"({a} AND {b})"
-    node_columns = ["a.qualified_name", "a.name", "a.label", "id(a)"]
-    edge_columns = node_columns + ["b.qualified_name", "b.name", "b.label", "id(b)", "id(r)", "type(r)"]
-    queries = [
-        f"MATCH (a) WHERE {a} RETURN {', '.join(node_columns)} LIMIT 200",
-        f"MATCH (a)-[r]->(b) WHERE {endpoints} "
-        f"RETURN {', '.join(edge_columns)} LIMIT 300",
-    ]
-    responses = call_materializer_read_tools(project_id=project_id, deck_id=deck_id, card_id=card_id,
-        calls=[("cbm.query_graph", {
-            "project": _CODEGRAPH_PROJECT,
-            "query": query,
-            "format": "json",
-        }) for query in queries])
-    nodes: dict[str, dict[str, Any]] = {}
-    edges: dict[str, dict[str, Any]] = {}
-
-    def node(row: list[str]) -> str:
-        qualified_name, name, label, stored_id = row
-        if any(not value or value == "null" for value in row):
-            raise DataAnchorError("codegraph_record_identity_missing")
-        nodes[qualified_name] = {
-            "id": qualified_name, "canonicalId": qualified_name, "label": name,
-            "type": label, "authority": "codegraph", "codeGraphRef": qualified_name,
-            "properties": {"qualified_name": qualified_name, "id": stored_id},
-            "provenance": {"project": _CODEGRAPH_PROJECT, "nodeId": stored_id, "tool": "cbm.query_graph"},
-        }
-        return qualified_name
-
-    for row in _cbm_table(responses[0], node_columns):
-        node(row)
-    for row in _cbm_table(responses[1], edge_columns):
-        source, target = node(row[:4]), node(row[4:8])
-        edge_id, predicate = row[8:]
-        if not edge_id or not predicate or "null" in (edge_id, predicate):
-            raise DataAnchorError("codegraph_relationship_identity_missing")
-        edges[edge_id] = {"id": edge_id, "source": source, "target": target, "predicate": predicate,
-            "properties": {}, "provenance": {"project": _CODEGRAPH_PROJECT, "edgeId": edge_id, "tool": "cbm.query_graph"}}
-    result.update(nodes=list(nodes.values()), edges=list(edges.values()),
-                  counts={"nodes": len(nodes), "edges": len(edges)})
-    return result
-
-
-def _json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe(item) for item in value]
-    iso_format = getattr(value, "iso_format", None)
-    if callable(iso_format):
-        return iso_format()
-    return str(value)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def read_thinkgraph_exact(
-    project_id: str,
-    id_field: str,
-    identifier: str,
-    *,
-    db_path: str | Path | None = None,
-    bounded_expansion: int = 0,
-    result_limit: int = _KNOWGRAPH_RESULT_LIMIT,
-    engraphis_reader: Callable[[str, str, str], dict[str, Any]] | None = None,
-) -> dict[str, Any] | None:
-    """Read the exact memory through the same Engraphis service used by agents."""
-    if db_path is not None:
-        raise DataAnchorError("data_anchor_database_override_not_supported")
-    if bounded_expansion not in (0, 1) or not 1 <= result_limit <= _KNOWGRAPH_RESULT_LIMIT:
-        raise DataAnchorError("data_anchor_expansion_invalid")
-    try:
-        if id_field not in {"engraphisEntityId", "engraphisMemoryId"}:
-            raise DataAnchorError("data_anchor_engraphis_reference_unsupported")
-        if engraphis_reader is not None:
-            engraphis_record = engraphis_reader(project_id, id_field, identifier)
-        else:
-            # This resolver also runs inside MCP for selected-Card handoffs. Only
-            # Python rails may own Engraphis; never instantiate it in this process.
-            request = Request(
-                os.environ.get("PYTHON_RAILS_URL", "http://127.0.0.1:8003").rstrip("/") + "/thinkgraph/operation",
-                data=json.dumps({
-                    "projectId": project_id,
-                    "operation": "inspect",
-                    "arguments": {
-                        "entityId" if id_field == "engraphisEntityId" else "memoryId": identifier,
-                    },
-                }).encode("utf-8"),
-                headers={"Content-Type": "application/json"}, method="POST",
-            )
-            with urlopen(request, timeout=30) as response:
-                engraphis_record = json.load(response)
-    except HTTPError as error:
-        if error.code == 409:
-            return None
-        raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
-    except Exception as error:
-        raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
-    entity = engraphis_record.get("entity")
-    if isinstance(entity, dict):
-        evidence = entity.get("evidence", [])
-        thinks = [
-            item for item in evidence
-            if isinstance(item.get("metadata"), dict)
-            and isinstance(item["metadata"].get("thinkgraph_origin"), dict)
-            and item["metadata"]["thinkgraph_origin"].get("authority") == "thinkgraph"
-        ]
-        think_memory_ids = {
-            str(item.get("memory_id") or "").strip()
-            for item in thinks
-            if str(item.get("memory_id") or "").strip()
-        }
-        residual_evidence = [
-            item for item in evidence
-            if (
-                str(item.get("memory_id") or "").strip() not in think_memory_ids
-                if str(item.get("memory_id") or "").strip()
-                else item not in thinks
-            )
-        ]
-        bounded_thinks = thinks[:result_limit]
-        remaining_evidence = max(0, result_limit - len(bounded_thinks))
-        bounded_evidence = residual_evidence[:remaining_evidence]
-        portable_context = bounded_thinks or bounded_evidence
-        body = "\n\n".join(
-            str(item.get("excerpt", "")) for item in portable_context
-        )
-        relations = entity.get("relations", [])[:max(0, result_limit - 1)] if bounded_expansion else []
-        return {
-            "graphSystem": "engraphis",
-            "engraphisEntityId": entity["canonical_id"],
-            "recordKind": "entity",
-            "portableKind": "think",
-            "recordId": entity["canonical_id"], "type": entity["type"], "title": entity["label"],
-            "content": body[:_ANCHOR_BODY_LIMIT],
-            "metadata": {"thinks": bounded_thinks, "evidence": bounded_evidence},
-            "provenance": {"engine": "engraphis", "memberIds": entity["member_ids"]},
-            "asOf": "current", "readOperation": "graph_entity",
-            "relationshipEvidence": [{"nodes": [{"id": r["other_id"], "title": r["other_label"]} for r in relations],
-                "relationships": [{"id": r["id"], "sourceId": r["source"],
-                    "targetId": r["target"], "type": r["relation"]} for r in relations]}] if relations else [],
-            "resultLimit": result_limit, "truncated": len(body) > _ANCHOR_BODY_LIMIT
-                or len(thinks) + len(residual_evidence) > (
-                    len(bounded_thinks) + len(bounded_evidence)
-                )
-                or any(entity.get("truncation", {}).values())
-                or bounded_expansion > 0 and len(entity.get("relations", [])) > len(relations),
-        }
-    row = engraphis_record.get("memory")
-    if not isinstance(row, dict):
-        return None
-    links = engraphis_record.get("relationships", []) if bounded_expansion else []
-    links = links[:max(0, result_limit - 1)]
-    neighbors = {link["b"] if link["a"] == row["id"] else link["a"] for link in links}
-    relationships = [{
-        "id": json.dumps([link["a"], link["b"], link["relation"]], separators=(",", ":")),
-        "sourceId": link["a"], "targetId": link["b"], "type": link["relation"],
-        "properties": {"reason": link.get("reason", ""), "layer": link.get("layer")},
-    } for link in links]
-    return {
-        "graphSystem": "engraphis",
-        "engraphisMemoryId": row["id"],
-        "recordKind": "memory",
-        "recordId": row["id"], "type": row.get("mtype", "semantic"),
-        "title": row.get("title", ""), "content": str(row.get("content", ""))[:_ANCHOR_BODY_LIMIT],
-        "properties": {
-            "memoryType": row.get("mtype", "semantic"),
-            "validFrom": row.get("valid_from"),
-            "validTo": row.get("valid_to"),
-            "validToRecordedAt": row.get("valid_to_recorded_at"),
-            "ingestedAt": row.get("ingested_at"),
-            "expiredAt": row.get("expired_at"),
-        },
-        "metadata": row.get("metadata", {}), "provenance": row.get("provenance", {}),
-        "asOf": "current", "readOperation": "engraphis_get_memory",
-        "relationshipEvidence": [{
-            "nodes": [{"id": link["id"], "title": link["title"]}
-                      for link in engraphis_record.get("links", []) if link["id"] in neighbors],
-            "relationships": relationships,
-        }] if relationships else [],
-        "resultLimit": result_limit,
-        "truncated": len(str(row.get("content", ""))) > _ANCHOR_BODY_LIMIT
-            or bounded_expansion > 0 and len(engraphis_record.get("relationships", [])) > len(links),
-    }
-
-
-def _neo4j_rows(result: Any) -> list[dict[str, Any]]:
-    if hasattr(result, "data"):
-        data = result.data()
-        return [dict(row) for row in data]
-    return [
-        row.data() if hasattr(row, "data") else dict(row)
-        for row in result
-    ]
-
-
-def _without_graphiti_embedding_vectors(value: Any) -> Any:
-    """Remove Graphiti's derived vector payloads from model-facing reads."""
-
-    if isinstance(value, dict):
-        return {
-            key: _without_graphiti_embedding_vectors(item)
-            for key, item in value.items()
-            if not (
-                str(key).lower().endswith("_embedding")
-                and isinstance(item, list)
-            )
-        }
-    if isinstance(value, list):
-        return [_without_graphiti_embedding_vectors(item) for item in value]
-    return value
-
-
-def _knowgraph_driver(
-    driver_factory: Callable[[], Any] | None = None,
-) -> tuple[Any, str]:
-    """Open the existing project-scoped Neo4j read seam."""
-    database = os.environ.get("NEO4J_DATABASE", "neo4j").strip() or "neo4j"
-    if driver_factory is not None:
-        return driver_factory(), database
-    uri = os.environ.get("NEO4J_URI", "").strip()
-    user = os.environ.get("NEO4J_USER", "").strip()
-    password = os.environ.get("NEO4J_PASSWORD", "").strip()
-    if not uri or not user or not password:
-        raise DataAnchorError("data_anchor_knowgraph_unavailable")
-    try:
-        from neo4j import GraphDatabase
-    except ImportError as error:
-        raise DataAnchorError("data_anchor_knowgraph_driver_unavailable") from error
-    return GraphDatabase.driver(uri, auth=(user, password)), database
-
-
-def read_knowgraph_episodes_exact(
-    project_id: str,
-    episode_ids: list[str],
-    *,
-    driver_factory: Callable[[], Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Hydrate only the requested project-scoped Graphiti source episodes."""
-    requested = list(dict.fromkeys(
-        str(value or "").strip() for value in episode_ids if str(value or "").strip()
-    ))
-    if not requested:
-        return []
-    if len(requested) > _KNOWGRAPH_EPISODE_LIMIT:
-        raise DataAnchorError("data_anchor_knowgraph_episode_limit_invalid")
-    driver, database = _knowgraph_driver(driver_factory)
-    scope_ids = [project_id, f"liquidaity-{project_id}"]
-    try:
-        with driver.session(database=database) as session:
-            rows = _neo4j_rows(session.run(
-                """
-                MATCH (episode:Episodic)
-                WHERE toString(episode.uuid) IN $episodeIds
-                  AND (
-                    toString(episode.group_id) IN $scopeIds
-                    OR toString(episode.project_id) = $projectId
-                  )
-                RETURN toString(episode.uuid) AS uuid,
-                       properties(episode) AS properties
-                """,
-                episodeIds=requested,
-                scopeIds=scope_ids,
-                projectId=project_id,
-            ))
-    except Exception as error:
-        if isinstance(error, DataAnchorError):
-            raise
-        raise DataAnchorError("data_anchor_knowgraph_episode_read_failed") from error
-    finally:
-        close = getattr(driver, "close", None)
-        if callable(close):
-            close()
-
-    hydrated: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        episode_id = str(row.get("uuid") or "").strip()
-        if not episode_id or episode_id not in requested:
-            continue
-        properties = _without_graphiti_embedding_vectors(
-            _json_safe(row.get("properties") if isinstance(row.get("properties"), dict) else {})
-        )
-        content = str(properties.get("content") or "")
-        source = {
-            "uuid": episode_id,
-            **{
-                key: properties.get(key)
-                for key in (
-                    "name", "source", "source_description", "source_name", "source_url",
-                    "source_path", "source_type", "document_id", "created_at", "valid_at",
-                    "reference_time", "fetched_at", "snippet", "content_fingerprint",
-                    "graphiti_version",
-                )
-                if properties.get(key) is not None
-            },
-            "content_chars": len(content),
-            "content_preview": content[:_KNOWGRAPH_EPISODE_PREVIEW_CHARS],
-            "content_truncated": len(content) > _KNOWGRAPH_EPISODE_PREVIEW_CHARS,
-        }
-        hydrated[episode_id] = source
-    return [hydrated[episode_id] for episode_id in requested if episode_id in hydrated]
-
-
-def _portable_know(
-    graphiti_fact_uuid: str,
-    properties: dict[str, Any],
-    *,
-    source_id: str,
-    target_id: str,
-    source_name: str = "",
-    target_name: str = "",
-    episodes: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Project one Graphiti fact without creating another stored object."""
-    episode_ids = _episode_ids(properties)
-    invalid_at = properties.get("invalid_at")
-    expired_at = properties.get("expired_at")
-    jev = _persisted_knowgraph_jev(graphiti_fact_uuid, properties)
-    return {
-        "portableKind": "know",
-        "graphitiFactUuid": graphiti_fact_uuid,
-        "sourceEntity": {"uuid": source_id, **({"name": source_name} if source_name else {})},
-        "targetEntity": {"uuid": target_id, **({"name": target_name} if target_name else {})},
-        "graphitiRelation": str(properties.get("name") or properties.get("edge_type") or "Fact"),
-        "fact": str(properties.get("fact") or ""),
-        "supportingEpisodeUuids": episode_ids,
-        "supportingEpisodes": list(episodes or []),
-        "createdAt": properties.get("created_at"),
-        "referenceTime": properties.get("reference_time"),
-        "validAt": properties.get("valid_at"),
-        "invalidAt": invalid_at,
-        "expiredAt": expired_at,
-        "temporalStatus": "historical" if invalid_at or expired_at else "current",
-        **({
-            "jevCanonicalRelation": jev["winner"],
-            "relationship_strength": jev["label_confidence"],
-            "jev": jev,
-        } if jev is not None else {}),
-    }
-
-
-def _persisted_knowgraph_jev(
-    graphiti_fact_uuid: str,
-    properties: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Read already-settled Jev metadata from the Graphiti relationship."""
-    winner = str(properties.get("jev_relation_winner") or "").strip()
-    serialized = properties.get("jev_relation_distribution_json")
-    if not winner or serialized in (None, ""):
-        return None
-    try:
-        distribution = (
-            json.loads(serialized) if isinstance(serialized, str) else dict(serialized)
-        )
-        if not isinstance(distribution, dict) or not distribution:
-            return None
-        serialized_choices = properties.get("jev_choice_options_json")
-        choices = (
-            json.loads(serialized_choices)
-            if isinstance(serialized_choices, str) and serialized_choices.strip()
-            else list(distribution)
-        )
-        if (
-            not isinstance(choices, list)
-            or any(not isinstance(choice, str) or not choice for choice in choices)
-        ):
-            return None
-        distribution = validate_rounded_probability_distribution(
-            distribution,
-            choices,
-        )
-        validate_rounded_choice_winner(winner, distribution)
-        label_confidence_value = properties.get("jev_label_confidence")
-        if isinstance(label_confidence_value, bool):
-            return None
-        label_confidence = float(label_confidence_value)
-        if (
-            not math.isfinite(label_confidence)
-            or label_confidence != distribution[winner]
-        ):
-            return None
-        provider_confidence_value = properties.get("jev_provider_confidence")
-        provider_confidence: float | None = None
-        if provider_confidence_value not in (None, ""):
-            if isinstance(provider_confidence_value, bool):
-                return None
-            provider_confidence = float(provider_confidence_value)
-            if (
-                not math.isfinite(provider_confidence)
-                or not 0.0 <= provider_confidence <= 1.0
-            ):
-                return None
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return None
-    return {
-        "graphitiFactUuid": graphiti_fact_uuid,
-        "status": "success",
-        "winner": winner,
-        "distribution": distribution,
-        "label_confidence": label_confidence,
-        **({"provider_confidence": provider_confidence}
-           if provider_confidence is not None else {}),
-        "requested_model": str(properties.get("jev_requested_model") or ""),
-        "resolved_model": str(properties.get("jev_resolved_model") or ""),
-        "evaluated_at": str(properties.get("jev_evaluated_at") or ""),
-        "question_schema_version": str(
-            properties.get("jev_question_schema_version") or ""
-        ),
-        "vocabulary_version": str(properties.get("jev_ontology_version") or ""),
-        "vocabulary_hash": str(properties.get("jev_ontology_hash") or ""),
-    }
-
-
-def read_knowgraph_exact(
-    project_id: str,
-    id_field: str,
-    identifier: str,
-    *,
-    bounded_expansion: int = 0,
-    result_limit: int = _KNOWGRAPH_RESULT_LIMIT,
-    driver_factory: Callable[[], Any] | None = None,
-    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
-) -> dict[str, Any] | None:
-    """Read one project-scoped Neo4j object and a bounded current neighborhood."""
-    if bounded_expansion < 0 or bounded_expansion > 3:
-        raise DataAnchorError("data_anchor_expansion_invalid")
-    if result_limit < 1 or result_limit > _KNOWGRAPH_RESULT_LIMIT:
-        raise DataAnchorError("data_anchor_result_limit_invalid")
-    if id_field not in {
-        "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
-    }:
-        raise DataAnchorError("data_anchor_graphiti_reference_unsupported")
-    scope_ids = [project_id, f"liquidaity-{project_id}"]
-    driver, database = _knowgraph_driver(driver_factory)
-    try:
-        with driver.session(database=database) as session:
-            center_rows = _neo4j_rows(session.run(
-                """
-                MATCH (n)
-                WHERE (elementId(n) = $graphitiId OR toString(n.uuid) = $graphitiId)
-                  AND toString(n.group_id) IN $scopeIds
-                RETURN coalesce(toString(n.uuid), elementId(n)) AS graphitiId,
-                       labels(n) AS labels, properties(n) AS properties
-                LIMIT 1
-                """,
-                graphitiId=identifier,
-                scopeIds=scope_ids,
-            ))
-            relationship_center = False
-            if not center_rows:
-                center_rows = _neo4j_rows(session.run(
-                    """
-                    MATCH (a)-[r]->(b)
-                    WHERE (elementId(r) = $graphitiId OR toString(r.uuid) = $graphitiId)
-                      AND toString(a.group_id) IN $scopeIds
-                      AND toString(b.group_id) IN $scopeIds
-                      AND toString(r.group_id) IN $scopeIds
-                    RETURN coalesce(toString(r.uuid), elementId(r)) AS graphitiId,
-                           [type(r)] AS labels, properties(r) AS properties,
-                           coalesce(toString(a.uuid), elementId(a)) AS sourceGraphitiId,
-                           coalesce(toString(b.uuid), elementId(b)) AS targetGraphitiId,
-                           [{graphitiId: coalesce(toString(a.uuid), elementId(a)),
-                             labels: labels(a), properties: properties(a)},
-                            {graphitiId: coalesce(toString(b.uuid), elementId(b)),
-                             labels: labels(b), properties: properties(b)}] AS endpointNodes
-                    LIMIT 1
-                    """,
-                    graphitiId=identifier,
-                    scopeIds=scope_ids,
-                ))
-                relationship_center = bool(center_rows)
-            if not center_rows:
-                return None
-
-            center = _without_graphiti_embedding_vectors(_json_safe(center_rows[0]))
-            paths: list[dict[str, Any]] = []
-            if bounded_expansion and not relationship_center:
-                paths = _without_graphiti_embedding_vectors(_neo4j_rows(session.run(
-                    f"""
-                    MATCH (center)
-                    WHERE (elementId(center) = $graphitiId OR toString(center.uuid) = $graphitiId)
-                      AND toString(center.group_id) IN $scopeIds
-                    MATCH path=(center)-[*1..{bounded_expansion}]-(other)
-                    WHERE ALL(node IN nodes(path)
-                              WHERE toString(node.group_id) IN $scopeIds)
-                      AND ALL(rel IN relationships(path)
-                              WHERE toString(rel.group_id) IN $scopeIds)
-                    RETURN [node IN nodes(path) | {{
-                               id: coalesce(toString(node.uuid), elementId(node)),
-                               labels: labels(node), properties: properties(node)}}] AS nodes,
-                           [rel IN relationships(path) | {{
-                               id: coalesce(toString(rel.uuid), elementId(rel)),
-                               type: type(rel), properties: properties(rel),
-                               sourceId: coalesce(toString(startNode(rel).uuid), elementId(startNode(rel))),
-                               targetId: coalesce(toString(endNode(rel).uuid), elementId(endNode(rel)))}}] AS relationships
-                    LIMIT $limit
-                    """,
-                    graphitiId=identifier,
-                    scopeIds=scope_ids,
-                    limit=result_limit,
-                )))
-    except Exception as error:
-        if isinstance(error, DataAnchorError):
-            raise
-        raise DataAnchorError("data_anchor_knowgraph_read_failed") from error
-    finally:
-        close = getattr(driver, "close", None)
-        if callable(close):
-            close()
-
-    properties = center.get("properties") if isinstance(center.get("properties"), dict) else {}
-    labels = center.get("labels") if isinstance(center.get("labels"), list) else []
-    neighborhood = _json_safe(paths)[:result_limit]
-    episode_ids = _episode_ids(properties) if relationship_center else []
-    episodes = (episode_reader or read_knowgraph_episodes_exact)(project_id, episode_ids) \
-        if episode_ids else []
-    endpoint_nodes = center.get("endpointNodes") if relationship_center else []
-    endpoints = endpoint_nodes if isinstance(endpoint_nodes, list) else []
-    source_endpoint = endpoints[0] if endpoints and isinstance(endpoints[0], dict) else {}
-    target_endpoint = endpoints[1] if len(endpoints) > 1 and isinstance(endpoints[1], dict) else {}
-    source_properties = source_endpoint.get("properties") \
-        if isinstance(source_endpoint.get("properties"), dict) else {}
-    target_properties = target_endpoint.get("properties") \
-        if isinstance(target_endpoint.get("properties"), dict) else {}
-    identifier = str(center.get("graphitiId") or identifier)
-    resolved_id_field = (
-        "graphitiRelationshipId" if relationship_center
-        else "graphitiEpisodeId" if "Episodic" in labels
-        else "graphitiEntityId"
-    )
-    if resolved_id_field != id_field:
-        return None
-    portable_know = _portable_know(
-        identifier,
-        properties,
-        source_id=str(center.get("sourceGraphitiId") or ""),
-        target_id=str(center.get("targetGraphitiId") or ""),
-        source_name=str(source_properties.get("name") or ""),
-        target_name=str(target_properties.get("name") or ""),
-        episodes=episodes,
-    ) if relationship_center else None
-    return {
-        "graphSystem": "graphiti",
-        **graph_record_fields(resolved_id_field, identifier),
-        "recordKind": "relationship" if relationship_center else (
-            "episode" if resolved_id_field == "graphitiEpisodeId" else "entity"
-        ),
-        **({"portableKind": "know"} if relationship_center else {}),
-        "type": str(labels[0] if labels else "Neo4jObject"),
-        "title": str(properties.get("name") or properties.get("title") or identifier),
-        "content": json.dumps(
-            {"properties": properties, "neighborhood": neighborhood},
-            ensure_ascii=False,
-            separators=(",", ":"),
-            default=str,
-        )[:_ANCHOR_BODY_LIMIT],
-        "properties": properties,
-        "endpointNodes": endpoint_nodes,
-        "sourceId": str(center.get("sourceGraphitiId") or ""),
-        "targetId": str(center.get("targetGraphitiId") or ""),
-        **({"know": portable_know, "jev": portable_know.get("jev")}
-           if portable_know is not None else {}),
-        "relationshipEvidence": neighborhood,
-        "provenance": {
-            **{
-                key: properties.get(key)
-                for key in (
-                    "group_id", "source", "source_description", "created_at",
-                    "reference_time", "valid_at", "invalid_at", "expired_at",
-                )
-                if properties.get(key) is not None
-            },
-            **({"episodeUuids": episode_ids, "episodes": episodes} if episode_ids else {}),
-        },
-        "asOf": _now_iso(),
-        "readOperation": "neo4j.project_scoped_exact",
-        "resultLimit": result_limit,
-        "truncated": bool(bounded_expansion and len(paths) >= result_limit),
-    }
-
-
-def read_codegraph_exact(
-    project_id: str,
-    deck_id: str,
-    card_id: str,
-    requested_qualified_name: str,
-    *,
-    bounded_expansion: int = 0,
-    result_limit: int = 24,
-    materializer_reader: Callable[..., list[dict[str, Any]]] = call_materializer_read_tools,
-) -> dict[str, Any] | None:
-    """Read one qualified current symbol through the official MCP/CBM seam."""
-    if bounded_expansion < 0 or bounded_expansion > 3:
-        raise DataAnchorError("data_anchor_expansion_invalid")
-    if result_limit < 1 or result_limit > 24:
-        raise DataAnchorError("data_anchor_result_limit_invalid")
-    if not deck_id or not card_id:
-        raise DataAnchorError("data_anchor_codegraph_context_missing")
-    calls: list[tuple[str, dict[str, Any]]] = [
-        ("cbm.index_status", {"project": _CODEGRAPH_PROJECT, "format": "json"}),
-        ("cbm.get_code_snippet", {
-            "project": _CODEGRAPH_PROJECT,
-            "qualified_name": requested_qualified_name,
-            "include_neighbors": False,
-            "format": "json",
-        }),
-    ]
-    if bounded_expansion:
-        calls.append(("cbm.trace_path", {
-            "project": _CODEGRAPH_PROJECT,
-            "function_name": requested_qualified_name,
-            "direction": "both",
-            "depth": bounded_expansion,
-            "mode": "calls",
-            "include_tests": False,
-            "limit": result_limit,
-            "format": "json",
-        }))
-    try:
-        results = materializer_reader(
-            project_id=project_id,
-            deck_id=deck_id,
-            card_id=card_id,
-            calls=calls,
-        )
-    except Exception as error:
-        raise DataAnchorError("data_anchor_codegraph_read_failed") from error
-    if len(results) != len(calls):
-        raise DataAnchorError("data_anchor_codegraph_result_invalid")
-    status, snippet = results[0], results[1]
-    if status.get("status") != "ready" or status.get("project") != _CODEGRAPH_PROJECT:
-        raise DataAnchorError("data_anchor_codegraph_not_ready")
-    qualified_name = str(snippet.get("qualified_name") or "").strip()
-    source = str(snippet.get("source") or "")
-    if qualified_name != requested_qualified_name or not source.strip():
-        return None
-    file_path = str(snippet.get("file_path") or "").replace("\\", "/")
-    repo_prefix = str(_REPO_ROOT).replace("\\", "/").rstrip("/") + "/"
-    if file_path.lower().startswith(repo_prefix.lower()):
-        file_path = file_path[len(repo_prefix):]
-    relationships = results[2] if len(results) > 2 else {}
-    evidence = {
-        key: _codegraph_trace_records(relationships.get(key))
-        for key in ("callers", "callees")
-        if _codegraph_trace_records(relationships.get(key))
-    }
-    return {
-        "graphSystem": "cbm",
-        "cbmQualifiedName": qualified_name,
-        "recordKind": "symbol",
-        "type": str(snippet.get("label") or "Symbol"),
-        "title": str(snippet.get("name") or qualified_name.rsplit(".", 1)[-1]),
-        "content": source[:_ANCHOR_BODY_LIMIT],
-        "properties": {
-            "project": status["project"],
-            "status": status["status"],
-            "nodes": status.get("nodes"),
-            "edges": status.get("edges"),
-            "file": file_path,
-            "startLine": snippet.get("start_line"),
-            "endLine": snippet.get("end_line"),
-            "signature": snippet.get("signature"),
-            "fingerprint": snippet.get("fp"),
-        },
-        "relationshipEvidence": evidence,
-        "provenance": {
-            "project": _CODEGRAPH_PROJECT,
-            "repositoryRoot": str(_REPO_ROOT).replace("\\", "/"),
-            "qualifiedSymbol": qualified_name,
-        },
-        "asOf": _now_iso(),
-        "readOperation": "cbm.get_code_snippet",
-        "truncated": bool(relationships.get("truncated") is True),
-    }
-
-
-def _codegraph_trace_records(value: Any) -> list[dict[str, Any]]:
-    """Normalize CBM JSON trace rows without interpreting their meaning."""
-    if isinstance(value, list):
-        return [dict(item) for item in value if isinstance(item, dict)]
-    if not isinstance(value, dict):
-        return []
-    columns = value.get("cols")
-    groups = value.get("groups")
-    if not isinstance(columns, list) or not isinstance(groups, list):
-        return []
-    records: list[dict[str, Any]] = []
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        prefix = str(group.get("qn_prefix") or "").strip()
-        rows = group.get("rows")
-        if not isinstance(rows, list):
-            continue
-        for row in rows:
-            if not isinstance(row, list) or len(row) != len(columns):
-                continue
-            record = {str(columns[index]): item for index, item in enumerate(row)}
-            name = str(record.get("name") or "").strip()
-            if name:
-                record["qualified_name"] = f"{prefix}.{name}" if prefix else name
-            records.append(record)
-    return records
-
-
-def _payload_records(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
-    current: Any = payload
-    for _ in range(3):
-        if not isinstance(current, dict):
-            return []
-        records = current.get(key)
-        if isinstance(records, list):
-            return [dict(item) for item in records if isinstance(item, dict)]
-        nested = current.get("result")
-        if isinstance(nested, dict):
-            current = nested
-            continue
-        break
-    return []
-
-
-def _string_values(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
-def _episode_ids(item: dict[str, Any]) -> list[str]:
-    values: list[str] = []
-    for key in ("episode_uuids", "episodes", "source_episode_uuids"):
-        raw = item.get(key)
-        if isinstance(raw, list):
-            for value in raw:
-                if isinstance(value, dict):
-                    text = str(value.get("uuid") or "").strip()
-                else:
-                    text = str(value or "").strip()
-                if text:
-                    values.append(text)
-        elif isinstance(raw, str) and raw.strip():
-            values.append(raw.strip())
-    return list(dict.fromkeys(values))
-
-
-def _knowgraph_node_record(
-    item: dict[str, Any],
-    *,
-    query: str,
-    centered: bool,
-    result_index: int,
-) -> dict[str, Any] | None:
-    graphiti_id = str(item.get("uuid") or item.get("graphitiId") or "").strip()
-    if not graphiti_id:
-        return None
-    name = str(item.get("name") or item.get("title") or graphiti_id).strip()
-    aliases = _string_values(item.get("aliases"))
-    exact_alias = query.casefold() in {name.casefold(), *(alias.casefold() for alias in aliases)}
-    labels = _string_values(item.get("labels") or item.get("entity_types"))
-    properties = _json_safe(item)
-    episode_ids = _episode_ids(item)
-    return {
-        "graphSystem": "graphiti",
-        "graphitiEntityId": graphiti_id,
-        "recordKind": "entity",
-        "type": labels[0] if labels else str(item.get("type") or "Entity"),
-        "title": name,
-        "content": json.dumps(properties, ensure_ascii=False, separators=(",", ":"))[:_ANCHOR_BODY_LIMIT],
-        "properties": properties,
-        "relationshipEvidence": [],
-        "provenance": {"episodeUuids": episode_ids},
-        "asOf": str(item.get("updated_at") or item.get("created_at") or _now_iso()),
-        "readOperation": "graphiti.search_nodes",
-        "selectionReason": (
-            "exact entity identity or alias match"
-            if exact_alias else
-            "bounded graph-proximity result" if centered else
-            "semantic entity result"
-        ),
-        "_rank": (1 if exact_alias else 4 if centered else 5, result_index),
-    }
-
-
-def _knowgraph_fact_record(
-    item: dict[str, Any],
-    *,
-    centered: bool,
-    result_index: int,
-) -> dict[str, Any] | None:
-    graphiti_id = str(item.get("uuid") or item.get("graphitiId") or "").strip()
-    if not graphiti_id:
-        return None
-    source_id = str(item.get("source_node_uuid") or "").strip()
-    target_id = str(item.get("target_node_uuid") or "").strip()
-    properties = _json_safe(item)
-    episode_ids = _episode_ids(item)
-    valid_at = str(item.get("valid_at") or "").strip()
-    invalid_at = str(item.get("invalid_at") or "").strip()
-    return {
-        "graphSystem": "graphiti",
-        "graphitiRelationshipId": graphiti_id,
-        "recordKind": "relationship",
-        "portableKind": "know",
-        "type": str(item.get("name") or item.get("edge_type") or "Fact"),
-        "title": str(item.get("fact") or item.get("name") or graphiti_id)[:500],
-        "content": json.dumps(properties, ensure_ascii=False, separators=(",", ":"))[:_ANCHOR_BODY_LIMIT],
-        "properties": properties,
-        "know": _portable_know(
-            graphiti_id,
-            properties,
-            source_id=source_id,
-            target_id=target_id,
-        ),
-        "relationshipEvidence": [{
-            "sourceNodeUuid": source_id,
-            "targetNodeUuid": target_id,
-            "validAt": valid_at or None,
-            "invalidAt": invalid_at or None,
-        }],
-        "provenance": {"episodeUuids": episode_ids},
-        "asOf": str(item.get("created_at") or _now_iso()),
-        "readOperation": "graphiti.search_memory_facts",
-        "selectionReason": (
-            "bounded fact near the strongest anchor" if centered else "semantic fact result"
-        ),
-        "_rank": (2 if not centered else 3, result_index, 0 if valid_at and not invalid_at else 1),
-    }
-
-
-def search_knowgraph_hybrid(
-    project_id: str,
-    deck_id: str,
-    card_id: str,
-    query: str,
-    *,
-    exact_records: list[dict[str, Any]] | None = None,
-    entity_types: list[str] | None = None,
-    edge_types: list[str] | None = None,
-    valid_at_after: str = "",
-    valid_at_before: str = "",
-    invalid_at_after: str = "",
-    invalid_at_before: str = "",
-    max_nodes: int = 8,
-    max_facts: int = 8,
-    bounded_expansion: int = 1,
-    materializer_reader: Callable[..., list[dict[str, Any]]] = call_materializer_read_tools,
-    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] = read_knowgraph_episodes_exact,
-) -> dict[str, Any]:
-    """Resolve one bounded hybrid KnowGraph search through the official MCP host."""
-    query = str(query or "").strip()
-    if not query:
-        raise DataAnchorError("data_anchor_knowgraph_search_query_required")
-    if not deck_id or not card_id:
-        raise DataAnchorError("data_anchor_knowgraph_context_missing")
-    if not 1 <= max_nodes <= 20 or not 1 <= max_facts <= 20:
-        raise DataAnchorError("data_anchor_knowgraph_limit_invalid")
-    if not 0 <= bounded_expansion <= 3:
-        raise DataAnchorError("data_anchor_expansion_invalid")
-
-    node_args: dict[str, Any] = {"query": query, "max_nodes": max_nodes}
-    fact_args: dict[str, Any] = {"query": query, "max_facts": max_facts}
-    if entity_types:
-        node_args["entity_types"] = list(entity_types)
-    if edge_types:
-        fact_args["edge_types"] = list(edge_types)
-    for key, value in (
-        ("valid_at_after", valid_at_after),
-        ("valid_at_before", valid_at_before),
-        ("invalid_at_after", invalid_at_after),
-        ("invalid_at_before", invalid_at_before),
-    ):
-        if value:
-            fact_args[key] = value
-
-    initial = materializer_reader(
-        project_id=project_id,
-        deck_id=deck_id,
-        card_id=card_id,
-        calls=[
-            ("graphiti.search_nodes", node_args),
-            ("graphiti.search_memory_facts", fact_args),
-        ],
-        concurrent=True,
-    )
-    if len(initial) != 2:
-        raise DataAnchorError("data_anchor_knowgraph_search_result_invalid")
-    node_rows = _payload_records(initial[0], "nodes")
-    fact_rows = _payload_records(initial[1], "facts")
-
-    records: list[dict[str, Any]] = []
-    for index, record in enumerate(exact_records or []):
-        current = dict(record)
-        current["selectionReason"] = str(
-            current.pop("_selectionReason", "explicit provider reference")
-        )
-        current["_rank"] = (0, index)
-        records.append(current)
-    for index, item in enumerate(node_rows):
-        record = _knowgraph_node_record(item, query=query, centered=False, result_index=index)
-        if record is not None:
-            records.append(record)
-    for index, item in enumerate(fact_rows):
-        record = _knowgraph_fact_record(item, centered=False, result_index=index)
-        if record is not None:
-            records.append(record)
-
-    strongest_node_id = next((
-        record["graphitiEntityId"] for record in records
-        if str(record.get("graphitiEntityId") or "").strip()
-        if record.get("type") not in {"Fact", "RELATIONSHIP"}
-        and record.get("readOperation") != "graphiti.search_memory_facts"
-    ), "")
-    centered_node_rows: list[dict[str, Any]] = []
-    centered_fact_rows: list[dict[str, Any]] = []
-    if bounded_expansion and strongest_node_id:
-        centered_node_args = {**node_args, "center_node_uuid": strongest_node_id}
-        centered_fact_args = {**fact_args, "center_node_uuid": strongest_node_id}
-        centered = materializer_reader(
-            project_id=project_id,
-            deck_id=deck_id,
-            card_id=card_id,
-            calls=[
-                ("graphiti.search_nodes", centered_node_args),
-                ("graphiti.search_memory_facts", centered_fact_args),
-            ],
-            concurrent=True,
-        )
-        if len(centered) != 2:
-            raise DataAnchorError("data_anchor_knowgraph_centered_result_invalid")
-        centered_node_rows = _payload_records(centered[0], "nodes")
-        centered_fact_rows = _payload_records(centered[1], "facts")
-        for index, item in enumerate(centered_node_rows):
-            record = _knowgraph_node_record(item, query=query, centered=True, result_index=index)
-            if record is not None:
-                records.append(record)
-        for index, item in enumerate(centered_fact_rows):
-            record = _knowgraph_fact_record(item, centered=True, result_index=index)
-            if record is not None:
-                records.append(record)
-
-    records.sort(key=lambda item: item.get("_rank", (9,)))
-    deduplicated: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for record in records:
-        try:
-            identity = graph_record_identity(record)
-        except ValueError:
-            continue
-        if identity in seen:
-            continue
-        seen.add(identity)
-        deduplicated.append(record)
-
-    episode_ids = list(dict.fromkeys(
-        episode_id
-        for record in deduplicated
-        for episode_id in _string_values((record.get("provenance") or {}).get("episodeUuids"))
-    ))
-    episodes_by_id: dict[str, dict[str, Any]] = {}
-    if episode_ids:
-        episodes_by_id = {
-            str(item.get("uuid") or ""): _json_safe(item)
-            for item in episode_reader(project_id, episode_ids)
-            if str(item.get("uuid") or "") in set(episode_ids)
-        }
-    for record in deduplicated:
-        provenance = record.get("provenance") or {}
-        ids = _string_values(provenance.get("episodeUuids"))
-        record["provenance"] = {
-            "episodeUuids": ids,
-            "episodes": [episodes_by_id[value] for value in ids if value in episodes_by_id],
-        }
-        if record.get("portableKind") == "know" and isinstance(record.get("know"), dict):
-            record["know"]["supportingEpisodes"] = [
-                episodes_by_id[value] for value in ids if value in episodes_by_id
-            ]
-        record.pop("_rank", None)
-
-    truncated = any((
-        len(node_rows) >= max_nodes,
-        len(fact_rows) >= max_facts,
-        len(centered_node_rows) >= max_nodes,
-        len(centered_fact_rows) >= max_facts,
-        len(deduplicated) > _KNOWGRAPH_RESULT_LIMIT,
-    ))
-    bounded = deduplicated[:_KNOWGRAPH_RESULT_LIMIT]
-    for record in bounded:
-        if record.get("portableKind") == "know" and isinstance(record.get("know"), dict):
-            jev = record["know"].get("jev")
-            if isinstance(jev, dict):
-                record["jev"] = jev
-    return {
-        "query": query,
-        "records": bounded,
-        "truncated": truncated,
-        "bounds": {
-            "maxNodes": max_nodes,
-            "maxFacts": max_facts,
-            "maxExpansionDepth": bounded_expansion,
-            "maxCombinedResults": _KNOWGRAPH_RESULT_LIMIT,
-        },
-    }
 
 
 def _materialized_record_sha256(record: dict[str, Any]) -> str:
@@ -1332,7 +41,7 @@ def _materialized_record_sha256(record: dict[str, Any]) -> str:
         "relationshipEvidence": record.get("relationshipEvidence") or [],
         "content": record.get("content"),
     }
-    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 def _deduplicate_exact_payload(
@@ -1341,13 +50,11 @@ def _deduplicate_exact_payload(
     id_field: str,
     identifier: str,
     field: str,
-    rendered_payloads: dict[tuple[str, str, str], str] | None,
+    rendered_payloads: dict[tuple[str, str, str], str],
 ) -> Any:
     """Replace only byte-identical repeated provider payloads with a stable pointer."""
 
-    if rendered_payloads is None:
-        return value
-    encoded = _canonical_json(value).encode("utf-8")
+    encoded = canonical_json(value).encode("utf-8")
     if len(encoded) < 256:
         return value
     digest = hashlib.sha256(encoded).hexdigest()
@@ -1368,7 +75,7 @@ def _render_anchor(
     anchor: dict[str, Any],
     record: dict[str, Any],
     *,
-    rendered_payloads: dict[tuple[str, str, str], str] | None = None,
+    rendered_payloads: dict[tuple[str, str, str], str],
 ) -> str:
     properties = record.get("properties") or {
         "type": record["type"],
@@ -1461,15 +168,6 @@ def _materialized_reference(
             if anchor.get("resultLimit") is not None
             else {}
         ),
-        **(
-            {
-                "searchDynamicInput": True,
-                "maxNodes": int(anchor.get("maxNodes", 8)),
-                "maxFacts": int(anchor.get("maxFacts", 8)),
-            }
-            if anchor.get("searchDynamicInput") is True
-            else {}
-        ),
     }
     id_field, identifier = graph_record_identity(record)
     return {
@@ -1527,13 +225,14 @@ def _projection_node(
         "labels": safe_labels,
         "graphSystem": graph_system,
         "mentionCount": 1,
-        "properties": _json_safe(safe_properties),
-        "provenance": _json_safe(provenance) if isinstance(provenance, dict) else {},
+        "properties": json_safe(safe_properties),
+        "provenance": json_safe(provenance) if isinstance(provenance, dict) else {},
     }
 
 
 def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[str, Any]:
     """Project only provider node/relationship identities actually returned by a read."""
+
     id_field, provider_id = graph_record_identity(record)
     graph_system = str(record.get("graphSystem") or "")
     if record.get("recordKind") not in {"entity", "relationship", "symbol"}:
@@ -1583,8 +282,8 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
             "target": target,
             "predicate": str(item.get("type") or item.get("name") or item.get("edge_type") or "RELATED"),
             "mentionCount": 1,
-            "properties": _json_safe(item.get("properties") or item),
-            "provenance": _json_safe(record.get("provenance") or {}),
+            "properties": json_safe(item.get("properties") or item),
+            "provenance": json_safe(record.get("provenance") or {}),
             "graphSystem": graph_system,
         }
 
@@ -1637,7 +336,10 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
             if isinstance(item, dict):
                 add_edge(item)
 
-    limit = max(1, min(int(record.get("resultLimit") or _KNOWGRAPH_RESULT_LIMIT), _KNOWGRAPH_RESULT_LIMIT))
+    limit = max(1, min(
+        int(record.get("resultLimit") or MAX_GRAPH_REFERENCE_RESULTS),
+        MAX_GRAPH_REFERENCE_RESULTS,
+    ))
     bounded_nodes = list(nodes.values())[:limit]
     node_ids = {node["id"] for node in bounded_nodes}
     bounded_edges = [
@@ -1677,39 +379,36 @@ def _read_exact_anchor_record(
     deck_id: str,
     card_id: str,
     anchor: dict[str, Any],
-    *,
-    thinkgraph_db_path: str | Path | None = None,
-    engraphis_reader: Callable[[str, str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Use the existing provider owner for one exact Data Anchor read."""
 
     id_field, identifier = graph_record_identity(anchor)
-    if id_field.startswith("engraphis"):
-        return read_thinkgraph_exact(
+    if id_field in {"engraphisEntityId", "engraphisMemoryId"}:
+        return thinkgraph_reference_reads.read_thinkgraph_exact(
             project_id,
             id_field,
             identifier,
-            db_path=thinkgraph_db_path,
             bounded_expansion=anchor["boundedExpansion"],
-            result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
-            engraphis_reader=engraphis_reader,
+            result_limit=int(anchor.get("resultLimit", MAX_GRAPH_REFERENCE_RESULTS)),
         )
-    if id_field.startswith("graphiti"):
-        return read_knowgraph_exact(
+    if id_field in {
+        "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
+    }:
+        return knowgraph_reference_reads.read_knowgraph_exact(
             project_id,
             id_field,
             identifier,
             bounded_expansion=anchor["boundedExpansion"],
-            result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
+            result_limit=int(anchor.get("resultLimit", MAX_GRAPH_REFERENCE_RESULTS)),
         )
     if id_field == "cbmQualifiedName":
-        return read_codegraph_exact(
+        return codegraph_reference_reads.read_codegraph_exact(
             project_id,
             deck_id,
             card_id,
             identifier,
             bounded_expansion=anchor["boundedExpansion"],
-            result_limit=int(anchor.get("resultLimit", 24)),
+            result_limit=int(anchor.get("resultLimit", MAX_GRAPH_REFERENCE_RESULTS)),
         )
     raise DataAnchorError(f"data_anchor_resolver_unavailable:{id_field}")
 
@@ -1720,21 +419,15 @@ def resolve_data_anchors(
     *,
     deck_id: str = "",
     card_id: str = "",
-    search_text: str = "",
-    thinkgraph_db_path: str | Path | None = None,
-    engraphis_reader: Callable[[str, str, str], dict[str, Any]] | None = None,
     graph_projection: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Resolve ordered anchors and return model text plus provider references."""
+    """Resolve ordered exact references and return model text plus source records."""
+
     rendered: list[str] = []
     references: list[dict[str, Any]] = []
     rendered_payloads: dict[tuple[str, str, str], str] = {}
     resolved_identities: set[tuple[str, str]] = set()
-    exact_knowgraph_records: list[dict[str, Any]] = []
-    search_hooks: list[dict[str, Any]] = []
     for anchor in anchors:
-        if anchor.get("searchDynamicInput") is True:
-            search_hooks.append(anchor)
         populated = [
             field for field in GRAPH_RECORD_ID_FIELDS
             if str(anchor.get(field) or "").strip()
@@ -1746,8 +439,6 @@ def resolve_data_anchors(
             deck_id,
             card_id,
             anchor,
-            thinkgraph_db_path=thinkgraph_db_path,
-            engraphis_reader=engraphis_reader,
         )
         if record is None:
             if anchor["required"]:
@@ -1770,69 +461,11 @@ def resolve_data_anchors(
             record,
             truncated=record.get("truncated") is True,
         ))
-        if identity[0].startswith("graphiti"):
-            exact_record = dict(record)
-            exact_record["_selectionReason"] = anchor["reason"]
-            exact_knowgraph_records.append(exact_record)
-
-    for hook in search_hooks:
-        result = search_knowgraph_hybrid(
-            project_id,
-            deck_id,
-            card_id,
-            search_text,
-            exact_records=exact_knowgraph_records,
-            entity_types=list(hook.get("entityTypes") or []),
-            edge_types=list(hook.get("edgeTypes") or []),
-            valid_at_after=str(hook.get("validAtAfter") or ""),
-            valid_at_before=str(hook.get("validAtBefore") or ""),
-            invalid_at_after=str(hook.get("invalidAtAfter") or ""),
-            invalid_at_before=str(hook.get("invalidAtBefore") or ""),
-            max_nodes=int(hook.get("maxNodes", 8)),
-            max_facts=int(hook.get("maxFacts", 8)),
-            bounded_expansion=int(hook.get("boundedExpansion", 1)),
-        )
-        search_records = list(result["records"])
-        novel_records = [
-            record for record in search_records
-            if graph_record_identity(record) not in resolved_identities
-        ]
-        if not search_records and hook.get("required") is True:
-            raise DataAnchorError("data_anchor_required_search_empty")
-        rendered.append("\n".join([
-            "### KnowGraph Hybrid Search",
-            f"Search request: {result['query']}",
-            f"Selection purpose: {hook['reason']}",
-            f"Bounds: {json.dumps(result['bounds'], separators=(',', ':'))}",
-            f"Truncated: {'yes' if result['truncated'] else 'no'}",
-            *(
-                [] if search_records else
-                ["No current project-scoped KnowGraph entity or fact matched this optional search."]
-            ),
-        ]).strip())
-        for record in novel_records:
-            identity = graph_record_identity(record)
-            resolved_identities.add(identity)
-            rendered.append(_render_anchor(
-                {"reason": f"{hook['reason']} — {record['selectionReason']}"},
-                record,
-                rendered_payloads=rendered_payloads,
-            ))
-            references.append(_materialized_reference(
-                {**hook, "reason": record["selectionReason"]},
-                record,
-                truncated=result["truncated"],
-            ))
-            if graph_projection is not None:
-                _merge_graph_projection(
-                    graph_projection,
-                    _record_graph_projection(project_id, record),
-                )
     if anchors and not rendered:
         rendered.append(
             "### Data Anchor Resolution\nNo optional current provider graph object was resolved."
         )
-    graph_seed = "\n\n".join(rendered)
-    if len(graph_seed.encode("utf-8")) > _GRAPH_SEED_LIMIT:
+    graph_context = "\n\n".join(rendered)
+    if len(graph_context.encode("utf-8")) > GRAPH_CONTEXT_BYTE_LIMIT:
         raise DataAnchorError("data_anchor_seed_limit_exceeded")
-    return graph_seed, references
+    return graph_context, references

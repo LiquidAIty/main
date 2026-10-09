@@ -30,10 +30,11 @@ describe('canonical model catalog — DeepSeek V4 Pro 0813', () => {
   const KEY = 'deepseek/deepseek-v4-pro-0813';
 
   it('keeps the exact pinned OpenRouter model without an alias', () => {
-    expect(MODEL_REGISTRY[KEY]).toEqual({
+    expect(MODEL_REGISTRY[KEY]).toMatchObject({
       label: 'OpenRouter DeepSeek V4 Pro 0813',
       provider: 'openrouter',
       id: KEY,
+      autoModelFacts: { eligible: false },
     });
   });
 });

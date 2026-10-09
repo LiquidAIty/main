@@ -444,57 +444,15 @@ def _close_codex_session(agent) -> None:
 
 
 def _dynamic_tools_configuration(agent) -> tuple[list[dict], dict[str, str]]:
-    definitions = getattr(agent, "_dynamic_tools", None)
-    if not isinstance(definitions, list):
-        return [], {}
-    projected: list[dict] = []
-    canonical_names: dict[str, str] = {}
-    for value in definitions:
-        if not isinstance(value, dict):
-            raise ValueError("dynamic_tool_definition_invalid")
-        name = str(value.get("name") or "")
-        canonical_name = str(value.get("canonical_name") or "")
-        schema = value.get("input_schema")
-        if (
-            value.get("type") != "function"
-            or not name
-            or not canonical_name
-            or not isinstance(schema, dict)
-            or name in canonical_names
-        ):
-            raise ValueError("dynamic_tool_definition_invalid")
-        canonical_names[name] = canonical_name
-        projected.append({
-            "type": "function",
-            "name": name,
-            "canonicalName": canonical_name,
-            "description": str(value.get("description") or ""),
-            "inputSchema": schema,
-        })
-    return projected, canonical_names
+    from agent.dynamic_tools import dynamic_tools_configuration
+
+    return dynamic_tools_configuration(agent)
 
 
 def _dynamic_tool_executor(agent, canonical_names: dict[str, str]):
-    if not canonical_names:
-        return None
-    authorization = str(getattr(agent, "_dynamic_tool_authorization", "") or "")
-    endpoint = str(getattr(agent, "_dynamic_tool_endpoint", "") or "")
-    if not authorization or not endpoint:
-        def unavailable(_name: str, _arguments: dict, _call_id: str) -> dict:
-            return {
-                "success": False,
-                "contentItems": [{
-                    "type": "inputText",
-                    "text": json.dumps({"error": "dynamic_tool_authorization_unavailable"}),
-                }],
-            }
-        return unavailable
-    from agent.transports.dynamic_tools_mcp import build_dynamic_tool_executor
-    return build_dynamic_tool_executor(
-        endpoint=endpoint,
-        authorization=authorization,
-        canonical_names=canonical_names,
-    )
+    from agent.dynamic_tools import dynamic_tool_executor
+
+    return dynamic_tool_executor(agent, canonical_names)
 
 
 def _consume_user_interrupt(agent, active: bool = True) -> tuple[bool, Any]:

@@ -10,7 +10,7 @@ from app.python_models.card_script import (
     saved_script,
     script_presentation,
 )
-from app.python_models.orchestration_contracts import HermesRuntime
+from app.python_models.card_configuration_contracts import HermesRuntime
 
 
 def test_literal_idd_is_the_only_loaded_builder_data() -> None:
@@ -21,7 +21,12 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
     assert {"types", "objects", "templates", "relationships"}.issubset(dictionary)
     assert "operations" not in dictionary
     assert {"records", "catalogs", "models", "editorFields", "islands", "toolGroups"}.isdisjoint(dictionary)
-    assert dictionary["types"]["GraphReference"]["source"].endswith(".GraphReference")
+    assert dictionary["types"]["GraphReference"]["source"] == (
+        "app.python_models.graph_reference_contracts.GraphReference"
+    )
+    assert dictionary["types"]["RuntimeObject"]["source"] == (
+        "app.python_models.card_configuration_contracts.HermesRuntime"
+    )
     assert dictionary["cardEditor"]["tabs"] == ["Results", "Prompt", "Runtime", "Memory", "Tools"]
     assert set(dictionary["templates"]) == {
         "template_assist",
@@ -48,7 +53,7 @@ output.emit({"agent": {"run": False}, "query": query})
 '''
     saved = saved_script({"source": source})
     assert saved["source"] == source
-    assert saved["lastValidation"]["executionTested"] is False
+    assert "executionTested" not in saved["lastValidation"]
 
 
 def test_unknown_future_objects_remain_absent_until_declared() -> None:
@@ -67,23 +72,23 @@ def test_runtime_errors_remain_at_the_executable_contract() -> None:
     assert secret not in str(error.value)
 
 
-def test_invalid_script_is_saved_but_degrades_to_exact_selected_mcp_tools() -> None:
+def test_invalid_script_is_saved_but_remains_inert_with_exact_selected_tools() -> None:
     script = saved_script({"source": "not valid Python is inert", "version": 2})
     assert script["source"] == "not valid Python is inert"
     assert script["version"] == 2
     assert script["lastValidation"]["status"] == "invalid"
     assert script["lastValidation"]["errors"][0].startswith("card_script_syntax_invalid")
-    assert script["hermesSupport"]["available"] is False
+    assert "hermesSupport" not in script
     presentation = script_presentation(
         {"enabled": True, "source": "return InvocationPreparation()"},
         selected_tools=["calculator"],
     )
     assert presentation["mode"] == "selected-mcp"
     assert presentation["presentedTools"] == ["calculator"]
-    assert presentation["fallbackReason"] == "card_script_validation_failed"
+    assert "fallbackReason" not in presentation
 
 
-def test_valid_enabled_script_stays_on_exact_selected_tools_without_hermes_executor() -> None:
+def test_valid_source_activates_compact_recipe_and_ignores_legacy_enabled_byte() -> None:
     source = '''CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {"type": "object", "properties": {}},
@@ -95,21 +100,15 @@ tools.call("cbm.search_graph")
 output.emit({"result": {}})
 '''
     presentation = script_presentation(
-        {"enabled": True, "source": source},
+        {"enabled": False, "source": source},
         selected_tools=["cbm.search_graph", "graphiti.get_status"],
     )
-    assert presentation["mode"] == "selected-mcp"
-    assert presentation["presentedTools"] == [
-        "cbm.search_graph", "graphiti.get_status",
-    ]
-    assert presentation["fallbackReason"] == "card_script_hermes_runner_unavailable"
+    assert presentation["mode"] == "script"
+    assert presentation["presentedTools"] == ["graphiti.get_status"]
+    assert "fallbackReason" not in presentation
     assert presentation["script"]["lastValidation"]["status"] == "valid"
-    assert presentation["script"]["hermesSupport"] == {
-        "available": False,
-        "executor": None,
-        "active": False,
-        "reason": "card_script_hermes_runner_unavailable",
-    }
+    assert "hermesSupport" not in presentation["script"]
+    assert "enabled" not in presentation["script"]
 
 
 def test_valid_script_compiles_literal_contract_and_selected_tool_handles() -> None:
@@ -134,11 +133,10 @@ output.emit({"context": context, "agent": {"run": True, "prompt": input.mission}
     presentation = script_presentation(
         {"enabled": True, "source": source},
         selected_tools=["engraphis_recall_context"],
-        hermes_available=True,
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == []
-    assert presentation["script"]["hermesSupport"]["active"] is True
+    assert presentation["script"]["lastValidation"]["status"] == "valid"
     with pytest.raises(ValueError, match="card_script_tool_not_selected:engraphis_recall_context"):
         compile_card_script(source, selected_tools=["graphiti.get_status"])
 
@@ -157,7 +155,6 @@ output.emit({"agent": {"run": False}})
     presentation = script_presentation(
         {"enabled": True, "source": source},
         selected_tools=["engraphis_recall_context", "graphiti.get_status"],
-        hermes_available=True,
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == ["graphiti.get_status"]
@@ -194,7 +191,6 @@ output.emit({"agent": {"run": True}})
     assert compiled["agentToolIds"] == ["graphiti.get_status", "engraphis_recall_context"]
     presentation = script_presentation(
         {"enabled": True, "source": source}, selected_tools=selected,
-        hermes_available=True,
     )
     assert presentation["presentedTools"] == [
         "graphiti.get_status", "engraphis_recall_context",
@@ -205,7 +201,7 @@ output.emit({"agent": {"run": True}})
     ]
 
 
-def test_unsaved_tools_default_off_unless_script_owned() -> None:
+def test_nonpresented_tools_default_off_unless_script_owned() -> None:
     source = '''CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
@@ -220,7 +216,6 @@ output.emit({"agent": {"run": False}})
         {"enabled": True, "source": source},
         selected_tools=["cbm.search_graph", "engraphis_remember", "web_search"],
         default_agent_tools=["engraphis_remember"],
-        hermes_available=True,
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == ["engraphis_remember"]
@@ -307,9 +302,6 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     assert fields["tools"]["catalog"] == "tools"
     assert "runtimeKind" not in fields
     assert "runtimeMode" not in fields
-    assert fields["temperature"]["minimum"] == 0.0
-    assert fields["maxTokens"]["minimum"] == 1
-    assert fields["maxTurns"]["minimum"] == 1
     assert fields["orchestrator"]["section"] == "Prompt"
     assert fields["orchestrator"]["path"] == "runtimeOptions.orchestrator"
     assert fields["orchestrator"]["control"] == "checkbox"
@@ -331,13 +323,6 @@ def test_human_and_builder_options_resolve_the_same_idd_without_sending_the_full
         "label": "Current model",
         "providerModelId": "catalog-model",
         "default": False,
-        "contextWindow": 1_050_000,
-        "routingProfile": {
-            "taskFit": "Configured model routing facts.",
-            "supportsTools": True,
-            "inputModalities": ["text", "image"],
-            "reasoningEfforts": ["low", "high"],
-        },
     }]
     palette = materialize_card_editor(models, catalog_options=[])
 
@@ -346,8 +331,7 @@ def test_human_and_builder_options_resolve_the_same_idd_without_sending_the_full
     assert set(options) == {"fields", "catalogs"}
     fields = {field["name"]: field for field in options["fields"]}
     assert fields["provider"]["options"] == [{"value": "catalog-provider", "label": "catalog-provider"}]
-    assert options["catalogs"]["configured-models"][0]["contextWindow"] == 1_050_000
-    assert options["catalogs"]["configured-models"][0]["routingProfile"]["supportsTools"] is True
+    assert options["catalogs"]["configured-models"][0] == models[0]
     assert "runtimeKind" not in fields
     assert "runtimeMode" not in fields
     assert materialize_runtime_options([])["catalogs"] == {"configured-models": []}
@@ -365,7 +349,6 @@ def test_idd_runtime_dependencies_and_constraints_come_from_executable_schemas()
     fields = {field["name"]: field for field in materialize_runtime_options([])["fields"]}
     assert "runtimeKind" not in fields
     assert "runtimeMode" not in fields
-    assert fields["maxTurns"]["minimum"] == fields["maxTurns"]["valueSchema"]["anyOf"][0]["minimum"]
     assert fields["tools"]["path"] == "runtimeOptions.tools"
     assert fields["tools"]["control"] == "catalog-multiselect"
 

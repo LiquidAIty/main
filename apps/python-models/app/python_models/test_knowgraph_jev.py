@@ -5,7 +5,9 @@ from time import sleep
 from app.python_models.jev_edge_ontology import (
     SHARED_JEV_RELATIONSHIPS,
 )
-from app.python_models.engraphis import PROJECT_RELATIONSHIP_VOCABULARY_VERSION
+from app.python_models.thinkgraph_relationships import (
+    PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+)
 from app.python_models.knowgraph_jev import (
     KNOWGRAPH_JEV_CHOICES,
     classify_knowgraph_fact,

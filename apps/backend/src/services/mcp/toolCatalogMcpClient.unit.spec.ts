@@ -96,7 +96,7 @@ describe('Python Agent MCP client', () => {
             canonicalInputSchema: { type: 'object', properties: {} },
             serverInjectedArguments: [],
             dispatcherContextArguments: [],
-            dispatcherOwner: 'app.mcp_host._call_graphiti',
+            dispatcherOwner: 'app.mcp_provider_operations._call_graphiti',
             authenticatedProjection: true,
           },
         },
@@ -152,7 +152,7 @@ describe('Python Agent MCP client', () => {
           available: true, grantEligible: true,
           canonicalInputSchema: { type: 'object', properties: {} },
           serverInjectedArguments: [], dispatcherContextArguments: [],
-          dispatcherOwner: 'app.mcp_host._call_cbm', authenticatedProjection: true,
+          dispatcherOwner: 'app.mcp_provider_operations._call_cbm', authenticatedProjection: true,
         } },
       }, {
         name: 'graphiti.search_nodes',
@@ -170,7 +170,7 @@ describe('Python Agent MCP client', () => {
     });
   });
 
-  it('late-binds the exact authorized Card-runtime catalog before probing its result', async () => {
+  it('reuses one catalog-reader connection for canonical catalog reads', async () => {
     const readiness = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -197,103 +197,29 @@ describe('Python Agent MCP client', () => {
             canonicalInputSchema: { type: 'object', properties: {} },
             serverInjectedArguments: [],
             dispatcherContextArguments: [],
-            dispatcherOwner: 'app.mcp_host._call_cbm',
+            dispatcherOwner: 'app.mcp_provider_operations._call_cbm',
             authenticatedProjection: true,
           },
         },
       }],
     });
-    const principal = {
-      kind: 'card-runtime' as const,
-      projectId: 'project-one',
-      deckId: 'deck-one',
-      conversationId: 'conversation-one',
-      parentRunId: 'run-one',
-      callerCardId: 'builder',
-      callerRuntimeKind: 'hermes' as const,
-      callerRuntimeMode: 'delegate' as const,
-      grantedTools: ['cbm.search_graph'],
-      presentedTools: ['cbm.search_graph'],
-    };
-
-    await listToolCatalog();
-    await expect(readToolCatalog(principal)).resolves.toMatchObject({
+    await expect(readToolCatalog()).resolves.toMatchObject({
       state: 'available',
       unavailableFamilies: [],
       tools: [{ name: 'cbm.search_graph', sourceId: 'cbm' }],
     });
+    await listToolCatalog();
 
     expect(mcpMocks.listTools).toHaveBeenCalledTimes(2);
     expect(readiness).toHaveBeenCalledOnce();
-    expect(mcpMocks.listTools.mock.invocationCallOrder[1])
-      .toBeLessThan(readiness.mock.invocationCallOrder[0]);
-    expect(mcpMocks.close).toHaveBeenCalledOnce();
-    const authorization = String(
-      mcpMocks.transportInits[1]?.requestInit?.headers?.Authorization || '',
-    );
-    const payload = JSON.parse(
-      Buffer.from(authorization.replace(/^Bearer /, '').split('.')[1], 'base64url').toString('utf8'),
-    );
-    expect(payload.principal).toEqual(principal);
-    await listToolCatalog();
-    expect(mcpMocks.connect).toHaveBeenCalledTimes(2);
-    expect(mcpMocks.listTools).toHaveBeenCalledTimes(3);
-  });
-
-  it('uses a runless materializer principal and reports only its authorized optional family', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        catalogState: 'ready',
-        unavailableCatalogFamilies: ['cbm', 'graphiti'],
-      }),
-    })));
-    mcpMocks.listTools.mockResolvedValueOnce({
-      tools: [{
-        name: 'cbm.search_graph',
-        description: 'Search CodeGraph.',
-        inputSchema: { type: 'object', properties: {} },
-        _meta: {
-          liquidaitySource: {
-            sourceId: 'cbm',
-            namespace: 'cbm',
-            providerToolName: 'search_graph',
-            connectionKind: 'external-mcp',
-            publication: 'external-mcp',
-            access: 'read',
-            available: true,
-            grantEligible: true,
-            canonicalInputSchema: { type: 'object', properties: {} },
-            serverInjectedArguments: [],
-            dispatcherContextArguments: [],
-            dispatcherOwner: 'app.mcp_host._call_cbm',
-            authenticatedProjection: true,
-          },
-        },
-      }],
-    });
-    const principal = {
-      kind: 'materializer-read' as const,
-      projectId: 'project-one',
-      deckId: 'deck-one',
-      callerCardId: 'builder',
-      conversationId: 'main',
-      grantedTools: ['card.create'],
-      grantedConnections: ['cbm'],
-    };
-
-    await expect(readToolCatalog(principal)).resolves.toMatchObject({
-      state: 'available',
-      unavailableFamilies: ['cbm'],
-      tools: [{ name: 'cbm.search_graph' }],
-    });
-
     const authorization = String(
       mcpMocks.transportInits[0]?.requestInit?.headers?.Authorization || '',
     );
     const payload = JSON.parse(
       Buffer.from(authorization.replace(/^Bearer /, '').split('.')[1], 'base64url').toString('utf8'),
     );
-    expect(payload.principal).toEqual(principal);
+    expect(payload.principal).toEqual({ kind: 'catalog-reader' });
+    expect(mcpMocks.connect).toHaveBeenCalledOnce();
+    expect(mcpMocks.close).not.toHaveBeenCalled();
   });
 });

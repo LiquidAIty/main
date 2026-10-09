@@ -19794,6 +19794,156 @@ def test_get_usage_safe_when_active_count_raises(monkeypatch):
     assert usage["model"] == "x"
 
 
+class _TurnUsageAgent:
+    model = "turn-model"
+    provider = "turn-provider"
+    session_input_tokens = 100
+    session_output_tokens = 40
+    session_reasoning_tokens = 10
+    session_prompt_tokens = 130
+    session_completion_tokens = 40
+    session_total_tokens = 170
+    session_api_calls = 5
+    session_cache_read_tokens = 30
+    session_cache_write_tokens = 0
+    session_estimated_cost_usd = 0.25
+    session_cost_status = "estimated"
+    context_compressor = None
+
+
+def _advance_turn_usage(agent: _TurnUsageAgent) -> None:
+    agent.session_input_tokens += 12
+    agent.session_output_tokens += 7
+    agent.session_reasoning_tokens += 3
+    agent.session_prompt_tokens += 16
+    agent.session_completion_tokens += 7
+    agent.session_total_tokens += 23
+    agent.session_api_calls += 2
+    agent.session_cache_read_tokens += 4
+    agent.session_cache_write_tokens += 1
+    agent.session_estimated_cost_usd += 0.05
+
+
+def test_get_usage_exposes_optional_cumulative_cache_and_cost_counters():
+    usage = server._get_usage(_TurnUsageAgent())
+
+    assert usage["cache_read"] == 30
+    assert usage["cache_write"] == 0
+    assert usage["cost_usd"] == 0.25
+    assert usage["cost_status"] == "estimated"
+
+    class _UnknownCost:
+        model = "unknown"
+        session_estimated_cost_usd = 0.0
+        session_cost_status = "unknown"
+
+    unknown_cost = server._get_usage(_UnknownCost())
+    assert unknown_cost["cost_usd"] == 0.0
+    assert unknown_cost["cost_status"] == "unknown"
+
+    class _Absent:
+        model = "absent"
+
+    absent = server._get_usage(_Absent())
+    assert "cache_read" not in absent
+    assert "cache_write" not in absent
+    assert "cost_usd" not in absent
+    assert "cost_status" not in absent
+
+
+def test_turn_usage_requires_an_increased_provider_call_and_never_reports_negative():
+    baseline = server._turn_usage_snapshot_or_delta({
+        "model": "m", "input": 10, "output": 5, "reasoning": 2,
+        "prompt": 12, "completion": 5, "total": 17, "calls": 3,
+    })
+
+    assert server._turn_usage_snapshot_or_delta({
+        "model": "m", "input": 11, "output": 5, "reasoning": 2,
+        "prompt": 13, "completion": 5, "total": 18, "calls": 3,
+    }, baseline) is None
+    assert server._turn_usage_snapshot_or_delta({
+        "model": "m", "input": 9, "output": 6, "reasoning": 2,
+        "prompt": 13, "completion": 6, "total": 19, "calls": 4,
+    }, baseline) is None
+
+
+def test_unknown_turn_cost_is_omitted_while_measured_zero_counters_are_kept():
+    baseline = server._turn_usage_snapshot_or_delta({
+        "model": "m", "input": 10, "output": 5, "reasoning": 0,
+        "prompt": 10, "completion": 5, "total": 15, "calls": 1,
+        "cache_read": 0, "cache_write": 0, "cost_usd": 0.0,
+        "cost_status": "unknown",
+    })
+    delta = server._turn_usage_snapshot_or_delta({
+        "model": "m", "input": 10, "output": 5, "reasoning": 0,
+        "prompt": 10, "completion": 5, "total": 15, "calls": 2,
+        "cache_read": 0, "cache_write": 0, "cost_usd": 0.0,
+        "cost_status": "unknown",
+    }, baseline)
+
+    assert delta == {
+        "model": "m", "input": 0, "output": 0, "reasoning": 0,
+        "prompt": 0, "completion": 0, "total": 0, "calls": 1,
+        "cache_read": 0, "cache_write": 0, "cost_status": "unknown",
+    }
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    [
+        ({"final_response": "partial", "interrupted": True}, "interrupted"),
+        ({"final_response": "", "error": "provider failed", "failed": True}, "error"),
+    ],
+)
+def test_complete_payload_keeps_cumulative_usage_and_adds_turn_usage_for_terminal_outcomes(
+    monkeypatch, outcome, expected_status,
+):
+    agent = _TurnUsageAgent()
+    st = server._TurnRun(agent, None, None, receipt_committed=False)
+    _advance_turn_usage(agent)
+    st.result = outcome
+    session = {"history_lock": threading.Lock(), "inflight_turn": None}
+
+    monkeypatch.setattr(server, "_is_bot_mode_session", lambda _session: False)
+    monkeypatch.setattr(server, "_persisted_turn_receipt", lambda *_args: None)
+    monkeypatch.setattr(server, "render_message", lambda *_args: None)
+    monkeypatch.setattr(server, "_clear_inflight_turn", lambda _session: None)
+    monkeypatch.setattr(server, "_fail_inflight_turn", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(server, "_turn_failure_detail", lambda *_args: "")
+
+    payload, _raw, status = server._complete_turn_payload(session, st, None, 80)
+
+    assert status == expected_status
+    assert payload["usage"]["total"] == 193
+    assert payload["usage"]["calls"] == 7
+    assert payload["turn_usage"] == {
+        "model": "turn-model",
+        "input": 12,
+        "output": 7,
+        "reasoning": 3,
+        "prompt": 16,
+        "completion": 7,
+        "total": 23,
+        "calls": 2,
+        "cache_read": 4,
+        "cache_write": 1,
+        "cost_usd": pytest.approx(0.05),
+        "cost_status": "estimated",
+    }
+
+
+def test_message_complete_contract_accepts_optional_turn_usage():
+    from tui_gateway.contracts.common import Usage
+    from tui_gateway.contracts.events import MessageCompletePayload
+
+    payload = MessageCompletePayload(
+        text="done", usage=Usage(total=20, calls=2), turn_usage=Usage(total=7, calls=1),
+    ).model_dump(exclude_none=True)
+
+    assert payload["usage"]["total"] == 20
+    assert payload["turn_usage"]["total"] == 7
+
+
 # ---------------------------------------------------------------------------
 # _resolve_runtime_with_fallback — init-time provider fallback
 # ---------------------------------------------------------------------------

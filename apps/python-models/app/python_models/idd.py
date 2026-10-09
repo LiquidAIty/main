@@ -175,7 +175,7 @@ def _editor_fields(models: list[dict[str, Any]], document: dict[str, Any]) -> li
 
 def materialize_runtime_options(model_options: Any, *, document: dict[str, Any] | None = None) -> dict[str, Any]:
     """The human editor receives only the resolved configuration slice of IDD."""
-    from app.python_models.orchestration_contracts import ModelOption
+    from app.python_models.card_configuration_contracts import ModelOption
     from pydantic import ValidationError
     if not isinstance(model_options, list):
         raise IddValidationError("model_catalog_invalid")

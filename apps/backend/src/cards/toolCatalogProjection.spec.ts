@@ -26,7 +26,7 @@ function definition(index: number, access: 'read' | 'write' = 'read'): ToolCatal
     },
     serverInjectedArguments: [],
     dispatcherContextArguments: [],
-    dispatcherOwner: 'app.mcp_host._call_cbm',
+    dispatcherOwner: 'app.mcp_provider_operations._call_cbm',
     annotations: {
       readOnlyHint: access === 'read',
       destructiveHint: false,

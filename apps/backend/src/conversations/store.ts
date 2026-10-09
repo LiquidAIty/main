@@ -59,15 +59,6 @@ export type ConversationMessage = {
   seq: number;
 };
 
-export type ProjectConversation = {
-  conversationId: string;
-  projectId: string;
-  title?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  archivedAt?: string | null;
-};
-
 function projectLookup(projectId: string, parameterIndex = 1): { clause: string; value: string } {
   return {
     clause: UUID_REGEX.test(projectId) ? `id = $${parameterIndex}` : `code = $${parameterIndex}`,
@@ -98,17 +89,6 @@ function mapMessage(row: Record<string, any>): ConversationMessage {
       ? row.visible_activities as VisibleActivity[]
       : undefined,
     seq: Number(row.seq),
-  };
-}
-
-function mapConversation(row: Record<string, any>): ProjectConversation {
-  return {
-    projectId: String(row.project_id),
-    conversationId: String(row.conversation_id),
-    title: row.title == null ? null : String(row.title),
-    createdAt: iso(row.created_at),
-    updatedAt: iso(row.updated_at),
-    archivedAt: row.archived_at == null ? null : iso(row.archived_at),
   };
 }
 
@@ -328,19 +308,6 @@ export async function appendSharedConversationReplyOnce(input: {
     );
     return { inserted: true, message: mapMessage(result.rows[0]) };
   });
-}
-
-export async function listConversations(projectId: string): Promise<ProjectConversation[]> {
-  const lookup = projectLookup(projectId);
-  const result = await pool.query(
-    `SELECT conversation.*
-     FROM ${CONVERSATIONS_TABLE} AS conversation
-     JOIN ${PROJECTS_TABLE} AS project ON project.id = conversation.project_id
-     WHERE project.${lookup.clause}
-     ORDER BY conversation.updated_at DESC`,
-    [lookup.value],
-  );
-  return result.rows.map(mapConversation);
 }
 
 export async function getConversationMessages(

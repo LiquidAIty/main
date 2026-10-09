@@ -1,7 +1,5 @@
 // Rail/topology derivation: which product surfaces are visible for the
-// current deck (bus connectivity, graph streams, workbench activation).
-// Extracted verbatim from pages/agentbuilder.tsx (decomposition pass
-// 2026-07-08). Behavior unchanged.
+// current deck through bus connectivity and the active workspace.
 import type {
   DeckCard,
   DeckDocument,
@@ -29,10 +27,10 @@ export function isWorldViewCard(
     .some((attachment) => attachment.id === 'gods-eye');
 }
 
-type ProgressiveRailVisibility = {
+export type AgentBuilderRailVisibility = {
   showKnowledge: boolean;
-  showWorldsignal: boolean;
-  showWorldview: boolean;
+  showWorldSignals: boolean;
+  showWorldView: boolean;
   showTrading: boolean;
 };
 
@@ -92,14 +90,14 @@ export function deriveVisibleRailItems({
 }: {
   deck: Pick<DeckDocument, 'nodes' | 'edges'>;
   workspaceView: string;
-}): ProgressiveRailVisibility {
+}): AgentBuilderRailVisibility {
   return {
     // Project graphs are an owner-visible workbench, not a card-topology capability.
     showKnowledge: true,
-    showWorldsignal:
-      workspaceView === 'worldsignal' ||
+    showWorldSignals:
+      workspaceView === 'worldsignals' ||
       isBusConnectedCard(deck.nodes, deck.edges, isWorldSignalsAgentCard),
-    showWorldview:
+    showWorldView:
       workspaceView === 'worldview' ||
       isBusConnectedCard(deck.nodes, deck.edges, isWorldViewCard),
     showTrading:
@@ -107,8 +105,3 @@ export function deriveVisibleRailItems({
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
   };
 }
-
-// The old "activation proposal" system (a deterministic keyword classifier
-// over user text) was dead plumbing: its detector had zero callers, its state
-// was only ever reset to null, and deriveVisibleRailItems ignored it. Removed
-// whole — banned pattern (regex intent-routing) with zero live function.

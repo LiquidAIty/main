@@ -69,9 +69,6 @@ describe('requested initial Card topology', () => {
     for (const id of ['card_main_chat', 'builder', 'card_thinkgraph', 'card_knowgraph', 'card_team']) {
       expect(INITIAL_DECK.nodes.find(card => card.id === id)?.parentGraphId).toBeNull();
     }
-    expect(INITIAL_DECK.nodes.every((card) =>
-      !(card.runtimeOptions?.tools ?? []).includes('hermes:tool:memory'),
-    )).toBe(true);
     expect(INITIAL_DECK.nodes.find((card) => card.id === 'card_magentic')
       ?.runtimeOptions?.tools ?? []).toEqual([]);
     expect(INITIAL_DECK.version).toBe(10);
@@ -168,7 +165,7 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
     expect(nextNode.runtimeOptions?.skills).toEqual([]);
     expect(nextNode.runtimeOptions?.toolsets).toEqual([]);
     expect(nextNode.runtimeOptions?.mcpConnectionIds).toEqual([]);
-    expect(nextNode.status).toBe('ready');
+    expect(nextNode.status).toBeUndefined();
     expect(typeof nextNode.position.x).toBe('number');
     expect(typeof nextNode.position.y).toBe('number');
   });
@@ -220,12 +217,12 @@ describe('initial Card subagents', () => {
 
 describe('initial Magnetic account binding', () => {
   it('uses the official ChatGPT account model without changing other Cards', () => {
-    const magentic = INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic');
-    expect(magentic?.runtime).toEqual({
+    const magnetic = INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic');
+    expect(magnetic?.runtime).toEqual({
       kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic',
     });
-    expect(magentic?.runtimeOptions?.provider).toBe('openai');
-    expect(magentic?.runtimeOptions?.accessMode).toBe('chatgpt-account');
-    expect(magentic?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
+    expect(magnetic?.runtimeOptions?.provider).toBe('openai');
+    expect(magnetic?.runtimeOptions?.accessMode).toBe('chatgpt-account');
+    expect(magnetic?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
   });
 });

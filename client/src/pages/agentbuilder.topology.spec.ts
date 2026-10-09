@@ -23,82 +23,83 @@ const mainToKnowGraphConnected = (
 
 describe('Main / Hermes / graph authority topology', () => {
   it('keeps saved reuse and new Card creation inside one Add Agent chooser', () => {
-    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('data-testid="saved-card-chooser"');
-    expect(source).toContain('data-testid="add-agent-new-card"');
-    expect(source).toContain('/saved-cards`');
-    expect(source).toContain('/memberships`');
-    expect(source).toContain('buildQuickAddAssistCard(currentDeckRef.current, binding)');
-    expect(source).toContain('Reuse a saved Card unchanged, or create and save one new Card.');
+    const dialog = readFileSync(
+      new URL('../features/agentbuilder/project/AgentCardChooserDialog.tsx', import.meta.url),
+      'utf8',
+    );
+    const state = readFileSync(
+      new URL('../features/agentbuilder/state/useAgentCardChooser.ts', import.meta.url),
+      'utf8',
+    );
+    expect(dialog).toContain('data-testid="saved-card-chooser"');
+    expect(dialog).toContain('data-testid="add-agent-new-card"');
+    expect(state).toContain('/saved-cards`');
+    expect(state).toContain('/memberships`');
+    expect(state).toContain('buildQuickAddAssistCard(currentDeckRef.current, binding)');
+    expect(dialog).toContain('Reuse a saved Card unchanged, or create and save one new Card.');
   });
 
   it('keeps five general Card tabs, ordinary Card CLI, and the permanent Builder CLI', () => {
-    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    expect(source).not.toContain('main-card-cli-location');
-    expect(source).not.toContain('onOpenMainChat');
-    expect(source).toContain(
-      "const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;",
+    const page = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    const inspector = readFileSync(
+      new URL('../features/agentbuilder/inspector/AgentCardInspectorPanel.tsx', import.meta.url),
+      'utf8',
     );
-    expect(source).not.toContain("'Results'");
-    expect(source).not.toContain('Dynamic context / input');
-    expect(source).toContain('selectedCard.id !== mainCardId');
-    expect(source).toContain('selectedCard.id !== builderCard?.id');
-    const tabProjection = source.slice(
-      source.indexOf('const builderTabs = useMemo'),
-      source.indexOf('const selectedCardSubsystem = useMemo'),
+    const chatWorkSurface = readFileSync(
+      new URL('../features/agentbuilder/console/AgentBuilderChatWorkSurface.tsx', import.meta.url),
+      'utf8',
     );
-    expect(tabProjection).toContain('!hasTaskLedger(selectedCard)');
-    const tabRenderer = source.slice(
-      source.indexOf('const renderEditorContent = () =>'),
-      source.indexOf('const cardWorkSurface = () =>'),
+    expect(page).not.toContain('main-card-cli-location');
+    expect(page).not.toContain('onOpenMainChat');
+    expect(inspector).toContain(
+      "export const CARD_CONFIGURATION_TABS = [\n  'Prompt',\n  'Runtime',\n  'Memory',\n  'Skills',\n  'Tools',\n] as const;",
     );
-    expect(tabRenderer).toContain('!hasTaskLedger(selectedCard)');
-    expect(source).toContain("setTab('Prompt')");
-    expect(source).toContain('data-testid="under-chat-card-work-surface"');
-    const underChat = source.slice(source.indexOf('const cardWorkSurface ='), source.indexOf('terminal={cardWorkSurface()}'));
+    expect(inspector).not.toContain("'Results'");
+    expect(inspector).not.toContain('Dynamic context / input');
+    expect(inspector).toContain('selectedCard.id !== mainCardId');
+    expect(inspector).toContain('selectedCard.id !== builderCardId');
+    expect(inspector).toContain('!isTaskLedgerCard(selectedCard)');
+    expect(page).toContain("setTab('Prompt')");
+    expect(chatWorkSurface).toContain('data-testid="under-chat-card-work-surface"');
+    const underChat = chatWorkSurface.slice(
+      chatWorkSurface.indexOf('terminal={'),
+      chatWorkSurface.indexOf('workSurfaceLabel='),
+    );
     expect(underChat).toContain('<CardTerminalPanel');
     expect(underChat).toContain('cardId: builderCard.id');
-    expect(source).not.toContain('agentBuilderCard');
-    expect(source).not.toContain('sharedWorkSurfaceCard');
-    expect(source).not.toContain('workSurfaceCardId');
+    expect(page).not.toContain('agentBuilderCard');
+    expect(page).not.toContain('sharedWorkSurfaceCard');
+    expect(page).not.toContain('workSurfaceCardId');
     expect(underChat).not.toContain('workspaceView');
     expect(underChat).not.toContain('data-testid="agent-builder-output"');
     expect(underChat).not.toContain('builderResult');
     expect(underChat).not.toContain('directInput');
-    expect(source).not.toContain('<CardRunResults');
+    expect(page).not.toContain('<CardRunResults');
     expect(underChat).not.toContain('Run Agent Builder');
-    expect(source).not.toContain('title="Main CLI Terminal"');
-    expect(source).not.toContain('data-testid="builder-card-terminal"');
+    expect(page).not.toContain('title="Main CLI Terminal"');
+    expect(page).not.toContain('data-testid="builder-card-terminal"');
   });
 
   it('keeps Main, Builder, and Magnetic out of the ordinary Card CLI projection', () => {
-    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const tabProjection = source.slice(
-      source.indexOf('const builderTabs = useMemo'),
-      source.indexOf('const selectedCardSubsystem = useMemo'),
+    const inspector = readFileSync(
+      new URL('../features/agentbuilder/inspector/AgentCardInspectorPanel.tsx', import.meta.url),
+      'utf8',
     );
-    expect(tabProjection).toContain('!hasTaskLedger(selectedCard)');
-    expect(tabProjection).toContain('selectedCard.id !== mainCardId');
-    expect(tabProjection).toContain('selectedCard.id !== builderCard?.id');
+    expect(inspector).toContain('!isTaskLedgerCard(selectedCard)');
+    expect(inspector).toContain('selectedCard.id !== mainCardId');
+    expect(inspector).toContain('selectedCard.id !== builderCardId');
   });
 
   it('gives Magnetic and Team a Hermes Tasks inspector without adding a Kanban board or settings tab', () => {
-    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const tabProjection = source.slice(
-      source.indexOf('const builderTabs = useMemo'),
-      source.indexOf('const selectedCardSubsystem = useMemo'),
+    const inspector = readFileSync(
+      new URL('../features/agentbuilder/inspector/AgentCardInspectorPanel.tsx', import.meta.url),
+      'utf8',
     );
-    expect(source).toContain("return card?.id === 'card_magentic'");
-    expect(source).toContain("card?.id === 'card_magentic' || card?.id === 'card_team'");
-    const magneticGate = source.slice(
-      source.indexOf('function isMagneticCard'),
-      source.indexOf('// The launch surface renders one mixed human graph'),
-    );
-    expect(magneticGate).not.toContain('runtime.mode');
-    expect(tabProjection).toContain("hasTaskLedger(selectedCard) ? ['Tasks'] : []");
-    expect(source).toContain("tab === 'Tasks'");
-    expect(tabProjection).not.toContain("['Kanban']");
-    expect(tabProjection).not.toContain("['Results']");
+    expect(inspector).toContain("card?.id === 'card_magentic' || card?.id === 'card_team'");
+    expect(inspector).toContain("isTaskLedgerCard(selectedCard) ? ['Tasks'] : []");
+    expect(inspector).toContain("tab === 'Tasks'");
+    expect(inspector).not.toContain("['Kanban']");
+    expect(inspector).not.toContain("['Results']");
   });
   it('uses the clean KnowGraph identity', () => {
     const serialized = JSON.stringify(INITIAL_DECK);
@@ -142,31 +143,29 @@ describe('Main / Hermes / graph authority topology', () => {
 
   it('collapses and reopens the mounted WorldSignals inspector without clearing its section', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    const drawer = readFileSync(
+      new URL('../features/agentbuilder/inspector/AgentBuilderInspectorDrawer.tsx', import.meta.url),
+      'utf8',
+    );
+    const roleOwner = readFileSync(
+      new URL('../features/agentbuilder/inspector/AgentBuilderWorkspaceInspector.tsx', import.meta.url),
+      'utf8',
+    );
     const stateOwner = source.slice(
-      source.indexOf('const [worldSignalInspectorSection'),
+      source.indexOf('const [worldSignalsInspectorSection'),
       source.indexOf('const worldSignalsCardId = useMemo'),
     );
-    const visibilityOwner = source.slice(
-      source.indexOf('const inspectorDrawerRole = useMemo'),
-      source.indexOf('const getSurfaceShellStyle'),
-    );
-    const drawerStart = source.indexOf('const workspaceDrawer =');
-    const drawerOwner = source.slice(drawerStart, source.indexOf('<FrontendCrashBoundary', drawerStart));
-
-    expect(stateOwner).toContain('const [worldSignalInspectorOpen, setWorldSignalInspectorOpen] = useState(false);');
-    expect(stateOwner).toContain('setWorldSignalInspectorSection(section);');
-    expect(stateOwner).toContain('setWorldSignalInspectorOpen(true);');
-    expect(visibilityOwner).toContain("if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';");
-    expect(visibilityOwner).toContain("inspectorDrawerRole === 'worldsignal'");
-    expect(visibilityOwner).toContain('? worldSignalInspectorOpen');
-    expect(visibilityOwner).toContain('const closeWorldSignalInspector = useCallback(() => {\n    setWorldSignalInspectorOpen(false);');
-    expect(visibilityOwner).not.toContain('setWorldSignalInspectorSection(null);');
-    expect(drawerOwner).toContain("onOpen={inspectorDrawerRole === 'worldsignal'");
-    expect(drawerOwner).toContain('setWorldSignalInspectorOpen(true)');
-    expect(drawerOwner).toContain("inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection");
-    expect(drawerOwner).toContain('<WorldSignalsInspectorPanel');
-    expect(drawerOwner).toContain('section={worldSignalInspectorSection}');
-    expect(drawerOwner).toContain("'Open WorldSignals Inspector'");
+    expect(stateOwner).toContain('const [worldSignalsInspectorOpen, setWorldSignalsInspectorOpen] = useState(false);');
+    expect(stateOwner).toContain('setWorldSignalsInspectorSection(section);');
+    expect(stateOwner).toContain('setWorldSignalsInspectorOpen(true);');
+    expect(roleOwner).toContain("workspaceView === 'worldsignals' && worldSignals.section");
+    expect(source).toContain('open: worldSignalsInspectorOpen');
+    expect(source).toContain('const closeWorldSignalsInspector = useCallback(() => {\n    setWorldSignalsInspectorOpen(false);');
+    expect(source).not.toContain('setWorldSignalsInspectorSection(null);');
+    expect(source).toContain('onOpen: () => setWorldSignalsInspectorOpen(true)');
+    expect(drawer).toContain('<WorldSignalsInspectorPanel');
+    expect(drawer).toContain('section={role.section}');
+    expect(drawer).toContain("'Open WorldSignals Inspector'");
   });
 
   it('selects direct chat responders from exact Card-owned companion surfaces without topology mutation', () => {
@@ -181,7 +180,6 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(source).toContain("setWorkspaceView(canvasProjectId ? 'canvas' : 'chat')");
     expect(source).toContain('setCurrentResponderCardId(null)');
     expect(source).toContain('directChatTargets={directChatTargets}');
-    expect(source).not.toContain('currentResponder={currentResponder}');
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_main_chat', target: 'card_worldsignals_agent', edgeType: 'flow',
     }));
@@ -217,7 +215,6 @@ describe('Main / Hermes / graph authority topology', () => {
       'graphiti.get_episodes',
       'graphiti.get_episode_entities',
       'graphiti.add_memory',
-      'card.load_graph_references',
     ]);
     expect(knowgraphTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
     expect(byId.has('card_research_agent')).toBe(false);
@@ -293,7 +290,7 @@ describe('Main / Hermes / graph authority topology', () => {
           'canvas.inspect', 'card.create', 'card.update_configuration', 'canvas.upsert_wire',
           'cbm.search_graph', 'cbm.search_code', 'cbm.trace_path', 'cbm.get_code_snippet',
           'cbm.check_index_coverage', 'engraphis_recall_context', 'graphiti.search_memory_facts',
-          'graphiti.search_nodes', 'graphiti.get_episodes', 'write_mag_one_instructions',
+          'graphiti.search_nodes', 'graphiti.get_episodes',
           'thinkgraph.reason', 'knowgraph.research',
         ],
       },
@@ -373,17 +370,12 @@ describe('Main / Hermes / graph authority topology', () => {
       'graphiti.get_episodes',
       'graphiti.get_episode_entities',
       'graphiti.add_memory',
-      'card.load_graph_references',
     ]);
     expect(knowgraph?.runtimeOptions?.skills).toEqual(['grounded-citations']);
     expect(knowgraph?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
     expect(knowgraph?.runtimeOptions?.subagentType).toBe('none');
     expect(knowgraph?.prompt).toContain('Do not use CBM or become a coding worker');
     expect(knowgraph?.prompt).toContain('Do not initiate another saved Card');
-    expect(knowgraph?.prompt).toContain(
-      'Use card.load_graph_references only to hand exact persisted graph references',
-    );
-    expect(knowgraph?.prompt).toContain('Builder alone stages Magnetic instructions');
     expect(knowgraph?.prompt).toContain('Inspect supplied graph data before researching');
     expect(knowgraph?.prompt).toContain('do not search ThinkGraph');
     expect(knowgraph?.prompt).toContain('Preserve sources, URLs, dates, entities, relationships, contradictions, Graphiti record IDs, and uncertainty');
@@ -393,32 +385,6 @@ describe('Main / Hermes / graph authority topology', () => {
       runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
     });
     expect(JSON.stringify(INITIAL_DECK.nodes)).not.toContain('"mode":"kanban"');
-  });
-
-  it('keeps one All graph surface and removes the deferred CodeGraph tab scaffolding', () => {
-    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const framework = readFileSync(
-      new URL('../components/knowledge/KnowledgeGraphFramework.tsx', import.meta.url),
-      'utf8',
-    );
-    const knowledgeSurface = readFileSync(
-      new URL('../components/knowledge/KnowledgeAuthorityGraphSurface.tsx', import.meta.url),
-      'utf8',
-    );
-    expect(source).not.toContain('knowledgeGraphKind');
-    expect(framework).toContain('<JoinedKnowledgeGraphSurface');
-    expect(framework).not.toContain('Knowledge graph view');
-    expect(framework).not.toContain('graph-kind-codegraph');
-    expect(framework).not.toContain('onReadContextualNode');
-    expect(framework).not.toContain('onUseContextualNodeRead');
-    expect(source).not.toContain('handleUseContextualNodeRead');
-    for (const forbiddenForeground of [
-      'Reread contents',
-      '<strong>For:</strong>',
-      'Use selected in chat',
-    ]) {
-      expect(knowledgeSurface).not.toContain(forbiddenForeground);
-    }
   });
 
 });

@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   waitForBackendReady: vi.fn(),
 }));
 
-vi.mock('../../../components/builder/backendReadiness', () => ({
+vi.mock('../api/backendReadiness', () => ({
   waitForBackendReady: mocks.waitForBackendReady,
 }));
 
@@ -23,13 +23,14 @@ vi.mock('./sharedChatClient', async () => {
     ...actual,
     loadSessionHistory: mocks.loadSessionHistory,
     stopSession: mocks.stopSession,
-    stopVoiceCapture: mocks.stopVoiceCapture,
-    streamVoiceCapture: mocks.streamVoiceCapture,
     subscribeSessionEvents: mocks.subscribeSessionEvents,
     streamSession: mocks.streamSession,
   };
 });
-
+vi.mock('./sharedChatVoiceClient', () => ({
+  stopVoiceCapture: mocks.stopVoiceCapture,
+  streamVoiceCapture: mocks.streamVoiceCapture,
+}));
 import useSharedCardChat from './useSharedCardChat';
 import { SessionStreamError } from './sharedChatClient';
 
@@ -100,7 +101,7 @@ describe('Shared Card chat live observation callbacks', () => {
     });
     const { result } = renderHook(() => useSharedCardChat({ canvasProjectId: 'project-1',
       deckId: 'deck_builder', conversationId: 'main' }));
-    await act(async () => { await result.current.requestMainText('Question'); });
+    await act(async () => { await result.current.handleSend('Question'); });
 
     expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Question' },
@@ -136,7 +137,7 @@ describe('Shared Card chat live observation callbacks', () => {
     }));
 
     await act(async () => {
-      await result.current.requestMainText('@builder Reply exactly BUILDER_DIRECT_OK');
+      await result.current.handleSend('@builder Reply exactly BUILDER_DIRECT_OK');
     });
 
     expect(result.current.messages).toMatchObject([
@@ -164,30 +165,19 @@ describe('Shared Card chat live observation callbacks', () => {
     act(() => {
       expect(result.current.setCurrentResponderCardId('card_worldsignals_agent')).toBe(true);
     });
-    expect(result.current.currentResponder).toMatchObject({
-      cardId: 'card_worldsignals_agent', label: 'WorldSignals', address: 'WorldSignals',
-    });
-
     await act(async () => {
-      await result.current.requestMainText('@Builder Keep these exact user bytes.');
+      await result.current.handleSend('@Builder Keep these exact user bytes.');
     });
     expect(mocks.streamSession).toHaveBeenCalledWith(expect.objectContaining({
       message: '@Builder Keep these exact user bytes.',
       targetCardId: 'builder',
     }));
-    expect(result.current.currentResponder).toMatchObject({
-      cardId: 'builder', label: 'Builder', address: 'Builder',
-    });
-
     await act(async () => {
-      await result.current.requestMainText('@Main Return to the default responder.');
+      await result.current.handleSend('@Main Return to the default responder.');
     });
     expect(mocks.streamSession).toHaveBeenLastCalledWith(expect.not.objectContaining({
       targetCardId: expect.anything(),
     }));
-    expect(result.current.currentResponder).toMatchObject({
-      cardId: 'card_main_chat', label: 'Main', address: 'Main',
-    });
   });
 
   it('passes user-uploaded images through a Main request without changing their content', async () => {
@@ -207,7 +197,7 @@ describe('Shared Card chat live observation callbacks', () => {
     await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
-      await result.current.requestMainText('Read this chart.', { images });
+      await result.current.handleSend('Read this chart.', { images });
     });
 
     expect(mocks.streamSession).toHaveBeenCalledOnce();
@@ -244,7 +234,7 @@ describe('Shared Card chat live observation callbacks', () => {
     await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
-      await result.current.requestMainText('@WorldView Compare these views.', { images });
+      await result.current.handleSend('@WorldView Compare these views.', { images });
     });
 
     expect(prepareRunImages).toHaveBeenCalledOnce();
@@ -274,7 +264,7 @@ describe('Shared Card chat live observation callbacks', () => {
     await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
-      await expect(result.current.requestMainText('@WorldView Read this image.', { images }))
+      await expect(result.current.handleSend('@WorldView Read this image.', { images }))
         .resolves.toBe('Uploaded image received.');
     });
 
@@ -308,7 +298,7 @@ describe('Shared Card chat live observation callbacks', () => {
     await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
 
     await act(async () => {
-      await result.current.requestMainText('@WorldView Compare the images.', { images });
+      await result.current.handleSend('@WorldView Compare the images.', { images });
     });
 
     const submittedImages = mocks.streamSession.mock.calls[0][0].images;
@@ -431,12 +421,8 @@ describe('Shared Card chat live observation callbacks', () => {
       expect(result.current.setCurrentResponderCardId('card_worldsignals_agent')).toBe(true);
       expect(result.current.setCurrentResponderCardId('missing-companion-card')).toBe(false);
     });
-    expect(result.current.currentResponder).toMatchObject({
-      cardId: 'card_worldsignals_agent', label: 'WorldSignals',
-    });
-
     await act(async () => {
-      await result.current.requestMainText('Keep the existing responder.');
+      await result.current.handleSend('Keep the existing responder.');
     });
     expect(mocks.streamSession).toHaveBeenCalledWith(expect.objectContaining({
       targetCardId: 'card_worldsignals_agent',
@@ -533,7 +519,6 @@ describe('Shared Card chat live observation callbacks', () => {
       result.current.setCurrentResponderCardId('card_worldview');
     });
     await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
-    expect(result.current.currentResponderCardId).toBe('card_worldview');
     expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
       message: 'Image for Builder.', targetCardId: 'builder',
       images: [{
@@ -541,7 +526,6 @@ describe('Shared Card chat live observation callbacks', () => {
         kind: 'user-upload', metadata: { caption: 'Original caption' },
       }],
     });
-    expect(result.current.currentResponderCardId).toBe('card_worldview');
   });
 
   it('keeps Main graph context out of a direct Card turn', async () => {
@@ -575,7 +559,7 @@ describe('Shared Card chat live observation callbacks', () => {
       expect(result.current.setCurrentResponderCardId('builder')).toBe(true);
     });
     await act(async () => {
-      await result.current.requestMainText('Work directly.');
+      await result.current.handleSend('Work directly.');
     });
 
   });
@@ -590,7 +574,7 @@ describe('Shared Card chat live observation callbacks', () => {
     }));
 
     await act(async () => {
-      await expect(result.current.requestMainText('@builder unavailable test'))
+      await expect(result.current.handleSend('@builder unavailable test'))
         .rejects.toMatchObject({ code: 'addressed_card_turn_failed' });
     });
 
@@ -689,7 +673,7 @@ describe('Shared Card chat live observation callbacks', () => {
     }));
 
     await act(async () => {
-      await result.current.requestMainText('Question.');
+      await result.current.handleSend('Question.');
     });
     await waitFor(() => expect(mocks.subscribeSessionEvents).toHaveBeenCalledOnce());
     const subscription = mocks.subscribeSessionEvents.mock.calls[0][0];
@@ -731,7 +715,7 @@ describe('Shared Card chat live observation callbacks', () => {
     }));
 
     await act(async () => {
-      await expect(result.current.requestMainText('  Normal human message.  '))
+      await expect(result.current.handleSend('  Normal human message.  '))
         .resolves.toBe('Hermes answer.');
     });
 
@@ -804,7 +788,7 @@ describe('Shared Card chat live observation callbacks', () => {
     }));
 
     await act(async () => {
-      await expect(result.current.requestMainText('Normal user message.')).rejects.toThrow();
+      await expect(result.current.handleSend('Normal user message.')).rejects.toThrow();
     });
 
     expect(messageText(result.current.messages)).toEqual([
@@ -822,8 +806,8 @@ describe('Shared Card chat live observation callbacks', () => {
     });
     const { result } = renderHook(() => useSharedCardChat({ canvasProjectId: 'project-1',
       deckId: 'deck_builder', conversationId: 'main' }));
-    await act(async () => { await expect(result.current.requestMainText('Question')).rejects.toThrow('Run identity changed'); });
-    expect(result.current.technicalError).toBe('main_run_identity_mismatch');
+    await act(async () => { await expect(result.current.handleSend('Question')).rejects.toThrow('Run identity changed'); });
+    expect(result.current.technicalError).toBe('shared_chat_run_identity_mismatch');
     expect(messageText(result.current.messages)).toEqual([{ role: 'user', text: 'Question' }]);
     expect(result.current.messages[0]).toMatchObject({ status: 'error' });
   });
@@ -845,7 +829,7 @@ describe('Shared Card chat live observation callbacks', () => {
     }));
 
     await act(async () => {
-      await expect(result.current.requestMainText('Normal user message.')).rejects.toThrow();
+      await expect(result.current.handleSend('Normal user message.')).rejects.toThrow();
     });
 
     expect(messageText(result.current.messages)).toEqual([
@@ -855,7 +839,9 @@ describe('Shared Card chat live observation callbacks', () => {
   });
 
   it('clears the session active state when the backend reports no active turn', async () => {
+    let emit!: (event: Record<string, unknown>) => void;
     mocks.streamSession.mockImplementation(({ signal, onEvent }) => new Promise((_resolve, reject) => {
+      emit = onEvent;
       onEvent({ kind: 'session', liveSessionId: 'hermes-session', runId: 'hermes-run' });
       signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
         once: true,
@@ -873,18 +859,60 @@ describe('Shared Card chat live observation callbacks', () => {
 
     let request!: Promise<string>;
     await act(async () => {
-      request = result.current.requestMainText('Normal user message.');
+      request = result.current.handleSend('Normal user message.')!;
+      await Promise.resolve();
+    });
+    expect(result.current.sessionActive).toBe(false);
+    expect(result.current.sessionConnecting).toBe(true);
+
+    await act(async () => {
+      emit({ kind: 'run', state: 'running', runId: 'hermes-run' });
       await Promise.resolve();
     });
     expect(result.current.sessionActive).toBe(true);
 
     await act(async () => {
-      await result.current.stopMainTurn();
+      await result.current.stopCurrentCardTurn();
       await request.catch(() => undefined);
     });
     expect(result.current.sessionActive).toBe(false);
     expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Normal user message.' },
     ]);
+  });
+
+  it('keeps the correlated turn active when Stop fails generically', async () => {
+    let rejectTurn!: (error: Error) => void;
+    mocks.streamSession.mockImplementation(({ onEvent }) => new Promise((_resolve, reject) => {
+      onEvent({ kind: 'session', liveSessionId: 'hermes-session', runId: 'hermes-run' });
+      onEvent({ kind: 'run', state: 'running', runId: 'hermes-run' });
+      rejectTurn = reject;
+    }));
+    mocks.stopSession.mockRejectedValue(new SessionStreamError({
+      code: 'stop_transport_failed',
+      message: 'stop transport failed',
+    }));
+    const { result } = renderHook(() => useSharedCardChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-stop-failure',
+    }));
+
+    let request!: Promise<string>;
+    await act(async () => {
+      request = result.current.handleSend('Normal user message.')!;
+      await Promise.resolve();
+    });
+    expect(result.current.sessionActive).toBe(true);
+
+    await act(async () => {
+      await expect(result.current.stopCurrentCardTurn()).rejects.toThrow('stop transport failed');
+    });
+    expect(result.current.sessionActive).toBe(true);
+
+    await act(async () => {
+      rejectTurn(new Error('test cleanup'));
+      await request.catch(() => undefined);
+    });
   });
 });

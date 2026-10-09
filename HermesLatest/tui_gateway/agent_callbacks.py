@@ -485,6 +485,12 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
     """
     old_agent = session.get("agent")
     profile_home = session.get("profile_home")
+    follows_profile = session.get("follow_profile_config") is True
+    profile_fingerprint_before = (
+        _session_profile_capability_fingerprint(session)
+        if follows_profile
+        else None
+    )
     session_db = getattr(old_agent, "_session_db", None)
     # No live agent to inherit from (rebuild before the deferred build ran): open the profile's store the
     # same FAIL-CLOSED way _start_agent_build does rather than letting _make_agent reach for the launch db.
@@ -495,7 +501,37 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
         config_model_seen = _config_model_target()
         if opened:
             session_db = _open_profile_session_db(profile_home)
-        agent = _make_agent(sid, session["session_key"], session_db=session_db, **kwargs)
+        if old_agent is None:
+            build_kwargs = _deferred_build_agent_kwargs(session, session_db)
+        else:
+            build_kwargs = {
+                "session_db": session_db,
+                "context_cwd_is_launch_artifact": _context_cwd_is_launch_artifact(session),
+                "platform_override": _session_source(session),
+                "cwd_override": _session_cwd(session),
+            }
+            if model_override := session.get("model_override"):
+                build_kwargs["model_override"] = model_override
+            reasoning_override = session.get("create_reasoning_override")
+            if reasoning_override is not None:
+                build_kwargs["reasoning_config_override"] = reasoning_override
+            if "create_service_tier_override" in session:
+                build_kwargs["service_tier_override"] = session.get(
+                    "create_service_tier_override"
+                )
+        build_kwargs.update(kwargs)
+        agent = _make_agent(sid, session["session_key"], **build_kwargs)
+        if follows_profile:
+            profile_fingerprint_after = _session_profile_capability_fingerprint(session)
+            if (
+                profile_fingerprint_before == "unavailable"
+                or profile_fingerprint_after == "unavailable"
+                or profile_fingerprint_before != profile_fingerprint_after
+            ):
+                with contextlib.suppress(Exception):
+                    agent.close()
+                raise RuntimeError("profile_changed_during_agent_build")
+            agent._profile_capability_fingerprint = profile_fingerprint_after
     except BaseException:
         if opened and session_db is not None:
             with contextlib.suppress(Exception):
@@ -507,6 +543,9 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
     # Only a DEDICATED handle carries ownership; the shared launch handle outlives every agent and
     # _transfer_db_to_agent refuses it.
     with _sessions_lock:
+        agent._follow_profile_config = follows_profile
+        if title_hint := str(getattr(old_agent, "_session_title_hint", "") or "").strip():
+            agent._session_title_hint = title_hint
         session.update(agent=agent, config_model_seen=config_model_seen)
         owned = opened or bool(getattr(old_agent, "_owns_session_db", False))
         if owned and _transfer_db_to_agent(agent, session_db):
@@ -516,6 +555,16 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
             with contextlib.suppress(Exception):
                 session_db.close()
     return agent
+
+
+def _session_profile_capability_fingerprint(session: dict) -> str:
+    from tools.bot_mode_probe import capability_fingerprint
+
+    roster = session.get("bot_mode_roster")
+    return capability_fingerprint(
+        session.get("profile_home") or None,
+        roster_override=list(roster) if isinstance(roster, list) else None,
+    )
 
 
 def _reset_session_agent(sid: str, session: dict) -> dict:

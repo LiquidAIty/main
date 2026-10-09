@@ -7,6 +7,8 @@ import unittest
 import importlib.util
 import sys
 import asyncio
+import hashlib
+import io
 import httpx
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +27,10 @@ if APP_SPEC is None or APP_SPEC.loader is None:
 app = importlib.util.module_from_spec(APP_SPEC)
 APP_SPEC.loader.exec_module(app)
 
+import graphiti_runtime
+import ingest as knowgraph_ingest
+import pdf_upload_storage
+
 
 async def _request(method: str, path: str, **kwargs: object) -> httpx.Response:
     transport = httpx.ASGITransport(app=app.app)
@@ -38,7 +44,7 @@ async def _request(method: str, path: str, **kwargs: object) -> httpx.Response:
 class KnowGraphUploadRouteTests(unittest.TestCase):
     def test_health_exposes_loaded_graphiti_versions(self) -> None:
         with patch.object(
-            app,
+            graphiti_runtime,
             "graphiti_runtime_versions",
             return_value={"graphiti_core": "0.30.2", "graphiti_mcp": None},
         ):
@@ -67,7 +73,7 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as upload_dir:
             with (
                 patch.object(app, "UPLOADS_DIR", Path(upload_dir)),
-                patch.object(app, "ingest_pdf", ingest_pdf),
+                patch.object(knowgraph_ingest, "ingest_pdf", ingest_pdf),
             ):
                 response = asyncio.run(_request(
                     "POST",
@@ -75,8 +81,6 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                     data={
                         "project_id": "project-1",
                         "document_id": "pdf:document:1",
-                        "prompt_template": "Extract only source-backed claims.",
-                        "organizing_principle": "Preserve source provenance.",
                     },
                     files={
                         "file": (
@@ -84,12 +88,6 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                             b"%PDF-1.4 deterministic route proof",
                             "application/pdf",
                         )
-                    },
-                    headers={
-                        "x-agent-id": "retired-card",
-                        "x-agent-provider": "openai",
-                        "x-agent-model-key": "retired-model",
-                        "x-agent-model-id": "retired/model",
                     },
                 ))
 
@@ -112,19 +110,41 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         )
         ingest_pdf.assert_awaited_once()
         args, kwargs = ingest_pdf.await_args
+        content_sha256 = hashlib.sha256(
+            b"%PDF-1.4 deterministic route proof"
+        ).hexdigest()
         self.assertEqual(args[1:3], ("project-1", "pdf:document:1"))
-        self.assertEqual(Path(args[0]).name, "pdf_document_1_source.pdf")
-        self.assertNotIn("provider", kwargs)
-        self.assertNotIn("model_key", kwargs)
-        self.assertNotIn("model_id", kwargs)
-        self.assertNotIn("agent_id", kwargs)
+        self.assertEqual(Path(args[0]).name, f"{content_sha256}.pdf")
+        self.assertEqual(Path(args[0]).parent.name, content_sha256[:2])
         self.assertEqual(kwargs["source_name"], "source.pdf")
         self.assertEqual(
-            kwargs["prompt_template"], "Extract only source-backed claims."
+            kwargs["source_reference"],
+            f"knowgraph-upload://sha256/{content_sha256}/source.pdf",
         )
-        self.assertEqual(
-            kwargs["organizing_principle"], "Preserve source provenance."
-        )
+        self.assertEqual(kwargs["source_content_sha256"], content_sha256)
+
+    def test_pdf_storage_reuses_identical_bytes_without_overwriting(self) -> None:
+        payload = b"%PDF-1.4 immutable content"
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as upload_dir:
+            directory = Path(upload_dir)
+            first = pdf_upload_storage.store_pdf_upload(
+                io.BytesIO(payload), "Research Source.pdf", directory
+            )
+            second = pdf_upload_storage.store_pdf_upload(
+                io.BytesIO(payload), "Research Source.pdf", directory
+            )
+
+            self.assertFalse(first.reused)
+            self.assertTrue(second.reused)
+            self.assertEqual(first.path, second.path)
+            self.assertEqual(first.path.read_bytes(), payload)
+            self.assertEqual(first.path.name, f"{digest}.pdf")
+            self.assertEqual(
+                first.source_reference,
+                f"knowgraph-upload://sha256/{digest}/Research_Source.pdf",
+            )
+            self.assertEqual(list(directory.glob(".upload-*.pdf")), [])
 
     def test_delete_fact_routes_one_project_scoped_fact_to_graphiti(self) -> None:
         delete_fact = AsyncMock(
@@ -184,15 +204,10 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         driver = SimpleNamespace(close=AsyncMock())
         with (
             patch.object(
-                sys.modules["graphiti_core.driver.neo4j_driver"],
-                "Neo4jDriver",
-                return_value=driver,
+                graphiti_runtime,
+                "create_graphiti_driver",
+                return_value=(driver, "neo4j"),
             ),
-            patch.dict("os.environ", {
-                "NEO4J_URI": "bolt://example",
-                "NEO4J_USER": "user",
-                "NEO4J_PASSWORD": "password",
-            }),
             patch(
                 "graphiti_core.edges.EntityEdge.get_by_uuid",
                 new=AsyncMock(return_value=edge),
@@ -216,15 +231,10 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         driver = SimpleNamespace(close=AsyncMock())
         with (
             patch.object(
-                sys.modules["graphiti_core.driver.neo4j_driver"],
-                "Neo4jDriver",
-                return_value=driver,
+                graphiti_runtime,
+                "create_graphiti_driver",
+                return_value=(driver, "neo4j"),
             ),
-            patch.dict("os.environ", {
-                "NEO4J_URI": "bolt://example",
-                "NEO4J_USER": "user",
-                "NEO4J_PASSWORD": "password",
-            }),
             patch(
                 "graphiti_core.edges.EntityEdge.get_by_uuid",
                 new=AsyncMock(return_value=edge),

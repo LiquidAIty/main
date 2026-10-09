@@ -23,7 +23,7 @@ import tempfile
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from tools.thread_context import propagate_context_to_thread
 from tools.registry import registry, tool_error
@@ -190,15 +190,95 @@ def _sandbox_failure_hint(stderr_text: str, enabled_tools=None) -> Optional[str]
     return None
 
 
-def generate_hermes_tools_module(enabled_tools: List[str],
-                                 transport: str = "uds") -> str:
+def generate_hermes_tools_module(
+    enabled_tools: List[str],
+    transport: str = "uds",
+    *,
+    tool_aliases: Optional[Dict[str, str]] = None,
+    script_input: Optional[Dict[str, Any]] = None,
+    tool_states: Optional[Dict[str, int]] = None,
+) -> str:
     """Source of the hermes_tools.py stub module for SANDBOX_ALLOWED_TOOLS ∩ *enabled_tools*.
     ``transport``: ``"uds"`` (local socket client) or ``"file"`` (file RPC, remote backends)."""
     header = _FILE_TRANSPORT_HEADER if transport == "file" else _UDS_TRANSPORT_HEADER
-    return header + "\n".join(
+    source = header + "\n".join(
         f"def {name}({sig}):\n    {doc}\n    return _call({name!r}, {args_expr})\n"
-        for name, (sig, doc, args_expr) in sorted(_TOOL_STUBS.items()) if name in set(enabled_tools)
+        for name, (sig, doc, args_expr) in sorted(_TOOL_STUBS.items())
+        if tool_aliases is None and name in set(enabled_tools)
     )
+    if tool_aliases is not None:
+        source += _card_script_helpers(script_input or {}, tool_states or {})
+    return source
+
+
+def _card_script_helpers(
+    script_input: Dict[str, Any], tool_states: Dict[str, int]
+) -> str:
+    """Child-only objects for one validated saved Card Python recipe."""
+
+    encoded_input = json.dumps(
+        script_input, ensure_ascii=False, separators=(",", ":")
+    )
+    encoded_tool_states = json.dumps(
+        tool_states, ensure_ascii=False, separators=(",", ":")
+    )
+    return f'''\n
+class _AttrMap(dict):
+    def __getattr__(self, name):
+        try:
+            value = self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+        return _wrap(value)
+
+def _wrap(value):
+    if isinstance(value, dict):
+        return _AttrMap(value)
+    if isinstance(value, list):
+        return [_wrap(item) for item in value]
+    return value
+
+OFF = 0
+SCRIPT = 1
+AGENT = 2
+BOTH = 3
+_tool_states = json.loads({encoded_tool_states!r})
+
+class _ToolNamespace:
+    def __init__(self, path):
+        object.__setattr__(self, "_path", path)
+
+    def __getattr__(self, name):
+        return _ToolNamespace(object.__getattribute__(self, "_path") + [name])
+
+    def __setattr__(self, name, value):
+        canonical_id = ".".join(object.__getattribute__(self, "_path") + [name])
+        if canonical_id not in _tool_states:
+            raise ValueError("tool is not selected on this Card: " + canonical_id)
+        if not isinstance(value, int) or isinstance(value, bool) or value != _tool_states[canonical_id]:
+            raise ValueError("tool mode differs from compiled Card Python recipe: " + canonical_id)
+
+class _Tools:
+    def __getattr__(self, name):
+        return _ToolNamespace([name])
+
+    @staticmethod
+    def call(canonical_id, **arguments):
+        if not isinstance(canonical_id, str) or not canonical_id.strip():
+            raise ValueError("tool canonical id required")
+        return _call(canonical_id, arguments)
+
+class _Output:
+    @staticmethod
+    def emit(value):
+        print("HERMES_CARD_SCRIPT_OUTPUT:" + json.dumps(
+            value, ensure_ascii=False, separators=(",", ":")
+        ))
+
+input = _wrap(json.loads({encoded_input!r}))
+tools = _Tools()
+output = _Output()
+'''
 
 
 # ---- Shared helpers section (embedded in both transport headers) ----------
@@ -666,12 +746,18 @@ def execute_code(
     task_id: Optional[str] = None,
     enabled_tools: Optional[List[str]] = None,
     reset: bool = False,
+    host_script: Optional[Dict[str, Any]] = None,
+    dispatch: Optional[Callable[[str, Dict[str, Any]], str]] = None,
 ) -> str:
     """Run Python in the session's persistent kernel (local) or on the remote terminal backend,
     with RPC access to a subset of Hermes tools; returns the JSON result string. "Sandbox" means
     the security envelope (env scrubbing, tool whitelist + call budget, output redaction), not an
     isolation jail: default `project` mode runs in the session's cwd with the project venv.
-    ``enabled_tools`` ∩ SANDBOX_ALLOWED_TOOLS; ``reset`` kills the existing kernel first."""
+    ``enabled_tools`` ∩ SANDBOX_ALLOWED_TOOLS; ``reset`` kills the existing kernel first.
+    ``host_script`` is the internal saved-Card path: it supplies immutable input
+    and canonical aliases while ``dispatch`` keeps every call on the exact
+    signed per-turn callback instead of the global registry.
+    """
     if not SANDBOX_AVAILABLE:
         return tool_error("execute_code sandbox is unavailable in this environment. "
                           "Use normal tool calls (terminal, read_file, write_file, ...) instead.")
@@ -726,6 +812,8 @@ def execute_code(
     from tools.terminal_tool import _get_env_config, _docker_has_host_access
     _env_config = _get_env_config()
     env_type = _env_config["env_type"]
+    if host_script is not None and env_type != "local":
+        return tool_error("Card Python recipes require Hermes' local child-process backend.")
     # Arbitrary Python never passes through terminal()/DANGEROUS_PATTERNS, so guard the whole
     # script before either dispatch path spawns it — in this (tool-executor) thread, which holds
     # the session context. A Docker sandbox with host bind mounts gets no container fast-path.
@@ -748,13 +836,71 @@ def execute_code(
     from tools.code_kernel import execute_in_session_kernel
     _cfg = _load_config()
     _mode = _get_execution_mode()
+    timeout = _cfg.get("timeout", DEFAULT_TIMEOUT)
+    max_tool_calls = _cfg.get("max_tool_calls", DEFAULT_MAX_TOOL_CALLS)
+    tool_module_options = None
+    kernel_namespace = ""
+    if host_script is not None:
+        aliases = host_script.get("toolAliases")
+        script_input = host_script.get("input")
+        tool_states = host_script.get("toolStates")
+        if (
+            not isinstance(aliases, dict)
+            or not isinstance(script_input, dict)
+            or not isinstance(tool_states, dict)
+            or dispatch is None
+        ):
+            return tool_error("Card Python recipe execution configuration is invalid.")
+        normalized_aliases = {
+            str(canonical): str(safe_name)
+            for canonical, safe_name in aliases.items()
+            if str(canonical).strip() and str(safe_name).strip()
+        }
+        normalized_states = {
+            str(name): mode for name, mode in tool_states.items()
+            if isinstance(mode, int) and not isinstance(mode, bool) and mode in {0, 1, 2, 3}
+        }
+        if (
+            len(normalized_aliases) != len(aliases)
+            or len(normalized_states) != len(tool_states)
+            or set(normalized_aliases) != set(enabled_tools or [])
+            or set(normalized_aliases) != {
+                name for name, mode in normalized_states.items() if mode in {1, 3}
+            }
+        ):
+            return tool_error("Card Python recipe tool scope is invalid.")
+        timeout = host_script.get("timeoutSeconds")
+        max_tool_calls = host_script.get("maxToolCalls")
+        if (
+            not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 60
+            or not isinstance(max_tool_calls, int) or isinstance(max_tool_calls, bool)
+            or not 1 <= max_tool_calls <= 32
+        ):
+            return tool_error("Card Python recipe execution budget is invalid.")
+        sandbox_tools = frozenset(normalized_aliases)
+        tool_module_options = {
+            "tool_aliases": normalized_aliases,
+            "script_input": script_input,
+            "tool_states": normalized_states,
+        }
+        source_hash = str(host_script.get("sourceHash") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
+            return tool_error("Card Python recipe source identity is invalid.")
+        kernel_namespace = f"card-script:{source_hash}"
+    else:
+        sandbox_tools = frozenset(_sandbox_tools_for(enabled_tools))
     return execute_in_session_kernel(
         code, task_id=task_id or "", mode=_mode, child_python=_resolve_child_python(_mode),
         child_cwd=_resolve_child_cwd(_mode, "", task_id=task_id or ""),
-        sandbox_tools=frozenset(_sandbox_tools_for(enabled_tools)),
-        timeout=_cfg.get("timeout", DEFAULT_TIMEOUT),
-        max_tool_calls=_cfg.get("max_tool_calls", DEFAULT_MAX_TOOL_CALLS),
-        reset=bool(reset), is_interrupted=_is_interrupted,
+        sandbox_tools=sandbox_tools,
+        timeout=timeout,
+        max_tool_calls=max_tool_calls,
+        reset=True if host_script is not None else bool(reset),
+        is_interrupted=_is_interrupted,
+        tool_module_options=tool_module_options,
+        dispatch=dispatch,
+        kernel_namespace=kernel_namespace,
+        dispose_after=host_script is not None,
     )
 
 

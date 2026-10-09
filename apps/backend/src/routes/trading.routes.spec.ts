@@ -92,34 +92,6 @@ describe('authenticated Trading presentation transport', () => {
     expect(requestRails).not.toHaveBeenCalled();
   });
 
-  it('starts only the fixed authenticated local lifecycle proof', async () => {
-    const { base, requestRails } = await serve();
-    const response = await fetch(`${base}/lifecycle/backtest`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        cardId: 'card_trading_workbench',
-        idempotencyKey: 'proof-1',
-        broker: 'live',
-        code: 'submit_order()',
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    const call = requestRails.mock.calls[0];
-    expect(call[0]).toBe('/trading/lifecycle/backtest');
-    expect(JSON.parse(String(call[1]?.body))).toEqual({
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      cardId: 'card_trading_workbench',
-      idempotencyKey: 'proof-1',
-      actor: 'authenticated-user:user-123',
-    });
-    expect(call[2]).toEqual({ timeoutMs: 120_000 });
-  });
-
   it('streams normalized snapshots through the same authenticated selector path', async () => {
     const snapshot = {
       cardId: 'card_trading_workbench',

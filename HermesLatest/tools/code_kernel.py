@@ -238,9 +238,10 @@ class CellAuthority:
     refused instead of running under a stale approval/session/turn identity.
     """
 
-    def __init__(self, task_id: str):
+    def __init__(self, task_id: str, dispatch: Optional[Callable[[str, dict], str]] = None):
         import contextvars
         self.task_id = task_id
+        self._dispatch = dispatch
         self.ctx = contextvars.copy_context()
         self.active = True
         # ((getter, setter), captured value) per thread-local prompt callback (approval, sudo, vault unlock…)
@@ -264,6 +265,8 @@ class CellAuthority:
         return self.ctx.run(self._invoke, tool_name, tool_args)
 
     def _invoke(self, tool_name: str, tool_args: dict) -> str:
+        if self._dispatch is not None:
+            return self._dispatch(tool_name, tool_args)
         from model_tools import handle_function_call
         previous = None
         if self._callbacks:
@@ -608,14 +611,16 @@ def _parent_process_handle(child_env: Dict[str, str]):
 
 
 def _spawn(kernel: SessionKernel, *, child_python: str, child_cwd: str,
-           sandbox_tools: frozenset, max_tool_calls: int, task_id: str = "") -> None:
+           sandbox_tools: frozenset, max_tool_calls: int, task_id: str = "",
+           tool_module_options: dict[str, Any] | None = None) -> None:
     from tools.code_execution_env import _build_child_env
     from tools.code_execution_tool import generate_hermes_tools_module
     kernel.tmpdir = tempfile.mkdtemp(prefix="hermes_kernel_")
     kernel.rpc_token = secrets.token_urlsafe(32)
     kernel.sentinel = "@@HERMES-KERNEL-" + secrets.token_urlsafe(16) + "@@"
     rpc_endpoint = _bind_rpc_socket(kernel)
-    for name, src in (("hermes_tools.py", generate_hermes_tools_module(list(sandbox_tools))),
+    for name, src in (("hermes_tools.py", generate_hermes_tools_module(
+                          list(sandbox_tools), **(tool_module_options or {}))),
                       ("hermes_kernel_runner.py", KERNEL_RUNNER_SOURCE)):
         Path(kernel.tmpdir, name).write_text(src, encoding="utf-8")
     child_env = _build_child_env(rpc_endpoint=rpc_endpoint, rpc_token=kernel.rpc_token,
@@ -845,40 +850,61 @@ def _cell_result(kernel: SessionKernel, key: Tuple, status: str, payload: Dict[s
 def execute_in_session_kernel(
     code: str, *, task_id: str, mode: str, child_python: str, child_cwd: str,
     sandbox_tools: frozenset, timeout: int, max_tool_calls: int, reset: bool, is_interrupted,
+    tool_module_options: dict[str, Any] | None = None,
+    dispatch: Optional[Callable[[str, dict], str]] = None,
+    kernel_namespace: str = "",
+    dispose_after: bool = False,
 ) -> str:
     """Run one cell in the (owner, mode, python, cwd, tools) session kernel. The owner is the
     session key (``_resolve_owner``), not the per-turn task id, so state survives across turns."""
-    key = (_resolve_owner(task_id) or "", mode, child_python, child_cwd, tuple(sorted(sandbox_tools)))
+    base_key = (
+        _resolve_owner(task_id) or "", mode, child_python, child_cwd,
+        tuple(sorted(sandbox_tools)),
+    )
+    key = (*base_key, kernel_namespace) if kernel_namespace else base_key
     exec_start = time.monotonic()
     from agent.delegation_context import is_delegated_child_context
     kernel, state_reset = _acquire_kernel(key, reset, pinned=is_delegated_child_context())
     try:
-        return _run_cell(kernel, key, code, task_id=task_id, child_python=child_python, child_cwd=child_cwd,
-                         sandbox_tools=sandbox_tools, timeout=timeout, max_tool_calls=max_tool_calls,
-                         is_interrupted=is_interrupted, exec_start=exec_start, state_reset=state_reset)
+        result = _run_cell(
+            kernel, key, code, task_id=task_id, child_python=child_python, child_cwd=child_cwd,
+            sandbox_tools=sandbox_tools, timeout=timeout, max_tool_calls=max_tool_calls,
+            is_interrupted=is_interrupted, exec_start=exec_start, state_reset=state_reset,
+            tool_module_options=tool_module_options, dispatch=dispatch,
+        )
+        if dispose_after:
+            _REGISTRY.discard(key, kernel)
+        return result
     finally:
         with _REGISTRY.lock:
             kernel.attached -= 1
             kernel.last_used = time.monotonic()
             # Dropped from the registry (reset/dead/reaped) while cells were still attached:
             # the last one out owns the teardown.
-            orphaned = kernel.attached == 0 and _KERNELS.get(key) is not kernel
+            orphaned = (
+                not dispose_after
+                and kernel.attached == 0
+                and _KERNELS.get(key) is not kernel
+            )
         if orphaned:
             kernel.teardown()
 
 
 def _run_cell(kernel: SessionKernel, key: Tuple, code: str, *, task_id: str, child_python: str,
               child_cwd: str, sandbox_tools: frozenset, timeout: int, max_tool_calls: int,
-              is_interrupted, exec_start: float, state_reset: bool) -> str:
+              is_interrupted, exec_start: float, state_reset: bool,
+              tool_module_options: dict[str, Any] | None = None,
+              dispatch: Optional[Callable[[str, dict], str]] = None) -> str:
     reused = kernel.proc is not None
     # Captured on the calling thread BEFORE the cell runs (the snapshot a per-call RPC thread
     # would get) and installed on the kernel so RPC dispatches under THIS cell's identity.
-    authority = CellAuthority(task_id)
+    authority = CellAuthority(task_id, dispatch=dispatch)
     with kernel.lock:
         try:
             if kernel.proc is None:
                 _spawn(kernel, task_id=task_id, child_python=child_python, child_cwd=child_cwd,
-                       sandbox_tools=sandbox_tools, max_tool_calls=max_tool_calls)
+                       sandbox_tools=sandbox_tools, max_tool_calls=max_tool_calls,
+                       tool_module_options=tool_module_options)
             assert kernel.proc is not None and kernel.proc.stdin is not None
             # Per-cell tool budget: the RPC loop enforces counter < max; reset without restarting.
             kernel.tool_call_counter[0] = 0

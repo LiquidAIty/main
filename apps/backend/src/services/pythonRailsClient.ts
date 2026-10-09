@@ -15,6 +15,20 @@ function isRetryablePythonRailsError(error: any): boolean {
   return code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
 }
 
+export class PythonRailsHttpError extends Error {
+  readonly code: string;
+
+  constructor(
+    readonly status: number,
+    readonly detail: string,
+  ) {
+    const code = `python_rails_http_${status}`;
+    super(detail, { cause: { code, status } });
+    this.name = 'PythonRailsHttpError';
+    this.code = code;
+  }
+}
+
 /** Transport-only request to the long-lived Python rails service. */
 export async function requestPythonRailsJson(
   endpointPath: string,
@@ -32,10 +46,21 @@ export async function requestPythonRailsJson(
     try {
       const response = await fetch(`${baseUrl}${endpointPath}`, { ...init, signal: controller.signal });
       const text = await response.text();
-      const data = text ? JSON.parse(text) : null;
+      let data: unknown = null;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          if (response.ok) {
+            throw new Error('python_rails_response_invalid_json', { cause: error });
+          }
+        }
+      }
       if (!response.ok) {
-        const message = String((data as any)?.detail || response.statusText || 'python_rails_http_error').trim();
-        throw new Error(`python_rails_http_${response.status}:${message}`);
+        const detail = String(
+          (data as any)?.detail || response.statusText || 'python_rails_request_failed',
+        ).trim();
+        throw new PythonRailsHttpError(response.status, detail);
       }
       return data;
     } catch (error: any) {
@@ -67,4 +92,27 @@ export async function fetchThinkGraphNeighborhood(
 ): Promise<unknown> {
   const query = new URLSearchParams({ projectId, canonicalId });
   return requestPythonRailsJson(`/thinkgraph/neighborhood?${query.toString()}`, { method: 'GET' });
+}
+
+/** Read the bounded Graphiti projection without reshaping it in TypeScript. */
+export async function fetchKnowGraphProjection(
+  projectId: string,
+  limit: number,
+): Promise<unknown> {
+  const query = new URLSearchParams({ projectId, limit: String(limit) });
+  return requestPythonRailsJson(`/knowgraph/projection?${query.toString()}`, { method: 'GET' });
+}
+
+/** Read one bounded Graphiti neighborhood without reshaping it in TypeScript. */
+export async function fetchKnowGraphNeighborhood(
+  projectId: string,
+  nodeId: string,
+  limit: number,
+): Promise<unknown> {
+  const query = new URLSearchParams({
+    projectId,
+    nodeId,
+    limit: String(limit),
+  });
+  return requestPythonRailsJson(`/knowgraph/neighborhood?${query.toString()}`, { method: 'GET' });
 }

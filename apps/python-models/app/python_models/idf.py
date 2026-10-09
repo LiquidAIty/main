@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from app.python_models.orchestration_contracts import (
+from app.python_models.graph_reference_contracts import (
     GraphRecordReference,
     graph_record_fields,
     graph_record_identity,
@@ -39,20 +39,20 @@ _SELECTED_GRAPH_RECORD_FIELDS = frozenset({
     "selectionScope", "materializedContentBytes", "materializedRecordSha256",
     "sourcePath", "sourceUrl", "truncated",
 })
-_RUNTIME_RECEIPT_REFERENCE_KEYS = frozenset({
+_RUN_TELEMETRY_REFERENCE_KEYS = frozenset({
     "attemptEvents", "requestFulfillment", "observationGap", "timingMs",
     "inputTokens", "outputTokens", "cachedTokens", "reasoningTokens",
     "costUsd", "totalCostUsd", "toolReceipt", "executionReceipt",
 })
 
 
-def _reference_contains_runtime_receipt(value: Any) -> bool:
+def _reference_contains_run_telemetry(value: Any) -> bool:
     if isinstance(value, dict):
-        return bool(set(value) & _RUNTIME_RECEIPT_REFERENCE_KEYS) or any(
-            _reference_contains_runtime_receipt(item) for item in value.values()
+        return bool(set(value) & _RUN_TELEMETRY_REFERENCE_KEYS) or any(
+            _reference_contains_run_telemetry(item) for item in value.values()
         )
     if isinstance(value, list):
-        return any(_reference_contains_runtime_receipt(item) for item in value)
+        return any(_reference_contains_run_telemetry(item) for item in value)
     return False
 
 
@@ -114,7 +114,7 @@ class ActualGraphData(BaseModel):
             if (
                 not isinstance(item, dict)
                 or set(item) - _SELECTED_GRAPH_RECORD_FIELDS
-                or _reference_contains_runtime_receipt(item)
+                or _reference_contains_run_telemetry(item)
             ):
                 raise ValueError("input_graph_reference_field_forbidden")
         return value
@@ -132,7 +132,6 @@ class SelectedToolsAndGrants(BaseModel):
     toolDefinitions: list[dict[str, Any]] = Field(default_factory=list)
     scriptPresentation: dict[str, Any] = Field(default_factory=lambda: {
         "mode": "selected-mcp",
-        "fallbackReason": None,
     })
     skills: list[str] = Field(default_factory=list)
     toolsets: list[str] = Field(default_factory=list)
@@ -190,7 +189,7 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _token_estimate(value: str) -> int:
+def estimate_text_tokens(value: str) -> int:
     """Return an intentionally model-agnostic UTF-8/4 planning estimate."""
 
     return ceil(len(value.encode("utf-8")) / 4) if value else 0
@@ -227,15 +226,15 @@ def _input_estimates(idf: Idf) -> dict[str, Any]:
 
     estimates: dict[str, Any] = {
         "method": "utf8-bytes-divided-by-4-ceiling",
-        "graphContextTokens": _token_estimate(idf.actualGraphData.modelText),
-        "systemContextTokens": _token_estimate(
+        "graphContextTokens": estimate_text_tokens(idf.actualGraphData.modelText),
+        "systemContextTokens": estimate_text_tokens(
             idf.stableSavedCardContext.instructions
         ),
-        "taskTokens": _token_estimate(idf.dynamicContext.task),
-        "worldviewContextTokens": _token_estimate(
+        "taskTokens": estimate_text_tokens(idf.dynamicContext.task),
+        "worldviewContextTokens": estimate_text_tokens(
             _worldview_context_text(idf.dynamicContext.images)
         ),
-        "outputContractTokens": _token_estimate(
+        "outputContractTokens": estimate_text_tokens(
             idf.stableSavedCardContext.outputRequirements
         ),
     }
@@ -451,7 +450,7 @@ def materialize_idf(
     if any(
         not isinstance(reference, dict)
         or set(reference) - _SELECTED_GRAPH_RECORD_FIELDS
-        or _reference_contains_runtime_receipt(reference)
+        or _reference_contains_run_telemetry(reference)
         for reference in graph_records
     ):
         raise InputMaterializationError("input_graph_reference_field_forbidden")
@@ -503,7 +502,6 @@ def materialize_idf(
         toolDefinitions=list(capabilities.get("toolDefinitions") or []),
         scriptPresentation=dict(capabilities.get("scriptPresentation") or {
             "mode": "selected-mcp",
-            "fallbackReason": None,
         }),
         skills=list(capabilities.get("skills") or []),
         toolsets=list(capabilities.get("toolsets") or []),
@@ -642,7 +640,7 @@ def model_task(idf: Idf) -> str:
     )
 
 
-def kanban_mission(idf: Idf) -> str:
+def task_graph_mission(idf: Idf) -> str:
     """Project only the graph-first user body; saved prompt/tools travel through Hermes."""
 
     return model_task(idf)
@@ -664,7 +662,7 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "task": idf.dynamicContext.task,
         "graphContext": idf.actualGraphData.modelText,
         "message": model_task(idf),
-        "kanbanMission": kanban_mission(idf),
+        "taskGraphMission": task_graph_mission(idf),
         "runtime": dict(stable.runtime),
         "provider": dict(stable.provider),
         "runtimeOptions": dict(stable.runtimeOptions),
@@ -692,7 +690,7 @@ def idf_public(materialized: MaterializedIdf) -> dict[str, Any]:
             "idfSha256": materialized.idf_sha256,
             "recordCounts": dict(materialized.idf.actualGraphData.recordCounts),
             "graphSystems": list(materialized.idf.actualGraphData.graphSystems),
-            "estimatedIdfFileTokens": _token_estimate(
+            "estimatedIdfFileTokens": estimate_text_tokens(
                 materialized.idf_bytes.decode("utf-8")
             ),
             "estimatedGraphContextTokens": estimates["graphContextTokens"],

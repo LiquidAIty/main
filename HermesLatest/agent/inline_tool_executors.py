@@ -293,6 +293,10 @@ def resolve_invoke_tool_executor(agent, function_name: str) -> Optional[InlineTo
     """
     if function_name in INVOKE_TOOL_PRE_MEMORY_MANAGER_NAMES:
         return INLINE_TOOL_EXECUTORS[function_name]
+    from agent.dynamic_tools import inline_dynamic_tool_executor
+
+    if dynamic_executor := inline_dynamic_tool_executor(agent, function_name):
+        return dynamic_executor
     memory_manager = agent._memory_manager
     if memory_manager and memory_manager.has_tool(function_name):
         return lambda agent, args, ctx: agent._memory_manager.handle_tool_call(function_name, args)

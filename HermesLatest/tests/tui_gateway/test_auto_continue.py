@@ -245,6 +245,98 @@ def test_concluded_turn_clears_marker(emits, turn_env, marker_home):
     assert read_turn_marker(marker_home, "session-key") is None
 
 
+def test_dynamic_tools_bind_to_refreshed_agent_for_one_turn_only(
+    monkeypatch, emits, turn_env, marker_home,
+):
+    observed = []
+
+    old_agent = types.SimpleNamespace(
+        session_id="session-key",
+        run_conversation=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("superseded agent must not run")
+        ),
+        clear_interrupt=lambda: None,
+    )
+
+    def run_with_dynamic_tools(message, **kwargs):
+        observed.append({
+            "tools": list(new_agent._dynamic_tools),
+            "endpoint": new_agent._dynamic_tool_endpoint,
+            "authorization": new_agent._dynamic_tool_authorization,
+        })
+        return {"final_response": "done"}
+
+    new_agent = types.SimpleNamespace(
+        session_id="session-key",
+        run_conversation=run_with_dynamic_tools,
+        clear_interrupt=lambda: None,
+    )
+    session = _session(agent=old_agent, running=True, bot_mode_roster=["old"])
+
+    def refresh(_sid, current, expected):
+        assert current["bot_mode_roster"] == ["knowgraph"]
+        assert expected == "0123456789ab"
+        current["agent"] = new_agent
+
+    monkeypatch.setattr(server, "_sync_profile_capabilities", refresh)
+    definitions = [{
+        "type": "function",
+        "name": "card__read__123",
+        "canonical_name": "provider.read",
+        "description": "Read provider data.",
+        "input_schema": {"type": "object", "properties": {}},
+    }]
+
+    server._run_prompt_submit(
+        "rid",
+        "sid",
+        session,
+        "do the thing",
+        dynamic_tools=definitions,
+        tool_endpoint="http://127.0.0.1:8765/mcp",
+        tool_authorization="Bearer exact-run",
+        bot_mode_roster=["knowgraph"],
+        expected_profile_capability_fingerprint="0123456789ab",
+    )
+
+    assert observed == [{
+        "tools": definitions,
+        "endpoint": "http://127.0.0.1:8765/mcp",
+        "authorization": "Bearer exact-run",
+    }]
+    assert not hasattr(old_agent, "_dynamic_tools")
+    assert new_agent._dynamic_tools == []
+    assert new_agent._dynamic_tool_endpoint is None
+    assert new_agent._dynamic_tool_authorization is None
+
+
+def test_queued_turn_preserves_roster_and_profile_fingerprint(monkeypatch):
+    session = _session(running=False)
+    captured = []
+    server._enqueue_prompt(
+        session,
+        "queued work",
+        None,
+        submission_id="run-next",
+        bot_mode_roster=["knowgraph"],
+        expected_profile_capability_fingerprint="0123456789ab",
+    )
+    monkeypatch.setattr(server, "_session_uses_compute_host", lambda _session: False)
+    monkeypatch.setattr(
+        server,
+        "_run_prompt_submit",
+        lambda rid, sid, current, text, **kwargs: captured.append(
+            (rid, sid, current, text, kwargs)
+        ) or True,
+    )
+
+    assert server._drain_queued_prompt("rid", "sid", session) is True
+    assert captured[0][3] == "queued work"
+    assert captured[0][4]["submission_id"] == "run-next"
+    assert captured[0][4]["bot_mode_roster"] == ["knowgraph"]
+    assert captured[0][4]["expected_profile_capability_fingerprint"] == "0123456789ab"
+
+
 def test_handled_failure_still_clears_marker(emits, turn_env, marker_home):
     """An exception is a CONCLUDED turn (terminal frame + retained snapshot own
     recovery) — only a process death may leave the marker behind."""

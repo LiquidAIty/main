@@ -6,16 +6,16 @@ type CompanionSurfaceHostProps = {
   workspaceView: string;
   knowledgeSurface: ReactNode;
   tradingSurface: ReactNode;
-  worldsignalSurface: ReactNode;
-  worldviewSurface?: ReactNode;
+  worldSignalsSurface: ReactNode;
+  worldViewSurface?: ReactNode;
 };
 
 export default function CompanionSurfaceHost({
   workspaceView,
   knowledgeSurface,
   tradingSurface,
-  worldsignalSurface,
-  worldviewSurface,
+  worldSignalsSurface,
+  worldViewSurface,
 }: CompanionSurfaceHostProps) {
   if (workspaceView === 'canvas' || workspaceView === 'chat') {
     return null;
@@ -44,8 +44,8 @@ export default function CompanionSurfaceHost({
         >
           {workspaceView === 'knowledge' && knowledgeSurface}
           {workspaceView === 'trading' && tradingSurface}
-          {workspaceView === 'worldsignal' && worldsignalSurface}
-          {workspaceView === 'worldview' && worldviewSurface}
+          {workspaceView === 'worldsignals' && worldSignalsSurface}
+          {workspaceView === 'worldview' && worldViewSurface}
         </div>
       </div>
     </aside>

@@ -17,7 +17,7 @@ marker = Path(os.environ["HERMES_HOME"]) / "fail-rebuild"
 
 
 def config_target():
-    if marker.exists() and any(frame.function in {"_reset_session_agent", "_sync_bot_capabilities"}
+    if marker.exists() and any(frame.function in {"_reset_session_agent", "_sync_profile_capabilities"}
                                for frame in inspect.stack()):
         marker.unlink()
         raise OSError("probe config read failure")

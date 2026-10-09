@@ -58,6 +58,25 @@ def _captured_context_cwd(agent):
     return captured["cwd"]
 
 
+def test_profile_following_session_gets_one_epoch_without_bot_roster(tmp_path):
+    from agent import system_prompt as system_prompt_module
+
+    agent = _make_agent(
+        _follow_profile_config=True,
+        _bot_mode_roster=[],
+        _session_title_hint="Card Chat:stable",
+        _session_db=None,
+    )
+    with (
+        patch.object(system_prompt_module, "_agent_home", return_value=tmp_path),
+        patch("tools.bot_mode_probe.bot_mode_session_authorized", return_value=False),
+        patch("tools.bot_mode_probe.epoch_line", return_value="Capability epoch: abcdef123456"),
+    ):
+        parts = system_prompt_module._profile_capability_parts(agent)
+
+    assert parts == ["Capability epoch: abcdef123456"]
+
+
 @pytest.mark.parametrize("task_id, expected", [(None, False), ("t_worker", True)])
 def test_kanban_guidance_requires_worker_task_at_agent_init(monkeypatch, task_id, expected):
     """A profile can expose kanban tools without making the session a worker."""

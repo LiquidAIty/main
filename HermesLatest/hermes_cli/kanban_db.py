@@ -1104,23 +1104,6 @@ def _claimer_id() -> str:
     return f"{host}:{os.getpid()}"
 
 
-def _new_claim_capability() -> str:
-    """Return one unguessable capability for exactly one bounded task run."""
-    return f"{_claimer_id()}:{secrets.token_hex(32)}"
-
-
-def _default_claim_lock(conn: sqlite3.Connection, task_id: str) -> str:
-    """Keep upstream host claims ordinary; bounded Magnetic tasks get per-run proof."""
-    row = conn.execute(
-        "SELECT allowed_assignees FROM tasks WHERE id = ?", (task_id,),
-    ).fetchone()
-    return (
-        _new_claim_capability()
-        if row is not None and row["allowed_assignees"] is not None
-        else _claimer_id()
-    )
-
-
 def _host_prefix() -> str:
     """``"<host>:"`` prefix shared by every claim lock issued from this host."""
     return f"{_claimer_id().split(':', 1)[0]}:"
@@ -2402,7 +2385,7 @@ def claim_task(
     already claimed (or is not in ``ready`` status).
     """
     now = int(time.time())
-    lock = claimer or _default_claim_lock(conn, task_id)
+    lock = claimer or _claimer_id()
     expires = now + _resolve_claim_ttl_seconds(ttl_seconds)
     with write_txn(conn):
         # Single enforcement point: never ready -> running with an undone
@@ -2435,7 +2418,7 @@ def claim_review_task(
     (one may have reopened meanwhile) and a NEW run tracks the reviewer
     separately from the implementer."""
     now = int(time.time())
-    lock = claimer or _default_claim_lock(conn, task_id)
+    lock = claimer or _claimer_id()
     expires = now + _resolve_claim_ttl_seconds(ttl_seconds)
     with write_txn(conn):
         if not _parents_satisfied(conn, task_id):

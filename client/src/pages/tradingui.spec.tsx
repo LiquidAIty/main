@@ -58,7 +58,6 @@ const snapshot: TradingState = {
     cancel: { available: false, reason: 'order_submission_blocked' },
   },
   engine: { status: 'available', paperOnly: true },
-  lifecycleProof: null,
   observedAt: '2026-09-03T00:01:00Z',
 };
 

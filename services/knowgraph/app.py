@@ -7,60 +7,22 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
 
-from runtime_config import load_runtime_environment
-
-load_runtime_environment()
-
-from ingest import (
-    graphiti_runtime_versions,
-    ingest_pdf,
-    ingest_web_documents,
-    reconcile_jev_annotations,
-)
+import graphiti_runtime
+import ingest as knowgraph_ingest
 from graphiti_identity import graphiti_project_group_id
+import pdf_upload_storage
 
 app = FastAPI(title="KnowGraph")
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-class WebResearchDocument(BaseModel):
-    project_id: str
-    document_id: str
-    source_url: str
-    title: str
-    snippet: str | None = None
-    summary: str | None = None
-    fetched_at: str
-    full_text: str | None = None
-    text: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class WebResearchIngestRequest(BaseModel):
-    project_id: str
-    documents: list[WebResearchDocument] = Field(default_factory=list)
-    prompt_template: str | None = None
-    organizing_principle: str | None = None
-    entity_taxonomy: Any = None
-    relationship_taxonomy: Any = None
-    extraction_policy: Any = None
-    research_focus: dict[str, Any] = Field(default_factory=dict)
-
-
-class JevReconciliationRequest(BaseModel):
-    project_id: str
-    graphiti_fact_uuids: list[str] = Field(default_factory=list, max_length=64)
 
 
 class GraphitiFactDeleteRequest(BaseModel):
@@ -69,37 +31,15 @@ class GraphitiFactDeleteRequest(BaseModel):
     kind: str = "fact"
 
 
-def _model_dump(model: BaseModel) -> dict[str, Any]:
-    if hasattr(model, "model_dump"):
-        return getattr(model, "model_dump")()
-    return model.dict()
-
-
-def _sanitize_filename(name: str) -> str:
-    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in name)
-    return safe or "upload.pdf"
-
-
 async def _delete_graphiti_fact(
     payload: GraphitiFactDeleteRequest,
 ) -> dict[str, str]:
-    from graphiti_core.driver.neo4j_driver import Neo4jDriver
     from graphiti_core.edges import EntityEdge
 
     if payload.kind != "fact":
         raise ValueError("knowgraph_delete_kind_invalid")
     expected_group = graphiti_project_group_id(payload.project_id)
-    uri = str(os.environ.get("NEO4J_URI") or "").strip()
-    user = str(os.environ.get("NEO4J_USER") or "").strip()
-    password = str(os.environ.get("NEO4J_PASSWORD") or "").strip()
-    if not uri or not user or not password:
-        raise RuntimeError("KnowGraph database is not configured.")
-    driver = Neo4jDriver(
-        uri,
-        user,
-        password,
-        database=str(os.environ.get("NEO4J_DATABASE") or "neo4j").strip() or "neo4j",
-    )
+    driver, _database = graphiti_runtime.create_graphiti_driver()
     try:
         record = await EntityEdge.get_by_uuid(driver, payload.graphiti_fact_uuid)
         if record.group_id != expected_group:
@@ -111,7 +51,7 @@ async def _delete_graphiti_fact(
 
 
 @app.post("/delete_fact")
-async def delete_fact(request: Request, payload: GraphitiFactDeleteRequest) -> JSONResponse:
+async def delete_fact(payload: GraphitiFactDeleteRequest) -> JSONResponse:
     try:
         result = await _delete_graphiti_fact(payload)
         return JSONResponse(status_code=200, content={"ok": True, **result})
@@ -132,30 +72,20 @@ async def ingest(
     project_id: str = Form(...),
     document_id: str = Form(...),
     file: UploadFile = File(...),
-    prompt_template: str | None = Form(None),
-    organizing_principle: str | None = Form(None),
-    entity_taxonomy_json: str | None = Form(None),
-    relationship_taxonomy_json: str | None = Form(None),
-    extraction_policy_json: str | None = Form(None),
 ) -> JSONResponse:
-    saved_path: Path | None = None
     try:
-        filename = _sanitize_filename(file.filename or "upload.pdf")
-        storage_document_id = _sanitize_filename(document_id)
-        saved_path = UPLOADS_DIR / f"{storage_document_id}_{filename}"
-        with saved_path.open("wb") as out:
-            shutil.copyfileobj(file.file, out)
-
-        result = await ingest_pdf(
-            str(saved_path),
+        stored = pdf_upload_storage.store_pdf_upload(
+            file.file,
+            file.filename or "upload.pdf",
+            UPLOADS_DIR,
+        )
+        result = await knowgraph_ingest.ingest_pdf(
+            str(stored.path),
             project_id,
             document_id,
-            source_name=filename,
-            prompt_template=prompt_template,
-            organizing_principle=organizing_principle,
-            entity_taxonomy_json=entity_taxonomy_json,
-            relationship_taxonomy_json=relationship_taxonomy_json,
-            extraction_policy_json=extraction_policy_json,
+            source_name=stored.source_name,
+            source_reference=stored.source_reference,
+            source_content_sha256=stored.content_sha256,
         )
         return JSONResponse(
             status_code=200,
@@ -178,67 +108,6 @@ async def ingest(
         await file.close()
 
 
-@app.post("/ingest_web_results")
-async def ingest_web_results(
-    request: Request,
-    payload: WebResearchIngestRequest,
-) -> JSONResponse:
-    try:
-        agent_id = (request.headers.get("x-agent-id") or "").strip() or None
-        agent_provider = (request.headers.get("x-agent-provider") or "").strip() or None
-        agent_model_key = (request.headers.get("x-agent-model-key") or "").strip() or None
-        agent_model_id = (request.headers.get("x-agent-model-id") or "").strip() or None
-
-        result = await ingest_web_documents(
-            project_id=payload.project_id,
-            documents=[_model_dump(doc) for doc in payload.documents],
-            provider=agent_provider,
-            model_key=agent_model_key,
-            model_id=agent_model_id,
-            agent_id=agent_id,
-            prompt_template=payload.prompt_template,
-            organizing_principle=payload.organizing_principle,
-            entity_taxonomy=payload.entity_taxonomy,
-            relationship_taxonomy=payload.relationship_taxonomy,
-            extraction_policy=payload.extraction_policy,
-            research_focus=payload.research_focus,
-        )
-        return JSONResponse(status_code=200, content={"ok": True, **result})
-    except Exception as exc:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "ok": False,
-                "error": {
-                    "message": str(exc),
-                },
-            },
-        )
-
-
-@app.post("/reconcile_jev_annotations")
-async def reconcile_existing_jev_annotations(
-    payload: JevReconciliationRequest,
-) -> JSONResponse:
-    """Explicitly repair existing Graphiti fact annotations without ingestion."""
-    try:
-        result = await reconcile_jev_annotations(
-            payload.project_id,
-            graphiti_fact_uuids=list(payload.graphiti_fact_uuids),
-        )
-        return JSONResponse(status_code=200, content={"ok": True, **result})
-    except ValueError as exc:
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "error": {"message": str(exc)}},
-        )
-    except Exception as exc:
-        return JSONResponse(
-            status_code=500,
-            content={"ok": False, "error": {"message": str(exc)}},
-        )
-
-
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "versions": graphiti_runtime_versions()}
+    return {"status": "ok", "versions": graphiti_runtime.graphiti_runtime_versions()}

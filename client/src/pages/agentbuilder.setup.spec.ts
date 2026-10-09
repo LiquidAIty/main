@@ -97,7 +97,7 @@ describe('agentbuilder authoring flow', () => {
       tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'canvas.upsert_wire',
         'cbm.search_graph', 'cbm.search_code', 'cbm.trace_path', 'cbm.get_code_snippet',
         'cbm.check_index_coverage', 'engraphis_recall_context', 'graphiti.search_memory_facts',
-        'graphiti.search_nodes', 'graphiti.get_episodes', 'write_mag_one_instructions',
+        'graphiti.search_nodes', 'graphiti.get_episodes',
         'thinkgraph.reason', 'knowgraph.research'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');
@@ -197,7 +197,7 @@ describe('agentbuilder authoring flow', () => {
       (node) => node.id === 'card_magentic',
     );
     if (!orchestratorNode) {
-      throw new Error('missing_magentic');
+      throw new Error('missing_magnetic');
     }
 
     const truncatedSystemDeck: DeckDocument = {
@@ -209,7 +209,7 @@ describe('agentbuilder authoring flow', () => {
         {
           ...JSON.parse(JSON.stringify(orchestratorNode)),
           id: 'card_magentic',
-          title: 'Magentic-One',
+          title: 'Magnetic',
         },
       ],
       edges: [],

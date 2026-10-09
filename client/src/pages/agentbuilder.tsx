@@ -1,36 +1,33 @@
-import React, {
-  Suspense,
-  lazy,
+import {
   useCallback,
   useEffect,
-  useMemo, 
+  useMemo,
   useRef,
   useState,
+  type ReactElement,
 } from 'react';
 
-import SharedCardChat from '../components/builder/SharedCardChat';
 import {
   createCanonicalSubjectMatcher,
   type CanonicalSubjectFocusRequest,
   type CanonicalSubjectFocusTarget,
-} from '../components/builder/canonicalSubjectLinks';
+} from '../components/knowledge/canonicalSubjectLinks';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
-import WorldSignalsSurface, {
-  type WorldSignalsInspectorBridge,
-  type WorldSignalsInspectorSection,
-  type WorldSignalsLayerState,
-} from '../components/worldsignal/WorldSignalsSurface';
-import WorldSignalsInspectorPanel from '../components/worldsignal/WorldSignalsInspectorPanel';
-import type { GodsEyeBridge } from '../components/worldsignal/GodsEyeSurface';
-import WorldViewSurface from '../features/worldview/WorldViewSurface';
-import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
+import type {
+  WorldSignalsInspectorBridge,
+  WorldSignalsInspectorSection,
+  WorldSignalsLayerState,
+} from '../components/worldsignals/WorldSignalsSurface';
+import type {
+  WorldSignalsDrawerSection,
+} from '../components/worldsignals/WorldSignalsInspectorPanel';
+import type { GodsEyeBridge } from '../components/worldsignals/GodsEyeSurface';
+import AgentCanvas from '../features/agentbuilder/canvas/AgentCanvas';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
-import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
-import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
-import CardTerminalPanel from '../features/agentbuilder/console/CardTerminalPanel';
-import SharedChatTerminalSplit from '../features/agentbuilder/console/SharedChatTerminalSplit';
+import AgentBuilderCompanionSurfaces from '../features/agentbuilder/core/AgentBuilderCompanionSurfaces';
+import AgentBuilderChatWorkSurface from '../features/agentbuilder/console/AgentBuilderChatWorkSurface';
 import {
   projectCardChatTargets,
   selectedConversationId,
@@ -44,36 +41,18 @@ import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderD
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
 import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuilderProject';
 import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
-import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
+import AgentCardChooserDialog from '../features/agentbuilder/project/AgentCardChooserDialog';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderKnowledgeGraphs from '../features/agentbuilder/state/useAgentBuilderKnowledgeGraphs';
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
-import TradingUI from './tradingui';
-import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
-import CardSubsystemTab from '../features/agentbuilder/subsystems/CardSubsystemTab';
-import MagneticTasksTab from '../features/agentbuilder/tasks/MagneticTasksTab';
-import {
-  GRAPH_THEME,
-  graphDrawerButtonStyle,
-  graphCompanionTabButtonStyle,
-  graphCompanionTabGroupStyle,
-  graphDrawerSectionStyle,
-} from '../components/graph/graphVisualTokens';
-import RightGlassDrawer from '../components/graph/RightGlassDrawer';
-// Decomposed Agent Builder modules (2026-07-08): the page is composition only;
-// deck primitives/new-project template/document logic and rail derivation live in the feature.
-import {
-  cloneDeckDocument,
-  safeText,
-} from '../features/agentbuilder/deck/deckPrimitives';
+import useAgentCardChooser from '../features/agentbuilder/state/useAgentCardChooser';
+import AgentBuilderWorkspaceInspector from '../features/agentbuilder/inspector/AgentBuilderWorkspaceInspector';
 import {
   BUILDER_CARD_ID,
   DEFAULT_PROJECT_DECK_ID,
 } from '../features/agentbuilder/deck/newProjectDeck';
-import { readCardSubsystemAttachments } from '../features/agentbuilder/deck/cardSubsystems';
 import {
   buildProjectlessDeckDocument,
-  buildQuickAddAssistCard,
   formatBuilderStatusMessage,
   readDeckDocument,
   resolveProjectDeckLoadResult,
@@ -89,160 +68,43 @@ import {
 } from '../features/agentbuilder/core/BuilderRailMoonOrb';
 import {
   isAbortLikeError,
-} from '../components/builder/requestGuards';
+} from '../features/agentbuilder/api/requestGuards';
 import {
-  useBuilderDeckPersistenceActions,
-} from '../components/builder/useBuilderDeckPersistenceActions';
+  useAgentBuilderDeckSave,
+} from '../features/agentbuilder/state/useAgentBuilderDeckSave';
+import {
+  showCanvasWorkspaceInUrl,
+  showKnowledgeWorkspaceInUrl,
+  showWorldViewWorkspaceInUrl,
+} from '../features/agentbuilder/core/agentBuilderWorkspaceUrl';
 import type {
-  DeckCard,
-  DeckEdge,
   DeckDocument,
 } from '../types/agentgraph';
 
-type SavedCardChoice = {
-  cardId: string;
-  cardRevisionId: string;
-  title: string;
-  subtitle: string | null;
-  runtimeProfile: string;
-};
+// Agent Builder composes Project navigation, Main/Builder chat, the agent
+// canvas, knowledge/app surfaces, and the one shared inspector drawer.
 
-const loadCardInspector = () => import('../components/CardInspector');
-const CardInspector = lazy(async () => {
-  const mod = await loadCardInspector();
-  return { default: mod.CardInspector };
-});
-void loadCardInspector();
-
-// Agent Builder page: left workspace rail, Main Chat, canvas, and one six-tab Card inspector.
-// No external deps. Persists per-project to localStorage. Includes mini force-graph.
-
-const C = {
+const AGENT_BUILDER_COLORS = {
   primary: '#4FA2AD', // teal
   bg: '#1F1F1F',
   panel: '#2B2B2B',
   border: '#3A3A3A',
   text: '#FFFFFF',
   neutral: '#E0DED5',
-  accent: '#8358A4',
   warn: '#D98458',
 };
-
-class KnowledgeSurfaceErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: Error | null }
-> {
-  state: { error: Error | null } = { error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div
-          data-testid="knowledge-surface-error"
-          style={{
-            height: '100%',
-            width: '100%',
-            padding: 16,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: GRAPH_THEME.background.knowledgeSurface,
-          }}
-        >
-          <div
-            style={graphDrawerSectionStyle({
-              width: 'min(560px, 100%)',
-              padding: 16,
-              color: GRAPH_THEME.drawer.inputMuted,
-              lineHeight: 1.5,
-            })}
-          >
-            <div
-              style={{
-                color: GRAPH_THEME.drawer.inputText,
-                fontWeight: 700,
-                marginBottom: 6,
-              }}
-            >
-              Knowledge graph unavailable
-            </div>
-            <div>
-              {this.state.error.message || 'The Knowledge graph failed to load.'}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-class CardEditorErrorBoundary extends React.Component<
-  { cardTitle: string; children: React.ReactNode },
-  { error: Error | null }
-> {
-  state: { error: Error | null } = { error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div
-        role="alert"
-        data-testid="card-editor-error"
-        style={graphDrawerSectionStyle({
-          padding: '12px 14px',
-          color: 'rgba(255,162,162,0.95)',
-        })}
-      >
-        {this.props.cardTitle} configuration could not be rendered: {this.state.error.message}
-      </div>
-    );
-  }
-}
-
-const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;
-const AGENT_EDITOR_DEFAULT_WIDTH = 344;
-
-function hasTaskLedger(card: DeckCard | null | undefined): boolean {
-  return card?.id === 'card_magentic' || card?.id === 'card_team';
-}
-
-function taskLedgerRunCardId(card: DeckCard, deck: DeckDocument): string {
-  if (card.id !== 'card_team') return card.id;
-  for (const edge of deck.edges) {
-    if (edge.edgeType !== 'magentic_option' || edge.enabled === false) continue;
-    const peerId = edge.source === card.id
-      ? edge.target
-      : edge.target === card.id ? edge.source : null;
-    const peer = peerId ? deck.nodes.find((node) => node.id === peerId) : null;
-    if (peer?.id === 'card_magentic') return peer.id;
-  }
-  return card.id;
-}
 // The launch surface renders one mixed human graph. ThinkGraph and KnowGraph
 // remain separate provider authorities; CodeGraph remains agent-facing through CBM.
 const PROJECTS_API = '/api/projects';
 
-/** Mean synodic month in days (NASA/USNO convention). */
-export default function AgentBuilder(): React.ReactElement {
+export default function AgentBuilder(): ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const largeSurface = 'chat' as const;
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
     | 'canvas'
     | 'knowledge'
     | 'trading'
-    | 'worldsignal'
+    | 'worldsignals'
     | 'worldview'
   >(() => {
     const params = new URLSearchParams(window.location.search);
@@ -250,7 +112,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (params.get('workspace') === 'worldview') return 'worldview';
     return params.get('projectId') ? 'canvas' : 'chat';
   });
-  // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
+  // Left-rail camera focus: carries a requested pan/zoom-to-fit to AgentCanvas;
   // bumping nonce re-triggers the camera fit without swapping node sets.
   const [canvasFocusZone, setCanvasFocusZone] = useState<
     { zone: 'agents'; nonce: number } | null
@@ -289,28 +151,34 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const {
     deck,
-    setDeckState,
+    setDeck,
+    setDeckFromPersistence,
     deckRevision,
     setDeckRevision,
     deckLoadBusy,
     setDeckLoadBusy,
-    deckSaveBusy,
     setDeckSaveBusy,
-    deckStatusMessage,
     setDeckStatusMessage,
     deckLoadError,
     setDeckLoadError,
+    stateLoaded,
+    setStateLoaded,
+    transientCardIds,
+    setTransientCardIds,
+    currentDeckRef,
+    deckSaveAbortRef,
+    lastPersistedBoardFingerprintRef,
+    lastPersistedBoardSnapshotRef,
+    lastDeckPersistReasonRef,
+    recordDeckWriteReason,
+    recordUiOnlyAction,
+    snapshotDeckBoard,
+    evaluateBoardIntegrityForSave,
   } = useAgentBuilderDeck({
+    builderDev: BUILDER_DEV,
+    canvasProjectId,
     createInitialDeck: buildProjectlessDeckDocument,
   });
-  const [stateLoaded, setStateLoaded] = useState(false);
-  const [savedCardChooserOpen, setSavedCardChooserOpen] = useState(false);
-  const [savedCardChoices, setSavedCardChoices] = useState<SavedCardChoice[]>([]);
-  const [savedCardChooserBusy, setSavedCardChooserBusy] = useState(false);
-  const [savedCardChooserError, setSavedCardChooserError] = useState<string | null>(null);
-  const [transientNewCardIds, setTransientNewCardIds] = useState<Set<string>>(
-    () => new Set(),
-  );
   const canonicalDeckReady = Boolean(
     canvasProjectId
       && stateLoaded
@@ -323,11 +191,6 @@ export default function AgentBuilder(): React.ReactElement {
     projectId: canonicalDeckReady ? canvasProjectId : '',
     deck,
   });
-
-  const currentDeckRef = useRef(deck);
-  useEffect(() => {
-    currentDeckRef.current = deck;
-  }, [deck]);
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -390,23 +253,23 @@ export default function AgentBuilder(): React.ReactElement {
     return Object.fromEntries(titles);
   }, [deck.nodes]);
   // WorldSignals → canonical Inspector: the companion surface requests a
-  // section and provides state adapters; the ONE workspace drawer below
+  // section and provides state adapters; the shared workspace drawer below
   // renders it. No second inspector, no drawer inside the map region.
-  const [worldSignalInspectorSection, setWorldSignalInspectorSection] = useState<
-    'markets' | 'layers' | null
+  const [worldSignalsInspectorSection, setWorldSignalsInspectorSection] = useState<
+    WorldSignalsDrawerSection | null
   >(null);
-  const [worldSignalInspectorOpen, setWorldSignalInspectorOpen] = useState(false);
-  const [worldSignalLayerState, setWorldSignalLayerState] =
+  const [worldSignalsInspectorOpen, setWorldSignalsInspectorOpen] = useState(false);
+  const [worldSignalsLayerState, setWorldSignalsLayerState] =
     useState<WorldSignalsLayerState | null>(null);
-  const [worldSignalBridge, setWorldSignalBridge] =
+  const [worldSignalsBridge, setWorldSignalsBridge] =
     useState<WorldSignalsInspectorBridge | null>(null);
   const [worldViewBridge, setWorldViewBridge] = useState<GodsEyeBridge | null>(null);
-  const handleWorldSignalInspectorRequest = useCallback(
+  const handleWorldSignalsInspectorRequest = useCallback(
     (section: WorldSignalsInspectorSection) => {
       // Only sections with a real canonical destination open today.
       if (section === 'markets' || section === 'layers') {
-        setWorldSignalInspectorSection(section);
-        setWorldSignalInspectorOpen(true);
+        setWorldSignalsInspectorSection(section);
+        setWorldSignalsInspectorOpen(true);
       }
     },
     [],
@@ -441,7 +304,6 @@ export default function AgentBuilder(): React.ReactElement {
     projectId: activeProject,
     deckId: DEFAULT_PROJECT_DECK_ID,
     conversationId,
-    selectedCardId,
   });
   const canonicalSubjectMatcher = useMemo(
     () => createCanonicalSubjectMatcher({
@@ -465,33 +327,6 @@ export default function AgentBuilder(): React.ReactElement {
       requestId: subjectFocusRequestIdentityRef.current,
     });
   }, [activeProject]);
-  useEffect(() => {
-    if (!activeProject) return undefined;
-    const params = new URLSearchParams({
-      projectId: activeProject,
-      deckId: DEFAULT_PROJECT_DECK_ID,
-      conversationId,
-    });
-    const stream = new EventSource(
-      `/api/thinkgraph/revisions?${params.toString()}`,
-      { withCredentials: true },
-    );
-    stream.addEventListener('thinkgraph_revision', (event) => {
-      knowledgeGraphs.observeThinkGraphRevision(JSON.parse((event as MessageEvent).data));
-    });
-    stream.addEventListener('thinkgraph_error', (event) => {
-      knowledgeGraphs.observeThinkGraphFailure(JSON.parse((event as MessageEvent).data));
-    });
-    stream.onerror = (error) => {
-      console.warn('[THINKGRAPH_REVISION_STREAM]', error);
-    };
-    return () => stream.close();
-  }, [
-    activeProject,
-    conversationId,
-    knowledgeGraphs.observeThinkGraphFailure,
-    knowledgeGraphs.observeThinkGraphRevision,
-  ]);
   const prepareRunImages = useCallback(async (targetCardId: string | null) => {
     if (!targetCardId || targetCardId !== worldViewCard?.id || workspaceView !== 'worldview') {
       return [];
@@ -506,7 +341,7 @@ export default function AgentBuilder(): React.ReactElement {
     sessionActive,
     sessionConnecting,
     startVoiceSession,
-    stopMainTurn,
+    stopCurrentCardTurn,
     stopVoiceSession,
     technicalError,
     voiceError,
@@ -519,7 +354,7 @@ export default function AgentBuilder(): React.ReactElement {
     prepareRunImages,
   });
   useEffect(() => {
-    const companion = workspaceView === 'worldsignal'
+    const companion = workspaceView === 'worldsignals'
       ? { cardId: worldSignalsCardId, label: 'WorldSignals' }
       : workspaceView === 'worldview'
         ? { cardId: worldViewCard?.id || null, label: 'WorldView' }
@@ -534,14 +369,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (companion.cardId && setCurrentResponderCardId(companion.cardId)) return;
     setDeckStatusMessage(`${companion.label} saved Card is unavailable for direct chat.`);
     setWorkspaceView(canvasProjectId ? 'canvas' : 'chat');
-    const params = new URLSearchParams(window.location.search);
-    params.delete('workspace');
-    const nextQuery = params.toString();
-    window.history.replaceState(
-      {},
-      '',
-      nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname,
-    );
+    showCanvasWorkspaceInUrl();
   }, [
     canonicalDeckReady,
     canvasProjectId,
@@ -559,137 +387,6 @@ export default function AgentBuilder(): React.ReactElement {
     return () => window.clearInterval(id);
   }, []);
 
-  // agent builder state
-  const activeProjectLatestRef = useRef('');
-  const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
-  const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
-  const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
-  const lastPersistedBoardFingerprintRef = useRef<string | null>(null);
-  const lastPersistedBoardSnapshotRef = useRef<{
-    nodes: DeckCard[];
-    edges: DeckEdge[];
-  } | null>(null);
-  const layoutAutosaveAbortRef = useRef<AbortController | null>(null);
-  const lastDeckPersistReasonRef = useRef<string | null>(null);
-
-  const recordDeckWriteReason = useCallback(
-    (reason: string) => {
-      lastBuilderDeckWriteReasonRef.current = reason;
-      lastDeckPersistReasonRef.current = reason;
-      lastBuilderUiOnlyActionRef.current = null;
-    },
-    [],
-  );
-
-  const recordUiOnlyAction = useCallback(
-    (action: string) => {
-      if (!BUILDER_DEV) return;
-      lastBuilderUiOnlyActionRef.current = action;
-    },
-    [BUILDER_DEV],
-  );
-
-  const snapshotDeckBoard = useCallback(
-    (document: DeckDocument) => ({
-      nodes: cloneDeckDocument(document.nodes),
-      edges: cloneDeckDocument(document.edges),
-    }),
-    [],
-  );
-
-  const evaluateBoardIntegrityForSave = useCallback(
-    (nextDeck: DeckDocument, reason: string) => {
-      const lastPersisted = lastPersistedBoardSnapshotRef.current;
-      if (!lastPersisted) {
-        return {
-          ok: true,
-          removedNodeIds: [] as string[],
-        };
-      }
-      const nextNodeIds = new Set(nextDeck.nodes.map((node) => node.id));
-      const removedNodeIds = lastPersisted.nodes
-        .map((node) => node.id)
-        .filter((nodeId) => !nextNodeIds.has(nodeId));
-      if (lastPersisted.nodes.length > 0 && nextDeck.nodes.length === 0) {
-        return {
-          ok: false,
-          removedNodeIds,
-          message:
-            'Blocked saving an empty board because the previous saved deck still had nodes.',
-        };
-      }
-      if (removedNodeIds.length > 1) {
-        return {
-          ok: false,
-          removedNodeIds,
-          message: `Blocked saving a partial board because ${removedNodeIds.length} nodes disappeared during ${reason}.`,
-        };
-      }
-      return {
-        ok: true,
-        removedNodeIds,
-      };
-    },
-    [],
-  );
-
-  const setDeck = useCallback<
-    React.Dispatch<React.SetStateAction<DeckDocument>>
-  >(
-    (update) => {
-      setDeckState((prev) => {
-        const next =
-          typeof update === 'function'
-            ? (update as (prevState: DeckDocument) => DeckDocument)(prev)
-            : update;
-        if (BUILDER_DEV) {
-          const prevFingerprint = JSON.stringify(prev);
-          const nextFingerprint = JSON.stringify(next);
-          if (prevFingerprint === nextFingerprint) {
-            console.warn(
-              '[builder] ignored deck write without persisted graph mutation',
-              {
-                reason: lastBuilderDeckWriteReasonRef.current || 'unknown',
-              },
-            );
-          }
-        }
-        return next;
-      });
-    },
-    [BUILDER_DEV],
-  );
-  const setDeckFromPersistence = useCallback<
-    React.Dispatch<React.SetStateAction<DeckDocument>>
-  >(
-    (update) => {
-      setDeck((current) => {
-        const persisted = typeof update === 'function'
-          ? (update as (previous: DeckDocument) => DeckDocument)(current)
-          : update;
-        if (transientNewCardIds.size === 0) return persisted;
-        const nextNodeIds = new Set(persisted.nodes.map((node) => node.id));
-        const transientNodes = current.nodes.filter((node) => (
-          transientNewCardIds.has(node.id) && !nextNodeIds.has(node.id)
-        ));
-        const nextEdgeIds = new Set(persisted.edges.map((edge) => edge.id));
-        const transientEdges = current.edges.filter((edge) => (
-          (transientNewCardIds.has(edge.source) || transientNewCardIds.has(edge.target))
-          && !nextEdgeIds.has(edge.id)
-        ));
-        return {
-          ...persisted,
-          version: Math.max(current.version, persisted.version),
-          nodes: [...persisted.nodes, ...transientNodes],
-          edges: [...persisted.edges, ...transientEdges],
-        };
-      });
-    },
-    [setDeck, transientNewCardIds],
-  );
-  useEffect(() => {
-    setTransientNewCardIds(new Set());
-  }, [canvasProjectId]);
   useAgentBuilderDeckLoad({
     canvasProjectId,
     projectsApi: PROJECTS_API,
@@ -708,11 +405,33 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckStatusMessage,
     reloadToken: 0,
   });
-  useAgentBuilderProjectReset({
-    canvasProjectId,
-    layoutAutosaveAbortRef,
-    setDeckSaveBusy,
-  });
+  const { handleSaveDeck } =
+    useAgentBuilderDeckSave({
+      builderDev: BUILDER_DEV,
+      canvasProjectId,
+      deck,
+      deckId: DEFAULT_PROJECT_DECK_ID,
+      deckRevision,
+      deckSaveAbortRef,
+      formatBuilderStatusMessage,
+      readDeckDocument,
+      setDeck: setDeckFromPersistence,
+      setDeckRevision,
+      setDeckSaveBusy,
+      setDeckStatusMessage,
+      projectsApi: PROJECTS_API,
+      recordDeckWriteReason,
+      onDeckSaveSettled: (entry) => {
+        if (entry.ok) {
+          lastPersistedBoardFingerprintRef.current = JSON.stringify({
+            nodes: (entry.document || deck).nodes,
+            edges: (entry.document || deck).edges,
+          });
+          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(entry.document || deck);
+        }
+        console.info('[builder][deck-save]', entry);
+      },
+    });
   useAgentBuilderAutosave({
     builderDev: BUILDER_DEV,
     canvasProjectId,
@@ -723,8 +442,8 @@ export default function AgentBuilder(): React.ReactElement {
     deckLoadBusy,
     deckLoadError,
     stateLoaded,
-    transientCardIds: transientNewCardIds,
-    layoutAutosaveAbortRef,
+    transientCardIds,
+    deckSaveAbortRef,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
     lastDeckPersistReasonRef,
@@ -736,35 +455,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckStatusMessage,
   });
 
-  const { handleSaveDeck } =
-    useBuilderDeckPersistenceActions({
-      builderDev: BUILDER_DEV,
-      canvasProjectId,
-      deck,
-      deckId: DEFAULT_PROJECT_DECK_ID,
-      deckRevision,
-      deckSaveAbortRef: layoutAutosaveAbortRef,
-      formatBuilderStatusMessage,
-      readDeckDocument,
-      setDeck: setDeckFromPersistence,
-      setDeckRevision,
-      setDeckSaveBusy,
-      setDeckStatusMessage,
-      projectsApi: PROJECTS_API,
-      activeProjectLatestRef,
-      recordDeckWriteReason,
-      onDeckPersistProof: (entry) => {
-        if (entry.ok) {
-          lastPersistedBoardFingerprintRef.current = JSON.stringify({
-            nodes: (entry.document || deck).nodes,
-            edges: (entry.document || deck).edges,
-          });
-          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(entry.document || deck);
-        }
-        console.info('[builder][deck-save-proof]', entry);
-      },
-    });
-
   const handleSetBuilderProjectCodeFolder = useCallback(async (folder: string) => {
     const normalizedFolder = folder.trim();
     const nextDeck = projectDeckForPersistence(
@@ -773,31 +463,38 @@ export default function AgentBuilder(): React.ReactElement {
         projectCodeFolder: normalizedFolder || null,
         version: deck.version + 1,
       },
-      transientNewCardIds,
+      transientCardIds,
     );
     recordDeckWriteReason('builder-project-code-folder');
     await handleSaveDeck(nextDeck);
-  }, [deck, handleSaveDeck, recordDeckWriteReason, transientNewCardIds]);
-
-
-
-  const showDeckBuilder = workspaceView === 'canvas';
+  }, [deck, handleSaveDeck, recordDeckWriteReason, transientCardIds]);
   const prepareDeckForCardSave = useCallback(
     (document: DeckDocument, cardId: string) => projectDeckForPersistence(
       document,
-      transientNewCardIds,
+      transientCardIds,
       new Set([cardId]),
     ),
-    [transientNewCardIds],
+    [transientCardIds],
   );
-  const handleCardPersisted = useCallback((cardId: string) => {
-    setTransientNewCardIds((current) => {
-      if (!current.has(cardId)) return current;
-      const next = new Set(current);
-      next.delete(cardId);
-      return next;
-    });
-  }, []);
+  const cardChooser = useAgentCardChooser({
+    canonicalDeckReady,
+    canvasProjectId,
+    deckRevision,
+    currentDeckRef,
+    cardDraftFlushRef,
+    setTransientCardIds,
+    setDeck,
+    setDeckFromPersistence,
+    setDeckRevision,
+    setDeckStatusMessage,
+    setInspectorDrawerOpen,
+    setSelectedCardId,
+    setSelectedEdgeId,
+    recordDeckWriteReason,
+    lastPersistedBoardFingerprintRef,
+    lastPersistedBoardSnapshotRef,
+    snapshotDeckBoard,
+  });
   const {
     handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,
@@ -811,98 +508,8 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCardId,
     setDeck,
     prepareDeckForCardSave,
-    onCardPersisted: handleCardPersisted,
+    onCardPersisted: cardChooser.markCardPersisted,
   });
-  const selectedOrangeConnections = useMemo(() => {
-    if (!selectedCard) return [];
-    const nodeById = new Map(deck.nodes.map((node) => [node.id, node] as const));
-    const seen = new Set<string>();
-    return deck.edges.flatMap((edge) => {
-      if (
-        edge.edgeType !== 'flow'
-        || edge.enabled === false
-        || edge.source !== selectedCard.id
-      ) return [];
-      const direction = 'outgoing' as const;
-      const otherId = edge.target;
-      const other = nodeById.get(otherId);
-      const key = `${direction}:${otherId}`;
-      const otherRecord = other as (typeof other & { enabled?: boolean }) | undefined;
-      const otherOptions = other?.runtimeOptions as ({ enabled?: boolean } | null | undefined);
-      if (
-        !other
-        || otherRecord?.enabled === false
-        || otherOptions?.enabled === false
-        || seen.has(key)
-      ) return [];
-      seen.add(key);
-      return [{ cardId: otherId, title: safeText(other.title || otherId), direction }];
-    });
-  }, [deck.edges, deck.nodes, selectedCard]);
-  const builderTabs = useMemo(() => {
-    if (selectedCard) return [
-      ...BUILDER_NODE_TABS,
-      ...(hasTaskLedger(selectedCard) ? ['Tasks'] : []),
-      ...(selectedCard.runtime.kind === 'hermes'
-        && !hasTaskLedger(selectedCard)
-        && selectedCard.id !== mainCardId
-        && selectedCard.id !== builderCard?.id
-        ? ['CLI']
-        : []),
-      ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
-        .filter((attachment) => attachment.cardTab.enabled)
-        .map((attachment) => attachment.label),
-    ];
-    return [...BUILDER_PROJECT_TABS];
-  }, [selectedCard, mainCardId, builderCard?.id]);
-  const selectedCardSubsystem = useMemo(
-    () => readCardSubsystemAttachments(selectedCard?.runtimeOptions)
-      .find((attachment) => attachment.cardTab.enabled && attachment.label === tab) || null,
-    [selectedCard?.runtimeOptions, tab],
-  );
-  const activeTabs = useMemo(() => {
-    if (workspaceView === 'canvas') return builderTabs;
-    return [];
-  }, [builderTabs, workspaceView]);
-  const deckPersistFingerprint = useMemo(
-    () => (BUILDER_DEV ? JSON.stringify(deck) : ''),
-    [BUILDER_DEV, deck],
-  );
-
-  useEffect(() => {
-    if (!BUILDER_DEV) return;
-    const previousFingerprint = lastBuilderDeckFingerprintRef.current;
-    lastBuilderDeckFingerprintRef.current = deckPersistFingerprint;
-    if (
-      previousFingerprint === null ||
-      previousFingerprint === deckPersistFingerprint
-    )
-      return;
-
-    const writeReason = lastBuilderDeckWriteReasonRef.current;
-    const uiOnlyAction = lastBuilderUiOnlyActionRef.current;
-    if (!writeReason) {
-      console.warn(
-        '[builder] deck payload changed without an explicit write reason',
-        {
-          action: uiOnlyAction || 'unknown',
-        },
-      );
-    } else if (uiOnlyAction) {
-      console.warn('[builder] deck payload changed after a UI-only action', {
-        action: uiOnlyAction,
-        reason: writeReason,
-      });
-    }
-    lastBuilderDeckWriteReasonRef.current = null;
-    lastBuilderUiOnlyActionRef.current = null;
-  }, [BUILDER_DEV, deckPersistFingerprint]);
-
-  useEffect(() => {
-    if (activeTabs.some((entry) => entry === tab)) return;
-    setTab(activeTabs[0] || 'Plan');
-  }, [activeTabs, tab]);
-
   useEffect(() => {
     if (workspaceView !== 'canvas') return;
     recordUiOnlyAction('tab-switch');
@@ -912,148 +519,6 @@ export default function AgentBuilder(): React.ReactElement {
     if (workspaceView !== 'canvas') return;
     recordUiOnlyAction('drawer-toggle');
   }, [openDrawer, recordUiOnlyAction, workspaceView]);
-
-  const handleOpenSavedCardChooser = useCallback(async () => {
-    if (!canonicalDeckReady) {
-      setDeckStatusMessage('Wait for the canvas to load.');
-      return;
-    }
-    if (cardDraftFlushRef.current && !(await cardDraftFlushRef.current())) return;
-    setSavedCardChooserOpen(true);
-    setSavedCardChooserBusy(true);
-    setSavedCardChooserError(null);
-    try {
-      const response = await fetch(
-        `${PROJECTS_API}/${canvasProjectId}/decks/${DEFAULT_PROJECT_DECK_ID}/saved-cards`,
-      );
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.ok !== true || !Array.isArray(payload.cards)) {
-        throw new Error(String(payload?.error || 'Saved Cards unavailable.'));
-      }
-      setSavedCardChoices(payload.cards as SavedCardChoice[]);
-    } catch (error) {
-      setSavedCardChoices([]);
-      setSavedCardChooserError(
-        error instanceof Error ? error.message : 'Saved Cards unavailable.',
-      );
-    } finally {
-      setSavedCardChooserBusy(false);
-    }
-  }, [
-    canonicalDeckReady,
-    canvasProjectId,
-    setDeckStatusMessage,
-  ]);
-
-  const handleAttachSavedCard = useCallback(async (choice: SavedCardChoice) => {
-    if (!canvasProjectId || !deckRevision || savedCardChooserBusy) return;
-    setSavedCardChooserBusy(true);
-    setSavedCardChooserError(null);
-    const rightMostX = currentDeckRef.current.nodes.reduce(
-      (maximum, node) => Math.max(maximum, Number(node.position?.x || 0)),
-      -220,
-    );
-    try {
-      const response = await fetch(
-        `${PROJECTS_API}/${canvasProjectId}/decks/${DEFAULT_PROJECT_DECK_ID}/memberships`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            cardId: choice.cardId,
-            cardRevisionId: choice.cardRevisionId,
-            expectedDeckRevision: deckRevision,
-            position: { x: rightMostX + 320, y: 40 },
-          }),
-        },
-      );
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.ok !== true || !payload.deck) {
-        throw new Error(String(payload?.error || 'Card attachment failed.'));
-      }
-      const loaded = readDeckDocument(payload.deck);
-      const nextRevision = typeof payload?.meta?.deckRevision === 'string'
-        ? payload.meta.deckRevision
-        : null;
-      if (!nextRevision) throw new Error('deck_revision_missing');
-      recordDeckWriteReason('saved-card-attach');
-      lastPersistedBoardFingerprintRef.current = JSON.stringify({
-        nodes: loaded.nodes,
-        edges: loaded.edges,
-      });
-      lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(loaded);
-      setDeckFromPersistence(loaded);
-      setDeckRevision(nextRevision);
-      setSavedCardChoices((current) => current.filter((card) => card.cardId !== choice.cardId));
-      setSavedCardChooserOpen(false);
-      setSelectedEdgeId(null);
-      setSelectedCardId(choice.cardId);
-      setDeckStatusMessage(`Added existing saved Card ${choice.title} to this Project.`);
-    } catch (error) {
-      setSavedCardChooserError(error instanceof Error ? error.message : 'Card attachment failed.');
-    } finally {
-      setSavedCardChooserBusy(false);
-    }
-  }, [
-    canvasProjectId,
-    deckRevision,
-    lastPersistedBoardFingerprintRef,
-    lastPersistedBoardSnapshotRef,
-    recordDeckWriteReason,
-    savedCardChooserBusy,
-    setDeckFromPersistence,
-    setDeckRevision,
-    setDeckStatusMessage,
-    setSelectedCardId,
-    setSelectedEdgeId,
-    snapshotDeckBoard,
-  ]);
-
-  const handleCreateNewAgent = useCallback(async () => {
-    if (!canonicalDeckReady || savedCardChooserBusy) return;
-    setSavedCardChooserBusy(true);
-    setSavedCardChooserError(null);
-    try {
-      const response = await fetch('/api/idd/card-editor');
-      const dictionary = await response.json().catch(() => null);
-      const binding = dictionary?.templates?.template_assist?.runtime;
-      if (!response.ok || dictionary?.ok !== true
-        || binding?.kind !== 'hermes' || binding?.mode !== 'delegate') {
-        throw new Error('Template unavailable.');
-      }
-      const { nextNode } = buildQuickAddAssistCard(currentDeckRef.current, binding);
-      recordDeckWriteReason('deck-quick-add');
-      setTransientNewCardIds((current) => new Set(current).add(nextNode.id));
-      setDeck((current) => ({
-        ...current,
-        version: current.version + 1,
-        nodes: [...current.nodes, nextNode],
-      }));
-      setSavedCardChooserOpen(false);
-      setSelectedEdgeId(null);
-      setInspectorDrawerOpen(true);
-      setSelectedCardId(nextNode.id);
-      if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) setTab('Prompt');
-      setDeckStatusMessage(
-        `Added ${nextNode.title}. Save the Card to establish its permanent Card/profile authority.`,
-      );
-    } catch (error) {
-      setSavedCardChooserError(error instanceof Error ? error.message : 'Template unavailable.');
-    } finally {
-      setSavedCardChooserBusy(false);
-    }
-  }, [
-    BUILDER_NODE_TABS,
-    canonicalDeckReady,
-    recordDeckWriteReason,
-    savedCardChooserBusy,
-    setDeck,
-    setDeckStatusMessage,
-    setInspectorDrawerOpen,
-    setSelectedCardId,
-    setSelectedEdgeId,
-    tab,
-  ]);
 
   const handleSelectCard = useCallback(
     async (cardId: string | null) => {
@@ -1066,18 +531,12 @@ export default function AgentBuilder(): React.ReactElement {
       // Canvas selection always opens the saved-card editor. Agent app surfaces
       // are opened from their connected rail icons.
       setInspectorDrawerOpen(Boolean(selectedNode));
-      const isMagenticSelection = Boolean(
-        selectedNode &&
-          selectedNode.runtime.kind === 'hermes'
-          && selectedNode.runtime.mode === 'magentic_one',
-      );
       if (cardId) {
         setSelectedEdgeId(null);
         setTab('Prompt');
-      } else {
       }
     },
-    [deck.nodes, recordUiOnlyAction, tab, mainCardId, builderCard?.id],
+    [deck.nodes, recordUiOnlyAction, setInspectorDrawerOpen, setSelectedCardId, setSelectedEdgeId, setTab],
   );
 
   const handleSelectEdge = useCallback(
@@ -1104,187 +563,6 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedEdgeId(null);
   }, [recordDeckWriteReason, selectedEdgeId]);
 
-  const renderAgentBuilderPanel = () => {
-    if (!showDeckBuilder) {
-      return (
-        <div
-          style={graphDrawerSectionStyle({
-            padding: '16px',
-            borderStyle: 'dashed',
-            color: GRAPH_THEME.drawer.inputMuted,
-          })}
-        >
-          Select a Project to open its Agent Builder configuration.
-        </div>
-      );
-    }
-
-    const renderEditorContent = () => {
-      if (selectedCard && selectedCardConfig) {
-        if (
-          tab === 'Tasks'
-          && hasTaskLedger(selectedCard)
-        ) {
-          return <MagneticTasksTab
-            projectId={canvasProjectId}
-            deckId={DEFAULT_PROJECT_DECK_ID}
-            cardId={taskLedgerRunCardId(selectedCard, deck)}
-            label={selectedCard.title}
-            cardTitlesByProfile={cardTitlesByProfile}
-          />;
-        }
-        if (selectedCardSubsystem) {
-          return <CardSubsystemTab
-            attachment={selectedCardSubsystem}
-            readinessEndpoint={selectedCardSubsystem.id === 'lumibot'
-              ? '/api/trading/readiness'
-              : selectedCardSubsystem.id === 'gods-eye'
-                ? '/api/worldview/readiness'
-              : null}
-          />;
-        }
-        if (
-          tab === 'CLI'
-          && selectedCard.runtime.kind === 'hermes'
-          && !hasTaskLedger(selectedCard)
-          && selectedCard.id !== mainCardId
-          && selectedCard.id !== builderCard?.id
-        ) {
-          return <CardTerminalPanel
-            key={`${canvasProjectId}:${DEFAULT_PROJECT_DECK_ID}:${selectedCard.id}:${selectedCard.runtime.profile}`}
-              identity={{
-                projectId: canvasProjectId,
-                deckId: DEFAULT_PROJECT_DECK_ID,
-                cardId: selectedCard.id,
-                conversationId,
-              }}
-          />;
-        }
-        if (BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-          return (
-            <>
-              <CardEditorErrorBoundary
-                key={`card-editor-boundary:${selectedCard.id}`}
-                cardTitle={String(selectedCard.title || 'Selected card')}
-              >
-                <Suspense
-                  fallback={
-                    <div
-                      style={graphDrawerSectionStyle({
-                        padding: '12px 14px',
-                        borderRadius: 8,
-                        color: GRAPH_THEME.drawer.inputMuted,
-                      })}
-                    >
-                      Loading card configuration…
-                    </div>
-                  }
-                >
-                  <CardInspector
-                    key="deck-card-editor"
-                    cardId={selectedCard.id}
-                    projectId={canvasProjectId}
-                    deckId={DEFAULT_PROJECT_DECK_ID}
-                    registerCardDraftFlush={registerCardDraftFlush}
-                    activeTab={tab}
-                    cardName={selectedCard.title}
-                    onChangeCardName={handleRenameSelectedCard}
-                    localConfig={selectedCardConfig}
-                    onSaveLocalConfig={handleSaveSelectedCardConfig}
-                    projectCodeFolder={
-                      selectedCard.id === BUILDER_CARD_ID
-                        ? deck.projectCodeFolder ?? null
-                        : undefined
-                    }
-                    onSetProjectCodeFolder={
-                      selectedCard.id === BUILDER_CARD_ID
-                        ? handleSetBuilderProjectCodeFolder
-                        : undefined
-                    }
-                    orangeConnections={selectedOrangeConnections}
-                  />
-                </Suspense>
-              </CardEditorErrorBoundary>
-            </>
-          );
-        }
-      }
-
-      if (tab === 'Plan') {
-        return (
-          <>
-            <div
-              style={graphDrawerSectionStyle({
-                padding: '12px 14px',
-                borderRadius: 8,
-              })}
-            >
-              <div
-                className="flex items-center gap-2"
-              >
-                <button
-                  onClick={() => {
-                    recordDeckWriteReason('save-board-now');
-                    void handleSaveDeck(
-                      projectDeckForPersistence(deck, transientNewCardIds),
-                    ).catch(() => undefined);
-                  }}
-                  disabled={deckSaveBusy || !canonicalDeckReady}
-                  style={graphDrawerButtonStyle({
-                    opacity:
-                      deckSaveBusy || !canonicalDeckReady
-                        ? 0.58
-                        : 1,
-                    cursor:
-                      deckSaveBusy || !canonicalDeckReady
-                        ? 'not-allowed'
-                        : 'pointer',
-                  })}
-                >
-                  {deckSaveBusy ? 'Saving...' : 'Save Board Now'}
-                </button>
-              </div>
-              {deckStatusMessage && (
-                <div
-                  className="text-xs"
-                  style={{ marginTop: 8, color: GRAPH_THEME.drawer.inputMuted }}
-                >
-                  {deckStatusMessage}
-                </div>
-              )}
-            </div>
-          </>
-        );
-      }
-
-      return null;
-    };
-
-    return <div className="space-y-3">{renderEditorContent()}</div>;
-  };
-
-  useEffect(() => {
-    activeProjectLatestRef.current = activeProject;
-  }, [activeProject]);
-
-  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | 'worldview' | null>(() => {
-    if (workspaceView === 'canvas' && canonicalDeckReady && selectedCard) return 'agent';
-    // The canonical Inspector also serves the WorldSignals companion surface —
-    // same drawer, same renderer, section requested by the vendor controls.
-    if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';
-    if (workspaceView === 'worldview' && worldViewCard) return 'worldview';
-    if (workspaceView === 'trading' && tradingCard) return 'trading';
-    return null;
-  }, [canonicalDeckReady, selectedCard, tradingCard, worldViewCard, workspaceView, worldSignalInspectorSection]);
-  const isInspectorDrawerVisible =
-    inspectorDrawerRole === 'worldsignal'
-      ? worldSignalInspectorOpen
-      : inspectorDrawerRole === 'worldview'
-        ? worldViewInspectorOpen
-      : inspectorDrawerOpen && inspectorDrawerRole !== null;
-  const inspectorDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
-  const inspectorDrawerStorageKey = 'liquidaity.drawer.inspector.agent.v1.width';
-
   const closeInspectorDrawer = useCallback(async () => {
     if (cardDraftFlushRef.current && !(await cardDraftFlushRef.current())) return false;
     setInspectorDrawerOpen(false);
@@ -1299,205 +577,87 @@ export default function AgentBuilder(): React.ReactElement {
     return true;
   }, []);
 
-  const closeWorldSignalInspector = useCallback(() => {
-    setWorldSignalInspectorOpen(false);
+  const closeWorldSignalsInspector = useCallback(() => {
+    setWorldSignalsInspectorOpen(false);
   }, []);
 
-  const getSurfaceShellStyle = useCallback(
-    (compact: boolean, extra?: React.CSSProperties): React.CSSProperties => {
-      return {
-        height: '100%',
-        minHeight: compact ? 320 : undefined,
-        ...extra,
-      };
-    },
-    [],
+  const chatSurface = (
+    <AgentBuilderChatWorkSurface
+      activeProject={activeProject}
+      canvasProjectId={canvasProjectId}
+      conversationId={conversationId}
+      builderCard={builderCard}
+      sharedChatProps={{
+        messages,
+        mainCardId: mainCardId || undefined,
+        directChatTargets,
+        onSend: handleSend,
+        onKnowledgeUploaded: () => {
+          void knowledgeGraphs.refreshKnowGraph();
+        },
+        draft: sharedChatDraftKey ? transientCardInputs[sharedChatDraftKey] || '' : '',
+        onDraftChange: (value) => {
+          if (!sharedChatDraftKey) return;
+          setTransientCardInputs((current) => {
+            if (!value) {
+              const next = { ...current };
+              delete next[sharedChatDraftKey];
+              return next;
+            }
+            return { ...current, [sharedChatDraftKey]: value };
+          });
+        },
+        knowledgeProjectId: activeProject,
+        subjectMatcher: canonicalSubjectMatcher,
+        onSubjectFocus: handleCanonicalSubjectFocus,
+        colors: AGENT_BUILDER_COLORS,
+        busy: sessionActive,
+        connecting: sessionConnecting,
+        error: technicalError,
+        voiceError,
+        voicePhase,
+        onVoiceStart: startVoiceSession,
+        onVoiceStop: () => {
+          void stopVoiceSession();
+        },
+        onStop: () => {
+          void stopCurrentCardTurn().catch((error) => {
+            setDeckStatusMessage(
+              error instanceof Error ? error.message : 'Main run stop failed.',
+            );
+          });
+        },
+      }}
+    />
   );
 
-  const renderChatSurface = (
-    projectId: string,
-    compact = false,
-    surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
-  ) => {
-    // Main owns the chat above; the permanent lower work surface belongs only
-    // to the separately saved Builder Card and its own Hermes session.
-    const chat = (
-      <div style={{ height: '100%', minHeight: 0 }}>
-        <SharedCardChat
-          messages={messages}
-          mainCardId={mainCardId || undefined}
-          directChatTargets={directChatTargets}
-          onSend={handleSend}
-          onKnowledgeUploaded={() => {
-            void knowledgeGraphs.refreshKnowGraph();
-          }}
-          draft={sharedChatDraftKey ? transientCardInputs[sharedChatDraftKey] || '' : ''}
-          onDraftChange={(value) => {
-            if (!sharedChatDraftKey) return;
-            setTransientCardInputs((current) => {
-              if (!value) {
-                const next = { ...current };
-                delete next[sharedChatDraftKey];
-                return next;
-              }
-              return { ...current, [sharedChatDraftKey]: value };
-            });
-          }}
-          knowledgeProjectId={projectId}
-          subjectMatcher={canonicalSubjectMatcher}
-          onSubjectFocus={handleCanonicalSubjectFocus}
-          colors={C}
-          busy={sessionActive}
-          connecting={sessionConnecting}
-          error={technicalError}
-          voiceError={voiceError}
-          voicePhase={voicePhase}
-          onVoiceStart={startVoiceSession}
-          onVoiceStop={() => {
-            void stopVoiceSession();
-          }}
-          onStop={() => {
-            void stopMainTurn().catch((error) => {
-              setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');
-            });
-          }}
-        />
-      </div>
-    );
-    const cardWorkSurface = () => (
-      builderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
-        <div
-          data-testid="under-chat-card-work-surface"
-          data-card-id={builderCard.id}
-          style={{ height: '100%', minHeight: 0 }}
-        >
-          <CardTerminalPanel
-            key={`${canvasProjectId}:${builderCard.id}:${builderCard.runtime.profile}`}
-            identity={{
-              projectId: canvasProjectId,
-              deckId: DEFAULT_PROJECT_DECK_ID,
-              cardId: builderCard.id,
-              conversationId,
-            }}
-          />
-        </div>
-      ) : null
-    );
-    return (
-      <div
-        data-testid={`${surfaceRole}-surface-chat`}
-        style={getSurfaceShellStyle(compact)}
-      >
-        {compact ? (
-          <div style={{ height: '100%' }}>{chat}</div>
-        ) : (
-          <SharedChatTerminalSplit
-            storageKey={`liquidaity.main.agent-builder.split.v1:${projectId}`}
-            chat={chat}
-            terminal={cardWorkSurface()}
-            workSurfaceLabel={builderCard?.title || 'Builder'}
-          />
-        )}
-      </div>
-    );
-  };
-
-  const renderCanvasSurface = (
-    compact = false,
-    surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
-  ) => {
-    const canvasPane = canonicalDeckReady ? (
-      <AgentCanvasPane
-        surfaceRole={surfaceRole}
-        shellStyle={getSurfaceShellStyle(compact)}
-        document={deck}
-        setDocument={setDeck}
-        onPersistGraphMutation={recordDeckWriteReason}
-        activeCardIds={cardActivity.activeCardIds}
-        activeAgentCounts={cardActivity.activeAgentCounts}
-        activeEdgeIds={[]}
-        selectedCardId={selectedCardId}
-        selectedEdgeId={selectedEdgeId}
-        onSelectCard={handleSelectCard}
-        onSelectEdge={handleSelectEdge}
-        onDeleteSelectedEdge={handleDeleteSelectedEdge}
-        inspectMode={false}
-        focusZone={canvasFocusZone}
-      />
-    ) : (
-      <div
-        role={deckLoadError ? 'alert' : 'status'}
-        data-testid="canonical-canvas-load-state"
-        style={graphDrawerSectionStyle({
-          height: '100%',
-          display: 'grid',
-          placeItems: 'center',
-          border: 0,
-          borderRadius: 0,
-          color: deckLoadError
-            ? 'rgba(255,162,162,0.95)'
-            : GRAPH_THEME.drawer.inputMuted,
-        })}
-      >
-        {deckLoadError
-          ? `Canvas unavailable: ${deckLoadError}`
-          : 'Loading…'}
-      </div>
-    );
-    return (
-      <div
-        data-testid="workspace-canvas-surface"
-        style={{ position: 'relative', height: '100%', minHeight: 0, overflow: 'hidden' }}
-      >
-        <div style={{ position: 'absolute', inset: 0 }}>{canvasPane}</div>
-      </div>
-    );
-  };
-
-  const canvasSurface = renderCanvasSurface(false, 'large');
-
-  const renderKnowledgeGraphSurface = ({
-    minHeight = 280,
-    surfaceRole = minHeight > 320 ? 'large' : 'companion',
-  }: {
-    minHeight?: number;
-    surfaceRole?: 'large' | 'companion';
-  }) => {
-    return (
-      <div style={getSurfaceShellStyle(minHeight <= 320)}>
-        <KnowledgeSurfaceErrorBoundary>
-          <KnowledgeGraphFramework
-            minHeight={minHeight}
-            surfaceRole={surfaceRole}
-            projections={knowledgeGraphs.projections}
-            onRemoveThinkGraphEvidence={knowledgeGraphs.removeThinkGraphEvidence}
-            onRemoveKnowGraphEvidence={knowledgeGraphs.removeKnowGraphEvidence}
-            errors={knowledgeGraphs.errors}
-            statuses={knowledgeGraphs.statuses}
-            onReadFocusNeighborhood={knowledgeGraphs.readProviderNeighborhood}
-            onExpandNode={(graph, node) => knowledgeGraphs.expandNode({
-              graph,
-              node,
-            })}
-            subjectFocusRequest={subjectFocusRequest}
-          />
-        </KnowledgeSurfaceErrorBoundary>
-      </div>
-    );
-  };
+  const canvasSurface = (
+    <AgentCanvas
+      surfaceRole="large"
+      shellStyle={{ height: '100%' }}
+      ready={canonicalDeckReady}
+      loadError={deckLoadError}
+      document={deck}
+      setDocument={setDeck}
+      onPersistGraphMutation={recordDeckWriteReason}
+      activeCardIds={cardActivity.activeCardIds}
+      activeAgentCounts={cardActivity.activeAgentCounts}
+      activeEdgeIds={[]}
+      selectedCardId={selectedCardId}
+      selectedEdgeId={selectedEdgeId}
+      onSelectCard={handleSelectCard}
+      onSelectEdge={handleSelectEdge}
+      onDeleteSelectedEdge={handleDeleteSelectedEdge}
+      inspectMode={false}
+      focusZone={canvasFocusZone}
+    />
+  );
 
   const showCanvasWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
     setCurrentResponderCardId(null);
     setWorkspaceView('canvas');
-    const params = new URLSearchParams(window.location.search);
-    params.delete('workspace');
-    const nextQuery = params.toString();
-    window.history.replaceState(
-      {},
-      '',
-      nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname,
-    );
+    showCanvasWorkspaceInUrl();
     // Camera focus only — pan to the agent/bus zone on the same scene.
     setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
   }, [closeInspectorDrawer, setCurrentResponderCardId]);
@@ -1506,13 +666,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (!(await closeInspectorDrawer())) return;
     setCurrentResponderCardId(null);
     setWorkspaceView('knowledge');
-    const params = new URLSearchParams(window.location.search);
-    params.set('workspace', 'knowledge');
-    window.history.replaceState(
-      {},
-      '',
-      `${window.location.pathname}?${params.toString()}`,
-    );
+    showKnowledgeWorkspaceInUrl();
   }, [closeInspectorDrawer, setCurrentResponderCardId]);
 
   const showTradingWorkspace = useCallback(async () => {
@@ -1528,16 +682,16 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('trading');
   }, [setCurrentResponderCardId, setDeckStatusMessage, setInspectorDrawerOpen, tradingCard?.id]);
 
-  const showWorldsignalWorkspace = useCallback(async () => {
+  const showWorldSignalsWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
     if (!worldSignalsCardId || !setCurrentResponderCardId(worldSignalsCardId)) {
       setDeckStatusMessage('WorldSignals saved Card is unavailable for direct chat.');
       return;
     }
-    setWorkspaceView('worldsignal');
+    setWorkspaceView('worldsignals');
   }, [closeInspectorDrawer, setCurrentResponderCardId, setDeckStatusMessage, worldSignalsCardId]);
 
-  const showWorldviewWorkspace = useCallback(async () => {
+  const showWorldViewWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
     if (!worldViewCard?.id || !setCurrentResponderCardId(worldViewCard.id)) {
       setDeckStatusMessage('WorldView saved Card is unavailable for direct chat.');
@@ -1545,30 +699,19 @@ export default function AgentBuilder(): React.ReactElement {
     }
     setWorkspaceView('worldview');
     setWorldViewInspectorOpen(true);
-    const params = new URLSearchParams(window.location.search);
-    params.set('workspace', 'worldview');
-    window.history.replaceState(
-      {},
-      '',
-      `${window.location.pathname}?${params.toString()}`,
-    );
+    showWorldViewWorkspaceInUrl();
   }, [closeInspectorDrawer, setCurrentResponderCardId, setDeckStatusMessage, worldViewCard?.id]);
-
-  const handleCompanionTabClick = useCallback(async (nextTab: string) => {
-    if (cardDraftFlushRef.current && !(await cardDraftFlushRef.current())) return;
-    setTab(nextTab);
-  }, []);
 
   const workspaceRail = (
     <AgentBuilderRail
-      colors={C}
+      colors={AGENT_BUILDER_COLORS}
       workspaceView={workspaceView}
       visibleRailItems={visibleRailItems}
       moonOrb={<BuilderRailMoonOrb phase01={moonPhase01} />}
-      onShowWorldsignalWorkspace={showWorldsignalWorkspace}
-      onShowWorldviewWorkspace={showWorldviewWorkspace}
+      onShowWorldSignalsWorkspace={showWorldSignalsWorkspace}
+      onShowWorldViewWorkspace={showWorldViewWorkspace}
       onShowCanvasWorkspace={showCanvasWorkspace}
-      onOpenAddAgent={handleOpenSavedCardChooser}
+      onOpenAddAgent={cardChooser.openChooser}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
@@ -1576,204 +719,112 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const workspaceCompanionSurfaceHost = (
-    <CompanionSurfaceHost
+    <AgentBuilderCompanionSurfaces
       workspaceView={workspaceView}
-      knowledgeSurface={
-        renderKnowledgeGraphSurface({
-          minHeight: 420,
-          surfaceRole: 'companion',
-        })
-      }
-      tradingSurface={
-        <TradingUI
-          symbol="RDW"
-          projectId={canvasProjectId || null}
-          deckId={DEFAULT_PROJECT_DECK_ID}
-          card={tradingCard}
-        />
-      }
-      worldsignalSurface={
-        <WorldSignalsSurface
-          projectId={
-            typeof activeProject === 'string' && activeProject ? activeProject : null
-          }
-          cardId={worldSignalsCardId}
-          onInspectorSectionRequest={handleWorldSignalInspectorRequest}
-          onLayerStateChange={setWorldSignalLayerState}
-          onBridgeChange={setWorldSignalBridge}
-        />
-      }
-      worldviewSurface={
-        <WorldViewSurface
-          projectId={canvasProjectId || null}
-          cardId={worldViewCard?.id || null}
-          onBridgeChange={setWorldViewBridge}
-          inspectorContainer={worldViewInspectorHost}
-        />
-      }
+      knowledgeGraphProps={{
+        minHeight: 420,
+        surfaceRole: 'companion',
+        projections: knowledgeGraphs.projections,
+        onRemoveThinkGraphEvidence: knowledgeGraphs.removeThinkGraphEvidence,
+        onRemoveKnowGraphEvidence: knowledgeGraphs.removeKnowGraphEvidence,
+        errors: knowledgeGraphs.errors,
+        statuses: knowledgeGraphs.statuses,
+        onReadFocusNeighborhood: knowledgeGraphs.readProviderNeighborhood,
+        subjectFocusRequest,
+      }}
+      tradingProps={{
+        symbol: 'RDW',
+        projectId: canvasProjectId || null,
+        deckId: DEFAULT_PROJECT_DECK_ID,
+        card: tradingCard,
+      }}
+      worldSignalsProps={{
+        projectId: typeof activeProject === 'string' && activeProject ? activeProject : null,
+        cardId: worldSignalsCardId,
+        onInspectorSectionRequest: handleWorldSignalsInspectorRequest,
+        onLayerStateChange: setWorldSignalsLayerState,
+        onBridgeChange: setWorldSignalsBridge,
+      }}
+      worldViewProps={{
+        projectId: canvasProjectId || null,
+        cardId: worldViewCard?.id || null,
+        onBridgeChange: setWorldViewBridge,
+        inspectorContainer: worldViewInspectorHost,
+      }}
     />
   );
 
-  const workspaceDrawer =
-    inspectorDrawerRole !== null ? (
-      <RightGlassDrawer
-        isOpen={isInspectorDrawerVisible}
-        title={
-          inspectorDrawerRole === 'worldsignal'
-            ? 'WorldSignals'
-            : inspectorDrawerRole === 'worldview'
-              ? ''
-            : inspectorDrawerRole === 'trading'
-              ? 'Trading settings'
-            : safeText(selectedCard?.title || 'Agent')
-        }
-        onClose={
-          inspectorDrawerRole === 'worldsignal'
-            ? closeWorldSignalInspector
-            : inspectorDrawerRole === 'worldview'
-              ? () => setWorldViewInspectorOpen(false)
-            : inspectorDrawerRole === 'trading'
-              ? () => setInspectorDrawerOpen(false)
-              : dockInspectorDrawer
-        }
-        onOpen={inspectorDrawerRole === 'worldsignal'
-          ? () => setWorldSignalInspectorOpen(true)
-          : inspectorDrawerRole === 'worldview'
-            ? () => setWorldViewInspectorOpen(true)
-            : inspectorDrawerRole === 'trading' || inspectorDrawerRole === 'agent'
-              ? () => setInspectorDrawerOpen(true)
-              : undefined}
-        collapsedLabel={null}
-        openAriaLabel={inspectorDrawerRole === 'worldsignal'
-          ? 'Open WorldSignals Inspector'
-          : inspectorDrawerRole === 'worldview'
-            ? 'Open WorldView controls'
-            : 'Open Trading Inspector'}
-        movable={inspectorDrawerRole !== 'trading'}
-        defaultWidth={inspectorDrawerDefaultWidth}
-        resetWidthOnOpen={false}
-        minWidth={300}
-        maxWidth={560}
-        storageKey={
-          inspectorDrawerRole === 'worldsignal'
-            ? 'liquidaity.drawer.inspector.worldsignal.v1.width'
-            : inspectorDrawerRole === 'worldview'
-              ? 'liquidaity.drawer.inspector.worldview.v1.width'
-            : inspectorDrawerRole === 'trading'
-              ? 'card.drawer.inspector.trading.v1.width'
-            : inspectorDrawerStorageKey
-        }
-        dataTestId="workspace-inspector-drawer"
-        right={12}
-        top={48}
-      >
-        {inspectorDrawerRole === 'worldview' ? <div ref={setWorldViewInspectorHost} /> : null}
-        {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
-          <div
-            className="flex min-w-0 flex-wrap"
-            style={graphCompanionTabGroupStyle({
-              gap: 6,
-              marginBottom: 10,
-            })}
-          >
-            {(['markets', 'layers'] as const).map((section) => {
-              const selected = worldSignalInspectorSection === section;
-              return (
-                <button
-                  key={section}
-                  data-testid={`worldsignals-inspector-tab-${section}`}
-                  aria-pressed={selected}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setWorldSignalInspectorSection(section);
-                  }}
-                  className="whitespace-nowrap transition-colors duration-150 ease-out"
-                  style={graphCompanionTabButtonStyle(selected)}
-                >
-                  {section === 'markets' ? 'Markets' : 'Layers'}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-        {inspectorDrawerRole === 'trading' && tradingCard ? (
-          <TradingUiInspectorPanel
-            configuration={tradingCard.runtimeOptions?.configuration || {}}
-            onSave={(configuration) => {
-              handleSaveCardConfiguration(tradingCard.id, configuration);
-            }}
-          />
-        ) : null}
-        {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
-          <WorldSignalsInspectorPanel
-            section={worldSignalInspectorSection}
-            bridge={worldSignalBridge}
-            layerState={worldSignalLayerState}
-          />
-        ) : null}
-        {inspectorDrawerRole === 'agent' && activeTabs.length > 0 ? (
-          <div
-            className="flex min-w-0"
-            style={graphCompanionTabGroupStyle({
-              gap: hasTaskLedger(selectedCard) ? 3 : 6,
-              padding: hasTaskLedger(selectedCard) ? 4 : 6,
-              flexWrap: hasTaskLedger(selectedCard) ? 'nowrap' : 'wrap',
-              overflowX: hasTaskLedger(selectedCard) ? 'auto' : 'visible',
-              marginBottom: 10,
-            })}
-          >
-            {activeTabs.map((t) => {
-              const selected = tab === t;
-              return (
-                <button
-                  key={t}
-                  data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-                  aria-pressed={selected}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleCompanionTabClick(t);
-                  }}
-                  className="whitespace-nowrap transition-colors duration-150 ease-out"
-                  style={graphCompanionTabButtonStyle(selected, hasTaskLedger(selectedCard) ? {
-                    padding: '5px 6px',
-                    fontSize: 10,
-                    flex: '0 0 auto',
-                  } : undefined)}
-                >
-                  {t}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-        {inspectorDrawerRole === 'agent' ? (
-          <div
-            data-testid="companion-surface-editor"
-            style={{
-              display: 'grid',
-              gap: 8,
-            }}
-          >
-            {renderAgentBuilderPanel()}
-          </div>
-        ) : null}
-      </RightGlassDrawer>
-    ) : null;
+  const workspaceDrawer = (
+    <AgentBuilderWorkspaceInspector
+      workspaceView={workspaceView}
+      agent={selectedCard ? {
+        available: canonicalDeckReady,
+        open: inspectorDrawerOpen,
+        title: String(selectedCard.title || 'Agent'),
+        onClose: () => { void dockInspectorDrawer(); },
+        onOpen: () => setInspectorDrawerOpen(true),
+        panelProps: {
+          canvasProjectId,
+          conversationId,
+          deck,
+          selectedCard,
+          selectedCardConfig,
+          tab,
+          setTab,
+          mainCardId,
+          builderCardId: builderCard?.id || null,
+          cardTitlesByProfile,
+          cardDraftFlushRef,
+          registerCardDraftFlush,
+          onRenameSelectedCard: handleRenameSelectedCard,
+          onSaveSelectedCardConfig: handleSaveSelectedCardConfig,
+          onSetBuilderProjectCodeFolder: handleSetBuilderProjectCodeFolder,
+          projectCodeFolder: deck.projectCodeFolder ?? null,
+        },
+      } : null}
+      worldSignals={{
+        section: worldSignalsInspectorSection,
+        open: worldSignalsInspectorOpen,
+        bridge: worldSignalsBridge,
+        layerState: worldSignalsLayerState,
+        onClose: closeWorldSignalsInspector,
+        onOpen: () => setWorldSignalsInspectorOpen(true),
+        onSectionChange: setWorldSignalsInspectorSection,
+      }}
+      worldView={{
+        available: Boolean(worldViewCard),
+        open: worldViewInspectorOpen,
+        onClose: () => setWorldViewInspectorOpen(false),
+        onOpen: () => setWorldViewInspectorOpen(true),
+        setInspectorHost: setWorldViewInspectorHost,
+      }}
+      trading={{
+        available: Boolean(tradingCard),
+        open: inspectorDrawerOpen,
+        configuration: tradingCard?.runtimeOptions?.configuration || {},
+        onClose: () => setInspectorDrawerOpen(false),
+        onOpen: () => setInspectorDrawerOpen(true),
+        onSave: (configuration) => {
+          handleSaveCardConfiguration(tradingCard!.id, configuration);
+        },
+      }}
+    />
+  );
 
   return (
     <FrontendCrashBoundary scopeLabel="AgentBuilder">
       <div
         className="h-screen w-full flex overflow-hidden"
-        style={{ background: C.bg, color: C.text }}
+        style={{ background: AGENT_BUILDER_COLORS.bg, color: AGENT_BUILDER_COLORS.text }}
       >
         <AgentBuilderWorkspace
           rail={workspaceRail}
           workspaceShellRef={workspaceShellRef}
           workspaceView={workspaceView}
-          surfaceName={largeSurface}
+          surfaceName="chat"
           chatPanelWidth={chatPanelWidth}
           chatMinWidth={chatMinWidth}
-          chat={renderChatSurface(activeProject, false, 'large')}
+          chat={chatSurface}
           splitterActive={splitterActive}
           onSplitterPointerEnter={onSplitterPointerEnter}
           onSplitterPointerLeave={onSplitterPointerLeave}
@@ -1788,95 +839,29 @@ export default function AgentBuilder(): React.ReactElement {
           drawer={<>{workspaceDrawer}</>}
         />
 
-      {savedCardChooserOpen ? (
-        <div
-          data-testid="saved-card-chooser"
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.58)' }}
-          onClick={() => !savedCardChooserBusy && setSavedCardChooserOpen(false)}
-        >
-          <div
-            className="w-[min(560px,calc(100vw-32px))] max-h-[72vh] overflow-auto rounded-xl p-4"
-            style={{ background: C.panel, border: `1px solid ${C.border}` }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div>
-                <div className="text-sm font-semibold">Add Agent</div>
-                <div className="text-xs mt-1" style={{ color: C.neutral }}>
-                  Reuse a saved Card unchanged, or create and save one new Card.
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-label="Close Add Agent"
-                onClick={() => setSavedCardChooserOpen(false)}
-                disabled={savedCardChooserBusy}
-              >
-                ×
-              </button>
-            </div>
-            {savedCardChooserError ? (
-              <div className="text-xs mb-3" style={{ color: C.warn }}>{savedCardChooserError}</div>
-            ) : null}
-            <button
-              type="button"
-              className="w-full text-left rounded-lg p-3 mb-3"
-              style={{ border: `1px solid ${C.primary}`, background: C.bg }}
-              disabled={savedCardChooserBusy}
-              onClick={() => void handleCreateNewAgent()}
-              data-testid="add-agent-new-card"
-            >
-              <div className="text-sm font-medium">New Agent</div>
-              <div className="text-xs mt-1" style={{ color: C.neutral }}>
-                Open one new editable Card, then save it as the permanent authority.
-              </div>
-            </button>
-            <div className="text-xs font-semibold mb-2" style={{ color: C.neutral }}>
-              Saved Agents
-            </div>
-            {savedCardChooserBusy && savedCardChoices.length === 0 ? (
-              <div className="text-sm" style={{ color: C.neutral }}>Loading saved Cards…</div>
-            ) : null}
-            {!savedCardChooserBusy && savedCardChoices.length === 0 ? (
-              <div className="text-sm" style={{ color: C.neutral }}>
-                Every available saved Card is already in this Project.
-              </div>
-            ) : null}
-            <div className="grid gap-2">
-              {savedCardChoices.map((choice) => (
-                <button
-                  key={`${choice.cardId}:${choice.cardRevisionId}`}
-                  type="button"
-                  className="text-left rounded-lg p-3"
-                  style={{ border: `1px solid ${C.border}`, background: C.bg }}
-                  disabled={savedCardChooserBusy}
-                  onClick={() => void handleAttachSavedCard(choice)}
-                  data-testid={`saved-card-choice-${choice.cardId}`}
-                >
-                  <div className="text-sm font-medium">{choice.title}</div>
-                  <div className="text-xs mt-1" style={{ color: C.neutral }}>
-                    {choice.subtitle || 'Saved Card'} · {choice.runtimeProfile}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
+        <AgentCardChooserDialog
+          open={cardChooser.open}
+          choices={cardChooser.choices}
+          busy={cardChooser.busy}
+          error={cardChooser.error}
+          colors={AGENT_BUILDER_COLORS}
+          onClose={cardChooser.close}
+          onCreateNewAgent={() => { void cardChooser.createNewAgent(); }}
+          onAttachSavedCard={(choice) => { void cardChooser.attachSavedCard(choice); }}
+        />
 
-      <AgentBuilderProjectDrawer
-        activeProject={activeProject}
-        colors={C}
-        open={openDrawer === 'navigation'}
-        projects={builderProjects}
-        projectsApi={PROJECTS_API}
-        projectsError={projectsError}
-        onClose={() => setOpenDrawer(null)}
-        refreshProjects={refreshProjects}
-        setActiveProjectWithUrl={setActiveProjectWithUrl}
-        setProjectsError={setProjectsError}
-      />
+        <AgentBuilderProjectDrawer
+          activeProject={activeProject}
+          colors={AGENT_BUILDER_COLORS}
+          open={openDrawer === 'navigation'}
+          projects={builderProjects}
+          projectsApi={PROJECTS_API}
+          projectsError={projectsError}
+          onClose={() => setOpenDrawer(null)}
+          refreshProjects={refreshProjects}
+          setActiveProjectWithUrl={setActiveProjectWithUrl}
+          setProjectsError={setProjectsError}
+        />
       </div>
     </FrontendCrashBoundary>
   );

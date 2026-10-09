@@ -1,30 +1,16 @@
 // @graph entity: KnowGraphReadRoute
 // @graph role: knowgraph-read-gateway
 // @graph relates_to: AgentBuilderWorkspace, KnowGraph API, KnowGraph
-// @graph depends_on: Express, Neo4j
+// @graph depends_on: Express, Python rails
 // @graph feeds_to: KnowGraph
 import { Router } from 'express';
-import { pool } from '../db/pool';
+import {
+  fetchKnowGraphNeighborhood,
+  fetchKnowGraphProjection,
+} from '../services/pythonRailsClient';
 import { getOwnedProjectByReference } from '../services/projectStore';
 
 const router = Router();
-
-type KnowGraphNodeDto = {
-  id: string;
-  label: string;
-  type: string;
-  source: 'know';
-  properties: Record<string, unknown>;
-};
-
-type KnowGraphRelationshipDto = {
-  id: string;
-  from: string;
-  to: string;
-  type: string;
-  source: 'know';
-  properties: Record<string, unknown>;
-};
 
 async function resolveAuthenticatedKnowGraphProjectId(
   userId: string,
@@ -35,509 +21,17 @@ async function resolveAuthenticatedKnowGraphProjectId(
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
-  const n = Number.parseInt(String(value ?? ''), 10);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-
-function toNeoJsonValue(value: any): any {
-  if (value == null) return value;
-  if (Array.isArray(value)) return value.map((v) => toNeoJsonValue(v));
-  if (typeof value !== 'object') return value;
-
-  if (typeof value.toNumber === 'function') {
-    try {
-      return value.toNumber();
-    } catch {
-      // fall through to recursive object copy
-    }
-  }
-
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value)) {
-    out[k] = toNeoJsonValue(v);
-  }
-  return out;
-}
-
-export function boundedKnowGraphProperties(value: unknown): Record<string, unknown> {
-  const properties = (toNeoJsonValue(value || {}) || {}) as Record<string, unknown>;
-  return Object.fromEntries(Object.entries(properties).filter(([key]) => {
-    const normalized = key.trim().toLowerCase();
-    return normalized !== 'embedding'
-      && !normalized.endsWith('_embedding')
-      && !normalized.startsWith('embedding_');
-  }));
-}
-
-function stringValues(value: unknown): string[] {
-  const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
-  return Array.from(new Set(values.map((item) => String(item || '').trim()).filter(Boolean)));
-}
-
-function persistedKnowGraphJev(properties: Record<string, unknown>): Record<string, unknown> | undefined {
-  const winner = String(properties.jev_relation_winner || '').trim();
-  const serialized = String(properties.jev_relation_distribution_json || '').trim();
-  if (!winner || !serialized) return undefined;
-
-  let distribution: Record<string, number>;
-  try {
-    const parsed = JSON.parse(serialized);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-    distribution = Object.fromEntries(Object.entries(parsed).flatMap(([choice, probability]) => {
-      if (typeof probability !== 'number') return [];
-      return Number.isFinite(probability) && probability >= 0 && probability <= 1
-        ? [[choice, probability]]
-        : [];
-    }));
-  } catch {
-    return undefined;
-  }
-  if (!Object.keys(distribution).length) return undefined;
-  const winnerProbability = Number(distribution[winner]);
-  if (!Number.isFinite(winnerProbability)) return undefined;
-  const lowerTotal = Object.values(distribution)
-    .reduce((total, value) => total + Math.max(0, value - 0.005), 0);
-  const upperTotal = Object.values(distribution)
-    .reduce((total, value) => total + Math.min(1, value + 0.005), 0);
-  if (lowerTotal > 1 + 1e-12 || upperTotal < 1 - 1e-12) return undefined;
-  const winnerUpper = Math.min(1, winnerProbability + 0.005);
-  if (Object.entries(distribution).some(([choice, probability]) =>
-    choice !== winner && Math.max(0, probability - 0.005) > winnerUpper + 1e-12)) {
-    return undefined;
-  }
-  if (typeof properties.jev_label_confidence !== 'number') return undefined;
-  const labelConfidence = properties.jev_label_confidence;
-  if (!Number.isFinite(labelConfidence) || labelConfidence !== winnerProbability) return undefined;
-  const rawProviderConfidence = properties.jev_provider_confidence;
-  const providerConfidence = rawProviderConfidence == null
-    ? undefined
-    : typeof rawProviderConfidence === 'number'
-      && Number.isFinite(rawProviderConfidence)
-      && rawProviderConfidence >= 0
-      && rawProviderConfidence <= 1
-      ? rawProviderConfidence
-      : null;
-  if (providerConfidence === null) return undefined;
-
-  return {
-    status: 'success',
-    winner,
-    distribution,
-    label_confidence: labelConfidence,
-    ...(providerConfidence === undefined ? {} : { provider_confidence: providerConfidence }),
-    requested_model: String(properties.jev_requested_model || ''),
-    resolved_model: String(properties.jev_resolved_model || ''),
-    evaluated_at: String(properties.jev_evaluated_at || ''),
-    question_schema_version: String(properties.jev_question_schema_version || ''),
-    vocabulary_version: String(properties.jev_ontology_version || ''),
-    vocabulary_hash: String(properties.jev_ontology_hash || ''),
-  };
-}
-
-export function portableKnowGraphFact(
-  factUuid: string,
-  graphitiRelationshipType: string,
-  properties: Record<string, unknown>,
-  source: { uuid: string; name: string },
-  target: { uuid: string; name: string },
-): Record<string, unknown> {
-  const supportingEpisodeUuids = stringValues(
-    properties.episodes ?? properties.episode_uuids ?? properties.source_episode_uuids,
-  );
-  const jev = persistedKnowGraphJev(properties);
-  return {
-    ...properties,
-    authority: 'know',
-    graphitiStore: 'neo4j',
-    portableKind: 'know',
-    graphitiFactUuid: factUuid,
-    graphitiRelationshipType,
-    graphitiRelation: String(properties.name || graphitiRelationshipType || 'Fact'),
-    fact: String(properties.fact || ''),
-    sourceEntity: source,
-    targetEntity: target,
-    supportingEpisodeUuids,
-    createdAt: properties.created_at ?? null,
-    referenceTime: properties.reference_time ?? null,
-    validAt: properties.valid_at ?? null,
-    invalidAt: properties.invalid_at ?? null,
-    expiredAt: properties.expired_at ?? null,
-    temporalStatus: properties.invalid_at || properties.expired_at ? 'historical' : 'current',
-    ...(jev ? {
-      jevCanonicalRelation: jev.winner,
-      relationship_strength: jev.label_confidence,
-      jev: { graphitiFactUuid: factUuid, ...jev },
-    } : {}),
-  };
-}
-
-async function hydrateExactSupportingEpisodes(
-  session: any,
-  episodeIds: string[],
-  projectScopeIds: string[],
-  upsertNode: (id: unknown, labels: unknown, properties: unknown) => void,
-): Promise<void> {
-  const exactIds = Array.from(new Set(episodeIds.map((id) => String(id || '').trim()).filter(Boolean)));
-  if (!exactIds.length) return;
-  const episodeResult = await session.run(
-    `
-      MATCH (episode:Episodic)
-      WHERE toString(episode.uuid) IN $episodeIds
-        AND toString(episode.group_id) IN $projectScopeIds
-      RETURN toString(episode.uuid) AS node_id,
-        labels(episode) AS node_labels, properties(episode) AS node_props
-    `,
-    { episodeIds: exactIds, projectScopeIds },
-  );
-  episodeResult.records.forEach((record: any) => {
-    upsertNode(record.get('node_id'), record.get('node_labels'), record.get('node_props'));
-  });
-}
-
-function neoNodeLabel(id: string, props: Record<string, unknown>): string {
-  const candidates = [props.name, props.title, props.label, props.id, props.document_id, props.chunk_id];
-  for (const candidate of candidates) {
-    const text = String(candidate ?? '').trim();
-    if (text) return text;
-  }
-  return id;
-}
-
-async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<string[]> {
-  const scopeProjectId = String(projectId || '').trim();
-  if (!scopeProjectId) return [];
-
-  const scopeIds = new Set<string>();
-  const addScopeId = (rawValue: unknown) => {
-    const value = String(rawValue || '').trim();
-    if (!value) return;
-    scopeIds.add(value);
-
-    // Graphiti namespaces project data with the canonical prefix defined by
-    // services/knowgraph/graphiti_identity.py. Keep aliases for legacy data,
-    // but always include the namespace used by the live Graphiti importer.
-    if (/^[A-Za-z0-9_-]+$/.test(value) && !value.startsWith('liquidaity-')) {
-      scopeIds.add(`liquidaity-${value}`);
-    }
-  };
-  addScopeId(scopeProjectId);
-  try {
-    const result = await pool.query(
-      `
-        SELECT
-          id::text AS id,
-          coalesce(name, '') AS name,
-          coalesce(code, '') AS code
-        FROM ag_catalog.projects
-        WHERE id::text = $1
-           OR lower(coalesce(name, '')) = lower($1)
-           OR lower(coalesce(code, '')) = lower($1)
-        LIMIT 1
-      `,
-      [scopeProjectId],
-    );
-    const row = result?.rows?.[0] as { id?: string; name?: string; code?: string } | undefined;
-    if (row) {
-      for (const rawValue of [row.id, row.name, row.code]) {
-        addScopeId(rawValue);
-      }
-    }
-  } catch (error: any) {
-    console.warn('[KNOWGRAPH][SCOPE] project alias resolution failed:', error?.message || error);
-  }
-
-  return Array.from(scopeIds);
-}
-
-// List the distinct Graphiti group scopes present in Neo4j, with a
-// human label + counts, so the UI can open ANY real KnowGraph scope directly — e.g.
-// an imported book under its own canonical scope — without moving or re-keying data.
-async function queryKnowGraphProject(projectId: string, limit: number): Promise<{
-  nodes: KnowGraphNodeDto[];
-  relationships: KnowGraphRelationshipDto[];
-}> {
-  const uri = String(process.env.NEO4J_URI || '').trim();
-  const user = String(process.env.NEO4J_USER || '').trim();
-  const password = String(process.env.NEO4J_PASSWORD || '').trim();
-
-  if (!uri || !user || !password) {
-    throw new Error('NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required');
-  }
-
-  const neo4jModule: any = await import('neo4j-driver');
-  const neo4j: any = neo4jModule?.default ?? neo4jModule;
-  const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
-  const database = String(process.env.NEO4J_DATABASE || '').trim();
-  const session = driver.session(database ? { database } : undefined);
-  const projectScopeIds = await resolveKnowGraphProjectScopeIds(projectId);
-
-  try {
-    const nodeMap = new Map<string, KnowGraphNodeDto>();
-
-    const upsertNode = (idRaw: unknown, labelsRaw: unknown, propsRaw: unknown) => {
-      const rawId = String(idRaw ?? '').trim();
-      if (!rawId) return;
-
-      const labels = Array.isArray(labelsRaw) ? labelsRaw.map((x) => String(x)) : [];
-      const props = boundedKnowGraphProperties(propsRaw);
-
-      if (!nodeMap.has(rawId)) {
-        nodeMap.set(rawId, {
-          id: rawId,
-          label: neoNodeLabel(rawId, props),
-          // Prefer the persisted owlClass property (records written via the
-          // :SemanticRecord MERGE share that label); fall back to the node label
-          // for legacy records whose label already encodes the owlClass.
-          type: String((props as any).owlClass || labels[0] || 'NeoEntity'),
-          source: 'know',
-          properties: props,
-        });
-      }
-    };
-
-    const nodeResult = await session.run(
-      `
-        MATCH (n)
-        WHERE toString(n.group_id) IN $projectScopeIds
-        RETURN DISTINCT coalesce(toString(n.uuid), elementId(n)) AS node_id,
-          labels(n) AS node_labels, properties(n) AS node_props
-        ORDER BY node_id
-        LIMIT toInteger($limit)
-      `,
-      { projectScopeIds, limit },
-    );
-
-    nodeResult.records.forEach((record: any) => {
-      upsertNode(record.get('node_id'), record.get('node_labels'), record.get('node_props'));
-    });
-
-    const nodeIds = Array.from(nodeMap.keys());
-    const relResult = nodeIds.length === 0 ? { records: [] } : await session.run(
-      `
-        MATCH (a)-[r]->(b)
-        WITH a, r, b,
-          coalesce(toString(a.uuid), elementId(a)) AS from_id,
-          coalesce(toString(b.uuid), elementId(b)) AS to_id
-        WHERE from_id IN $nodeIds
-          AND to_id IN $nodeIds
-          AND toString(r.group_id) IN $projectScopeIds
-        RETURN DISTINCT
-          coalesce(toString(r.uuid), elementId(r)) AS rel_id,
-          type(r) AS rel_type,
-          properties(r) AS rel_props,
-          from_id,
-          labels(a) AS from_labels,
-          properties(a) AS from_props,
-          to_id,
-          labels(b) AS to_labels,
-          properties(b) AS to_props
-        ORDER BY rel_id
-        LIMIT toInteger($relationshipLimit)
-      `,
-      { projectScopeIds, nodeIds, relationshipLimit: Math.min(1_000, limit * 4) },
-    );
-
-    const relationships: KnowGraphRelationshipDto[] = [];
-
-    relResult.records.forEach((record: any) => {
-      const relId = String(record.get('rel_id') ?? '').trim();
-      const fromId = String(record.get('from_id') ?? '').trim();
-      const toId = String(record.get('to_id') ?? '').trim();
-      if (!relId || !fromId || !toId) return;
-
-      upsertNode(record.get('from_id'), record.get('from_labels'), record.get('from_props'));
-      upsertNode(record.get('to_id'), record.get('to_labels'), record.get('to_props'));
-
-      const graphitiRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
-      const graphitiProperties = boundedKnowGraphProperties(record.get('rel_props'));
-      const sourceName = neoNodeLabel(fromId, boundedKnowGraphProperties(record.get('from_props')));
-      const targetName = neoNodeLabel(toId, boundedKnowGraphProperties(record.get('to_props')));
-      const properties = portableKnowGraphFact(
-        relId,
-        graphitiRelationshipType,
-        graphitiProperties,
-        { uuid: fromId, name: sourceName },
-        { uuid: toId, name: targetName },
-      );
-      relationships.push({
-        id: relId,
-        from: fromId,
-        to: toId,
-        type: String(properties.jevCanonicalRelation || properties.graphitiRelation || graphitiRelationshipType),
-        source: 'know',
-        properties,
-      });
-    });
-
-    await hydrateExactSupportingEpisodes(
-      session,
-      relationships.flatMap((relationship) => stringValues(
-        relationship.properties.supportingEpisodeUuids,
-      )),
-      projectScopeIds,
-      upsertNode,
-    );
-
-    return {
-      nodes: Array.from(nodeMap.values()),
-      relationships,
-    };
-  } finally {
-    await session.close();
-    await driver.close();
-  }
-}
-
-async function queryKnowGraphExpand(
-  projectId: string,
-  nodeId: string,
-  limit: number,
-): Promise<{
-  nodes: KnowGraphNodeDto[];
-  relationships: KnowGraphRelationshipDto[];
-}> {
-  const rawNodeId = String(nodeId || '').trim();
-  if (!rawNodeId) {
-    throw new Error('nodeId is required');
-  }
-
-  const uri = String(process.env.NEO4J_URI || '').trim();
-  const user = String(process.env.NEO4J_USER || '').trim();
-  const password = String(process.env.NEO4J_PASSWORD || '').trim();
-  if (!uri || !user || !password) {
-    throw new Error('NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required');
-  }
-
-  const neo4jModule: any = await import('neo4j-driver');
-  const neo4j: any = neo4jModule?.default ?? neo4jModule;
-  const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
-  const database = String(process.env.NEO4J_DATABASE || '').trim();
-  const session = driver.session(database ? { database } : undefined);
-  const projectScopeIds = await resolveKnowGraphProjectScopeIds(projectId);
-
-  try {
-    const nodeMap = new Map<string, KnowGraphNodeDto>();
-    const upsertNode = (idRaw: unknown, labelsRaw: unknown, propsRaw: unknown) => {
-      const rawId = String(idRaw ?? '').trim();
-      if (!rawId) return;
-      const labels = Array.isArray(labelsRaw) ? labelsRaw.map((x) => String(x)) : [];
-      const props = boundedKnowGraphProperties(propsRaw);
-      if (!nodeMap.has(rawId)) {
-        nodeMap.set(rawId, {
-          id: rawId,
-          label: neoNodeLabel(rawId, props),
-          // Prefer the persisted owlClass property (records written via the
-          // :SemanticRecord MERGE share that label); fall back to the node label
-          // for legacy records whose label already encodes the owlClass.
-          type: String((props as any).owlClass || labels[0] || 'NeoEntity'),
-          source: 'know',
-          properties: props,
-        });
-      }
-    };
-
-    const centerResult = await session.run(
-      `
-        MATCH (n)
-        WHERE (elementId(n) = $nodeId OR toString(n.uuid) = $nodeId)
-          AND toString(n.group_id) IN $projectScopeIds
-        RETURN coalesce(toString(n.uuid), elementId(n)) AS node_id,
-          labels(n) AS node_labels, properties(n) AS node_props
-        LIMIT 1
-      `,
-      { nodeId: rawNodeId, projectScopeIds },
-    );
-
-    if (centerResult.records.length === 0) {
-      return { nodes: [], relationships: [] };
-    }
-
-    centerResult.records.forEach((record: any) => {
-      upsertNode(record.get('node_id'), record.get('node_labels'), record.get('node_props'));
-    });
-
-    const relResult = await session.run(
-      `
-        MATCH (center)
-        WHERE (elementId(center) = $nodeId OR toString(center.uuid) = $nodeId)
-          AND toString(center.group_id) IN $projectScopeIds
-        MATCH (a)-[r]-(b)
-        WHERE (a = center OR b = center)
-          AND toString(a.group_id) IN $projectScopeIds
-          AND toString(b.group_id) IN $projectScopeIds
-          AND toString(r.group_id) IN $projectScopeIds
-        RETURN DISTINCT
-          coalesce(toString(r.uuid), elementId(r)) AS rel_id,
-          type(r) AS rel_type,
-          properties(r) AS rel_props,
-          coalesce(toString(startNode(r).uuid), elementId(startNode(r))) AS from_id,
-          labels(startNode(r)) AS from_labels,
-          properties(startNode(r)) AS from_props,
-          coalesce(toString(endNode(r).uuid), elementId(endNode(r))) AS to_id,
-          labels(endNode(r)) AS to_labels,
-          properties(endNode(r)) AS to_props
-        LIMIT toInteger($limit)
-      `,
-      { nodeId: rawNodeId, projectScopeIds, limit },
-    );
-
-    const relationships: KnowGraphRelationshipDto[] = [];
-    relResult.records.forEach((record: any) => {
-      const relId = String(record.get('rel_id') ?? '').trim();
-      const fromId = String(record.get('from_id') ?? '').trim();
-      const toId = String(record.get('to_id') ?? '').trim();
-      if (!relId || !fromId || !toId) return;
-
-      upsertNode(record.get('from_id'), record.get('from_labels'), record.get('from_props'));
-      upsertNode(record.get('to_id'), record.get('to_labels'), record.get('to_props'));
-
-      const graphitiRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
-      const graphitiProperties = boundedKnowGraphProperties(record.get('rel_props'));
-      const sourceName = neoNodeLabel(fromId, boundedKnowGraphProperties(record.get('from_props')));
-      const targetName = neoNodeLabel(toId, boundedKnowGraphProperties(record.get('to_props')));
-      const properties = portableKnowGraphFact(
-        relId,
-        graphitiRelationshipType,
-        graphitiProperties,
-        { uuid: fromId, name: sourceName },
-        { uuid: toId, name: targetName },
-      );
-      relationships.push({
-        id: relId,
-        from: fromId,
-        to: toId,
-        type: String(properties.jevCanonicalRelation || properties.graphitiRelation || graphitiRelationshipType),
-        source: 'know',
-        properties,
-      });
-    });
-
-    await hydrateExactSupportingEpisodes(
-      session,
-      relationships.flatMap((relationship) => stringValues(
-        relationship.properties.supportingEpisodeUuids,
-      )),
-      projectScopeIds,
-      upsertNode,
-    );
-
-    return {
-      nodes: Array.from(nodeMap.values()),
-      relationships,
-    };
-  } finally {
-    await session.close();
-    await driver.close();
-  }
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
 router.get('/graph', async (req, res) => {
   try {
     const requestedProjectId =
-      (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
-      (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) ||
-      '';
+      (typeof req.query?.projectId === 'string' && req.query.projectId.trim())
+      || (typeof req.query?.project_id === 'string' && req.query.project_id.trim())
+      || '';
 
     if (!requestedProjectId) {
       return res.status(400).json({
@@ -557,26 +51,23 @@ router.get('/graph', async (req, res) => {
     }
 
     const limit = clampInt(req.query?.limit, 1, 500, 200);
-    const graph = await queryKnowGraphProject(projectId, limit);
-    return res.json(graph);
+    return res.json(await fetchKnowGraphProjection(projectId, limit));
   } catch (error: any) {
     const message = error?.message || 'Failed to fetch KnowGraph graph';
     return res.status(500).json({ ok: false, error: { message } });
   }
 });
 
-// List available KnowGraph scopes so the UI can open any real scope directly
-// (the book graph keeps its canonical scope; nothing is moved or re-keyed).
 router.get('/expand', async (req, res) => {
   try {
     const requestedProjectId =
-      (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
-      (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) ||
-      '';
+      (typeof req.query?.projectId === 'string' && req.query.projectId.trim())
+      || (typeof req.query?.project_id === 'string' && req.query.project_id.trim())
+      || '';
     const nodeId =
-      (typeof req.query?.nodeId === 'string' && req.query.nodeId.trim()) ||
-      (typeof req.query?.node_id === 'string' && req.query.node_id.trim()) ||
-      '';
+      (typeof req.query?.nodeId === 'string' && req.query.nodeId.trim())
+      || (typeof req.query?.node_id === 'string' && req.query.node_id.trim())
+      || '';
 
     if (!requestedProjectId || !nodeId) {
       return res.status(400).json({
@@ -596,12 +87,9 @@ router.get('/expand', async (req, res) => {
     }
 
     const limit = clampInt(req.query?.limit, 1, 200, 50);
-    // Current endpoint supports 1-hop expansion for interactive use. Depth is accepted but clamped.
-    const _depth = clampInt(req.query?.depth, 1, 1, 1);
-    void _depth;
-
-    const graph = await queryKnowGraphExpand(projectId, nodeId, limit);
-    return res.json(graph);
+    // The established endpoint is always a one-hop interactive expansion;
+    // the Python owner does not accept a competing traversal-depth control.
+    return res.json(await fetchKnowGraphNeighborhood(projectId, nodeId, limit));
   } catch (error: any) {
     const message = error?.message || 'Failed to expand KnowGraph graph';
     return res.status(500).json({ ok: false, error: { message } });

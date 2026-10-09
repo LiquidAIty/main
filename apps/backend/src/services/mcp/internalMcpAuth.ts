@@ -4,20 +4,10 @@ const INTERNAL_MCP_ISSUER = 'liquidaity-runtime';
 const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
 const TOKEN_LIFETIME_SECONDS = 12 * 60 * 60;
-const MATERIALIZER_TOKEN_LIFETIME_SECONDS = 60;
 
 export type InternalMcpPrincipal =
   | {
       kind: 'catalog-reader';
-    }
-  | {
-      kind: 'materializer-read';
-      projectId: string;
-      deckId: string;
-      callerCardId: string;
-      conversationId?: string;
-      grantedTools: string[];
-      grantedConnections?: string[];
     }
   | {
       kind: 'card-runtime';
@@ -29,10 +19,7 @@ export type InternalMcpPrincipal =
       callerRuntimeKind: 'hermes';
       callerRuntimeMode: 'main' | 'delegate' | 'magentic_one';
       grantedTools: string[];
-      presentedTools?: string[];
-      // Signed Hermes attribution only; these do not grant permissions.
-      hermesChildId?: string;
-      hermesRunId?: string;
+      presentedTools: string[];
     };
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
@@ -45,11 +32,18 @@ function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
-function uniqueStrings(values: string[]): string[] {
-  return values
-    .map((value) => String(value || '').trim())
-    .filter((value, index, all) => Boolean(value) && all.indexOf(value) === index)
-    .sort((left, right) => left.localeCompare(right));
+function normalizedUniqueToolNames(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`internal_mcp_${field}_invalid`);
+  const normalized = value.map((item) => (
+    typeof item === 'string' ? item.trim() : ''
+  ));
+  if (
+    normalized.some((item) => !item)
+    || new Set(normalized).size !== normalized.length
+  ) {
+    throw new Error(`internal_mcp_${field}_invalid`);
+  }
+  return normalized.sort((left, right) => left.localeCompare(right));
 }
 
 export function resolveInternalMcpUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -68,23 +62,11 @@ export function createInternalMcpBearer(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const secret = requiredSecret(env);
-  if (!['catalog-reader', 'materializer-read', 'card-runtime'].includes(principal.kind)) {
+  if (!['catalog-reader', 'card-runtime'].includes(principal.kind)) {
     throw new Error('internal_mcp_principal_kind_invalid');
   }
   const normalized = principal.kind === 'catalog-reader'
     ? principal
-    : principal.kind === 'materializer-read'
-      ? {
-          ...principal,
-          projectId: String(principal.projectId || '').trim(),
-          deckId: String(principal.deckId || '').trim(),
-          callerCardId: String(principal.callerCardId || '').trim(),
-          ...(String(principal.conversationId || '').trim()
-            ? { conversationId: String(principal.conversationId || '').trim() }
-            : {}),
-          grantedTools: uniqueStrings(principal.grantedTools),
-          grantedConnections: uniqueStrings(principal.grantedConnections ?? []),
-        }
     : {
         ...principal,
         projectId: String(principal.projectId || '').trim(),
@@ -94,19 +76,10 @@ export function createInternalMcpBearer(
         callerCardId: String(principal.callerCardId || '').trim(),
         callerRuntimeKind: String(principal.callerRuntimeKind || '').trim() as typeof principal.callerRuntimeKind,
         callerRuntimeMode: String(principal.callerRuntimeMode || '').trim() as typeof principal.callerRuntimeMode,
-        grantedTools: uniqueStrings(principal.grantedTools),
-        presentedTools: uniqueStrings(principal.presentedTools ?? principal.grantedTools),
+        grantedTools: normalizedUniqueToolNames(principal.grantedTools, 'granted_tools'),
+        presentedTools: normalizedUniqueToolNames(principal.presentedTools, 'presented_tools'),
       };
-  if (normalized.kind === 'materializer-read') {
-    const required = [
-      normalized.projectId,
-      normalized.deckId,
-      normalized.callerCardId,
-    ];
-    if (required.some((value) => !value)) {
-      throw new Error('internal_mcp_principal_incomplete');
-    }
-  } else if (normalized.kind === 'card-runtime') {
+  if (normalized.kind === 'card-runtime') {
     const required = [
       normalized.projectId,
       normalized.deckId,
@@ -129,13 +102,9 @@ export function createInternalMcpBearer(
     aud: INTERNAL_MCP_AUDIENCE,
     sub: normalized.kind === 'catalog-reader'
       ? 'catalog-reader'
-      : `${normalized.kind}:${normalized.callerCardId}`,
+      : `card-runtime:${normalized.callerCardId}`,
     iat: nowSeconds,
-    exp: nowSeconds + (
-      normalized.kind === 'materializer-read'
-        ? MATERIALIZER_TOKEN_LIFETIME_SECONDS
-        : TOKEN_LIFETIME_SECONDS
-    ),
+    exp: nowSeconds + TOKEN_LIFETIME_SECONDS,
     scope: 'liquidaity.main',
     principal: normalized,
   });

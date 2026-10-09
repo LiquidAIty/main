@@ -39,6 +39,8 @@ export type CardSubsystemAttachment = {
 };
 
 export type SavedCardConfiguration = {
+  autoTools?: boolean;
+  autoModel?: boolean;
   /** Saved outbound orange Card-to-Card delegation authority. Main has this
    * authority by its runtime role; another non-Magnetic Card must opt in. */
   orchestrator?: boolean;
@@ -46,11 +48,10 @@ export type SavedCardConfiguration = {
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
-   * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
+   * Python/Hermes capability. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;
   subsystems?: CardSubsystemAttachment[] | null;
   script?: {
-    enabled: boolean;
     source: string;
     version: number;
     author?: Record<string, string>;
@@ -74,26 +75,12 @@ export type SavedCardConfiguration = {
       compiledHash?: string;
     };
     lastValidation?: Record<string, unknown>;
-    hermesSupport?: Record<string, unknown>;
-    rollback?: Record<string, unknown>;
   } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   providerModelId?: string | null;
-  /** Let one Run-scoped Jev Choice select among eligible configured models.
-   * The saved model remains the durable default and is never overwritten. */
-  autoSelect?: boolean;
-  /** Let one Run-scoped Jev request narrow this Card's own authorized tools.
-   * It never grants tools or changes the saved selection. */
-  autoTools?: boolean;
-  /** Optional extra evidence for Card-scoped Jev decisions. Required request
-   * and saved-Card inputs remain present for every mode. */
-  jevContext?: {
-    autoTools?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_graph_context';
-    modelChoice?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_graph_context';
-  } | null;
   openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded Hermes delegated children and
    * background skill review. Hermes profile/readback remains effective truth. */
@@ -103,10 +90,6 @@ export type SavedCardConfiguration = {
     modelKey: string;
     providerModelId: string;
   } | null;
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
-  temperature?: number | null;
-  maxTokens?: number | null;
-  maxTurns?: number | null;
   tools?: string[] | null;
   /** Saved skill identities. Runtime homes materialize/cache them separately. */
   skills?: string[] | null;
@@ -124,8 +107,6 @@ export type CardTemplate = {
   promptTemplate?: string | null;
   model?: string | null;
   provider?: string | null;
-  temperature?: number | null;
-  maxTokens?: number | null;
   tools: string[];
 };
 
@@ -140,7 +121,7 @@ export type DeckCard = {
   /** Stable LiquidAIty Card-to-Card capability description. */
   role?: string | null;
   prompt?: string | null;
-  /** LiquidAIty-owned result validation/presentation contract. */
+  /** Application-owned result validation and presentation contract. */
   outputContract?: unknown;
   runtime: CardRuntime;
   runtimeOptions?: SavedCardConfiguration | null;
@@ -150,6 +131,7 @@ export type DeckCard = {
   subtitle?: string;
   position: { x: number; y: number };
   overrides?: Partial<CardTemplate>;
+  /** Legacy persisted display value. Run state comes from the Run ledger; new Cards omit this field. */
   status?: 'idle' | 'ready' | 'running' | 'error';
 };
 

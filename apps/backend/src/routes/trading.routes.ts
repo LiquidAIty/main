@@ -164,35 +164,6 @@ export function createTradingRouter(deps: Dependencies = {
     }
   });
 
-  router.post('/lifecycle/backtest', async (req, res) => {
-    try {
-      const body = {
-        projectId: requiredText(req.body?.projectId, 'project_id_required'),
-        deckId: requiredText(req.body?.deckId, 'deck_id_required'),
-        cardId: requiredText(req.body?.cardId, 'card_id_required'),
-        idempotencyKey: requiredText(
-          req.body?.idempotencyKey,
-          'trading_lifecycle_idempotency_key_required',
-        ),
-        actor: `authenticated-user:${requiredText(
-          (req as any).userId,
-          'authenticated_user_required',
-        )}`,
-      };
-      if (!await requireOwnedProject(req, res, body.projectId)) return undefined;
-      return res.json(await deps.requestRails('/trading/lifecycle/backtest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      }, { timeoutMs: 120_000 }));
-    } catch (error) {
-      return res.status(inputStatus(error)).json({
-        ok: false,
-        error: error instanceof Error ? error.message : 'trading_lifecycle_failed',
-      });
-    }
-  });
-
   return router;
 }
 

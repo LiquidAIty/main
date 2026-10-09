@@ -606,8 +606,8 @@ def _print_billing_or_entitlement_guidance(
     ))
 
 
-def _bot_chat_prompt_stale(agent, stored_prompt: str) -> bool:
-    """Bot Chat capability epoch check for a stored prompt.
+def _profile_capability_prompt_stale(agent, stored_prompt: str) -> bool:
+    """Capability epoch check for a stored profile-following prompt.
 
     The stored prompt embeds a capability fingerprint; a mismatch is a deliberate
     once-per-change rebuild. Unstamped prompts never match; probe failures fail closed
@@ -618,6 +618,7 @@ def _bot_chat_prompt_stale(agent, stored_prompt: str) -> bool:
         from tools.bot_mode_probe import (
             BOT_CHAT_TITLE,
             stored_bot_chat_prompt_needs_upgrade,
+            stored_profile_prompt_needs_upgrade,
             stored_prompt_capability_stale,
         )
         home = None
@@ -626,8 +627,15 @@ def _bot_chat_prompt_stale(agent, stored_prompt: str) -> bool:
             home = _agent_home(agent)
         except Exception:
             pass
-        if stored_prompt_capability_stale(stored_prompt, home):
+        roster = getattr(agent, "_bot_mode_roster", None)
+        if stored_prompt_capability_stale(
+            stored_prompt,
+            home,
+            roster_override=roster,
+        ):
             return True
+        if getattr(agent, "_follow_profile_config", False) is True:
+            return stored_profile_prompt_needs_upgrade(stored_prompt)
         if not getattr(agent, "_bot_mode_protocol", True):
             return False
         title = str(getattr(agent, "_session_title_hint", "") or "").strip()
@@ -648,10 +656,10 @@ def _persist_system_prompt(agent, failure_message: str, *, persist_tools: bool =
     if not agent._session_db:
         return
     try:
-        agent._session_db.update_system_prompt(agent.session_id, agent._cached_system_prompt)
         if persist_tools:
             from tools.mcp_tool_agent import persist_agent_tool_names
             persist_agent_tool_names(agent)
+        agent._session_db.update_system_prompt(agent.session_id, agent._cached_system_prompt)
     except Exception as exc:
         logger.warning(failure_message, agent.session_id, exc)
 
@@ -702,13 +710,12 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
             )
 
     if stored_prompt and _stored_prompt_matches_runtime(agent, stored_prompt):
-        if _bot_chat_prompt_stale(agent, stored_prompt):
+        if _profile_capability_prompt_stale(agent, stored_prompt):
             logger.info(
-                "Bot Chat capability epoch changed for session %s; rebuilding system prompt to "
+                "Profile capability epoch changed for session %s; rebuilding system prompt to "
                 "adopt the new capability surface (one-time prefix-cache break).",
                 agent.session_id,
             )
-            agent._session_title_hint = "Bot Chat"
             # The skills index cache (LRU + disk snapshot) does not watch the skills
             # dir; a capability refresh must rebuild THROUGH it or new skills are lost.
             try:
@@ -722,8 +729,9 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
             # once per capability change). on_session_start not re-fired: continuation.
             _persist_system_prompt(
                 agent,
-                "Session DB update_system_prompt failed after Bot Chat capability refresh "
+                "Session DB update_system_prompt failed after profile capability refresh "
                 "(session=%s): %s. The refresh will re-fire next turn.",
+                persist_tools=True,
             )
             return
         # Continuing session — reuse the exact system prompt from the

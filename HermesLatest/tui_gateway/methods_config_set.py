@@ -421,45 +421,6 @@ def _set_cwd(rid, params, key, value, session):
     return _kv(rid, "terminal.cwd", cwd, cwd=cwd, branch=git_probe.branch(cwd))
 
 
-_TERMINAL_BACKENDS = {
-    "local", "docker", "singularity", "modal", "daytona", "vercel_sandbox", "ssh",
-}
-
-
-def _set_terminal_backend(rid, params, key, value, session):
-    backend = _word(value)
-    if backend not in _TERMINAL_BACKENDS:
-        return _err(rid, 4002, f"unknown terminal backend: {value}")
-    _write_config_key("terminal.backend", backend)
-    return _kv(rid, key, backend)
-
-
-def _set_terminal_boolean(rid, params, key, value, session):
-    raw = _raw_word(value)
-    resolved = {
-        "true": True, "1": True, "yes": True, "on": True,
-        "false": False, "0": False, "no": False, "off": False,
-    }.get(raw)
-    if resolved is None:
-        return _err(rid, 4002, f"{key} takes true or false")
-    _write_config_key(key, resolved)
-    return _kv(rid, key, resolved)
-
-
-def _clear_terminal_string_list(rid, params, key, value, session):
-    if value != []:
-        return _err(rid, 4002, f"{key} may only be cleared through this RPC")
-    _write_config_key(key, [])
-    return _kv(rid, key, [])
-
-
-def _clear_terminal_mapping(rid, params, key, value, session):
-    if value != {}:
-        return _err(rid, 4002, f"{key} may only be cleared through this RPC")
-    _write_config_key(key, {})
-    return _kv(rid, key, {})
-
-
 @_cfgset_guarded
 def _set_prompt(rid, params, key, value, session):
     cfg = _load_cfg_raw()  # write-back round-trip
@@ -508,13 +469,6 @@ _CONFIG_SETTERS = {
     "density": _set_toggle, "battery": _set_toggle, "theme": _set_word,
     "statusbar": _set_toggle, "mouse": _set_toggle, "indicator": _set_word, "voice.voice_chat_mode": _set_word,
     "cwd": _set_cwd, "terminal.cwd": _set_cwd, "workdir": _set_cwd,
-    "terminal.backend": _set_terminal_backend,
-    "terminal.docker_mount_cwd_to_workspace": _set_terminal_boolean,
-    "terminal.container_persistent": _set_terminal_boolean,
-    "terminal.docker_volumes": _clear_terminal_string_list,
-    "terminal.docker_extra_args": _clear_terminal_string_list,
-    "terminal.docker_forward_env": _clear_terminal_string_list,
-    "terminal.docker_env": _clear_terminal_mapping,
     "prompt": _set_prompt, "personality": _set_personality, "skin": _set_skin}
 
 # Keys whose sessionless branch writes a different, wider scope than the session branch (config.yaml's

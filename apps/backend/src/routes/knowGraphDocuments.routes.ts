@@ -275,11 +275,4 @@ router.post('/delete-fact', async (req, res) => {
   }
 });
 
-// Real-source web/document ingestion passthrough to the KnowGraph API's
-// existing Neo/Python pipeline (/ingest_web_results): document loading,
-// chunking, extraction prompts, entity/relationship extraction, provenance,
-// Neo4j writes all stay in the pipeline. Source-vs-interpretation provenance is
-// carried by each document's own typed source field and enforced through the
-// ingest prompt/tool contract — this proxy forwards inputs, it does NOT classify
-// content or gate on text length.
 export default router;

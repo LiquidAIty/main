@@ -13,6 +13,7 @@ from app.python_models.worldsignals_client import (
     collect_worldsignals_signal_package,
     _guard_command,
     worldsignals_capabilities,
+    worldsignals_command,
 )
 
 
@@ -286,7 +287,7 @@ def test_manifest_filters_and_exact_command_schema_are_bounded(monkeypatch) -> N
     assert keyword["tools"]["truncated"] is False
 
 
-def test_worldsignals_registry_uses_provider_callable_without_assignment_side_effects() -> None:
-    resolved = tr.DEFAULT_TOOL_REGISTRY.resolve_selected(["worldsignals.command"])
-    assert len(resolved) == 1
-    assert resolved[0].name == "worldsignals.command"
+def test_worldsignals_definition_uses_provider_callable_without_assignment_side_effects() -> None:
+    definition = tr.operation_definition("worldsignals.command")
+    assert definition is not None
+    assert definition.handler is worldsignals_command

@@ -1037,6 +1037,15 @@ def _attach_built_agent(current: dict, agent) -> None:
         agent._session_title_hint = _title_hint
     if isinstance(current.get("bot_mode_roster"), list):
         agent._bot_mode_roster = list(current["bot_mode_roster"])
+    follows_profile = current.get("follow_profile_config") is True
+    agent._follow_profile_config = follows_profile
+    if follows_profile:
+        fingerprint = str(
+            getattr(agent, "_profile_capability_fingerprint", "") or ""
+        )
+        if fingerprint == "unavailable" or not fingerprint:
+            raise RuntimeError("profile_capability_fingerprint_unavailable")
+        current["profile_capabilities_seen"] = fingerprint
     current["agent"] = agent
     # A workspace move can land while construction is still in flight.
     _register_session_cwd(current)
@@ -1127,7 +1136,24 @@ def _start_agent_build(sid: str, session: dict) -> None:
             except Exception:
                 logger.warning("MCP discovery startup failed", exc_info=True)
             try:
+                follows_profile = current.get("follow_profile_config") is True
+                profile_fingerprint_before = (
+                    _session_profile_capability_fingerprint(current)
+                    if follows_profile
+                    else None
+                )
                 agent = _make_agent(sid, key, **_deferred_build_agent_kwargs(current, session_db))
+                if follows_profile:
+                    profile_fingerprint_after = _session_profile_capability_fingerprint(current)
+                    if (
+                        profile_fingerprint_before == "unavailable"
+                        or profile_fingerprint_after == "unavailable"
+                        or profile_fingerprint_before != profile_fingerprint_after
+                    ):
+                        with contextlib.suppress(Exception):
+                            agent.close()
+                        raise RuntimeError("profile_changed_during_agent_build")
+                    agent._profile_capability_fingerprint = profile_fingerprint_after
             finally:
                 _clear_session_context(tokens)
             _attach_built_agent(current, agent)
@@ -2017,6 +2043,24 @@ def _get_usage(agent) -> dict:
         "completion": g("session_completion_tokens"), "total": g("session_total_tokens"),
         "calls": g("session_api_calls"),
     }
+    # These are the same cumulative session counters as the core token fields above.  Optional
+    # producers stay optional: a missing/None/invalid counter is unknown, while a present zero is
+    # measured zero.  ``cost_status`` distinguishes an estimated/included zero from unknown cost.
+    for _key, _attr, _cast in (
+            ("cache_read", "session_cache_read_tokens", int),
+            ("cache_write", "session_cache_write_tokens", int),
+            ("cost_usd", "session_estimated_cost_usd", float)):
+        with contextlib.suppress(Exception):
+            _raw_value = getattr(agent, _attr, None)
+            if _raw_value is None:
+                continue
+            _value = _cast(_raw_value)
+            if _value >= 0 and (_cast is int or _value < float("inf")):
+                usage[_key] = _value
+    with contextlib.suppress(Exception):
+        _cost_status = getattr(agent, "session_cost_status", None)
+        if _cost_status is not None and str(_cost_status).strip():
+            usage["cost_status"] = str(_cost_status)
     comp = getattr(agent, "context_compressor", None)
     if comp:
         from agent.context_breakdown import context_usage_fields

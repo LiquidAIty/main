@@ -7,7 +7,7 @@ distribution without rewriting the provider's raw values.
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping
 
 
 DECISIONS_DECIMAL_PLACES = 2
@@ -71,67 +71,3 @@ def validate_rounded_choice_winner(
         if key != winner
     ):
         raise ValueError("winner probability")
-
-
-def _weighted_extreme(
-    probabilities: Mapping[str, float],
-    positions: Mapping[str, float],
-    *,
-    maximize: bool,
-) -> float:
-    bounded = {
-        key: probability_rounding_bounds(probabilities[key])
-        for key in probabilities
-    }
-    allocated = {key: bounds[0] for key, bounds in bounded.items()}
-    remaining = max(0.0, 1.0 - sum(allocated.values()))
-    ordered = sorted(
-        allocated,
-        key=lambda key: positions[key],
-        reverse=maximize,
-    )
-    for key in ordered:
-        capacity = bounded[key][1] - allocated[key]
-        addition = min(capacity, remaining)
-        allocated[key] += addition
-        remaining -= addition
-        if remaining <= _NUMERIC_EPSILON:
-            break
-    if remaining > _NUMERIC_EPSILON:
-        raise ValueError("probability total")
-    return sum(positions[key] * allocated[key] for key in allocated)
-
-
-def validate_rounded_weighted_score(
-    score: Any,
-    probabilities: Mapping[str, float],
-    ordered_keys: Sequence[str],
-) -> float:
-    """Validate a rounded Score against every feasible underlying distribution."""
-
-    if isinstance(score, bool):
-        raise ValueError("score")
-    try:
-        numeric = float(score)
-    except (TypeError, ValueError, OverflowError) as error:
-        raise ValueError("score") from error
-    maximum = float(len(ordered_keys) - 1)
-    if not math.isfinite(numeric) or not 0.0 <= numeric <= maximum:
-        raise ValueError("score")
-    positions = {key: float(index) for index, key in enumerate(ordered_keys)}
-    if set(probabilities) != set(positions):
-        raise ValueError("score")
-    minimum_score = _weighted_extreme(
-        probabilities, positions, maximize=False,
-    )
-    maximum_score = _weighted_extreme(
-        probabilities, positions, maximize=True,
-    )
-    returned_lower = max(0.0, numeric - _ROUNDING_HALF_STEP)
-    returned_upper = min(maximum, numeric + _ROUNDING_HALF_STEP)
-    if (
-        returned_upper < minimum_score - _NUMERIC_EPSILON
-        or returned_lower > maximum_score + _NUMERIC_EPSILON
-    ):
-        raise ValueError("score")
-    return numeric

@@ -38,6 +38,7 @@ from agent.inline_tool_executors import (
     emit_terminal_post_tool_call,
     tool_hook_ids,
 )
+from agent.dynamic_tools import inline_dynamic_tool_executor
 from agent.tool_dispatch_helpers import (
     _NEVER_PARALLEL_TOOLS,
     _is_destructive_command,
@@ -1615,9 +1616,12 @@ def _resolve_sequential_dispatch(agent, ref: _ToolCallRef, messages: list) -> _S
     function_name, function_args, effective_task_id, tool_call_id, middleware_trace = (
         ref.name, ref.args, ref.task_id, ref.call_id, ref.trace,
     )
-    if function_name != "delegate_task" and function_name in INLINE_TOOL_EXECUTORS:
+    dynamic_executor = inline_dynamic_tool_executor(agent, function_name)
+    if function_name != "delegate_task" and (
+        function_name in INLINE_TOOL_EXECUTORS or dynamic_executor is not None
+    ):
         # Agent-level tools that need live AIAgent state; table shared with invoke_tool.
-        inline_executor = INLINE_TOOL_EXECUTORS[function_name]
+        inline_executor = dynamic_executor or INLINE_TOOL_EXECUTORS[function_name]
         inline_ctx = InlineToolContext(effective_task_id=effective_task_id, tool_call_id=tool_call_id, messages=messages)
         return _SequentialDispatch(lambda next_args: inline_executor(agent, next_args, inline_ctx), finish_in_finally=False)
     if function_name == "delegate_task":

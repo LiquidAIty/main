@@ -6,6 +6,13 @@ export type CardEditorModelOption = {
   providerModelId: string;
 };
 
+export type CardEditorAutoModelCandidate = {
+  provider: string;
+  accessMode: string;
+  modelKey: string;
+  eligible: boolean;
+};
+
 export type InputDictionaryEditorOption = {
   value: string;
   label: string;
@@ -67,10 +74,6 @@ export type CardEditorConfiguration = {
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | '' | null;
   access_mode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '' | null;
   model_key?: string | null;
-  reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
-  temperature?: number | null;
-  max_tokens?: number | null;
-  max_turns?: number | null;
   prompt_template?: string | null;
   tools?: unknown[];
   skills?: unknown[];
@@ -194,6 +197,7 @@ export function parseCardListEditorText(value: string): string[] {
 export function parseCardEditorOptions(payload: unknown): {
   fields: InputDictionaryEditorField[];
   modelsByProvider: Record<string, CardEditorModelOption[]>;
+  autoModelCandidates: CardEditorAutoModelCandidate[];
 } {
   if (!payload || typeof payload !== 'object') throw new Error('runtime_options_invalid');
   const document = payload as Record<string, unknown>;
@@ -222,7 +226,22 @@ export function parseCardEditorOptions(payload: unknown): {
     if (!provider || !key || !label || !providerModelId) continue;
     (modelsByProvider[provider] ||= []).push({ key, label, providerModelId });
   }
-  return { fields, modelsByProvider };
+  const autoModelCandidates = Array.isArray(document.autoModelCandidates)
+    ? document.autoModelCandidates
+      .filter((value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+      .map((value) => value as Record<string, unknown>)
+      .filter((value) => (
+        typeof value.provider === 'string'
+        && typeof value.accessMode === 'string'
+        && typeof value.modelKey === 'string'
+        && typeof value.eligible === 'boolean'
+      ))
+      .map((value) => ({
+        provider: String(value.provider), accessMode: String(value.accessMode),
+        modelKey: String(value.modelKey), eligible: value.eligible === true,
+      }))
+    : [];
+  return { fields, modelsByProvider, autoModelCandidates };
 }
 
 export function buildInputDictionarySelectedRows(
@@ -313,10 +332,6 @@ export function buildCardConfigurationFromEditorFields(input: {
   provider: NonNullable<CardEditorConfiguration['provider']>;
   accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '';
   modelKey: string;
-  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
-  temperature: number | '';
-  maxTokens: number | '';
-  maxTurns: number | '';
   promptTemplate: string;
   toolsText: string;
   skillsText: string;
@@ -328,10 +343,6 @@ export function buildCardConfigurationFromEditorFields(input: {
     provider: input.provider,
     access_mode: input.accessMode,
     model_key: input.modelKey || null,
-    reasoning_effort: input.reasoningEffort || null,
-    temperature: typeof input.temperature === 'number' ? input.temperature : null,
-    max_tokens: typeof input.maxTokens === 'number' ? input.maxTokens : null,
-    max_turns: typeof input.maxTurns === 'number' ? input.maxTurns : null,
     prompt_template: input.promptTemplate,
     tools: parseCardListEditorText(input.toolsText),
     skills: parseCardListEditorText(input.skillsText),

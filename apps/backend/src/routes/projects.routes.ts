@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db/pool';
-import { getDeckDocument, saveDeckDocument } from '../decks/store';
+import { getDeckDocument, saveDeckDocument } from '../decks/deckDomainClient';
 import { DEFAULT_PROJECT_EDGES } from '../decks/defaultProjectDeck';
 import {
   createProject,

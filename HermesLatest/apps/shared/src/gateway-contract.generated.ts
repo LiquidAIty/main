@@ -1812,11 +1812,12 @@ export interface ProfileMirrored {
   model_inherited?: boolean
   voice?: boolean
 }
-export interface ProfileNameParams {
+export interface ProfilesDescribeParams {
   profile?: string | null
   name?: string | null
+  bot_mode_roster?: string[] | null
 }
-/** Editor snapshot; ``toolsets_pinned`` says whether ``tools.enabled_toolsets`` is explicit. */
+/** Editor snapshot; ``toolsets_pinned`` says whether ``platform_toolsets.cli`` is explicit. */
 export interface ProfilesDescribeResult {
   name: string
   description?: string
@@ -1828,6 +1829,7 @@ export interface ProfilesDescribeResult {
   mcp_servers?: McpServerEntry[]
   delegation: ProfileDelegationSettings
   task_mode?: 'team' | null
+  capability_fingerprint: string
 }
 export interface ProfileModelPin {
   provider?: string
@@ -2456,8 +2458,11 @@ export interface PromptSubmitParams {
   queued?: boolean | null
   submission_id?: string | null
   dynamic_tools?: DynamicToolDefinition[] | null
+  card_script?: CardScriptDefinition | null
   tool_endpoint?: string | null
   tool_authorization?: string | null
+  bot_mode_roster?: string[] | null
+  expected_profile_capability_fingerprint?: string | null
   surface?: string | null
   voice_context?: string | null
   title_preview?: string | null
@@ -2475,6 +2480,21 @@ export interface DynamicToolDefinition {
   canonical_name: string
   description: string
   input_schema: unknown
+}
+/** One validated saved Card Python recipe for this exact turn. ``enabled`` is deliberately absent: nonblank, valid saved source is the activation condition. Tool aliases are the already-authorized per-turn Dynamic Tool names, never a registry or discovery surface. */
+export interface CardScriptDefinition {
+  version: number
+  source: string
+  source_hash: string
+  compiled_hash: string
+  mode: 'tool_recipe'
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+  tool_aliases: Record<string, string>
+  tool_states: Record<string, number>
+  timeout_seconds: number
+  max_tool_calls: number
+  max_output_bytes: number
 }
 /** ``status`` is absent only on the typed-stop-phrase reply (``voice_stopped``). After a truncation the survivor row ids let the client rebind its cached ``rowId``s (``None`` map entries: drop the cached id). ``turn_isolation`` marks a compute-host dispatch. */
 export interface PromptSubmitResult {
@@ -4396,6 +4416,7 @@ export interface MessageCompletePayload {
   text?: string | unknown
   submission_id?: string | null
   usage?: Usage | null
+  turn_usage?: Usage | null
   status?: TurnStatus | null
   reasoning?: string | null
   warning?: string | null
@@ -4976,7 +4997,7 @@ export interface RpcMethods {
   /** Create a profile (ws twin of POST /api/profiles), mirroring launch credentials by default. */
   'profiles.create': { params: ProfilesCreateParams; result: ProfilesCreateResult }
   /** Everything the profile editor shows: soul, model pin, skills, toolsets, MCP servers. */
-  'profiles.describe': { params: ProfileNameParams; result: ProfilesDescribeResult }
+  'profiles.describe': { params: ProfilesDescribeParams; result: ProfilesDescribeResult }
   /** A profile asset as a data URL. */
   'profiles.get_asset': { params: ProfilesGetAssetParams; result: ProfilesGetAssetResult }
   /** Roster of profiles with previews so a client paints without N follow-up calls. */

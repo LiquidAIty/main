@@ -471,6 +471,61 @@ def _run_post_turn_followups(
         _hook_failure("completion queue drain", _drain_exc)
 
 
+def _turn_usage_snapshot_or_delta(
+    usage: dict[str, Any], baseline: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Snapshot cumulative provider counters, or return their exact non-negative turn delta.
+
+    The provider-call counter is the admission proof: no increased call count means no
+    ``turn_usage``.  Missing optional cache/cost counters remain missing.  An impossible reset
+    or negative counter delta invalidates the whole turn snapshot rather than publishing a
+    plausible-looking partial or negative measurement.  Reasoning remains included in output;
+    ``total`` is the provider's native total counter delta.
+    """
+    numeric_fields = (
+        "input", "output", "reasoning", "prompt", "completion", "total", "calls",
+        "cache_read", "cache_write", "cost_usd",
+    )
+    current: dict[str, Any] = {"model": str(usage.get("model") or "")}
+    for key in numeric_fields:
+        value = usage.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if value < 0 or (isinstance(value, float) and not value < float("inf")):
+            if baseline is None or key in baseline:
+                return None
+            continue
+        current[key] = value
+    cost_status = usage.get("cost_status")
+    if cost_status is not None and str(cost_status).strip():
+        current["cost_status"] = str(cost_status)
+    if baseline is None:
+        return current
+
+    current_calls = current.get("calls")
+    baseline_calls = baseline.get("calls")
+    if not isinstance(current_calls, (int, float)) or not isinstance(baseline_calls, (int, float)):
+        return None
+    if current_calls <= baseline_calls:
+        return None
+
+    delta: dict[str, Any] = {"model": current["model"]}
+    for key in numeric_fields:
+        if key not in current or key not in baseline:
+            continue
+        value = current[key] - baseline[key]
+        if value < 0:
+            return None
+        delta[key] = value
+    if "cost_status" in current:
+        delta["cost_status"] = current["cost_status"]
+    # Unknown means the provider/pricing owner supplied no amount for at least the latest call.
+    # Keep the status, but do not turn an unchanged cumulative estimate into a false $0 turn.
+    if delta.get("cost_status") == "unknown":
+        delta.pop("cost_usd", None)
+    return delta
+
+
 @dataclasses.dataclass(slots=True)
 class _TurnRun:
     """Shared state of one turn thread.  ``agent`` is bound eagerly so except/finally always
@@ -494,6 +549,10 @@ class _TurnRun:
     prompt_text: str = ""
     marker_key: str = ""
     receipt_attempted: bool = False
+    turn_usage_baseline: dict[str, Any] = dataclasses.field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.turn_usage_baseline = _turn_usage_snapshot_or_delta(_get_usage(self.agent)) or {}
 
 
 def _adopt_out_of_band_turns(session: dict) -> None:
@@ -542,7 +601,14 @@ def _adopt_out_of_band_turns(session: dict) -> None:
         session["history_version"] = version + 1
 
 
-def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images: list[str]):
+def _prepare_turn_input(
+    sid: str,
+    session: dict,
+    st: _TurnRun,
+    text: Any,
+    images: list[str],
+    expected_profile_capability_fingerprint: str | None = None,
+):
     """Bind scopes, sync the agent, snapshot history, build the run message; returns
     ``(prompt, run_message, cols, streamer)`` or None when @-expansion was refused.
     Scopes fill field by field so a failure midway still leaves every bound token for the
@@ -565,6 +631,8 @@ def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images
     # The sudo password callback is thread-local: without re-wiring here, sudo prompts
     # fall through to /dev/tty and hang the headless gateway (re-run is a no-op).
     _wire_callbacks(sid)
+    if st.one_turn_restore and expected_profile_capability_fingerprint:
+        raise RuntimeError("profile_fenced_turn_model_once_unsupported")
     if not st.one_turn_restore:
         # Skip the config-model sync while a /model --once override is active: the once-model is
         # intentionally not pinned as a session model_override (it must not persist), so without this guard
@@ -574,10 +642,22 @@ def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images
         _apply_pending_model_switch(sid, session)
         _sync_agent_model_with_config(sid, session)
         _sync_agent_compression_with_config(sid, session)
+        if expected_profile_capability_fingerprint is None:
+            _sync_profile_capabilities(sid, session)
+        else:
+            _sync_profile_capabilities(
+                sid,
+                session,
+                expected_profile_capability_fingerprint,
+            )
     _sync_agent_fallback_with_config(sid, session)  # chain added after the chat opened reaches this turn
-    _sync_bot_capabilities(sid, session)  # Bot Chat: adopt Settings->Capabilities edits
     _adopt_out_of_band_turns(session)
-    st.agent = agent = session["agent"]
+    agent = session["agent"]
+    if agent is not st.agent:
+        # A profile-capability refresh may replace the cached agent after admission.  Re-anchor
+        # immediately on that final owner, still before run_conversation/provider work begins.
+        st.turn_usage_baseline = _turn_usage_snapshot_or_delta(_get_usage(agent)) or {}
+    st.agent = agent
     # Snapshot after the model sync: a deferred switch's history mutation belongs to this turn.
     with session["history_lock"]:
         st.history = list(session["history"])
@@ -822,6 +902,8 @@ def _complete_turn_payload(session: dict, st: _TurnRun, status_note: str | None,
     if _is_bot_mode_session(session):
         raw = _bot_mode_delivery_text(raw, successful=status == "complete")
     payload = {"text": raw, "usage": _get_usage(agent), "status": status}
+    if turn_usage := _turn_usage_snapshot_or_delta(payload["usage"], st.turn_usage_baseline):
+        payload["turn_usage"] = turn_usage
     if receipt := _persisted_turn_receipt(st, raw, status):
         payload["persisted_turn"] = receipt
     if last_reasoning:
@@ -988,7 +1070,11 @@ def _run_prompt_submit(
     terminal_callback: Callable[[dict[str, Any]], None] | None = None,
     turn_author: dict | None = None, submission_id: str | None = None,
     dynamic_tools: list[dict] | None = None, tool_endpoint: str | None = None,
-    tool_authorization: str | None = None) -> bool:
+    tool_authorization: str | None = None,
+    card_script: dict[str, Any] | None = None,
+    bot_mode_roster: list[str] | None = None,
+    expected_profile_capability_fingerprint: str | None = None,
+) -> bool:
     # Every dispatch binds the session's own row (session_key, real source) before the turn writes:
     # the synthesized turns that enter here directly (crash auto-continue, queued-prompt drain,
     # wake-ups) bypass prompt.submit's persist, and a row-less turn is otherwise materialized by
@@ -1002,10 +1088,6 @@ def _run_prompt_submit(
     if admitted is None:
         return False
     images, agent = admitted
-    if dynamic_tools is not None:
-        agent._dynamic_tools = list(dynamic_tools)
-        agent._dynamic_tool_endpoint = tool_endpoint
-    agent._dynamic_tool_authorization = tool_authorization
     from gateway.warning_notifications import diagnostic_turn_muted
     from agent.notification_presentation import notification_config_snapshot
     with _session_profile_runtime_scope(session):
@@ -1043,11 +1125,21 @@ def _run_prompt_submit(
         st = _TurnRun(
             session["agent"], session.pop("one_turn_model_restore", None), terminal_callback,
             receipt_committed=terminal_callback is None)
+        dynamic_scope = None
         st.marker_key = _record_turn_marker(session, text, auto_continue=terminal_callback is None,
             notification_category=(display_metadata or {}).get("notification_category"))
         goal_followup = None
         try:
-            prepared = _prepare_turn_input(sid, session, st, text, images)
+            if bot_mode_roster is not None:
+                _apply_session_bot_roster(session, bot_mode_roster)
+            prepared = _prepare_turn_input(
+                sid,
+                session,
+                st,
+                text,
+                images,
+                expected_profile_capability_fingerprint,
+            )
             if prepared is None:
                 if st.terminal_callback is not None and not st.receipt_attempted:
                     st.receipt_attempted = True
@@ -1056,6 +1148,18 @@ def _run_prompt_submit(
                     st.receipt_committed = True
                 return
             prompt, run_message, cols, streamer = prepared
+            # Bind Dynamic Tools to the final agent selected for THIS turn. The
+            # shared Hermes owner projects them for both the ordinary loop and
+            # Codex App Server, and restores the cached agent after settlement.
+            from agent.dynamic_tools import install_turn_dynamic_tools
+
+            dynamic_scope = install_turn_dynamic_tools(
+                st.agent,
+                dynamic_tools,
+                endpoint=tool_endpoint,
+                authorization=tool_authorization,
+                card_script=card_script,
+            )
             _invoke_agent(
                 sid, session, st, prompt, run_message, streamer, images, display_kind,
                 display_metadata, turn_author, text)
@@ -1087,7 +1191,9 @@ def _run_prompt_submit(
                 if not st.error_retained:
                     _clear_inflight_turn(session)
                 _release_hosted_room_turn_slot(session)
-            agent._dynamic_tool_authorization = None
+            from agent.dynamic_tools import clear_turn_dynamic_tools
+
+            clear_turn_dynamic_tools(st.agent, dynamic_scope)
             # Closing bookend of "tui prompt accepted" — exactly one per accepted prompt.
             # agent.session_id is re-read because compression may have rotated it (an
             # accepted/finished pair whose id changed IS a rotation trace).

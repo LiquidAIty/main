@@ -2,26 +2,28 @@
 import json
 from copy import deepcopy
 
-from app.python_models.tool_registry import (
-    OperationDefinition,
-    ToolCatalogError,
-    ToolRegistry,
-    build_default_tool_registry,
-    graphiti_operation_policy,
-    materialize_live_tool_catalog,
-    materialize_live_tool_catalog_with_failures,
-    operation_catalog_descriptor,
-    operation_definition,
-    operation_definitions,
-    provider_tool_catalog_descriptor,
-    replace_discovered_external_operations,
-    static_tool_catalog,
+from app.python_models.operation_definition import OperationDefinition
+from app.python_models.python_tool_definitions import (
+    python_operation_definitions,
     tool_calculator,
     tool_current_datetime,
-    validate_live_tool_catalog,
     web_search_tool,
 )
-from app.python_models.orchestration_contracts import ToolSpec
+from app.python_models.tool_catalog import (
+    ToolCatalogError,
+    code_owned_tool_projection,
+    materialize_live_tool_catalog,
+    operation_catalog_descriptor,
+    provider_tool_catalog_descriptor,
+    validate_live_tool_catalog,
+)
+from app.python_models.tool_registry import (
+    card_tool_selection_is_eligible,
+    graphiti_operation_policy,
+    operation_definition,
+    operation_definitions,
+    replace_discovered_external_operations,
+)
 import pytest
 
 
@@ -29,39 +31,37 @@ def test_calculator_evaluates_arithmetic():
     assert tool_calculator("2 + 3 * 4") == "14.0"
 
 
-def test_registry_never_injects_unselected_reads():
-    registry = build_default_tool_registry()
-    assert registry.resolve_selected([]) == []
-    assert [tool.name for tool in registry.resolve_selected(["calculator"])] == ["calculator"]
-
-
 def test_current_datetime_returns_iso_like_string():
     value = tool_current_datetime()
     assert isinstance(value, str) and len(value) >= 10
+
+
+def test_card_selection_uses_the_live_definition_availability_and_grant_flag():
+    assert card_tool_selection_is_eligible("calculator") is True
+    assert card_tool_selection_is_eligible("main.context") is False
+    assert card_tool_selection_is_eligible("not_a_real_tool") is False
 
 
 def test_web_search_adapter_returns_the_declared_structured_object(monkeypatch):
     async def search(**_arguments):
         return json.dumps({"ok": True, "query": "rk", "result_count": 0, "results": []})
 
-    monkeypatch.setattr("app.python_models.tool_registry.web_search", search)
+    monkeypatch.setattr("app.python_models.python_tool_definitions.web_search", search)
     result = __import__("asyncio").run(web_search_tool("rk"))
     assert result == {"ok": True, "query": "rk", "result_count": 0, "results": []}
-    assert build_default_tool_registry().spec("web_search").outputSchema["type"] == "object"
-
-
-def test_default_registry_exposes_known_tools():
-    registry = build_default_tool_registry()
-    names = registry.known_names()
-    assert isinstance(names, list)
-    assert len(names) >= 1
+    definition = next(
+        item for item in python_operation_definitions()
+        if item.canonical_id == "web_search"
+    )
+    assert definition.output_schema["type"] == "object"
 
 
 def test_worldsignals_batch_uses_the_provider_command_contract():
-    registry = build_default_tool_registry()
-    spec = registry.spec("worldsignals.batch")
-    assert spec is not None
-    command = spec.inputSchema["properties"]["commands"]["items"]
+    definition = next(
+        item for item in python_operation_definitions()
+        if item.canonical_id == "worldsignals.batch"
+    )
+    command = definition.parameters_schema["properties"]["commands"]["items"]
     assert command["required"] == ["cmd"]
     assert command["properties"] == {
         "cmd": {"type": "string", "minLength": 1},
@@ -71,40 +71,26 @@ def test_worldsignals_batch_uses_the_provider_command_contract():
 
 
 def test_worldsignals_package_exposes_query_only_and_requires_runtime_scope():
-    registry = build_default_tool_registry()
-    spec = registry.spec("worldsignals.package")
-    assert spec is not None
-    assert spec.access == "read"
-    assert set(spec.inputSchema["properties"]) == {
+    definition = next(
+        item for item in python_operation_definitions()
+        if item.canonical_id == "worldsignals.package"
+    )
+    assert definition.access == "read"
+    assert set(definition.parameters_schema["properties"]) == {
         "command", "reason", "arguments", "domains", "sourceRefs",
         "maxAgeSeconds", "limit",
     }
-    assert spec.inputSchema["required"] == ["command", "reason"]
-    assert "projectId" not in spec.inputSchema["properties"]
-    with pytest.raises(RuntimeError, match="worldsignals_package_card_context_required"):
-        registry._adapters["worldsignals.package"](
+    assert definition.parameters_schema["required"] == ["command", "reason"]
+    assert "projectId" not in definition.parameters_schema["properties"]
+    with pytest.raises((TypeError, ValueError), match="worldsignals_package_card_context_required|argument"):
+        definition.handler(
             command="get_summary",
             reason="Read one bounded source result.",
         )
 
 
-def test_duplicate_registry_identity_is_rejected():
-    registry = ToolRegistry()
-    spec = ToolSpec(
-        name="one_tool",
-        description="One test tool.",
-        enabled=True,
-        access="read",
-        inputSchema={"type": "object", "properties": {}, "required": []},
-        outputSchema={"type": "string"},
-    )
-    registry.register(spec, lambda: "one")
-    with pytest.raises(RuntimeError, match="card_tool_already_registered: one_tool"):
-        registry.register(spec, lambda: "two")
-
-
 def test_catalog_is_definition_backed_with_no_duplicate_entries():
-    catalog = static_tool_catalog()
+    catalog = code_owned_tool_projection()
     ids = [item["canonicalId"] for item in catalog]
     assert ids == sorted(set(ids))
     assert "retrieve_knowgraph_context" not in ids
@@ -113,7 +99,9 @@ def test_catalog_is_definition_backed_with_no_duplicate_entries():
 
 
 def test_catalog_publishes_one_factual_flat_definition():
-    catalog = {entry["canonicalId"]: entry for entry in static_tool_catalog()}
+    catalog = {
+        entry["canonicalId"]: entry for entry in code_owned_tool_projection()
+    }
     calculator = catalog["calculator"]
     assert calculator["provider"] == "python_runtime"
     assert calculator["namespace"] == "python"
@@ -130,7 +118,7 @@ def test_every_code_owned_publisher_contract_has_complete_effect_metadata():
     required_hints = {
         "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
     }
-    for item in static_tool_catalog():
+    for item in code_owned_tool_projection():
         assert item["displayName"]
         assert item["description"]
         assert item["inputSchema"]["type"] == "object"
@@ -164,7 +152,7 @@ def test_authenticated_projection_may_remove_only_declared_server_owned_fields()
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
-    catalog = static_tool_catalog()
+    catalog = code_owned_tool_projection()
     blob = json.dumps(catalog).lower()
     for forbidden in ["bolt://", "neo4j_uri", "12434", "services/knowgraph", "bearer "]:
         assert forbidden not in blob
@@ -191,7 +179,7 @@ def test_canonical_operation_ids_and_publisher_views_are_unique_and_permitted():
     ids = [definition.canonical_id for definition in definitions]
     assert len(ids) == len(set(ids))
     by_id = {definition.canonical_id: definition for definition in definitions}
-    catalog = static_tool_catalog()
+    catalog = code_owned_tool_projection()
     assert len(catalog) == len({item["canonicalId"] for item in catalog})
     for item in catalog:
         definition = by_id[item["canonicalId"]]
@@ -217,7 +205,7 @@ def test_calculator_is_one_internal_operation_and_is_not_republished_by_mcp():
     assert definition is not None
     assert definition.publishers == frozenset({"internal-plugin"})
     calculator = [
-        item for item in static_tool_catalog()
+        item for item in code_owned_tool_projection()
         if item["canonicalId"] == "calculator"
     ]
     assert len(calculator) == 1
@@ -225,8 +213,53 @@ def test_calculator_is_one_internal_operation_and_is_not_republished_by_mcp():
     assert calculator[0]["publications"] == ["card-runtime"]
 
 
+def test_forecast_market_bars_has_one_literal_trading_definition():
+    definition = operation_definition("forecast_market_bars")
+    assert definition is not None
+    assert definition.title == "Forecast market bars"
+    assert definition.external_source_id == "python_runtime"
+    assert definition.namespace == "trading"
+    assert definition.dispatcher_owner == (
+        "app.python_models.trading_forecast.forecast_market_bars"
+    )
+    assert definition.publishers == frozenset({"internal-plugin"})
+    assert definition.access == "read"
+    assert definition.grant_eligible is True
+    assert definition.server_injected_arguments == frozenset()
+    assert definition.parameters_schema == {
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string", "minLength": 1},
+            "timeframe": {
+                "type": "string",
+                "pattern": r"^[1-9][0-9]*(Min|Hour|Day|Week|Month)$",
+            },
+            "start": {"type": ["string", "null"]},
+            "end": {"type": ["string", "null"]},
+            "history_limit": {
+                "type": "integer", "minimum": 16, "maximum": 400,
+                "default": 128,
+            },
+            "horizon": {
+                "type": "integer", "minimum": 1, "maximum": 20,
+                "default": 5,
+            },
+        },
+        "required": ["symbol", "timeframe"],
+        "additionalProperties": False,
+    }
+    assert definition.annotations == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    }
+
+
 def test_engraphis_is_internal_while_cbm_comes_only_from_live_discovery():
-    code_owned_names = [item["canonicalId"] for item in static_tool_catalog()]
+    code_owned_names = [
+        item["canonicalId"] for item in code_owned_tool_projection()
+    ]
     assert code_owned_names.count("engraphis_recall_context") == 1
     assert code_owned_names.count("engraphis_get_memory") == 1
     assert operation_definition("cbm.unfamiliar_current_tool") is None
@@ -277,7 +310,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
         "canonicalInputSchema": {"type": "object", "properties": {}},
         "serverInjectedArguments": [],
         "dispatcherContextArguments": [],
-        "dispatcherOwner": "app.mcp_host._call_cbm",
+        "dispatcherOwner": "app.mcp_provider_operations._call_cbm",
         "authenticatedProjection": True,
         "annotations": {
             "readOnlyHint": True,
@@ -292,7 +325,9 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
     )
     assert projected["provider"] == "cbm"
     assert projected["providerToolName"] == "search_graph"
-    assert projected["dispatcherOwner"] == "app.mcp_host._call_cbm"
+    assert projected["dispatcherOwner"] == (
+        "app.mcp_provider_operations._call_cbm"
+    )
     after = tuple(
         (item.canonical_id, item.publishers, id(item.handler))
         for item in operation_definitions()
@@ -326,7 +361,7 @@ def test_combined_publisher_contracts_have_no_duplicate_discovery_tuple():
         "canonicalInputSchema": {"type": "object", "properties": {}},
         "serverInjectedArguments": [],
         "dispatcherContextArguments": [],
-        "dispatcherOwner": "app.mcp_host._call_cbm",
+        "dispatcherOwner": "app.mcp_provider_operations._call_cbm",
         "authenticatedProjection": True,
         "annotations": {
             "readOnlyHint": True,

@@ -100,7 +100,7 @@ def _idf(
     )
 
 
-def _runtime_receipt_ledger() -> dict:
+def _run_telemetry_ledger() -> dict:
     return {
         "attemptEvents": [{"marker": "LEDGER_ATTEMPT_EVENT"}],
         "requestFulfillment": {"marker": "LEDGER_REQUEST_FULFILLMENT"},
@@ -197,8 +197,7 @@ def test_worldview_turn_context_is_retained_once_and_projected_for_hermes() -> N
 
 def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -> None:
     presentation = {
-        "mode": "selected-mcp",
-        "fallbackReason": "card_script_hermes_runner_unavailable",
+        "mode": "script",
     }
     materialized = _idf(capabilities={
         "presentedTools": ["codegraph.search_graph"],
@@ -341,8 +340,8 @@ def test_noncanonical_or_secret_bearing_idf_fails_closed() -> None:
         _idf(secret=True)
 
 
-def test_runtime_receipt_ledger_is_not_materialized_or_projected() -> None:
-    ledger = _runtime_receipt_ledger()
+def test_run_telemetry_ledger_is_not_materialized_or_projected() -> None:
+    ledger = _run_telemetry_ledger()
     materialized = _idf(
         stable_extra=ledger,
         capabilities=ledger,
@@ -376,8 +375,8 @@ def test_runtime_receipt_ledger_is_not_materialized_or_projected() -> None:
         assert marker not in projected_json
 
 
-def test_runtime_receipt_ledger_cannot_enter_dynamic_or_reference_input() -> None:
-    ledger = _runtime_receipt_ledger()
+def test_run_telemetry_ledger_cannot_enter_dynamic_or_reference_input() -> None:
+    ledger = _run_telemetry_ledger()
     with pytest.raises(
         InputMaterializationError,
         match="input_dynamic_field_forbidden",
@@ -398,8 +397,8 @@ def test_runtime_receipt_ledger_cannot_enter_dynamic_or_reference_input() -> Non
         )
 
 
-def test_retained_idf_rejects_root_or_reference_receipt_ledger_fields() -> None:
-    ledger = _runtime_receipt_ledger()
+def test_retained_idf_rejects_root_or_reference_run_telemetry_fields() -> None:
+    ledger = _run_telemetry_ledger()
     materialized = _idf(graph_context="bounded")
 
     root_value = json.loads(materialized.idf_bytes)

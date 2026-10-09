@@ -49,6 +49,18 @@ def test_bot_roster_rejects_self_unknown_and_malformed_entries(home, roster):
     assert not (home / "config.yaml").exists()
 
 
+def test_profile_capability_fingerprint_includes_the_exact_session_roster(home):
+    empty = srv._methods["profiles.describe"](
+        "describe-empty", {"name": "default", "bot_mode_roster": []},
+    )["result"]["capability_fingerprint"]
+    alpha = srv._methods["profiles.describe"](
+        "describe-alpha", {"name": "default", "bot_mode_roster": ["alpha"]},
+    )["result"]["capability_fingerprint"]
+
+    assert len(empty) == len(alpha) == 12
+    assert empty != alpha
+
+
 def test_card_profile_execution_fields_preserve_unknown_config(home):
     (home / "config.yaml").write_text(
         "model:\n  provider: openai-codex\n  default: gpt-parent\n"

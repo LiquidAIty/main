@@ -2407,7 +2407,7 @@
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/ProfileNameParams"
+            "$ref": "#/components/schemas/ProfilesDescribeParams"
           }
         }
       ],
@@ -7213,6 +7213,96 @@
           "name"
         ],
         "title": "CapabilityEntry",
+        "type": "object"
+      },
+      "CardScriptDefinition": {
+        "additionalProperties": false,
+        "description": "One validated saved Card Python recipe for this exact turn.\n\n``enabled`` is deliberately absent: nonblank, valid saved source is the\nactivation condition. Tool aliases are the already-authorized per-turn\nDynamic Tool names, never a registry or discovery surface.",
+        "properties": {
+          "version": {
+            "minimum": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "source": {
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Source Hash",
+            "type": "string"
+          },
+          "compiled_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Compiled Hash",
+            "type": "string"
+          },
+          "mode": {
+            "const": "tool_recipe",
+            "title": "Mode",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "output_schema": {
+            "additionalProperties": true,
+            "title": "Output Schema",
+            "type": "object"
+          },
+          "tool_aliases": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Tool Aliases",
+            "type": "object"
+          },
+          "tool_states": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tool States",
+            "type": "object"
+          },
+          "timeout_seconds": {
+            "maximum": 60,
+            "minimum": 1,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "maximum": 32,
+            "minimum": 1,
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "max_output_bytes": {
+            "maximum": 50000,
+            "minimum": 256,
+            "title": "Max Output Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "source",
+          "source_hash",
+          "compiled_hash",
+          "mode",
+          "input_schema",
+          "output_schema",
+          "tool_aliases",
+          "tool_states",
+          "timeout_seconds",
+          "max_tool_calls",
+          "max_output_bytes"
+        ],
+        "title": "CardScriptDefinition",
         "type": "object"
       },
       "CatalogAppState": {
@@ -17643,6 +17733,17 @@
             ],
             "default": null
           },
+          "turn_usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "status": {
             "anyOf": [
               {
@@ -22654,37 +22755,6 @@
         "title": "ProfileModelPin",
         "type": "object"
       },
-      "ProfileNameParams": {
-        "additionalProperties": false,
-        "properties": {
-          "profile": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Profile"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Name"
-          }
-        },
-        "title": "ProfileNameParams",
-        "type": "object"
-      },
       "ProfileParams": {
         "additionalProperties": false,
         "description": "Any method the desktop may route to a named profile (``requestGatewayForProfile`` adds ``profile``).",
@@ -23550,9 +23620,55 @@
         "title": "ProfilesCreateResult",
         "type": "object"
       },
+      "ProfilesDescribeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
+          }
+        },
+        "title": "ProfilesDescribeParams",
+        "type": "object"
+      },
       "ProfilesDescribeResult": {
         "additionalProperties": false,
-        "description": "Editor snapshot; ``toolsets_pinned`` says whether ``tools.enabled_toolsets`` is explicit.",
+        "description": "Editor snapshot; ``toolsets_pinned`` says whether ``platform_toolsets.cli`` is explicit.",
         "properties": {
           "name": {
             "title": "Name",
@@ -23612,12 +23728,17 @@
             ],
             "default": null,
             "title": "Task Mode"
+          },
+          "capability_fingerprint": {
+            "title": "Capability Fingerprint",
+            "type": "string"
           }
         },
         "required": [
           "name",
           "model",
-          "delegation"
+          "delegation",
+          "capability_fingerprint"
         ],
         "title": "ProfilesDescribeResult",
         "type": "object"
@@ -25546,6 +25667,17 @@
             "default": null,
             "title": "Dynamic Tools"
           },
+          "card_script": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CardScriptDefinition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "tool_endpoint": {
             "anyOf": [
               {
@@ -25569,6 +25701,34 @@
             ],
             "default": null,
             "title": "Tool Authorization"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
+          },
+          "expected_profile_capability_fingerprint": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Profile Capability Fingerprint"
           },
           "surface": {
             "anyOf": [

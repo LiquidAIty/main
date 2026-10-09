@@ -56,7 +56,7 @@ describe('useCardActiveAgentCounts', () => {
         ok: true,
         result: body.cardId === 'card_knowgraph'
           ? { cardId: body.cardId, state: 'running', activeWorkers: 2 }
-          : { cardId: body.cardId, state: 'running', activeWorkers: 0 },
+          : { cardId: body.cardId, state: 'running', activeWorkers: null },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     });
 
@@ -80,12 +80,16 @@ describe('useCardActiveAgentCounts', () => {
     unmount();
   });
 
-  it('hides all counts for terminal Runs and before the canonical Deck is ready', async () => {
+  it('hides counts for pending and terminal Runs and before the canonical Deck is ready', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
       const body = JSON.parse(String(init?.body || '{}'));
       return new Response(JSON.stringify({
         ok: true,
-        result: { cardId: body.cardId, state: 'completed', activeWorkers: 4 },
+        result: {
+          cardId: body.cardId,
+          state: body.cardId === 'card_knowgraph' ? 'pending' : 'completed',
+          activeWorkers: 4,
+        },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     });
     const { result, unmount } = renderHook(() => useCardActiveAgentCounts({

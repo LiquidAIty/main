@@ -57,7 +57,6 @@ export type HermesCardOperation =
   | { method: 'learning.detail'; params: { id: string } }
   | { method: 'learning.edit'; params: { id: string; content: string } }
   | { method: 'skills.manage'; params: Record<string, unknown> }
-  | { method: 'tools.configure'; params: Record<string, unknown> }
   | { method: 'toolsets.list'; params?: Record<string, unknown> }
   | { method: 'mcp.servers.list'; params?: Record<string, unknown> }
   | { method: 'mcp.servers.test'; params: { name: string } };

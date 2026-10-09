@@ -31,8 +31,8 @@ export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<SavedCardConfiguration['provider']> = 'openai';
 export const MAIN_CARD_MODEL_KEY = 'gpt-5.6-sol';
 export const BUILDER_CARD_MODEL_KEY = 'gpt-5.6-sol';
-export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
-export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<SavedCardConfiguration['provider']> = 'openai';
+export const MAGNETIC_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
+export const MAGNETIC_DEFAULT_PROVIDER: NonNullable<SavedCardConfiguration['provider']> = 'openai';
 // Builder's non-administrative CodeGraph corridor. Indexing, trace ingestion,
 // ADR mutation, and project deletion stay outside ordinary Card grants.
 export const CODEBASE_MEMORY_TOOLS = [
@@ -53,7 +53,6 @@ export const BUILDER_CARD_TOOLS = [
   'graphiti.search_memory_facts',
   'graphiti.search_nodes',
   'graphiti.get_episodes',
-  'write_mag_one_instructions',
   'thinkgraph.reason',
   'knowgraph.research',
 ] as const;
@@ -82,7 +81,6 @@ export const KNOWGRAPH_CARD_TOOLS = [
   'graphiti.get_episodes',
   'graphiti.get_episode_entities',
   'graphiti.add_memory',
-  'card.load_graph_references',
 ] as const;
 
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {
@@ -121,7 +119,7 @@ export function hasMainBotAuthority(card: DeckCard): boolean {
 
 
 /** Recognise ONLY the two real edge types — mirrors the backend contract
- * (decks/store.ts). Anything else is 'invalid': visible on the canvas but
+ * (decks/deckDomainClient.ts). Anything else is 'invalid': visible on the canvas but
  * authorising nothing. The old default returned 'flow' (invocation authority)
  * for typos and corrupt data, which is how Main→Hermes delegation silently
  * died twice (C-1). */

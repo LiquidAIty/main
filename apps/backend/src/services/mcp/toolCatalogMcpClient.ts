@@ -12,7 +12,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import {
   createInternalMcpBearer,
   resolveInternalMcpUrl,
-  type InternalMcpPrincipal,
 } from './internalMcpAuth';
 
 let clientPromise: Promise<Client> | null = null;
@@ -20,44 +19,26 @@ let clientPromise: Promise<Client> | null = null;
 const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 500;
 const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm', 'graphiti']);
 
-function authorizedOptionalCatalogFamilies(principal: InternalMcpPrincipal): Set<string> | null {
-  if (principal.kind === 'catalog-reader') return null;
-  const toolFamilies = principal.grantedTools
-    .map((name) => String(name || '').trim().split('.', 1)[0])
-    .filter((family) => OPTIONAL_CATALOG_FAMILIES.has(family));
-  const connectionFamilies = principal.kind === 'materializer-read'
-    ? (principal.grantedConnections ?? [])
-      .map((name) => String(name || '').trim())
-      .filter((family) => OPTIONAL_CATALOG_FAMILIES.has(family))
-    : [];
-  return new Set([...toolFamilies, ...connectionFamilies]);
-}
-
-async function connect(
-  principal: InternalMcpPrincipal,
-  sharedLifecycle = false,
-): Promise<Client> {
+async function connect(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
     requestInit: {
       headers: {
-        Authorization: `Bearer ${createInternalMcpBearer(principal)}`,
+        Authorization: `Bearer ${createInternalMcpBearer({ kind: 'catalog-reader' })}`,
       },
     },
   });
   const client = new Client({ name: 'backend-tool-catalog', version: '0.0.1' });
-  if (sharedLifecycle) {
-    client.onclose = () => {
-      // Honest teardown: the NEXT call re-connects lazily; no in-flight retry.
-      clientPromise = null;
-    };
-  }
+  client.onclose = () => {
+    // Honest teardown: the NEXT call re-connects lazily; no in-flight retry.
+    clientPromise = null;
+  };
   await client.connect(transport);
   return client;
 }
 
 function getClient(): Promise<Client> {
   if (!clientPromise) {
-    clientPromise = connect({ kind: 'catalog-reader' }, true).catch((error) => {
+    clientPromise = connect().catch((error) => {
       clientPromise = null;
       throw error;
     });
@@ -217,29 +198,23 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
 
 /** Read factual live MCP contracts. Optional failures isolate malformed tools for a Run. */
 export async function listToolCatalog(
-  principal: InternalMcpPrincipal = { kind: 'catalog-reader' },
   failures?: Record<string, string>,
 ): Promise<ToolCatalogDescriptor[]> {
-  const shared = principal.kind === 'catalog-reader';
-  const client = shared ? await getClient() : await connect(principal);
-  try {
-    const result = await client.listTools();
-    const tools: ToolCatalogDescriptor[] = [];
-    for (const raw of result.tools || []) {
-      try {
-        tools.push(parseToolCatalogDescriptor(raw));
-      } catch (error) {
-        if (!failures) throw error;
-        const name = String(raw?.name || '').trim() || `catalog-entry-${tools.length}`;
-        failures[name] = error instanceof Error
-          ? error.message
-          : `tool_catalog_contract_invalid:${name}`;
-      }
+  const client = await getClient();
+  const result = await client.listTools();
+  const tools: ToolCatalogDescriptor[] = [];
+  for (const raw of result.tools || []) {
+    try {
+      tools.push(parseToolCatalogDescriptor(raw));
+    } catch (error) {
+      if (!failures) throw error;
+      const name = String(raw?.name || '').trim() || `catalog-entry-${tools.length}`;
+      failures[name] = error instanceof Error
+        ? error.message
+        : `tool_catalog_contract_invalid:${name}`;
     }
-    return tools.sort((left, right) => left.name.localeCompare(right.name));
-  } finally {
-    if (!shared) await client.close();
   }
+  return tools.sort((left, right) => left.name.localeCompare(right.name));
 }
 
 async function readToolCatalogReadiness(): Promise<{
@@ -286,26 +261,14 @@ async function readToolCatalogReadiness(): Promise<{
  * catalog families remain visible as unavailable grants while Card-local
  * conversation and private-runtime tools can continue.
  */
-export async function readToolCatalog(
-  principal: InternalMcpPrincipal = { kind: 'catalog-reader' },
-): Promise<ToolCatalogRead> {
+export async function readToolCatalog(): Promise<ToolCatalogRead> {
   let unavailableFamilies: string[] = [];
   const toolFailures: Record<string, string> = {};
   try {
-    if (principal.kind === 'catalog-reader') {
-      const initialProbe = await readToolCatalogReadiness();
-      unavailableFamilies = initialProbe.unavailableFamilies;
-      if (!initialProbe.ready) throw new Error('catalog_unavailable');
-    }
-    const tools = await listToolCatalog(principal, toolFailures);
-    if (principal.kind !== 'catalog-reader') {
-      const probe = await readToolCatalogReadiness();
-      const authorizedFamilies = authorizedOptionalCatalogFamilies(principal)!;
-      unavailableFamilies = probe.unavailableFamilies.filter((family) => (
-        authorizedFamilies.has(family)
-      ));
-      if (!probe.ready) throw new Error('catalog_unavailable');
-    }
+    const probe = await readToolCatalogReadiness();
+    unavailableFamilies = probe.unavailableFamilies;
+    if (!probe.ready) throw new Error('catalog_unavailable');
+    const tools = await listToolCatalog(toolFailures);
     return {
       state: 'available',
       tools,

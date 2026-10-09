@@ -157,10 +157,31 @@ def test_api_key_never_appears_in_output():
     assert "token" not in blob.lower()
 
 
-def test_incomplete_filing_record_is_skipped_not_fabricated():
+def test_incomplete_or_non_sec_filing_record_is_skipped_not_fabricated():
     def _partial(_k, _b):
-        return {"filings": [{"formType": "8-K"}]}  # missing accession/filedAt/url
+        return {"filings": [
+            {"formType": "8-K"},  # missing accession/filedAt/url
+            {
+                "accessionNo": "evil-source",
+                "formType": "8-K",
+                "filedAt": "2024-05-10T16:30:00-04:00",
+                "linkToFilingDetails": (
+                    "https://www.sec.gov.example.test/Archives/fake"
+                ),
+            },
+            {
+                "accessionNo": "valid-source",
+                "formType": "8-K",
+                "filedAt": "2024-05-10T16:30:00-04:00",
+                "linkToFilingDetails": (
+                    "https://www.sec.gov/Archives/edgar/data/1/valid-index.htm"
+                ),
+                "linkToHtml": "https://example.test/not-sec.htm",
+            },
+        ]}
 
     result = find_recent_sec_filing_signals(_explicit_query(), transport=_partial, api_key="TEST-KEY")
     assert result.status == STATUS_AVAILABLE
-    assert result.envelopes == []  # skipped, never invented
+    assert len(result.envelopes) == 1
+    assert result.envelopes[0].filing.accessionNumber == "valid-source"
+    assert result.envelopes[0].filing.primaryDocumentUrl is None

@@ -3284,7 +3284,7 @@ def _bounded_gateway_success(spec: ActionSpec, payload: dict[str, Any]) -> str:
     })
 
 
-def _resolve_capability(capability_id: str, schema_digest: str) -> Optional[ActionSpec]:
+def resolve_capability(capability_id: str, schema_digest: str) -> Optional[ActionSpec]:
     entry = _CAPABILITY_INDEX.get(str(capability_id or ""))
     if entry is None:
         return None
@@ -3635,7 +3635,7 @@ def engraphis_discover_actions(
 
 def _execute_gateway(capability_id: str, schema_digest: str, arguments: dict[str, Any], *,
                      expected: str) -> str:
-    spec = _resolve_capability(capability_id, schema_digest)
+    spec = resolve_capability(capability_id, schema_digest)
     if spec is None:
         return _gateway_error("invalid_or_stale_capability")
     if expected == "read":

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,8 +10,18 @@ import {
 } from './hermesCardSession';
 import type { AddressableCard, SharedChatAuthority } from './savedCardAuthority';
 
+const mocks = vi.hoisted(() => ({ getDeck: vi.fn() }));
+vi.mock('../decks/deckDomainClient', () => ({
+  BUILDER_CARD_ID: 'builder',
+  getDeckDocument: mocks.getDeck,
+}));
+
 const builderCodeRoots: string[] = [];
+const decksByProject = new Map<string, DeckDocument>();
 const originalBuilderCodeRoot = process.env.BUILDER_PROJECT_CODE_ROOT;
+mocks.getDeck.mockImplementation(async (projectId: string) => ({
+  deck: decksByProject.get(projectId) || null,
+}));
 
 function useTemporaryBuilderCodeRoot(): string {
   const root = mkdtempSync(path.join(
@@ -29,10 +39,12 @@ afterEach(() => {
   while (builderCodeRoots.length > 0) {
     rmSync(builderCodeRoots.pop()!, { recursive: true, force: true });
   }
+  decksByProject.clear();
 });
 
 const mainCard: DeckCard = {
   id: 'card_main_chat',
+  _cardRevisionId: 'revision-main',
   templateId: 'main',
   title: 'Main',
   role: '',
@@ -54,6 +66,7 @@ const mainCard: DeckCard = {
 function target(id: string, profile: string): DeckCard {
   return {
     id,
+    _cardRevisionId: `revision-${id}`,
     templateId: 'assistant',
     title: profile,
     role: '',
@@ -73,16 +86,16 @@ function target(id: string, profile: string): DeckCard {
   };
 }
 
-function authority(projectMarker: string, rosterTarget: DeckCard): SharedChatAuthority {
+function authority(projectId: string, rosterTarget: DeckCard): SharedChatAuthority {
   const deck: DeckDocument = {
     id: 'deck_builder',
-    name: `Deck ${projectMarker}`,
+    name: `Deck ${projectId}`,
     projectCodeFolder: '',
     version: 1,
     promptTemplates: [],
     nodes: [mainCard, rosterTarget],
     edges: [{
-      id: `edge-${projectMarker}`,
+      id: `edge-${projectId}`,
       source: mainCard.id,
       target: rosterTarget.id,
       edgeType: 'flow',
@@ -96,10 +109,90 @@ function authority(projectMarker: string, rosterTarget: DeckCard): SharedChatAut
     address: 'Main',
     aliases: ['card_main_chat', 'main'],
   };
+  decksByProject.set(projectId, deck);
   return { deck, main: addressable, cards: [addressable] };
 }
 
 describe('shared Card profile with isolated Project sessions', () => {
+  it('refuses a stale selected revision before touching the shared profile', async () => {
+    const calls: string[] = [];
+    const client = {
+      async request<T>(method: string): Promise<T> {
+        calls.push(method);
+        throw new Error(`unexpected:${method}`);
+      },
+    } as unknown as HermesGatewayClient;
+    const project = authority('stale-project', target('builder', 'builder'));
+    project.main.cardRevisionId = 'revision-stale';
+
+    await expect(cardSession(client, project.main, {
+      userId: 'user-a', projectId: 'stale-project', deckId: 'deck_builder',
+      conversationId: 'conversation-a',
+    })).rejects.toThrow('card_revision_changed');
+
+    expect(calls).toEqual([]);
+  });
+
+  it('creates one Hermes session for simultaneous first turns in the same conversation', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let storedSessionId = '';
+    const client = {
+      async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+        calls.push({ method, params: structuredClone(params) });
+        if (method === 'profiles.describe') {
+          return {
+            name: 'main', soul: mainCard.prompt,
+            capability_fingerprint: '0123456789ab',
+            model: {
+              provider: 'openai-codex', default: 'gpt-parent',
+              openai_runtime: 'codex_app_server',
+            },
+            skills: [{ name: 'hermes-agent', enabled: true }],
+            toolsets: [], mcp_servers: [],
+            delegation: {
+              provider: '', model: '', max_spawn_depth: 1,
+              orchestrator_enabled: false, enabled: false,
+            },
+            task_mode: null,
+          } as T;
+        }
+        if (method === 'session.list') {
+          return { sessions: storedSessionId ? [{
+            id: storedSessionId,
+            resolved_id: storedSessionId,
+          }] : [] } as T;
+        }
+        if (method === 'session.create') {
+          storedSessionId = 'stored-main';
+          return {
+            session_id: 'live-main', stored_session_id: storedSessionId, info: {},
+          } as T;
+        }
+        if (method === 'session.resume') {
+          return {
+            session_id: 'live-main', stored_session_id: storedSessionId, info: {},
+          } as T;
+        }
+        throw new Error(`unexpected:${method}`);
+      },
+    } as unknown as HermesGatewayClient;
+    const project = authority('same-project', target('builder', 'builder'));
+    const owner = {
+      userId: 'same-user', projectId: 'same-project', deckId: 'deck_builder',
+      conversationId: 'same-conversation',
+    };
+
+    const [first, second] = await Promise.all([
+      cardSession(client, project.main, owner),
+      cardSession(client, project.main, owner),
+    ]);
+
+    expect(first.storedSessionId).toBe('stored-main');
+    expect(second.storedSessionId).toBe('stored-main');
+    expect(calls.filter(({ method }) => method === 'session.create')).toHaveLength(1);
+    expect(calls.filter(({ method }) => method === 'session.resume')).toHaveLength(1);
+  });
+
   it('reuses one profile while two users and Projects retain separate session authority', async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
     let sequence = 0;
@@ -109,6 +202,7 @@ describe('shared Card profile with isolated Project sessions', () => {
         if (method === 'profiles.describe') {
           return {
             name: 'main',
+            capability_fingerprint: '0123456789ab',
             soul: mainCard.prompt,
             model: {
               provider: 'openai-codex',
@@ -142,11 +236,11 @@ describe('shared Card profile with isolated Project sessions', () => {
     const projectA = authority('project-a', target('builder', 'builder'));
     const projectB = authority('project-b', target('card_knowgraph', 'knowgraph'));
     const [first, second] = await Promise.all([
-      cardSession(client, projectA, projectA.main, {
+      cardSession(client, projectA.main, {
         userId: 'user-a', projectId: 'project-a', deckId: 'deck_builder',
         conversationId: 'conversation-a',
       }),
-      cardSession(client, projectB, projectB.main, {
+      cardSession(client, projectB.main, {
         userId: 'user-b', projectId: 'project-b', deckId: 'deck_builder',
         conversationId: 'conversation-b',
       }),
@@ -155,10 +249,10 @@ describe('shared Card profile with isolated Project sessions', () => {
     expect(first.sessionId).not.toBe(second.sessionId);
     const profileCalls = calls.filter(({ method }) => method.startsWith('profiles.'));
     expect(profileCalls).toHaveLength(2);
-    expect(profileCalls.every(({ method, params }) => (
-      method === 'profiles.describe'
-      && JSON.stringify(params) === JSON.stringify({ name: 'main' })
-    ))).toBe(true);
+    expect(profileCalls.map(({ method, params }) => ({ method, params }))).toEqual([
+      { method: 'profiles.describe', params: { name: 'main', bot_mode_roster: ['builder'] } },
+      { method: 'profiles.describe', params: { name: 'main', bot_mode_roster: ['knowgraph'] } },
+    ]);
     expect(calls.some(({ method }) => method === 'profiles.configure')).toBe(false);
 
     const created = calls.filter(({ method }) => method === 'session.create').map(({ params }) => params);
@@ -186,6 +280,7 @@ describe('shared Card profile with isolated Project sessions', () => {
         if (method === 'profiles.describe') {
           return {
             name: 'builder',
+            capability_fingerprint: '0123456789ab',
             soul: '# builder',
             model: {
               provider: 'openai-codex',
@@ -197,25 +292,18 @@ describe('shared Card profile with isolated Project sessions', () => {
             task_mode: null,
           } as T;
         }
-        if (method === 'config.get') {
-          return { config: { terminal: {
-            backend: 'docker', docker_mount_cwd_to_workspace: true,
-            container_persistent: false, docker_volumes: [], docker_extra_args: [],
-            docker_forward_env: [], docker_env: {},
-          } } } as T;
-        }
         if (method === 'session.list') return { sessions: [] } as T;
         if (method === 'session.create') {
           return {
             session_id: 'live-builder', stored_session_id: 'stored-builder',
-            info: { terminal_backend: 'docker' },
+            info: {},
           } as T;
         }
         throw new Error(`unexpected:${method}`);
       },
     } as unknown as HermesGatewayClient;
     const builderCard = target('builder', 'builder');
-    const project = authority('builder-project', builderCard);
+    const project = authority('project-a', builderCard);
     project.deck.projectCodeFolder = 'worker-agent-ui';
     const addressableBuilder: AddressableCard = {
       card: builderCard,
@@ -226,7 +314,7 @@ describe('shared Card profile with isolated Project sessions', () => {
       aliases: ['builder'],
     };
 
-    await cardSession(client, project, addressableBuilder, {
+    await cardSession(client, addressableBuilder, {
       userId: 'user-a', projectId: 'project-a', deckId: 'deck_builder',
       conversationId: 'conversation-a',
     });
@@ -245,6 +333,7 @@ describe('shared Card profile with isolated Project sessions', () => {
         if (method === 'profiles.describe') {
           return {
             name: 'builder', soul: '# builder',
+            capability_fingerprint: '0123456789ab',
             model: {
               provider: 'openai-codex',
               default: 'gpt-parent',
@@ -255,19 +344,12 @@ describe('shared Card profile with isolated Project sessions', () => {
             task_mode: null,
           } as T;
         }
-        if (method === 'config.get') {
-          return { config: { terminal: {
-            backend: 'docker', docker_mount_cwd_to_workspace: true,
-            container_persistent: false, docker_volumes: [], docker_extra_args: [],
-            docker_forward_env: [], docker_env: {},
-          } } } as T;
-        }
         if (method === 'session.list') return { sessions: [] } as T;
         throw new Error(`unexpected:${method}`);
       },
     } as unknown as HermesGatewayClient;
     const builderCard = target('builder', 'builder');
-    const project = authority('builder-project', builderCard);
+    const project = authority('project-a', builderCard);
     project.deck.projectCodeFolder = 'C:\\outside';
     const addressableBuilder: AddressableCard = {
       card: builderCard,
@@ -278,7 +360,7 @@ describe('shared Card profile with isolated Project sessions', () => {
       aliases: ['builder'],
     };
 
-    await expect(cardSession(client, project, addressableBuilder, {
+    await expect(cardSession(client, addressableBuilder, {
       userId: 'user-a', projectId: 'project-a', deckId: 'deck_builder',
       conversationId: 'conversation-a',
     })).rejects.toThrow('builder_project_code_folder_invalid');
@@ -295,6 +377,7 @@ describe('shared Card profile with isolated Project sessions', () => {
         if (method === 'profiles.describe') {
           return {
             name: 'builder', soul: '# builder',
+            capability_fingerprint: '0123456789ab',
             model: {
               provider: 'openai-codex',
               default: 'gpt-parent',
@@ -302,13 +385,6 @@ describe('shared Card profile with isolated Project sessions', () => {
             },
             skills: [], toolsets: [], mcp_servers: [], task_mode: null,
           } as T;
-        }
-        if (method === 'config.get') {
-          return { config: { terminal: {
-            backend: 'docker', docker_mount_cwd_to_workspace: true,
-            container_persistent: false, docker_volumes: [], docker_extra_args: [],
-            docker_forward_env: [], docker_env: {},
-          } } } as T;
         }
         if (method === 'session.list') {
           return {
@@ -322,14 +398,14 @@ describe('shared Card profile with isolated Project sessions', () => {
           return {
             session_id: 'live-builder',
             stored_session_id: 'stored-builder',
-            info: { cwd: desiredCwd, terminal_backend: 'docker' },
+            info: { cwd: desiredCwd },
           } as T;
         }
         throw new Error(`unexpected:${method}`);
       },
     } as unknown as HermesGatewayClient;
     const builderCard = target('builder', 'builder');
-    const project = authority('builder-project', builderCard);
+    const project = authority('project-a', builderCard);
     project.deck.projectCodeFolder = 'worker-agent-ui';
     const addressableBuilder: AddressableCard = {
       card: builderCard,
@@ -340,7 +416,7 @@ describe('shared Card profile with isolated Project sessions', () => {
       aliases: ['builder'],
     };
 
-    await cardSession(client, project, addressableBuilder, {
+    await cardSession(client, addressableBuilder, {
       userId: 'user-a', projectId: 'project-a', deckId: 'deck_builder',
       conversationId: 'conversation-a',
     });

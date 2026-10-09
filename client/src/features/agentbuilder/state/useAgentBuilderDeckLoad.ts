@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
-import { waitForBackendReady } from '../../../components/builder/backendReadiness';
-import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
+import { waitForBackendReady } from '../api/backendReadiness';
+import { guardedRequest, safeJson } from '../api/requestGuards';
 import type {
   DeckDocument,
 } from '../../../types/agentgraph';
@@ -124,7 +124,7 @@ export default function useAgentBuilderDeckLoad({
         setStateLoaded(true);
         setDeckLoadError(null);
         setDeckStatusMessage('Canvas loaded.');
-        console.info('[builder][deck-load-proof]', {
+        console.info('[builder][deck-load]', {
           projectId: canvasProjectId,
           deckId: builderDeckId,
           reason: 'deck-load',

@@ -8,7 +8,7 @@ import GodsEyeSurface, {
   type GodsEyeCommandResult,
   type GodsEyeLayerState,
   type GodsEyeSelectionRef,
-} from '../../components/worldsignal/GodsEyeSurface';
+} from '../../components/worldsignals/GodsEyeSurface';
 import { GraphNavigationControls } from '../../components/graph/GraphCanvasChrome';
 import {
   isCapability,
