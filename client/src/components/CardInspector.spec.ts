@@ -645,8 +645,8 @@ describe('CardInspector active builder config', () => {
       if (String(input).startsWith('/api/idd/tools?')) {
         return { ok: true, json: async () => ({ ok: true,
           references: [{
-            canonicalId: 'web_search', provider: 'python_runtime',
-            providerToolName: 'web_search', displayName: 'Web search',
+            canonicalId: 'current_datetime', provider: 'python_runtime',
+            providerToolName: 'current_datetime', displayName: 'Current date and time',
             access: 'read', available: true,
           }],
           selectedKnownReferences: [], unresolvedSelectedIds: ['calculator'], total: 1 }) };
@@ -662,13 +662,13 @@ describe('CardInspector active builder config', () => {
     }));
     await screen.findByRole('checkbox', { name: 'Include calculator' });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Selected only' }));
-    const availableRead = await screen.findByRole('checkbox', { name: 'Include Web search' });
+    const availableRead = await screen.findByRole('checkbox', { name: 'Include Current date and time' });
     expect((availableRead as HTMLInputElement).checked).toBe(false);
     expect((screen.getByRole('checkbox', { name: 'Include calculator' }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(availableRead);
     await leaveEditor();
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-    expect(onSave.mock.calls[0][0].tools).toEqual(['calculator', 'web_search']);
+    expect(onSave.mock.calls[0][0].tools).toEqual(['calculator', 'current_datetime']);
   });
 
   it('selects Hermes toolsets through the saved Card configuration and shows profile readback', async () => {
@@ -880,7 +880,7 @@ describe('CardInspector active builder config', () => {
     expect(provider.selectedOptions[0].text).toContain('unavailable — saved');
     expect(provider.disabled).toBe(!available);
     expect(screen.getByLabelText<HTMLSelectElement>('Model').value).toBe('removed-model');
-    if (!available) expect(screen.getByRole('alert').textContent).toContain('Runtime options unavailable');
+    if (!available) expect(screen.getByText('Runtime options unavailable. Saved values are unchanged.')).toBeTruthy();
     await leaveEditor();
     expect(onSave).not.toHaveBeenCalled();
     expect(JSON.stringify(config)).toBe(before);
@@ -893,7 +893,7 @@ describe('CardInspector active builder config', () => {
       activeTab: 'Tools', localConfig: savedConfig, onSaveLocalConfig: onSave,
     }));
     expect(screen.getByText('Loading tools…')).not.toBeNull();
-    expect((await screen.findByRole('alert')).textContent).toBe('Tool options unavailable. Saved selections are unchanged.');
+    expect(await screen.findByText('Tool options unavailable. Saved selections are unchanged.')).toBeTruthy();
     expect(screen.queryByText('0 tools')).toBeNull();
     expect(screen.queryByText('No tools match this search.')).toBeNull();
     expect(screen.getByLabelText<HTMLInputElement>('Include calculator').checked).toBe(true);

@@ -12,14 +12,6 @@ import { getOwnedProjectByReference } from '../services/projectStore';
 
 const router = Router();
 
-async function resolveAuthenticatedKnowGraphProjectId(
-  userId: string,
-  requestedProjectId: string,
-): Promise<string | null> {
-  const project = await getOwnedProjectByReference(requestedProjectId, userId);
-  return project?.id ?? null;
-}
-
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -41,7 +33,7 @@ router.get('/graph', async (req, res) => {
     }
     const userId = String((req as any).userId || '').trim();
     const projectId = userId
-      ? await resolveAuthenticatedKnowGraphProjectId(userId, requestedProjectId)
+      ? (await getOwnedProjectByReference(requestedProjectId, userId))?.id ?? null
       : null;
     if (!projectId) {
       return res.status(userId ? 404 : 401).json({
@@ -77,7 +69,7 @@ router.get('/expand', async (req, res) => {
     }
     const userId = String((req as any).userId || '').trim();
     const projectId = userId
-      ? await resolveAuthenticatedKnowGraphProjectId(userId, requestedProjectId)
+      ? (await getOwnedProjectByReference(requestedProjectId, userId))?.id ?? null
       : null;
     if (!projectId) {
       return res.status(userId ? 404 : 401).json({

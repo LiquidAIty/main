@@ -208,6 +208,22 @@ def test_schedule_task_parks_time_delay_without_dispatching(kanban_home):
 
 
 
+def test_append_task_event_uses_the_callers_write_transaction(kanban_home):
+    with kbc.connect() as conn:
+        task_id = kb.create_task(conn, title="extension event", assignee="ops")
+        with kbc.write_txn(conn):
+            kb.append_task_event(
+                conn,
+                task_id,
+                "extension_authority",
+                {"profiles": ["builder"]},
+            )
+
+        event = kb.list_events(conn, task_id)[-1]
+        assert event.kind == "extension_authority"
+        assert event.payload == {"profiles": ["builder"]}
+
+
 def test_stale_claim_reclaim_event_records_diagnostic_payload(
     kanban_home, monkeypatch,
 ):

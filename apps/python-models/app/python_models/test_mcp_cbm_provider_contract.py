@@ -14,6 +14,8 @@ from app.python_models.provider_config import ensure_env_loaded
 
 ensure_env_loaded()
 
+from app import mcp_transport
+
 from app import (
     mcp_cbm_provider,
     mcp_provider_operations,
@@ -27,15 +29,15 @@ def test_main_selects_stdio_transport(monkeypatch):
 
     events = []
 
-    async def run_stdio():
+    async def run_stdio(*_args):
         events.append("stdio")
 
-    async def run_http():
+    async def run_http(*_args):
         events.append("http")
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
-    monkeypatch.setattr(mcp_host, "_run_stdio", run_stdio)
-    monkeypatch.setattr(mcp_host, "_run_streamable_http", run_http)
+    monkeypatch.setattr(mcp_transport, "run_stdio", run_stdio)
+    monkeypatch.setattr(mcp_transport, "run_streamable_http", run_http)
 
     asyncio.run(mcp_host.main())
 
@@ -62,31 +64,29 @@ def test_cbm_lifespan_uses_one_official_sdk_client_and_closes_once(monkeypatch):
 
     async def open_client(command, args, cwd, **_kwargs):
         opens.append((command, list(args), cwd))
-        return client, (provider_tool,), ["list_projects"]
+        return client, (provider_tool,)
 
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_CLIENT", None)
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_TOOLS", None)
-    monkeypatch.setattr(mcp_cbm_provider, "_CBM_NAMES", frozenset())
     monkeypatch.setattr(
         mcp_provider_operations,
-        "_cbm_config",
+        "cbm_config",
         lambda: ("cbm", ["--stdio"], r"C:\Projects\main"),
     )
     monkeypatch.setattr(mcp_cbm_provider, "_open_cbm_client", open_client)
 
     async def check():
-        command, args, cwd = mcp_provider_operations._cbm_config()
+        command, args, cwd = mcp_provider_operations.cbm_config()
         for _ in range(2):
-            await mcp_cbm_provider._start_cbm_client(
+            await mcp_cbm_provider.start_cbm_client(
                 command,
                 args,
                 cwd,
                 implementation_version=mcp_host._MCP_IMPLEMENTATION_VERSION,
-                request_timeout_seconds=mcp_provider_operations._CBM_REQUEST_TIMEOUT_SECONDS,
+                request_timeout_seconds=mcp_provider_operations.CBM_REQUEST_TIMEOUT_SECONDS,
             )
         assert mcp_cbm_provider._CBM_CLIENT is client
-        assert mcp_cbm_provider._CBM_NAMES == frozenset({"list_projects"})
-        await mcp_cbm_provider._close_cbm()
+        await mcp_cbm_provider.close_cbm()
 
     asyncio.run(check())
 
@@ -94,13 +94,12 @@ def test_cbm_lifespan_uses_one_official_sdk_client_and_closes_once(monkeypatch):
     assert client.closed is True
     assert mcp_cbm_provider._CBM_CLIENT is None
     assert mcp_cbm_provider._CBM_TOOLS is None
-    assert mcp_cbm_provider._CBM_NAMES == frozenset()
 
 def test_http_mcp_resolves_the_current_official_command_from_path():
     import shutil
     import mcp_host
 
-    command, args, cwd = mcp_provider_operations._cbm_config()
+    command, args, cwd = mcp_provider_operations.cbm_config()
     expected_command = os.environ.get("MCP_CBM_BINARY", "").strip() or "codebase-memory-mcp"
     assert command == (shutil.which(expected_command) or expected_command)
     assert os.path.isfile(command)
@@ -260,19 +259,16 @@ def test_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
         inputSchema={"type": "object", "properties": {}},
     )
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_TOOLS", (provider_tool,))
-    monkeypatch.setattr(
-        mcp_cbm_provider, "_CBM_NAMES", frozenset({"search_graph"})
-    )
     calls = []
 
     class CbmClient:
         async def call_tool(self, name, arguments, *, read_timeout_seconds):
-            assert read_timeout_seconds == mcp_provider_operations._CBM_REQUEST_TIMEOUT_SECONDS
+            assert read_timeout_seconds == mcp_provider_operations.CBM_REQUEST_TIMEOUT_SECONDS
             calls.append((name, dict(arguments)))
             return CallToolResult(content=[TextContent(type="text", text="ok")])
 
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_CLIENT", CbmClient())
-    result = asyncio.run(mcp_provider_operations._call_cbm(
+    result = asyncio.run(mcp_provider_operations.call_cbm_operation(
         "search_graph",
         {"project": "C-Projects-LiquidAIty-main", "query": "Graph Agent continuity"},
     ))
@@ -298,7 +294,7 @@ def test_cbm_client_failure_is_strict(monkeypatch):
 
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_CLIENT", FailingClient())
     with pytest.raises(RuntimeError, match="provider transport closed"):
-        asyncio.run(mcp_provider_operations._call_cbm(
+        asyncio.run(mcp_provider_operations.call_cbm_operation(
             "search_graph", {"project": "C-Projects-LiquidAIty-main"}
         ))
 
@@ -319,7 +315,7 @@ def test_cbm_bootstrap_failure_does_not_spawn_a_second_frontend(monkeypatch):
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_TOOLS", None)
     monkeypatch.setattr(
         mcp_provider_operations,
-        "_cbm_config",
+        "cbm_config",
         lambda: (
             "docker",
             ["exec", "-i", "codegraph", "/usr/local/bin/codebase-memory-mcp"],
@@ -327,13 +323,13 @@ def test_cbm_bootstrap_failure_does_not_spawn_a_second_frontend(monkeypatch):
         ),
     )
     with pytest.raises(RuntimeError, match="CBM daemon could not start within 30000 ms"):
-        command, args, cwd = mcp_provider_operations._cbm_config()
-        asyncio.run(mcp_cbm_provider._start_cbm_client(
+        command, args, cwd = mcp_provider_operations.cbm_config()
+        asyncio.run(mcp_cbm_provider.start_cbm_client(
             command,
             args,
             cwd,
             implementation_version=mcp_host._MCP_IMPLEMENTATION_VERSION,
-            request_timeout_seconds=mcp_provider_operations._CBM_REQUEST_TIMEOUT_SECONDS,
+            request_timeout_seconds=mcp_provider_operations.CBM_REQUEST_TIMEOUT_SECONDS,
         ))
 
     assert attempts == [
@@ -358,14 +354,14 @@ def test_cbm_bootstrap_does_not_retry_other_failures(monkeypatch):
     monkeypatch.setattr(mcp_cbm_provider, "_open_cbm_client", open_client)
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_CLIENT", None)
     monkeypatch.setattr(mcp_cbm_provider, "_CBM_TOOLS", None)
-    command, args, cwd = mcp_provider_operations._cbm_config()
+    command, args, cwd = mcp_provider_operations.cbm_config()
     with pytest.raises(RuntimeError, match="cbm_initialize_invalid"):
-        asyncio.run(mcp_cbm_provider._start_cbm_client(
+        asyncio.run(mcp_cbm_provider.start_cbm_client(
             command,
             args,
             cwd,
             implementation_version=mcp_host._MCP_IMPLEMENTATION_VERSION,
-            request_timeout_seconds=mcp_provider_operations._CBM_REQUEST_TIMEOUT_SECONDS,
+            request_timeout_seconds=mcp_provider_operations.CBM_REQUEST_TIMEOUT_SECONDS,
         ))
     assert attempts == 1
 
@@ -404,7 +400,7 @@ def test_cbm_duplicate_catalog_closes_the_only_frontend(monkeypatch):
             [],
             "repo",
             implementation_version=mcp_host._MCP_IMPLEMENTATION_VERSION,
-            request_timeout_seconds=mcp_provider_operations._CBM_REQUEST_TIMEOUT_SECONDS,
+            request_timeout_seconds=mcp_provider_operations.CBM_REQUEST_TIMEOUT_SECONDS,
         ))
     assert attempts == 1
     assert closed is True

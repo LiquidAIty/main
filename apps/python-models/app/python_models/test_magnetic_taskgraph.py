@@ -5,7 +5,11 @@ from typing import Any
 import pytest
 
 from app.python_models import idf as idf_module
-from app.python_models import magnetic_taskgraph
+from app.python_models import (
+    magnetic_taskgraph_authority,
+    magnetic_taskgraph_readback,
+    magnetic_taskgraph_submission,
+)
 
 
 def _execution_payload() -> dict[str, Any]:
@@ -102,7 +106,7 @@ def test_worker_scope_includes_only_compact_project_eligible_capability_metadata
         "projectEligibleToolIds": ["weather.read"],
     }
 
-    identities, scope = magnetic_taskgraph._worker_scope(workers)
+    identities, scope = magnetic_taskgraph_authority._worker_scope(workers)
 
     assert identities == ["worker-a", "worker-b"]
     assert "Project-eligible tools: weather.read" in scope
@@ -118,21 +122,20 @@ def test_worker_scope_rejects_project_capabilities_not_owned_by_the_saved_card()
     }
 
     with pytest.raises(
-        magnetic_taskgraph.MagneticTaskGraphError,
+        magnetic_taskgraph_authority.MagneticTaskGraphError,
         match="magnetic_taskgraph_worker_capabilities_invalid",
     ):
-        magnetic_taskgraph._worker_scope(workers)
+        magnetic_taskgraph_authority._worker_scope(workers)
 
 
 @pytest.fixture
 def hermes_task_store(tmp_path, monkeypatch):
-    magnetic_taskgraph._runtime_paths()
-    from hermes_cli import kanban_db_connect as task_db_connect
-
     db_path = tmp_path / "tasks.db"
-    task_db_connect.init_db(db_path)
-    monkeypatch.setattr(magnetic_taskgraph, "_task_db_path", lambda: db_path)
-    return db_path
+    monkeypatch.setattr(magnetic_taskgraph_authority, "_task_db_path", lambda: db_path)
+    with magnetic_taskgraph_authority.hermes_task_runtime_scope():
+        _resolved_path, _task_db, task_db_connect = magnetic_taskgraph_authority._task_store()
+        task_db_connect.init_db(db_path)
+        yield db_path
 
 
 def _stub_retained_input(monkeypatch, *, mission: str | None = None) -> dict[str, str]:
@@ -151,15 +154,15 @@ def _stub_retained_input(monkeypatch, *, mission: str | None = None) -> dict[str
         },
     )
     monkeypatch.setattr(
-        magnetic_taskgraph,
+        magnetic_taskgraph_submission,
         "_ensure_orchestrator_identity",
         lambda _spec, _workers: (
             "card_magentic", "openai-codex", "gpt-5.6-sol", "codex_app_server",
         ),
     )
     monkeypatch.setattr(
-        magnetic_taskgraph,
-            "_bind_outer_magnetic_taskgraph_run",
+        magnetic_taskgraph_submission,
+        "_bind_outer_magnetic_taskgraph_run",
         lambda run_id, hermes_root_id, _status: {
             "ok": True,
             "runId": run_id,
@@ -173,7 +176,7 @@ def _stub_retained_input(monkeypatch, *, mission: str | None = None) -> dict[str
 def test_orchestrator_identity_resolves_the_repository_profile_tree(
     tmp_path, monkeypatch,
 ) -> None:
-    magnetic_taskgraph._runtime_paths()
+    magnetic_taskgraph_authority._runtime_paths()
     hermes_root = tmp_path / "Hermes"
     hermes_home = hermes_root / ".hermes"
     orchestrator_home = hermes_home / "profiles" / "card_magentic"
@@ -192,12 +195,12 @@ def test_orchestrator_identity_resolves_the_repository_profile_tree(
     )
     worker_home.joinpath("config.yaml").write_text("model: {}\n", encoding="utf-8")
     monkeypatch.setattr(
-        magnetic_taskgraph,
+        magnetic_taskgraph_authority,
         "_runtime_paths",
         lambda: (hermes_root, hermes_home),
     )
 
-    assert magnetic_taskgraph._ensure_orchestrator_identity(
+    assert magnetic_taskgraph_authority._ensure_orchestrator_identity(
         _execution_payload()["orchestrator"],
         [_execution_payload()["workers"][0]],
     ) == ("card_magentic", "openai-codex", "gpt-5.6-sol", "codex_app_server")
@@ -216,7 +219,7 @@ def test_orchestrator_identity_resolves_the_repository_profile_tree(
 def test_orchestrator_identity_rejects_duplicate_or_mismatched_prompt_authority(
     tmp_path, monkeypatch, soul: str, agent_config: str,
 ) -> None:
-    magnetic_taskgraph._runtime_paths()
+    magnetic_taskgraph_authority._runtime_paths()
     hermes_root = tmp_path / "Hermes"
     hermes_home = hermes_root / ".hermes"
     orchestrator_home = hermes_home / "profiles" / "card_magentic"
@@ -233,16 +236,16 @@ def test_orchestrator_identity_rejects_duplicate_or_mismatched_prompt_authority(
     orchestrator_home.joinpath("SOUL.md").write_text(soul, encoding="utf-8")
     worker_home.joinpath("config.yaml").write_text("model: {}\n", encoding="utf-8")
     monkeypatch.setattr(
-        magnetic_taskgraph,
+        magnetic_taskgraph_authority,
         "_runtime_paths",
         lambda: (hermes_root, hermes_home),
     )
 
     with pytest.raises(
-        magnetic_taskgraph.MagneticTaskGraphError,
+        magnetic_taskgraph_authority.MagneticTaskGraphError,
         match="magnetic_taskgraph_orchestrator_materialization_mismatch",
     ):
-        magnetic_taskgraph._ensure_orchestrator_identity(
+        magnetic_taskgraph_authority._ensure_orchestrator_identity(
             _execution_payload()["orchestrator"],
             [_execution_payload()["workers"][0]],
         )
@@ -255,8 +258,8 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
 
     captured = _stub_retained_input(monkeypatch)
     payload = _execution_payload()
-    first = magnetic_taskgraph.submit_magnetic_taskgraph(payload)
-    second = magnetic_taskgraph.submit_magnetic_taskgraph(payload)
+    first = magnetic_taskgraph_submission.submit_magnetic_taskgraph(payload)
+    second = magnetic_taskgraph_submission.submit_magnetic_taskgraph(payload)
 
     assert captured == {
         "project_id": "project-one",
@@ -308,7 +311,7 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
         ).fetchone()["count"] == 1
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (first["hermesRootId"], magnetic_taskgraph._HERMES_AUTHORITY_EVENT),
+            (first["hermesRootId"], magnetic_taskgraph_authority._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
 
 
@@ -336,18 +339,18 @@ def test_team_only_bypasses_magnetic_model_and_uses_the_same_team_root(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        magnetic_taskgraph, "_runtime_paths", lambda: (hermes_root, hermes_home),
+        magnetic_taskgraph_submission, "_runtime_paths", lambda: (hermes_root, hermes_home),
     )
 
     def magnetic_model_must_not_run(*_args, **_kwargs):
         raise AssertionError("Team-only execution must bypass the Magnetic model")
 
     monkeypatch.setattr(
-        magnetic_taskgraph, "_ensure_orchestrator_identity", magnetic_model_must_not_run,
+        magnetic_taskgraph_submission, "_ensure_orchestrator_identity", magnetic_model_must_not_run,
     )
     payload = _team_execution_payload()
 
-    result = magnetic_taskgraph.submit_magnetic_taskgraph(payload)
+    result = magnetic_taskgraph_submission.submit_magnetic_taskgraph(payload)
 
     assert result == {
         "ok": True,
@@ -383,15 +386,15 @@ def test_submit_rejoin_rejects_changed_immutable_worker_authority(
 
     _stub_retained_input(monkeypatch)
     payload = _execution_payload()
-    first = magnetic_taskgraph.submit_magnetic_taskgraph(payload)
+    first = magnetic_taskgraph_submission.submit_magnetic_taskgraph(payload)
     changed = _execution_payload()
     changed["workerAuthorities"][0]["configurationFingerprint"] = "d" * 64
 
     with pytest.raises(
-        magnetic_taskgraph.MagneticTaskGraphError,
+        magnetic_taskgraph_authority.MagneticTaskGraphError,
         match="magnetic_taskgraph_worker_authority_binding_mismatch",
     ):
-        magnetic_taskgraph.submit_magnetic_taskgraph(changed)
+        magnetic_taskgraph_submission.submit_magnetic_taskgraph(changed)
 
     with task_db_connect.connect_closing(hermes_task_store) as connection:
         assert connection.execute(
@@ -400,7 +403,7 @@ def test_submit_rejoin_rejects_changed_immutable_worker_authority(
         ).fetchone()["count"] == 1
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (first["hermesRootId"], magnetic_taskgraph._HERMES_AUTHORITY_EVENT),
+            (first["hermesRootId"], magnetic_taskgraph_authority._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
 
 
@@ -411,18 +414,18 @@ def test_submit_preserves_an_unbound_staged_root_for_exact_retry(
 
     _stub_retained_input(monkeypatch)
     monkeypatch.setattr(
-        magnetic_taskgraph,
+        magnetic_taskgraph_submission,
         "_bind_outer_magnetic_taskgraph_run",
         lambda *_args: (_ for _ in ()).throw(
-            magnetic_taskgraph.MagneticTaskGraphError("magnetic_taskgraph_outer_run_binding_failed")
+            magnetic_taskgraph_authority.MagneticTaskGraphError("magnetic_taskgraph_outer_run_binding_failed")
         ),
     )
 
     with pytest.raises(
-        magnetic_taskgraph.MagneticTaskGraphError,
+        magnetic_taskgraph_authority.MagneticTaskGraphError,
         match="magnetic_taskgraph_outer_run_binding_failed",
     ):
-        magnetic_taskgraph.submit_magnetic_taskgraph(_execution_payload())
+        magnetic_taskgraph_submission.submit_magnetic_taskgraph(_execution_payload())
     with task_db_connect.connect_closing(hermes_task_store) as connection:
         staged = connection.execute(
             "SELECT id, status, current_run_id FROM tasks WHERE idempotency_key = ?",
@@ -433,7 +436,7 @@ def test_submit_preserves_an_unbound_staged_root_for_exact_retry(
         assert staged["current_run_id"] is None
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (staged["id"], magnetic_taskgraph._HERMES_AUTHORITY_EVENT),
+            (staged["id"], magnetic_taskgraph_authority._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
 
 
@@ -447,10 +450,10 @@ def test_submit_preserves_a_bound_staged_root_when_activation_fails_for_retry(
     monkeypatch.setattr(task_db, "promote_task", lambda *_args, **_kwargs: (False, "injected"))
 
     with pytest.raises(
-        magnetic_taskgraph.MagneticTaskGraphError,
+        magnetic_taskgraph_authority.MagneticTaskGraphError,
         match="magnetic_taskgraph_hermes_root_activation_failed",
     ):
-        magnetic_taskgraph.submit_magnetic_taskgraph(_execution_payload())
+        magnetic_taskgraph_submission.submit_magnetic_taskgraph(_execution_payload())
     with task_db_connect.connect_closing(hermes_task_store) as connection:
         staged = connection.execute(
             "SELECT id, status FROM tasks WHERE idempotency_key = ?",
@@ -459,11 +462,11 @@ def test_submit_preserves_a_bound_staged_root_when_activation_fails_for_retry(
         assert staged is not None and staged["status"] == "blocked"
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = ?",
-            (staged["id"], magnetic_taskgraph._HERMES_AUTHORITY_EVENT),
+            (staged["id"], magnetic_taskgraph_authority._HERMES_AUTHORITY_EVENT),
         ).fetchone()["count"] == 1
 
     monkeypatch.setattr(task_db, "promote_task", promote_task)
-    retried = magnetic_taskgraph.submit_magnetic_taskgraph(_execution_payload())
+    retried = magnetic_taskgraph_submission.submit_magnetic_taskgraph(_execution_payload())
     assert retried["hermesRootId"] == staged["id"]
     assert retried["hermesStatus"] == "ready"
 
@@ -474,10 +477,10 @@ def test_team_marker_cannot_be_applied_to_another_worker(monkeypatch) -> None:
     _stub_retained_input(monkeypatch)
 
     with pytest.raises(
-        magnetic_taskgraph.MagneticTaskGraphError,
+        magnetic_taskgraph_authority.MagneticTaskGraphError,
         match="magnetic_taskgraph_team_identity_invalid:worker-card-a",
     ):
-        magnetic_taskgraph.submit_magnetic_taskgraph(payload)
+        magnetic_taskgraph_submission.submit_magnetic_taskgraph(payload)
 
 
 def test_submit_rejects_transport_mission_that_differs_from_reloaded_idf(
@@ -486,15 +489,15 @@ def test_submit_rejects_transport_mission_that_differs_from_reloaded_idf(
     _stub_retained_input(monkeypatch, mission="Mission held by retained bytes.")
 
     with pytest.raises(
-        magnetic_taskgraph.MagneticTaskGraphError,
+        magnetic_taskgraph_authority.MagneticTaskGraphError,
         match="magnetic_taskgraph_mission_input_mismatch",
     ):
-        magnetic_taskgraph.submit_magnetic_taskgraph(_execution_payload())
+        magnetic_taskgraph_submission.submit_magnetic_taskgraph(_execution_payload())
 
 
 def _submit_root(monkeypatch) -> str:
     _stub_retained_input(monkeypatch)
-    return magnetic_taskgraph.submit_magnetic_taskgraph(
+    return magnetic_taskgraph_submission.submit_magnetic_taskgraph(
         _execution_payload(),
     )["hermesRootId"]
 
@@ -543,7 +546,7 @@ def test_same_root_waits_on_hermes_dependencies_then_returns_its_own_final_resul
         )
         assert task_db.get_task(connection, root_id).status == "todo"
 
-    waiting = magnetic_taskgraph.read_magnetic_taskgraph({"hermesRootId": root_id})
+    waiting = magnetic_taskgraph_readback.read_magnetic_taskgraph({"hermesRootId": root_id})
     assert waiting["state"] == "pending"
     assert waiting["hermesStatus"] == "todo"
     assert waiting["hermesRunId"] == first_run_id
@@ -606,7 +609,7 @@ def test_same_root_waits_on_hermes_dependencies_then_returns_its_own_final_resul
             expected_run_id=second_run_id,
         )
 
-    status = magnetic_taskgraph.read_magnetic_taskgraph({"hermesRootId": root_id})
+    status = magnetic_taskgraph_readback.read_magnetic_taskgraph({"hermesRootId": root_id})
     assert status["state"] == "completed"
     assert status["hermesStatus"] == "done"
     assert status["hermesRootId"] == root_id
@@ -662,7 +665,7 @@ def test_status_does_not_project_detached_worker_session_metadata(
             metadata={"worker_session_id": 7},
         )
 
-    status = magnetic_taskgraph.read_magnetic_taskgraph({"hermesRootId": root_id})
+    status = magnetic_taskgraph_readback.read_magnetic_taskgraph({"hermesRootId": root_id})
     worker = next(task for task in status["hermesTasks"] if task["taskId"] == worker_id)
     assert worker["handoffSummary"] == "Bounded handoff."
     assert "workerSessionId" not in worker
@@ -680,7 +683,7 @@ def test_completed_root_without_its_own_result_fails_closed(
         with pytest.raises(task_db.EmptyCompletionError):
             task_db.complete_task(connection, root_id)
 
-    status = magnetic_taskgraph.read_magnetic_taskgraph({"hermesRootId": root_id})
+    status = magnetic_taskgraph_readback.read_magnetic_taskgraph({"hermesRootId": root_id})
     assert status["state"] == "pending"
     assert status["hermesStatus"] == "ready"
     assert "finalResult" not in status

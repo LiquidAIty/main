@@ -3,16 +3,10 @@ import type { ComponentProps } from 'react';
 import SharedCardChat from './SharedCardChat';
 import CardTerminalPanel from './CardTerminalPanel';
 import SharedChatTerminalSplit from './SharedChatTerminalSplit';
-import { DEFAULT_PROJECT_DECK_ID } from '../deck/newProjectDeck';
-
-type BuilderTerminalCard = {
-  id: string;
-  title: string;
-  runtime: {
-    kind: string;
-    profile?: string;
-  };
-};
+import {
+  builderTerminalBinding,
+  type BuilderTerminalCard,
+} from './agentBuilderChatWorkSurfacePolicy';
 
 export default function AgentBuilderChatWorkSurface({
   activeProject,
@@ -27,6 +21,11 @@ export default function AgentBuilderChatWorkSurface({
   builderCard: BuilderTerminalCard | null | undefined;
   sharedChatProps: ComponentProps<typeof SharedCardChat>;
 }) {
+  const terminalBinding = builderTerminalBinding({
+    canvasProjectId,
+    conversationId,
+    builderCard,
+  });
   return (
     <div data-testid="large-surface-chat" style={{ height: '100%' }}>
       <SharedChatTerminalSplit
@@ -36,20 +35,15 @@ export default function AgentBuilderChatWorkSurface({
             <SharedCardChat {...sharedChatProps} />
           </div>
         )}
-        terminal={builderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
+        terminal={terminalBinding ? (
           <div
             data-testid="under-chat-card-work-surface"
-            data-card-id={builderCard.id}
+            data-card-id={terminalBinding.cardId}
             style={{ height: '100%', minHeight: 0 }}
           >
             <CardTerminalPanel
-              key={`${canvasProjectId}:${builderCard.id}:${builderCard.runtime.profile}`}
-              identity={{
-                projectId: canvasProjectId,
-                deckId: DEFAULT_PROJECT_DECK_ID,
-                cardId: builderCard.id,
-                conversationId,
-              }}
+              key={terminalBinding.key}
+              identity={terminalBinding.identity}
             />
           </div>
         ) : null}

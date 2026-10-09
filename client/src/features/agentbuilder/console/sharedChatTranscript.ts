@@ -10,6 +10,9 @@ export type SharedCardChatMessage = SharedChatMessage & {
 
 export type SharedCardRunInput = { images?: Array<Record<string, unknown>> };
 
+// Matches the Hermes turn-image attachment count limit.
+export const MAX_SHARED_CARD_CHAT_IMAGES = 12;
+
 export const SHARED_CHAT_USER: SharedChatParticipant = { kind: 'user', label: 'You' };
 
 export function participantFromEvent(value: unknown): SharedChatParticipant | null {

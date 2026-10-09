@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.python_models import card_run_selection
+from app.python_models import (
+    card_run_auto_model,
+    card_run_auto_tools,
+    card_run_jev,
+    card_run_selection_context,
+)
 
 
 def _candidate(model: str, **overrides):
@@ -25,7 +30,7 @@ def _candidate(model: str, **overrides):
 
 
 def _context():
-    return card_run_selection.selection_context(
+    return card_run_selection_context.selection_context(
         current_request="Use the selected graph record.",
         instructions="Saved instructions.",
         output_contract="Return JSON.",
@@ -89,8 +94,8 @@ def test_auto_tools_asks_one_exact_use_omit_choice_and_stores_selected_confidenc
             },
         }
 
-    monkeypatch.setattr(card_run_selection, "_post_jev", decide)
-    selected, decision = card_run_selection.select_auto_tools(
+    monkeypatch.setattr(card_run_jev, "_post_jev", decide)
+    selected, decision = card_run_auto_tools.select_auto_tools(
         baseline_tool_ids=["canvas.inspect", "graphiti.search_nodes"],
         tool_contracts=[
             {"canonicalId": "canvas.inspect", "inputSchema": {"type": "object"}},
@@ -119,11 +124,11 @@ def test_auto_tools_asks_one_exact_use_omit_choice_and_stores_selected_confidenc
 
 def test_auto_tools_malformed_response_uses_full_valid_baseline(monkeypatch):
     monkeypatch.setattr(
-        card_run_selection,
+        card_run_jev,
         "_post_jev",
         lambda *_args, **_kwargs: {"id": "bad", "answers": {}},
     )
-    selected, decision = card_run_selection.select_auto_tools(
+    selected, decision = card_run_auto_tools.select_auto_tools(
         baseline_tool_ids=["canvas.inspect"],
         tool_contracts=[{"canonicalId": "canvas.inspect"}],
         context=_context(),
@@ -137,11 +142,11 @@ def test_auto_tools_malformed_response_uses_full_valid_baseline(monkeypatch):
 
 def test_auto_model_one_compatible_candidate_selects_without_jev(monkeypatch):
     monkeypatch.setattr(
-        card_run_selection,
+        card_run_jev,
         "_post_jev",
         lambda *_args, **_kwargs: pytest.fail("one candidate must be deterministic"),
     )
-    provider, decision = card_run_selection.select_auto_model(
+    provider, decision = card_run_auto_model.select_auto_model(
         saved_provider={
             "provider": "openai", "accessMode": "chatgpt-account",
             "modelKey": "gpt-5.6-sol", "providerModelId": "gpt-5.6-sol",
@@ -181,8 +186,8 @@ def test_auto_model_multiple_candidates_requires_one_valid_jev_choice(monkeypatc
             }},
         }
 
-    monkeypatch.setattr(card_run_selection, "_post_jev", decide)
-    provider, decision = card_run_selection.select_auto_model(
+    monkeypatch.setattr(card_run_jev, "_post_jev", decide)
+    provider, decision = card_run_auto_model.select_auto_model(
         saved_provider={
             "provider": "openai", "accessMode": "chatgpt-account",
             "modelKey": "gpt-5.6-sol", "providerModelId": "gpt-5.6-sol",
@@ -203,8 +208,8 @@ def test_auto_model_multiple_candidates_requires_one_valid_jev_choice(monkeypatc
 
 
 def test_auto_model_no_compatible_candidate_fails_with_bounded_decision():
-    with pytest.raises(card_run_selection.AutoModelSelectionError) as captured:
-        card_run_selection.select_auto_model(
+    with pytest.raises(card_run_auto_model.AutoModelSelectionError) as captured:
+        card_run_auto_model.select_auto_model(
             saved_provider={
                 "provider": "openai", "accessMode": "chatgpt-account",
                 "modelKey": "gpt-5.6-sol", "providerModelId": "gpt-5.6-sol",

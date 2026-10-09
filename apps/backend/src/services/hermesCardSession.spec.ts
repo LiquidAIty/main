@@ -133,6 +133,87 @@ describe('shared Card profile with isolated Project sessions', () => {
     expect(calls).toEqual([]);
   });
 
+  it('creates a missing saved Card profile through Hermes before opening its first session', async () => {
+    const codeRoot = useTemporaryBuilderCodeRoot();
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let describeCalls = 0;
+    const client = {
+      async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+        calls.push({ method, params: structuredClone(params) });
+        if (method === 'profiles.describe') {
+          describeCalls += 1;
+          if (describeCalls === 1) {
+            throw Object.assign(new Error("profile 'builder' not found"), { code: 4064 });
+          }
+          return {
+            name: 'builder', soul: '# builder',
+            capability_fingerprint: '0123456789ab',
+            model: {
+              provider: 'openai-codex', default: 'gpt-parent',
+              openai_runtime: 'codex_app_server',
+            },
+            skills: [
+              { name: 'hermes-agent', enabled: true },
+              { name: 'agent-builder-inspection', enabled: true },
+            ],
+            toolsets: [], mcp_servers: [],
+            delegation: { provider: '', model: '', max_spawn_depth: 1, enabled: false },
+            task_mode: null,
+          } as T;
+        }
+        if (method === 'profiles.create') {
+          return { ok: true, name: 'builder', path: 'profiles/builder' } as T;
+        }
+        if (method === 'session.list') return { sessions: [] } as T;
+        if (method === 'session.create') {
+          return {
+            session_id: 'live-builder', stored_session_id: 'stored-builder', info: {},
+          } as T;
+        }
+        throw new Error(`unexpected:${method}`);
+      },
+    } as unknown as HermesGatewayClient;
+    const builderCard = target('builder', 'builder');
+    builderCard.title = 'Builder';
+    builderCard.prompt = '# builder';
+    builderCard.runtimeOptions!.skills = ['agent-builder-inspection'];
+    const project = authority('new-builder-project', builderCard);
+    project.deck.projectCodeFolder = 'worker-agent-ui';
+    const addressableBuilder: AddressableCard = {
+      card: builderCard,
+      cardRevisionId: 'revision-builder',
+      profile: 'builder',
+      title: 'Builder',
+      address: 'Builder',
+      aliases: ['builder'],
+    };
+
+    const binding = await cardSession(client, addressableBuilder, {
+      userId: 'user-a', projectId: 'new-builder-project', deckId: 'deck_builder',
+      conversationId: 'conversation-a',
+    });
+
+    expect(binding).toMatchObject({
+      sessionId: 'live-builder', storedSessionId: 'stored-builder',
+    });
+    expect(calls.map(({ method }) => method)).toEqual([
+      'profiles.describe',
+      'profiles.create',
+      'profiles.describe',
+      'session.list',
+      'session.create',
+    ]);
+    expect(calls[1].params).toEqual({
+      name: 'builder',
+      description: 'Builder',
+      soul: '# builder',
+      mirror_credentials: false,
+    });
+    expect(calls.at(-1)?.params.cwd).toBe(
+      path.join(codeRoot, 'new-builder-project', 'worker-agent-ui'),
+    );
+  });
+
   it('creates one Hermes session for simultaneous first turns in the same conversation', async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
     let storedSessionId = '';

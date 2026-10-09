@@ -58,7 +58,7 @@ def connector(rows):
 def test_absent_project_rows_preserve_existing_capability_availability():
     result = resolve_project_worldview(
         "project-a",
-        ["web_search", "weather", "web_search"],
+        ["satellite.imagery", "weather", "satellite.imagery"],
         connector=connector([]),
     )
 
@@ -66,8 +66,8 @@ def test_absent_project_rows_preserve_existing_capability_availability():
         "schemaVersion": "project-worldview.v1",
         "projectId": "project-a",
         "defaultEnabled": True,
-        "candidateCapabilities": ["web_search", "weather"],
-        "enabledCapabilities": ["web_search", "weather"],
+        "candidateCapabilities": ["satellite.imagery", "weather"],
+        "enabledCapabilities": ["satellite.imagery", "weather"],
         "excludedCapabilities": [],
         "overrides": [],
     }
@@ -76,7 +76,7 @@ def test_absent_project_rows_preserve_existing_capability_availability():
 def test_user_override_precedes_main_and_off_is_a_hard_candidate_ceiling():
     result = resolve_project_worldview(
         "project-a",
-        ["web_search", "weather", "aircraft"],
+        ["satellite.imagery", "weather", "aircraft"],
         connector=connector([
             {
                 "capability_id": "weather",
@@ -97,7 +97,7 @@ def test_user_override_precedes_main_and_off_is_a_hard_candidate_ceiling():
         ]),
     )
 
-    assert result["enabledCapabilities"] == ["web_search"]
+    assert result["enabledCapabilities"] == ["satellite.imagery"]
     assert result["excludedCapabilities"] == ["weather", "aircraft"]
     assert result["overrides"][0] == {
         "capabilityId": "weather",

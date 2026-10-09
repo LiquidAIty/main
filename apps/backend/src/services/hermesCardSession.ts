@@ -6,6 +6,7 @@ import {
   materializeSavedCardProfile,
   savedCardBotRoster,
 } from '../hermes/profileMaterialization';
+import { ensureSavedCardProfile } from '../hermes/savedCardProfileProvisioning';
 import type { HermesGatewayClient } from './hermesGateway';
 import {
   objectRecord,
@@ -113,6 +114,23 @@ function hermesSessionResult(
   };
 }
 
+async function materializeCardProfile(
+  client: HermesGatewayClient,
+  card: AddressableCard,
+  roster: string[],
+): Promise<Record<string, unknown>> {
+  const request = <T>(method: string, params: Record<string, unknown> = {}) => (
+    client.request<T>(method, params)
+  );
+  const existing = await ensureSavedCardProfile(request, card.card, roster);
+  return objectRecord(await materializeSavedCardProfile(
+    request,
+    card.card,
+    roster,
+    existing,
+  ));
+}
+
 async function bindCardSession(
   client: HermesGatewayClient,
   authority: SharedChatAuthority,
@@ -122,11 +140,7 @@ async function bindCardSession(
   const title = savedCardSessionTitle({ ...owner, cardId: card.card.id });
   const roster = savedCardBotRoster(authority.deck, card.card);
   const profile = card.profile;
-  const profileState = objectRecord(await materializeSavedCardProfile(
-    (method, params = {}) => client.request(method, params),
-    card.card,
-    roster,
-  ));
+  const profileState = await materializeCardProfile(client, card, roster);
   const profileModel = objectRecord(profileState.model);
   const profileCapabilityFingerprint = String(
     profileState.capability_fingerprint || '',

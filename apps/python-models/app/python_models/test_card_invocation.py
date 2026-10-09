@@ -6,8 +6,9 @@ import pytest
 
 from app.python_models import (
     agentgraph_topology,
-    card_invocation,
-    card_runs,
+    card_invocation_preparation,
+    card_invocation_tools,
+    card_run_preparation,
     saved_card_contract,
     saved_cards,
 )
@@ -29,7 +30,7 @@ def project_worldview_defaults_to_existing_availability(monkeypatch):
             "overrides": [],
         }
 
-    monkeypatch.setattr(card_invocation, "resolve_project_worldview", resolve)
+    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", resolve)
     monkeypatch.setattr(agentgraph_topology, "resolve_project_worldview", resolve)
 
 def _agent(card_id: str, **overrides):
@@ -76,9 +77,9 @@ def _external_tool(name: str, *, read_only: bool) -> dict:
         "serverInjectedArguments": [],
         "dispatcherContextArguments": [],
         "dispatcherOwner": (
-            "app.mcp_provider_operations._call_graphiti"
+            "app.mcp_provider_operations.call_graphiti_operation"
             if namespace == "graphiti"
-            else "app.mcp_provider_operations._call_cbm"
+            else "app.mcp_provider_operations.call_cbm_operation"
         ),
         "authenticatedProjection": True,
         "annotations": {
@@ -123,7 +124,7 @@ def _delegation_invocation(
             "deck": {"nodes": [parent, child], "edges": edges},
         },
     )
-    return card_invocation.materialize_invocation({
+    return card_invocation_preparation.materialize_invocation({
         "projectId": "project-one",
         "deckId": "deck-one",
         "runId": "run-delegation",
@@ -135,7 +136,7 @@ def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
     reads = [{
         "cbmQualifiedName": "symbol-one",
     }]
-    materialized = card_invocation.materialize_idf(
+    materialized = card_invocation_preparation.materialize_idf(
         stable={
             "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
             "instructions": "test instructions",
@@ -219,7 +220,7 @@ def test_no_script_preserves_saved_presentation_without_narrowing_effective_gran
     payload["discoveredTools"] = [
         _external_tool("graphiti.search_nodes", read_only=True),
     ]
-    prepared = card_invocation._prepare_invocation(payload)
+    prepared = card_invocation_preparation._prepare_invocation(payload)
     config = prepared["_callConfig"]
     assert config["presentedTools"] == card["runtimeOptions"]["tools"]
     assert set(config["presentedTools"]) <= set(config["enabledTools"])
@@ -247,13 +248,13 @@ def test_auto_tools_narrows_only_the_ordinary_model_surface(monkeypatch):
             "errorCode": None,
         }
 
-    monkeypatch.setattr(card_invocation, "select_auto_tools", select)
+    monkeypatch.setattr(card_invocation_preparation, "select_auto_tools", select)
     payload = _destination_payload("hermes")
     payload["discoveredTools"] = [
         _external_tool("graphiti.search_nodes", read_only=True),
     ]
 
-    invocation = card_invocation.materialize_invocation(payload)
+    invocation = card_invocation_preparation.materialize_invocation(payload)
     grants = invocation["idf"]["selectedToolsAndGrants"]
 
     assert captured["baseline_tool_ids"] == [
@@ -298,7 +299,7 @@ def test_auto_model_replaces_only_the_run_provider_tuple(monkeypatch):
         "autoModelCandidates": [candidate],
     }
 
-    invocation = card_invocation.materialize_invocation(payload)
+    invocation = card_invocation_preparation.materialize_invocation(payload)
 
     assert invocation["idf"]["stableSavedCardContext"]["provider"] == {
         "provider": "openai",
@@ -321,7 +322,7 @@ def test_published_catalog_failure_keeps_the_model_turn_and_surfaces_the_error(m
         "canvas.inspect": "tool_catalog_definition_invalid:canvas.inspect",
     }
 
-    prepared = card_invocation._prepare_invocation(payload)
+    prepared = card_invocation_preparation._prepare_invocation(payload)
 
     config = prepared["_callConfig"]
     assert config["enabledTools"] == []
@@ -349,7 +350,7 @@ def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
     payload["discoveredTools"] = [unavailable]
     payload["unavailableToolCatalogFamilies"] = ["graphiti"]
 
-    prepared = card_invocation._prepare_invocation(payload)
+    prepared = card_invocation_preparation._prepare_invocation(payload)
     config = prepared["_callConfig"]
     assert config["enabledTools"] == ["canvas.inspect"]
     assert config["presentedTools"] == ["canvas.inspect"]
@@ -376,7 +377,7 @@ output.emit({"result": {}})
 ''',
     }
     monkeypatch.setattr(
-        card_invocation,
+        card_invocation_preparation,
         "select_auto_tools",
         lambda **kwargs: (
             [],
@@ -392,7 +393,7 @@ output.emit({"result": {}})
         ),
     )
 
-    invocation = card_invocation.materialize_invocation(_destination_payload("hermes"))
+    invocation = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
     grants = invocation["idf"]["selectedToolsAndGrants"]
     saved = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
 
@@ -414,7 +415,7 @@ def test_invalid_script_is_inert_and_keeps_exact_saved_tool_schema(monkeypatch):
         "source": "return InvocationPreparation()",
     }
 
-    invocation = card_invocation.materialize_invocation(_destination_payload("hermes"))
+    invocation = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
     grants = invocation["idf"]["selectedToolsAndGrants"]
     saved = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
 
@@ -436,11 +437,15 @@ def test_main_preview_exposes_saved_authority_without_starting_a_run(monkeypatch
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_: {
         "projectId": "00000000-0000-0000-0000-000000000001", "deck": {"nodes": [main], "edges": []},
     })
-    monkeypatch.setattr(card_invocation, "materialize_idf", lambda **_: pytest.fail("preview created an IDF"))
-    monkeypatch.setattr(card_runs, "_insert_run", lambda *_, **__: pytest.fail("preview started a Run"))
+    monkeypatch.setattr(
+        card_invocation_preparation,
+        "materialize_idf",
+        lambda **_: pytest.fail("preview created an IDF"),
+    )
+    monkeypatch.setattr(card_run_preparation, "_insert_run", lambda *_, **__: pytest.fail("preview started a Run"))
     payload = {"projectId": "project-one", "deckId": "deck-one", "conversationId": "conversation-one"}
-    assert "preparedContext" not in card_invocation.prepare_main_chat(payload)
-    result = card_invocation.prepare_main_chat({**payload, "message": "source validity"})
+    assert "preparedContext" not in card_invocation_preparation.prepare_main_chat(payload)
+    result = card_invocation_preparation.prepare_main_chat({**payload, "message": "source validity"})
     assert result["message"] == "source validity"
     assert "preparedContext" not in result
     assert result["sessionProfile"]["unavailableTools"] == []
@@ -516,9 +521,9 @@ def test_catalog_does_not_broaden_saved_card_grants(
             "serverInjectedArguments": [],
             "dispatcherContextArguments": [],
             "dispatcherOwner": (
-                "app.mcp_provider_operations._call_graphiti"
+                "app.mcp_provider_operations.call_graphiti_operation"
                 if namespace == "graphiti"
-                else "app.mcp_provider_operations._call_cbm"
+                else "app.mcp_provider_operations.call_cbm_operation"
             ),
             "authenticatedProjection": True,
             "annotations": {
@@ -530,7 +535,7 @@ def test_catalog_does_not_broaden_saved_card_grants(
             "grantEligible": True,
         }
 
-    invocation = card_invocation.materialize_invocation({
+    invocation = card_invocation_preparation.materialize_invocation({
         "projectId": "project-one",
         "deckId": "deck-one",
         "runId": "run-catalog",
@@ -565,8 +570,12 @@ def test_helper_and_mag_one_accept_empty_graph_and_reject_stale_selected_referen
     prepared = _prepared_grounded_runtime(runtime)
     prepared["resolvedGraphReads"] = []
     prepared["resolvedGraphProjection"] = {"nodes": [], "edges": []}
-    monkeypatch.setattr(card_invocation, "materialize_invocation", lambda _payload: prepared)
-    assert card_invocation.prepare_run_invocation({}) is prepared
+    monkeypatch.setattr(
+        card_invocation_preparation,
+        "materialize_invocation",
+        lambda _payload, **_kwargs: prepared,
+    )
+    assert card_invocation_preparation.prepare_run_invocation({}) is prepared
 
     stale = [{
         "cbmQualifiedName": "missing-symbol",
@@ -577,7 +586,7 @@ def test_helper_and_mag_one_accept_empty_graph_and_reject_stale_selected_referen
         saved_card_contract.CardDomainError,
         match="selected_graph_data_reference_stale:cbmQualifiedName:missing-symbol",
     ):
-        card_invocation.prepare_run_invocation({"dataAnchors": stale})
+        card_invocation_preparation.prepare_run_invocation({"dataAnchors": stale})
 
 @pytest.mark.parametrize(
     "runtime",
@@ -591,8 +600,12 @@ def test_selected_helper_and_mag_one_graph_data_is_validated_without_creating_a_
     runtime: dict[str, str],
 ) -> None:
     prepared = _prepared_grounded_runtime(runtime)
-    monkeypatch.setattr(card_invocation, "materialize_invocation", lambda _payload: prepared)
-    monkeypatch.setattr(card_runs, "_insert_run",
+    monkeypatch.setattr(
+        card_invocation_preparation,
+        "materialize_invocation",
+        lambda _payload, **_kwargs: prepared,
+    )
+    monkeypatch.setattr(card_run_preparation, "_insert_run",
         lambda *_args, **_kwargs: pytest.fail("graph-data validation created a Run"),
     )
     payload = {"dataAnchors": [{
@@ -601,7 +614,7 @@ def test_selected_helper_and_mag_one_graph_data_is_validated_without_creating_a_
         "boundedExpansion": 0, "resultLimit": 4, "required": True,
     }]}
 
-    assert card_invocation.prepare_run_invocation(payload) is prepared
+    assert card_invocation_preparation.prepare_run_invocation(payload) is prepared
 
 def test_ordinary_hermes_cards_keep_the_existing_unrestricted_preparation(
     monkeypatch: pytest.MonkeyPatch,
@@ -611,9 +624,13 @@ def test_ordinary_hermes_cards_keep_the_existing_unrestricted_preparation(
     })
     prepared["resolvedGraphReads"] = []
     prepared["resolvedGraphProjection"] = {"nodes": [], "edges": []}
-    monkeypatch.setattr(card_invocation, "materialize_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(
+        card_invocation_preparation,
+        "materialize_invocation",
+        lambda _payload, **_kwargs: prepared,
+    )
 
-    assert card_invocation.prepare_run_invocation({}) is prepared
+    assert card_invocation_preparation.prepare_run_invocation({}) is prepared
 
 def test_magnetic_taskgraph_card_may_invoke_only_a_saved_blue_worker(
     monkeypatch: pytest.MonkeyPatch,
@@ -650,10 +667,10 @@ def test_magnetic_taskgraph_card_may_invoke_only_a_saved_blue_worker(
         "senderCardId": "mag-one",
         "assignment": "bounded worker task",
     }
-    assert card_invocation.materialize_invocation(payload)["runtimeOwner"] == "hermes"
+    assert card_invocation_preparation.materialize_invocation(payload)["runtimeOwner"] == "hermes"
     loaded["deck"]["edges"] = []
     with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation.materialize_invocation(payload)
+        card_invocation_preparation.materialize_invocation(payload)
 
 def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity(
     monkeypatch: pytest.MonkeyPatch,
@@ -707,7 +724,7 @@ def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity
         },
     })
 
-    direct = card_invocation.materialize_invocation({
+    direct = card_invocation_preparation.materialize_invocation({
         "projectId": "project-one",
         "deckId": "deck-one",
         "runId": "run-direct",
@@ -715,7 +732,7 @@ def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity
         "senderCardId": "main",
         "assignment": "direct mission",
     })
-    bus_worker = card_invocation.materialize_invocation({
+    bus_worker = card_invocation_preparation.materialize_invocation({
         "projectId": "project-one",
         "deckId": "deck-one",
         "runId": "run-team-child",
@@ -755,7 +772,7 @@ def test_one_enabled_saved_magnetic_card_resolves_without_a_control_wire(
         },
     }
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: loaded)
-    assert card_invocation.resolve_magnetic_taskgraph_card(
+    assert card_invocation_preparation.resolve_magnetic_taskgraph_card(
         "project-one", "deck-one"
     ) == {
         "projectId": "00000000-0000-0000-0000-000000000001",
@@ -767,7 +784,7 @@ def test_one_enabled_saved_magnetic_card_resolves_without_a_control_wire(
         saved_card_contract.CardDomainError,
         match="magnetic_taskgraph_card_identity_ambiguous",
     ):
-        card_invocation.resolve_magnetic_taskgraph_card("project-one", "deck-one")
+        card_invocation_preparation.resolve_magnetic_taskgraph_card("project-one", "deck-one")
     mag_one["runtimeOptions"].pop("enabled")
     loaded["deck"]["nodes"].append(_agent(
         "other-mag",
@@ -777,7 +794,7 @@ def test_one_enabled_saved_magnetic_card_resolves_without_a_control_wire(
         saved_card_contract.CardDomainError,
         match="magnetic_taskgraph_card_identity_ambiguous",
     ):
-        card_invocation.resolve_magnetic_taskgraph_card("project-one", "deck-one")
+        card_invocation_preparation.resolve_magnetic_taskgraph_card("project-one", "deck-one")
 
 def test_main_mode_invokes_magnetic_across_orange_bot_authority(
     monkeypatch: pytest.MonkeyPatch,
@@ -813,10 +830,10 @@ def test_main_mode_invokes_magnetic_across_orange_bot_authority(
         "senderCardId": "main",
         "assignment": "approved Magnetic mission",
     }
-    assert card_invocation.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
+    assert card_invocation_preparation.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
     loaded["deck"]["edges"] = []
     with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation.materialize_invocation(payload)
+        card_invocation_preparation.materialize_invocation(payload)
     loaded["deck"]["edges"] = [{
         "id": "main-magnetic",
         "source": "main",
@@ -825,10 +842,10 @@ def test_main_mode_invokes_magnetic_across_orange_bot_authority(
     }]
     main["runtime"] = {"kind": "hermes", "mode": "delegate", "profile": "main"}
     main["runtimeOptions"]["orchestrator"] = True
-    assert card_invocation.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
+    assert card_invocation_preparation.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
     main["runtimeOptions"]["orchestrator"] = False
     with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation.materialize_invocation(payload)
+        card_invocation_preparation.materialize_invocation(payload)
 
 def test_disabled_flow_edge_materializes_no_delegation_transport(
     monkeypatch: pytest.MonkeyPatch,
@@ -856,8 +873,8 @@ def test_saved_parent_selection_reaches_execution_without_changing_card_authorit
                        "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna"},
     )
     before = json.dumps(loaded, sort_keys=True)
-    prepared = card_invocation._prepare_invocation(_destination_payload("hermes"))
-    invocation = card_invocation.materialize_invocation(_destination_payload("hermes"))
+    prepared = card_invocation_preparation._prepare_invocation(_destination_payload("hermes"))
+    invocation = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
     expected = {"provider": "openai", "accessMode": "chatgpt-account",
                 "modelKey": model_key, "providerModelId": "gpt-5.6-sol"}
     assert prepared["_callConfig"]["provider"] == expected
@@ -876,7 +893,7 @@ def test_saved_hermes_subagent_model_survives_canonical_idf_materialization(monk
     }
     card["runtimeOptions"]["subagentModel"] = selection
 
-    invocation = card_invocation.materialize_invocation(_destination_payload("hermes"))
+    invocation = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
 
     assert invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["subagentModel"] == selection
     assert invocation["idf"]["stableSavedCardContext"]["provider"]["providerModelId"] != "gpt-5.6-luna"
@@ -890,8 +907,8 @@ def test_saved_hermes_subagent_type_survives_canonical_idf_materialization(
     card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
     card["runtimeOptions"]["subagentType"] = selection
 
-    prepared = card_invocation._prepare_invocation(_destination_payload("hermes"))
-    invocation = card_invocation.materialize_invocation(_destination_payload("hermes"))
+    prepared = card_invocation_preparation._prepare_invocation(_destination_payload("hermes"))
+    invocation = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
 
     assert prepared["_callConfig"]["runtimeOptions"]["subagentType"] == selection
     assert invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["subagentType"] == selection
@@ -900,7 +917,7 @@ def test_saved_hermes_subagent_type_survives_canonical_idf_materialization(
 def test_missing_hermes_subagent_type_stays_absent(monkeypatch):
     _destination_fixture(monkeypatch)
 
-    prepared = card_invocation._prepare_invocation(_destination_payload("hermes"))
+    prepared = card_invocation_preparation._prepare_invocation(_destination_payload("hermes"))
 
     assert "subagentType" not in prepared["_callConfig"]["runtimeOptions"]
 
@@ -910,7 +927,7 @@ def test_invalid_saved_hermes_subagent_type_is_rejected(monkeypatch):
     card["runtimeOptions"]["subagentType"] = "team"
 
     with pytest.raises(saved_card_contract.CardDomainError, match="card_subagent_type_invalid"):
-        card_invocation._prepare_invocation(_destination_payload("hermes"))
+        card_invocation_preparation._prepare_invocation(_destination_payload("hermes"))
 
 @pytest.mark.parametrize("runtime", [
     {"kind": "hermes", "mode": mode, "profile": "research"}
@@ -924,7 +941,7 @@ def test_ordinary_materialization_never_loads_builder_dictionary(monkeypatch, ru
         AssertionError("ordinary Run must not load builder data")))
     payload = _destination_payload("hermes")
     payload.pop("senderCardId")
-    invocation = card_invocation.materialize_invocation(payload)
+    invocation = card_invocation_preparation.materialize_invocation(payload)
     assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
 
 def test_project_worldview_filters_saved_tools_before_idf_materialization(
@@ -953,9 +970,9 @@ def test_project_worldview_filters_saved_tools_before_idf_materialization(
             }],
         }
 
-    monkeypatch.setattr(card_invocation, "resolve_project_worldview", project_mask)
+    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", project_mask)
 
-    invocation = card_invocation.materialize_invocation(_destination_payload("hermes"))
+    invocation = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
 
     assert invocation["projectWorldview"]["excludedCapabilities"] == ["current_datetime"]
     assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
@@ -964,7 +981,7 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loaded = _destination_fixture(monkeypatch)
-    hermes = card_invocation.materialize_invocation(_destination_payload("hermes"))
+    hermes = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
 
     assert hermes["idf"]["stableSavedCardContext"]["instructions"] == "Hermes saved prompt"
     assert hermes["idf"]["stableSavedCardContext"]["runtime"] == {
@@ -984,7 +1001,7 @@ def test_receiving_card_materializes_its_own_exact_call_data(
         saved_card_contract.CardDomainError,
         match="card_invocation_edge_authority_required",
     ):
-        card_invocation.materialize_invocation(_destination_payload("hermes"))
+        card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
 
 def test_idf_materialization_requires_an_actual_run_identity(
     monkeypatch: pytest.MonkeyPatch,
@@ -994,7 +1011,7 @@ def test_idf_materialization_requires_an_actual_run_identity(
     payload.pop("runId")
 
     with pytest.raises(saved_card_contract.CardDomainError, match="run_id_required"):
-        card_invocation.materialize_invocation(payload)
+        card_invocation_preparation.materialize_invocation(payload)
 
 @pytest.mark.parametrize(
     ("field", "value"),
@@ -1018,7 +1035,7 @@ def test_invocation_rejects_every_non_graph_context_field(
         saved_card_contract.CardDomainError,
         match=f"invocation_context_field_forbidden:{field}",
     ):
-        card_invocation.materialize_invocation(payload)
+        card_invocation_preparation.materialize_invocation(payload)
 
 def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
     monkeypatch: pytest.MonkeyPatch,
@@ -1043,9 +1060,9 @@ def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
             "canonicalName": "Rocket Lab", "entityKind": "Entity",
         }]},
     )
-    monkeypatch.setattr(card_invocation, "build_canonical_subject_directory", lambda _project: subjects,
+    monkeypatch.setattr(card_invocation_preparation, "build_canonical_subject_directory", lambda _project: subjects,
     )
-    invocation = card_invocation.materialize_invocation(
+    invocation = card_invocation_preparation.materialize_invocation(
         _destination_payload("card_knowgraph")
     )
 
@@ -1079,7 +1096,7 @@ def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
         ],
     }
     with pytest.raises(saved_card_contract.CardDomainError, match="data_anchor_duplicate"):
-        card_invocation.materialize_invocation(payload)
+        card_invocation_preparation.materialize_invocation(payload)
 
     payload["dataAnchors"] = []
     payload["senderCardId"] = "hermes"
@@ -1087,7 +1104,7 @@ def test_context_cascade_rejects_duplicate_and_recursive_handoffs(
         saved_card_contract.CardDomainError,
         match="card_invocation_self_handoff_forbidden",
     ):
-        card_invocation.materialize_invocation(payload)
+        card_invocation_preparation.materialize_invocation(payload)
 
 def test_explicit_card_mission_is_transient_and_retaskable(
     monkeypatch: pytest.MonkeyPatch,
@@ -1097,13 +1114,13 @@ def test_explicit_card_mission_is_transient_and_retaskable(
     target["runtime"] = {"kind": "hermes", "mode": "delegate", "profile": "knowledge"}
     target["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
 
-    first = card_invocation.materialize_invocation({
+    first = card_invocation_preparation.materialize_invocation({
         **_destination_payload("hermes"),
         "runId": "run-first",
         "assignment": "Research the first bounded question.",
         "discoveredTools": [_external_tool("graphiti.add_memory", read_only=False)],
     })
-    second = card_invocation.materialize_invocation({
+    second = card_invocation_preparation.materialize_invocation({
         **_destination_payload("hermes"),
         "runId": "run-second",
         "assignment": "Retask the same saved Graph Agent Card with a second question.",
@@ -1139,7 +1156,7 @@ def test_only_main_mode_can_retask_one_connected_graph_card(
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: loaded)
 
     def invoke(sender: str, task: str) -> dict:
-        return card_invocation.materialize_invocation({
+        return card_invocation_preparation.materialize_invocation({
             "projectId": "project-one", "deckId": "deck_builder",
             "runId": f"run-{sender}-{len(task)}",
             "cardId": "graph-agent", "senderCardId": sender,
@@ -1184,9 +1201,9 @@ def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
     }
 
     def materialized():
-        prepared = card_invocation._prepare_invocation(payload)
+        prepared = card_invocation_preparation._prepare_invocation(payload)
         config = prepared["_callConfig"]
-        return card_invocation.materialize_idf(
+        return card_invocation_preparation.materialize_idf(
             stable={"instructions": config["systemPrompt"], "runtime": config["runtime"],
                     "provider": config["provider"]},
             variable={"task": prepared["assignment"]},
@@ -1210,4 +1227,4 @@ def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
 @pytest.mark.parametrize("field", ["builderOperation", "agentBuilderOperation", "agentBuilderGuidance", "buildTarget", "selectedCardTarget"])
 def test_invocation_rejects_retired_operation_fields(field):
     with pytest.raises(saved_card_contract.CardDomainError, match="invocation_context_field_forbidden"):
-        card_invocation._reject_non_graph_invocation_context({field: {"mode": "create"}})
+        card_invocation_preparation._reject_non_graph_invocation_context({field: {"mode": "create"}})

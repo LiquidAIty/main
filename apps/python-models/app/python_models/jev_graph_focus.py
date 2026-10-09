@@ -13,7 +13,7 @@ from .jev_validation import (
     validate_rounded_choice_winner,
     validate_rounded_probability_distribution,
 )
-from .thinkgraph_relationships import (
+from .thinkgraph_relationship_classification import (
     JEV_ENDPOINT,
     JEV_MODEL,
 )

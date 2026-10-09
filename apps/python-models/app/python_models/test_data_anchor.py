@@ -19,17 +19,21 @@ from app.python_models.data_anchor_contract import (
     json_safe,
 )
 from app.python_models.codegraph_reference_reads import read_codegraph_exact
-from app.python_models.knowgraph_reference_reads import (
+from app.python_models.knowgraph_exact_reads import (
     read_knowgraph_episodes_exact,
     read_knowgraph_exact,
+)
+from app.python_models.knowgraph_projection_reads import (
     read_knowgraph_neighborhood,
     read_knowgraph_projection,
 )
 from app.python_models.thinkgraph_reference_reads import read_thinkgraph_exact
 from app.python_models import (
     codegraph_reference_reads,
+    data_anchor,
     engraphis,
-    knowgraph_reference_reads,
+    knowgraph_exact_reads,
+    knowgraph_projection_reads,
     thinkgraph_reference_reads,
 )
 
@@ -321,8 +325,8 @@ def test_knowgraph_projection_preserves_ui_shape_and_provider_semantics(
         _projection_episode_rows(),
     ])
     monkeypatch.setattr(
-        knowgraph_reference_reads,
-        "_knowgraph_driver",
+        knowgraph_projection_reads,
+        "knowgraph_driver",
         lambda: (driver, "neo4j"),
     )
     projection = read_knowgraph_projection("project-1", 200)
@@ -380,8 +384,8 @@ def test_knowgraph_neighborhood_preserves_one_hop_direction_and_episode_nodes(
         _projection_episode_rows(),
     ])
     monkeypatch.setattr(
-        knowgraph_reference_reads,
-        "_knowgraph_driver",
+        knowgraph_projection_reads,
+        "knowgraph_driver",
         lambda: (driver, "neo4j"),
     )
     neighborhood = read_knowgraph_neighborhood("project-1", "entity-a", 50)
@@ -565,8 +569,8 @@ def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance
     }]])
 
     monkeypatch.setattr(
-        knowgraph_reference_reads,
-        "_knowgraph_driver",
+        knowgraph_exact_reads,
+        "knowgraph_driver",
         lambda: (driver, "neo4j"),
     )
     record = read_knowgraph_exact(
@@ -604,8 +608,8 @@ def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
     }]])
 
     monkeypatch.setattr(
-        knowgraph_reference_reads,
-        "_knowgraph_driver",
+        knowgraph_exact_reads,
+        "knowgraph_driver",
         lambda: (driver, "neo4j"),
     )
     episodes = read_knowgraph_episodes_exact("project-1", ["episode-1", "episode-2"])
@@ -657,12 +661,12 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources(
     }
 
     monkeypatch.setattr(
-        knowgraph_reference_reads,
-        "_knowgraph_driver",
+        knowgraph_exact_reads,
+        "knowgraph_driver",
         lambda: (driver, "neo4j"),
     )
     monkeypatch.setattr(
-        knowgraph_reference_reads,
+        knowgraph_exact_reads,
         "read_knowgraph_episodes_exact",
         lambda project_id, ids: [episode]
         if project_id == "project-1" and ids == ["episode-1"] else [],
@@ -736,12 +740,12 @@ def test_knowgraph_exact_fact_preserves_graphiti_fact_when_jev_readback_is_malfo
     episode = {"uuid": "episode-1", "source_url": "https://example.test/source"}
 
     monkeypatch.setattr(
-        knowgraph_reference_reads,
-        "_knowgraph_driver",
+        knowgraph_exact_reads,
+        "knowgraph_driver",
         lambda: (driver, "neo4j"),
     )
     monkeypatch.setattr(
-        knowgraph_reference_reads,
+        knowgraph_exact_reads,
         "read_knowgraph_episodes_exact",
         lambda project_id, ids: [episode]
         if project_id == "project-1" and ids == ["episode-1"] else [],
@@ -797,7 +801,7 @@ def test_provider_projection_contains_only_ids_returned_in_model_bound_graph_dat
         "truncated": False,
     }
     monkeypatch.setattr(
-        knowgraph_reference_reads,
+        data_anchor,
         "read_knowgraph_exact",
         lambda *_args, **_kwargs: record,
     )
@@ -914,7 +918,7 @@ def test_codegraph_exact_read_normalizes_provider_grouped_trace_json(
 
 def test_missing_required_anchor_fails_before_provider(engraphis_graph, monkeypatch) -> None:
     monkeypatch.setattr(
-        knowgraph_reference_reads,
+        data_anchor,
         "read_knowgraph_exact",
         lambda *_args, **_kwargs: None,
     )

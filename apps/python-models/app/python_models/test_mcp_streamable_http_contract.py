@@ -14,13 +14,16 @@ from app.python_models.provider_config import ensure_env_loaded
 
 ensure_env_loaded()
 
+from app import mcp_transport
+
 from app import (
     mcp_auth,
+    mcp_catalog_projection,
     mcp_catalog_runtime,
     mcp_cbm_provider,
     mcp_provider_operations,
 )
-from app.python_models.mcp_contract_test_support import (
+from app.python_models.test_mcp_contract_support import (
     clear_live_provider_operations,
     tool_result_wire_text,
 )
@@ -98,7 +101,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             )
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
-    monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
+    monkeypatch.setattr(mcp_transport, "HTTP_MCP_PORT", port)
     monkeypatch.setattr(
         mcp_auth,
         "PUBLIC_MCP_RESOURCE_URL",
@@ -187,9 +190,18 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                             await session.list_tools(cache_mode="refresh")
                         ).tools
                         actual = sorted(tool.name for tool in listed_tools)
-                        catalog_identity = mcp_catalog_runtime._catalog_identity(listed_tools)
+                        catalog_identity = mcp_catalog_projection.catalog_identity(
+                            listed_tools
+                        )
+                        cbm_project = "-".join(
+                            part.rstrip(":")
+                            for part in mcp_provider_operations._CBM_HOST_REPO_ROOT
+                            .replace("\\", "/")
+                            .split("/")
+                            if part
+                        )
                         cbm_result = await session.call_tool("cbm.search_graph", {
-                            "project": mcp_provider_operations._CBM_PROJECT,
+                            "project": cbm_project,
                             "query": "MCP session lifecycle",
                             "limit": 1,
                             "format": "json",
@@ -271,7 +283,9 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert second_protocol in {
                 "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25",
             }
-            base_identity = mcp_catalog_runtime._catalog_identity(list(mcp_catalog_runtime._CATALOG_TOOLS or ()))
+            base_identity = mcp_catalog_projection.catalog_identity(
+                list(mcp_catalog_runtime._CATALOG_TOOLS or ())
+            )
             assert len(first_catalog) == base_identity[0]
             assert readiness.json()["toolCount"] == base_identity[0]
             assert readiness.json()["uniqueToolCount"] == base_identity[0]

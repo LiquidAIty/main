@@ -30,7 +30,9 @@ Use this procedure for LiquidAIty's saved Magnetic Card and its Hermes task/depe
 ## Discovery
 
 Use Codebase Memory when available to resolve `run_mag_one`, `begin_run`,
-`_connected_hermes_card_targets`, `MagneticTasksTab`, and `magnetic_taskgraph.py`. Direct-read the
+`agentgraph_topology.connected_hermes_card_targets`, `MagneticTasksTab`, and
+`magnetic_taskgraph_authority.py`, `magnetic_taskgraph_submission.py`, and
+`magnetic_taskgraph_readback.py`. Direct-read the
 complete current owners and focused tests after the graph bounds the slice. Treat HermesLatest as a
 controlled fork: use its indexed structure for discovery, then read every affected task-ledger body directly.
 

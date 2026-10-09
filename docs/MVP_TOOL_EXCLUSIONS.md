@@ -84,7 +84,7 @@ with the Graphiti provider rather than an application-side semantic merger.
 
 | Tool | Why it is excluded from the MVP Card catalog | Underlying owner / future route |
 | --- | --- | --- |
-| `web_search` | KnowGraph already receives Hermes's Web toolset and owns all outside research, citation, and Graphiti persistence. A second LiquidAIty search tool would create two research doorways. | Hermes Web on the saved KnowGraph profile. If that real path fails, report the gap instead of restoring a fallback automatically. |
+| `web_search` | The redundant LiquidAIty Tavily adapter is deleted. KnowGraph receives Hermes's Web toolset and owns outside research, citation, and Graphiti persistence; a second search doorway would split that authority. | HermesLatest already supplies selectable Tavily and Firecrawl web providers. Configure the intended provider on KnowGraph's reusable profile instead of restoring an application tool. If that path fails, report the gap rather than adding a fallback. |
 | Hermes internal `message_agent` capability (not a catalog ID) | Bot delivery is Hermes session behavior authorized by the saved orange roster, not a Card-catalog tool. | Hermes Bot Mode and saved Project topology. |
 
 `current_datetime` and `calculator` remain ordinary Card-eligible utilities.

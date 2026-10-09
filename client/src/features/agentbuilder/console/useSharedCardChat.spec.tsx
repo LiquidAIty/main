@@ -466,7 +466,9 @@ describe('Shared Card chat live observation callbacks', () => {
       finishFirst({ finalText: 'WorldSignals first reply.' });
       await Promise.resolve();
     });
-    act(() => result.current.handleSend('Second turn for Builder.'));
+    await act(async () => {
+      await result.current.handleSend('Second turn for Builder.');
+    });
     await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
     expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
       message: 'Second turn for Builder.',

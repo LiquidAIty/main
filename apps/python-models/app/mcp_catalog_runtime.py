@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import hashlib
-import json
 import os
 import re
 import sys
@@ -15,19 +13,8 @@ from typing import Any
 
 from mcp.types import Tool
 
-from app import (
-    mcp_auth,
-    mcp_cbm_provider,
-    mcp_graphiti_provider,
-    mcp_observability,
-    mcp_provider_operations,
-)
-from app.python_models.operation_definition import allowed_operation_keys
-from app.python_models.tool_catalog import (
-    code_owned_tool_projection,
-    project_server_injected_schema,
-)
-from app.python_models.tool_registry import operation_definition, tool_access
+from app import mcp_auth, mcp_catalog_projection, mcp_graphiti_provider
+from app import mcp_observability, mcp_provider_operations
 
 
 _HOST_SOURCE_PATH = os.path.join(os.path.dirname(__file__), "mcp_host.py")
@@ -46,7 +33,7 @@ _CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 
 
-def _catalog_diagnostics() -> dict[str, Any]:
+def catalog_diagnostics() -> dict[str, Any]:
     """Return bounded process/catalog readiness without exposing membership."""
     with _CATALOG_DIAGNOSTIC_LOCK:
         identity = dict(_LATEST_CATALOG_DIAGNOSTIC or {})
@@ -62,11 +49,7 @@ def _catalog_diagnostics() -> dict[str, Any]:
             current_source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
     except OSError:
         current_source_sha256 = None
-    catalog_ready = bool(
-        state == "ready"
-        and identity
-        and "liquidaity" in completed_families
-    )
+    catalog_ready = bool(state == "ready" and identity and "liquidaity" in completed_families)
     return {
         "state": state,
         "catalogState": state,
@@ -88,26 +71,8 @@ def _catalog_diagnostics() -> dict[str, Any]:
             if current_source_sha256 and mcp_observability.STARTUP_SOURCE_SHA256
             else None
         ),
-        "graphitiVersions": mcp_graphiti_provider._graphiti_runtime_versions(),
+        "graphitiVersions": mcp_graphiti_provider.graphiti_runtime_versions(),
     }
-
-
-def _catalog_identity(tools: list[Tool]) -> tuple[int, str]:
-    descriptors = sorted(
-        (
-            tool.model_dump(by_alias=True, exclude_none=True)
-            for tool in tools
-        ),
-        key=lambda descriptor: str(descriptor.get("name") or ""),
-    )
-    digest = hashlib.sha256(
-        json.dumps(
-            descriptors,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    return len(descriptors), digest
 
 
 def _catalog_failure_details(error: Exception) -> tuple[str, str]:
@@ -134,9 +99,7 @@ def _set_catalog_initializing_family(family: str) -> None:
     global _CATALOG_INITIALIZING_FAMILY
     with _CATALOG_DIAGNOSTIC_LOCK:
         _CATALOG_INITIALIZING_FAMILY = family
-    mcp_observability.trace(
-        "catalog_family_initializing", catalog_family=family, completed=False,
-    )
+    mcp_observability.trace("catalog_family_initializing", catalog_family=family, completed=False)
 
 
 def _complete_catalog_family(family: str) -> None:
@@ -149,9 +112,7 @@ def _complete_catalog_family(family: str) -> None:
             value for value in _CATALOG_UNAVAILABLE_FAMILIES if value != family
         )
         _CATALOG_INITIALIZING_FAMILY = None
-    mcp_observability.trace(
-        "catalog_family_ready", catalog_family=family, completed=True,
-    )
+    mcp_observability.trace("catalog_family_ready", catalog_family=family, completed=True)
 
 
 def _mark_catalog_family_unavailable(
@@ -179,7 +140,7 @@ def _mark_catalog_family_unavailable(
     )
 
 
-def _published_mcp_tool_names() -> frozenset[str]:
+def published_mcp_tool_names() -> frozenset[str]:
     """Read the exact frozen external publication surface without rebuilding it."""
 
     with _CATALOG_DIAGNOSTIC_LOCK:
@@ -188,94 +149,17 @@ def _published_mcp_tool_names() -> frozenset[str]:
         return frozenset(tool.name for tool in _CATALOG_TOOLS)
 
 
-def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
-    """Attach OAuth metadata without projecting or filtering the canonical registry."""
-    result: list[Tool] = []
-    for tool in tools:
-        payload = tool.model_dump(by_alias=True, exclude_none=True)
-        meta = dict(payload.get("_meta") or {})
-        security_schemes = [
-            {"type": "oauth2", "scopes": [mcp_auth.AUTH0_REQUIRED_SCOPE]}
-        ]
-        source = dict(meta.get("liquidaitySource") or {})
-        canonical_schema = source.get("canonicalInputSchema")
-        declared = source.get("serverInjectedArguments")
-        if not isinstance(canonical_schema, dict) or not isinstance(declared, list):
-            raise RuntimeError(f"mcp_tool_projection_metadata_missing:{tool.name}")
-        projected_schema = project_server_injected_schema(
-            canonical_schema,
-            frozenset(declared),
-        )
-        if tool.input_schema not in (canonical_schema, projected_schema):
-            raise RuntimeError(f"mcp_tool_pre_projection_schema_mismatch:{tool.name}")
-        payload["inputSchema"] = projected_schema
-        source["authenticatedProjection"] = True
-        meta["liquidaitySource"] = source
-        meta["securitySchemes"] = security_schemes
-        payload["_meta"] = meta
-        result.append(Tool.model_validate(payload))
-    return result
-
-
-
 async def _materialize_complete_catalog() -> list[Tool]:
     global _LATEST_CATALOG_DIAGNOSTIC
 
-    external_descriptors = [
-        descriptor
-        for descriptor in await asyncio.to_thread(code_owned_tool_projection)
-        if "external-mcp" in descriptor["publications"]
-    ]
-    tools = [
-        mcp_provider_operations._bind_repo_tool_source(Tool(
-            name=descriptor["canonicalId"],
-            title=descriptor.get("displayName"),
-            description=descriptor["description"],
-            inputSchema=copy.deepcopy(descriptor["inputSchema"]),
-            outputSchema=copy.deepcopy(descriptor.get("outputSchema")),
-            annotations=copy.deepcopy(descriptor.get("annotations")),
-        ),
-            source_id=descriptor["provider"],
-            provider_tool_name=descriptor["providerToolName"],
-        )
-        for descriptor in external_descriptors
-    ]
-    for tool in tools:
-        tool.input_schema.setdefault("additionalProperties", False)
-        public_keys = set(tool.input_schema.get("properties", {}))
-        definition = operation_definition(tool.name)
-        if definition is None:
-            raise RuntimeError(f"mcp_tool_definition_missing:{tool.name}")
-        dispatch_keys = allowed_operation_keys(definition)
-        if not public_keys <= dispatch_keys:
-            missing = sorted(public_keys - dispatch_keys)
-            raise RuntimeError(
-                f"mcp_tool_dispatch_keys_missing:{tool.name}:{','.join(missing)}"
-            )
+    tools = await mcp_catalog_projection.application_tools()
     _complete_catalog_family("liquidaity")
-    tools = [
-        mcp_provider_operations._bind_operation_access(tool) for tool in tools
-    ]
+    tools = [mcp_provider_operations.bind_operation_access(tool) for tool in tools]
     provider_tools = await _materialize_requested_provider_catalog(
-        tuple(mcp_provider_operations._PROVIDER_PREFIXES)
+        tuple(mcp_provider_operations.PROVIDER_PREFIXES)
     )
-    existing_names = {tool.name for tool in tools}
-    tools.extend(
-        tool for tool in provider_tools if tool.name not in existing_names
-    )
-    names = [tool.name for tool in tools]
-    if len(names) != len(set(names)):
-        duplicates = sorted({name for name in names if names.count(name) > 1})
-        raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
-    context = mcp_auth._authenticated_main_context()
-    # OAuth security metadata belongs to the canonical catalog even when this
-    # request has not resolved application-level Main project authorization.
-    catalog = (
-        _bind_authenticated_catalog(tools)
-        if mcp_auth.OAUTH_ENFORCED or context is not None
-        else tools
-    )
-    catalog_count, catalog_hash = _catalog_identity(catalog)
+    catalog = mcp_catalog_projection.complete_catalog(tools, provider_tools)
+    catalog_count, catalog_hash = mcp_catalog_projection.catalog_identity(catalog)
     with _CATALOG_DIAGNOSTIC_LOCK:
         _LATEST_CATALOG_DIAGNOSTIC = {
             "toolCount": catalog_count,
@@ -291,37 +175,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
         source_sha256=mcp_observability.STARTUP_SOURCE_SHA256,
         response_status=200,
         completed=True,
-        **mcp_auth._oauth_trace_fields(),
+        **mcp_auth.oauth_trace_fields(),
     )
     return catalog
-
-
-def _requested_provider_catalog_families() -> tuple[str, ...]:
-    """Resolve external families only from an authorized live MCP request."""
-    principal = mcp_auth._internal_mcp_principal()
-    if principal is None:
-        # A public authenticated MCP client explicitly listing this product's
-        # tools is allowed to discover the complete external surface. Process
-        # startup itself has no request token and never reaches this branch.
-        return ("cbm", "graphiti") if mcp_auth.access_token_available() else ()
-    kind = str(principal.get("kind") or "")
-    if kind == "catalog-reader":
-        # The catalog reader can inspect every loaded provider contract but
-        # cannot execute any tool. Card-specific principals remain narrowed to
-        # their saved grants below.
-        return tuple(mcp_provider_operations._PROVIDER_PREFIXES)
-    if kind not in {"materializer-read", "card-runtime"}:
-        return ()
-    tool_names = mcp_auth._validated_principal_tool_names(
-        principal.get(
-            "presentedTools" if kind == "card-runtime" else "grantedTools"
-        )
-    ) or frozenset()
-    return tuple(
-        family
-        for family, prefix in mcp_provider_operations._PROVIDER_PREFIXES.items()
-        if any(name.startswith(prefix) for name in tool_names)
-    )
 
 
 async def _materialize_requested_provider_catalog(
@@ -332,11 +188,7 @@ async def _materialize_requested_provider_catalog(
     for provider in families:
         _set_catalog_initializing_family(provider)
         try:
-            provider_tools = (
-                await mcp_cbm_provider._cbm_tools()
-                if provider == "cbm"
-                else await mcp_graphiti_provider._graphiti_tools()
-            )
+            provider_tools = await mcp_catalog_projection.discover_provider_tools(provider)
         except Exception as error:
             failure_code, failure_summary = _catalog_failure_details(error)
             _mark_catalog_family_unavailable(
@@ -345,46 +197,28 @@ async def _materialize_requested_provider_catalog(
                 failure_summary=failure_summary,
             )
             continue
-        graphiti_unavailable = (
-            mcp_graphiti_provider.graphiti_unavailability()
-            if provider == "graphiti" and not provider_tools
-            else None
+        graphiti_unavailable = mcp_catalog_projection.provider_unavailability(
+            provider, provider_tools,
         )
         if graphiti_unavailable:
             _mark_catalog_family_unavailable(
                 provider,
-                failure_code=str(
-                    graphiti_unavailable.get("failureCode")
-                    or "optional_capability_unavailable"
-                ),
-                failure_summary=str(
-                    graphiti_unavailable.get("detail")
-                    or "Graphiti catalog is unavailable."
-                ),
+                failure_code=str(graphiti_unavailable.get("failureCode")
+                                 or "optional_capability_unavailable"),
+                failure_summary=str(graphiti_unavailable.get("detail")
+                                    or "Graphiti catalog is unavailable."),
             )
             continue
         _complete_catalog_family(provider)
-        namespaced = mcp_provider_operations._namespace_provider_tools(
+        namespaced = mcp_catalog_projection.project_provider_tools(
             provider, provider_tools,
         )
-        if provider == "cbm":
-            mcp_provider_operations._register_cbm_catalog(namespaced)
-        elif provider == "graphiti":
-            mcp_provider_operations._register_graphiti_catalog(namespaced)
         tools.extend(namespaced)
 
-    tools = [
-        mcp_provider_operations._bind_operation_access(tool) for tool in tools
-    ]
-    return (
-        _bind_authenticated_catalog(tools)
-        if mcp_auth.OAUTH_ENFORCED
-        or mcp_auth._authenticated_main_context() is not None
-        else tools
-    )
+    return mcp_catalog_projection.finalize_provider_catalog(tools)
 
 
-async def _initialize_catalog_once() -> None:
+async def initialize_catalog_once() -> None:
     """Freeze the one canonical MCP catalog for all clients."""
     global _CATALOG_COMPLETED_FAMILIES, _CATALOG_UNAVAILABLE_FAMILIES
     global _CATALOG_FAILURE, _CATALOG_FAILURE_CODE
@@ -410,7 +244,7 @@ async def _initialize_catalog_once() -> None:
                 f"actual={len(tools)} "
                 f"unique={len(set(canonical_names))}"
             )
-        catalog_count, catalog_hash = _catalog_identity(list(tools))
+        catalog_count, catalog_hash = mcp_catalog_projection.catalog_identity(list(tools))
     except asyncio.CancelledError:
         with _CATALOG_DIAGNOSTIC_LOCK:
             if _CATALOG_STATE == "initializing":
@@ -513,21 +347,19 @@ def _observe_catalog_initialization(task: asyncio.Task[None]) -> None:
     )
 
 
-def _start_catalog_initialization() -> asyncio.Task[None]:
+def start_catalog_initialization() -> asyncio.Task[None]:
     """Return the one process-wide canonical catalog initialization task."""
     global _CATALOG_INITIALIZATION_TASK
     task = _CATALOG_INITIALIZATION_TASK
     if task is None:
-        task = asyncio.create_task(
-            _initialize_catalog_once(),
-            name="liquidaity-mcp-catalog-initialization",
-        )
+        task = asyncio.create_task(initialize_catalog_once(),
+                                   name="liquidaity-mcp-catalog-initialization")
         task.add_done_callback(_observe_catalog_initialization)
         _CATALOG_INITIALIZATION_TASK = task
     return task
 
 
-def _catalog_or_error() -> list[Tool]:
+def catalog_or_error() -> list[Tool]:
     with _CATALOG_DIAGNOSTIC_LOCK:
         state = _CATALOG_STATE
         failure = _CATALOG_FAILURE
@@ -536,9 +368,7 @@ def _catalog_or_error() -> list[Tool]:
     if state == "initializing":
         raise RuntimeError("mcp_catalog_initializing")
     if state == "failed":
-        raise RuntimeError(
-            f"mcp_catalog_initialization_failed: {failure or 'unknown'}"
-        )
+        raise RuntimeError(f"mcp_catalog_initialization_failed: {failure or 'unknown'}")
     if state != "ready" or tools is None:
         raise RuntimeError("mcp_catalog_readiness_invalid")
     if "liquidaity" not in completed_families:
@@ -556,52 +386,10 @@ async def list_tools() -> list[Tool]:
         # observe an incomplete catalog or turn a transient startup state into
         # missing saved grants. Shield the one process-wide initializer from a
         # client cancellation, then return only its frozen terminal catalog.
-        await asyncio.shield(_start_catalog_initialization())
-    tools = _catalog_or_error()
-    families = set(_requested_provider_catalog_families())
-    tools = [
-        tool for tool in tools
-        if not any(
-            tool.name.startswith(prefix) and family not in families
-            for family, prefix in mcp_provider_operations._PROVIDER_PREFIXES.items()
-        )
-    ]
-    principal = mcp_auth._internal_mcp_principal()
-    kind = str((principal or {}).get("kind") or "")
-    if kind == "materializer-read":
-        granted = mcp_auth._validated_principal_tool_names(
-            principal.get("grantedTools")
-        )
-        tools = [
-            tool for tool in tools
-            if granted is not None
-            and tool.name in granted
-            and tool_access(tool.name) == "read"
-        ]
-    elif kind == "card-runtime":
-        granted = mcp_auth._validated_principal_tool_names(
-            principal.get("grantedTools")
-        )
-        presented = mcp_auth._validated_principal_tool_names(
-            principal.get("presentedTools")
-        )
-        tools = [
-            tool for tool in tools
-            if granted is not None
-            and presented is not None
-            and tool.name in granted
-            and tool.name in presented
-        ]
-    names = [tool.name for tool in tools]
-    if len(names) != len(set(names)):
-        raise RuntimeError("federated_duplicate_tool_name:" + ",".join(sorted({
-            name for name in names if names.count(name) > 1
-        })))
-    return tools
+        await asyncio.shield(start_catalog_initialization())
+    return mcp_catalog_projection.catalog_for_request(catalog_or_error())
 
 
-def _listed_tool_input_schema(name: str) -> dict[str, Any] | None:
+def listed_tool_input_schema(name: str) -> dict[str, Any] | None:
     """Return the frozen model-visible schema used by SDK header validation."""
-    tools = _CATALOG_TOOLS or ()
-    match = next((tool for tool in tools if tool.name == name), None)
-    return copy.deepcopy(match.input_schema) if match is not None else None
+    return mcp_catalog_projection.listed_tool_input_schema(_CATALOG_TOOLS or (), name)

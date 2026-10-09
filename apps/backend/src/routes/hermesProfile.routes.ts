@@ -3,6 +3,8 @@ import { Router, type Request } from 'express';
 import { getDeckDocument } from '../decks/deckDomainClient';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { hermesGateway } from '../services/hermesGateway';
+import { ensureSavedCardProfile } from '../hermes/savedCardProfileProvisioning';
+import { objectRecord } from '../services/savedCardAuthority';
 import type { DeckCard } from '../types';
 
 type RequestHermes = (
@@ -15,12 +17,6 @@ type Dependencies = {
   requestHermes: RequestHermes;
   authorizeProject(req: Request, projectId: string): Promise<boolean>;
 };
-
-function record(value: unknown): Record<string, any> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, any>
-    : {};
-}
 
 function requiredText(value: unknown, error: string): string {
   const text = String(value || '').trim();
@@ -66,10 +62,10 @@ function errorStatus(error: unknown): number {
 }
 
 function operation(value: unknown): { method: string; params: Record<string, unknown> } {
-  const body = record(value);
+  const body = objectRecord(value);
   exactFields(body, ['projectId', 'deckId', 'method', 'params']);
   const method = requiredText(body.method, 'hermes_method_required');
-  const params = record(body.params);
+  const params = objectRecord(body.params);
   if (method === 'learning.detail') {
     exactFields(params, ['id']);
     return { method, params: { id: requiredText(params.id, 'hermes_learning_node_required') } };
@@ -101,14 +97,14 @@ function operation(value: unknown): { method: string; params: Record<string, unk
 }
 
 function safeMcpTestResult(value: unknown): Record<string, unknown> {
-  const result = record(value);
+  const result = objectRecord(value);
   const error = String(result.error || '')
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/(access_token|refresh_token|client_secret|api_key)=([^&\s]+)/gi, '$1=[REDACTED]')
     .slice(0, 2_000);
   return {
     ok: result.ok === true,
-    tools: (Array.isArray(result.tools) ? result.tools : []).map(record).map((tool) => ({
+    tools: (Array.isArray(result.tools) ? result.tools : []).map(objectRecord).map((tool) => ({
       name: String(tool.name || ''),
       description: String(tool.description || '').slice(0, 2_000),
     })).filter((tool) => tool.name),
@@ -128,16 +124,16 @@ async function readProfile(
   const request = <T>(method: string, params: Record<string, unknown> = {}) => (
     requestHermes(method, params) as Promise<T>
   );
-  const profile = record(await request('profiles.describe', { name: card.runtime.profile }));
-  const learning = record(await request('learning.frames', {
+  const profile = objectRecord(await ensureSavedCardProfile(request, card));
+  const learning = objectRecord(await request('learning.frames', {
     profile: card.runtime.profile,
     cols: 80,
     rows: 24,
     frames: 48,
   }));
-  const mcp = record(await request('mcp.servers.list', { profile: card.runtime.profile }));
+  const mcp = objectRecord(await request('mcp.servers.list', { profile: card.runtime.profile }));
   const serverDetails = new Map((Array.isArray(mcp.servers) ? mcp.servers : [])
-    .map(record).map((server) => [String(server.name || ''), server]));
+    .map(objectRecord).map((server) => [String(server.name || ''), server]));
   return {
     profileApply: 'run_start',
     cardSaveMutatesProfile: false,
@@ -146,13 +142,13 @@ async function readProfile(
       name: String(profile.name || ''),
       description: String(profile.description || ''),
       soul: String(profile.soul || ''),
-      model: record(profile.model),
+      model: objectRecord(profile.model),
       skills: Array.isArray(profile.skills) ? profile.skills : [],
       toolsets: Array.isArray(profile.toolsets) ? profile.toolsets : [],
       toolsetsPinned: profile.toolsets_pinned === true,
-      mcpServers: (Array.isArray(profile.mcp_servers) ? profile.mcp_servers : []).map(record)
+      mcpServers: (Array.isArray(profile.mcp_servers) ? profile.mcp_servers : []).map(objectRecord)
         .map((server) => {
-          const detail = record(serverDetails.get(String(server.name || '')));
+          const detail = objectRecord(serverDetails.get(String(server.name || '')));
           return {
             name: String(server.name || ''),
             transport: String(detail.transport || server.transport || 'stdio'),
@@ -216,6 +212,10 @@ export function createHermesProfileRouter(deps: Dependencies = defaultDependenci
         return res.status(403).json({ ok: false, error: 'hermes_profile_project_access_denied' });
       }
       const selected = operation(req.body);
+      await ensureSavedCardProfile(
+        (method, params = {}) => deps.requestHermes(method, params),
+        resolved.card,
+      );
       const result = await deps.requestHermes(
         selected.method,
         { ...selected.params, profile: resolved.card.runtime.profile },

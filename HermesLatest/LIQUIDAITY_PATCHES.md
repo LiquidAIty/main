@@ -27,8 +27,8 @@ or fallback checkout is retained.
    child-process Python path, and route only its declared nested tool calls through the same callback.
 3. Bot roster scoping: constrain Hermes `message_agent` to the exact Project-session orange roster.
 4. Card profile capability fencing: apply/read only Card-owned profile fields, scope learning reads to the
-   addressed profile, preserve unknown/learned state, and rebuild a session only when its capability
-   fingerprint is stale.
+   addressed profile, preserve unknown/learned state, ship Builder's selected inspection skill through
+   Hermes's bundled-skill mechanism, and rebuild a session only when its capability fingerprint is stale.
 5. Exact turn evidence: correlate submission, Stop, completion, actual provider/model and turn-local usage
    without replacing Hermes queue/session ownership.
 6. AutoTeam / Team TaskGraph: mark an ordinary saved Team profile, create one bounded Team root, use
@@ -44,6 +44,7 @@ or fallback checkout is retained.
 | `agent/dynamic_tools.py` | Dynamic Tools / Card Python | Installs and restores the current turn's exact definitions/executors for Codex and ordinary providers; it creates no global tool registry. |
 | `agent/card_script_tool.py` | Card Python | Validates the immutable Script contract, hashes, schemas, aliases, tool states and budgets; exposes one `card_python` tool and one bounded output. |
 | `hermes_cli/kanban_team.py` | AutoTeam | Owns the explicit Team task mode/policy, root construction/readback, activation and bounded decomposition-failure settlement. |
+| `skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md` | Profile fencing | Bundled Builder guidance selected by the saved Builder Card and seeded by Hermes's existing fresh-profile skill sync; it adds no permission, loader or execution path. |
 
 ## Compatibility hunks in upstream production files
 
@@ -59,7 +60,7 @@ Files may appear in more than one family because one accepted turn carries all o
 | `agent/transports/codex_app_server_session.py` | Dynamic Tools | Validate the experimental handshake, definitions, thread/turn/call identity and exactly-once server-request response; propagate the existing interrupt event. |
 | `gateway/kanban_watchers_dispatcher.py` | AutoTeam | `_record_team_decomposition_failure`, `_decompose_one`: apply the breaker only to marked Team roots. |
 | `hermes_cli/config_defaults.py` | AutoTeam | `kanban.task_mode`: empty preserves shipped behavior; `team` is explicit profile configuration. |
-| `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling and build same-root Team synthesis context. No custom claim capability is retained. |
+| `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling, build same-root Team synthesis context, and expose `append_task_event` so the Magnetic adapter records its authority event without importing Hermes's private `_append_event`. No custom claim capability is retained. |
 | `hermes_cli/kanban_db_connect.py` | Magnetic | Additive `allowed_assignees` column migration for existing Hermes task databases. |
 | `hermes_cli/kanban_db_dispatch.py` | AutoTeam / Magnetic / turn evidence | Record Team step/provider/model facts, enforce default-assignee ceiling, and mark Team worker processes. |
 | `hermes_cli/kanban_db_graph.py` | AutoTeam / Magnetic | Enforce/inherit the ceiling during decomposition and move a marked Team root to synthesis. |
@@ -114,8 +115,10 @@ tests/agent/test_system_prompt_restore.py
 tests/agent/transports/test_codex_app_server_session.py
 tests/agent/transports/test_dynamic_tools_mcp.py
 tests/hermes_cli/test_kanban_creator_origin.py
+tests/hermes_cli/test_kanban_db.py
 tests/hermes_cli/test_kanban_team.py
 tests/hermes_state/test_named_profile_session_db.py
+tests/skills/test_agent_builder_inspection_skill.py
 tests/tools/test_bot_mode_probe.py
 tests/tools/test_card_script_code_execution.py
 tests/tools/test_kanban_tools.py
@@ -146,10 +149,14 @@ The overlay does not contain:
 
 ## Focused Windows proof
 
-From the repository root, with the application Python environment:
+From the repository root, use the application environment for pytest and add both the Hermes source
+and Hermes runtime dependencies. `HermesLatest/.venv` is the production environment but intentionally
+does not install pytest:
 
 ```powershell
-$env:PYTHONPATH = "C:\Projects\LiquidAIty\main\HermesLatest"
+$hermesRoot = (Resolve-Path "HermesLatest").Path
+$hermesSite = (Resolve-Path "HermesLatest\.venv\Lib\site-packages").Path
+$env:PYTHONPATH = "$hermesRoot;$hermesSite"
 apps\python-models\.venv\Scripts\python.exe -m pytest `
   HermesLatest/tests/agent/test_card_script_dynamic_tools.py `
   HermesLatest/tests/agent/test_system_prompt.py `
@@ -157,8 +164,10 @@ apps\python-models\.venv\Scripts\python.exe -m pytest `
   HermesLatest/tests/agent/transports/test_codex_app_server_session.py `
   HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py `
   HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py `
+  HermesLatest/tests/hermes_cli/test_kanban_db.py `
   HermesLatest/tests/hermes_cli/test_kanban_team.py `
   HermesLatest/tests/hermes_state/test_named_profile_session_db.py `
+  HermesLatest/tests/skills/test_agent_builder_inspection_skill.py `
   HermesLatest/tests/tools/test_bot_mode_probe.py `
   HermesLatest/tests/tools/test_card_script_code_execution.py `
   HermesLatest/tests/tools/test_kanban_tools.py `
@@ -169,6 +178,12 @@ apps\python-models\.venv\Scripts\python.exe -m pytest `
   HermesLatest/tests/tui_gateway/test_profiles_toolset_pin.py `
   HermesLatest/tests/tui_gateway/test_tui_gateway_server.py -q
 ```
+
+On native Windows this complete file set currently has six source-unrelated upstream baseline failures:
+three POSIX/systemd/worktree assertions in `test_kanban_db.py`, two fallback-chain hot-reload assertions,
+and one same-size/pinned-mtime config-cache assertion. The 2026-10-09 run passed 965 tests, including every
+overlay-added assertion, and failed only those six cases. Do not patch or weaken those upstream behaviors as
+part of the LiquidAIty overlay; rerun them when updating the upstream baseline or its Windows test support.
 
 Run the repository's current Magnetic/Team adapter proof separately from these vendor tests. Loaded
 Hermes, saved-Card execution and visible product acceptance remain higher proof tiers.

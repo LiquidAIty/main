@@ -54,6 +54,30 @@ def graphiti_operation_policy(canonical_id: str) -> dict[str, object] | None:
     }
 
 
+def python_operation_definitions() -> list[OperationDefinition]:
+    """Assemble Python-owned definitions in their canonical family order."""
+
+    from app.python_models.general_tool_operations import (
+        general_tool_operation_definitions,
+    )
+    from app.python_models.market_sec_tool_operations import (
+        market_sec_tool_operation_definitions,
+    )
+    from app.python_models.trading_tool_operations import (
+        trading_tool_operation_definitions,
+    )
+    from app.python_models.worldsignals_tool_operations import (
+        worldsignals_tool_operation_definitions,
+    )
+
+    return [
+        *worldsignals_tool_operation_definitions(),
+        *general_tool_operation_definitions(),
+        *market_sec_tool_operation_definitions(),
+        *trading_tool_operation_definitions(),
+    ]
+
+
 def code_owned_operation_definitions() -> tuple[OperationDefinition, ...]:
     """Assemble the three code-owned definition families exactly once."""
 
@@ -63,15 +87,13 @@ def code_owned_operation_definitions() -> tuple[OperationDefinition, ...]:
     with _CODE_OWNED_OPERATION_DEFINITIONS_LOCK:
         if _CODE_OWNED_OPERATION_DEFINITIONS is not None:
             return _CODE_OWNED_OPERATION_DEFINITIONS
-        from app import application_operations
-        from app.python_models import engraphis_operations
-        from app.python_models.python_tool_definitions import (
-            python_operation_definitions,
+        from app.application_operation_catalog import (
+            application_operation_definitions,
         )
-
+        from app.python_models import engraphis_operations
         contributed = [
             *python_operation_definitions(),
-            *application_operations.application_operation_definitions(),
+            *application_operation_definitions(),
             *engraphis_operations.operation_definitions(),
         ]
         by_id: dict[str, OperationDefinition] = {}

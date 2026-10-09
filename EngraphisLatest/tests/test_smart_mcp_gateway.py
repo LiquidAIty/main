@@ -105,6 +105,21 @@ def test_normal_mcp_exposes_only_the_smart_gateway_tools(monkeypatch):
     assert props["exact_value_type"]["default"] == "literal"
 
 
+def test_synchronous_smart_catalog_matches_the_served_mcp_contract(monkeypatch):
+    server = _memory_server(monkeypatch)
+
+    served = {
+        tool.name: tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for tool in asyncio.run(server.smart_mcp.list_tools())
+    }
+    embedded = {
+        tool.name: tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for tool in server.smart_tool_catalog()
+    }
+
+    assert embedded == served
+
+
 def test_smart_remember_tool_persists_exact_source_binding(monkeypatch):
     from engraphis.core.evidence import exact_value_binding
 

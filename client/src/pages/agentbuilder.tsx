@@ -7,32 +7,15 @@ import {
   type ReactElement,
 } from 'react';
 
-import {
-  createCanonicalSubjectMatcher,
-  type CanonicalSubjectFocusRequest,
-  type CanonicalSubjectFocusTarget,
-} from '../components/knowledge/canonicalSubjectLinks';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
-import type {
-  WorldSignalsInspectorBridge,
-  WorldSignalsInspectorSection,
-  WorldSignalsLayerState,
-} from '../components/worldsignals/WorldSignalsSurface';
-import type {
-  WorldSignalsDrawerSection,
-} from '../components/worldsignals/WorldSignalsInspectorPanel';
-import type { GodsEyeBridge } from '../components/worldsignals/GodsEyeSurface';
 import AgentCanvas from '../features/agentbuilder/canvas/AgentCanvas';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import AgentBuilderCompanionSurfaces from '../features/agentbuilder/core/AgentBuilderCompanionSurfaces';
 import AgentBuilderChatWorkSurface from '../features/agentbuilder/console/AgentBuilderChatWorkSurface';
-import {
-  projectCardChatTargets,
-  selectedConversationId,
-} from '../features/agentbuilder/console/sharedChatClient';
-import useSharedCardChat from '../features/agentbuilder/console/useSharedCardChat';
+import useAgentBuilderSharedChat from '../features/agentbuilder/console/useAgentBuilderSharedChat';
+import { selectedConversationId } from '../features/agentbuilder/console/sharedChatClient';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
 } from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -47,21 +30,16 @@ import useAgentBuilderKnowledgeGraphs from '../features/agentbuilder/state/useAg
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
 import useAgentCardChooser from '../features/agentbuilder/state/useAgentCardChooser';
 import AgentBuilderWorkspaceInspector from '../features/agentbuilder/inspector/AgentBuilderWorkspaceInspector';
-import {
-  BUILDER_CARD_ID,
-  DEFAULT_PROJECT_DECK_ID,
-} from '../features/agentbuilder/deck/newProjectDeck';
+import useAgentBuilderInspectorBridges from '../features/agentbuilder/inspector/useAgentBuilderInspectorBridges';
+import { DEFAULT_PROJECT_DECK_ID } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   buildProjectlessDeckDocument,
   formatBuilderStatusMessage,
   readDeckDocument,
   resolveProjectDeckLoadResult,
 } from '../features/agentbuilder/deck/deckDocument';
-import {
-  deriveVisibleRailItems,
-  isWorldViewCard,
-  isWorldSignalsAgentCard,
-} from '../features/agentbuilder/rail/railVisibility';
+import { deriveVisibleRailItems } from '../features/agentbuilder/rail/railVisibility';
+import { deriveAgentBuilderWorkspaceIdentity } from '../features/agentbuilder/core/agentBuilderWorkspaceIdentity';
 import {
   BuilderRailMoonOrb,
   synodicPhaseFromDate,
@@ -72,11 +50,10 @@ import {
 import {
   useAgentBuilderDeckSave,
 } from '../features/agentbuilder/state/useAgentBuilderDeckSave';
-import {
-  showCanvasWorkspaceInUrl,
-  showKnowledgeWorkspaceInUrl,
-  showWorldViewWorkspaceInUrl,
-} from '../features/agentbuilder/core/agentBuilderWorkspaceUrl';
+import useAgentBuilderWorkspaceNavigation, {
+  type AgentBuilderCanvasFocus,
+  type AgentBuilderWorkspaceView,
+} from '../features/agentbuilder/core/useAgentBuilderWorkspaceNavigation';
 import type {
   DeckDocument,
 } from '../types/agentgraph';
@@ -99,14 +76,7 @@ const PROJECTS_API = '/api/projects';
 
 export default function AgentBuilder(): ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const [workspaceView, setWorkspaceView] = useState<
-    | 'chat'
-    | 'canvas'
-    | 'knowledge'
-    | 'trading'
-    | 'worldsignals'
-    | 'worldview'
-  >(() => {
+  const [workspaceView, setWorkspaceView] = useState<AgentBuilderWorkspaceView>(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('workspace') === 'knowledge') return 'knowledge';
     if (params.get('workspace') === 'worldview') return 'worldview';
@@ -114,9 +84,7 @@ export default function AgentBuilder(): ReactElement {
   });
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to AgentCanvas;
   // bumping nonce re-triggers the camera fit without swapping node sets.
-  const [canvasFocusZone, setCanvasFocusZone] = useState<
-    { zone: 'agents'; nonce: number } | null
-  >(null);
+  const [canvasFocusZone, setCanvasFocusZone] = useState<AgentBuilderCanvasFocus>(null);
   const {
     activeProject,
     canvasProjectId,
@@ -214,172 +182,46 @@ export default function AgentBuilder(): ReactElement {
     deck,
   });
   const cardDraftFlushRef = useRef<(() => Promise<boolean>) | null>(null);
-  const [worldViewInspectorHost, setWorldViewInspectorHost] = useState<HTMLDivElement | null>(null);
-  const [worldViewInspectorOpen, setWorldViewInspectorOpen] = useState(true);
   const registerCardDraftFlush = useCallback((save: (() => Promise<boolean>) | null) => {
     cardDraftFlushRef.current = save;
   }, []);
-
-  const [transientCardInputs, setTransientCardInputs] = useState<Record<string, string>>({});
-  const mainCardId = useMemo(
-    () => deck.nodes.find((card) => (
-      card.runtime.kind === 'hermes' && card.runtime.mode === 'main'
-    ))?.id || null,
-    [deck.nodes],
-  );
-  const directChatTargets = useMemo(
-    () => projectCardChatTargets(deck.nodes),
-    [deck.nodes],
-  );
-  const builderCard = useMemo(
-    () => deck.nodes.find((card) => (
-      card.runtime.kind === 'hermes'
-      && card.id === BUILDER_CARD_ID
-    )) || null,
-    [deck.nodes],
-  );
-  const cardTitlesByProfile = useMemo(() => {
-    const titles = new Map<string, string>();
-    const ambiguous = new Set<string>();
-    for (const card of deck.nodes) {
-      const profile = String(card.runtime.profile || '').trim();
-      const title = String(card.title || '').trim();
-      if (!profile || !title) continue;
-      const previous = titles.get(profile);
-      if (previous && previous !== title) ambiguous.add(profile);
-      else titles.set(profile, title);
-    }
-    for (const profile of ambiguous) titles.delete(profile);
-    return Object.fromEntries(titles);
-  }, [deck.nodes]);
-  // WorldSignals → canonical Inspector: the companion surface requests a
-  // section and provides state adapters; the shared workspace drawer below
-  // renders it. No second inspector, no drawer inside the map region.
-  const [worldSignalsInspectorSection, setWorldSignalsInspectorSection] = useState<
-    WorldSignalsDrawerSection | null
-  >(null);
-  const [worldSignalsInspectorOpen, setWorldSignalsInspectorOpen] = useState(false);
-  const [worldSignalsLayerState, setWorldSignalsLayerState] =
-    useState<WorldSignalsLayerState | null>(null);
-  const [worldSignalsBridge, setWorldSignalsBridge] =
-    useState<WorldSignalsInspectorBridge | null>(null);
-  const [worldViewBridge, setWorldViewBridge] = useState<GodsEyeBridge | null>(null);
-  const handleWorldSignalsInspectorRequest = useCallback(
-    (section: WorldSignalsInspectorSection) => {
-      // Only sections with a real canonical destination open today.
-      if (section === 'markets' || section === 'layers') {
-        setWorldSignalsInspectorSection(section);
-        setWorldSignalsInspectorOpen(true);
-      }
-    },
-    [],
-  );
-  const worldSignalsCardId = useMemo(
-    () => deck.nodes.find((node) => isWorldSignalsAgentCard(node))?.id ?? null,
-    [deck.nodes],
-  );
-  const worldViewCard = useMemo(
-    () => {
-      const owners = deck.nodes.filter((node) => isWorldViewCard(node));
-      return owners.length === 1
-        && directChatTargets.some((target) => target.cardId === owners[0].id)
-        ? owners[0]
-        : null;
-    },
-    [deck.nodes, directChatTargets],
-  );
-  const tradingCard = useMemo(
-    () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
-    [deck.nodes],
-  );
-  // Resolve existing conversation links once; continuity stays project-owned,
-  // without conversation navigation controls or a URL-driven swap mid-turn.
-  const [conversationId] = useState(() => (
-    selectedConversationId(window.location.search)
-  ));
-  const sharedChatDraftKey = mainCardId
-    ? JSON.stringify([canvasProjectId, conversationId, mainCardId])
-    : '';
+  const inspectorBridges = useAgentBuilderInspectorBridges();
+  const {
+    mainCardId,
+    directChatTargets,
+    builderCard,
+    cardTitlesByProfile,
+    worldSignalsCardId,
+    worldViewCard,
+    tradingCard,
+  } = useMemo(() => deriveAgentBuilderWorkspaceIdentity(deck), [deck]);
+  const [conversationId] = useState(() => selectedConversationId(window.location.search));
   const knowledgeGraphs = useAgentBuilderKnowledgeGraphs({
     projectId: activeProject,
     deckId: DEFAULT_PROJECT_DECK_ID,
     conversationId,
   });
-  const canonicalSubjectMatcher = useMemo(
-    () => createCanonicalSubjectMatcher({
-      thinkgraph: knowledgeGraphs.projections.thinkgraph,
-      knowgraph: knowledgeGraphs.projections.knowgraph,
-    }),
-    [knowledgeGraphs.projections.knowgraph, knowledgeGraphs.projections.thinkgraph],
-  );
-  const subjectFocusRequestIdentityRef = useRef(0);
-  const [subjectFocusRequest, setSubjectFocusRequest] =
-    useState<CanonicalSubjectFocusRequest | null>(null);
-  useEffect(() => {
-    if (workspaceView !== 'knowledge') setSubjectFocusRequest(null);
-  }, [activeProject, workspaceView]);
-  const handleCanonicalSubjectFocus = useCallback((target: CanonicalSubjectFocusTarget) => {
-    if (!activeProject || target.projectId !== activeProject) return;
-    subjectFocusRequestIdentityRef.current += 1;
-    setWorkspaceView('knowledge');
-    setSubjectFocusRequest({
-      ...target,
-      requestId: subjectFocusRequestIdentityRef.current,
-    });
-  }, [activeProject]);
-  const prepareRunImages = useCallback(async (targetCardId: string | null) => {
-    if (!targetCardId || targetCardId !== worldViewCard?.id || workspaceView !== 'worldview') {
-      return [];
-    }
-    if (!worldViewBridge) throw new Error('worldview_turn_context_unavailable');
-    return worldViewBridge.prepareRunImages();
-  }, [workspaceView, worldViewBridge, worldViewCard?.id]);
   const {
-    handleSend,
-    messages,
     setCurrentResponderCardId,
-    sessionActive,
-    sessionConnecting,
-    startVoiceSession,
-    stopCurrentCardTurn,
-    stopVoiceSession,
-    technicalError,
-    voiceError,
-    voicePhase,
-  } = useSharedCardChat({
+    subjectFocusRequest,
+    sharedChatProps,
+  } = useAgentBuilderSharedChat({
+    activeProject,
     canvasProjectId,
-    deckId: DEFAULT_PROJECT_DECK_ID,
     conversationId,
-    directChatTargets,
-    prepareRunImages,
-  });
-  useEffect(() => {
-    const companion = workspaceView === 'worldsignals'
-      ? { cardId: worldSignalsCardId, label: 'WorldSignals' }
-      : workspaceView === 'worldview'
-        ? { cardId: worldViewCard?.id || null, label: 'WorldView' }
-        : workspaceView === 'trading'
-          ? { cardId: tradingCard?.id || null, label: 'Trading' }
-          : null;
-    if (!companion) {
-      setCurrentResponderCardId(null);
-      return;
-    }
-    if (!canonicalDeckReady) return;
-    if (companion.cardId && setCurrentResponderCardId(companion.cardId)) return;
-    setDeckStatusMessage(`${companion.label} saved Card is unavailable for direct chat.`);
-    setWorkspaceView(canvasProjectId ? 'canvas' : 'chat');
-    showCanvasWorkspaceInUrl();
-  }, [
-    canonicalDeckReady,
-    canvasProjectId,
-    setCurrentResponderCardId,
-    setDeckStatusMessage,
-    tradingCard?.id,
     workspaceView,
+    setWorkspaceView,
+    canonicalDeckReady,
+    setDeckStatusMessage,
+    mainCardId,
+    directChatTargets,
+    knowledgeGraphs,
     worldSignalsCardId,
-    worldViewCard?.id,
-  ]);
+    worldViewCard,
+    tradingCard,
+    worldViewBridge: inspectorBridges.worldViewBridge,
+    colors: AGENT_BUILDER_COLORS,
+  });
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -577,57 +419,13 @@ export default function AgentBuilder(): ReactElement {
     return true;
   }, []);
 
-  const closeWorldSignalsInspector = useCallback(() => {
-    setWorldSignalsInspectorOpen(false);
-  }, []);
-
   const chatSurface = (
     <AgentBuilderChatWorkSurface
       activeProject={activeProject}
       canvasProjectId={canvasProjectId}
       conversationId={conversationId}
       builderCard={builderCard}
-      sharedChatProps={{
-        messages,
-        mainCardId: mainCardId || undefined,
-        directChatTargets,
-        onSend: handleSend,
-        onKnowledgeUploaded: () => {
-          void knowledgeGraphs.refreshKnowGraph();
-        },
-        draft: sharedChatDraftKey ? transientCardInputs[sharedChatDraftKey] || '' : '',
-        onDraftChange: (value) => {
-          if (!sharedChatDraftKey) return;
-          setTransientCardInputs((current) => {
-            if (!value) {
-              const next = { ...current };
-              delete next[sharedChatDraftKey];
-              return next;
-            }
-            return { ...current, [sharedChatDraftKey]: value };
-          });
-        },
-        knowledgeProjectId: activeProject,
-        subjectMatcher: canonicalSubjectMatcher,
-        onSubjectFocus: handleCanonicalSubjectFocus,
-        colors: AGENT_BUILDER_COLORS,
-        busy: sessionActive,
-        connecting: sessionConnecting,
-        error: technicalError,
-        voiceError,
-        voicePhase,
-        onVoiceStart: startVoiceSession,
-        onVoiceStop: () => {
-          void stopVoiceSession();
-        },
-        onStop: () => {
-          void stopCurrentCardTurn().catch((error) => {
-            setDeckStatusMessage(
-              error instanceof Error ? error.message : 'Main run stop failed.',
-            );
-          });
-        },
-      }}
+      sharedChatProps={sharedChatProps}
     />
   );
 
@@ -653,54 +451,25 @@ export default function AgentBuilder(): ReactElement {
     />
   );
 
-  const showCanvasWorkspace = useCallback(async () => {
-    if (!(await closeInspectorDrawer())) return;
-    setCurrentResponderCardId(null);
-    setWorkspaceView('canvas');
-    showCanvasWorkspaceInUrl();
-    // Camera focus only — pan to the agent/bus zone on the same scene.
-    setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
-  }, [closeInspectorDrawer, setCurrentResponderCardId]);
-
-  const showKnowledgeWorkspace = useCallback(async () => {
-    if (!(await closeInspectorDrawer())) return;
-    setCurrentResponderCardId(null);
-    setWorkspaceView('knowledge');
-    showKnowledgeWorkspaceInUrl();
-  }, [closeInspectorDrawer, setCurrentResponderCardId]);
-
-  const showTradingWorkspace = useCallback(async () => {
-    if (cardDraftFlushRef.current && !(await cardDraftFlushRef.current())) return;
-    if (!tradingCard?.id || !setCurrentResponderCardId(tradingCard.id)) {
-      setDeckStatusMessage('Trading saved Card is unavailable for direct chat.');
-      return;
-    }
-    // Hide the editor while the operational presentation is open, but preserve
-    // the Canvas selection. Returning to the Canvas therefore restores the
-    // same Card context instead of treating app navigation as a Card edit.
-    setInspectorDrawerOpen(false);
-    setWorkspaceView('trading');
-  }, [setCurrentResponderCardId, setDeckStatusMessage, setInspectorDrawerOpen, tradingCard?.id]);
-
-  const showWorldSignalsWorkspace = useCallback(async () => {
-    if (!(await closeInspectorDrawer())) return;
-    if (!worldSignalsCardId || !setCurrentResponderCardId(worldSignalsCardId)) {
-      setDeckStatusMessage('WorldSignals saved Card is unavailable for direct chat.');
-      return;
-    }
-    setWorkspaceView('worldsignals');
-  }, [closeInspectorDrawer, setCurrentResponderCardId, setDeckStatusMessage, worldSignalsCardId]);
-
-  const showWorldViewWorkspace = useCallback(async () => {
-    if (!(await closeInspectorDrawer())) return;
-    if (!worldViewCard?.id || !setCurrentResponderCardId(worldViewCard.id)) {
-      setDeckStatusMessage('WorldView saved Card is unavailable for direct chat.');
-      return;
-    }
-    setWorkspaceView('worldview');
-    setWorldViewInspectorOpen(true);
-    showWorldViewWorkspaceInUrl();
-  }, [closeInspectorDrawer, setCurrentResponderCardId, setDeckStatusMessage, worldViewCard?.id]);
+  const {
+    showCanvasWorkspace,
+    showKnowledgeWorkspace,
+    showTradingWorkspace,
+    showWorldSignalsWorkspace,
+    showWorldViewWorkspace,
+  } = useAgentBuilderWorkspaceNavigation({
+    cardDraftFlushRef,
+    closeInspectorDrawer,
+    setCurrentResponderCardId,
+    setDeckStatusMessage,
+    setInspectorDrawerOpen,
+    setWorkspaceView,
+    setCanvasFocusZone,
+    setWorldViewInspectorOpen: inspectorBridges.setWorldViewInspectorOpen,
+    tradingCard,
+    worldSignalsCardId,
+    worldViewCard,
+  });
 
   const workspaceRail = (
     <AgentBuilderRail
@@ -741,15 +510,15 @@ export default function AgentBuilder(): ReactElement {
       worldSignalsProps={{
         projectId: typeof activeProject === 'string' && activeProject ? activeProject : null,
         cardId: worldSignalsCardId,
-        onInspectorSectionRequest: handleWorldSignalsInspectorRequest,
-        onLayerStateChange: setWorldSignalsLayerState,
-        onBridgeChange: setWorldSignalsBridge,
+        onInspectorSectionRequest: inspectorBridges.handleWorldSignalsInspectorRequest,
+        onLayerStateChange: inspectorBridges.setWorldSignalsLayerState,
+        onBridgeChange: inspectorBridges.setWorldSignalsBridge,
       }}
       worldViewProps={{
         projectId: canvasProjectId || null,
         cardId: worldViewCard?.id || null,
-        onBridgeChange: setWorldViewBridge,
-        inspectorContainer: worldViewInspectorHost,
+        onBridgeChange: inspectorBridges.setWorldViewBridge,
+        inspectorContainer: inspectorBridges.worldViewInspectorHost,
       }}
     />
   );
@@ -783,20 +552,20 @@ export default function AgentBuilder(): ReactElement {
         },
       } : null}
       worldSignals={{
-        section: worldSignalsInspectorSection,
-        open: worldSignalsInspectorOpen,
-        bridge: worldSignalsBridge,
-        layerState: worldSignalsLayerState,
-        onClose: closeWorldSignalsInspector,
-        onOpen: () => setWorldSignalsInspectorOpen(true),
-        onSectionChange: setWorldSignalsInspectorSection,
+        section: inspectorBridges.worldSignalsInspectorSection,
+        open: inspectorBridges.worldSignalsInspectorOpen,
+        bridge: inspectorBridges.worldSignalsBridge,
+        layerState: inspectorBridges.worldSignalsLayerState,
+        onClose: inspectorBridges.closeWorldSignalsInspector,
+        onOpen: () => inspectorBridges.setWorldSignalsInspectorOpen(true),
+        onSectionChange: inspectorBridges.setWorldSignalsInspectorSection,
       }}
       worldView={{
         available: Boolean(worldViewCard),
-        open: worldViewInspectorOpen,
-        onClose: () => setWorldViewInspectorOpen(false),
-        onOpen: () => setWorldViewInspectorOpen(true),
-        setInspectorHost: setWorldViewInspectorHost,
+        open: inspectorBridges.worldViewInspectorOpen,
+        onClose: () => inspectorBridges.setWorldViewInspectorOpen(false),
+        onOpen: () => inspectorBridges.setWorldViewInspectorOpen(true),
+        setInspectorHost: inspectorBridges.setWorldViewInspectorHost,
       }}
       trading={{
         available: Boolean(tradingCard),

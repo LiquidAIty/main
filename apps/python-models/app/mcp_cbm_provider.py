@@ -11,7 +11,6 @@ from mcp.types import CallToolResult, Implementation, Tool
 
 _CBM_CLIENT: Client | None = None
 _CBM_TOOLS: tuple[Tool, ...] | None = None
-_CBM_NAMES: frozenset[str] = frozenset()
 _CBM_STARTUP_FAILURE: str | None = None
 
 
@@ -22,7 +21,7 @@ async def _open_cbm_client(
     *,
     implementation_version: str,
     request_timeout_seconds: float,
-) -> tuple[Client, tuple[Tool, ...], list[str]]:
+) -> tuple[Client, tuple[Tool, ...]]:
     """Open the one CBM frontend through the official SDK v2 client."""
     client = Client(
         StdioServerParameters(command=command, args=args, cwd=cwd),
@@ -50,13 +49,13 @@ async def _open_cbm_client(
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)):
             raise RuntimeError("cbm_duplicate_tool_name")
-        return client, tuple(tools), names
+        return client, tuple(tools)
     except Exception:
         await client.__aexit__(*sys.exc_info())
         raise
 
 
-async def _start_cbm_client(
+async def start_cbm_client(
     command: str,
     args: list[str],
     cwd: str,
@@ -65,11 +64,11 @@ async def _start_cbm_client(
     request_timeout_seconds: float,
 ) -> None:
     """Enter the SDK client once from the owning server-lifespan task."""
-    global _CBM_CLIENT, _CBM_NAMES, _CBM_STARTUP_FAILURE, _CBM_TOOLS
+    global _CBM_CLIENT, _CBM_STARTUP_FAILURE, _CBM_TOOLS
     if _CBM_CLIENT is not None and _CBM_TOOLS is not None:
         return
     try:
-        client, tools, names = await _open_cbm_client(
+        client, tools = await _open_cbm_client(
             command,
             args,
             cwd,
@@ -81,20 +80,14 @@ async def _start_cbm_client(
         raise
     _CBM_CLIENT = client
     _CBM_TOOLS = tools
-    _CBM_NAMES = frozenset(names)
     _CBM_STARTUP_FAILURE = None
 
 
-async def _cbm_tools() -> list[Tool]:
+async def cbm_tools() -> list[Tool]:
     if _CBM_CLIENT is None or _CBM_TOOLS is None:
         detail = _CBM_STARTUP_FAILURE or "CBM SDK client is not connected."
         raise RuntimeError(f"cbm_unavailable:{detail}")
     return list(_CBM_TOOLS)
-
-
-def cbm_tool_names() -> frozenset[str]:
-    """Return the exact tool names discovered from the owned CBM client."""
-    return _CBM_NAMES
 
 
 async def call_cbm_tool(
@@ -114,12 +107,11 @@ async def call_cbm_tool(
     )
 
 
-async def _close_cbm() -> None:
-    global _CBM_CLIENT, _CBM_NAMES, _CBM_STARTUP_FAILURE, _CBM_TOOLS
+async def close_cbm() -> None:
+    global _CBM_CLIENT, _CBM_STARTUP_FAILURE, _CBM_TOOLS
     client = _CBM_CLIENT
     _CBM_CLIENT = None
     _CBM_TOOLS = None
-    _CBM_NAMES = frozenset()
     _CBM_STARTUP_FAILURE = None
     if client is not None:
         await client.__aexit__(None, None, None)

@@ -40,7 +40,7 @@ OAUTH_ENFORCED = os.environ.get("MCP_OAUTH_ENFORCED", "false").strip().lower() i
     "1", "true", "yes", "on",
 }
 _MAIN_CONTEXT_TIMEOUT_SECONDS = 30.0
-_MAIN_CONTEXT_FIELDS = frozenset(
+MAIN_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
 )
 _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset({
@@ -49,7 +49,7 @@ _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset({
 })
 
 
-def _oauth_trace_fields() -> dict[str, str]:
+def oauth_trace_fields() -> dict[str, str]:
     access_token = get_access_token()
     if access_token is None:
         return {}
@@ -78,7 +78,7 @@ class OAuthConfig:
     required_scope: str
 
 
-def _oauth_config() -> OAuthConfig:
+def oauth_config() -> OAuthConfig:
     issuer = AUTH0_ISSUER_URL.rstrip("/") + "/" if AUTH0_ISSUER_URL else ""
     config = OAuthConfig(
         resource_url=PUBLIC_MCP_RESOURCE_URL.rstrip("/"),
@@ -115,7 +115,7 @@ def _oauth_config() -> OAuthConfig:
     return config
 
 
-def _authenticated_main_context() -> dict[str, Any] | None:
+def authenticated_main_context() -> dict[str, Any] | None:
     access_token = get_access_token()
     if access_token is None:
         return None
@@ -139,10 +139,10 @@ def _authenticated_main_context() -> dict[str, Any] | None:
         }
     else:
         context = claims.get("main") if isinstance(claims, dict) else None
-    if not isinstance(context, dict) or not _MAIN_CONTEXT_FIELDS.issubset(context):
+    if not isinstance(context, dict) or not MAIN_CONTEXT_FIELDS.issubset(context):
         return None
     resolved: dict[str, Any] = {
-        field: str(context[field]) for field in _MAIN_CONTEXT_FIELDS
+        field: str(context[field]) for field in MAIN_CONTEXT_FIELDS
     }
     for field in _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS:
         value = context.get(field)
@@ -155,14 +155,14 @@ def _authenticated_main_context() -> dict[str, Any] | None:
     return resolved
 
 
-def _internal_mcp_principal() -> dict[str, Any] | None:
+def internal_mcp_principal() -> dict[str, Any] | None:
     access_token = get_access_token()
     claims = getattr(access_token, "claims", None) if access_token is not None else None
     principal = claims.get("internal") if isinstance(claims, dict) else None
     return dict(principal) if isinstance(principal, dict) else None
 
 
-def _validated_principal_tool_names(value: Any) -> frozenset[str] | None:
+def validated_principal_tool_names(value: Any) -> frozenset[str] | None:
     """Validate one exact normalized tool-name set from a signed principal."""
     if not isinstance(value, list):
         return None
@@ -201,7 +201,7 @@ def _resolve_external_main_context_sync(
     )
     return (
         context
-        if isinstance(context, dict) and _MAIN_CONTEXT_FIELDS.issubset(context)
+        if isinstance(context, dict) and MAIN_CONTEXT_FIELDS.issubset(context)
         else None
     )
 
@@ -248,7 +248,7 @@ class Auth0TokenVerifier:
                         for field in required
                     ):
                         return None
-                    if _validated_principal_tool_names(
+                    if validated_principal_tool_names(
                         principal.get("grantedTools")
                     ) is None:
                         return None
@@ -262,10 +262,10 @@ class Auth0TokenVerifier:
                         for field in required
                     ):
                         return None
-                    grants = _validated_principal_tool_names(
+                    grants = validated_principal_tool_names(
                         principal.get("grantedTools")
                     )
-                    presented = _validated_principal_tool_names(
+                    presented = validated_principal_tool_names(
                         principal.get("presentedTools")
                     )
                     if (

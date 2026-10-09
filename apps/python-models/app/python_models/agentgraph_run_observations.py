@@ -12,7 +12,7 @@ from app.python_models.postgres import connect_postgres
 from app.python_models.saved_card_contract import accepted_at, utc_now
 
 
-def _observe_run_acceptance(
+def observe_run_acceptance(
     *,
     project_id: str,
     deck_id: str,
@@ -65,7 +65,7 @@ def _observe_run_acceptance(
         return False
 
 
-def _observe_run_preparation_failure(
+def observe_run_preparation_failure(
     *,
     project_id: str,
     deck_id: str,
@@ -111,7 +111,7 @@ def _observe_run_preparation_failure(
         return False
 
 
-def _observe_run_execution_started(
+def observe_run_execution_started(
     *,
     run_id: str,
     submission_id: str,
@@ -145,7 +145,7 @@ def _observe_run_execution_started(
         return False
 
 
-def _observe_run_progress(run_id: str, hermes_status: str, payload: dict[str, Any]) -> bool:
+def observe_run_progress(run_id: str, hermes_status: str, payload: dict[str, Any]) -> bool:
     active_workers = payload.get("activeWorkers")
     execution_active = hermes_status == "running" or (
         isinstance(active_workers, int)
@@ -192,7 +192,7 @@ def _observe_run_progress(run_id: str, hermes_status: str, payload: dict[str, An
         return False
 
 
-def _observe_run_preparation_complete(
+def observe_run_preparation_complete(
     prepared: dict[str, Any],
     payload: dict[str, Any],
     *,
@@ -301,7 +301,7 @@ def _observe_run_preparation_complete(
         return False
 
 
-def _observe_run_result_ready(run_id: str) -> bool:
+def observe_run_result_ready(run_id: str) -> bool:
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             agentgraph_query.execute_fixed_agentgraph_query(
@@ -319,7 +319,7 @@ def _observe_run_result_ready(run_id: str) -> bool:
         return False
 
 
-def _observe_run_finish(
+def observe_run_finish(
     run_id: str,
     state: str,
     payload: dict[str, Any] | None = None,
@@ -391,7 +391,7 @@ def _observe_run_finish(
         return False
 
 
-def _observe_artifact(
+def observe_artifact(
     run_id: str,
     artifact_id: str,
     artifact_kind: str,

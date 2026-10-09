@@ -57,7 +57,7 @@ def test_global_profile_binding_locks_sorted_before_collision_read() -> None:
     ]
     first_binding_read = next(
         index for index, (query, _params) in enumerate(calls)
-        if "FROM ag_catalog.agent_card_revisions" in query
+        if "JOIN ag_catalog.agent_card_revisions" in query
     )
     assert first_binding_read == 4
 
@@ -81,15 +81,17 @@ def test_global_profile_binding_allows_same_card_and_profile_in_another_project(
 
     profile_query = next(
         (query, params) for query, params in calls
-        if "LOWER(runtime_profile)=%s" in query
+        if "LOWER(current_revision.runtime_profile)=%s" in query
     )
     assert "card_id<>%s" in profile_query[0]
+    assert "current_revision_id" in profile_query[0]
     assert profile_query[1] == ("shared-profile", "shared-card")
     card_query = next(
         (query, params) for query, params in calls
-        if "LOWER(runtime_profile)<>%s" in query
+        if "LOWER(current_revision.runtime_profile)<>%s" in query
     )
     assert card_query[1] == ("shared-card", "shared-profile")
+    assert "current_revision_id" in card_query[0]
 
 
 def test_global_profile_binding_rejects_one_card_id_with_another_profile() -> None:
@@ -100,7 +102,7 @@ def test_global_profile_binding_rejects_one_card_id_with_another_profile() -> No
             self.last_query = str(query)
 
         def fetchone(self):
-            if "LOWER(runtime_profile)<>%s" in self.last_query:
+            if "LOWER(current_revision.runtime_profile)<>%s" in self.last_query:
                 return {"runtime_profile": "other-profile"}
             return None
 
@@ -137,7 +139,7 @@ def test_save_deck_rejects_new_card_using_globally_bound_profile(
         def fetchone(self):
             if "SELECT 1 FROM ag_catalog.agent_decks" in self.last_query:
                 return {"exists": 1}
-            if "LOWER(runtime_profile)=%s" in self.last_query:
+            if "LOWER(current_revision.runtime_profile)=%s" in self.last_query:
                 return {"card_id": "existing-card"}
             return None
 
@@ -177,7 +179,7 @@ def test_save_deck_rejects_new_card_using_globally_bound_profile(
     )
     profile_binding_read_index = next(
         index for index, (query, _params) in enumerate(calls)
-        if "LOWER(runtime_profile)=%s" in query
+        if "LOWER(current_revision.runtime_profile)=%s" in query
     )
     assert profile_lock_index < profile_binding_read_index
     assert not any("FOR UPDATE" in query for query, _params in calls)
@@ -350,7 +352,7 @@ def test_card_save_advances_every_exact_reused_revision_and_ensures_age_presence
         "deck": {"nodes": [previous], "edges": []},
         "meta": {"deckRevision": "deck-revision"},
     })
-    monkeypatch.setattr(agentgraph_topology, "_ensure_age_card",
+    monkeypatch.setattr(agentgraph_topology, "ensure_card_vertex",
         lambda _cursor, project, deck, card: ensured.append((project, deck, card)),
     )
 
@@ -381,7 +383,7 @@ def test_card_save_advances_every_exact_reused_revision_and_ensures_age_presence
     )
     profile_binding_read_index = next(
         index for index, (query, _params) in enumerate(statements)
-        if "LOWER(runtime_profile)=%s" in query
+        if "LOWER(current_revision.runtime_profile)=%s" in query
     )
     deck_lock_index = next(
         index for index, (query, _params) in enumerate(statements)

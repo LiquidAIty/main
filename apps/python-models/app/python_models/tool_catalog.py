@@ -17,8 +17,6 @@ _CATALOG_ANNOTATIONS = frozenset({
     "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
 })
 _CARD_CATALOG_EXCLUDED_IDS = frozenset({
-    # KnowGraph owns outside research through its saved profile Web toolset.
-    "web_search",
     # Retained operator/governance operations are not ordinary Card choices.
     "engraphis_conflict_review",
     "engraphis_session",

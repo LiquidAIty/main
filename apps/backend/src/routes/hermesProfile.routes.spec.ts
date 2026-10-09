@@ -124,6 +124,58 @@ describe('Hermes profile Card routes', () => {
     expect(JSON.stringify(body)).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret|bearer\s+[a-z0-9]/i);
   });
 
+  it('creates only the exact missing saved Card profile before reading it', async () => {
+    let describeCalls = 0;
+    const requestHermes = vi.fn<HermesRequest>(async (method: string) => {
+      if (method === 'profiles.describe') {
+        describeCalls += 1;
+        if (describeCalls === 1) {
+          throw Object.assign(new Error("profile 'liquidaity-main' not found"), { code: 4064 });
+        }
+        return profileState();
+      }
+      if (method === 'profiles.create') return { ok: true, name: 'liquidaity-main' };
+      if (method === 'mcp.servers.list') return { servers: [] };
+      if (method === 'learning.frames') return { count: 0, summary: [], buckets: [] };
+      throw new Error(`unexpected_hermes_method:${method}`);
+    });
+    const { base } = await start(requestHermes);
+
+    const response = await fetch(`${base}/cards/card_main?projectId=p1&deckId=deck_builder`);
+
+    expect(response.status).toBe(200);
+    expect(requestHermes.mock.calls.map(([method]) => method)).toEqual([
+      'profiles.describe',
+      'profiles.create',
+      'profiles.describe',
+      'learning.frames',
+      'mcp.servers.list',
+    ]);
+    expect(requestHermes).toHaveBeenNthCalledWith(2, 'profiles.create', {
+      name: 'liquidaity-main',
+      description: 'Main Chat',
+      soul: 'Card contract',
+      mirror_credentials: false,
+    });
+  });
+
+  it('does not create a profile for any describe failure other than missing-profile code 4064', async () => {
+    const requestHermes = vi.fn<HermesRequest>(async (method: string) => {
+      if (method === 'profiles.describe') {
+        throw Object.assign(new Error('gateway unavailable'), { code: 5001 });
+      }
+      throw new Error(`unexpected_hermes_method:${method}`);
+    });
+    const { base } = await start(requestHermes);
+
+    const response = await fetch(`${base}/cards/card_main?projectId=p1&deckId=deck_builder`);
+
+    expect(response.status).toBe(502);
+    expect(requestHermes.mock.calls.map(([method]) => method)).toEqual([
+      'profiles.describe',
+    ]);
+  });
+
   it('rejects direct profile configuration because the Card is the profile authority', async () => {
     const { base, requestHermes } = await start();
     const response = await fetch(`${base}/cards/card_main/operations`, {
@@ -164,11 +216,11 @@ describe('Hermes profile Card routes', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(requestHermes).toHaveBeenNthCalledWith(1, method, {
+    expect(requestHermes).toHaveBeenNthCalledWith(2, method, {
       ...params,
       profile: 'liquidaity-main',
     });
-    expect(requestHermes).toHaveBeenCalledTimes(4);
+    expect(requestHermes).toHaveBeenCalledTimes(5);
   });
 
   it.each([

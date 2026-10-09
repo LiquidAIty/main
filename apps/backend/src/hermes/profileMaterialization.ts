@@ -1,8 +1,9 @@
 import type { DeckCard, DeckDocument } from '../types';
+import { exactStrings, objectRecord } from '../services/savedCardAuthority';
 
 type HermesRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
-type ProfileState = {
+export type HermesProfileState = {
   name: string;
   capability_fingerprint?: string;
   description?: string;
@@ -25,20 +26,8 @@ const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
 const TEAM_CARD_ID = 'card_team';
 
-function record(value: unknown): Record<string, any> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, any>
-    : {};
-}
-
 function cardEnabled(card: DeckCard): boolean {
   return card.enabled !== false && card.runtimeOptions?.enabled !== false;
-}
-
-function strings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))]
-    : [];
 }
 
 function equalStrings(left: string[], right: string[]): boolean {
@@ -86,9 +75,9 @@ function subagentType(value: unknown): 'none' | 'leaf' | 'recursive' | null {
   throw new Error('card_subagent_type_invalid');
 }
 
-function delegationSettings(options: Record<string, any>, current: ProfileState) {
+function delegationSettings(options: Record<string, any>, current: HermesProfileState) {
   const type = subagentType(options.subagentType);
-  const selection = record(options.subagentModel);
+  const selection = objectRecord(options.subagentModel);
   if (!type) return null;
   const resolved = Object.keys(selection).length
     ? providerSelection(selection)
@@ -109,7 +98,7 @@ function delegationSettings(options: Record<string, any>, current: ProfileState)
 }
 
 export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[] {
-  const options = record(card.runtimeOptions);
+  const options = objectRecord(card.runtimeOptions);
   const orchestrator = card.runtime.mode === 'main' || options.orchestrator === true;
   if (!orchestrator) return [];
   const profiles = new Map(deck.nodes.flatMap((node) => (
@@ -128,13 +117,13 @@ export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[]
 
 function configuredProfileParams(
   card: DeckCard,
-  current: ProfileState,
+  current: HermesProfileState,
 ): Record<string, unknown> {
-  const options = record(card.runtimeOptions);
+  const options = objectRecord(card.runtimeOptions);
   const model = providerSelection(options);
   const installedSkills = (current.skills || [])
     .map((item) => String(item.name || '').trim()).filter(Boolean);
-  const selectedSkills = new Set(strings(options.skills).map((name) => name.toLowerCase()));
+  const selectedSkills = new Set(exactStrings(options.skills).map((name) => name.toLowerCase()));
   for (const skill of selectedSkills) {
     if (!installedSkills.some((name) => name.toLowerCase() === skill)) {
       throw new Error(`hermes_skill_missing:${card.runtime.profile}:${skill}`);
@@ -145,7 +134,7 @@ function configuredProfileParams(
   ));
   const availableToolsets = new Set((current.toolsets || [])
     .map((item) => String(item.name || '').trim()).filter(Boolean));
-  const selectedToolsets = strings(options.toolsets);
+  const selectedToolsets = exactStrings(options.toolsets);
   const delegation = delegationSettings(options, current);
   if (delegation?.enabled && !selectedToolsets.includes('delegation')) {
     selectedToolsets.push('delegation');
@@ -154,7 +143,7 @@ function configuredProfileParams(
   if (unavailableToolset) {
     throw new Error(`hermes_toolset_missing:${card.runtime.profile}:${unavailableToolset}`);
   }
-  const desiredMcp = strings(options.mcpConnectionIds);
+  const desiredMcp = exactStrings(options.mcpConnectionIds);
   const params: Record<string, unknown> = { name: card.runtime.profile };
   if (current.soul !== String(card.prompt || '')) params.soul = String(card.prompt || '');
   if (
@@ -188,7 +177,7 @@ function configuredProfileParams(
 
 function assertMaterialized(
   card: DeckCard,
-  profile: ProfileState,
+  profile: HermesProfileState,
 ): void {
   const pending = configuredProfileParams(card, profile);
   if (Object.keys(pending).length !== 1) {
@@ -200,7 +189,8 @@ export async function materializeSavedCardProfile(
   request: HermesRequest,
   card: DeckCard,
   botModeRoster: string[],
-): Promise<ProfileState> {
+  existingProfile?: HermesProfileState,
+): Promise<HermesProfileState> {
   if (card.runtime.kind !== 'hermes' || !PROFILE_PATTERN.test(card.runtime.profile)) {
     throw new Error('hermes_profile_card_invalid');
   }
@@ -208,17 +198,18 @@ export async function materializeSavedCardProfile(
     name: card.runtime.profile,
     bot_mode_roster: botModeRoster,
   };
-  let current = await request<ProfileState>('profiles.describe', describeParams);
+  let current = existingProfile
+    || await request<HermesProfileState>('profiles.describe', describeParams);
   if (String(current?.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()) {
     throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
   }
   const params = configuredProfileParams(card, current);
   if (Object.keys(params).length > 1) {
-    const configured = record(await request('profiles.configure', params));
+    const configured = objectRecord(await request('profiles.configure', params));
     if (configured.ok !== true || configured.confirm_required === true) {
       throw new Error(`hermes_profile_configuration_failed:${card.runtime.profile}`);
     }
-    current = await request<ProfileState>('profiles.describe', describeParams);
+    current = await request<HermesProfileState>('profiles.describe', describeParams);
   }
   assertMaterialized(card, current);
   if (!/^[0-9a-f]{12}$/.test(String(current.capability_fingerprint || ''))) {

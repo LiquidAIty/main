@@ -2061,6 +2061,19 @@ def _append_event(
     )
 
 
+def append_task_event(
+    conn: sqlite3.Connection,
+    task_id: str,
+    kind: str,
+    payload: Optional[dict] = None,
+    *,
+    run_id: Optional[int] = None,
+) -> None:
+    """Append one extension event inside the caller's existing write transaction."""
+
+    _append_event(conn, task_id, kind, payload, run_id=run_id)
+
+
 def _end_run(
     conn: sqlite3.Connection, task_id: str, *, outcome: str, summary: Optional[str] = None,
     error: Optional[str] = None, metadata: Optional[dict] = None, status: Optional[str] = None,

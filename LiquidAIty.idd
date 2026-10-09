@@ -123,7 +123,7 @@ label = "Trading"
 extends = "template_assist"
 
 [cardEditor]
-tabs = ["Results", "Prompt", "Runtime", "Memory", "Tools"]
+tabs = ["Prompt", "Runtime", "Memory", "Skills", "Tools"]
 fields = [
   { name = "provider", label = "Provider", section = "Runtime", path = "runtimeOptions.provider", source = "CardConfiguration.provider", catalog = "configured-models", catalogProperty = "provider" },
   { name = "orchestrator", label = "Orchestrator", section = "Prompt", path = "runtimeOptions.orchestrator", source = "CardConfiguration.orchestrator", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },

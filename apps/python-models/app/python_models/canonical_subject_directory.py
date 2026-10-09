@@ -12,7 +12,7 @@ from app.python_models.data_anchor_contract import (
     DataAnchorError,
     canonical_json,
 )
-from app.python_models.knowgraph_reference_reads import (
+from app.python_models.knowgraph_exact_reads import (
     read_knowgraph_subject_directory,
 )
 from app.python_models.graph_reference_contracts import graph_record_identity

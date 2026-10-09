@@ -13,7 +13,6 @@ from typing import Any
 
 from app.python_models import (
     codegraph_reference_reads,
-    knowgraph_reference_reads,
     thinkgraph_reference_reads,
 )
 from app.python_models.data_anchor_contract import (
@@ -28,6 +27,7 @@ from app.python_models.graph_reference_contracts import (
     graph_record_fields,
     graph_record_identity,
 )
+from app.python_models.knowgraph_exact_reads import read_knowgraph_exact
 
 
 def _materialized_record_sha256(record: dict[str, Any]) -> str:
@@ -394,7 +394,7 @@ def _read_exact_anchor_record(
     if id_field in {
         "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
     }:
-        return knowgraph_reference_reads.read_knowgraph_exact(
+        return read_knowgraph_exact(
             project_id,
             id_field,
             identifier,

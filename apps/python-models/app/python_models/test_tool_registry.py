@@ -3,11 +3,9 @@ import json
 from copy import deepcopy
 
 from app.python_models.operation_definition import OperationDefinition
-from app.python_models.python_tool_definitions import (
-    python_operation_definitions,
+from app.python_models.general_tool_operations import (
     tool_calculator,
     tool_current_datetime,
-    web_search_tool,
 )
 from app.python_models.tool_catalog import (
     ToolCatalogError,
@@ -22,6 +20,7 @@ from app.python_models.tool_registry import (
     graphiti_operation_policy,
     operation_definition,
     operation_definitions,
+    python_operation_definitions,
     replace_discovered_external_operations,
 )
 import pytest
@@ -40,20 +39,6 @@ def test_card_selection_uses_the_live_definition_availability_and_grant_flag():
     assert card_tool_selection_is_eligible("calculator") is True
     assert card_tool_selection_is_eligible("main.context") is False
     assert card_tool_selection_is_eligible("not_a_real_tool") is False
-
-
-def test_web_search_adapter_returns_the_declared_structured_object(monkeypatch):
-    async def search(**_arguments):
-        return json.dumps({"ok": True, "query": "rk", "result_count": 0, "results": []})
-
-    monkeypatch.setattr("app.python_models.python_tool_definitions.web_search", search)
-    result = __import__("asyncio").run(web_search_tool("rk"))
-    assert result == {"ok": True, "query": "rk", "result_count": 0, "results": []}
-    definition = next(
-        item for item in python_operation_definitions()
-        if item.canonical_id == "web_search"
-    )
-    assert definition.output_schema["type"] == "object"
 
 
 def test_worldsignals_batch_uses_the_provider_command_contract():
@@ -310,7 +295,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
         "canonicalInputSchema": {"type": "object", "properties": {}},
         "serverInjectedArguments": [],
         "dispatcherContextArguments": [],
-        "dispatcherOwner": "app.mcp_provider_operations._call_cbm",
+        "dispatcherOwner": "app.mcp_provider_operations.call_cbm_operation",
         "authenticatedProjection": True,
         "annotations": {
             "readOnlyHint": True,
@@ -326,7 +311,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
     assert projected["provider"] == "cbm"
     assert projected["providerToolName"] == "search_graph"
     assert projected["dispatcherOwner"] == (
-        "app.mcp_provider_operations._call_cbm"
+        "app.mcp_provider_operations.call_cbm_operation"
     )
     after = tuple(
         (item.canonical_id, item.publishers, id(item.handler))
@@ -361,7 +346,7 @@ def test_combined_publisher_contracts_have_no_duplicate_discovery_tuple():
         "canonicalInputSchema": {"type": "object", "properties": {}},
         "serverInjectedArguments": [],
         "dispatcherContextArguments": [],
-        "dispatcherOwner": "app.mcp_provider_operations._call_cbm",
+        "dispatcherOwner": "app.mcp_provider_operations.call_cbm_operation",
         "authenticatedProjection": True,
         "annotations": {
             "readOnlyHint": True,

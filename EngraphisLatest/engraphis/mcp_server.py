@@ -50,7 +50,7 @@ except ImportError:  # pragma: no cover - core-floor (numpy-only) installs
 
 try:
     from mcp.server import MCPServer
-    from mcp.types import CallToolResult, TextContent
+    from mcp.types import CallToolResult, TextContent, Tool
 except ImportError:  # pragma: no cover - exercised only without the optional dep
     raise SystemExit(
         "The 'mcp' package is required to run the Engraphis MCP server.\n"
@@ -3846,6 +3846,30 @@ def engraphis_conflict_review(
         ))
     except Exception as exc:  # noqa: BLE001 — Smart gateway classification
         return _classify_gateway_exception(exc)
+
+
+def smart_tool_catalog() -> list[Tool]:
+    """Return the registered Smart tools without starting an MCP transport.
+
+    Embedders that publish the same contracts through another authenticated
+    transport need a synchronous catalog during their own startup.  Engraphis
+    keeps ownership of SDK registration details and exposes only MCP Tool
+    models, matching ``await smart_mcp.list_tools()`` exactly.
+    """
+
+    return [
+        Tool(
+            name=tool.name,
+            title=tool.title,
+            description=tool.description,
+            inputSchema=tool.parameters,
+            outputSchema=tool.output_schema,
+            annotations=tool.annotations,
+            icons=tool.icons,
+            _meta=tool.meta,
+        )
+        for tool in smart_mcp._tool_manager.list_tools()
+    ]
 
 
 # The standard module export and dashboard mount are the zero-configuration Smart surface.

@@ -17,6 +17,12 @@ import MagneticTasksTab from '../tasks/MagneticTasksTab';
 import { BUILDER_CARD_ID, DEFAULT_PROJECT_DECK_ID } from '../deck/newProjectDeck';
 import { readCardSubsystemAttachments } from '../deck/cardSubsystems';
 import { safeText } from '../deck/deckPrimitives';
+import {
+  CARD_CONFIGURATION_TABS,
+  cardInspectorTabs,
+  isCardCliEligible,
+  isTaskLedgerCard,
+} from './agentCardInspectorPolicy';
 import type { CardEditorConfiguration } from '../cardConfigurationEditor';
 import {
   graphCompanionTabButtonStyle,
@@ -32,18 +38,6 @@ const CardInspector = lazy(async () => {
   return { default: module.CardInspector };
 });
 void loadCardInspector();
-
-export const CARD_CONFIGURATION_TABS = [
-  'Prompt',
-  'Runtime',
-  'Memory',
-  'Skills',
-  'Tools',
-] as const;
-
-export function isTaskLedgerCard(card: DeckCard | null | undefined): boolean {
-  return card?.id === 'card_magentic' || card?.id === 'card_team';
-}
 
 export function resolveTaskLedgerCardId(card: DeckCard, deck: DeckDocument): string {
   if (card.id !== 'card_team') return card.id;
@@ -151,20 +145,11 @@ export default function AgentCardInspectorPanel({
   }, [deck.edges, deck.nodes, selectedCard]);
 
   const tabs = useMemo(() => {
-    if (!selectedCard) return [];
-    return [
-      ...CARD_CONFIGURATION_TABS,
-      ...(isTaskLedgerCard(selectedCard) ? ['Tasks'] : []),
-      ...(selectedCard.runtime.kind === 'hermes'
-        && !isTaskLedgerCard(selectedCard)
-        && selectedCard.id !== mainCardId
-        && selectedCard.id !== builderCardId
-        ? ['CLI']
-        : []),
-      ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
-        .filter((attachment) => attachment.cardTab.enabled)
-        .map((attachment) => attachment.label),
-    ];
+    return cardInspectorTabs({
+      card: selectedCard,
+      mainCardId,
+      builderCardId,
+    });
   }, [builderCardId, mainCardId, selectedCard]);
 
   const selectedSubsystem = useMemo(
@@ -209,10 +194,7 @@ export default function AgentCardInspectorPanel({
     );
   } else if (
     tab === 'CLI'
-    && selectedCard.runtime.kind === 'hermes'
-    && !isTaskLedgerCard(selectedCard)
-    && selectedCard.id !== mainCardId
-    && selectedCard.id !== builderCardId
+    && isCardCliEligible({ card: selectedCard, mainCardId, builderCardId })
   ) {
     content = (
       <CardTerminalPanel

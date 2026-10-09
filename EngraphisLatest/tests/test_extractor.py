@@ -41,6 +41,19 @@ def test_extractors_satisfy_protocol():
     assert isinstance(LLMExtractor(FakeLLM("{}")), Extractor)
 
 
+def test_structured_extractor_exposes_its_exact_model_contract():
+    extractor = StructuredLLMExtractor(FakeStructuredLLM({"facts": []}))
+
+    prompt, schema = extractor.extraction_contract(
+        "A completed user and assistant pair.",
+        context='{"project":"one"}',
+    )
+
+    assert "A completed user and assistant pair." in prompt
+    assert 'CONTEXT:\n{"project":"one"}' in prompt
+    assert schema == extractor._output_schema()
+
+
 def test_llm_extractor_parses_facts_with_hints():
     payload = ('{"facts": [{"content": "The API uses PASETO tokens.", "title": "auth", '
                '"mtype": "semantic", "importance": 0.8, "keywords": ["paseto", "auth"]}, '

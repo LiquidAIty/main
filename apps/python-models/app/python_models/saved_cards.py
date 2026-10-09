@@ -160,12 +160,14 @@ def _lock_and_validate_hermes_profile_bindings(
         card_id = bindings[profile]
         cursor.execute(
             """
-            SELECT card_id
-            FROM ag_catalog.agent_card_revisions
-            WHERE runtime_kind='hermes'
-              AND LOWER(runtime_profile)=%s
-              AND card_id<>%s
-            ORDER BY card_id
+            SELECT current_card.card_id
+            FROM ag_catalog.agent_cards AS current_card
+            JOIN ag_catalog.agent_card_revisions AS current_revision
+              ON current_revision.revision_id=current_card.current_revision_id
+            WHERE current_revision.runtime_kind='hermes'
+              AND LOWER(current_revision.runtime_profile)=%s
+              AND current_card.card_id<>%s
+            ORDER BY current_card.card_id
             LIMIT 1
             """,
             (profile, card_id),
@@ -174,12 +176,14 @@ def _lock_and_validate_hermes_profile_bindings(
             raise CardDomainError(f"card_profile_duplicate:{profile}")
         cursor.execute(
             """
-            SELECT LOWER(runtime_profile) AS runtime_profile
-            FROM ag_catalog.agent_card_revisions
-            WHERE runtime_kind='hermes'
-              AND card_id=%s
-              AND LOWER(runtime_profile)<>%s
-            ORDER BY runtime_profile
+            SELECT LOWER(current_revision.runtime_profile) AS runtime_profile
+            FROM ag_catalog.agent_cards AS current_card
+            JOIN ag_catalog.agent_card_revisions AS current_revision
+              ON current_revision.revision_id=current_card.current_revision_id
+            WHERE current_revision.runtime_kind='hermes'
+              AND current_card.card_id=%s
+              AND LOWER(current_revision.runtime_profile)<>%s
+            ORDER BY current_revision.runtime_profile
             LIMIT 1
             """,
             (card_id, profile),
@@ -338,7 +342,7 @@ def load_saved_deck_with_cursor(
             "id": deck_row["deck_id"], "name": deck_row["name"],
             "version": int(deck_row["document_version"]),
             "projectCodeFolder": deck_row.get("project_code_folder"),
-            "nodes": nodes, "edges": agentgraph_topology._load_age_edges(cursor, project_id, deck_id),
+            "nodes": nodes, "edges": agentgraph_topology.load_card_relationships(cursor, project_id, deck_id),
             "promptTemplates": templates,
         },
         "meta": {
@@ -415,9 +419,9 @@ def _create_new_deck_with_cursor(
                 canonical_json(stable_card_record(node)["presentationProperties"]),
             ),
         )
-        agentgraph_topology._ensure_age_card(cursor, project_id, deck_id, card_id)
+        agentgraph_topology.ensure_card_vertex(cursor, project_id, deck_id, card_id)
     for ordinal, edge in enumerate(incoming_edges):
-        agentgraph_topology._upsert_age_edge(cursor, project_id, deck_id, edge, ordinal)
+        agentgraph_topology.upsert_card_relationship(cursor, project_id, deck_id, edge, ordinal)
 
 
 def _update_existing_deck_with_cursor(
@@ -446,7 +450,7 @@ def _update_existing_deck_with_cursor(
         # Card revision.  AGE owns only this Project-local canvas presence,
         # so ensure the scoped vertex on every save, not only when a new
         # Card definition is inserted.
-        agentgraph_topology._ensure_age_card(cursor, project_id, deck_id, card_id)
+        agentgraph_topology.ensure_card_vertex(cursor, project_id, deck_id, card_id)
         if previous is None:
             cursor.execute(
                 "INSERT INTO ag_catalog.agent_cards (project_id, deck_id, card_id) VALUES (%s,%s,%s)",
@@ -544,9 +548,9 @@ def _update_existing_deck_with_cursor(
             for field in ("source", "target", "edgeType")
         )
         if next_edge is None or changed_identity:
-            agentgraph_topology._delete_age_edge(cursor, project_id, deck_id, edge)
+            agentgraph_topology.delete_card_relationship(cursor, project_id, deck_id, edge)
     for ordinal, edge in enumerate(incoming_edges):
-        agentgraph_topology._upsert_age_edge(cursor, project_id, deck_id, edge, ordinal)
+        agentgraph_topology.upsert_card_relationship(cursor, project_id, deck_id, edge, ordinal)
     cursor.execute(
         "DELETE FROM ag_catalog.deck_prompt_templates WHERE project_id=%s AND deck_id=%s",
         (project_id, deck_id),

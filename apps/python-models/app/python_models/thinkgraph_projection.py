@@ -19,7 +19,7 @@ from .engraphis import (
     project_id,
 )
 from .engraphis_operations import inspect
-from .thinkgraph_relationships import winner_probability
+from .thinkgraph_relationship_classification import winner_probability
 
 
 def _projection_subject_directory(project: str) -> dict[str, Any] | None:

@@ -30,7 +30,8 @@ older checkpoint SHA.
   shared Hermes Gateway client connection, submission correlation, and truthful result projection.
 - Saved Card execution enters through `sharedChatTurn.ts`, `savedSpecialistRun.ts`, or the completed-pair
   handler in `thinkGraphRevision.routes.ts`, using the shared `savedCardAuthority`, `hermesCardSession`,
-  and `savedCardRun` services. Registration/history/event/Stop routes do not own execution.
+  `savedCardRunLedger`, `savedCardHermesToolProjection`, and `savedCardHermesTurn` services.
+  Registration/history/event/Stop routes do not own execution.
 - Builder's Project-owned `projectCodeFolder` is source-wired to managed Project storage and a
   Hermes session workspace for Builder only. HermesLatest's standard terminal and PTY remain the sole
   terminal/process owner; LiquidAIty applies no Docker policy.
@@ -43,6 +44,10 @@ older checkpoint SHA.
 - `POST /api/cards/runs/read` is a read-only latest/history/status projection. Main and addressed-Card
   execution use `/api/shared-chat/turn`; the internal saved-specialist bridge uses
   `/api/saved-specialists/invoke`.
+- `run_mag_one` keeps the exact tool call open while its one correlated Hermes root runs, records
+  progress from that invocation, and settles the outer Run from the observed terminal root result.
+  A bounded completion timeout remains visibly pending and never lets a status read manufacture a
+  terminal result.
 - One durable Card maps to one reusable Hermes profile. Projects and conversations create distinct
   sessions; Project topology and private/session state are not written into the shared profile.
 - After an ordinary Main response is persisted and returned, the restored saved ThinkGraph Card

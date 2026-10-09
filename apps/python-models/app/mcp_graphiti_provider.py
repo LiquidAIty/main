@@ -14,13 +14,12 @@ from mcp.types import Tool
 
 _GRAPHITI_MODULE: Any | None = None
 _GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
-_GRAPHITI_NAMES: frozenset[str] = frozenset()
 _GRAPHITI_UNAVAILABLE: dict[str, Any] | None = None
 _GRAPHITI_SERVICE_READY = False
 _GRAPHITI_SERVICE_INIT_LOCK = asyncio.Lock()
 
 
-def _graphiti_runtime_versions() -> dict[str, str | None]:
+def graphiti_runtime_versions() -> dict[str, str | None]:
     """Expose resolved Graphiti packages, never an expected or hard-coded pin."""
 
     def resolved(distribution: str) -> str | None:
@@ -96,13 +95,12 @@ def _graphiti_config():
 
 async def _initialize_graphiti() -> None:
     """Discover the Graphiti catalog without opening provider connections."""
-    global _GRAPHITI_MODULE, _GRAPHITI_NAMES, _GRAPHITI_TOOLS
+    global _GRAPHITI_MODULE, _GRAPHITI_TOOLS
     global _GRAPHITI_UNAVAILABLE
     if _GRAPHITI_TOOLS is not None:
         return
     if not os.environ.get("OPENROUTER_API_KEY", "").strip():
         _GRAPHITI_TOOLS = ()
-        _GRAPHITI_NAMES = frozenset()
         _GRAPHITI_UNAVAILABLE = {
             "ok": False,
             "failureCode": "optional_capability_unavailable",
@@ -142,7 +140,6 @@ async def _initialize_graphiti() -> None:
                 await close_result
         _GRAPHITI_MODULE = None
         _GRAPHITI_TOOLS = ()
-        _GRAPHITI_NAMES = frozenset()
         _GRAPHITI_UNAVAILABLE = {
             "ok": False,
             "failureCode": "optional_capability_unavailable",
@@ -155,11 +152,10 @@ async def _initialize_graphiti() -> None:
 
     _GRAPHITI_MODULE = graphiti_module_ref
     _GRAPHITI_TOOLS = tools
-    _GRAPHITI_NAMES = frozenset(names)
     _GRAPHITI_UNAVAILABLE = None
 
 
-async def _ensure_graphiti_service() -> None:
+async def ensure_graphiti_service() -> None:
     """Open Graphiti providers lazily on the first Graphiti tool call."""
     global _GRAPHITI_SERVICE_READY, _GRAPHITI_UNAVAILABLE
     if _GRAPHITI_SERVICE_READY:
@@ -217,7 +213,7 @@ async def _ensure_graphiti_service() -> None:
         _GRAPHITI_UNAVAILABLE = None
 
 
-async def _graphiti_tools() -> list[Tool]:
+async def graphiti_tools() -> list[Tool]:
     await _initialize_graphiti()
     return list(_GRAPHITI_TOOLS or ())
 
@@ -225,11 +221,6 @@ async def _graphiti_tools() -> list[Tool]:
 def graphiti_unavailability() -> dict[str, Any] | None:
     """Return a copy of the current provider availability failure, if any."""
     return copy.deepcopy(_GRAPHITI_UNAVAILABLE)
-
-
-def graphiti_tool_names() -> frozenset[str]:
-    """Return the exact discovered provider tool-name set."""
-    return _GRAPHITI_NAMES
 
 
 async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
@@ -240,14 +231,13 @@ async def call_graphiti_tool(name: str, arguments: dict[str, Any]) -> Any:
     return await graphiti_module_ref.mcp.call_tool(name, dict(arguments))
 
 
-async def _close_graphiti() -> None:
-    global _GRAPHITI_MODULE, _GRAPHITI_NAMES, _GRAPHITI_TOOLS
+async def close_graphiti() -> None:
+    global _GRAPHITI_MODULE, _GRAPHITI_TOOLS
     global _GRAPHITI_UNAVAILABLE
     global _GRAPHITI_SERVICE_READY
     graphiti_module_ref = _GRAPHITI_MODULE
     _GRAPHITI_MODULE = None
     _GRAPHITI_TOOLS = None
-    _GRAPHITI_NAMES = frozenset()
     _GRAPHITI_UNAVAILABLE = None
     _GRAPHITI_SERVICE_READY = False
     client = (

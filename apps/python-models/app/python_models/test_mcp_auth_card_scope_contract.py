@@ -1,3 +1,5 @@
+from app import mcp_request_dispatch, mcp_transport
+from mcp.types import TextContent
 """MCP authentication, principal, and saved-Card scope contract tests."""
 
 import json
@@ -21,7 +23,7 @@ from app import (
     mcp_graphiti_provider,
     mcp_provider_operations,
 )
-from app.python_models.mcp_contract_test_support import (
+from app.python_models.test_mcp_contract_support import (
     clear_live_provider_operations,
     tool_result_wire_text,
 )
@@ -35,15 +37,15 @@ def test_call_tool_preserves_exact_results_without_runtime_observation_leak(monk
     async def dispatch(name, _arguments):
         if name == "graphiti.search_nodes":
             return mcp_provider_operations._normalize_graphiti_result(
-                [mcp_host.TextContent(type="text", text=json.dumps({
+                [TextContent(type="text", text=json.dumps({
                     "error": "OpenAI insufficient credits for embeddings"
                 }))]
             )
-        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+        return [TextContent(type="text", text=json.dumps({"ok": True}))]
 
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
-    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
-    failed = asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "x"}))
+    monkeypatch.setattr(mcp_request_dispatch, "dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_request_dispatch, "request_tool_is_allowed", lambda _name: True)
+    failed = asyncio.run(mcp_request_dispatch.call_tool("graphiti.search_nodes", {"query": "x"}))
     assert failed.is_error is True
     failure = json.loads(failed.content[0].text)
     assert failure["failureCode"] == "insufficient_credits"
@@ -51,7 +53,7 @@ def test_call_tool_preserves_exact_results_without_runtime_observation_leak(monk
     assert len(failed.content) == 1
     assert "executionReceipt" not in tool_result_wire_text(failed)
 
-    later = asyncio.run(mcp_host.call_tool("main.context", {}))
+    later = asyncio.run(mcp_request_dispatch.call_tool("main.context", {}))
     assert json.loads(later[0].text)["ok"] is True
     assert len(later) == 1
     assert "executionReceipt" not in tool_result_wire_text(later)
@@ -76,7 +78,7 @@ def test_main_context_reads_only_the_current_request_claims(monkeypatch):
     )}
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: current["token"])
 
-    assert mcp_auth._authenticated_main_context() == contexts[0]
+    assert mcp_auth.authenticated_main_context() == contexts[0]
     current["token"] = AccessToken(
         token="second",
         client_id="chatgpt-client",
@@ -84,9 +86,9 @@ def test_main_context_reads_only_the_current_request_claims(monkeypatch):
         expires_at=int(time.time()) + 60,
         claims={"main": contexts[1]},
     )
-    assert mcp_auth._authenticated_main_context() == contexts[1]
+    assert mcp_auth.authenticated_main_context() == contexts[1]
     current["token"] = None
-    assert mcp_auth._authenticated_main_context() is None
+    assert mcp_auth.authenticated_main_context() is None
     assert not hasattr(mcp_host, "_VERIFIED_CONTEXTS")
     assert not hasattr(mcp_host, "_MAIN_CONNECTION_CONTEXTS")
 
@@ -108,7 +110,7 @@ def test_main_context_rejects_expired_or_incomplete_request_claims(monkeypatch):
         }},
     )}
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: current["token"])
-    assert mcp_auth._authenticated_main_context() is None
+    assert mcp_auth.authenticated_main_context() is None
 
 def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(monkeypatch):
     import jwt
@@ -155,7 +157,7 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
     verified = verifier._verify_sync(token)
     assert verified is not None
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: verified)
-    assert mcp_auth._authenticated_main_context() == {
+    assert mcp_auth.authenticated_main_context() == {
         "projectId": "project-1",
         "deckId": "deck_builder",
         "conversationId": "conversation-1",
@@ -167,8 +169,8 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
         "grantedTools": ["canvas.inspect"],
         "presentedTools": ["canvas.inspect"],
     }
-    assert mcp_host._request_tool_is_allowed("canvas.inspect") is True
-    assert mcp_host._request_tool_is_allowed("run_mag_one") is False
+    assert mcp_request_dispatch.request_tool_is_allowed("canvas.inspect") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("run_mag_one") is False
 
 def test_card_run_token_uses_direct_saved_authority_and_exact_presentation(monkeypatch):
     import jwt
@@ -199,11 +201,11 @@ def test_card_run_token_uses_direct_saved_authority_and_exact_presentation(monke
     )):
         assert verify({**principal, **invalid}) is None
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: token)
-    resolved = mcp_auth._authenticated_main_context()
+    resolved = mcp_auth.authenticated_main_context()
     assert resolved["parentRunId"] == "persisted-run"
     assert resolved["conversationId"] == "conversation-1"
     assert resolved["presentedTools"] == ["worldsignals.package"]
-    assert mcp_host._request_tool_is_allowed("card.create") is False
+    assert mcp_request_dispatch.request_tool_is_allowed("card.create") is False
 
     assert verify({**principal, "presentedTools": []}) is not None
     assert verify({**principal, "presentedTools": ["card.create"]}) is None
@@ -225,9 +227,9 @@ def test_replaced_runless_agent_terminal_token_is_rejected(monkeypatch):
         "kind": "agent-terminal",
         "projectId": "project-1",
         "deckId": "deck_builder",
-        "callerCardId": "card_hermes_steward",
+        "callerCardId": "builder",
         "terminalSessionId": "terminal-session-1",
-        "profile": "liquidaity-hermes-steward",
+        "profile": "builder",
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "delegate",
         "grantedTools": ["canvas.inspect"],
@@ -236,7 +238,7 @@ def test_replaced_runless_agent_terminal_token_is_rejected(monkeypatch):
     token = jwt.encode({
         "iss": "liquidaity-runtime",
         "aud": "liquidaity-internal-mcp",
-        "sub": "agent-terminal:card_hermes_steward:terminal-session-1",
+        "sub": "agent-terminal:builder:terminal-session-1",
         "iat": now,
         "exp": now + 60,
         "principal": principal,
@@ -258,7 +260,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
     import jwt
     import mcp_host
 
-    mcp_provider_operations._register_cbm_catalog(mcp_provider_operations._namespace_provider_tools("cbm", [
+    mcp_provider_operations.register_cbm_catalog(mcp_provider_operations.namespace_provider_tools("cbm", [
         Tool(
             name="get_code_snippet",
             description="Read current source.",
@@ -312,6 +314,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: verified)
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ("liquidaity",))
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", (
         Tool(name="canvas.inspect", description="base", inputSchema={"type": "object"}),
         Tool(name="cbm.get_code_snippet", description="read",
@@ -321,11 +324,11 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
         Tool(name="graphiti.search_nodes", description="graph read",
                       inputSchema={"type": "object"}, annotations={"readOnlyHint": True}),
     ))
-    assert mcp_auth._authenticated_main_context() is None
-    assert mcp_host._request_tool_is_allowed("cbm.get_code_snippet") is True
-    assert mcp_host._request_tool_is_allowed("cbm.search_graph") is False
-    assert mcp_host._request_tool_is_allowed("cbm.index_repository") is False
-    assert mcp_host._request_tool_is_allowed("run_mag_one") is False
+    assert mcp_auth.authenticated_main_context() is None
+    assert mcp_request_dispatch.request_tool_is_allowed("cbm.get_code_snippet") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("cbm.search_graph") is False
+    assert mcp_request_dispatch.request_tool_is_allowed("cbm.index_repository") is False
+    assert mcp_request_dispatch.request_tool_is_allowed("run_mag_one") is False
 
     assert [tool.name for tool in asyncio.run(mcp_catalog_runtime.list_tools())] == [
         "cbm.get_code_snippet",
@@ -350,8 +353,8 @@ def test_materializer_provider_reads_keep_project_scope_without_a_fake_run(
     import asyncio
     import mcp_host
     calls = []
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: {
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: {
         "kind": "materializer-read", "projectId": "project-1", "deckId": "d",
         "callerCardId": "main", "conversationId": "conversation-1",
         "grantedTools": ["graphiti.search_memory_facts"],
@@ -365,25 +368,21 @@ def test_materializer_provider_reads_keep_project_scope_without_a_fake_run(
         calls.append((name, args))
         return []
     monkeypatch.setattr(mcp_graphiti_provider, "_initialize_graphiti", initialize)
-    monkeypatch.setattr(mcp_graphiti_provider, "_graphiti_tools", graphiti_tools)
-    monkeypatch.setattr(
-        mcp_graphiti_provider,
-        "_GRAPHITI_NAMES",
-        frozenset({"search_memory_facts"}),
-    )
-    monkeypatch.setattr(mcp_provider_operations, "_call_graphiti", graphiti)
+    monkeypatch.setattr(mcp_graphiti_provider, "graphiti_tools", graphiti_tools)
+    monkeypatch.setattr(mcp_provider_operations, "call_graphiti_operation", graphiti)
     provider_tools = asyncio.run(graphiti_tools())
-    mcp_provider_operations._register_graphiti_catalog(
-        mcp_provider_operations._namespace_provider_tools("graphiti", provider_tools)
+    mcp_provider_operations.register_graphiti_catalog(
+        mcp_provider_operations.namespace_provider_tools("graphiti", provider_tools)
     )
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ("liquidaity",))
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", (
         Tool(
             name="graphiti.search_memory_facts",
             inputSchema={"type": "object"},
         ),
     ))
-    asyncio.run(mcp_host._dispatch_tool("graphiti.search_memory_facts", {"query": "sources"}))
+    asyncio.run(mcp_request_dispatch.dispatch_tool("graphiti.search_memory_facts", {"query": "sources"}))
     assert calls == [("search_memory_facts", {"query": "sources", "group_ids": ["liquidaity-project-1"]})]
 
 def test_card_runtime_catalog_is_exactly_its_presented_granted_tools(monkeypatch):
@@ -397,6 +396,7 @@ def test_card_runtime_catalog_is_exactly_its_presented_granted_tools(monkeypatch
     )
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ("liquidaity",))
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", tools)
     principal = {
         "kind": "card-runtime",
@@ -437,49 +437,49 @@ def test_card_runtime_catalog_is_exactly_its_presented_granted_tools(monkeypatch
 def test_builder_update_uses_explicit_target_and_revisions_with_saved_grants(monkeypatch):
     import asyncio
     import mcp_host
-    from app import saved_card_tools
+    from app import saved_card_update
     observed = []
     async def update(args, **authority):
         observed.append((dict(args), dict(authority)))
         return {"ok": True, "cardId": args["cardId"]}
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "project-1", "deckId": "deck_builder", "conversationId": "conversation-1",
         "parentRunId": "builder-run-1", "mainCardId": "builder", "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "delegate", "principalKind": "card-runtime",
         "grantedTools": ["card.update_configuration"],
     })
-    monkeypatch.setattr(saved_card_tools, "card_update_configuration", update)
+    monkeypatch.setattr(saved_card_update, "card_update_configuration", update)
     args = {"cardId": "selected", "expectedRevision": "deck-revision-one",
             "expectedCardRevisionId": "selected-revision", "updates": {"prompt": "New prompt"}}
-    result = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", args))
-    assert json.loads(result[0].text)["ok"] is True
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("card.update_configuration", args))
+    assert json.loads(result.content[0].text)["ok"] is True
     assert observed == [({**args, "projectId": "project-1", "deckId": "deck_builder"},
                          {"caller_card_id": "builder", "authenticated_user_edit": False})]
     for forged in ("_builderOperation", "_effectTargetCardId", "authenticated_user_edit"):
-        rejected = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", {**args, forged: True}))
+        rejected = asyncio.run(mcp_request_dispatch.dispatch_tool("card.update_configuration", {**args, forged: True}))
         assert json.loads(rejected[0].text)["ok"] is False
     assert len(observed) == 1
 
 def test_external_card_edit_uses_authenticated_context_not_caller_arguments(monkeypatch):
     import asyncio
     import mcp_host
-    from app import saved_card_tools
+    from app import saved_card_update
     observed = []
     async def update(args, **authority):
         observed.append((args, authority))
         return {"ok": True}
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "p", "deckId": "deck_builder", "mainCardId": "main",
         "conversationId": "c", "parentRunId": "r",
     })
-    monkeypatch.setattr(saved_card_tools, "card_update_configuration", update)
-    result = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", {
+    monkeypatch.setattr(saved_card_update, "card_update_configuration", update)
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("card.update_configuration", {
         "cardId": "main", "updates": {"prompt": "Updated instructions"},
     }))
-    assert json.loads(result[0].text)["ok"] is True
+    assert json.loads(result.content[0].text)["ok"] is True
     assert observed[0][1]["authenticated_user_edit"] is True
-    forged = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", {
+    forged = asyncio.run(mcp_request_dispatch.dispatch_tool("card.update_configuration", {
         "cardId": "main", "updates": {"prompt": "x"}, "authenticated_user_edit": True,
     }))
     assert json.loads(forged[0].text)["ok"] is False
@@ -502,29 +502,25 @@ def test_builder_cbm_read_forwards_explicit_provider_arguments_without_operation
     )]
     async def catalog():
         return provider_tools
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "p", "deckId": "d", "mainCardId": "builder",
         "principalKind": "card-runtime", "grantedTools": ["cbm.search_graph"],
     })
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", catalog)
-    monkeypatch.setattr(
-        mcp_cbm_provider,
-        "_CBM_NAMES",
-        frozenset({"search_graph"}),
-    )
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", catalog)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ("liquidaity",))
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", (
         Tool(name="cbm.search_graph", inputSchema={"type": "object"}),
     ))
     async def call_cbm(name, args):
         calls.append((name, args))
         return []
-    monkeypatch.setattr(mcp_provider_operations, "_call_cbm", call_cbm)
-    mcp_provider_operations._register_cbm_catalog(
-        mcp_provider_operations._namespace_provider_tools("cbm", provider_tools)
+    monkeypatch.setattr(mcp_provider_operations, "call_cbm_operation", call_cbm)
+    mcp_provider_operations.register_cbm_catalog(
+        mcp_provider_operations.namespace_provider_tools("cbm", provider_tools)
     )
     args = {"project": "C-Projects-LiquidAIty-main", "query": "materialize_idf"}
-    asyncio.run(mcp_host._dispatch_tool("cbm.search_graph", args))
+    asyncio.run(mcp_request_dispatch.dispatch_tool("cbm.search_graph", args))
     assert calls == [("search_graph", args)]
 
 def test_stdio_without_signed_principal_does_not_invent_main_context(monkeypatch):
@@ -535,8 +531,8 @@ def test_stdio_without_signed_principal_does_not_invent_main_context(monkeypatch
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: None)
 
-    assert mcp_auth._authenticated_main_context() is None
-    result = asyncio.run(mcp_host.call_tool("main.context", {}))
+    assert mcp_auth.authenticated_main_context() is None
+    result = asyncio.run(mcp_request_dispatch.call_tool("main.context", {}))
     assert result.is_error is True
     assert json.loads(result.content[0].text) == {
         "ok": False,
@@ -550,10 +546,10 @@ def test_dispatch_rejects_caller_supplied_context_fields_without_auth_context(
     import mcp_host
 
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
 
-    result = asyncio.run(mcp_host._dispatch_tool("main.context", {
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("main.context", {
         "_mainContext": {"projectId": "caller-forged"},
         "_catalogDiagnostics": {"state": "caller-forged"},
     }))
@@ -579,7 +575,7 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
         "mainCardId": "main-1",
     }
     calls = []
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: dict(context))
     monkeypatch.setattr(
         mcp_auth,
         "get_access_token",
@@ -596,8 +592,8 @@ def test_authenticated_connection_reaches_read_only_handler_without_context_inje
         return {"ok": True, "cards": []}
 
     monkeypatch.setattr(saved_canvas_tools, "canvas_inspect", inspect_cards)
-    result = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
+    result = asyncio.run(mcp_request_dispatch.call_tool("canvas.inspect", {}))
 
-    assert json.loads(result[0].text) == {"ok": True, "cards": []}
+    assert json.loads(result.content[0].text) == {"ok": True, "cards": []}
     assert calls == [{"projectId": "project-1", "deckId": "deck-1"}]
-    assert "context" not in result[0].text
+    assert "context" not in result.content[0].text

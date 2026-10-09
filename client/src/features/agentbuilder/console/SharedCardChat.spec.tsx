@@ -4,10 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import SharedCardChat, {
+import SharedCardChat from './SharedCardChat';
+import {
   followLatestOutput,
   sharedCardMessageKey,
-} from './SharedCardChat';
+} from './SharedCardChatViewport';
 import { CANONICAL_SUBJECT_LINK_STYLE } from './SharedCardChatMessage';
 
 const colors = {
@@ -512,15 +513,20 @@ describe('SharedCardChat', () => {
 
   it('reflows Pretext bubble width when the continuously resizable Main lane changes', async () => {
     let viewportWidth = 720;
-    let notifyResize: () => void = () => undefined;
+    const resizeCallbacks = new Map<Element, () => void>();
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => viewportWidth);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       font: '',
       measureText: (text: string) => ({ width: Array.from(text).length * 7.5 }),
     } as unknown as CanvasRenderingContext2D);
     vi.stubGlobal('ResizeObserver', vi.fn((callback: ResizeObserverCallback) => {
-      notifyResize = () => callback([], {} as ResizeObserver);
-      return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+      return {
+        observe: vi.fn((element: Element) => {
+          resizeCallbacks.set(element, () => callback([], {} as ResizeObserver));
+        }),
+        unobserve: vi.fn(),
+        disconnect: vi.fn(),
+      };
     }));
 
     render(
@@ -547,7 +553,8 @@ describe('SharedCardChat', () => {
     scroller.scrollTop = 37;
     const readerPosition = scroller.scrollTop;
     viewportWidth = 300;
-    await act(async () => notifyResize());
+    const viewport = screen.getByTestId('shared-card-chat-message-viewport');
+    await act(async () => resizeCallbacks.get(viewport)?.());
     const narrowWidth = Number.parseFloat(frame.style.width);
 
     expect(wideWidth).toBeGreaterThan(narrowWidth);

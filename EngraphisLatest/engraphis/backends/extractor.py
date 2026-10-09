@@ -299,6 +299,21 @@ class StructuredLLMExtractor:
             "llm_structured",
         )
 
+    def extraction_contract(
+        self,
+        text: str,
+        *,
+        context: str = "",
+    ) -> tuple[str, dict]:
+        """Return the exact prompt and schema used by structured extraction.
+
+        External model hosts may execute the model call while Engraphis retains
+        ownership of prompt and schema construction.  This method exposes that
+        contract without exposing the extractor's implementation helpers.
+        """
+
+        return self._build_prompt(text or "", context), self._output_schema()
+
     # ── internals ────────────────────────────────────────────────────────────
     def _build_prompt(self, text: str, context: str = "") -> str:
         ctx = f"\nCONTEXT:\n{context}\n" if context else ""

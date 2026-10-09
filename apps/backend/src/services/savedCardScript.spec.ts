@@ -6,7 +6,7 @@ import {
   hermesCallbackToolNames,
   hermesCardScriptDefinition,
   hermesDynamicToolDefinitions,
-} from './savedCardRun';
+} from './savedCardHermesToolProjection';
 
 const source = `CARD_SCRIPT = {
     "mode": "tool_recipe",

@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from app import mcp_request_dispatch, mcp_transport
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
@@ -17,12 +18,13 @@ ensure_env_loaded()
 
 from app import (
     mcp_auth,
+    mcp_catalog_projection,
     mcp_catalog_runtime,
     mcp_cbm_provider,
     mcp_graphiti_provider,
 )
 from app.python_models import tool_catalog
-from app.python_models.mcp_contract_test_support import clear_live_provider_operations
+from app.python_models.test_mcp_contract_support import clear_live_provider_operations
 from app.python_models.operation_definition import allowed_operation_keys
 from mcp.types import Tool
 
@@ -38,10 +40,10 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", provider_catalog_fixture)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", provider_catalog_fixture)
     monkeypatch.setattr(
-        mcp_graphiti_provider, "_graphiti_tools", provider_catalog_fixture
+        mcp_graphiti_provider, "graphiti_tools", provider_catalog_fixture
     )
 
     async def check():
@@ -85,7 +87,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
             "expectedRevision", "templateId", "title",
             "role", "prompt", "runtime", "model", "tools", "skills",
             "toolsets", "mcpConnectionIds", "subagentType", "subagentModel",
-            "openaiRuntime", "position",
+            "openaiRuntime", "autoTools", "autoModel", "position",
         }
         runtime_schema = by_name["card.create"].input_schema["properties"]["runtime"]
         assert runtime_schema == {
@@ -95,15 +97,15 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
                 "mode": {"type": "string", "minLength": 1},
                 "profile": {"type": "string", "minLength": 1},
             },
-            "required": ["kind", "mode"],
+            "required": ["kind", "mode", "profile"],
             "additionalProperties": False,
         }
-        # The receiving Card domain checks the exact IDD template binding;
-        # Transport must not impose a removed runtime-specific creation rule.
-        for binding in ({"kind": "hermes", "mode": "delegate"},
-                        {"kind": "hermes", "mode": "delegate", "profile": "worker"}):
+        # A durable Card/profile binding is part of the create contract, so the
+        # model-visible schema must reject the same missing profile as the handler.
+        for binding in ({"kind": "hermes", "mode": "delegate", "profile": "worker"},):
             jsonschema.validate(binding, runtime_schema)
-        for binding in ({"kind": "hermes"}, {"kind": "hermes", "mode": ""},
+        for binding in ({"kind": "hermes"}, {"kind": "hermes", "mode": "delegate"},
+                        {"kind": "hermes", "mode": ""},
                         {"kind": "hermes", "mode": "delegate", "override": True}):
             with pytest.raises(jsonschema.ValidationError):
                 jsonschema.validate(binding, runtime_schema)
@@ -114,6 +116,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_provider_disco
             "configuration", "prompt", "title", "script", "subsystems", "tools",
             "skills", "toolsets", "mcpConnectionIds", "modelKey", "provider",
             "providerModelId", "accessMode", "subagentType", "subagentModel", "openaiRuntime",
+            "autoTools", "autoModel",
         }
         assert by_name["card.update_configuration"].input_schema["required"] == [
             "cardId", "expectedRevision", "expectedCardRevisionId", "updates",
@@ -156,12 +159,12 @@ def test_only_externally_permitted_operations_are_in_the_mcp_catalog(monkeypatch
 
     monkeypatch.setattr(
         mcp_cbm_provider,
-        "_cbm_tools",
+        "cbm_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
     monkeypatch.setattr(
         mcp_graphiti_provider,
-        "_graphiti_tools",
+        "graphiti_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
     tools = asyncio.run(mcp_catalog_runtime._materialize_complete_catalog())
@@ -179,11 +182,11 @@ def test_only_externally_permitted_operations_are_in_the_mcp_catalog(monkeypatch
 
 def test_saved_specialist_tools_are_card_runtime_only_write_operations():
     import mcp_host
-    from app import application_operations
+    from app.application_operation_catalog import application_operation_definitions
 
     definitions = {
         item.canonical_id: item
-        for item in application_operations.application_operation_definitions()
+        for item in application_operation_definitions()
     }
     expected_titles = {
         "thinkgraph.reason": "Reason with ThinkGraph",
@@ -218,7 +221,7 @@ def test_saved_specialist_dispatch_injects_exact_authenticated_card_scope(monkey
     import asyncio
     import json
     import mcp_host
-    from app import application_operations
+    from app import saved_graph_specialist_operations
 
     calls = []
 
@@ -235,9 +238,9 @@ def test_saved_specialist_dispatch_injects_exact_authenticated_card_scope(monkey
         }
 
     monkeypatch.setattr(
-        application_operations, "_saved_specialist_card_bridge", bridge,
+        saved_graph_specialist_operations, "_saved_specialist_card_bridge", bridge,
     )
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "project-1",
         "deckId": "deck_builder",
         "conversationId": "conversation-1",
@@ -248,7 +251,7 @@ def test_saved_specialist_dispatch_injects_exact_authenticated_card_scope(monkey
         "principalKind": "card-runtime",
     })
 
-    result = asyncio.run(mcp_host._dispatch_tool("thinkgraph.reason", {
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("thinkgraph.reason", {
         "request": "How did this design evolve?",
         "dataAnchors": [],
     }))
@@ -274,7 +277,7 @@ def test_saved_specialist_dispatch_injects_exact_authenticated_card_scope(monkey
         "sourceRunId": "req_source",
     }]
 
-    forged = asyncio.run(mcp_host._dispatch_tool("thinkgraph.reason", {
+    forged = asyncio.run(mcp_request_dispatch.dispatch_tool("thinkgraph.reason", {
         "request": "forged",
         "projectId": "other-project",
     }))
@@ -286,7 +289,7 @@ def test_saved_specialist_dispatch_injects_exact_authenticated_card_scope(monkey
 def test_saved_specialist_bridge_cancellation_closes_async_http(monkeypatch):
     import asyncio
     import httpx2
-    from app import application_operations
+    from app import saved_graph_specialist_operations
 
     entered = asyncio.Event()
     closed = []
@@ -309,7 +312,7 @@ def test_saved_specialist_bridge_cancellation_closes_async_http(monkeypatch):
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", "s" * 32)
 
     async def scenario():
-        task = asyncio.create_task(application_operations._saved_specialist_card_bridge({
+        task = asyncio.create_task(saved_graph_specialist_operations._saved_specialist_card_bridge({
             "operation": "thinkgraph.reason",
         }))
         await asyncio.wait_for(entered.wait(), timeout=1)
@@ -343,13 +346,13 @@ def test_stale_external_catalog_cannot_invoke_known_internal_only_operation(
         ("liquidaity", "cbm", "graphiti"),
     )
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_UNAVAILABLE_FAMILIES", ())
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
 
-    assert mcp_host._request_tool_is_allowed("main.context") is True
-    assert mcp_host._request_tool_is_allowed("calculator") is False
-    assert mcp_host._request_tool_is_allowed("not_a_real_tool") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("main.context") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("calculator") is False
+    assert mcp_request_dispatch.request_tool_is_allowed("not_a_real_tool") is True
 
-    stale = asyncio.run(mcp_host.call_tool("calculator", {"expression": "1+1"}))
+    stale = asyncio.run(mcp_request_dispatch.call_tool("calculator", {"expression": "1+1"}))
     assert stale.is_error is True
     assert json.loads(stale.content[0].text)["error"] == "tool_not_granted"
 
@@ -457,10 +460,10 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", True)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", cbm_tools)
-    monkeypatch.setattr(mcp_graphiti_provider, "_graphiti_tools", graphiti_tools)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", cbm_tools)
+    monkeypatch.setattr(mcp_graphiti_provider, "graphiti_tools", graphiti_tools)
 
     canonical = asyncio.run(mcp_catalog_runtime._materialize_complete_catalog())
     canonical_by_name = {tool.name: tool for tool in canonical}
@@ -489,7 +492,7 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
             ({"kind": "card-runtime", "grantedTools": ["graphiti.search_nodes"],
               "presentedTools": ["graphiti.search_nodes"]}, {"graphiti.search_nodes"}),
         ):
-            monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: principal)
+            monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: principal)
             listed = asyncio.run(mcp_catalog_runtime.list_tools())
             assert {tool.name for tool in listed} == expected
     for tool in canonical:
@@ -554,8 +557,10 @@ def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
         },
     )
 
-    assert mcp_catalog_runtime._catalog_identity([original])[0] == 1
-    assert mcp_catalog_runtime._catalog_identity([original])[1] != mcp_catalog_runtime._catalog_identity([changed])[1]
+    assert mcp_catalog_projection.catalog_identity([original])[0] == 1
+    assert mcp_catalog_projection.catalog_identity(
+        [original]
+    )[1] != mcp_catalog_projection.catalog_identity([changed])[1]
 
 def test_mag_one_tools_use_direct_transient_input_contract():
     import mcp_host
@@ -563,4 +568,5 @@ def test_mag_one_tools_use_direct_transient_input_contract():
 
     assert allowed_operation_keys(operation_definition("run_mag_one")) == {
         "projectId", "deckId", "input", "conversationId", "dataAnchors",
+        "_callerCardId",
     }

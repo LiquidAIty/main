@@ -5,17 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from app.python_models.idf import (
+from app.python_models.idf import load_idf, materialize_idf, runtime_projection, write_idf
+from app.python_models.idf_contract import (
     IDF_FILENAME,
     InputMaterializationError,
-    idf_public,
-    load_idf,
     load_idf_bytes,
-    materialize_idf,
-    model_task,
-    runtime_projection,
-    write_idf,
 )
+from app.python_models.idf_projection import idf_public, model_task
 
 
 def _idf(
@@ -86,7 +82,7 @@ def _idf(
             **(variable_extra or {}),
         },
         capabilities={
-            "enabledTools": ["codegraph.search_graph"],
+            "enabledTools": ["cbm.search_graph"],
             "toolDefinitions": [],
             "skills": [],
             "toolsets": [],
@@ -200,7 +196,7 @@ def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -
         "mode": "script",
     }
     materialized = _idf(capabilities={
-        "presentedTools": ["codegraph.search_graph"],
+        "presentedTools": ["cbm.search_graph"],
         "unavailableTools": ["graphiti.search_nodes"],
         "scriptPresentation": presentation,
     })
@@ -237,7 +233,7 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     assert materialized.idf.stableSavedCardContext.outputRequirements == (
         "Return one bounded result."
     )
-    assert projected["enabledTools"] == ["codegraph.search_graph"]
+    assert projected["enabledTools"] == ["cbm.search_graph"]
     summary = idf_public(materialized)["inputSummary"]
     assert summary["idfBytes"] == len(materialized.idf_bytes)
     assert summary["estimatedGraphContextTokens"] > 0

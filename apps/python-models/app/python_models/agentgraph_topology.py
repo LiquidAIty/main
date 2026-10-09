@@ -33,7 +33,7 @@ def _edge_labels() -> dict[str, str]:
     return {"flow": "FLOW", "magentic_option": "MAGENTIC_OPTION"}
 
 
-def _ensure_age_card(cursor: Any, project_id: str, deck_id: str, card_id: str) -> None:
+def ensure_card_vertex(cursor: Any, project_id: str, deck_id: str, card_id: str) -> None:
     agentgraph_query.execute_fixed_agentgraph_query(
         cursor,
         """
@@ -72,7 +72,7 @@ def parse_card_edge(edge: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _upsert_age_edge(
+def upsert_card_relationship(
     cursor: Any,
     project_id: str,
     deck_id: str,
@@ -114,7 +114,7 @@ def _upsert_age_edge(
         raise CardDomainError(f"age_edge_upsert_failed:{core['id']}")
 
 
-def _delete_age_edge(cursor: Any, project_id: str, deck_id: str, edge: dict[str, Any]) -> None:
+def delete_card_relationship(cursor: Any, project_id: str, deck_id: str, edge: dict[str, Any]) -> None:
     core = parse_card_edge(edge)
     label = _edge_labels()[core["edgeType"]]
     rows = agentgraph_query.execute_fixed_agentgraph_query(
@@ -133,7 +133,7 @@ def _delete_age_edge(cursor: Any, project_id: str, deck_id: str, edge: dict[str,
         raise CardDomainError(f"age_edge_delete_failed:{core['id']}")
 
 
-def _load_age_edges(cursor: Any, project_id: str, deck_id: str) -> list[dict[str, Any]]:
+def load_card_relationships(cursor: Any, project_id: str, deck_id: str) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = []
     for edge_type, label in _edge_labels().items():
         rows = agentgraph_query.execute_fixed_agentgraph_query(
@@ -165,7 +165,7 @@ def _load_age_edges(cursor: Any, project_id: str, deck_id: str) -> list[dict[str
     return [value for _, value in sorted(edges, key=lambda item: (item[0], item[1]["id"]))]
 
 
-def _card_has_orchestrator_authority(card: dict[str, Any]) -> bool:
+def card_has_orchestrator_authority(card: dict[str, Any]) -> bool:
     """Return saved outbound orange authority for one non-Magnetic Hermes Card."""
     if card.get("kind") != "agent" or not card_is_enabled(card):
         return False
@@ -224,7 +224,7 @@ def _validate_single_master_topology(
             if (
                 source is not None
                 and target is not None
-                and _card_has_orchestrator_authority(source)
+                and card_has_orchestrator_authority(source)
                 and not is_magnetic_taskgraph_runtime(card_runtime(target))
             ):
                 flow_masters.setdefault(target_id, set()).add(source_id)
@@ -275,12 +275,12 @@ def validate_card_topology(nodes: list[dict[str, Any]], edges: list[dict[str, An
             continue
         if edge.get("enabled") is False:
             continue
-        targets = _direct_card_targets(edge["source"], cards, [edge])
+        targets = direct_orchestrator_targets(edge["source"], cards, [edge])
         if not any(target["cardId"] == edge["target"] for target in targets):
             raise CardDomainError(f"card_connection_controller_required:{edge['id']}")
 
 
-def _connected_hermes_card_targets(
+def connected_hermes_card_targets(
     card_id: str,
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
@@ -384,7 +384,7 @@ def _connected_hermes_card_targets(
     return direct
 
 
-def _magnetic_taskgraph_worker_capability_projection(
+def materialize_magnetic_worker_capabilities(
     project_id: str,
     workers: list[dict[str, Any]],
     cards: dict[str, dict[str, Any]],
@@ -432,16 +432,16 @@ def _magnetic_taskgraph_worker_capability_projection(
     return projected
 
 
-def _direct_card_targets(
+def direct_orchestrator_targets(
     card_id: str,
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Project one saved orchestrator Card's Bots from outbound FLOW edges."""
     source = cards.get(card_id)
-    if source is None or not _card_has_orchestrator_authority(source):
+    if source is None or not card_has_orchestrator_authority(source):
         return []
-    return _connected_hermes_card_targets(
+    return connected_hermes_card_targets(
         card_id,
         cards,
         [edge for edge in edges if edge.get("source") == card_id],

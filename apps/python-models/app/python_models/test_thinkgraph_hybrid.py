@@ -7,9 +7,23 @@ from typing import Any, Callable
 import pytest
 
 from app.python_models import engraphis as service_adapter
-from app.python_models import thinkgraph_completed_pair as completed_pair
+from app.python_models import (
+    thinkgraph_completed_pair_extraction as completed_pair_extraction,
+)
+from app.python_models import (
+    thinkgraph_completed_pair_preparation as completed_pair_preparation,
+)
+from app.python_models import (
+    thinkgraph_completed_pair_settlement as completed_pair_settlement,
+)
 from app.python_models import thinkgraph_projection as projection_adapter
-from app.python_models import thinkgraph_relationships as relationships
+from app.python_models import (
+    thinkgraph_relationship_classification as relationship_classification,
+)
+from app.python_models import (
+    thinkgraph_relationship_vocabulary as relationship_vocabulary,
+)
+from app.python_models.jev_edge_ontology import SHARED_JEV_RELATIONSHIPS
 
 
 @pytest.fixture()
@@ -89,7 +103,7 @@ def _settle_payload(
     source = completed or _completed()
     return {
         **source,
-        "pairReference": completed_pair.pair_reference(source),
+        "pairReference": completed_pair_preparation.pair_reference(source),
         "structuredOutput": output or _structured_output(),
         "cardRun": card_run or _card_run(),
     }
@@ -100,26 +114,26 @@ def _decision(
     *,
     vocabulary: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    vocabulary = vocabulary or tuple(relationships.SHARED_JEV_RELATIONSHIPS)
-    choices = relationships.relationship_choices(vocabulary)
+    vocabulary = vocabulary or tuple(SHARED_JEV_RELATIONSHIPS)
+    choices = relationship_classification.relationship_choices(vocabulary)
     distribution = {name: 0.0 for name in choices}
-    if winner == relationships.THINKGRAPH_JEV_ABSTAIN:
+    if winner == relationship_classification.THINKGRAPH_JEV_ABSTAIN:
         distribution[winner] = 0.76
         distribution["USES"] = 0.24
     else:
         distribution[winner] = 0.76
-        distribution[relationships.THINKGRAPH_JEV_ABSTAIN] = 0.24
+        distribution[relationship_classification.THINKGRAPH_JEV_ABSTAIN] = 0.24
     return {
         "decision_id": "jev-decision-one",
         "winner": winner,
         "distribution": distribution,
         "confidence": 0.91,
         "provider": "TypeSafe",
-        "requested_model": relationships.JEV_MODEL,
+        "requested_model": relationship_classification.JEV_MODEL,
         "resolved_model": "typesafe/jev-1.13-test",
         "usage": {"input_tokens": 12, "output_tokens": 4},
-        "vocabulary_version": relationships.PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
-        "vocabulary_hash": relationships.relationship_vocabulary_hash(vocabulary),
+        "vocabulary_version": relationship_vocabulary.PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+        "vocabulary_hash": relationship_vocabulary.relationship_vocabulary_hash(vocabulary),
         "vocabulary_count": len(vocabulary),
     }
 
@@ -153,23 +167,23 @@ def _settle(
     classifier: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     monkeypatch.setattr(service_adapter, "_service", service)
-    return completed_pair.settle_completed_pair(
+    return completed_pair_settlement.settle_completed_pair(
         payload or _settle_payload(),
         classifier=classifier or _classifier(),
     )
 
 
 def test_custom_schema_requires_exactly_one_episodic_think() -> None:
-    schema, prompt = completed_pair.llm_structured_contract(
+    schema, prompt = completed_pair_extraction.llm_structured_contract(
         "USER: x\nMAIN: y", {"canonical_subject_directory": {}}
     )
-    facts = completed_pair.extract_saved_card_facts(
+    facts = completed_pair_extraction.extract_saved_card_facts(
         _structured_output(),
         pair_text="USER: x\nMAIN: y",
         context={},
         card_run=_card_run(),
     )
-    projected = completed_pair.project_saved_card_think(facts)
+    projected = completed_pair_extraction.project_saved_card_think(facts)
 
     assert len(facts) == 1
     assert facts[0].mtype == service_adapter.MemoryType.EPISODIC
@@ -181,6 +195,48 @@ def test_custom_schema_requires_exactly_one_episodic_think() -> None:
     assert "think" in str(schema)
     assert "Return exactly one object in the facts array" in prompt
     assert "Jev alone" in prompt
+
+
+def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
+    engraphis_service: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = {
+        "schemaVersion": "graph-subject-directory",
+        "projectId": "project-one",
+        "complete": True,
+        "counts": {"engraphis": 0, "graphiti": 0, "total": 0},
+        "revisions": {"engraphis": "0:test", "graphiti": "test"},
+        "subjects": [],
+        "sha256": "test",
+        "bytes": 0,
+        "estimatedTokens": 0,
+        "readDurationMs": 0.0,
+    }
+    monkeypatch.setattr(service_adapter, "_service", engraphis_service)
+    monkeypatch.setattr(
+        completed_pair_preparation,
+        "_subject_directory_for_project",
+        lambda _project: directory,
+    )
+    before = _table_counts(engraphis_service)
+
+    prepared = completed_pair_preparation.prepare_completed_pair(_completed())
+
+    assert prepared["pairReference"] == completed_pair_preparation.pair_reference(
+        _completed()
+    )
+    assert prepared["intakeOperation"] == "pending"
+    assert prepared["structuredExtractionRequired"] is True
+    assert prepared["revisionChanged"] is False
+    assert prepared["preparation"] == {
+        "status": "completed_without_graph_mutation"
+    }
+    assert prepared["canonicalSubjectDirectory"] == directory
+    assert prepared["enrichmentInput"]["canonical_subject_directory"] == directory
+    assert "think" in str(prepared["enrichmentSchema"])
+    assert "THINKGRAPH TEMPORAL THINK" in prepared["enrichmentPrompt"]
+    assert _table_counts(engraphis_service) == before
 
 
 @pytest.mark.parametrize(
@@ -205,7 +261,7 @@ def test_invalid_or_multiple_card_output_creates_no_graph_rows(
         return _decision()
 
     with pytest.raises(
-        (relationships.ThinkGraphIntakeError, ValueError),
+        (relationship_vocabulary.ThinkGraphIntakeError, ValueError),
         match="thinkgraph_card_",
     ):
         _settle(
@@ -243,8 +299,31 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     assert memory is not None
     assert memory.mtype == service_adapter.MemoryType.EPISODIC
     assert memory.metadata["consolidation_exempt"] is True
-    assert memory.metadata["thinkgraph_origin"]["resolved_provider"] == "openai-codex"
-    assert memory.metadata["thinkgraph_origin"]["resolved_model"] == "configured/model"
+    origin = memory.metadata["thinkgraph_origin"]
+    assert origin["card_id"] == "card_thinkgraph"
+    assert origin["card_revision_id"] == "revision-one"
+    assert origin["run_id"] == "thinkgraph-run-one"
+    assert origin["profile"] == "thinkgraph"
+    assert origin["hermes_session_id"] == "thinkgraph-session-one"
+    assert origin["resolved_provider"] == "openai-codex"
+    assert origin["resolved_model"] == "configured/model"
+    assert origin["source_pair"] == {
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-one",
+        "runId": "main-run-one",
+        "cardId": "card_main_chat",
+        "hermesSessionId": "main-session",
+        "completedAt": "2026-10-08T12:00:00Z",
+        "user_sha256": completed_pair_preparation.text_hash(
+            _completed()["userMessage"]
+        ),
+        "main_sha256": completed_pair_preparation.text_hash(
+            _completed()["mainResponse"]
+        ),
+    }
+    assert "userMessage" not in origin["source_pair"]
+    assert "mainResponse" not in origin["source_pair"]
     assert set(memory.metadata["structured_extraction"]) == {"think"}
     think = memory.metadata["structured_extraction"]["think"]
     assert think["summary"] == memory.content
@@ -281,7 +360,7 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     assert jev["label_confidence"] == pytest.approx(0.76)
     assert jev["relationship_strength"] == pytest.approx(0.76)
     assert jev["provider"] == "TypeSafe"
-    assert jev["requested_model"] == relationships.JEV_MODEL
+    assert jev["requested_model"] == relationship_classification.JEV_MODEL
     assert jev["resolved_model"] == "typesafe/jev-1.13-test"
     assert jev["natural_relationship"] == (
         "operates as its current launch vehicle"
@@ -366,6 +445,13 @@ def test_duplicate_pair_is_exact_noop_without_another_jev_call(
     payload = _settle_payload()
     first = _settle(engraphis_service, monkeypatch, payload=payload)
     before = _table_counts(engraphis_service)
+    prepared = completed_pair_preparation.prepare_completed_pair(_completed())
+
+    assert prepared["intakeOperation"] == "noop"
+    assert prepared["structuredExtractionRequired"] is False
+    assert prepared["thinkMemoryIds"] == [first["thinkMemoryId"]]
+    assert prepared["revisionChanged"] is False
+    assert _table_counts(engraphis_service) == before
 
     def forbidden(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise AssertionError("duplicate pair must not reach Jev")
@@ -386,8 +472,8 @@ def test_duplicate_pair_is_exact_noop_without_another_jev_call(
 @pytest.mark.parametrize(
     "failure",
     [
-        relationships.JevRelationshipError("jev_relationship_unavailable"),
-        relationships.JevRelationshipError("jev_relationship_timeout"),
+        relationship_classification.JevRelationshipError("jev_relationship_unavailable"),
+        relationship_classification.JevRelationshipError("jev_relationship_timeout"),
     ],
 )
 def test_jev_provider_failure_creates_no_rows(
@@ -398,7 +484,7 @@ def test_jev_provider_failure_creates_no_rows(
     def fail(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         raise failure
 
-    with pytest.raises(relationships.JevRelationshipError, match=str(failure)):
+    with pytest.raises(relationship_classification.JevRelationshipError, match=str(failure)):
         _settle(engraphis_service, monkeypatch, classifier=fail)
     assert not any(_table_counts(engraphis_service).values())
 
@@ -407,11 +493,11 @@ def test_jev_abstention_creates_no_rows(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(relationships.JevRelationshipError, match="abstained"):
+    with pytest.raises(relationship_classification.JevRelationshipError, match="abstained"):
         _settle(
             engraphis_service,
             monkeypatch,
-            classifier=_classifier(relationships.THINKGRAPH_JEV_ABSTAIN),
+            classifier=_classifier(relationship_classification.THINKGRAPH_JEV_ABSTAIN),
         )
     assert not any(_table_counts(engraphis_service).values())
 
@@ -422,7 +508,7 @@ def test_invalid_jev_winner_creates_no_rows(
 ) -> None:
     invalid = _decision()
     invalid["winner"] = "MODEL_AUTHORED_RAW_EDGE"
-    with pytest.raises(relationships.JevRelationshipError, match="response_invalid"):
+    with pytest.raises(relationship_classification.JevRelationshipError, match="response_invalid"):
         _settle(
             engraphis_service,
             monkeypatch,
@@ -439,7 +525,7 @@ def test_edge_store_failure_rolls_back_think_entities_and_supports(
         raise RuntimeError("edge-store-failed")
 
     monkeypatch.setattr(engraphis_service.store, "upsert_edge", fail_edge)
-    with pytest.raises(relationships.ThinkGraphIntakeError, match="think_store_failed"):
+    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError, match="think_store_failed"):
         _settle(engraphis_service, monkeypatch)
     assert not any(_table_counts(engraphis_service).values())
 
@@ -518,9 +604,9 @@ def test_real_jev_request_is_bounded_and_uses_only_declared_pair_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
-    vocabulary = tuple(relationships.SHARED_JEV_RELATIONSHIPS)
+    vocabulary = tuple(SHARED_JEV_RELATIONSHIPS)
     response_decision = _decision("USES", vocabulary=vocabulary)
-    choices = relationships.relationship_choices(vocabulary)
+    choices = relationship_classification.relationship_choices(vocabulary)
 
     class Response:
         def raise_for_status(self) -> None:
@@ -563,9 +649,9 @@ def test_real_jev_request_is_bounded_and_uses_only_declared_pair_context(
             captured.update({"url": url, "headers": headers, "json": deepcopy(json)})
             return Response()
 
-    monkeypatch.setattr(relationships.httpx, "Client", Client)
+    monkeypatch.setattr(relationship_classification.httpx, "Client", Client)
     monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
-    result = relationships.classify_relationship(
+    result = relationship_classification.classify_relationship(
         "Rocket Lab",
         "Electron",
         _completed(),
@@ -577,8 +663,8 @@ def test_real_jev_request_is_bounded_and_uses_only_declared_pair_context(
 
     assert result["winner"] == "USES"
     body = captured["json"]
-    assert captured["url"] == relationships.JEV_ENDPOINT
-    assert body["model"] == relationships.JEV_MODEL
+    assert captured["url"] == relationship_classification.JEV_ENDPOINT
+    assert body["model"] == relationship_classification.JEV_MODEL
     assert set(body["state"]) == {
         "description",
         "source_node_a",

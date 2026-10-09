@@ -98,6 +98,9 @@ class FakeGateway {
 
   async request<T>(method: string, params: Record<string, any> = {}): Promise<T> {
     this.calls.push({ method, params: structuredClone(params) });
+    if (method === 'profiles.describe') {
+      return { name: String(params.name), model: {} } as T;
+    }
     if (method === 'session.list') {
       if (params.profile === 'builder') {
         return { sessions: [{ id: 'stored-source', resolved_id: 'stored-source' }] } as T;
@@ -121,15 +124,25 @@ class FakeGateway {
     if (method === 'session.active_list') {
       return { sessions: [{ id: 'live-source', session_key: 'stored-source' }] } as T;
     }
+    if (method === 'session.activate') {
+      return {
+        session_id: String(params.session_id),
+        stored_session_id: params.profile === 'builder'
+          ? 'stored-source'
+          : `stored-${params.profile}`,
+        messages_omitted: true,
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      } as T;
+    }
     if (method === 'prompt.submit') {
       this.promptIssuedResolve();
-      if (!this.blockTarget) {
-        queueMicrotask(() => {
-          this.emit({
-            type: 'prompt.submission.started',
-            session_id: params.session_id,
-            payload: { submission_id: params.submission_id },
-          });
+      queueMicrotask(() => {
+        this.emit({
+          type: 'prompt.submission.started',
+          session_id: params.session_id,
+          payload: { submission_id: params.submission_id },
+        });
+        if (!this.blockTarget) {
           this.emit({
             type: this.failTarget && !this.structuredFailure ? 'error' : 'message.complete',
             session_id: params.session_id,
@@ -148,10 +161,11 @@ class FakeGateway {
                     text: this.responsesByProfile.get(String(params.profile))
                       || 'actual specialist result',
                   }),
+              turn_usage: { model: 'gpt-5.6-sol' },
             },
           });
-        });
-      }
+        }
+      });
       return { status: 'streaming' } as T;
     }
     if (method === 'session.interrupt') return { status: 'interrupted' } as T;
@@ -255,6 +269,7 @@ async function start(gateway: FakeGateway, savedDeck = deck(), completedPairDeck
               kind: 'hermes', mode: 'delegate',
               profile,
             },
+            provider: { provider: 'openai', providerModelId: 'gpt-5.6-sol' },
             message: payload.assignment,
             images: [],
             enabledTools: [canonicalId],
@@ -699,7 +714,7 @@ describe('fixed saved specialist Card tools', () => {
   it('request cancellation interrupts the exact target submission and settles the child failed once', async () => {
     const gateway = new FakeGateway();
     gateway.blockTarget = true;
-    const { base, begins, finishes } = await start(gateway);
+    const { base, begins, finishes, starts } = await start(gateway);
     const controller = new AbortController();
     const pending = fetch(`${base}/saved-specialists/invoke`, {
       method: 'POST',
@@ -712,6 +727,12 @@ describe('fixed saved specialist Card tools', () => {
     });
     await gateway.promptIssued;
     const childRunId = begins[0].runId;
+    await vi.waitFor(() => expect(starts).toEqual([expect.objectContaining({
+      runId: childRunId,
+      correlationId: childRunId,
+      submissionId: childRunId,
+      hermesSessionRef: 'stored-thinkgraph',
+    })]));
     controller.abort();
     await expect(pending).rejects.toThrow();
     await vi.waitFor(() => expect(finishes).toHaveLength(1));
@@ -829,8 +850,8 @@ describe('fixed saved specialist Card tools', () => {
       effectiveProvider: 'openai-codex',
       providerApiMode: 'codex_app_server',
       model: 'gpt-5.6-sol',
+      toolCallCount: 0,
     })]);
-    expect(finishes[0]).not.toHaveProperty('toolCallCount');
   });
 
   it('keeps source Stop scoped to the exact source submission', async () => {

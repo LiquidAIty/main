@@ -1,9 +1,9 @@
 diff --git a/HermesLatest/LIQUIDAITY_PATCHES.md b/HermesLatest/LIQUIDAITY_PATCHES.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96cce924046
+index 0000000000000000000000000000000000000000..67c6bdafaf4100728fe91f94c2c0139cb714ba13
 --- /dev/null
 +++ b/HermesLatest/LIQUIDAITY_PATCHES.md
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,205 @@
 +# HermesLatest application patch overlay
 +
 +This register is the update contract for seven bounded extension families carried on top of Hermes
@@ -33,8 +33,8 @@ index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96c
 +   child-process Python path, and route only its declared nested tool calls through the same callback.
 +3. Bot roster scoping: constrain Hermes `message_agent` to the exact Project-session orange roster.
 +4. Card profile capability fencing: apply/read only Card-owned profile fields, scope learning reads to the
-+   addressed profile, preserve unknown/learned state, and rebuild a session only when its capability
-+   fingerprint is stale.
++   addressed profile, preserve unknown/learned state, ship Builder's selected inspection skill through
++   Hermes's bundled-skill mechanism, and rebuild a session only when its capability fingerprint is stale.
 +5. Exact turn evidence: correlate submission, Stop, completion, actual provider/model and turn-local usage
 +   without replacing Hermes queue/session ownership.
 +6. AutoTeam / Team TaskGraph: mark an ordinary saved Team profile, create one bounded Team root, use
@@ -50,6 +50,7 @@ index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96c
 +| `agent/dynamic_tools.py` | Dynamic Tools / Card Python | Installs and restores the current turn's exact definitions/executors for Codex and ordinary providers; it creates no global tool registry. |
 +| `agent/card_script_tool.py` | Card Python | Validates the immutable Script contract, hashes, schemas, aliases, tool states and budgets; exposes one `card_python` tool and one bounded output. |
 +| `hermes_cli/kanban_team.py` | AutoTeam | Owns the explicit Team task mode/policy, root construction/readback, activation and bounded decomposition-failure settlement. |
++| `skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md` | Profile fencing | Bundled Builder guidance selected by the saved Builder Card and seeded by Hermes's existing fresh-profile skill sync; it adds no permission, loader or execution path. |
 +
 +## Compatibility hunks in upstream production files
 +
@@ -65,7 +66,7 @@ index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96c
 +| `agent/transports/codex_app_server_session.py` | Dynamic Tools | Validate the experimental handshake, definitions, thread/turn/call identity and exactly-once server-request response; propagate the existing interrupt event. |
 +| `gateway/kanban_watchers_dispatcher.py` | AutoTeam | `_record_team_decomposition_failure`, `_decompose_one`: apply the breaker only to marked Team roots. |
 +| `hermes_cli/config_defaults.py` | AutoTeam | `kanban.task_mode`: empty preserves shipped behavior; `team` is explicit profile configuration. |
-+| `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling and build same-root Team synthesis context. No custom claim capability is retained. |
++| `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling, build same-root Team synthesis context, and expose `append_task_event` so the Magnetic adapter records its authority event without importing Hermes's private `_append_event`. No custom claim capability is retained. |
 +| `hermes_cli/kanban_db_connect.py` | Magnetic | Additive `allowed_assignees` column migration for existing Hermes task databases. |
 +| `hermes_cli/kanban_db_dispatch.py` | AutoTeam / Magnetic / turn evidence | Record Team step/provider/model facts, enforce default-assignee ceiling, and mark Team worker processes. |
 +| `hermes_cli/kanban_db_graph.py` | AutoTeam / Magnetic | Enforce/inherit the ceiling during decomposition and move a marked Team root to synthesis. |
@@ -120,8 +121,10 @@ index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96c
 +tests/agent/transports/test_codex_app_server_session.py
 +tests/agent/transports/test_dynamic_tools_mcp.py
 +tests/hermes_cli/test_kanban_creator_origin.py
++tests/hermes_cli/test_kanban_db.py
 +tests/hermes_cli/test_kanban_team.py
 +tests/hermes_state/test_named_profile_session_db.py
++tests/skills/test_agent_builder_inspection_skill.py
 +tests/tools/test_bot_mode_probe.py
 +tests/tools/test_card_script_code_execution.py
 +tests/tools/test_kanban_tools.py
@@ -152,10 +155,14 @@ index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96c
 +
 +## Focused Windows proof
 +
-+From the repository root, with the application Python environment:
++From the repository root, use the application environment for pytest and add both the Hermes source
++and Hermes runtime dependencies. `HermesLatest/.venv` is the production environment but intentionally
++does not install pytest:
 +
 +```powershell
-+$env:PYTHONPATH = "C:\Projects\LiquidAIty\main\HermesLatest"
++$hermesRoot = (Resolve-Path "HermesLatest").Path
++$hermesSite = (Resolve-Path "HermesLatest\.venv\Lib\site-packages").Path
++$env:PYTHONPATH = "$hermesRoot;$hermesSite"
 +apps\python-models\.venv\Scripts\python.exe -m pytest `
 +  HermesLatest/tests/agent/test_card_script_dynamic_tools.py `
 +  HermesLatest/tests/agent/test_system_prompt.py `
@@ -163,8 +170,10 @@ index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96c
 +  HermesLatest/tests/agent/transports/test_codex_app_server_session.py `
 +  HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py `
 +  HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py `
++  HermesLatest/tests/hermes_cli/test_kanban_db.py `
 +  HermesLatest/tests/hermes_cli/test_kanban_team.py `
 +  HermesLatest/tests/hermes_state/test_named_profile_session_db.py `
++  HermesLatest/tests/skills/test_agent_builder_inspection_skill.py `
 +  HermesLatest/tests/tools/test_bot_mode_probe.py `
 +  HermesLatest/tests/tools/test_card_script_code_execution.py `
 +  HermesLatest/tests/tools/test_kanban_tools.py `
@@ -175,6 +184,12 @@ index 0000000000000000000000000000000000000000..c8157f33b06fece3d83494940f59a96c
 +  HermesLatest/tests/tui_gateway/test_profiles_toolset_pin.py `
 +  HermesLatest/tests/tui_gateway/test_tui_gateway_server.py -q
 +```
++
++On native Windows this complete file set currently has six source-unrelated upstream baseline failures:
++three POSIX/systemd/worktree assertions in `test_kanban_db.py`, two fallback-chain hot-reload assertions,
++and one same-size/pinned-mtime config-cache assertion. The 2026-10-09 run passed 965 tests, including every
++overlay-added assertion, and failed only those six cases. Do not patch or weaken those upstream behaviors as
++part of the LiquidAIty overlay; rerun them when updating the upstream baseline or its Windows test support.
 +
 +Run the repository's current Magnetic/Team adapter proof separately from these vendor tests. Loaded
 +Hermes, saved-Card execution and visible product acceptance remain higher proof tiers.
@@ -2427,7 +2442,7 @@ index 7e1bed1cd19cd29408ad8410362552cf7f9ca0ea..a507e5b59a8a9b9a004adc6038735981
          # ready on the next tick; a still-running local worker is terminated first. 0 = off.
          "dispatch_stale_timeout_seconds": 14400,
 diff --git a/HermesLatest/hermes_cli/kanban_db.py b/HermesLatest/hermes_cli/kanban_db.py
-index b034a68054d9cbdd3d30bb99fdba1c2a05f42f62..7a54a3019a3c068305fa08b22a1267c793c0dbed 100644
+index b034a68054d9cbdd3d30bb99fdba1c2a05f42f62..3fbcefbf900e52b1ed1d390608c409cb20511cac 100644
 --- a/HermesLatest/hermes_cli/kanban_db.py
 +++ b/HermesLatest/hermes_cli/kanban_db.py
 @@ -732,12 +732,19 @@ class Task:
@@ -2655,7 +2670,27 @@ index b034a68054d9cbdd3d30bb99fdba1c2a05f42f62..7a54a3019a3c068305fa08b22a1267c7
          else:
              conn.execute("UPDATE tasks SET assignee = ? WHERE id = ?", (profile, task_id))
          # ``from`` lets the respawn guard tell a real handoff (dev→closer) from
-@@ -3385,7 +3500,7 @@ def request_review(
+@@ -1946,6 +2061,19 @@ def _append_event(
+     )
+ 
+ 
++def append_task_event(
++    conn: sqlite3.Connection,
++    task_id: str,
++    kind: str,
++    payload: Optional[dict] = None,
++    *,
++    run_id: Optional[int] = None,
++) -> None:
++    """Append one extension event inside the caller's existing write transaction."""
++
++    _append_event(conn, task_id, kind, payload, run_id=run_id)
++
++
+ def _end_run(
+     conn: sqlite3.Connection, task_id: str, *, outcome: str, summary: Optional[str] = None,
+     error: Optional[str] = None, metadata: Optional[dict] = None, status: Optional[str] = None,
+@@ -3385,7 +3513,7 @@ def request_review(
                  return _ret(False, "parent dependencies are not satisfied")
              trow = conn.execute(
                  "SELECT assignee, status, claim_lock, current_run_id, worker_pid, "
@@ -2664,7 +2699,7 @@ index b034a68054d9cbdd3d30bb99fdba1c2a05f42f62..7a54a3019a3c068305fa08b22a1267c7
              ).fetchone()
              if trow is None:
                  return _ret(False, "task not found")
-@@ -3407,6 +3522,8 @@ def request_review(
+@@ -3407,6 +3535,8 @@ def request_review(
                          "malformed); pass reviewer= explicitly",
                      )
              reviewer = _canonical_assignee(reviewer)
@@ -2673,7 +2708,7 @@ index b034a68054d9cbdd3d30bb99fdba1c2a05f42f62..7a54a3019a3c068305fa08b22a1267c7
              # The actor is the run that did the work. ``assignee`` is the actor
              # only while a worker holds the card; on a never-claimed card it is
              # whoever the operator assigned -- possibly the reviewer itself,
-@@ -3829,11 +3946,20 @@ def specify_triage_task(
+@@ -3829,11 +3959,20 @@ def specify_triage_task(
      assignee = _canonical_assignee(assignee)
      with write_txn(conn):
          existing = conn.execute(
@@ -2695,7 +2730,7 @@ index b034a68054d9cbdd3d30bb99fdba1c2a05f42f62..7a54a3019a3c068305fa08b22a1267c7
          sets: list[str] = ["status = 'todo'"]
          params: list[Any] = []
          changed_fields: list[str] = []
-@@ -3849,6 +3975,9 @@ def specify_triage_task(
+@@ -3849,6 +3988,9 @@ def specify_triage_task(
              sets.append("assignee = ?")
              params.append(assignee)
              changed_fields.append("assignee")
@@ -2705,7 +2740,7 @@ index b034a68054d9cbdd3d30bb99fdba1c2a05f42f62..7a54a3019a3c068305fa08b22a1267c7
          params.append(task_id)
          cur = conn.execute(
              f"UPDATE tasks SET {', '.join(sets)} "
-@@ -3992,6 +4121,16 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
+@@ -3992,6 +4134,16 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
      now = int(time.time())
      lines: list[str] = []
      _ctx_header(lines, task)
@@ -3398,6 +3433,113 @@ index 0000000000000000000000000000000000000000..05c9053910e362fafad84b015c38e71a
 +            "limit_source": limit_source,
 +            "error": error,
 +        }
+diff --git a/HermesLatest/skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md b/HermesLatest/skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..a320bc313ba1c2ca7ddde3ae0966aab98d95dc35
+--- /dev/null
++++ b/HermesLatest/skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md
+@@ -0,0 +1,101 @@
++---
++name: agent-builder-inspection
++description: Configure Cards and build agent-facing product surfaces.
++version: 1.0.0
++author: Jeremiah, Hermes Agent
++license: Apache-2.0
++platforms: [linux, macos, windows]
++metadata:
++  hermes:
++    tags: [agents, cards, product-ui]
++    category: autonomous-ai-agents
++    related_skills: [hermes-agent]
++---
++
++# Agent Builder Inspection Skill
++
++Use the saved Builder Card to configure Cards and build the agent-facing applications,
++pages, and interfaces requested by the user or Main. This skill guides work through
++Builder's granted tools; it does not add permissions, choose a different Card, or create
++another execution path.
++
++## When to Use
++
++Use this skill when the current assignment asks Builder to:
++
++- inspect or update a saved Card;
++- create a new Card from an existing template;
++- connect Cards through the saved Canvas;
++- inspect repository ownership before a bounded implementation;
++- build an agent-facing page, application, or interface in the configured Project folder.
++
++Do not use Card create or update operations for ordinary research, analysis, or writing.
++
++## Prerequisites
++
++- The active saved Card is Builder and the current Project is authorized.
++- The selected Hermes profile has its required provider authentication; Card creation does not copy user credentials.
++- The required operation is present in Builder's granted tool surface.
++- Card changes use `canvas.inspect`, `card.create`, `card.update_configuration`, or
++  `canvas.upsert_wire` as appropriate.
++- Repository work uses the granted Codebase Memory MCP tools before `read_file`, `patch`,
++  or `terminal` work.
++- File changes remain inside the Project code folder selected by the user.
++
++## How to Run
++
++1. Read the current mission and supplied references.
++2. Inspect only the Card, Canvas, repository, or Project folder required by that mission.
++3. Choose the smallest granted operation that completes the requested change.
++4. Apply the change once with exact identity and revision fields.
++5. Read back and verify the changed owner before reporting completion.
++
++## Quick Reference
++
++| Need | Use |
++| --- | --- |
++| Inspect a Card or Canvas | `canvas.inspect` |
++| Create one saved Card | `card.create` |
++| Update one saved Card | `card.update_configuration` |
++| Add or update one saved wire | `canvas.upsert_wire` |
++| Locate code ownership | granted Codebase Memory MCP tools |
++| Read or edit Project files | `read_file` and `patch` |
++| Run a bounded command | `terminal` |
++
++## Procedure
++
++### Card configuration
++
++Inspect the exact Card and applicable Input Data Dictionary choices first. Preserve its
++stable Card ID, current revision, profile binding, prompt, model, grants, and topology unless
++the mission explicitly changes them. A new Card requires one explicit, unused, stable Hermes
++profile name; never derive authority from the display title. Supply every required create or
++update argument and the current revision. Saving a Card and running it are separate actions.
++
++### Repository and interface work
++
++Use repository structure to identify the current owner before editing. Keep work inside the
++configured Project code folder. Prefer the existing component, route, provider, and build
++boundaries over a new framework or runtime. Use Builder's selected `file`, `terminal`, `web`,
++`browser`, `vision`, and `code_execution` toolsets only when the mission requires them.
++
++### Verification
++
++Verify the smallest real boundary that changed: saved Card readback, Canvas relationship,
++source behavior, typecheck, build, or loaded interface. Distinguish those proof levels in the
++result. Never report a passing source check as a working Card invocation or visible product.
++
++## Pitfalls
++
++- Do not infer an operation from vague prose when exact Card identity or revision is absent.
++- Do not broaden Builder's saved grants, Project access, or file boundary.
++- Do not edit application source to compensate for a missing runtime capability without first
++  proving the actual owner and gap.
++- Do not create a second profile, session owner, tool catalog, graph, or execution engine.
++- Do not treat a saved configuration, accepted request, or queued turn as completed execution.
++
++## Verification
++
++Return the exact target, operation, readback, and proof performed. If a required tool,
++revision, profile, or Project folder is unavailable, report that limitation without inventing
++a substitute path.
 diff --git a/HermesLatest/tests/agent/test_card_script_dynamic_tools.py b/HermesLatest/tests/agent/test_card_script_dynamic_tools.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..dcc8090e56ab7884656a2e5b5c777ef5ee17ae65
@@ -3991,6 +4133,33 @@ index 4402b201a804430b47e36d7f147870839100e760..7391fbdba23016878e3e9bca646046f6
 +        assert child.allowed_assignees == ["orchestrator", "worker-a"]
 +        created = next(event for event in kb.list_events(conn, child.id) if event.kind == "created")
 +        assert created.payload["creator_task_id"] == root
+diff --git a/HermesLatest/tests/hermes_cli/test_kanban_db.py b/HermesLatest/tests/hermes_cli/test_kanban_db.py
+index 08520370978df54488c4b471877d33707e7705f1..fb8c4fb3e21bfe0c015f7bbc1b0bf46ae814d32b 100644
+--- a/HermesLatest/tests/hermes_cli/test_kanban_db.py
++++ b/HermesLatest/tests/hermes_cli/test_kanban_db.py
+@@ -208,6 +208,22 @@ def test_schedule_task_parks_time_delay_without_dispatching(kanban_home):
+ 
+ 
+ 
++def test_append_task_event_uses_the_callers_write_transaction(kanban_home):
++    with kbc.connect() as conn:
++        task_id = kb.create_task(conn, title="extension event", assignee="ops")
++        with kbc.write_txn(conn):
++            kb.append_task_event(
++                conn,
++                task_id,
++                "extension_authority",
++                {"profiles": ["builder"]},
++            )
++
++        event = kb.list_events(conn, task_id)[-1]
++        assert event.kind == "extension_authority"
++        assert event.payload == {"profiles": ["builder"]}
++
++
+ def test_stale_claim_reclaim_event_records_diagnostic_payload(
+     kanban_home, monkeypatch,
+ ):
 diff --git a/HermesLatest/tests/hermes_cli/test_kanban_team.py b/HermesLatest/tests/hermes_cli/test_kanban_team.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..a4a2b366b74b2bd106e812a5f99dc002ac927f03
@@ -4521,6 +4690,43 @@ index 11bb9b8e8a33df09baa12eb21cc916f7bdb3bb79..96b2998e2f482c42041b07e5a99b76b3
  
          new_agent = session["agent"]
          assert new_agent is not old_agent, "capability change must have rebuilt the agent"
+diff --git a/HermesLatest/tests/skills/test_agent_builder_inspection_skill.py b/HermesLatest/tests/skills/test_agent_builder_inspection_skill.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..1921d661ba8dfd60dbcce4e6f455e1b083b2f561
+--- /dev/null
++++ b/HermesLatest/tests/skills/test_agent_builder_inspection_skill.py
+@@ -0,0 +1,31 @@
++"""The Builder skill ships through Hermes's supported bundled-skill sync."""
++
++from pathlib import Path
++
++from tools import skills_sync
++
++
++def test_agent_builder_inspection_is_seeded_into_a_fresh_profile(
++    tmp_path: Path,
++    monkeypatch,
++) -> None:
++    home = tmp_path / ".hermes"
++    skills_dir = home / "skills"
++    monkeypatch.setenv("HERMES_HOME", str(home))
++    monkeypatch.setattr(skills_sync, "HERMES_HOME", home)
++    monkeypatch.setattr(skills_sync, "SKILLS_DIR", skills_dir)
++    monkeypatch.setattr(
++        skills_sync,
++        "MANIFEST_FILE",
++        skills_dir / ".bundled_manifest",
++    )
++
++    result = skills_sync.sync_skills(quiet=True)
++
++    assert "agent-builder-inspection" in result["copied"]
++    assert (
++        skills_dir
++        / "autonomous-ai-agents"
++        / "agent-builder-inspection"
++        / "SKILL.md"
++    ).is_file()
 diff --git a/HermesLatest/tests/tools/test_bot_mode_probe.py b/HermesLatest/tests/tools/test_bot_mode_probe.py
 index 00e87e6c33e2f66209017283ec7c6254e57368d5..c95b497a3f01f65dbbb913daec7c48e379e86dd2 100644
 --- a/HermesLatest/tests/tools/test_bot_mode_probe.py

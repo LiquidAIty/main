@@ -13,13 +13,15 @@ import { cardSession, type SessionBinding } from './hermesCardSession';
 import {
   failAcceptedSavedCardRun,
   finishSavedCardRun,
+  prepareSavedCardRun,
+  type PreparedCardRun,
+} from './savedCardRunLedger';
+import {
   hermesCallbackToolNames,
   hermesCardScriptDefinition,
   hermesDynamicToolDefinitions,
-  prepareSavedCardRun,
-  submitHermesTurn,
-  type PreparedCardRun,
-} from './savedCardRun';
+} from './savedCardHermesToolProjection';
+import { submitHermesTurn } from './savedCardHermesTurn';
 import {
   publishThinkGraphRevisionEvent,
   type ThinkGraphCompletedPairFailure,
@@ -48,6 +50,10 @@ function thinkGraphCardAssignment(preparation: Record<string, any>): string {
   ].join('\n');
 }
 
+/**
+ * Transport one completed pair through Python's non-writing preparation owner,
+ * the saved ThinkGraph Card, and Python's sole native settlement owner.
+ */
 export async function processCompletedMainPairWithThinkGraph(args: {
   userId: string;
   projectId: string;

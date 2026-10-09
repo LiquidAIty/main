@@ -24,9 +24,9 @@ from app.python_models.tool_registry import (
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
 _CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
-_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
+CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _PROVIDER_TOOL_TIMEOUT_SECONDS = 30.0
-_PROVIDER_PREFIXES = {
+PROVIDER_PREFIXES = {
     "cbm": "cbm.",
     "graphiti": "graphiti.",
 }
@@ -56,8 +56,8 @@ _GRAPHITI_SERVER_INJECTED_ARGUMENTS = frozenset({"group_id", "group_ids"})
 _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def _is_provider_operation_name(name: str) -> bool:
-    return name.startswith((*_PROVIDER_PREFIXES.values(), "engraphis_"))
+def is_provider_operation_name(name: str) -> bool:
+    return name.startswith((*PROVIDER_PREFIXES.values(), "engraphis_"))
 
 
 def graphiti_project_group_id(project_id: str) -> str:
@@ -69,9 +69,9 @@ def graphiti_project_group_id(project_id: str) -> str:
     return f"liquidaity-{project_id}"
 
 
-def _namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
+def namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
     """Project the deliberate model-facing provider subset with its routing prefix."""
-    prefix = _PROVIDER_PREFIXES[provider]
+    prefix = PROVIDER_PREFIXES[provider]
     exposed_names = _CARD_CATALOG_PROVIDER_TOOL_NAMES[provider]
     result: list[Tool] = []
     for tool in tools:
@@ -117,7 +117,7 @@ def _namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
     return result
 
 
-def _register_cbm_catalog(tools: list[Tool]) -> None:
+def register_cbm_catalog(tools: list[Tool]) -> None:
     """Project the current official CBM catalog into runtime authorization."""
     definitions: list[OperationDefinition] = []
     for tool in tools:
@@ -134,13 +134,13 @@ def _register_cbm_catalog(tools: list[Tool]) -> None:
             (payload.get("_meta") or {}).get("liquidaitySource", {}).get(
                 "providerToolName"
             )
-            or tool.name.removeprefix(_PROVIDER_PREFIXES["cbm"])
+            or tool.name.removeprefix(PROVIDER_PREFIXES["cbm"])
         )
 
         async def dispatch_cbm(
             *, _provider_tool_name: str = provider_tool_name, **arguments: Any,
         ) -> Any:
-            return await _call_cbm(_provider_tool_name, arguments)
+            return await call_cbm_operation(_provider_tool_name, arguments)
 
         definitions.append(OperationDefinition(
             canonical_id=tool.name,
@@ -163,12 +163,12 @@ def _register_cbm_catalog(tools: list[Tool]) -> None:
                 or tool.name
             ),
             annotations=copy.deepcopy(annotations),
-            dispatcher_owner="app.mcp_provider_operations._call_cbm",
+            dispatcher_owner="app.mcp_provider_operations.call_cbm_operation",
         ))
     replace_discovered_external_operations("cbm", definitions)
 
 
-def _register_graphiti_catalog(tools: list[Tool]) -> None:
+def register_graphiti_catalog(tools: list[Tool]) -> None:
     """Bind exact live Graphiti schemas to the explicit provider adapter contract."""
     definitions: list[OperationDefinition] = []
     for tool in tools:
@@ -189,7 +189,7 @@ def _register_graphiti_catalog(tools: list[Tool]) -> None:
             (payload.get("_meta") or {}).get("liquidaitySource", {}).get(
                 "providerToolName"
             )
-            or tool.name.removeprefix(_PROVIDER_PREFIXES["graphiti"])
+            or tool.name.removeprefix(PROVIDER_PREFIXES["graphiti"])
         )
 
         async def dispatch_graphiti(
@@ -218,7 +218,7 @@ def _register_graphiti_catalog(tools: list[Tool]) -> None:
                         "server_injected_argument_unavailable:"
                         + ",".join(missing_scope)
                     )
-            result = await _call_graphiti(_provider_tool_name, provider_arguments)
+            result = await call_graphiti_operation(_provider_tool_name, provider_arguments)
             if (
                 _provider_tool_name == "get_episodes"
                 and isinstance(result, CallToolResult)
@@ -254,12 +254,12 @@ def _register_graphiti_catalog(tools: list[Tool]) -> None:
                 "body_preview_chars",
                 "max_response_chars",
             }),
-            dispatcher_owner="app.mcp_provider_operations._call_graphiti",
+            dispatcher_owner="app.mcp_provider_operations.call_graphiti_operation",
         ))
     replace_discovered_external_operations("graphiti", definitions)
 
 
-def _bind_repo_tool_source(
+def bind_repo_tool_source(
     tool: Tool,
     *,
     source_id: str = "main_mcp",
@@ -277,7 +277,7 @@ def _bind_repo_tool_source(
     return Tool.model_validate(payload)
 
 
-def _bind_operation_access(tool: Tool) -> Tool:
+def bind_operation_access(tool: Tool) -> Tool:
     """Attach access from the canonical operation or provider definition."""
     definition = operation_definition(tool.name)
     access = definition.access if definition is not None else None
@@ -326,11 +326,11 @@ def _bind_operation_access(tool: Tool) -> Tool:
     return Tool.model_validate(payload)
 
 
-async def _call_graphiti(name: str, arguments: dict[str, Any]) -> Any:
+async def call_graphiti_operation(name: str, arguments: dict[str, Any]) -> Any:
     arguments = dict(arguments)
     try:
         await asyncio.wait_for(
-            mcp_graphiti_provider._ensure_graphiti_service(),
+            mcp_graphiti_provider.ensure_graphiti_service(),
             timeout=_PROVIDER_TOOL_TIMEOUT_SECONDS,
         )
     except TimeoutError as error:
@@ -458,16 +458,16 @@ def _normalize_provider_tool_result(result: Any, *, dependency: str) -> Any:
     )
 
 
-def _cbm_config() -> tuple[str, list[str], str]:
+def cbm_config() -> tuple[str, list[str], str]:
     """Open the one current official user-installed CBM frontend owned by this host."""
     command = os.environ.get("MCP_CBM_BINARY", "").strip() or "codebase-memory-mcp"
     binary = shutil.which(command) or command
     return (binary, [], _CBM_HOST_REPO_ROOT)
 
 
-async def _call_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
+async def call_cbm_operation(name: str, arguments: dict[str, Any]) -> CallToolResult:
     return await mcp_cbm_provider.call_cbm_tool(
         name,
         dict(arguments),
-        request_timeout_seconds=_CBM_REQUEST_TIMEOUT_SECONDS,
+        request_timeout_seconds=CBM_REQUEST_TIMEOUT_SECONDS,
     )

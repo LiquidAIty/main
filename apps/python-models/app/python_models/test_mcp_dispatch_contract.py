@@ -5,6 +5,8 @@ import os
 import sys
 
 import pytest
+from app import mcp_request_dispatch, mcp_transport
+from mcp.types import TextContent
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
@@ -25,9 +27,14 @@ def test_agentgraph_and_mag_one_dispatch_use_current_python_owners(
     monkeypatch,
 ):
     import asyncio
+    from app import mag_one_operation
     import mcp_host
-    from app import application_operations
-    from app.python_models import card_invocation, card_runs, magnetic_taskgraph
+    from app.python_models import (
+        card_invocation_preparation,
+        card_run_preparation,
+        card_run_settlement,
+        magnetic_taskgraph_submission,
+    )
     from app.python_models import agentgraph_inspection
 
     context = {
@@ -38,21 +45,16 @@ def test_agentgraph_and_mag_one_dispatch_use_current_python_owners(
         "mainCardId": "card_main_chat",
     }
     calls = []
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: dict(context))
 
     def inspect(args):
         calls.append(("agentgraph.inspect", dict(args)))
         return {"ok": True, "authority": "postgresql-age-agentgraph", "runs": []}
 
-    async def bridge(path, payload):
-        calls.append((path, dict(payload)))
-        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
-
     monkeypatch.setattr(agentgraph_inspection, "inspect_agentgraph", inspect)
-    monkeypatch.setattr(application_operations, "_bridge", bridge)
 
     monkeypatch.setattr(
-        card_invocation,
+        card_invocation_preparation,
         "resolve_magnetic_taskgraph_card",
         lambda project_id, deck_id: {
             "projectId": project_id,
@@ -84,13 +86,39 @@ def test_agentgraph_and_mag_one_dispatch_use_current_python_owners(
             "state": "pending",
         }
 
-    monkeypatch.setattr(card_runs, "begin_run", begin)
-    monkeypatch.setattr(magnetic_taskgraph, "submit_magnetic_taskgraph", submit)
+    monkeypatch.setattr(card_run_preparation, "begin_run", begin)
+    monkeypatch.setattr(magnetic_taskgraph_submission, "submit_magnetic_taskgraph", submit)
+    monkeypatch.setattr(
+        mag_one_operation,
+        "_wait_for_completion",
+        lambda run_id, root_id: ({
+            "ok": True,
+            "runId": run_id,
+            "hermesRootId": root_id,
+            "hermesRunId": "attempt-final",
+            "hermesStatus": "done",
+            "state": "completed",
+            "configuredProvider": "openai-codex",
+            "configuredProviderApiMode": "codex_app_server",
+            "finalResult": "Exact Hermes synthesis.",
+            "hermesTasks": [{"taskId": root_id, "status": "done"}],
+        }, {"tasksCompleted": 1, "tasksTotal": 1, "activeWorkers": 0}),
+    )
+    monkeypatch.setattr(
+        card_run_settlement,
+        "finish_run",
+        lambda payload: {
+            "ok": True,
+            "runId": payload["runId"],
+            "state": payload["state"],
+            "updated": True,
+        },
+    )
 
     inspected = asyncio.run(
-        mcp_host._dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
+        mcp_request_dispatch.dispatch_tool("agentgraph.inspect", {"runId": "run-1", "limit": 5})
     )
-    assert json.loads(inspected[0].text)["authority"] == "postgresql-age-agentgraph"
+    assert json.loads(inspected.content[0].text)["authority"] == "postgresql-age-agentgraph"
     assert calls[-1] == (
         "agentgraph.inspect",
         {
@@ -100,14 +128,14 @@ def test_agentgraph_and_mag_one_dispatch_use_current_python_owners(
             "deckId": "deck_builder",
         },
     )
-    asyncio.run(mcp_host._dispatch_tool("agentgraph.inspect", {"limit": 5}))
+    asyncio.run(mcp_request_dispatch.dispatch_tool("agentgraph.inspect", {"limit": 5}))
     assert calls[-1][1] == {"limit": 5, "projectId": "project-1", "deckId": "deck_builder",
                             "conversationId": "external-mcp:grant-1"}
-    asyncio.run(mcp_host._dispatch_tool("agentgraph.inspect", {"projectWide": True, "limit": 5}))
+    asyncio.run(mcp_request_dispatch.dispatch_tool("agentgraph.inspect", {"projectWide": True, "limit": 5}))
     assert calls[-1][1] == {"projectWide": True, "limit": 5, "projectId": "project-1", "deckId": "deck_builder"}
 
     executed = asyncio.run(
-        mcp_host._dispatch_tool(
+        mcp_request_dispatch.dispatch_tool(
             "run_mag_one",
             {
                 "input": "exact proposed mission",
@@ -121,7 +149,8 @@ def test_agentgraph_and_mag_one_dispatch_use_current_python_owners(
     )
     executed_payload = json.loads(executed.content[0].text)
     assert executed_payload["ok"] is True
-    assert executed_payload["state"] == "pending"
+    assert executed_payload["state"] == "completed"
+    assert executed_payload["outerRunSettled"] is True
     assert executed.structured_content == executed_payload
     assert [call[0] for call in magnetic_calls] == ["begin", "submit"]
     assert magnetic_calls[0][1] == {
@@ -146,7 +175,7 @@ def test_agentgraph_and_mag_one_dispatch_use_current_python_owners(
 
     magnetic_calls.clear()
     executed_without_graph = asyncio.run(
-        mcp_host._dispatch_tool(
+        mcp_request_dispatch.dispatch_tool(
             "run_mag_one",
             {"input": "mission with no selected graph data"},
         )
@@ -167,7 +196,7 @@ def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
     async def dispatch(_name, arguments):
         raise RuntimeError(str(arguments["error"]))
 
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_request_dispatch, "dispatch_tool", dispatch)
 
     async def check():
         results = {}
@@ -181,7 +210,7 @@ def test_lifecycle_errors_remain_typed_and_distinct(monkeypatch):
         }.items():
             # Exercise failure classification through a declared read-plane tool so
             # the access gate remains part of the contract under test.
-            result = await mcp_host.call_tool("canvas.inspect", {"error": message})
+            result = await mcp_request_dispatch.call_tool("canvas.inspect", {"error": message})
             results[name] = json.loads(result.content[0].text)
         return results
 
@@ -207,8 +236,8 @@ def test_worldsignals_connection_refusal_is_dependency_unavailable(monkeypatch):
             "No connection could be made because the target machine actively refused it>"
         )
 
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", refuse)
-    result = asyncio.run(mcp_host.call_tool("worldsignals.capabilities", {}))
+    monkeypatch.setattr(mcp_request_dispatch, "dispatch_tool", refuse)
+    result = asyncio.run(mcp_request_dispatch.call_tool("worldsignals.capabilities", {}))
 
     assert isinstance(result, mcp_host.CallToolResult)
     assert result.is_error is True
@@ -228,15 +257,15 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
     async def dispatch(name, arguments):
         if arguments.get("speed") == "slow":
             await asyncio.sleep(60)
-        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "name": name}))]
+        return [TextContent(type="text", text=json.dumps({"ok": True, "name": name}))]
 
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
-    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(mcp_request_dispatch, "dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 0.02)
 
     async def check():
-        slow = asyncio.create_task(mcp_host.call_tool("canvas.inspect", {"speed": "slow"}))
+        slow = asyncio.create_task(mcp_request_dispatch.call_tool("canvas.inspect", {"speed": "slow"}))
         sibling = await asyncio.wait_for(
-            mcp_host.call_tool("agentgraph.inspect", {"speed": "sibling"}),
+            mcp_request_dispatch.call_tool("agentgraph.inspect", {"speed": "sibling"}),
             timeout=0.5,
         )
         timed_out = await asyncio.wait_for(slow, timeout=0.5)
@@ -249,34 +278,41 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
 
 def test_long_running_provider_tools_use_their_owned_timeouts(monkeypatch):
     import mcp_host
-    from app import application_operations
+    from app import backend_operation_transport
 
-    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 30.0)
+    monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(
-        mcp_provider_operations, "_CBM_REQUEST_TIMEOUT_SECONDS", 300.0,
+        mcp_provider_operations, "CBM_REQUEST_TIMEOUT_SECONDS", 300.0,
     )
-    monkeypatch.setattr(mcp_host, "_MAG_ONE_SUBMISSION_TIMEOUT_SECONDS", 300.0)
+    monkeypatch.setattr(mcp_request_dispatch, "MAG_ONE_COMPLETION_TIMEOUT_SECONDS", 570.0)
 
-    assert mcp_host._mcp_tool_timeout_seconds("run_mag_one") == 300.0
-    assert mcp_provider_operations._CBM_REQUEST_TIMEOUT_SECONDS == 300.0
-    assert application_operations._SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS == 540.0
-    assert mcp_host._mcp_tool_timeout_seconds("thinkgraph.reason") == 570.0
-    assert mcp_host._mcp_tool_timeout_seconds("knowgraph.research") == 570.0
-    assert mcp_host._mcp_tool_timeout_seconds("engraphis_remember") == 190.0
-    assert mcp_host._mcp_tool_timeout_seconds("cbm.search_graph") == 30.0
-    assert mcp_host._mcp_tool_timeout_seconds("graphiti.search_nodes") == 30.0
+    assert mcp_request_dispatch.mcp_tool_timeout_seconds("run_mag_one") == 570.0
+    assert mcp_provider_operations.CBM_REQUEST_TIMEOUT_SECONDS == 300.0
+    assert backend_operation_transport.SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS == 540.0
+    assert mcp_request_dispatch.mcp_tool_timeout_seconds("thinkgraph.reason") == 570.0
+    assert mcp_request_dispatch.mcp_tool_timeout_seconds("knowgraph.research") == 570.0
+    assert mcp_request_dispatch.mcp_tool_timeout_seconds("engraphis_remember") == 190.0
+    assert mcp_request_dispatch.mcp_tool_timeout_seconds("cbm.search_graph") == 30.0
+    assert mcp_request_dispatch.mcp_tool_timeout_seconds("graphiti.search_nodes") == 30.0
 
 def test_removed_generic_card_bridge_has_no_route_or_long_running_policy(monkeypatch):
     import mcp_host
-    from app import application_operations
+    from app import (
+        backend_operation_transport,
+        main_worldview_operations,
+        saved_graph_specialist_operations,
+    )
 
-    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 30.0)
+    monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 30.0)
 
-    assert "run_configured_card" not in application_operations._BACKEND_ROUTES
-    assert "describe_connected_agents" not in application_operations._BACKEND_ROUTES
-    assert application_operations._backend_bridge_timeout_seconds(
-        "run_configured_card"
-    ) == 30.0
+    routes = {
+        main_worldview_operations.WORLDVIEW_ACTION_ROUTE,
+        saved_graph_specialist_operations.SAVED_SPECIALIST_ROUTE,
+    }
+    assert not any("run_configured_card" in route for route in routes)
+    assert not any("describe_connected_agents" in route for route in routes)
+    assert backend_operation_transport.DEFAULT_BACKEND_OPERATION_TIMEOUT_SECONDS == 30.0
+    assert backend_operation_transport.WORLDVIEW_ACTION_HTTP_TIMEOUT_SECONDS == 40.0
 
 @pytest.mark.parametrize("operation,route,has_secret", [
     ("external_main_context", "/api/main/context", True),
@@ -321,12 +357,12 @@ def test_backend_domain_routes_preserve_payload_and_process_owned_secret(
     assert captured["timeout"] == mcp_auth._MAIN_CONTEXT_TIMEOUT_SECONDS
 
 def test_removed_generic_card_bridge_cannot_dispatch(monkeypatch):
-    from app import application_operations
+    from app import backend_operation_transport
 
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", "short")
 
     with pytest.raises(KeyError, match="run_configured_card"):
-        application_operations._bridge_sync(
+        backend_operation_transport.post_backend_text_sync(
             "run_configured_card", {"action": "execute"},
         )
 
@@ -336,8 +372,8 @@ def test_plain_text_does_not_hide_a_later_structured_tool_error():
     from app import mcp_observability
 
     result = [
-        mcp_host.TextContent(type="text", text="provider diagnostic"),
-        mcp_host.TextContent(
+        TextContent(type="text", text="provider diagnostic"),
+        TextContent(
             type="text",
             text=json.dumps({"ok": False, "error": "provider_failure"}),
         ),

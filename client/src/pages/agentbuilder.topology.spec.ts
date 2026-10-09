@@ -1,8 +1,26 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+// @vitest-environment jsdom
+
+import { createElement, useState } from 'react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
-import { deriveVisibleRailItems } from '../features/agentbuilder/rail/railVisibility';
+import {
+  isWorldSignalsAgentCard,
+  isWorldViewCard,
+} from '../features/agentbuilder/rail/railVisibility';
+import AgentCardChooserDialog from '../features/agentbuilder/project/AgentCardChooserDialog';
+import AgentBuilderInspectorDrawer from '../features/agentbuilder/inspector/AgentBuilderInspectorDrawer';
+import { builderTerminalBinding } from '../features/agentbuilder/console/agentBuilderChatWorkSurfacePolicy';
+import {
+  CARD_CONFIGURATION_TABS,
+  cardInspectorTabs,
+  isCardCliEligible,
+  isTaskLedgerCard,
+} from '../features/agentbuilder/inspector/agentCardInspectorPolicy';
+import { projectCardChatTargets } from '../features/agentbuilder/console/sharedChatClient';
+
+afterEach(cleanup);
 
 const mainToKnowGraphConnected = (
   nodes: typeof INITIAL_DECK.nodes,
@@ -22,84 +40,90 @@ const mainToKnowGraphConnected = (
 };
 
 describe('Main / Hermes / graph authority topology', () => {
-  it('keeps saved reuse and new Card creation inside one Add Agent chooser', () => {
-    const dialog = readFileSync(
-      new URL('../features/agentbuilder/project/AgentCardChooserDialog.tsx', import.meta.url),
-      'utf8',
-    );
-    const state = readFileSync(
-      new URL('../features/agentbuilder/state/useAgentCardChooser.ts', import.meta.url),
-      'utf8',
-    );
-    expect(dialog).toContain('data-testid="saved-card-chooser"');
-    expect(dialog).toContain('data-testid="add-agent-new-card"');
-    expect(state).toContain('/saved-cards`');
-    expect(state).toContain('/memberships`');
-    expect(state).toContain('buildQuickAddAssistCard(currentDeckRef.current, binding)');
-    expect(dialog).toContain('Reuse a saved Card unchanged, or create and save one new Card.');
+  it('renders saved reuse and new Card creation inside one Add Agent chooser', () => {
+    const createNew = vi.fn();
+    const attachSaved = vi.fn();
+    const choice = {
+      cardId: 'saved-helper',
+      cardRevisionId: 'revision-one',
+      title: 'Saved Helper',
+      subtitle: 'Reusable Card',
+      runtimeProfile: 'saved-helper',
+    };
+    render(createElement(AgentCardChooserDialog, {
+      open: true,
+      choices: [choice],
+      busy: false,
+      error: null,
+      colors: {
+        primary: '#4FA2AD', bg: '#1F1F1F', panel: '#2B2B2B',
+        border: '#3A3A3A', text: '#FFFFFF', neutral: '#E0DED5', warn: '#D98458',
+      },
+      onClose: vi.fn(),
+      onCreateNewAgent: createNew,
+      onAttachSavedCard: attachSaved,
+    }));
+
+    expect(screen.getByTestId('saved-card-chooser')).toBeTruthy();
+    expect(screen.getByText('Reuse a saved Card unchanged, or create and save one new Card.'))
+      .toBeTruthy();
+    fireEvent.click(screen.getByTestId('add-agent-new-card'));
+    fireEvent.click(screen.getByTestId('saved-card-choice-saved-helper'));
+    expect(createNew).toHaveBeenCalledOnce();
+    expect(attachSaved).toHaveBeenCalledExactlyOnceWith(choice);
   });
 
-  it('keeps five general Card tabs, ordinary Card CLI, and the permanent Builder CLI', () => {
-    const page = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const inspector = readFileSync(
-      new URL('../features/agentbuilder/inspector/AgentCardInspectorPanel.tsx', import.meta.url),
-      'utf8',
-    );
-    const chatWorkSurface = readFileSync(
-      new URL('../features/agentbuilder/console/AgentBuilderChatWorkSurface.tsx', import.meta.url),
-      'utf8',
-    );
-    expect(page).not.toContain('main-card-cli-location');
-    expect(page).not.toContain('onOpenMainChat');
-    expect(inspector).toContain(
-      "export const CARD_CONFIGURATION_TABS = [\n  'Prompt',\n  'Runtime',\n  'Memory',\n  'Skills',\n  'Tools',\n] as const;",
-    );
-    expect(inspector).not.toContain("'Results'");
-    expect(inspector).not.toContain('Dynamic context / input');
-    expect(inspector).toContain('selectedCard.id !== mainCardId');
-    expect(inspector).toContain('selectedCard.id !== builderCardId');
-    expect(inspector).toContain('!isTaskLedgerCard(selectedCard)');
-    expect(page).toContain("setTab('Prompt')");
-    expect(chatWorkSurface).toContain('data-testid="under-chat-card-work-surface"');
-    const underChat = chatWorkSurface.slice(
-      chatWorkSurface.indexOf('terminal={'),
-      chatWorkSurface.indexOf('workSurfaceLabel='),
-    );
-    expect(underChat).toContain('<CardTerminalPanel');
-    expect(underChat).toContain('cardId: builderCard.id');
-    expect(page).not.toContain('agentBuilderCard');
-    expect(page).not.toContain('sharedWorkSurfaceCard');
-    expect(page).not.toContain('workSurfaceCardId');
-    expect(underChat).not.toContain('workspaceView');
-    expect(underChat).not.toContain('data-testid="agent-builder-output"');
-    expect(underChat).not.toContain('builderResult');
-    expect(underChat).not.toContain('directInput');
-    expect(page).not.toContain('<CardRunResults');
-    expect(underChat).not.toContain('Run Agent Builder');
-    expect(page).not.toContain('title="Main CLI Terminal"');
-    expect(page).not.toContain('data-testid="builder-card-terminal"');
+  it('derives exact configuration, Tasks, and CLI tabs from saved Card identity', () => {
+    const byId = new Map(INITIAL_DECK.nodes.map((card) => [card.id, card]));
+    const mainCardId = 'card_main_chat';
+    const builderCardId = 'builder';
+    const tabs = (cardId: string) => cardInspectorTabs({
+      card: byId.get(cardId), mainCardId, builderCardId,
+    });
+
+    expect(CARD_CONFIGURATION_TABS).toEqual([
+      'Prompt', 'Runtime', 'Memory', 'Skills', 'Tools',
+    ]);
+    expect(tabs('card_knowgraph')).toEqual([...CARD_CONFIGURATION_TABS, 'CLI']);
+    expect(tabs(mainCardId)).toEqual([...CARD_CONFIGURATION_TABS]);
+    expect(tabs(builderCardId)).toEqual([...CARD_CONFIGURATION_TABS]);
+    expect(tabs('card_magentic')).toEqual([...CARD_CONFIGURATION_TABS, 'Tasks']);
+    expect(tabs('card_team')).toEqual([...CARD_CONFIGURATION_TABS, 'Tasks']);
+    expect(isTaskLedgerCard(byId.get('card_magentic'))).toBe(true);
+    expect(isTaskLedgerCard(byId.get('card_team'))).toBe(true);
+    expect(isCardCliEligible({
+      card: byId.get('card_knowgraph'), mainCardId, builderCardId,
+    })).toBe(true);
+    for (const cardId of [mainCardId, builderCardId, 'card_magentic', 'card_team']) {
+      expect(isCardCliEligible({ card: byId.get(cardId), mainCardId, builderCardId }))
+        .toBe(false);
+    }
+    expect(tabs('card_magentic')).not.toEqual(expect.arrayContaining(['Kanban', 'Results']));
   });
 
-  it('keeps Main, Builder, and Magnetic out of the ordinary Card CLI projection', () => {
-    const inspector = readFileSync(
-      new URL('../features/agentbuilder/inspector/AgentCardInspectorPanel.tsx', import.meta.url),
-      'utf8',
-    );
-    expect(inspector).toContain('!isTaskLedgerCard(selectedCard)');
-    expect(inspector).toContain('selectedCard.id !== mainCardId');
-    expect(inspector).toContain('selectedCard.id !== builderCardId');
-  });
+  it('binds the permanent under-chat terminal to the saved Builder Card', () => {
+    const builder = INITIAL_DECK.nodes.find((card) => card.id === 'builder')!;
+    const binding = builderTerminalBinding({
+      canvasProjectId: 'project-one',
+      conversationId: 'conversation-one',
+      builderCard: builder,
+    });
 
-  it('gives Magnetic and Team a Hermes Tasks inspector without adding a Kanban board or settings tab', () => {
-    const inspector = readFileSync(
-      new URL('../features/agentbuilder/inspector/AgentCardInspectorPanel.tsx', import.meta.url),
-      'utf8',
-    );
-    expect(inspector).toContain("card?.id === 'card_magentic' || card?.id === 'card_team'");
-    expect(inspector).toContain("isTaskLedgerCard(selectedCard) ? ['Tasks'] : []");
-    expect(inspector).toContain("tab === 'Tasks'");
-    expect(inspector).not.toContain("['Kanban']");
-    expect(inspector).not.toContain("['Results']");
+    expect(binding).toMatchObject({
+      cardId: 'builder',
+      key: 'project-one:builder:builder',
+    });
+    expect(binding?.identity).toEqual({
+      projectId: 'project-one',
+      deckId: INITIAL_DECK.id,
+      cardId: 'builder',
+      conversationId: 'conversation-one',
+    });
+    expect(builderTerminalBinding({
+      canvasProjectId: null,
+      conversationId: 'conversation-one',
+      builderCard: builder,
+    })).toBeNull();
   });
   it('uses the clean KnowGraph identity', () => {
     const serialized = JSON.stringify(INITIAL_DECK);
@@ -142,47 +166,63 @@ describe('Main / Hermes / graph authority topology', () => {
   });
 
   it('collapses and reopens the mounted WorldSignals inspector without clearing its section', () => {
-    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const drawer = readFileSync(
-      new URL('../features/agentbuilder/inspector/AgentBuilderInspectorDrawer.tsx', import.meta.url),
-      'utf8',
-    );
-    const roleOwner = readFileSync(
-      new URL('../features/agentbuilder/inspector/AgentBuilderWorkspaceInspector.tsx', import.meta.url),
-      'utf8',
-    );
-    const stateOwner = source.slice(
-      source.indexOf('const [worldSignalsInspectorSection'),
-      source.indexOf('const worldSignalsCardId = useMemo'),
-    );
-    expect(stateOwner).toContain('const [worldSignalsInspectorOpen, setWorldSignalsInspectorOpen] = useState(false);');
-    expect(stateOwner).toContain('setWorldSignalsInspectorSection(section);');
-    expect(stateOwner).toContain('setWorldSignalsInspectorOpen(true);');
-    expect(roleOwner).toContain("workspaceView === 'worldsignals' && worldSignals.section");
-    expect(source).toContain('open: worldSignalsInspectorOpen');
-    expect(source).toContain('const closeWorldSignalsInspector = useCallback(() => {\n    setWorldSignalsInspectorOpen(false);');
-    expect(source).not.toContain('setWorldSignalsInspectorSection(null);');
-    expect(source).toContain('onOpen: () => setWorldSignalsInspectorOpen(true)');
-    expect(drawer).toContain('<WorldSignalsInspectorPanel');
-    expect(drawer).toContain('section={role.section}');
-    expect(drawer).toContain("'Open WorldSignals Inspector'");
+    function WorldSignalsInspectorHarness() {
+      const [section, setSection] = useState<'markets' | 'layers'>('markets');
+      const [open, setOpen] = useState(true);
+      return createElement(AgentBuilderInspectorDrawer, {
+        role: {
+          kind: 'worldsignals',
+          open,
+          section,
+          bridge: null,
+          layerState: null,
+          onClose: () => setOpen(false),
+          onOpen: () => setOpen(true),
+          onSectionChange: setSection,
+        },
+      });
+    }
+
+    render(createElement(WorldSignalsInspectorHarness));
+    fireEvent.click(screen.getByTestId('worldsignals-inspector-tab-layers'));
+    expect(screen.getByTestId('worldsignals-inspector-tab-layers').getAttribute('aria-pressed'))
+      .toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open WorldSignals Inspector' }));
+    expect(screen.getByTestId('worldsignals-inspector-tab-layers').getAttribute('aria-pressed'))
+      .toBe('true');
+    expect(screen.getByTestId('worldsignals-inspector-note').textContent)
+      .toContain('layer controls appear once the map is mounted');
   });
 
   it('selects direct chat responders from exact Card-owned companion surfaces without topology mutation', () => {
-    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    expect(source).toContain('projectCardChatTargets(deck.nodes)');
-    expect(source).toContain('const owners = deck.nodes.filter((node) => isWorldViewCard(node));');
-    expect(source).toContain('directChatTargets.some((target) => target.cardId === owners[0].id)');
-    expect(source).toContain('!worldSignalsCardId || !setCurrentResponderCardId(worldSignalsCardId)');
-    expect(source).toContain('!worldViewCard?.id || !setCurrentResponderCardId(worldViewCard.id)');
-    expect(source).toContain('!tradingCard?.id || !setCurrentResponderCardId(tradingCard.id)');
-    expect(source).toContain('saved Card is unavailable for direct chat.');
-    expect(source).toContain("setWorkspaceView(canvasProjectId ? 'canvas' : 'chat')");
-    expect(source).toContain('setCurrentResponderCardId(null)');
-    expect(source).toContain('directChatTargets={directChatTargets}');
+    const before = JSON.stringify(INITIAL_DECK);
+    const currentCards = INITIAL_DECK.nodes.map((card) => ({
+      ...card,
+      _cardRevisionId: `revision:${card.id}`,
+    }));
+    const directChatTargets = projectCardChatTargets(currentCards);
+    const targetIds = new Set(directChatTargets.map((target) => target.cardId));
+    const worldSignalsCardId = currentCards.find(isWorldSignalsAgentCard)?.id;
+    const worldViewCards = currentCards.filter(isWorldViewCard);
+    const tradingCardId = currentCards.find(
+      (card) => card.id === 'card_trading_workbench',
+    )?.id;
+
+    expect(worldSignalsCardId).toBeTruthy();
+    expect(tradingCardId).toBeTruthy();
+    expect(targetIds.has(worldSignalsCardId!)).toBe(true);
+    for (const worldViewCard of worldViewCards) {
+      expect(targetIds.has(worldViewCard.id)).toBe(true);
+    }
+    expect(targetIds.has(tradingCardId!)).toBe(true);
+    expect(directChatTargets.every((target) => (
+      INITIAL_DECK.nodes.some((card) => card.id === target.cardId)
+    ))).toBe(true);
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_main_chat', target: 'card_worldsignals_agent', edgeType: 'flow',
     }));
+    expect(JSON.stringify(INITIAL_DECK)).toBe(before);
   });
 
   it('stores bounded write authority without the retired public Card-run model tool', () => {

@@ -6,6 +6,7 @@ import socket
 import sys
 
 import pytest
+from app import mcp_request_dispatch, mcp_transport
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
@@ -15,8 +16,11 @@ from app.python_models.provider_config import ensure_env_loaded
 
 ensure_env_loaded()
 
+from mcp.types import TextContent
+
 from app import (
     mcp_auth,
+    mcp_catalog_projection,
     mcp_catalog_runtime,
     mcp_cbm_provider,
     mcp_graphiti_provider,
@@ -24,7 +28,7 @@ from app import (
     mcp_provider_operations,
 )
 from app.python_models import tool_catalog
-from app.python_models.mcp_contract_test_support import (
+from app.python_models.test_mcp_contract_support import (
     clear_live_provider_operations,
     tool_result_wire_text,
 )
@@ -105,27 +109,16 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         ),
     ]
 
-    monkeypatch.setattr(
-        mcp_cbm_provider,
-        "_CBM_NAMES",
-        frozenset(tool.name for tool in cbm_tools),
-    )
-
     async def cbm_catalog():
         return cbm_tools
 
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", cbm_catalog)
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", cbm_catalog)
     monkeypatch.setattr(
         mcp_graphiti_provider,
-        "_GRAPHITI_NAMES",
-        frozenset(tool.name for tool in graphiti_tools),
-    )
-    monkeypatch.setattr(
-        mcp_graphiti_provider,
-        "_graphiti_tools",
+        "graphiti_tools",
         lambda: asyncio.sleep(0, result=graphiti_tools),
     )
-    asyncio.run(mcp_catalog_runtime._initialize_catalog_once())
+    asyncio.run(mcp_catalog_runtime.initialize_catalog_once())
     tools = asyncio.run(mcp_catalog_runtime.list_tools())
     by_name = {tool.name: tool for tool in tools}
     from app.python_models.tool_registry import (
@@ -162,14 +155,14 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         assert source["grantEligible"] is definition.grant_eligible
         assert source["access"] == definition.access
         if tool.name.startswith("cbm."):
-            assert source["dispatcherOwner"] == "app.mcp_provider_operations._call_cbm"
+            assert source["dispatcherOwner"] == "app.mcp_provider_operations.call_cbm_operation"
         elif tool.name.startswith("graphiti."):
-            assert source["dispatcherOwner"] == "app.mcp_provider_operations._call_graphiti"
+            assert source["dispatcherOwner"] == "app.mcp_provider_operations.call_graphiti_operation"
         else:
             allowed = allowed_operation_keys(definition)
             assert set(tool.input_schema.get("properties", {})) <= allowed
             assert definition.dispatcher_context_arguments == frozenset(
-                allowed & mcp_host._SERVER_OWNED_ARGUMENTS
+                allowed & mcp_request_dispatch.SERVER_OWNED_ARGUMENTS
             )
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
@@ -204,7 +197,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         "canonicalInputSchema": cbm_tools[0].input_schema,
         "serverInjectedArguments": [],
         "dispatcherContextArguments": [],
-        "dispatcherOwner": "app.mcp_provider_operations._call_cbm",
+        "dispatcherOwner": "app.mcp_provider_operations.call_cbm_operation",
         "authenticatedProjection": True,
     }
     assert "graphiti.search_nodes" in by_name
@@ -253,28 +246,28 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         calls.append((name, arguments))
         return mcp_host.CallToolResult(
             content=[
-                mcp_host.TextContent(
+                TextContent(
                     type="text",
                     text=json.dumps({"ok": True, "provider": name}),
                 )
             ]
         )
 
-    monkeypatch.setattr(mcp_provider_operations, "_call_cbm", call_cbm)
+    monkeypatch.setattr(mcp_provider_operations, "call_cbm_operation", call_cbm)
 
     async def initialize_graphiti():
         return None
 
     async def call_graphiti(name, arguments):
         calls.append((name, arguments))
-        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+        return [TextContent(type="text", text=json.dumps({"ok": True}))]
 
     monkeypatch.setattr(
         mcp_graphiti_provider, "_initialize_graphiti", initialize_graphiti
     )
-    monkeypatch.setattr(mcp_provider_operations, "_call_graphiti", call_graphiti)
+    monkeypatch.setattr(mcp_provider_operations, "call_graphiti_operation", call_graphiti)
 
-    asyncio.run(mcp_host.call_tool("engraphis_recall_context", {"query": "Main", "token_budget": 2000}))
+    asyncio.run(mcp_request_dispatch.call_tool("engraphis_recall_context", {"query": "Main", "token_budget": 2000}))
     assert calls[-1] == (
         "engraphis_recall_context",
         "project-1",
@@ -284,13 +277,13 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     memory = {
         "content": "Approved fact", "importance": 0.5,
     }
-    asyncio.run(mcp_host.call_tool("engraphis_remember", memory))
+    asyncio.run(mcp_request_dispatch.call_tool("engraphis_remember", memory))
     assert calls[-1] == (
         "engraphis_remember",
         "project-1",
         memory,
     )
-    rejected_scope = asyncio.run(mcp_host.call_tool(
+    rejected_scope = asyncio.run(mcp_request_dispatch.call_tool(
         "engraphis_remember",
         {**memory, "projectId": "other-project"},
     ))
@@ -300,25 +293,25 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     }
 
     cbm_result = asyncio.run(
-        mcp_host.call_tool("cbm.search_graph", {"project": "C-Projects-main"})
+        mcp_request_dispatch.call_tool("cbm.search_graph", {"project": "C-Projects-main"})
     )
     assert calls[-1] == ("search_graph", {"project": "C-Projects-main"})
     assert len(cbm_result.content) == 1
     assert "executionReceipt" not in tool_result_wire_text(cbm_result)
 
-    asyncio.run(mcp_host.call_tool("graphiti.search_nodes", {"query": "Main"}))
+    asyncio.run(mcp_request_dispatch.call_tool("graphiti.search_nodes", {"query": "Main"}))
     assert calls[-1] == (
         "search_nodes",
         {"query": "Main", "group_ids": ["liquidaity-project-1"]},
     )
 
     removed_adapter = asyncio.run(
-        mcp_host.call_tool("codegraph.search", {"query": "Main"})
+        mcp_request_dispatch.call_tool("codegraph.search", {"query": "Main"})
     )
     assert removed_adapter.is_error is True
     assert "unknown_tool: codegraph.search" in removed_adapter.content[0].text
 
-    main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
+    main_context = asyncio.run(mcp_request_dispatch.call_tool("main.context", {}))
     assert json.loads(main_context[0].text)["context"] == {
         "projectId": "project-1",
         "deckId": "deck_builder",
@@ -377,17 +370,17 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
     monkeypatch.setattr(mcp_auth, "get_access_token", access_token)
     monkeypatch.setattr(
         mcp_cbm_provider,
-        "_cbm_tools",
+        "cbm_tools",
         lambda: asyncio.sleep(0, result=cbm_tools),
     )
     monkeypatch.setattr(
         mcp_graphiti_provider,
-        "_graphiti_tools",
+        "graphiti_tools",
         lambda: asyncio.sleep(0, result=graphiti_tools),
     )
     # Process startup freezes the complete external catalog once. Public OAuth
     # changes only which frozen view is returned; it never adds late metadata.
-    asyncio.run(mcp_catalog_runtime._initialize_catalog_once())
+    asyncio.run(mcp_catalog_runtime.initialize_catalog_once())
     frozen = list(mcp_catalog_runtime._CATALOG_TOOLS or ())
     frozen_names = {tool.name for tool in frozen}
     assert {"cbm.search_graph", "graphiti.search_nodes"}.issubset(frozen_names)
@@ -406,10 +399,10 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
     assert {"cbm.search_graph", "graphiti.search_nodes"}.issubset(
         {tool.name for tool in authenticated}
     )
-    main_context = asyncio.run(mcp_host.call_tool("main.context", {}))
+    main_context = asyncio.run(mcp_request_dispatch.call_tool("main.context", {}))
     main_payload = json.loads(main_context[0].text)
     assert main_payload["ok"] is True
-    expected_count, expected_hash = mcp_catalog_runtime._catalog_identity(frozen)
+    expected_count, expected_hash = mcp_catalog_projection.catalog_identity(frozen)
     assert main_payload["diagnostics"] == {
         "state": "ready",
         "catalogState": "ready",
@@ -430,7 +423,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
         "sourceSha256": mcp_observability.STARTUP_SOURCE_SHA256,
         "currentSourceSha256": mcp_observability.STARTUP_SOURCE_SHA256,
         "sourceCurrent": True,
-        "graphitiVersions": mcp_graphiti_provider._graphiti_runtime_versions(),
+        "graphitiVersions": mcp_graphiti_provider.graphiti_runtime_versions(),
     }
 
 def test_canonical_tunnel_is_transport_only_and_mcp_owns_public_metadata():
@@ -494,9 +487,9 @@ def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypa
         return []
 
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", True)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_graphiti_provider, "_graphiti_tools", empty_catalog)
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", empty_catalog)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_graphiti_provider, "graphiti_tools", empty_catalog)
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", empty_catalog)
 
     tools = asyncio.run(mcp_catalog_runtime._materialize_complete_catalog())
     assert tools
@@ -599,18 +592,18 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
             raise RuntimeError("database_connection_lost")
         return {"ok": True, "cards": []}
 
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
     monkeypatch.setattr(saved_canvas_tools, "canvas_inspect", inspect)
 
-    failed = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
-    succeeded = asyncio.run(mcp_host.call_tool("canvas.inspect", {}))
+    failed = asyncio.run(mcp_request_dispatch.call_tool("canvas.inspect", {}))
+    succeeded = asyncio.run(mcp_request_dispatch.call_tool("canvas.inspect", {}))
 
     assert failed.is_error is True
     failed_payload = json.loads(failed.content[0].text)
     assert failed_payload["error"] == "database_failure"
     assert failed_payload["failureCode"] == "database_failure"
-    assert succeeded[0].type == "text"
-    assert json.loads(succeeded[0].text) == {"ok": True, "cards": []}
+    assert succeeded.content[0].type == "text"
+    assert json.loads(succeeded.content[0].text) == {"ok": True, "cards": []}
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
     import asyncio
@@ -629,7 +622,7 @@ def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
         return None
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
-    monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
+    monkeypatch.setattr(mcp_transport, "HTTP_MCP_PORT", port)
     monkeypatch.setattr(mcp_auth, "PUBLIC_MCP_RESOURCE_URL", resource)
     monkeypatch.setattr(mcp_auth, "AUTH0_ISSUER_URL", "https://tenant.auth0.com/")
     monkeypatch.setattr(mcp_auth, "AUTH0_AUDIENCE", resource)
@@ -637,8 +630,8 @@ def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
     monkeypatch.setattr(mcp_auth, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_graphiti_provider, "_initialize_graphiti", initialized)
-    monkeypatch.setattr(mcp_graphiti_provider, "_graphiti_tools", empty_catalog)
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", empty_catalog)
+    monkeypatch.setattr(mcp_graphiti_provider, "graphiti_tools", empty_catalog)
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", empty_catalog)
 
     async def check():
         server_task = asyncio.create_task(mcp_host.main())
@@ -701,7 +694,7 @@ def test_script_bootstrap_imports_card_schema_without_pythonpath(tmp_path):
     probe = (
         "import runpy; runpy.run_path(" + repr(host)
         + ", run_name='bootstrap_probe'); "
-        "from app.saved_card_tools import saved_card_operation_schema; "
+        "from app.saved_card_operation_schema import saved_card_operation_schema; "
         "assert saved_card_operation_schema('card.create')['additionalProperties'] is False"
     )
     result = subprocess.run([sys.executable, "-I", "-c", probe], cwd=tmp_path,

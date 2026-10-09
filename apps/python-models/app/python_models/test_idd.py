@@ -27,7 +27,7 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
     assert dictionary["types"]["RuntimeObject"]["source"] == (
         "app.python_models.card_configuration_contracts.HermesRuntime"
     )
-    assert dictionary["cardEditor"]["tabs"] == ["Results", "Prompt", "Runtime", "Memory", "Tools"]
+    assert dictionary["cardEditor"]["tabs"] == ["Prompt", "Runtime", "Memory", "Skills", "Tools"]
     assert set(dictionary["templates"]) == {
         "template_assist",
         "template_main_chat",
@@ -214,7 +214,7 @@ output.emit({"agent": {"run": False}})
 '''
     presentation = script_presentation(
         {"enabled": True, "source": source},
-        selected_tools=["cbm.search_graph", "engraphis_remember", "web_search"],
+        selected_tools=["cbm.search_graph", "engraphis_remember", "current_datetime"],
         default_agent_tools=["engraphis_remember"],
     )
     assert presentation["mode"] == "script"
@@ -222,7 +222,7 @@ output.emit({"agent": {"run": False}})
     assert presentation["script"]["compiled"]["toolStates"] == {
         "cbm.search_graph": 1,
         "engraphis_remember": 2,
-        "web_search": 0,
+        "current_datetime": 0,
     }
 
 

@@ -5,6 +5,7 @@ import os
 import sys
 
 import pytest
+from app import mag_one_operation, mcp_request_dispatch, mcp_transport
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
@@ -14,6 +15,8 @@ from app.python_models.provider_config import ensure_env_loaded
 
 ensure_env_loaded()
 
+from mcp.types import TextContent
+
 from app import (
     mcp_auth,
     mcp_catalog_runtime,
@@ -21,7 +24,7 @@ from app import (
     mcp_graphiti_provider,
 )
 from app.python_models import engraphis_operations
-from app.python_models.mcp_contract_test_support import (
+from app.python_models.test_mcp_contract_support import (
     tool_result_wire_text,
 )
 from mcp.types import Tool
@@ -54,11 +57,11 @@ def test_catalog_health_reports_resolved_graphiti_packages(monkeypatch):
         lambda distribution: versions[distribution],
     )
 
-    assert mcp_graphiti_provider._graphiti_runtime_versions() == {
+    assert mcp_graphiti_provider.graphiti_runtime_versions() == {
         "core": "0.30.2",
         "mcp": "1.1.0",
     }
-    assert mcp_catalog_runtime._catalog_diagnostics()["graphitiVersions"] == {
+    assert mcp_catalog_runtime.catalog_diagnostics()["graphitiVersions"] == {
         "core": "0.30.2",
         "mcp": "1.1.0",
     }
@@ -78,12 +81,12 @@ def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypa
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(
         mcp_cbm_provider,
-        "_cbm_tools",
+        "cbm_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
     monkeypatch.setattr(
         mcp_graphiti_provider,
-        "_graphiti_tools",
+        "graphiti_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
     catalog = asyncio.run(mcp_catalog_runtime._materialize_complete_catalog())
@@ -126,18 +129,18 @@ def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch)
     async def dispatch(name, arguments):
         await asyncio.sleep(0.03)
         completed.append(name)
-        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "id": "memory-question"}))]
+        return [TextContent(type="text", text=json.dumps({"ok": True, "id": "memory-question"}))]
 
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
-    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.005)
+    monkeypatch.setattr(mcp_request_dispatch, "dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_request_dispatch, "request_tool_is_allowed", lambda name: True)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 0.005)
 
-    result = asyncio.run(mcp_host.call_tool(operation, {}))
+    result = asyncio.run(mcp_request_dispatch.call_tool(operation, {}))
     assert not getattr(result, "isError", False)
     assert completed == [operation]
     # Ordinary reads keep their short deadline; this is not a global increase.
-    result = asyncio.run(mcp_host.call_tool("engraphis_recall_context", {}))
+    result = asyncio.run(mcp_request_dispatch.call_tool("engraphis_recall_context", {}))
     assert result.is_error
     assert completed == [operation]
 
@@ -155,15 +158,19 @@ def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch)
         return {"ok": False, "error": "thinkgraph_project_id_invalid"}
 
     monkeypatch.setattr(engraphis_operations, "invoke_tool", reject)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: context)
-    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
-    monkeypatch.setattr(mcp_host, "_enforce_tool_caller", lambda *args, **kwargs: None)
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: context)
+    monkeypatch.setattr(
+        mcp_request_dispatch,
+        "request_tool_is_allowed",
+        lambda name, definition=None: True,
+    )
+    monkeypatch.setattr(mcp_request_dispatch, "enforce_tool_caller", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", (
         Tool(name="engraphis_remember", inputSchema={"type": "object"}),
     ))
-    result = asyncio.run(mcp_host.call_tool("engraphis_remember", {
+    result = asyncio.run(mcp_request_dispatch.call_tool("engraphis_remember", {
         "content": "A retained thought",
     }))
     assert result.is_error is True
@@ -180,9 +187,9 @@ def test_engraphis_smart_result_preserves_python_rails_payload(monkeypatch):
     import mcp_host
     from app.python_models import engraphis_operations
     payload = {"id": "mem-one", "content": "Synthetic memory"}
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context",
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context",
         lambda: {"projectId": "project-one", "mainCardId": "thinkgraph"})
-    monkeypatch.setattr(mcp_host, "_enforce_tool_caller", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_request_dispatch, "enforce_tool_caller", lambda *a, **k: None)
     async def invoke(*_args):
         return payload
     monkeypatch.setattr(engraphis_operations, "invoke_tool", invoke)
@@ -190,7 +197,7 @@ def test_engraphis_smart_result_preserves_python_rails_payload(monkeypatch):
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", (
         Tool(name="engraphis_get_memory", inputSchema={"type": "object"}),
     ))
-    result = asyncio.run(mcp_host._dispatch_tool(
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool(
         "engraphis_get_memory", {"memory_id": "mem-one"},
     ))
     assert result.structured_content == payload
@@ -201,16 +208,16 @@ def test_canvas_wire_catalog_preserves_supported_fields_without_provider_discove
     import jsonschema
     import mcp_host
 
-    monkeypatch.setattr(mcp_auth, '_authenticated_main_context', lambda: None)
+    monkeypatch.setattr(mcp_auth, 'authenticated_main_context', lambda: None)
     monkeypatch.setattr(mcp_auth, 'OAUTH_ENFORCED', False)
     monkeypatch.setattr(
         mcp_cbm_provider,
-        "_cbm_tools",
+        "cbm_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
     monkeypatch.setattr(
         mcp_graphiti_provider,
-        "_graphiti_tools",
+        "graphiti_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
     tools = asyncio.run(mcp_catalog_runtime._materialize_complete_catalog())
@@ -244,23 +251,23 @@ def test_caller_enforcement_reads_explicit_registry_permissions():
         "_callerRuntimeKind": "hermes",
         "_callerRuntimeMode": "main",
     }
-    assert mcp_host._enforce_tool_caller("run_mag_one", allowed) is None
+    assert mcp_request_dispatch.enforce_tool_caller("run_mag_one", allowed) is None
     denied = {
         "_callerCardId": "card-hermes",
         "_callerRuntimeKind": "hermes",
         "_callerRuntimeMode": "delegate",
     }
-    assert mcp_host._enforce_tool_caller("run_mag_one", denied) == (
+    assert mcp_request_dispatch.enforce_tool_caller("run_mag_one", denied) == (
         "tool_caller_not_authorized: run_mag_one requires hermes/main"
     )
-    assert mcp_host._enforce_tool_caller(
+    assert mcp_request_dispatch.enforce_tool_caller(
         "worldview.set_capability", {
             "_callerCardId": "card-main",
             "_callerRuntimeKind": "hermes",
             "_callerRuntimeMode": "main",
         },
     ) is None
-    assert mcp_host._enforce_tool_caller(
+    assert mcp_request_dispatch.enforce_tool_caller(
         "worldview.set_capability", {
             "_callerCardId": "card-hermes",
             "_callerRuntimeKind": "hermes",
@@ -270,7 +277,7 @@ def test_caller_enforcement_reads_explicit_registry_permissions():
         "tool_caller_not_authorized: worldview.set_capability requires hermes/main"
     )
     unrestricted: dict[str, str] = {}
-    assert mcp_host._enforce_tool_caller("cbm.search_graph", unrestricted) is None
+    assert mcp_request_dispatch.enforce_tool_caller("cbm.search_graph", unrestricted) is None
 
 def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
     import asyncio
@@ -296,8 +303,8 @@ def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
     monkeypatch.setattr(
         project_worldview, "set_main_project_worldview_capability", save,
     )
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "project-current",
         "deckId": "deck-current",
         "conversationId": "conversation-current",
@@ -307,7 +314,7 @@ def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
         "callerRuntimeMode": "main",
     })
 
-    result = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("worldview.set_capability", {
         "capabilityId": "weather",
         "enabled": False,
         "reason": "The current Project does not need weather data.",
@@ -321,7 +328,7 @@ def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
     )]
     assert json.loads(result[0].text)["projectId"] == "project-current"
 
-    forged = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+    forged = asyncio.run(mcp_request_dispatch.dispatch_tool("worldview.set_capability", {
         "projectId": "project-foreign",
         "capabilityId": "weather",
         "enabled": True,
@@ -332,14 +339,14 @@ def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
         "error": "caller_identity_rejected: projectId",
     }
 
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "project-1",
         "deckId": "deck_builder",
         "conversationId": "conversation-1",
         "parentRunId": "req_source",
         "mainCardId": "card_main_chat",
     })
-    external_main = asyncio.run(mcp_host._dispatch_tool("knowgraph.research", {
+    external_main = asyncio.run(mcp_request_dispatch.dispatch_tool("knowgraph.research", {
         "request": "not a Card-runtime call",
     }))
     assert external_main.is_error is True
@@ -360,15 +367,15 @@ def test_worldview_main_write_rejects_delegate_card_before_storage(monkeypatch):
         "set_main_project_worldview_capability",
         lambda *args: calls.append(args),
     )
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "project-current",
         "mainCardId": "card-delegate",
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "delegate",
     })
 
-    result = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("worldview.set_capability", {
         "capabilityId": "weather",
         "enabled": True,
         "reason": "Relevant.",
@@ -387,10 +394,10 @@ def test_worldview_main_write_requires_authenticated_context(monkeypatch):
     import asyncio
     import mcp_host
 
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_auth, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
 
-    result = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("worldview.set_capability", {
         "projectId": "caller-supplied-project",
         "_callerCardId": "caller-supplied-main",
         "_callerRuntimeKind": "hermes",
@@ -402,15 +409,18 @@ def test_worldview_main_write_requires_authenticated_context(monkeypatch):
 
     assert json.loads(result[0].text) == {
         "ok": False,
-        "error": "authenticated_main_context_required",
+        "error": (
+            "caller_identity_rejected: "
+            "_callerCardId,_callerRuntimeKind,_callerRuntimeMode,projectId"
+        ),
     }
 
 def test_worldview_action_catalog_offers_only_spatial_actions():
-    from app import application_operations
+    from app.application_operation_catalog import application_operation_definitions
 
     action = next(
         definition
-        for definition in application_operations.application_operation_definitions()
+        for definition in application_operation_definitions()
         if definition.canonical_id == "worldview.action"
     )
     assert action.parameters_schema["properties"]["name"]["enum"] == [
@@ -427,30 +437,81 @@ def test_worldview_action_catalog_offers_only_spatial_actions():
     assert "[] clears transient agent focus" in action.description
     main_choice = next(
         definition
-        for definition in application_operations.application_operation_definitions()
+        for definition in application_operation_definitions()
         if definition.canonical_id == "worldview.set_capability"
     )
     assert "current user turn explicitly asks" in main_choice.description
 
 def test_application_and_engraphis_definitions_use_real_non_host_handlers():
     import inspect
-    from app import application_operations
+    from app.application_operation_catalog import application_operation_definitions
     from app.python_models import engraphis_operations
 
     definitions = [
-        *application_operations.application_operation_definitions(),
+        *application_operation_definitions(),
         *engraphis_operations.operation_definitions(),
     ]
     assert definitions
     for definition in definitions:
         assert definition.handler.__module__ != "app.mcp_host"
-        assert "_dispatch_tool" not in inspect.getsource(definition.handler)
-        assert definition.dispatcher_owner != "app.mcp_host._dispatch_tool"
+        assert "dispatch_tool" not in inspect.getsource(definition.handler)
+        assert definition.dispatcher_owner != "app.mcp_request_dispatch.dispatch_tool"
+
+
+def test_application_operation_catalog_preserves_order_and_literal_dispatcher_owners():
+    from app.application_operation_catalog import application_operation_definitions
+
+    definitions = application_operation_definitions()
+    assert [definition.canonical_id for definition in definitions] == [
+        "main.context",
+        "worldview.set_capability",
+        "worldview.action",
+        "agentgraph.inspect",
+        "run_mag_one",
+        "thinkgraph.reason",
+        "knowgraph.research",
+        "canvas.inspect",
+        "card.create",
+        "card.update_configuration",
+        "canvas.upsert_wire",
+    ]
+    assert {
+        definition.canonical_id: definition.dispatcher_owner
+        for definition in definitions
+    } == {
+        "main.context": "app.main_worldview_operations.main_context",
+        "worldview.set_capability": (
+            "app.main_worldview_operations.worldview_set_capability"
+        ),
+        "worldview.action": "app.main_worldview_operations.worldview_action",
+        "agentgraph.inspect": (
+            "app.application_operation_handlers.agentgraph_inspect"
+        ),
+        "run_mag_one": "app.mag_one_operation.run_mag_one",
+        "thinkgraph.reason": (
+            "app.saved_graph_specialist_operations.thinkgraph_reason"
+        ),
+        "knowgraph.research": (
+            "app.saved_graph_specialist_operations.knowgraph_research"
+        ),
+        "canvas.inspect": (
+            "app.application_operation_handlers.canvas_inspect_operation"
+        ),
+        "card.create": (
+            "app.application_operation_handlers.card_create_operation"
+        ),
+        "card.update_configuration": (
+            "app.application_operation_handlers.card_update_configuration_operation"
+        ),
+        "canvas.upsert_wire": (
+            "app.application_operation_handlers.canvas_upsert_wire_operation"
+        ),
+    }
 
 def test_worldsignals_package_dispatch_uses_authenticated_card_run_scope(monkeypatch):
     import asyncio
     import mcp_host
-    from app.python_models import python_tool_definitions
+    from app.python_models import worldsignals_tool_operations
 
     captured = {}
 
@@ -467,11 +528,11 @@ def test_worldsignals_package_dispatch_uses_authenticated_card_run_scope(monkeyp
         return _Package()
 
     monkeypatch.setattr(
-        python_tool_definitions,
+        worldsignals_tool_operations,
         "collect_worldsignals_signal_package",
         collect,
     )
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "project-1",
         "deckId": "deck-1",
         "conversationId": "conversation-1",
@@ -482,7 +543,7 @@ def test_worldsignals_package_dispatch_uses_authenticated_card_run_scope(monkeyp
         "principalKind": "card-runtime",
         "grantedTools": ["worldsignals.package"],
     })
-    result = asyncio.run(mcp_host._dispatch_tool("worldsignals.package", {
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("worldsignals.package", {
         "command": "get_summary",
         "reason": "Inspect one bounded source result.",
         "limit": 4,
@@ -501,7 +562,7 @@ def test_worldsignals_package_rejects_model_supplied_scope(monkeypatch):
     import asyncio
     import mcp_host
 
-    monkeypatch.setattr(mcp_auth, "_authenticated_main_context", lambda: {
+    monkeypatch.setattr(mcp_auth, "authenticated_main_context", lambda: {
         "projectId": "project-1",
         "deckId": "deck-1",
         "conversationId": "conversation-1",
@@ -512,7 +573,7 @@ def test_worldsignals_package_rejects_model_supplied_scope(monkeypatch):
         "principalKind": "card-runtime",
         "grantedTools": ["worldsignals.package"],
     })
-    result = asyncio.run(mcp_host._dispatch_tool("worldsignals.package", {
+    result = asyncio.run(mcp_request_dispatch.dispatch_tool("worldsignals.package", {
         "command": "get_summary",
         "reason": "Inspect one bounded source result.",
         "projectId": "other-project",
@@ -550,7 +611,6 @@ def test_graphiti_is_optional_when_provider_credentials_are_absent(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", None)
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_TOOLS", None)
-    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_NAMES", frozenset())
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_UNAVAILABLE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ())
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_UNAVAILABLE_FAMILIES", ())
@@ -561,9 +621,8 @@ def test_graphiti_is_optional_when_provider_credentials_are_absent(monkeypatch):
         lambda: provider_initialization.append("called"),
     )
 
-    assert asyncio.run(mcp_graphiti_provider._graphiti_tools()) == []
+    assert asyncio.run(mcp_graphiti_provider.graphiti_tools()) == []
     assert provider_initialization == []
-    assert mcp_graphiti_provider._GRAPHITI_NAMES == frozenset()
     assert mcp_graphiti_provider._GRAPHITI_UNAVAILABLE == {
         "ok": False,
         "failureCode": "optional_capability_unavailable",
@@ -586,7 +645,6 @@ def test_graphiti_initialization_failure_never_leaks_secrets_or_kills_mcp(monkey
     monkeypatch.setenv("OPENROUTER_API_KEY", secret)
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", None)
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_TOOLS", None)
-    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_NAMES", frozenset())
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_UNAVAILABLE", None)
     real_import = builtins.__import__
 
@@ -597,12 +655,12 @@ def test_graphiti_initialization_failure_never_leaks_secrets_or_kills_mcp(monkey
 
     monkeypatch.setattr(builtins, "__import__", failing_import)
 
-    assert asyncio.run(mcp_graphiti_provider._graphiti_tools()) == []
+    assert asyncio.run(mcp_graphiti_provider.graphiti_tools()) == []
     failure_text = json.dumps(mcp_graphiti_provider._GRAPHITI_UNAVAILABLE)
     assert secret not in failure_text
     assert "RuntimeError" in failure_text
 
-    later = asyncio.run(mcp_host.call_tool("main.context", {}))
+    later = asyncio.run(mcp_request_dispatch.call_tool("main.context", {}))
     assert later.is_error is True
     later_payload = json.loads(later.content[0].text)
     assert later_payload["error"] == "main_context_unavailable"
@@ -617,22 +675,11 @@ def test_graphiti_catalog_discovery_does_not_open_provider_connections(monkeypat
     for module_name in list(sys.modules):
         if module_name == "utils" or module_name.startswith("utils."):
             monkeypatch.delitem(sys.modules, module_name, raising=False)
-    # Another contract suite imports the vendored Hermes root, which contains a
-    # top-level utils.py. Keep that unrelated test-only path from shadowing the
-    # installed Graphiti distribution's required utils package.
-    hermes_root = os.path.normcase(os.path.abspath(
-        os.path.join(_APP_DIR, "..", "..", "..", "Hermes")
-    ))
-    monkeypatch.setattr(sys, "path", [
-        entry for entry in sys.path
-        if os.path.normcase(os.path.abspath(entry or os.curdir)) != hermes_root
-    ])
     import graphiti_mcp_server as graphiti_provider
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "configured")
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_MODULE", None)
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_TOOLS", None)
-    monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_NAMES", frozenset())
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_UNAVAILABLE", None)
     monkeypatch.setattr(mcp_graphiti_provider, "_GRAPHITI_SERVICE_READY", False)
     monkeypatch.setattr(
@@ -641,8 +688,153 @@ def test_graphiti_catalog_discovery_does_not_open_provider_connections(monkeypat
         lambda *_args, **_kwargs: pytest.fail("catalog opened Graphiti providers"),
     )
 
-    tools = asyncio.run(mcp_graphiti_provider._graphiti_tools())
+    tools = asyncio.run(mcp_graphiti_provider.graphiti_tools())
 
     assert tools
-    assert mcp_graphiti_provider._GRAPHITI_NAMES
     assert mcp_graphiti_provider._GRAPHITI_SERVICE_READY is False
+
+
+def test_mag_one_invocation_waits_and_records_progress_before_terminal_result(monkeypatch):
+    observations = iter([
+        {
+            "ok": True,
+            "hermesRootId": "root-one",
+            "hermesRunId": "attempt-one",
+            "hermesStatus": "running",
+            "state": "running",
+            "hermesTasks": [
+                {"taskId": "root-one", "status": "running"},
+                {"taskId": "worker-one", "status": "running"},
+            ],
+        },
+        {
+            "ok": True,
+            "hermesRootId": "root-one",
+            "hermesRunId": "attempt-two",
+            "hermesStatus": "done",
+            "state": "completed",
+            "finalResult": "Exact Hermes synthesis.",
+            "hermesTasks": [
+                {"taskId": "root-one", "status": "done"},
+                {"taskId": "worker-one", "status": "done"},
+            ],
+        },
+    ])
+    progress: list[dict] = []
+    monkeypatch.setattr(
+        "app.python_models.magnetic_taskgraph_readback.read_magnetic_taskgraph",
+        lambda _payload: next(observations),
+    )
+    monkeypatch.setattr(
+        "app.python_models.card_run_execution.update_run_progress",
+        lambda payload: progress.append(payload) or {
+            "ok": True,
+            "runId": payload["runId"],
+            "hermesRootId": payload["hermesRootId"],
+            "updated": True,
+        },
+    )
+    monkeypatch.setattr(mag_one_operation.time, "sleep", lambda _seconds: None)
+
+    result, metrics = mag_one_operation._wait_for_completion(
+        "run-one", "root-one", timeout_seconds=10, poll_seconds=0.01,
+    )
+
+    assert result["state"] == "completed"
+    assert metrics == {"tasksCompleted": 2, "tasksTotal": 2, "activeWorkers": 0}
+    assert progress == [{
+        "runId": "run-one",
+        "hermesRootId": "root-one",
+        "hermesRunId": "attempt-one",
+        "hermesStatus": "running",
+        "tasksCompleted": 0,
+        "tasksTotal": 2,
+        "activeWorkers": 1,
+    }]
+
+
+def test_mag_one_completion_timeout_keeps_the_outer_run_open(monkeypatch):
+    monkeypatch.setattr(
+        "app.python_models.magnetic_taskgraph_readback.read_magnetic_taskgraph",
+        lambda _payload: {
+            "ok": True,
+            "hermesRootId": "root-one",
+            "hermesRunId": "attempt-one",
+            "hermesStatus": "running",
+            "state": "running",
+            "hermesTasks": [{"taskId": "root-one", "status": "running"}],
+        },
+    )
+    monkeypatch.setattr(
+        "app.python_models.card_run_execution.update_run_progress",
+        lambda payload: {
+            "ok": True,
+            "runId": payload["runId"],
+            "hermesRootId": payload["hermesRootId"],
+            "updated": True,
+        },
+    )
+
+    result, _metrics = mag_one_operation._wait_for_completion(
+        "run-one", "root-one", timeout_seconds=0,
+    )
+
+    assert result == {
+        "ok": False,
+        "hermesRootId": "root-one",
+        "hermesRunId": "attempt-one",
+        "hermesStatus": "running",
+        "state": "running",
+        "hermesTasks": [{"taskId": "root-one", "status": "running"}],
+        "runId": "run-one",
+        "completionPending": True,
+        "outerRunSettled": False,
+        "error": "magnetic_taskgraph_completion_timeout",
+    }
+
+
+def test_mag_one_terminal_settlement_uses_the_exact_root_and_attempt(monkeypatch):
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        "app.python_models.card_run_settlement.finish_run",
+        lambda payload: captured.append(payload) or {
+            "ok": True,
+            "runId": payload["runId"],
+            "state": payload["state"],
+        },
+    )
+    terminal = {
+        "ok": True,
+        "hermesRootId": "root-one",
+        "hermesRunId": "attempt-final",
+        "hermesStatus": "done",
+        "state": "completed",
+        "configuredProvider": "openai-codex",
+        "configuredProviderApiMode": "codex_app_server",
+        "finalResult": "Exact Hermes synthesis.",
+    }
+
+    result = mag_one_operation._settle_terminal_result(
+        "run-one",
+        terminal,
+        {"tasksCompleted": 2, "tasksTotal": 2, "activeWorkers": 0},
+    )
+
+    assert result == {
+        **terminal,
+        "runId": "run-one",
+        "outerRunSettled": True,
+    }
+    assert captured == [{
+        "runId": "run-one",
+        "state": "completed",
+        "finalResult": "Exact Hermes synthesis.",
+        "effectiveProvider": "openai-codex",
+        "providerApiMode": "codex_app_server",
+        "providerThreadRef": "root-one",
+        "providerTurnRef": "attempt-final",
+        "hermesStatus": "done",
+        "tasksCompleted": 2,
+        "tasksTotal": 2,
+        "activeWorkers": 0,
+    }]

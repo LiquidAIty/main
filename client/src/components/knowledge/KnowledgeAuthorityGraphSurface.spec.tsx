@@ -966,7 +966,10 @@ describe('knowledge authority graph surfaces', () => {
       directional_arrow_length: 3, directional_arrow_rel_pos: 0.9,
     });
     expect(graph.data.links[0].label).toBe('');
-    expect(graph.data.nodes.map((node: any) => [node.id, node.label])).toEqual([['subject', 'Subject'], ['idea', 'Idea']]);
+    expect(graph.data.nodes.map((node: any) => [node.id, node.label])).toEqual([
+      ['thinkgraph:subject', 'Subject'],
+      ['thinkgraph:idea', 'Idea'],
+    ]);
     expect(JSON.stringify(projection)).toBe(before);
     act(() => graph.linkClick(graph.data.links[0]));
     expect(screen.getByTestId('thinkgraph-edge-inspector').textContent).toContain('Recorded relationship.');
@@ -1286,7 +1289,7 @@ describe('knowledge authority graph surfaces', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
     expect(remove).toHaveBeenCalledExactlyOnceWith('memory-new');
     expect(screen.getByText(paragraph)).toBeTruthy();
-    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['stored']);
+    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['thinkgraph:stored']);
   });
 
   it('opens the exact selected relationship with its recorded claim and keeps diagnostics out of the inspector', () => {
@@ -1485,7 +1488,9 @@ describe('knowledge authority graph surfaces', () => {
     };
     renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
-    act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.id === 'company')));
+    const company = graph.data.nodes.find((node: any) => node.id === 'knowgraph:company');
+    expect(company).toBeTruthy();
+    act(() => graph.nodeClick(company));
 
     expect(paragraph.length).toBeGreaterThan(140);
     expect(screen.getByText(paragraph)).toBeTruthy();
@@ -1581,7 +1586,7 @@ describe('knowledge authority graph surfaces', () => {
     const styleSelect = screen.getByRole('combobox', { name: 'Style' }) as HTMLSelectElement;
     expect(styleSelect.value).toBe('solarpunk');
     expect([...styleSelect.options].map(option => option.textContent)).toContain('Solarpunk');
-    expect(graph.data.nodes[0].material_kind).toBe('solarpunk');
+    expect(graph.data.nodes[0].material_kind).toBe('joined-cyber');
     expect(screen.getByRole('group', { name: 'Solarpunk colors' })).toBeTruthy();
     expect(graph.setStyle).toHaveBeenLastCalledWith('cyber');
     fireEvent.change(styleSelect, { target: { value: 'cyber' } });

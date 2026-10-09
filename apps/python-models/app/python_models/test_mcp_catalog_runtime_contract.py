@@ -14,6 +14,8 @@ from app.python_models.provider_config import ensure_env_loaded
 
 ensure_env_loaded()
 
+from app import mcp_transport
+
 from app import (
     mcp_auth,
     mcp_catalog_runtime,
@@ -29,15 +31,15 @@ def test_main_selects_streamable_http_transport(monkeypatch):
 
     events = []
 
-    async def run_http():
+    async def run_http(*_args):
         events.append("http")
 
-    async def run_stdio():
+    async def run_stdio(*_args):
         events.append("stdio")
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
-    monkeypatch.setattr(mcp_host, "_run_streamable_http", run_http)
-    monkeypatch.setattr(mcp_host, "_run_stdio", run_stdio)
+    monkeypatch.setattr(mcp_transport, "run_streamable_http", run_http)
+    monkeypatch.setattr(mcp_transport, "run_stdio", run_stdio)
 
     asyncio.run(mcp_host.main())
 
@@ -53,12 +55,12 @@ def test_catalog_guard_never_exposes_initializing_or_failed_catalog(monkeypatch)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", None)
     with pytest.raises(RuntimeError, match="mcp_catalog_initializing"):
-        mcp_catalog_runtime._catalog_or_error()
+        mcp_catalog_runtime.catalog_or_error()
 
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "failed")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", "RuntimeError: cbm_failed")
     with pytest.raises(RuntimeError, match="cbm_failed"):
-        mcp_catalog_runtime._catalog_or_error()
+        mcp_catalog_runtime.catalog_or_error()
 
     catalog_size = 7
     catalog_names = [f"tool-{index}" for index in range(catalog_size)]
@@ -71,6 +73,7 @@ def test_catalog_guard_never_exposes_initializing_or_failed_catalog(monkeypatch)
         for name in catalog_names
     )
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ("liquidaity",))
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", tools)
     ready = asyncio.run(mcp_catalog_runtime.list_tools())
@@ -139,8 +142,8 @@ def test_catalog_initialization_is_process_wide_once(monkeypatch):
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_INITIALIZATION_TASK", None)
     async def check():
-        first = mcp_catalog_runtime._start_catalog_initialization()
-        second = mcp_catalog_runtime._start_catalog_initialization()
+        first = mcp_catalog_runtime.start_catalog_initialization()
+        second = mcp_catalog_runtime.start_catalog_initialization()
         assert first is second
         await asyncio.gather(first, second)
 
@@ -157,7 +160,7 @@ def test_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        mcp_catalog_runtime, "_initialize_catalog_once", incomplete_initializer
+        mcp_catalog_runtime, "initialize_catalog_once", incomplete_initializer
     )
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
@@ -167,11 +170,11 @@ def test_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_INITIALIZATION_TASK", None)
 
     async def check():
-        await mcp_catalog_runtime._start_catalog_initialization()
+        await mcp_catalog_runtime.start_catalog_initialization()
         await asyncio.sleep(0)
 
     asyncio.run(check())
-    diagnostics = mcp_catalog_runtime._catalog_diagnostics()
+    diagnostics = mcp_catalog_runtime.catalog_diagnostics()
     assert diagnostics["catalogState"] == "failed"
     assert diagnostics["failureCode"] == "catalog_initializer_ended_without_state"
     assert mcp_catalog_runtime._CATALOG_TOOLS is None
@@ -180,7 +183,7 @@ def test_catalog_initialization_has_no_arbitrary_30_second_deadline():
     import inspect
     import mcp_host
 
-    source = inspect.getsource(mcp_catalog_runtime._initialize_catalog_once)
+    source = inspect.getsource(mcp_catalog_runtime.initialize_catalog_once)
     assert "wait_for" not in source
     assert "30" not in source
 
@@ -191,15 +194,15 @@ def test_provider_catalog_progress_is_part_of_canonical_startup(monkeypatch):
     snapshots = []
 
     async def cbm_catalog():
-        snapshots.append(mcp_catalog_runtime._catalog_diagnostics())
+        snapshots.append(mcp_catalog_runtime.catalog_diagnostics())
         return []
 
     async def graphiti_catalog():
-        snapshots.append(mcp_catalog_runtime._catalog_diagnostics())
+        snapshots.append(mcp_catalog_runtime.catalog_diagnostics())
         return []
 
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", cbm_catalog)
-    monkeypatch.setattr(mcp_graphiti_provider, "_graphiti_tools", graphiti_catalog)
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", cbm_catalog)
+    monkeypatch.setattr(mcp_graphiti_provider, "graphiti_tools", graphiti_catalog)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ())
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_UNAVAILABLE_FAMILIES", ())
@@ -233,15 +236,15 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     async def unavailable_cbm():
         raise RuntimeError("cbm_process_not_running")
 
-    monkeypatch.setattr(mcp_cbm_provider, "_cbm_tools", unavailable_cbm)
+    monkeypatch.setattr(mcp_cbm_provider, "cbm_tools", unavailable_cbm)
     monkeypatch.setattr(
         mcp_graphiti_provider,
-        "_graphiti_tools",
+        "graphiti_tools",
         lambda: asyncio.sleep(0, result=[]),
     )
     monkeypatch.setattr(
         mcp_cbm_provider,
-        "_close_cbm",
+        "close_cbm",
         lambda: closed.append(True),
     )
     monkeypatch.setattr(
@@ -253,7 +256,7 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_UNAVAILABLE_FAMILIES", ())
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_INITIALIZING_FAMILY", "liquidaity")
 
-    asyncio.run(mcp_catalog_runtime._initialize_catalog_once())
+    asyncio.run(mcp_catalog_runtime.initialize_catalog_once())
     tools = list(mcp_catalog_runtime._CATALOG_TOOLS or ())
 
     assert tools
@@ -264,7 +267,7 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
         "graphiti",
     )
     assert mcp_catalog_runtime._CATALOG_INITIALIZING_FAMILY is None
-    diagnostics = mcp_catalog_runtime._catalog_diagnostics()
+    diagnostics = mcp_catalog_runtime.catalog_diagnostics()
     assert diagnostics["catalogReady"] is True
     assert diagnostics["unavailableCatalogFamilies"] == ["cbm"]
     listed = asyncio.run(mcp_catalog_runtime.list_tools())
@@ -317,12 +320,12 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
         return None
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
-    monkeypatch.setattr(mcp_host, "HTTP_MCP_PORT", port)
+    monkeypatch.setattr(mcp_transport, "HTTP_MCP_PORT", port)
     monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
     monkeypatch.setattr(mcp_catalog_runtime, "_materialize_complete_catalog", slow_complete_catalog)
-    monkeypatch.setattr(mcp_graphiti_provider, "_close_graphiti", closed_graphiti)
-    monkeypatch.setattr(mcp_cbm_provider, "_start_cbm_client", no_cbm)
-    monkeypatch.setattr(mcp_cbm_provider, "_close_cbm", no_cbm)
+    monkeypatch.setattr(mcp_graphiti_provider, "close_graphiti", closed_graphiti)
+    monkeypatch.setattr(mcp_cbm_provider, "start_cbm_client", no_cbm)
+    monkeypatch.setattr(mcp_cbm_provider, "close_cbm", no_cbm)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", None)
@@ -386,9 +389,9 @@ def test_catalog_failure_is_truthful_and_unavailable(monkeypatch, capsys):
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", None)
 
-    asyncio.run(mcp_catalog_runtime._initialize_catalog_once())
+    asyncio.run(mcp_catalog_runtime.initialize_catalog_once())
 
-    diagnostics = mcp_catalog_runtime._catalog_diagnostics()
+    diagnostics = mcp_catalog_runtime.catalog_diagnostics()
     assert diagnostics["catalogState"] == "failed"
     assert diagnostics["state"] == "failed"
     assert diagnostics["catalogReady"] is False

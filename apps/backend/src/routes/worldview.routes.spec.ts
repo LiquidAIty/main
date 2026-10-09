@@ -3,13 +3,15 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createProjectWorldviewCapabilityStore,
-  createWorldviewActionChannel,
   createWorldviewInternalRouter,
   createWorldviewRouter,
-  resolveWorldviewGlobeUrl,
-  type ProjectWorldviewCapabilityStore,
 } from './worldview.routes';
+import { createWorldviewActionChannel } from './worldviewActionChannel';
+import {
+  createProjectWorldviewCapabilityStore,
+  type ProjectWorldviewCapabilityStore,
+} from './projectWorldviewCapabilities';
+import { resolveWorldviewGlobeUrl } from './worldviewRouteHandlers';
 
 const closers: Array<() => Promise<void>> = [];
 

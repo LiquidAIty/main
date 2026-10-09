@@ -8,11 +8,17 @@ from app.python_models import (
     agentgraph_query,
     agentgraph_run_observations,
     agentgraph_topology,
-    card_invocation,
-    card_runs,
+    card_invocation_preparation,
+    card_invocation_tools,
+    card_run_execution,
+    card_run_inputs,
+    card_run_preparation,
+    card_run_readback,
+    card_run_settlement,
     saved_card_contract,
     saved_cards,
 )
+from app.python_models.card_run_auto_model import AutoModelSelectionError
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +37,7 @@ def project_worldview_defaults_to_existing_availability(monkeypatch):
             "overrides": [],
         }
 
-    monkeypatch.setattr(card_invocation, "resolve_project_worldview", resolve)
+    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", resolve)
     monkeypatch.setattr(agentgraph_topology, "resolve_project_worldview", resolve)
 
 def _agent(card_id: str, **overrides):
@@ -59,7 +65,7 @@ def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
         "cbmQualifiedName": "symbol-one",
     }]
 
-    materialized = card_invocation.materialize_idf(
+    materialized = card_invocation_preparation.materialize_idf(
         stable={
             "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
             "instructions": "test instructions",
@@ -126,11 +132,11 @@ def test_scoped_run_read_checks_provider_conversation_before_output(monkeypatch,
     cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
     cursor.fetchone.return_value = {"run_id": "parent", "project_id": "p", "deck_id": "d",
                                    "card_id": "main", "final_result": "private output"}
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **kwargs: connection)
+    monkeypatch.setattr(card_run_readback, "connect_postgres", lambda **kwargs: connection)
     monkeypatch.setattr(saved_cards, "resolve_project_record", lambda *args: {"id": "p"})
     lineage = MagicMock(return_value=[{"run_id": "parent"}] if conversation_matches else [])
     monkeypatch.setattr(agentgraph_query, "execute_fixed_agentgraph_query", lineage)
-    result = card_runs.read_run({"projectId": "p", "deckId": "d", "runId": "parent",
+    result = card_run_readback.read_run({"projectId": "p", "deckId": "d", "runId": "parent",
                                    "conversationId": "selected-conversation"})
     if conversation_matches:
         assert result["run"]["conversationId"] == "selected-conversation"
@@ -161,7 +167,7 @@ def test_run_history_reads_only_the_outer_run_ledger_without_age_filtering(monke
             "state": "completed",
         },
     ]
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: connection)
+    monkeypatch.setattr(card_run_readback, "connect_postgres", lambda **_kwargs: connection)
     monkeypatch.setattr(saved_cards, "resolve_project_record", lambda *_args: {"id": "project-one"})
     monkeypatch.setattr(
         agentgraph_query,
@@ -169,7 +175,7 @@ def test_run_history_reads_only_the_outer_run_ledger_without_age_filtering(monke
         lambda *_args: pytest.fail("outer Run history must not depend on AGE"),
     )
 
-    result = card_runs.read_run_history({
+    result = card_run_readback.read_run_history({
         "projectId": "project-one",
         "deckId": "deck-one",
         "cardId": "card-one",
@@ -186,7 +192,7 @@ def test_run_history_reads_only_the_outer_run_ledger_without_age_filtering(monke
 @pytest.mark.parametrize("limit", [0, 21, True, "8"])
 def test_run_history_rejects_unbounded_limits(monkeypatch, limit):
     with pytest.raises(saved_card_contract.CardDomainError, match="run_history_limit_invalid"):
-        card_runs.read_run_history({
+        card_run_readback.read_run_history({
             "projectId": "project-one",
             "deckId": "deck-one",
             "cardId": "card-one",
@@ -206,7 +212,7 @@ def test_card_rejoin_reads_only_the_outer_run_ledger_without_age_filtering(monke
         "card_id": "card-one",
         "state": "completed",
     }
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: connection)
+    monkeypatch.setattr(card_run_readback, "connect_postgres", lambda **_kwargs: connection)
     monkeypatch.setattr(
         saved_cards,
         "resolve_project_record",
@@ -218,7 +224,7 @@ def test_card_rejoin_reads_only_the_outer_run_ledger_without_age_filtering(monke
         lambda *_args: pytest.fail("Card Run read must not depend on AGE"),
     )
 
-    result = card_runs.read_run({
+    result = card_run_readback.read_run({
         "projectId": "project-one",
         "deckId": "deck-one",
         "cardId": "card-one",
@@ -237,21 +243,24 @@ def test_new_run_fails_closed_when_root_input_files_cannot_persist(
     })
     terminal: list[dict] = []
     monkeypatch.setattr(
-        card_invocation, "prepare_run_invocation",
+        card_invocation_preparation, "prepare_run_invocation",
         lambda _payload, **_kwargs: prepared,
     )
-    monkeypatch.setattr(card_runs, "_insert_run",
+    monkeypatch.setattr(card_run_preparation, "_insert_run",
         lambda *_args, **_kwargs: ("run-one", "correlation-one", True),
     )
-    monkeypatch.setattr(card_runs, "_retain_run_idf",
+    monkeypatch.setattr(card_run_inputs, "_retain_run_idf",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             saved_card_contract.CardDomainError("input_files_write_failed")
         ),
     )
-    monkeypatch.setattr(card_runs, "finish_run", lambda payload: terminal.append(payload) or {})
+    monkeypatch.setattr(card_run_settlement, "finish_run", lambda payload: terminal.append(payload) or {})
 
     with pytest.raises(saved_card_contract.CardDomainError, match="input_files_write_failed"):
-        card_runs.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
+        card_run_preparation.begin_run({
+            "runId": "run-one", "correlationId": "correlation-one",
+            "assignment": "test task",
+        })
     assert terminal == [{
         "runId": "run-one",
         "state": "failed",
@@ -266,7 +275,7 @@ def test_mag_one_participant_validation_still_fails_before_run_creation(
         "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
     })
     monkeypatch.setattr(
-        card_invocation, "prepare_run_invocation",
+        card_invocation_preparation, "prepare_run_invocation",
         lambda _payload, **_kwargs: prepared,
     )
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {
@@ -281,7 +290,7 @@ def test_mag_one_participant_validation_still_fails_before_run_creation(
             "edges": [],
         },
     })
-    monkeypatch.setattr(card_runs, "_insert_run",
+    monkeypatch.setattr(card_run_preparation, "_insert_run",
         lambda *_args, **_kwargs: pytest.fail("participant validation created a Run"),
     )
 
@@ -289,7 +298,10 @@ def test_mag_one_participant_validation_still_fails_before_run_creation(
         saved_card_contract.CardDomainError,
         match="magnetic_taskgraph_no_connected_workers",
     ):
-        card_runs.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
+        card_run_preparation.begin_run({
+            "runId": "run-one", "correlationId": "correlation-one",
+            "assignment": "test task",
+        })
 
 def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monkeypatch):
     prepared = _prepared_grounded_runtime({
@@ -304,7 +316,7 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
         worker["_cardRevision"] = 1
         worker["_cardRevisionSha256"] = f"{i:064x}"
     monkeypatch.setattr(
-        card_invocation, "prepare_run_invocation",
+        card_invocation_preparation, "prepare_run_invocation",
         lambda _payload, **_kwargs: prepared,
     )
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {"deck": {
@@ -313,10 +325,13 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
                    "target": worker["id"] if i % 2 else "card-one",
                    "edgeType": "magentic_option"} for i, worker in enumerate(workers)],
     }})
-    monkeypatch.setattr(card_runs, "_insert_run", lambda *a, **kw: ("run-one", "correlation-one", True))
-    monkeypatch.setattr(card_runs, "_retain_required_run_idf", _fake_retain_idf)
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_preparation_complete", lambda *a, **kw: True)
-    result = card_runs.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
+    monkeypatch.setattr(card_run_preparation, "_insert_run", lambda *a, **kw: ("run-one", "correlation-one", True))
+    monkeypatch.setattr(card_run_inputs, "retain_required_run_idf", _fake_retain_idf)
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_preparation_complete", lambda *a, **kw: True)
+    result = card_run_preparation.begin_run({
+        "runId": "run-one", "correlationId": "correlation-one",
+        "assignment": "test task",
+    })
     assert result["magneticTaskGraph"]["workers"] == [
         {
             "cardId": worker["id"],
@@ -347,7 +362,7 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
     }
 
 def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None:
-    projected = card_runs._run_projection({
+    projected = card_run_readback.run_projection({
         "run_id": "run-one",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -376,12 +391,12 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
     assert projected["autoToolsDecision"] == {"status": "selected"}
     assert projected["autoModelDecision"] == {"status": "selected"}
     assert projected["hermesStatus"] == "ready"
-    legacy = card_runs._run_projection({"run_id": "old", "hermes_phase": "queued"})
+    legacy = card_run_readback.run_projection({"run_id": "old", "hermes_phase": "queued"})
     assert legacy["hermesStatus"] is None
 
 
 def test_run_projection_does_not_present_requested_model_as_effective() -> None:
-    projected = card_runs._run_projection({
+    projected = card_run_readback.run_projection({
         "run_id": "pending-run",
         "provider": "openai",
         "provider_model_id": "requested-model",
@@ -435,14 +450,14 @@ def test_run_starts_only_from_exact_correlated_submission_evidence(
             return Cursor()
 
     observed: list[dict] = []
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_run_execution, "connect_postgres", lambda **_kwargs: Connection())
     monkeypatch.setattr(
         agentgraph_run_observations,
-        "_observe_run_execution_started",
+        "observe_run_execution_started",
         lambda **kwargs: observed.append(kwargs) or True,
     )
 
-    result = card_runs.start_run({
+    result = card_run_execution.start_run({
         "runId": "run-one",
         "correlationId": "run-one",
         "submissionId": "run-one",
@@ -492,10 +507,10 @@ def test_run_progress_casts_numeric_hermes_run_id_to_persisted_text(
         def cursor(self, **_kwargs):
             return Cursor()
 
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_progress", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(card_run_execution, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_progress", lambda *_args, **_kwargs: True)
 
-    result = card_runs.update_run_progress({
+    result = card_run_execution.update_run_progress({
         "runId": "run-one",
         "hermesRootId": "t_retained_root",
         "hermesRunId": 18,
@@ -544,12 +559,12 @@ def test_run_progress_refuses_to_rebind_a_magnetic_root(monkeypatch: pytest.Monk
         def cursor(self, **_kwargs):
             return Cursor()
 
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_progress",
+    monkeypatch.setattr(card_run_execution, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_progress",
         lambda *_args, **_kwargs: pytest.fail("rejected rebind wrote telemetry"),
     )
 
-    assert card_runs.update_run_progress({
+    assert card_run_execution.update_run_progress({
         "runId": "run-one",
         "hermesRootId": "t_conflicting_root",
         "hermesStatus": "running",
@@ -562,10 +577,11 @@ def test_run_progress_refuses_to_rebind_a_magnetic_root(monkeypatch: pytest.Monk
     }
 
 @pytest.mark.parametrize(
-    ("function", "payload", "error"),
+    ("owner", "function", "payload", "error"),
     [
         (
-            card_runs.update_run_progress,
+            card_run_execution,
+            card_run_execution.update_run_progress,
             {
                 "runId": "run-one", "hermesRootId": "root-one",
                 "hermesStatus": "running", "providerTotalTokens": True,
@@ -573,7 +589,8 @@ def test_run_progress_refuses_to_rebind_a_magnetic_root(monkeypatch: pytest.Monk
             "run_provider_total_tokens_invalid",
         ),
         (
-            card_runs.finish_run,
+            card_run_settlement,
+            card_run_settlement.finish_run,
             {
                 "runId": "run-one", "state": "failed",
                 "costStatus": "unavailable",
@@ -584,12 +601,13 @@ def test_run_progress_refuses_to_rebind_a_magnetic_root(monkeypatch: pytest.Monk
 )
 def test_run_usage_extension_rejects_coerced_or_unknown_values(
     monkeypatch: pytest.MonkeyPatch,
+    owner,
     function,
     payload,
     error,
 ) -> None:
     monkeypatch.setattr(
-        card_runs,
+        owner,
         "connect_postgres",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("invalid metrics must fail before storage")
@@ -646,10 +664,10 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
         def cursor(self, **_kwargs):
             return Cursor()
 
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_finish", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(card_run_settlement, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_finish", lambda *_args, **_kwargs: True)
 
-    result = card_runs.finish_run({
+    result = card_run_settlement.finish_run({
         "runId": "run-one",
         "state": "completed",
         "finalResult": "Exact Gateway answer",
@@ -718,10 +736,10 @@ def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_sess
         def cursor(self, **_kwargs):
             return Cursor()
 
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_finish", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(card_run_settlement, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_finish", lambda *_args, **_kwargs: True)
 
-    result = card_runs.finish_run({
+    result = card_run_settlement.finish_run({
         "runId": "run-mag-one",
         "state": "completed",
         "finalResult": "Exact Hermes synthesis",
@@ -783,13 +801,13 @@ def test_finish_run_reconciles_one_hash_verified_result_without_rewriting_run_re
         def cursor(self, **_kwargs):
             return Cursor()
 
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_result_ready", lambda *_args: True)
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_finish",
+    monkeypatch.setattr(card_run_settlement, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_result_ready", lambda *_args: True)
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_finish",
         lambda *_args, **_kwargs: pytest.fail("result recovery rewrote terminal Run telemetry"),
     )
 
-    result = card_runs.finish_run({
+    result = card_run_settlement.finish_run({
         "runId": "run-one",
         "state": "completed",
         "finalResult": final_result,
@@ -814,7 +832,7 @@ def test_finish_run_result_reconciliation_rejects_wrong_hash() -> None:
         saved_card_contract.CardDomainError,
         match="run_result_reconciliation_hash_mismatch",
     ):
-        card_runs.finish_run({
+        card_run_settlement.finish_run({
             "runId": "run-one",
             "state": "completed",
             "finalResult": "Exact provider result.",
@@ -850,14 +868,16 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
         },
     )
     materializations: list[str] = []
-    real_materialize = card_invocation.materialize_idf
+    real_materialize = card_invocation_preparation.materialize_idf
 
     def count_materialization(**kwargs):
         materializations.append(str(kwargs["variable"]["task"]))
         return real_materialize(**kwargs)
 
-    monkeypatch.setattr(card_invocation, "materialize_idf", count_materialization)
-    prepared = card_invocation.prepare_main_chat({
+    monkeypatch.setattr(
+        card_invocation_preparation, "materialize_idf", count_materialization,
+    )
+    prepared = card_invocation_preparation.prepare_main_chat({
         "projectId": "project-one",
         "deckId": "deck-one",
         "message": "Help me prepare work for another agent.",
@@ -874,16 +894,16 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert prepared["cardIdentity"] == {"cardId": "main", "title": "main"}
     assert materializations == []
     inserted: dict[str, object] = {}
-    monkeypatch.setattr(card_runs, "_insert_run",
+    monkeypatch.setattr(card_run_preparation, "_insert_run",
         lambda value, **kwargs: (
             inserted.update({"prepared": value, **kwargs})
             or (kwargs["run_id"], kwargs["correlation_id"], True)
         ),
     )
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_preparation_complete", lambda *args, **kwargs: True)
-    monkeypatch.setattr(card_runs, "_record_run_input_artifact", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_preparation_complete", lambda *args, **kwargs: True)
+    monkeypatch.setattr(card_run_inputs, "_record_run_input_artifact", lambda *_args, **_kwargs: None)
     monkeypatch.setenv("LIQUIDAITY_RUN_INPUT_ROOT", str(tmp_path / "run-inputs"))
-    begun = card_runs.begin_main_chat_run({
+    begun = card_run_preparation.begin_main_chat_run({
         "projectId": "project-one",
         "deckId": "deck-one",
         "message": "Help me prepare work for another agent.",
@@ -919,12 +939,12 @@ def test_shared_conversation_task_names_the_selected_saved_card() -> None:
             "content": "BUILDER_DIRECT_OK",
         },
     ]
-    rendered = card_runs.shared_conversation_task(current, context, "Builder")
+    rendered = card_run_preparation.shared_conversation_task(current, context, "Builder")
     assert rendered.startswith("## Shared conversation before this Builder turn")
     assert "You -> Builder:\n@builder Reply exactly BUILDER_DIRECT_OK" in rendered
     assert "Builder:\nBUILDER_DIRECT_OK" in rendered
     assert rendered.endswith("## Current user message to Builder\n\nWho just replied to me?")
-    assert card_runs.shared_conversation_task(current, [], "Research") == current
+    assert card_run_preparation.shared_conversation_task(current, [], "Research") == current
 
 def test_begin_run_renders_shared_conversation_before_selected_card_idf(
     monkeypatch: pytest.MonkeyPatch,
@@ -940,14 +960,16 @@ def test_begin_run_renders_shared_conversation_before_selected_card_idf(
         captured["selectionRequest"] = selection_request
         return prepared
 
-    monkeypatch.setattr(card_invocation, "prepare_run_invocation", prepare)
-    monkeypatch.setattr(card_runs, "_insert_run",
+    monkeypatch.setattr(
+        card_invocation_preparation, "prepare_run_invocation", prepare,
+    )
+    monkeypatch.setattr(card_run_preparation, "_insert_run",
         lambda *_args, **_kwargs: ("run-builder", "run-builder", True),
     )
-    monkeypatch.setattr(card_runs, "_retain_required_run_idf", _fake_retain_idf)
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_preparation_complete", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(card_run_inputs, "retain_required_run_idf", _fake_retain_idf)
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_preparation_complete", lambda *_args, **_kwargs: True)
 
-    card_runs.begin_run({
+    card_run_preparation.begin_run({
         "projectId": "project-one",
         "deckId": "deck-one",
         "cardId": "builder",
@@ -1022,12 +1044,12 @@ def test_accepted_run_request_is_pending_scoped_and_has_no_hermes_run(
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {
         "projectId": "project-one", "deck": {"nodes": [card], "edges": []},
     })
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "_observe_run_acceptance",
+    monkeypatch.setattr(card_run_preparation, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_acceptance",
         lambda **kwargs: observed.append(kwargs) or True,
     )
 
-    result = card_runs.accept_run_request({
+    result = card_run_preparation.accept_run_request({
         "projectId": "project-one",
         "deckId": "deck-one",
         "cardId": "card-one",
@@ -1058,12 +1080,12 @@ def test_run_acceptance_rejects_a_changed_expected_card_revision_before_insert(
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_args: {
         "projectId": "project-one", "deck": {"nodes": [card], "edges": []},
     })
-    monkeypatch.setattr(card_runs, "connect_postgres",
+    monkeypatch.setattr(card_run_preparation, "connect_postgres",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not insert")),
     )
 
     with pytest.raises(saved_card_contract.CardDomainError, match="card_revision_changed"):
-        card_runs.accept_run_request({
+        card_run_preparation.accept_run_request({
             "projectId": "project-one",
             "deckId": "deck-one",
             "cardId": "card-one",
@@ -1118,12 +1140,12 @@ def test_beginning_an_accepted_run_uses_only_run_and_correlation_identity(
         def cursor(self, **_kwargs):
             return Cursor()
 
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_run_preparation, "connect_postgres", lambda **_kwargs: Connection())
     prepared = _prepared_grounded_runtime({
         "kind": "hermes", "mode": "main", "profile": "liquidaity-main",
     })
 
-    assert card_runs._insert_run(
+    assert card_run_preparation._insert_run(
         prepared,
         run_id="request-one",
         correlation_id="request-one",
@@ -1192,13 +1214,13 @@ def test_idempotent_run_rejoin_requires_exact_selection_decisions(
         "selectedToolIds": [],
     }
     prepared["autoModelDecision"] = None
-    monkeypatch.setattr(card_runs, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_run_preparation, "connect_postgres", lambda **_kwargs: Connection())
 
     with pytest.raises(
         saved_card_contract.CardDomainError,
         match="run_selection_decision_conflict",
     ):
-        card_runs._insert_run(
+        card_run_preparation._insert_run(
             prepared,
             run_id="request-one",
             correlation_id="request-one",
@@ -1214,13 +1236,13 @@ def test_begin_run_preserves_source_failure_after_settling_accepted_attempt(
         "cardRevisionId": "revision-one", "acceptedAt": "2026-10-01T20:00:00+00:00",
         "preparationStartedAt": "2026-10-01T20:00:00.001+00:00",
     }
-    monkeypatch.setattr(card_runs, "accept_run_request", lambda _payload: accepted)
-    monkeypatch.setattr(card_runs, "_begin_accepted_run",
+    monkeypatch.setattr(card_run_preparation, "accept_run_request", lambda _payload: accepted)
+    monkeypatch.setattr(card_run_preparation, "_begin_accepted_run",
         lambda _payload: (_ for _ in ()).throw(
             saved_card_contract.CardDomainError("configured_tool_unknown:provider.tool")
         ),
     )
-    monkeypatch.setattr(card_runs, "_fail_accepted_run_preparation",
+    monkeypatch.setattr(card_run_preparation, "_fail_accepted_run_preparation",
         lambda snapshot, payload: settled.append({
             "accepted": snapshot, "payload": payload,
         }) or {"ok": True},
@@ -1235,7 +1257,7 @@ def test_begin_run_preserves_source_failure_after_settling_accepted_attempt(
         saved_card_contract.CardDomainError,
         match="configured_tool_unknown:provider.tool",
     ):
-        card_runs.begin_run(payload)
+        card_run_preparation.begin_run(payload)
 
     assert settled == [{
         "accepted": accepted,
@@ -1266,7 +1288,7 @@ def test_auto_model_preparation_failure_persists_the_typed_bounded_decision(
         "decisionId": None,
         "errorCode": "auto_model_compatible_candidates_unavailable",
     }
-    error = card_runs.AutoModelSelectionError(model_decision)
+    error = AutoModelSelectionError(model_decision)
     error.auto_tools_decision = {
         "schemaVersion": "auto-tools-decision.v1",
         "status": "selected",
@@ -1276,14 +1298,14 @@ def test_auto_model_preparation_failure_persists_the_typed_bounded_decision(
         "decisionId": None,
         "errorCode": None,
     }
-    monkeypatch.setattr(card_runs, "accept_run_request", lambda _payload: accepted)
+    monkeypatch.setattr(card_run_preparation, "accept_run_request", lambda _payload: accepted)
     monkeypatch.setattr(
-        card_runs,
+        card_run_preparation,
         "_begin_accepted_run",
         lambda _payload: (_ for _ in ()).throw(error),
     )
     monkeypatch.setattr(
-        card_runs,
+        card_run_preparation,
         "_fail_accepted_run_preparation",
         lambda _accepted, payload: settled.append(payload) or {"ok": True},
     )
@@ -1294,10 +1316,10 @@ def test_auto_model_preparation_failure_persists_the_typed_bounded_decision(
     }
 
     with pytest.raises(
-        card_runs.AutoModelSelectionError,
+        AutoModelSelectionError,
         match="auto_model_compatible_candidates_unavailable",
     ):
-        card_runs.begin_run(payload)
+        card_run_preparation.begin_run(payload)
 
     assert settled[0]["autoModelDecision"] == model_decision
     assert settled[0]["autoToolsDecision"] == error.auto_tools_decision

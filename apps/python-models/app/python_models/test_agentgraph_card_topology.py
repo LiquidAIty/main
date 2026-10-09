@@ -9,7 +9,8 @@ from app.python_models import (
     agentgraph_query,
     agentgraph_run_observations,
     agentgraph_topology,
-    card_invocation,
+    card_invocation_preparation,
+    card_invocation_tools,
     saved_card_contract,
     saved_cards,
 )
@@ -31,7 +32,7 @@ def project_worldview_defaults_to_existing_availability(monkeypatch):
             "overrides": [],
         }
 
-    monkeypatch.setattr(card_invocation, "resolve_project_worldview", resolve)
+    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", resolve)
     monkeypatch.setattr(agentgraph_topology, "resolve_project_worldview", resolve)
 
 def _agent(card_id: str, **overrides):
@@ -79,8 +80,8 @@ def test_one_flow_connection_grants_only_outbound_main_bot_authority():
     agentgraph_topology.validate_card_topology(cards, edges)
     agentgraph_topology.validate_card_topology(cards, edges)
     indexed = {card['id']: card for card in cards}
-    assert [target['cardId'] for target in agentgraph_topology._direct_card_targets('main', indexed, edges)] == ['helper']
-    assert agentgraph_topology._direct_card_targets('helper', indexed, edges) == []
+    assert [target['cardId'] for target in agentgraph_topology.direct_orchestrator_targets('main', indexed, edges)] == ['helper']
+    assert agentgraph_topology.direct_orchestrator_targets('helper', indexed, edges) == []
     with pytest.raises(saved_card_contract.CardDomainError, match='card_connection_controller_required:reverse'):
         agentgraph_topology.validate_card_topology(cards, [{
             'id': 'reverse', 'source': 'helper', 'target': 'main', 'edgeType': 'flow',
@@ -109,10 +110,10 @@ def test_one_card_can_be_an_independent_main_target_and_magnetic_worker():
         [main, magnetic, team], [orange, blue],
     )
     indexed = {card["id"]: card for card in (main, magnetic, team)}
-    assert [target["cardId"] for target in agentgraph_topology._direct_card_targets(
+    assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "main", indexed, [orange, blue],
     )] == ["card_team"]
-    assert [target["cardId"] for target in agentgraph_topology._connected_hermes_card_targets(
+    assert [target["cardId"] for target in agentgraph_topology.connected_hermes_card_targets(
         "magnetic", indexed, [orange, blue], edge_type="magentic_option", strict=False,
     )] == ["card_team"]
 
@@ -136,7 +137,7 @@ def test_team_worker_projection_uses_stable_identity_and_saved_parent_model():
         card["_cardRevisionId"] = f"revision-{card['id']}"
     cards = {card["id"]: card for card in (magnetic, team)}
 
-    assert agentgraph_topology._connected_hermes_card_targets(
+    assert agentgraph_topology.connected_hermes_card_targets(
         "magnetic",
         cards,
         [{"source": "card_team", "target": "magnetic", "edgeType": "magentic_option"}],
@@ -181,10 +182,10 @@ def test_saved_orchestrator_flag_grants_non_main_outbound_bot_authority():
 
     agentgraph_topology.validate_card_topology(cards, edges)
     indexed = {card["id"]: card for card in cards}
-    assert [target["cardId"] for target in agentgraph_topology._direct_card_targets(
+    assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "main", indexed, edges,
     )] == ["signal"]
-    assert [target["cardId"] for target in agentgraph_topology._direct_card_targets(
+    assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "signal", indexed, edges,
     )] == ["worldsignals"]
 
@@ -233,10 +234,10 @@ def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_
     agentgraph_topology.validate_card_topology(cards, edges)
     assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(worldview) is True
     indexed = {card["id"]: card for card in cards}
-    assert [target["cardId"] for target in agentgraph_topology._direct_card_targets(
+    assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "main", indexed, edges,
     )] == ["worldview"]
-    assert [target["cardId"] for target in agentgraph_topology._direct_card_targets(
+    assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets(
         "worldview", indexed, edges,
     )] == ["worldsignals"]
 
@@ -252,12 +253,12 @@ def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
     cards = {card["id"]: card for card in nodes}
     before = json.dumps(nodes, sort_keys=True)
     agentgraph_topology.validate_card_topology(nodes, edges)
-    assert [target["cardId"] for target in agentgraph_topology._direct_card_targets("main", cards, edges)] == ["builder", "graph"]
-    assert agentgraph_topology._direct_card_targets("builder", cards, edges) == []
+    assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets("main", cards, edges)] == ["builder", "graph"]
+    assert agentgraph_topology.direct_orchestrator_targets("builder", cards, edges) == []
     monkeypatch.setattr(saved_cards, "load_deck", lambda *_: {
         "projectId": "p", "deck": {"nodes": nodes, "edges": edges},
     })
-    received = card_invocation._prepare_invocation({
+    received = card_invocation_preparation._prepare_invocation({
         "projectId": "p", "deckId": "d", "cardId": "builder", "senderCardId": "main", "assignment": "Inspect",
     })
     assert received["_callConfig"]["runtime"] == receivers[0]["runtime"]
@@ -268,23 +269,23 @@ def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
         invalid = [{**edges[0], **mutation}]
         with pytest.raises(saved_card_contract.CardDomainError, match="controller_required"):
             agentgraph_topology.validate_card_topology(nodes, invalid)
-    assert [target["cardId"] for target in agentgraph_topology._direct_card_targets("main", cards, edges)] == [
+    assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets("main", cards, edges)] == [
         "builder", "graph",
     ]
     agentgraph_topology.validate_card_topology(nodes, edges)
     assert len(edges) == 2
     assert list(cards) == ["main", "builder", "graph", "disconnected"]
-    assert card_invocation._prepare_invocation({
+    assert card_invocation_preparation._prepare_invocation({
         "projectId": "p", "deckId": "d", "cardId": "builder", "senderCardId": "main", "assignment": "Allowed",
     })["cardIdentity"]["cardId"] == "builder"
     with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation._prepare_invocation({
+        card_invocation_preparation._prepare_invocation({
             "projectId": "p", "deckId": "d", "cardId": "main",
             "senderCardId": "builder", "assignment": "Reverse is not authorized",
         })
 
 
-def test_direct_card_targets_allow_saved_hermes_cards_including_magnetic() -> None:
+def test_direct_orchestrator_targets_allow_saved_hermes_cards_including_magnetic() -> None:
     cards = {
         "parent": _main_bot("parent", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
                             runtimeOptions={"orchestrator": False}),
@@ -315,7 +316,7 @@ def test_direct_card_targets_allow_saved_hermes_cards_including_magnetic() -> No
         {"source": "parent", "target": "enabled", "edgeType": "magentic_option"},
         {"source": "parent", "target": "enabled", "edgeType": "flow", "enabled": False},
     ]
-    assert agentgraph_topology._direct_card_targets("parent", cards, edges) == [
+    assert agentgraph_topology.direct_orchestrator_targets("parent", cards, edges) == [
         {**_expected_bot_target("enabled"), "cardRevisionId": ""},
         {
             "cardId": "presentation-attached",
@@ -342,7 +343,7 @@ def test_disabled_missing_or_magnetic_flow_target_projection_is_exact() -> None:
         "child", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"}
     )
     disabled["runtimeOptions"] = {**disabled["runtimeOptions"], "enabled": False}
-    assert agentgraph_topology._direct_card_targets(
+    assert agentgraph_topology.direct_orchestrator_targets(
         "parent", {"parent": parent, "child": disabled}, edge
     ) == []
 
@@ -350,7 +351,7 @@ def test_disabled_missing_or_magnetic_flow_target_projection_is_exact() -> None:
         "child",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "child"},
     )
-    assert agentgraph_topology._direct_card_targets(
+    assert agentgraph_topology.direct_orchestrator_targets(
         "parent", {"parent": parent, "child": magnetic}, edge
     ) == [{
         "cardId": "child",
@@ -359,7 +360,7 @@ def test_disabled_missing_or_magnetic_flow_target_projection_is_exact() -> None:
         "description": "",
         "cardRevisionId": "",
     }]
-    assert agentgraph_topology._direct_card_targets(
+    assert agentgraph_topology.direct_orchestrator_targets(
         "parent",
         {"parent": parent},
         [{"source": "parent", "target": "missing", "edgeType": "flow"}],
@@ -414,7 +415,7 @@ def test_connected_magnetic_taskgraph_worker_projects_exact_saved_card_binding()
         "edgeType": "magentic_option",
     }]
 
-    assert agentgraph_topology._connected_hermes_card_targets(
+    assert agentgraph_topology.connected_hermes_card_targets(
         "mag-one", cards, edges, edge_type="magentic_option", strict=True,
     ) == [{
         "cardId": "helper",
@@ -431,7 +432,7 @@ def test_connected_magnetic_taskgraph_worker_projects_exact_saved_card_binding()
         saved_card_contract.CardDomainError,
         match="magnetic_taskgraph_worker_runtime_invalid",
     ):
-        agentgraph_topology._connected_hermes_card_targets(
+        agentgraph_topology.connected_hermes_card_targets(
             "mag-one", cards, edges, edge_type="magentic_option", strict=True,
         )
 
@@ -472,7 +473,7 @@ def test_age_run_preparation_records_identity_without_claiming_execution_or_tool
             "kind": "hermes", "mode": "main", "profile": "main",
         }}},
     }
-    assert agentgraph_run_observations._observe_run_preparation_complete(
+    assert agentgraph_run_observations.observe_run_preparation_complete(
         prepared,
         {
             "acceptedAt": "2026-10-01T20:00:00.000Z",
@@ -505,7 +506,7 @@ def test_age_run_preparation_records_identity_without_claiming_execution_or_tool
 
     statements.clear()
     started_at = datetime(2026, 10, 1, 20, 0, 1, tzinfo=timezone.utc)
-    assert agentgraph_run_observations._observe_run_execution_started(
+    assert agentgraph_run_observations.observe_run_execution_started(
         run_id="run-one",
         submission_id="run-one",
         hermes_session_id="stored-main",
@@ -520,12 +521,12 @@ def test_age_run_preparation_records_identity_without_claiming_execution_or_tool
     }
 
     statements.clear()
-    assert agentgraph_run_observations._observe_run_finish("run-one", "completed") is True
+    assert agentgraph_run_observations.observe_run_finish("run-one", "completed") is True
     assert len(statements) == 1
     assert "SET run.state=$state" in statements[0][0]
 
     statements.clear()
-    assert agentgraph_run_observations._observe_artifact(
+    assert agentgraph_run_observations.observe_artifact(
         "run-one",
         "artifact-one",
         "report",
@@ -561,7 +562,7 @@ def test_run_finish_links_hermes_identity_to_the_same_observed_request(
         lambda _cursor, query, params, _columns: statements.append((query, params)) or [],
     )
 
-    assert agentgraph_run_observations._observe_run_finish("request-one", "failed", {
+    assert agentgraph_run_observations.observe_run_finish("request-one", "failed", {
         "providerThreadRef": "provider-root-one",
         "providerTurnRef": "provider-run-one",
         "errorCode": "provider_failure",

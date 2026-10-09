@@ -46,22 +46,9 @@ def _registered_tool_catalog():
     compatibility surface alongside them.
     """
 
-    from engraphis.mcp_server import smart_mcp
-    from mcp.types import Tool as McpTool
+    from engraphis.mcp_server import smart_mcp, smart_tool_catalog
 
-    def public_tools(server):
-        return [McpTool(
-            name=tool.name,
-            title=tool.title,
-            description=tool.description,
-            inputSchema=tool.parameters,
-            outputSchema=tool.output_schema,
-            annotations=tool.annotations,
-            icons=tool.icons,
-            _meta=tool.meta,
-        ) for tool in server._tool_manager.list_tools()]
-
-    return {tool.name: (smart_mcp, tool) for tool in public_tools(smart_mcp)}
+    return {tool.name: (smart_mcp, tool) for tool in smart_tool_catalog()}
 
 
 async def _tool_catalog():

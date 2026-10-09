@@ -15,11 +15,16 @@ visible Main or addressed-Card message
   → POST /api/shared-chat/turn
   → sharedChatTurn.ts
   → savedCardAuthority.ts              exact Card, revision, Project and topology authority
-  → savedCardRun.ts                    Python-rails Run preparation and settlement transport
+  → savedCardRunLedger.ts              Python-rails Run preparation and settlement transport
   → /domain/main/runs/begin or /domain/runs/begin
-  → card_invocation.py                 exact saved configuration + transient input
+  → card_invocation_authority.py       exact saved Card and sender authority
+  → card_invocation_tools.py           live granted tool and Script presentation
+  → card_invocation_preparation.py     transient graph selection + canonical IDF preparation
   → idf.py::materialize_idf            writes and reloads the one canonical in.idf
-  → hermesCardSession.ts               materializes the Card profile and binds the Project conversation
+  → savedCardProfileProvisioning.ts    creates only a missing exact saved profile through Hermes
+  → profileMaterialization.ts          applies and reads back Card-owned profile configuration
+  → hermesCardSession.ts               binds the Project conversation to that reusable profile
+  → savedCardHermesTurn.ts             submits and correlates the exact Hermes turn
   → HermesLatest prompt.submit         one correlated submission on the returned live session_id
   → Hermes events                      actual response, tool calls, usage, failure and completion
   → Python-rails Run settlement
@@ -33,7 +38,9 @@ Other literal doors:
 - `/api/card-terminals/.../open` resolves the exact saved Card session and returns HermesLatest's
   existing PTY WebSocket attachment.
 - `run_mag_one` prepares the saved Magnetic Card and submits its bounded root through
-  `magnetic_taskgraph.py`; Hermes owns child tasks, attempts, assignment, retries and synthesis.
+  `magnetic_taskgraph_submission.py`; `magnetic_taskgraph_authority.py` validates the saved
+  profiles/workers and `magnetic_taskgraph_readback.py` projects status. Hermes owns child tasks,
+  attempts, assignment, retries and synthesis.
 
 ## Tool boundary
 
