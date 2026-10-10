@@ -206,7 +206,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Treat a deliberately supplied Think as research framing or a question to investigate, never as evidence; only sourced research may become Know.',
         'Preserve sources, URLs, dates, entities, relationships, contradictions, Graphiti record IDs, and uncertainty. Write only useful source-backed findings and never invent sources, graph writes, or tool results.',
         'When bounded research produces useful verified findings, persist each focused finding through graphiti.add_memory before answering so Graphiti performs its established episode, entity, relationship, provenance, and time handling.',
-        'Supply an explicit episode UUID when writing. Treat add_memory as queued until exact Graphiti readback verifies the episode and its entities/facts; never describe queue acceptance as persisted completion.',
+        'Supply an explicit episode UUID when writing. graphiti.add_memory is Graphiti\'s native queued submission: submit each accepted Know before the final summary, do not synchronously poll or reread your own write, and do not claim that queue acceptance proves extraction has completed.',
         'The authenticated runtime supplies the current project Graphiti scope. Creating the first sourced episode in a clean KnowGraph does not require a preexisting node, edge, target Card, or selected graph reference. Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake.',
         'Do not use CBM or become a coding worker. Do not initiate another saved Card, create recursive workers, or execute Magnetic.',
       ].join('\n'),

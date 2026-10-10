@@ -113,6 +113,8 @@ describe('requested initial Card topology', () => {
     expect(knowGraph?.prompt).toContain(
       'Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake',
     );
+    expect(knowGraph?.prompt).toContain('do not synchronously poll or reread your own write');
+    expect(knowGraph?.prompt).not.toContain('exact Graphiti readback verifies');
   });
 
   it('seeds only Builder with the two fixed saved-specialist tools', () => {
