@@ -10,6 +10,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+
 class MagneticTaskGraphError(RuntimeError):
     pass
 

@@ -301,24 +301,6 @@ def observe_run_preparation_complete(
         return False
 
 
-def observe_run_result_ready(run_id: str) -> bool:
-    try:
-        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            agentgraph_query.execute_fixed_agentgraph_query(
-                cursor,
-                """
-                MATCH (run:Run {runId: $runId})
-                SET run.resultReady=true
-                RETURN properties(run)
-                """,
-                {"runId": run_id},
-                "value agtype",
-            )
-        return True
-    except Exception:
-        return False
-
-
 def observe_run_finish(
     run_id: str,
     state: str,

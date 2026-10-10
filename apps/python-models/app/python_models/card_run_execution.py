@@ -158,11 +158,7 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
                 WHEN %s THEN COALESCE(run.started_at, NOW())
                 ELSE run.started_at
               END,
-              provider_thread_ref=CASE
-                WHEN run.runtime_mode='magentic_one'
-                  THEN COALESCE(run.provider_thread_ref, %s)
-                ELSE COALESCE(%s, run.provider_thread_ref)
-              END,
+              provider_thread_ref=COALESCE(run.provider_thread_ref, %s),
               provider_turn_ref=COALESCE(%s::text, provider_turn_ref),
               hermes_phase=%s,
               hermes_task_completed_count=COALESCE(%s, hermes_task_completed_count),
@@ -180,20 +176,16 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
             WHERE run.run_id=%s
               AND revision.revision_id=run.target_card_revision_id
               AND run.state IN ('pending','running')
-              AND (
-                run.runtime_mode!='magentic_one'
-                OR (
-                  run.runtime_kind='hermes'
-                  AND revision.card_id='card_magentic'
-                  AND revision.runtime_profile='card_magentic'
-                  AND (run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s)
-                )
-              )
+              AND (run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s)
+              AND run.runtime_kind='hermes'
+              AND run.runtime_mode='magentic_one'
+              AND revision.card_id='card_magentic'
+              AND revision.runtime_profile='card_magentic'
             RETURNING run.provider_thread_ref
             """,
             (
                 execution_active, execution_active,
-                hermes_root_id, hermes_root_id,
+                hermes_root_id,
                 payload.get("hermesRunId"), hermes_status,
                 counts["tasksCompleted"], counts["tasksTotal"],
                 counts["activeWorkers"], counts["toolCallCount"],

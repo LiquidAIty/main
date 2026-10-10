@@ -361,39 +361,6 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
         "runtimeOptions": {},
     }
 
-def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None:
-    projected = card_run_readback.run_projection({
-        "run_id": "run-one",
-        "runtime_kind": "hermes",
-        "runtime_mode": "delegate",
-        "runtime_profile": "research",
-        "provider_thread_ref": "t_retained_root",
-        "provider": "openai-codex",
-        "provider_model_id": "gpt-5.6-luna",
-        "effective_provider": "openai-codex",
-        "access_mode": "chatgpt-account",
-        "provider_total_tokens": 0,
-        "cost_status": "included",
-        "auto_tools_decision": {"status": "selected"},
-        "auto_model_decision": {"status": "selected"},
-        "state": "failed",
-        "hermes_phase": "ready",
-    })
-
-    assert projected["runId"] == "run-one"
-    assert projected["runtimeProfile"] == "research"
-    assert projected["hermesRootId"] == "t_retained_root"
-    assert projected["provider"] == "openai-codex"
-    assert projected["model"] == "gpt-5.6-luna"
-    assert projected["accessMode"] == "chatgpt-account"
-    assert projected["providerTotalTokens"] == 0
-    assert projected["costStatus"] == "included"
-    assert projected["autoToolsDecision"] == {"status": "selected"}
-    assert projected["autoModelDecision"] == {"status": "selected"}
-    assert projected["hermesStatus"] == "ready"
-    legacy = card_run_readback.run_projection({"run_id": "old", "hermes_phase": "queued"})
-    assert legacy["hermesStatus"] is None
-
 
 def test_run_projection_does_not_present_requested_model_as_effective() -> None:
     projected = card_run_readback.run_projection({
@@ -477,7 +444,7 @@ def test_run_starts_only_from_exact_correlated_submission_evidence(
     }]
 
 
-def test_run_progress_casts_numeric_hermes_run_id_to_persisted_text(
+def test_magnetic_run_progress_casts_numeric_hermes_run_id_to_persisted_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, object]] = []
@@ -525,15 +492,21 @@ def test_run_progress_casts_numeric_hermes_run_id_to_persisted_text(
     query, params = statements[0]
     assert "WHEN %s AND run.state='pending' THEN 'running'" in query
     assert "provider_turn_ref=COALESCE(%s::text, provider_turn_ref)" in query
-    assert "run.runtime_mode!='magentic_one'" in query
+    assert "run.runtime_kind='hermes'" in query
+    assert "run.runtime_mode='magentic_one'" in query
+    assert "revision.card_id='card_magentic'" in query
+    assert "revision.runtime_profile='card_magentic'" in query
+    assert "run.runtime_mode!='magentic_one'" not in query
     assert "run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s" in query
     assert "provider_total_tokens=COALESCE(%s, provider_total_tokens)" in query
     assert "cost_status=COALESCE(%s, cost_status)" in query
-    assert params[4] == 18
+    assert params[3] == 18
     assert result["hermesRootId"] == "t_retained_root"
     assert result["updated"] is True
 
-def test_run_progress_refuses_to_rebind_a_magnetic_root(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_magnetic_run_progress_refuses_to_rebind_outer_run_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class Cursor:
         rowcount = 0
 
@@ -699,6 +672,7 @@ def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_sess
         "state": "running",
         "runtime_kind": "hermes",
         "runtime_mode": "magentic_one",
+        "runtime_profile": "card_magentic",
         "provider": "openai",
         "access_mode": "chatgpt-account",
         "saved_openai_runtime": "codex_app_server",
@@ -758,87 +732,11 @@ def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_sess
     assert update_params[10] == "t_mag_final"
     assert result["updated"] is True
     assert result["state"] == "completed"
+    assert result["runRecord"]["runtimeProfile"] == "card_magentic"
+    assert result["runRecord"]["hermesRootId"] == "t_mag_root"
     assert result["runRecord"]["provider"] is None
     assert result["runRecord"]["model"] is None
 
-def test_finish_run_reconciles_one_hash_verified_result_without_rewriting_run_record(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    statements: list[tuple[str, object]] = []
-    final_result = "Exact provider assistant result."
-    run_record = {
-        "run_id": "run-one",
-        "state": "completed",
-        "finished_at": "original-finished-at",
-        "provider_input_tokens": 123,
-        "final_result": final_result,
-    }
-
-    class Cursor:
-        rowcount = 0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, query, params=None):
-            statements.append((str(query), params))
-            if "UPDATE ag_catalog.agent_runs SET final_result" in str(query):
-                self.rowcount = 1
-
-        def fetchone(self):
-            return run_record
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(card_run_settlement, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "observe_run_result_ready", lambda *_args: True)
-    monkeypatch.setattr(agentgraph_run_observations, "observe_run_finish",
-        lambda *_args, **_kwargs: pytest.fail("result recovery rewrote terminal Run telemetry"),
-    )
-
-    result = card_run_settlement.finish_run({
-        "runId": "run-one",
-        "state": "completed",
-        "finalResult": final_result,
-        "expectedResultSha256": saved_card_contract.sha256_text(final_result),
-        "reconcilePersistedResult": True,
-    })
-
-    update_query, update_params = next(
-        statement for statement in statements
-        if "UPDATE ag_catalog.agent_runs SET final_result" in statement[0]
-    )
-    assert "SET final_result=%s" in update_query
-    assert "state='completed' AND final_result IS NULL" in update_query
-    assert "finished_at" not in update_query
-    assert "provider_input_tokens" not in update_query
-    assert update_params == (final_result, "run-one")
-    assert result["updated"] is True
-    assert result["telemetryWritten"] is True
-
-def test_finish_run_result_reconciliation_rejects_wrong_hash() -> None:
-    with pytest.raises(
-        saved_card_contract.CardDomainError,
-        match="run_result_reconciliation_hash_mismatch",
-    ):
-        card_run_settlement.finish_run({
-            "runId": "run-one",
-            "state": "completed",
-            "finalResult": "Exact provider result.",
-            "expectedResultSha256": "0" * 64,
-            "reconcilePersistedResult": True,
-        })
 
 def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     monkeypatch: pytest.MonkeyPatch,

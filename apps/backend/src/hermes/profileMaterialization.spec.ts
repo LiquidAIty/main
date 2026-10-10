@@ -140,6 +140,78 @@ describe('saved Card to Hermes profile materialization', () => {
       .toEqual(['legacy-project-edge']);
   });
 
+  it('materializes Team task mode only for the saved Team Card', async () => {
+    const materializedTaskMode = async (
+      cardId: 'card_team' | 'card_knowgraph',
+      profile: 'team' | 'knowgraph',
+      initialTaskMode: 'team' | null,
+    ) => {
+      const card: DeckCard = {
+        id: cardId,
+        templateId: `template_${profile}`,
+        title: profile === 'team' ? 'Team' : 'KnowGraph',
+        role: '',
+        prompt: `# ${profile}`,
+        runtime: { kind: 'hermes', mode: 'delegate', profile },
+        runtimeOptions: {
+          provider: 'openai',
+          accessMode: 'chatgpt-account',
+          modelKey: 'gpt-parent',
+        },
+        position: { x: 0, y: 0 },
+      };
+      let state = {
+        name: profile,
+        description: '',
+        soul: String(card.prompt || ''),
+        capability_fingerprint: '0123456789ab',
+        model: {
+          provider: 'openai-codex',
+          default: 'gpt-parent',
+          openai_runtime: 'auto',
+        },
+        skills: [],
+        toolsets: [],
+        mcp_servers: [],
+        delegation: {
+          provider: '', model: '', max_spawn_depth: 1,
+          orchestrator_enabled: false, enabled: false,
+        },
+        task_mode: initialTaskMode,
+      };
+      let configured: Record<string, unknown> | null = null;
+      const request = vi.fn(async <T>(
+        method: string,
+        params: Record<string, unknown> = {},
+      ): Promise<T> => {
+        if (method === 'profiles.configure') {
+          configured = params;
+          state = { ...state, task_mode: params.task_mode as 'team' | null };
+          return { ok: true, applied: { task_mode: true } } as T;
+        }
+        if (method === 'profiles.describe') return structuredClone(state) as T;
+        throw new Error(`unexpected:${method}`);
+      });
+
+      await materializeSavedCardProfile(
+        request as unknown as Parameters<typeof materializeSavedCardProfile>[0],
+        card,
+        [],
+        state,
+      );
+      return configured;
+    };
+
+    await expect(materializedTaskMode('card_team', 'team', null)).resolves.toEqual({
+      name: 'team', task_mode: 'team',
+    });
+    await expect(
+      materializedTaskMode('card_knowgraph', 'knowgraph', 'team'),
+    ).resolves.toEqual({
+      name: 'knowgraph', task_mode: null,
+    });
+  });
+
   it('derives only outbound enabled orange targets', () => {
     const disabledWorker: DeckCard = {
       ...worker,

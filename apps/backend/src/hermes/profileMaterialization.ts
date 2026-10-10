@@ -24,7 +24,7 @@ export type HermesProfileState = {
 
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
-const TEAM_CARD_ID = 'card_team';
+const TEAM_CARD_IDS = new Set(['card_team']);
 
 function cardEnabled(card: DeckCard): boolean {
   return card.enabled !== false && card.runtimeOptions?.enabled !== false;
@@ -170,7 +170,7 @@ function configuredProfileParams(
   if (delegation && JSON.stringify(current.delegation || {}) !== JSON.stringify(delegation)) {
     params.delegation = delegation;
   }
-  const taskMode = card.id === TEAM_CARD_ID ? 'team' : null;
+  const taskMode = TEAM_CARD_IDS.has(card.id) ? 'team' : null;
   if ((current.task_mode || null) !== taskMode) params.task_mode = taskMode;
   return params;
 }

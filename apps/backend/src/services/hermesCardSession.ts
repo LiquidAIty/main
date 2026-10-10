@@ -27,6 +27,15 @@ export type SessionBinding = {
   profileCapabilityFingerprint: string;
 };
 
+export type SavedCardProfileBinding = {
+  authority: SharedChatAuthority;
+  card: AddressableCard;
+  botModeRoster: string[];
+  profileState: Record<string, unknown>;
+  profileCapabilityFingerprint: string;
+  info: Record<string, unknown>;
+};
+
 // Serialize only the list/create critical section for one deterministic Card
 // conversation. This map caches no session identity and never reports runtime
 // state; Hermes remains the sole session authority.
@@ -131,24 +140,65 @@ async function materializeCardProfile(
   ));
 }
 
-async function bindCardSession(
+async function materializeCurrentSavedCardProfile(
   client: HermesGatewayClient,
-  authority: SharedChatAuthority,
   card: AddressableCard,
-  owner: { userId: string; projectId: string; deckId: string; conversationId: string },
-): Promise<SessionBinding> {
-  const title = savedCardSessionTitle({ ...owner, cardId: card.card.id });
-  const roster = savedCardBotRoster(authority.deck, card.card);
-  const profile = card.profile;
-  const profileState = await materializeCardProfile(client, card, roster);
-  const profileModel = objectRecord(profileState.model);
-  const profileCapabilityFingerprint = String(
-    profileState.capability_fingerprint || '',
+  owner: { projectId: string; deckId: string },
+): Promise<SavedCardProfileBinding> {
+  const currentAuthority = await sharedChatAuthority(owner.projectId, owner.deckId);
+  const currentCards = currentAuthority.cards.filter(
+    (candidate) => candidate.card.id === card.card.id,
   );
-  const completeBinding = (binding: SessionBinding): SessionBinding => {
-    const info: Record<string, unknown> = {
+  if (
+    currentCards.length !== 1
+    || currentCards[0].cardRevisionId !== card.cardRevisionId
+    || currentCards[0].profile !== card.profile
+  ) {
+    throw new Error('card_revision_changed');
+  }
+  const currentCard = currentCards[0];
+  const botModeRoster = savedCardBotRoster(currentAuthority.deck, currentCard.card);
+  const profileState = await materializeCardProfile(client, currentCard, botModeRoster);
+  const profileModel = objectRecord(profileState.model);
+  return {
+    authority: currentAuthority,
+    card: currentCard,
+    botModeRoster,
+    profileState,
+    profileCapabilityFingerprint: String(profileState.capability_fingerprint || ''),
+    info: {
       provider: String(profileModel.provider || ''),
       model: String(profileModel.default || ''),
+      ...(profileModel.openai_runtime
+        ? { api_mode: String(profileModel.openai_runtime) }
+        : {}),
+    },
+  };
+}
+
+export async function materializeSavedCardProfileOnly(
+  client: HermesGatewayClient,
+  card: AddressableCard,
+  owner: { projectId: string; deckId: string },
+): Promise<SavedCardProfileBinding> {
+  return withProfileMaterializationLock(
+    card.profile,
+    () => materializeCurrentSavedCardProfile(client, card, owner),
+  );
+}
+
+async function bindCardSession(
+  client: HermesGatewayClient,
+  materialized: SavedCardProfileBinding,
+  owner: { userId: string; projectId: string; deckId: string; conversationId: string },
+): Promise<SessionBinding> {
+  const { authority, card, botModeRoster: roster } = materialized;
+  const title = savedCardSessionTitle({ ...owner, cardId: card.card.id });
+  const profile = card.profile;
+  const profileCapabilityFingerprint = materialized.profileCapabilityFingerprint;
+  const completeBinding = (binding: SessionBinding): SessionBinding => {
+    const info: Record<string, unknown> = {
+      ...materialized.info,
       ...binding.info,
     };
     return { ...binding, info };
@@ -217,18 +267,8 @@ export async function cardSession(
   return withProfileMaterializationLock(
     card.profile,
     async () => {
-      const currentAuthority = await sharedChatAuthority(owner.projectId, owner.deckId);
-      const currentCards = currentAuthority.cards.filter(
-        (candidate) => candidate.card.id === card.card.id,
-      );
-      if (
-        currentCards.length !== 1
-        || currentCards[0].cardRevisionId !== card.cardRevisionId
-        || currentCards[0].profile !== card.profile
-      ) {
-        throw new Error('card_revision_changed');
-      }
-      return bindCardSession(client, currentAuthority, currentCards[0], owner);
+      const materialized = await materializeCurrentSavedCardProfile(client, card, owner);
+      return bindCardSession(client, materialized, owner);
     },
   );
 }

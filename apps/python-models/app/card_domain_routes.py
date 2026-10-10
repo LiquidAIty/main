@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Any
 from app.python_models.saved_card_contract import CardDomainError
 from app.python_models.saved_cards import load_deck, save_deck
-from app.python_models.card_run_execution import start_run, update_run_progress
+from app.python_models.card_run_execution import start_run
 from app.python_models.card_run_preparation import begin_main_chat_run, begin_run
 from app.python_models.card_run_readback import read_run, read_run_history
 from app.python_models.card_run_settlement import finish_run
@@ -161,14 +161,6 @@ def domain_run_finish(payload: dict[str, Any]):
 def domain_run_start(payload: dict[str, Any]):
     try:
         return start_run(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/domain/runs/progress")
-def domain_run_progress(payload: dict[str, Any]):
-    try:
-        return update_run_progress(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

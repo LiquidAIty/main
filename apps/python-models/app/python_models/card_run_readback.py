@@ -124,7 +124,6 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
     selectors = {
         "run_id": str(payload.get("runId") or "").strip(),
         "correlation_id": str(payload.get("correlationId") or "").strip(),
-        "provider_thread_ref": str(payload.get("hermesRootId") or "").strip(),
         "card_id": str(payload.get("cardId") or "").strip(),
     }
     selected = [(name, value) for name, value in selectors.items() if value]
@@ -153,7 +152,6 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                 column = {
                     "run_id": "run.run_id",
                     "correlation_id": "run.correlation_id",
-                    "provider_thread_ref": "run.provider_thread_ref",
                 }[selector]
                 cursor.execute(
                     f"""
