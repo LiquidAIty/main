@@ -1,9 +1,9 @@
-diff --git a/HermesLatest/LIQUIDAITY_PATCHES.md b/HermesLatest/LIQUIDAITY_PATCHES.md
+diff --git a/new/HermesLatest/LIQUIDAITY_PATCHES.md b/HermesLatest/LIQUIDAITY_PATCHES.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..67c6bdafaf4100728fe91f94c2c0139cb714ba13
+index 0000000000000000000000000000000000000000..b682b1027ed33c196bf1cf1238c2f490ccfddf2a
 --- /dev/null
 +++ b/HermesLatest/LIQUIDAITY_PATCHES.md
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,211 @@
 +# HermesLatest application patch overlay
 +
 +This register is the update contract for seven bounded extension families carried on top of Hermes
@@ -28,14 +28,19 @@ index 0000000000000000000000000000000000000000..67c6bdafaf4100728fe91f94c2c0139c
 +## Extension families
 +
 +1. Experimental Dynamic Tools: project one accepted turn's exact authorized tool schemas into Hermes,
-+   dispatch each call through the authenticated MCP callback, and cancel the exact in-flight call on Stop.
++   dispatch each application call through the authenticated MCP callback, present an authorized session's
++   Hermes-owned `message_agent` to Codex without publishing it in the application catalog, and cancel the
++   exact in-flight call on Stop. Codex CLI 0.159 accepts Dynamic Tools only at `thread/start` and restores
++   them from rollout SessionMeta on resume, so Hermes atomically binds each thread ID to the exact projected
++   fingerprint and retires legacy, missing-fingerprint, or mismatched bindings into a fresh history-seeded thread.
 +2. Card Python: present one valid saved Script as `card_python`, execute it through Hermes's existing
 +   child-process Python path, and route only its declared nested tool calls through the same callback.
 +3. Bot roster scoping: constrain Hermes `message_agent` to the exact Project-session orange roster.
 +4. Card profile capability fencing: apply/read only Card-owned profile fields, scope learning reads to the
 +   addressed profile, preserve unknown/learned state, ship Builder's selected inspection skill through
 +   Hermes's bundled-skill mechanism, and rebuild a session only when its capability fingerprint is stale.
-+5. Exact turn evidence: correlate submission, Stop, completion, actual provider/model and turn-local usage
++5. Exact turn evidence: correlate submission, Stop, completion, actual provider/model and turn-local usage;
++   report the profile-scoped provider/model on lazy session create/resume/activate before the agent is built,
 +   without replacing Hermes queue/session ownership.
 +6. AutoTeam / Team TaskGraph: mark an ordinary saved Team profile, create one bounded Team root, use
 +   temporary workers, and synthesize on that same root through Hermes's task ledger.
@@ -58,12 +63,12 @@ index 0000000000000000000000000000000000000000..67c6bdafaf4100728fe91f94c2c0139c
 +
 +| File | Family | Symbols / reason |
 +| --- | --- | --- |
-+| `agent/codex_runtime.py` | Dynamic Tools / Card Python | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session`: fingerprint exact turn tools and retire/reuse Codex sessions accordingly. |
++| `agent/codex_runtime.py` | Dynamic Tools / Card Python / Bot roster | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session`: fingerprint exact turn tools, expose authorized Hermes `message_agent` only inside the Codex session, dispatch it through Hermes's existing inline owner with exact task/call identity, atomically bind the thread ID to that fingerprint, and resume only an exact match. |
 +| `agent/conversation_loop.py` | Profile fencing | `_profile_capability_prompt_stale`, `_persist_system_prompt`, `_restore_or_build_system_prompt`: refresh profile-following prompts when the real capability epoch changes. |
 +| `agent/inline_tool_executors.py` | Dynamic Tools / Card Python | `resolve_invoke_tool_executor`: prefer the current turn's exact executor before shipped memory/registry lookup. |
 +| `agent/system_prompt.py` | Bot roster / profile fencing | `_profile_capability_parts`, `_post_workspace_parts`: describe only the authorized Bot roster and bind the prompt to the profile capability epoch. |
 +| `agent/tool_executor.py` | Dynamic Tools / Card Python | `_resolve_sequential_dispatch`: route current-turn tools through agent-local authority, never a replacement global registry. |
-+| `agent/transports/codex_app_server_session.py` | Dynamic Tools | Validate the experimental handshake, definitions, thread/turn/call identity and exactly-once server-request response; propagate the existing interrupt event. |
++| `agent/transports/codex_app_server_session.py` | Dynamic Tools | Validate the experimental handshake, definitions, thread/turn/call identity and exactly-once server-request response; send Dynamic Tools only on `thread/start` for Codex CLI 0.159 and propagate the existing interrupt event. |
 +| `gateway/kanban_watchers_dispatcher.py` | AutoTeam | `_record_team_decomposition_failure`, `_decompose_one`: apply the breaker only to marked Team roots. |
 +| `hermes_cli/config_defaults.py` | AutoTeam | `kanban.task_mode`: empty preserves shipped behavior; `team` is explicit profile configuration. |
 +| `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling, build same-root Team synthesis context, and expose `append_task_event` so the Magnetic adapter records its authority event without importing Hermes's private `_append_event`. No custom claim capability is retained. |
@@ -83,13 +88,13 @@ index 0000000000000000000000000000000000000000..67c6bdafaf4100728fe91f94c2c0139c
 +| `tui_gateway/contracts/prompt_voice.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Declare exact tool, Script, callback, roster, fingerprint and submission fields on `prompt.submit`. Voice behavior is otherwise unchanged. |
 +| `tui_gateway/contracts/sessions.py` | Bot roster / exact Stop | Declare session roster input and `expected_submission_id`. |
 +| `tui_gateway/contracts/tools_mcp_plugins.py` | Profile fencing | Add explicit profile identity to Hermes learning reads/edits. |
-+| `tui_gateway/methods_profiles.py` | Bot roster / profile fencing / AutoTeam | Configure/read only declared Card fields, preserve explicit empty toolset pins, canonicalize session rosters and return the capability fingerprint. |
++| `tui_gateway/methods_profiles.py` | Bot roster / profile fencing / AutoTeam | Configure/read only declared Card fields, atomically preserve exact UTF-8 Card PromptBlock bytes in `SOUL.md` across platform newline modes, preserve explicit empty toolset pins, canonicalize session rosters and return the capability fingerprint. |
 +| `tui_gateway/methods_prompt.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Validate one complete callback/Script/roster/fingerprint envelope and forward the exact accepted authority. |
-+| `tui_gateway/methods_session.py` | Bot roster / exact Stop | Apply the roster to create/resume/activate and refuse interruption of a different submission. |
++| `tui_gateway/methods_session.py` | Bot roster / exact Stop / turn evidence | Apply the roster to create/resume/activate, report the exact profile-scoped lazy model/provider pair, and refuse interruption of a different submission. |
 +| `tui_gateway/methods_tools.py` | Profile fencing | Forward learning operations to Hermes's existing implementation for the exact profile. |
-+| `tui_gateway/model_switch.py` | Profile fencing / model evidence | Rebuild only against the expected capability fingerprint and clear stale resume overrides without choosing a model for the application. |
++| `tui_gateway/model_switch.py` | Profile fencing / model evidence | Resolve a lazy session's model and provider from that session's own profile, rebuild only against the expected capability fingerprint, and clear stale resume overrides without choosing a model for the application. |
 +| `tui_gateway/prompt_turn.py` | All turn-scoped families | Fence before provider work, install/restore exact tools and Script, emit submission events, and calculate the turn-local usage delta. |
-+| `tui_gateway/server.py` | Bot roster / profile fencing / turn evidence | Preserve explicit empty toolsets, carry roster/session authority, fence profile builds, and expose available Hermes usage evidence. |
++| `tui_gateway/server.py` | Bot roster / profile fencing / turn evidence | Preserve explicit empty toolsets, carry roster/session authority, return the same model/provider identity for built and lazy sessions, fence profile builds, and expose available Hermes usage evidence. |
 +| `tui_gateway/session_auto_continue.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Preserve the accepted envelope and submission identity when Hermes queues and later drains a busy-session turn. |
 +
 +`tui_gateway/methods_config_set.py` is not part of the overlay. The rejected Builder Docker/configuration
@@ -116,6 +121,7 @@ index 0000000000000000000000000000000000000000..67c6bdafaf4100728fe91f94c2c0139c
 +
 +```text
 +tests/agent/test_card_script_dynamic_tools.py
++tests/agent/test_codex_runtime_prompt_handoff.py
 +tests/agent/test_system_prompt.py
 +tests/agent/test_system_prompt_restore.py
 +tests/agent/transports/test_codex_app_server_session.py
@@ -209,7 +215,7 @@ index 0000000000000000000000000000000000000000..67c6bdafaf4100728fe91f94c2c0139c
 +
 +Rollback is family-scoped: remove a family's listed hunks and tests together, then disable the dependent
 +application capability honestly. Never retain a half-applied contract or add an application substitute.
-diff --git a/HermesLatest/agent/card_script_tool.py b/HermesLatest/agent/card_script_tool.py
+diff --git a/new/HermesLatest/agent/card_script_tool.py b/HermesLatest/agent/card_script_tool.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..12dfdb9ebccd4082fe3c792309661c362fc19b07
 --- /dev/null
@@ -492,37 +498,182 @@ index 0000000000000000000000000000000000000000..12dfdb9ebccd4082fe3c792309661c36
 +    "normalize_card_script",
 +]
 diff --git a/HermesLatest/agent/codex_runtime.py b/HermesLatest/agent/codex_runtime.py
-index 14ba9d17c50c85d54d7a04156fa60cc76ace3889..85059aa84485954f7615164b50154d57530dd727 100644
+index 14ba9d17c50c85d54d7a04156fa60cc76ace3889..1b1bec5f0398ef2d34a2663d074446ef11b4d851 100644
 --- a/HermesLatest/agent/codex_runtime.py
 +++ b/HermesLatest/agent/codex_runtime.py
-@@ -5,6 +5,7 @@ AIAgent first: ``run_codex_app_server_turn`` drives one ``codex app-server`` sub
+@@ -5,6 +5,8 @@ AIAgent first: ``run_codex_app_server_turn`` drives one ``codex app-server`` sub
  from __future__ import annotations
  
  import contextvars
++import copy
 +import hashlib
  import json
  import logging
  import os
-@@ -442,6 +443,18 @@ def _close_codex_session(agent) -> None:
+@@ -442,6 +444,87 @@ def _close_codex_session(agent) -> None:
      agent._codex_session = None
  
  
 +def _dynamic_tools_configuration(agent) -> tuple[list[dict], dict[str, str]]:
 +    from agent.dynamic_tools import dynamic_tools_configuration
++    from tools.bot_mode_dm import (
++        MESSAGE_AGENT_TOOL_NAME,
++        message_agent_authorized,
++        message_agent_tool_schema,
++    )
 +
-+    return dynamic_tools_configuration(agent)
++    projected, canonical_names = dynamic_tools_configuration(agent)
++    if not message_agent_authorized(agent):
++        return projected, canonical_names
++    if MESSAGE_AGENT_TOOL_NAME in canonical_names:
++        raise ValueError(f"dynamic_tool_name_collision:{MESSAGE_AGENT_TOOL_NAME}")
++    schema = message_agent_tool_schema().get("function") or {}
++    parameters = schema.get("parameters")
++    if (
++        schema.get("name") != MESSAGE_AGENT_TOOL_NAME
++        or not isinstance(parameters, dict)
++    ):
++        raise ValueError("message_agent_dynamic_tool_invalid")
++    projected.append({
++        "type": "function",
++        "name": MESSAGE_AGENT_TOOL_NAME,
++        "canonicalName": MESSAGE_AGENT_TOOL_NAME,
++        "description": str(schema.get("description") or ""),
++        "inputSchema": copy.deepcopy(parameters),
++    })
++    canonical_names[MESSAGE_AGENT_TOOL_NAME] = MESSAGE_AGENT_TOOL_NAME
++    return projected, canonical_names
 +
 +
-+def _dynamic_tool_executor(agent, canonical_names: dict[str, str]):
++def _dynamic_tool_executor(
++    agent,
++    canonical_names: dict[str, str],
++    effective_task_id: str = "",
++):
 +    from agent.dynamic_tools import dynamic_tool_executor
++    from agent.inline_tool_executors import INLINE_TOOL_EXECUTORS, InlineToolContext
++    from tools.bot_mode_dm import MESSAGE_AGENT_TOOL_NAME
 +
-+    return dynamic_tool_executor(agent, canonical_names)
++    application_names = {
++        name: canonical
++        for name, canonical in canonical_names.items()
++        if name != MESSAGE_AGENT_TOOL_NAME
++    }
++    application_executor = dynamic_tool_executor(agent, application_names)
++    if MESSAGE_AGENT_TOOL_NAME not in canonical_names:
++        return application_executor
++
++    def execute(name: str, arguments: dict, call_id: str, interrupt_event) -> dict:
++        if name != MESSAGE_AGENT_TOOL_NAME:
++            if application_executor is None:
++                raise ValueError("dynamic_tool_not_selected")
++            return application_executor(name, arguments, call_id, interrupt_event)
++        if interrupt_event.is_set():
++            result = json.dumps({"error": "dynamic_tool_cancelled"})
++            return {
++                "success": False,
++                "contentItems": [{"type": "inputText", "text": result}],
++            }
++        result = INLINE_TOOL_EXECUTORS[MESSAGE_AGENT_TOOL_NAME](
++            agent,
++            arguments,
++            InlineToolContext(
++                effective_task_id=effective_task_id,
++                tool_call_id=call_id,
++            ),
++        )
++        text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
++        try:
++            decoded = json.loads(text)
++        except (TypeError, json.JSONDecodeError):
++            decoded = None
++        return {
++            "success": not (isinstance(decoded, dict) and bool(decoded.get("error"))),
++            "contentItems": [{"type": "inputText", "text": text}],
++        }
++
++    return execute
 +
 +
  def _consume_user_interrupt(agent, active: bool = True) -> tuple[bool, Any]:
      """(user_interrupted, interrupt_message); clears the agent-level interrupt so a hard
      stop cannot poison the next turn (mirrors the conversation-loop finalizer)."""
-@@ -507,10 +520,23 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
+@@ -460,29 +543,44 @@ def _codex_developer_instructions(agent) -> str:
+     return developer_instructions
+ 
+ 
+-# Durable codex thread binding: ``sessions.model_config.codex_thread_id`` (hermes_state), written after the
+-# turn's projected rows were committed, read by the next AIAgent built for the same Hermes session so an
+-# API-server restart (or the per-request agents of /api/sessions/{id}/chat) resumes the model-side thread
+-# instead of starting an empty one while Hermes' own transcript continues (#100531).
++# Durable codex thread binding: ``sessions.model_config`` stores the thread id and the exact projected Dynamic
++# Tools fingerprint together after the turn's projected rows were committed. The next AIAgent resumes only an
++# exact-match binding; legacy/mismatched bindings start one fresh history-seeded thread because codex restores
++# Dynamic Tools from the rollout's creation-time SessionMeta (#100531).
+ _CODEX_THREAD_ID_KEY = "codex_thread_id"
++_CODEX_DYNAMIC_TOOLS_FINGERPRINT_KEY = "codex_dynamic_tools_fingerprint"
+ _CODEX_THREAD_RESUME_NOTICE = "Codex thread could not be resumed; starting a new one."
+ 
+ 
+-def _stored_codex_thread_id(agent) -> str | None:
++def _stored_codex_thread_binding(agent) -> tuple[str | None, str | None]:
+     db, session_id = getattr(agent, "_session_db", None), getattr(agent, "session_id", None)
+     if db is None or not session_id:
+-        return None
++        return None, None
+     thread_id = db.get_session_model_config_value(session_id, _CODEX_THREAD_ID_KEY)
+-    return thread_id if isinstance(thread_id, str) and thread_id else None
++    fingerprint = db.get_session_model_config_value(session_id, _CODEX_DYNAMIC_TOOLS_FINGERPRINT_KEY)
++    return (
++        thread_id if isinstance(thread_id, str) and thread_id else None,
++        fingerprint if isinstance(fingerprint, str) and fingerprint else None,
++    )
+ 
+ 
+-def _store_codex_thread_id(agent, thread_id: str | None) -> None:
+-    """Merge (``None`` clears) the binding into the session row; a failed write only logs — the turn is done."""
++def _store_codex_thread_binding(
++    agent,
++    thread_id: str | None,
++    dynamic_tools_fingerprint: str | None,
++) -> None:
++    """Atomically merge (``None`` clears) the binding; a failed write only logs — the turn is done."""
+     db, session_id = getattr(agent, "_session_db", None), getattr(agent, "session_id", None)
+     if db is None or not session_id:
+         return
+-    _call_guarded(db.patch_session_model_config, "codex thread id could not be stored on the session row",
+-                  args=(session_id, {_CODEX_THREAD_ID_KEY: thread_id}))
++    _call_guarded(
++        db.patch_session_model_config,
++        "codex thread binding could not be stored on the session row",
++        args=(session_id, {
++            _CODEX_THREAD_ID_KEY: thread_id,
++            _CODEX_DYNAMIC_TOOLS_FINGERPRINT_KEY: dynamic_tools_fingerprint,
++        }),
++    )
+ 
+ 
+ def _start_codex_thread(agent) -> str:
+@@ -494,12 +592,16 @@ def _start_codex_thread(agent) -> str:
+         return agent._codex_session.ensure_started()
+     except CodexThreadResumeError as exc:
+         logger.warning("%s; starting a new codex thread (session=%s)", exc.message, getattr(agent, "session_id", None))
+-        _store_codex_thread_id(agent, None)
++        _store_codex_thread_binding(agent, None, None)
+         agent._emit_diagnostic_status(_CODEX_THREAD_RESUME_NOTICE)
+         return agent._codex_session.ensure_started()
+ 
+ 
+-def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -> None:
++def _ensure_codex_session(
++    agent,
++    messages: List[Dict[str, Any]] | None = None,
++    effective_task_id: str = "",
++) -> None:
+     """Lazily spawn one CodexAppServerSession per AIAgent (reused across turns, closed by the _cleanup hook).
+     A live session whose thread was started with a different prompt composition (TUI/Desktop ``/personality``
+     or a prompt mirror mutate the agent in place) is retired first so the new thread carries the current one.
+@@ -507,13 +609,30 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
      today's fresh-thread behaviour and overwrites the binding once its turn is committed. ``messages`` is the
      turn's transcript (current user row last); a thread started from scratch is seeded with the prior turns."""
      developer_instructions = _codex_developer_instructions(agent)
@@ -543,19 +694,49 @@ index 14ba9d17c50c85d54d7a04156fa60cc76ace3889..85059aa84485954f7615164b50154d57
 +            == dynamic_fingerprint
 +        ):
 +            agent._codex_session._tool_executor = _dynamic_tool_executor(
-+                agent, canonical_names)
++                agent, canonical_names, effective_task_id)
              return
          _close_codex_session(agent)
-     resume_thread_id = None if getattr(agent, "_codex_session_prompt", None) is not None else _stored_codex_thread_id(agent)
-@@ -560,6 +586,8 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
+-    resume_thread_id = None if getattr(agent, "_codex_session_prompt", None) is not None else _stored_codex_thread_id(agent)
++    resume_thread_id = None
++    if getattr(agent, "_codex_session_prompt", None) is None:
++        stored_thread_id, stored_dynamic_fingerprint = _stored_codex_thread_binding(agent)
++        if stored_dynamic_fingerprint == dynamic_fingerprint:
++            resume_thread_id = stored_thread_id
+     from agent.runtime_cwd import resolve_agent_cwd
+     from agent.transports.codex_app_server_session import CodexAppServerSession, _ServerRequestRouting
+     from hermes_cli.codex_runtime_switch import get_configured_codex_binary
+@@ -560,6 +679,8 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
          developer_instructions=developer_instructions or None,
          model=getattr(agent, "model", None) if model_provider else None, model_provider=model_provider,
          resume_thread_id=resume_thread_id, history_seed=history_seed,
 +        dynamic_tools=dynamic_tools,
-+        tool_executor=_dynamic_tool_executor(agent, canonical_names),
++        tool_executor=_dynamic_tool_executor(agent, canonical_names, effective_task_id),
      )
  
  
+@@ -632,7 +753,7 @@ def run_codex_app_server_turn(agent, *, user_message: str, original_user_message
+         from agent.conversation_compression import _checkpoint_blocked
+         raise _checkpoint_blocked("codex_app_server owns the authoritative thread and compacts it "
+                                   "without a truthful pre-compaction transcript boundary")
+-    _ensure_codex_session(agent, messages)
++    _ensure_codex_session(agent, messages, effective_task_id)
+     try:
+         _start_codex_thread(agent)
+         turn = agent._codex_session.run_turn(user_input=user_message)
+@@ -652,7 +773,11 @@ def run_codex_app_server_turn(agent, *, user_message: str, original_user_message
+     # The binding is published only once the transcript it belongs to is durable, and never for a
+     # retired thread (the next agent would only resume into the same wedge).
+     if _persist_projected_messages(agent, turn, messages) and not getattr(turn, "should_retire", False):
+-        _store_codex_thread_id(agent, turn.thread_id)
++        _store_codex_thread_binding(
++            agent,
++            turn.thread_id,
++            agent._codex_session.dynamic_tools_fingerprint,
++        )
+     usage_result = _finish_codex_turn(
+         agent, turn, messages, original_user_message=original_user_message, should_review_memory=should_review_memory,
+     )
 diff --git a/HermesLatest/agent/conversation_loop.py b/HermesLatest/agent/conversation_loop.py
 index fb79d6242f3ca527aee4a76deeb8844b9c58abe9..e9c574b1b66d024cdc27b4c5781e35310e06182b 100644
 --- a/HermesLatest/agent/conversation_loop.py
@@ -635,7 +816,7 @@ index fb79d6242f3ca527aee4a76deeb8844b9c58abe9..e9c574b1b66d024cdc27b4c5781e3531
              )
              return
          # Continuing session — reuse the exact system prompt from the
-diff --git a/HermesLatest/agent/dynamic_tools.py b/HermesLatest/agent/dynamic_tools.py
+diff --git a/new/HermesLatest/agent/dynamic_tools.py b/HermesLatest/agent/dynamic_tools.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..a801476b02e0bde1919809c6b25f2158bb1b4ded
 --- /dev/null
@@ -946,7 +1127,7 @@ index 7265d18a2445261281fc16a6f37d4576adf8ff94..57cc070f4cc388f7ed06cf08036a8878
          return _SequentialDispatch(lambda next_args: inline_executor(agent, next_args, inline_ctx), finish_in_finally=False)
      if function_name == "delegate_task":
 diff --git a/HermesLatest/agent/transports/codex_app_server_session.py b/HermesLatest/agent/transports/codex_app_server_session.py
-index 86287403d984a036e528a2579785504c897a975e..7ec91a54fdf7eb7f292ee80df5c440161b12963b 100644
+index 86287403d984a036e528a2579785504c897a975e..1e5a19bf481640927f5d22a9f8d3c1d90650ceec 100644
 --- a/HermesLatest/agent/transports/codex_app_server_session.py
 +++ b/HermesLatest/agent/transports/codex_app_server_session.py
 @@ -10,6 +10,9 @@ reader threads feed queues that this adapter polls, like the chat_completions lo
@@ -1029,7 +1210,7 @@ index 86287403d984a036e528a2579785504c897a975e..7ec91a54fdf7eb7f292ee80df5c44016
      def ensure_started(self) -> str:
          """Spawn, handshake, and ``thread/start`` (or ``thread/resume`` for a stored id); idempotent, returns
          the codex thread id. A failed resume raises :class:`CodexThreadResumeError` once; the next call
-@@ -263,12 +315,19 @@ class CodexAppServerSession:
+@@ -263,7 +315,12 @@ class CodexAppServerSession:
              return self._thread_id
          if self._client is None:
              self._client = self._client_factory(codex_bin=self._codex_bin, codex_home=self._codex_home)
@@ -1043,14 +1224,31 @@ index 86287403d984a036e528a2579785504c897a975e..7ec91a54fdf7eb7f292ee80df5c44016
          # Permissions are NOT sent on thread/start: codex gates ``thread/start.permissions``
          # behind experimentalApi + a matching ``[permissions]`` table in ~/.codex/config.toml.
          # Hermes supplies the agent identity through its own system prompt; ``personality: "none"`` strips
-         # codex's built-in "# Personality" section from the base instructions so it cannot compete (#72104).
-         params: dict[str, Any] = {"cwd": self._cwd, "personality": "none"}
-+        if self._dynamic_tools:
-+            params["dynamicTools"] = copy.deepcopy(self._dynamic_tools)
-         if self._developer_instructions and self._developer_instructions.strip():
-             params["developerInstructions"] = self._developer_instructions
-         if self._model_provider:
-@@ -421,6 +480,13 @@ class CodexAppServerSession:
+@@ -280,6 +337,8 @@ class CodexAppServerSession:
+             thread_id = self._resume_thread(wanted, params)
+             logger.info("codex app-server thread resumed: id=%s cwd=%s", thread_id[:8], self._cwd)
+         else:
++            if self._dynamic_tools:
++                params["dynamicTools"] = copy.deepcopy(self._dynamic_tools)
+             if self._history_seed:
+                 params["developerInstructions"] = "\n\n".join(
+                     part for part in (params.get("developerInstructions"), self._history_seed) if part)
+@@ -294,8 +353,12 @@ class CodexAppServerSession:
+         return thread_id
+ 
+     def _resume_thread(self, wanted: str, params: dict[str, Any]) -> str:
+-        """``thread/resume`` for the stored id; the same thread/start params ride along so the resumed thread
+-        carries the CURRENT prompt composition and provider (accepted by the resume schema, codex 0.147)."""
++        """Resume with the supported start-like fields (prompt/provider/model/cwd/personality).
++
++        Codex CLI 0.159 does not accept ``dynamicTools`` in ``ThreadResumeParams``; it restores the
++        creation-time definitions from rollout SessionMeta. The runtime therefore resumes only a stored
++        thread whose persisted Dynamic Tools fingerprint exactly matches the current projected contract.
++        """
+         assert self._client is not None
+         try:
+             result = self._client.request("thread/resume", {"threadId": wanted, **params}, timeout=15)
+@@ -421,6 +484,13 @@ class CodexAppServerSession:
  
          Returns (projection, aborted); aborted = agent text carried a terminal ``<turn_aborted>`` marker.
          """
@@ -1064,7 +1262,7 @@ index 86287403d984a036e528a2579785504c897a975e..7ec91a54fdf7eb7f292ee80df5c44016
          if self._on_event is not None:
              try:
                  self._on_event(note)
-@@ -690,6 +756,9 @@ class CodexAppServerSession:
+@@ -690,6 +760,9 @@ class CodexAppServerSession:
          method = req.get("method", "")
          rid = req.get("id")
          params = req.get("params") or {}
@@ -1074,7 +1272,7 @@ index 86287403d984a036e528a2579785504c897a975e..7ec91a54fdf7eb7f292ee80df5c44016
          handler = self._SERVER_REQUEST_HANDLERS.get(method)
          if handler is None:
              logger.warning("Unknown codex server request: %s", method)
-@@ -697,6 +766,93 @@ class CodexAppServerSession:
+@@ -697,6 +770,93 @@ class CodexAppServerSession:
              return
          client.respond(rid, handler(self, params))
  
@@ -1168,7 +1366,7 @@ index 86287403d984a036e528a2579785504c897a975e..7ec91a54fdf7eb7f292ee80df5c44016
      def _respond_elicitation(self, params: dict) -> dict:
          """MCP elicitation: auto-accept our own hermes-tools server (opted in by enabling the runtime;
          exposes nothing codex's shell can't do); decline others so the user opts in via codex's own flow."""
-diff --git a/HermesLatest/agent/transports/dynamic_tools_mcp.py b/HermesLatest/agent/transports/dynamic_tools_mcp.py
+diff --git a/new/HermesLatest/agent/transports/dynamic_tools_mcp.py b/HermesLatest/agent/transports/dynamic_tools_mcp.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..b6812545ab32dd19badd795c07afca95015332e2
 --- /dev/null
@@ -3015,7 +3213,7 @@ index 1d8284ce3b82d496b05b22639da4ab519e72cdd1..b73fd1e434b9105397d79f1d7dfe57c3
  
  
  def list_triage_ids(*, tenant: Optional[str] = None) -> list[str]:
-diff --git a/HermesLatest/hermes_cli/kanban_team.py b/HermesLatest/hermes_cli/kanban_team.py
+diff --git a/new/HermesLatest/hermes_cli/kanban_team.py b/HermesLatest/hermes_cli/kanban_team.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..05c9053910e362fafad84b015c38e71a60165bd1
 --- /dev/null
@@ -3433,7 +3631,7 @@ index 0000000000000000000000000000000000000000..05c9053910e362fafad84b015c38e71a
 +            "limit_source": limit_source,
 +            "error": error,
 +        }
-diff --git a/HermesLatest/skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md b/HermesLatest/skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md
+diff --git a/new/HermesLatest/skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md b/HermesLatest/skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md
 new file mode 100644
 index 0000000000000000000000000000000000000000..a320bc313ba1c2ca7ddde3ae0966aab98d95dc35
 --- /dev/null
@@ -3540,7 +3738,7 @@ index 0000000000000000000000000000000000000000..a320bc313ba1c2ca7ddde3ae0966aab9
 +Return the exact target, operation, readback, and proof performed. If a required tool,
 +revision, profile, or Project folder is unavailable, report that limitation without inventing
 +a substitute path.
-diff --git a/HermesLatest/tests/agent/test_card_script_dynamic_tools.py b/HermesLatest/tests/agent/test_card_script_dynamic_tools.py
+diff --git a/new/HermesLatest/tests/agent/test_card_script_dynamic_tools.py b/HermesLatest/tests/agent/test_card_script_dynamic_tools.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..dcc8090e56ab7884656a2e5b5c777ef5ee17ae65
 --- /dev/null
@@ -3609,6 +3807,109 @@ index 0000000000000000000000000000000000000000..dcc8090e56ab7884656a2e5b5c777ef5
 +    clear_turn_dynamic_tools(agent, prior)
 +    assert [item["function"]["name"] for item in agent.tools] == ["terminal"]
 +    assert agent.valid_tool_names == {"terminal"}
+diff --git a/HermesLatest/tests/agent/test_codex_runtime_prompt_handoff.py b/HermesLatest/tests/agent/test_codex_runtime_prompt_handoff.py
+index 2e67658b6511764ca759a0466a8cb4e75d9dd062..cc060bc7aac6055610908f8610a6fa9e6962fc81 100644
+--- a/HermesLatest/tests/agent/test_codex_runtime_prompt_handoff.py
++++ b/HermesLatest/tests/agent/test_codex_runtime_prompt_handoff.py
+@@ -5,8 +5,12 @@ codex early-return used to send only cwd + raw user text, so SOUL.md / memory /
+ composed and then silently dropped.
+ """
+ 
++import json
++import threading
+ from types import SimpleNamespace
+ 
++import pytest
++
+ from agent import codex_runtime
+ from agent.transports import codex_app_server_session as sess_mod
+ 
+@@ -73,3 +77,85 @@ def test_runtime_retires_thread_when_prompt_composition_changes(monkeypatch):
+     starts = [p["developerInstructions"] for (m, p) in client.requests if m == "thread/start"]
+     assert starts == ["SOUL: you are Hermes\n\nAlways start with ZZZ", "SOUL: you are Hermes\n\nPersonality: pirate"]
+     assert client.closed == 1  # the stale thread's client was closed, not leaked
++
++
++@pytest.mark.parametrize("roster,expected", [(None, False), ([], False), (["knowgraph"], True)])
++def test_codex_projects_message_agent_only_for_an_authorized_roster(
++    monkeypatch, roster, expected,
++):
++    from tools import bot_mode_dm
++
++    agent = _agent(_dynamic_tools=[], _bot_mode_roster=roster)
++    monkeypatch.setattr(
++        bot_mode_dm,
++        "message_agent_authorized",
++        lambda value: bool(value._bot_mode_roster),
++    )
++
++    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
++    message_tools = [item for item in projected if item["name"] == "message_agent"]
++
++    assert bool(message_tools) is expected
++    assert ("message_agent" in canonical_names) is expected
++    if expected:
++        function = bot_mode_dm.message_agent_tool_schema()["function"]
++        assert message_tools == [{
++            "type": "function",
++            "name": "message_agent",
++            "canonicalName": "message_agent",
++            "description": function["description"],
++            "inputSchema": function["parameters"],
++        }]
++
++
++def test_codex_message_agent_uses_the_exact_hermes_inline_owner(monkeypatch):
++    from agent import inline_tool_executors
++    from tools import bot_mode_dm
++
++    calls = []
++    agent = _agent(_dynamic_tools=[], _bot_mode_roster=["knowgraph"])
++    monkeypatch.setattr(bot_mode_dm, "message_agent_authorized", lambda _agent: True)
++    monkeypatch.setitem(
++        inline_tool_executors.INLINE_TOOL_EXECUTORS,
++        "message_agent",
++        lambda actual_agent, arguments, context: calls.append(
++            (actual_agent, arguments, context.effective_task_id, context.tool_call_id),
++        ) or json.dumps({"status": "queued", "delivery_id": "delivery-one"}),
++    )
++    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
++    executor = codex_runtime._dynamic_tool_executor(
++        agent, canonical_names, "task-one",
++    )
++
++    result = executor(
++        "message_agent",
++        {"target": "knowgraph", "message": "Research Rocket Lab."},
++        "call-one",
++        threading.Event(),
++    )
++
++    assert any(item["name"] == "message_agent" for item in projected)
++    assert calls == [(
++        agent,
++        {"target": "knowgraph", "message": "Research Rocket Lab."},
++        "task-one",
++        "call-one",
++    )]
++    assert result["success"] is True
++    assert json.loads(result["contentItems"][0]["text"])["delivery_id"] == "delivery-one"
++
++
++def test_codex_rejects_a_card_tool_named_message_agent(monkeypatch):
++    from tools import bot_mode_dm
++
++    agent = _agent(_dynamic_tools=[{
++        "type": "function",
++        "name": "message_agent",
++        "canonical_name": "application.message_agent",
++        "description": "invalid collision",
++        "input_schema": {"type": "object", "properties": {}},
++    }], _bot_mode_roster=["knowgraph"])
++    monkeypatch.setattr(bot_mode_dm, "message_agent_authorized", lambda _agent: True)
++
++    with pytest.raises(ValueError, match="dynamic_tool_name_collision:message_agent"):
++        codex_runtime._dynamic_tools_configuration(agent)
 diff --git a/HermesLatest/tests/agent/test_system_prompt.py b/HermesLatest/tests/agent/test_system_prompt.py
 index f9d680985c5f15e16bdbd262911e1ded539d91db..c271efa21fa272b1f5672204bad23327b1187795 100644
 --- a/HermesLatest/tests/agent/test_system_prompt.py
@@ -3876,7 +4177,7 @@ index a4e03ed54f5602f67294e212dcd5e242367e2dd4..1fc1ccc0b9c90bae04f34492409fe35e
  # ---- choice mapping ----
  
  class TestApprovalChoiceMapping:
-diff --git a/HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py b/HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py
+diff --git a/new/HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py b/HermesLatest/tests/agent/transports/test_dynamic_tools_mcp.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..5fbc6bd8eb629b62a36fe0de080a292889c37d84
 --- /dev/null
@@ -3983,6 +4284,19 @@ index 0000000000000000000000000000000000000000..5fbc6bd8eb629b62a36fe0de080a2928
 +        "stream-closed",
 +        "http-closed",
 +    ]
+diff --git a/HermesLatest/tests/agent/transports/test_hermes_tools_mcp_server.py b/HermesLatest/tests/agent/transports/test_hermes_tools_mcp_server.py
+index e8049bc6b24c1e22a1910c6df1aebfe6325d30f6..2e1f3348deecdbd244a85b6be4f930f748d31fa9 100644
+--- a/HermesLatest/tests/agent/transports/test_hermes_tools_mcp_server.py
++++ b/HermesLatest/tests/agent/transports/test_hermes_tools_mcp_server.py
+@@ -85,7 +85,7 @@ class TestModuleSurface:
+         from agent.transports.hermes_tools_mcp_server import EXPOSED_TOOLS
+         forbidden = {
+             "terminal", "shell", "read_file", "write_file", "patch",
+-            "search_files", "process",
++            "search_files", "process", "message_agent",
+         }
+         leaked = forbidden & set(EXPOSED_TOOLS)
+         assert not leaked, (
 diff --git a/HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py b/HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py
 index 4402b201a804430b47e36d7f147870839100e760..7391fbdba23016878e3e9bca646046f660cffdb9 100644
 --- a/HermesLatest/tests/hermes_cli/test_kanban_creator_origin.py
@@ -4160,7 +4474,7 @@ index 08520370978df54488c4b471877d33707e7705f1..fb8c4fb3e21bfe0c015f7bbc1b0bf46a
  def test_stale_claim_reclaim_event_records_diagnostic_payload(
      kanban_home, monkeypatch,
  ):
-diff --git a/HermesLatest/tests/hermes_cli/test_kanban_team.py b/HermesLatest/tests/hermes_cli/test_kanban_team.py
+diff --git a/new/HermesLatest/tests/hermes_cli/test_kanban_team.py b/HermesLatest/tests/hermes_cli/test_kanban_team.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..a4a2b366b74b2bd106e812a5f99dc002ac927f03
 --- /dev/null
@@ -4690,7 +5004,7 @@ index 11bb9b8e8a33df09baa12eb21cc916f7bdb3bb79..96b2998e2f482c42041b07e5a99b76b3
  
          new_agent = session["agent"]
          assert new_agent is not old_agent, "capability change must have rebuilt the agent"
-diff --git a/HermesLatest/tests/skills/test_agent_builder_inspection_skill.py b/HermesLatest/tests/skills/test_agent_builder_inspection_skill.py
+diff --git a/new/HermesLatest/tests/skills/test_agent_builder_inspection_skill.py b/HermesLatest/tests/skills/test_agent_builder_inspection_skill.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..1921d661ba8dfd60dbcce4e6f455e1b083b2f561
 --- /dev/null
@@ -4818,7 +5132,7 @@ index 00e87e6c33e2f66209017283ec7c6254e57368d5..c95b497a3f01f65dbbb913daec7c48e3
  
  def test_legacy_bot_chat_upgrade(tmp_path):
      home = tmp_path / ".hermes"
-diff --git a/HermesLatest/tests/tools/test_card_script_code_execution.py b/HermesLatest/tests/tools/test_card_script_code_execution.py
+diff --git a/new/HermesLatest/tests/tools/test_card_script_code_execution.py b/HermesLatest/tests/tools/test_card_script_code_execution.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..ab29c6f2b91f4773a96f633706cdf52b34f6720a
 --- /dev/null
@@ -5359,7 +5673,7 @@ index 2825f1f375363500844f3bd2197be76f491ff432..081e2464aeccf2d6bde77a48f0a14d46
 +
 +    assert session["agent"] is old
 +    assert closed == [True]
-diff --git a/HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py b/HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py
+diff --git a/new/HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py b/HermesLatest/tests/tui_gateway/test_profiles_bot_roster.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..c7e1c350effae429d1c5cc8b374c25df63d68758
 --- /dev/null
@@ -5474,6 +5788,23 @@ index 0000000000000000000000000000000000000000..c7e1c350effae429d1c5cc8b374c25df
 +        "enabled": False,
 +    }
 +    assert described["task_mode"] == "team"
+diff --git a/HermesLatest/tests/tui_gateway/test_profiles_configure.py b/HermesLatest/tests/tui_gateway/test_profiles_configure.py
+index 97ebfc74c999451e83ffc04baef1a4eeceb659bf..d2ea9bad94583a049daae1fb00b47b578c53e9f8 100644
+--- a/HermesLatest/tests/tui_gateway/test_profiles_configure.py
++++ b/HermesLatest/tests/tui_gateway/test_profiles_configure.py
+@@ -86,3 +86,12 @@ def test_configure_toggle_is_what_the_runtime_resolver_and_describe_see(profile_
+     assert not any("disabled" in entry for entry in on_disk.values())
+     assert enabled_mcp_server_names({"mcp_servers": on_disk}) == {"keep", "legacy"}
+     assert _described() == {"keep": True, "drop": False, "legacy": True}
++
++
++def test_configure_soul_roundtrips_exact_mixed_newlines(profile_dir):
++    soul = "first\r\nsecond\nthird\r\n"
++
++    _call("profiles.configure", {"soul": soul})
++
++    assert (profile_dir / "SOUL.md").read_bytes() == soul.encode("utf-8")
++    assert _call("profiles.describe", {})["soul"] == soul
 diff --git a/HermesLatest/tests/tui_gateway/test_profiles_toolset_pin.py b/HermesLatest/tests/tui_gateway/test_profiles_toolset_pin.py
 index 7c8446bbdb90399fab81f88b4c068bb9a6b81374..36469828f686775b90e66d3bbd60bdc2b54f84cf 100644
 --- a/HermesLatest/tests/tui_gateway/test_profiles_toolset_pin.py
@@ -5513,7 +5844,7 @@ index 7c8446bbdb90399fab81f88b4c068bb9a6b81374..36469828f686775b90e66d3bbd60bdc2
 -    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)) != {"web"}
 +    assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False))
 diff --git a/HermesLatest/tests/tui_gateway/test_tui_gateway_server.py b/HermesLatest/tests/tui_gateway/test_tui_gateway_server.py
-index de4586d444acaa6d706cbd667c3a0c58c44e99c3..3127cdcd3615050629e4ca3aebd3592e9d106293 100644
+index de4586d444acaa6d706cbd667c3a0c58c44e99c3..58a2d0c6bb1b489ffc05075e243fda8c4ead2359 100644
 --- a/HermesLatest/tests/tui_gateway/test_tui_gateway_server.py
 +++ b/HermesLatest/tests/tui_gateway/test_tui_gateway_server.py
 @@ -2365,6 +2365,34 @@ def test_load_enabled_toolsets_folds_project_into_focus_posture(monkeypatch):
@@ -5551,7 +5882,52 @@ index de4586d444acaa6d706cbd667c3a0c58c44e99c3..3127cdcd3615050629e4ca3aebd3592e
  def test_load_enabled_toolsets_rejects_disabled_mcp_env(monkeypatch, capsys):
      monkeypatch.setenv("HERMES_TUI_TOOLSETS", "mcp-off")
      monkeypatch.setitem(
-@@ -19766,6 +19794,156 @@ def test_get_usage_safe_when_active_count_raises(monkeypatch):
+@@ -14929,7 +14957,7 @@ def test_session_create_lazy_info_reports_desktop_contract(monkeypatch):
+     server._sessions.pop(resp["result"]["session_id"], None)
+ 
+ 
+-def test_session_activate_lazy_info_reports_desktop_contract():
++def test_session_activate_lazy_info_reports_desktop_contract(monkeypatch):
+     """Activating an already-live *lazy* session (agent not built yet) must
+     still advertise desktop_contract. _live_session_payload falls back to
+     _fallback_session_info while session["agent"] is None; the desktop reads a
+@@ -14938,6 +14966,9 @@ def test_session_activate_lazy_info_reports_desktop_contract():
+     #36112; this pins the session.activate path."""
+     import threading
+ 
++    monkeypatch.setattr(server, "_session_default_model", lambda _session: "profile-model")
++    monkeypatch.setattr(server, "_session_default_provider", lambda _session: "profile-provider")
++
+     sid = "lazy-activate-contract"
+     server._sessions[sid] = {
+         "agent": None,
+@@ -14959,6 +14990,7 @@ def test_session_activate_lazy_info_reports_desktop_contract():
+         )
+         info = resp["result"]["info"]
+         assert info["lazy"] is True
++        assert (info["model"], info["provider"]) == ("profile-model", "profile-provider")
+         assert info["desktop_contract"] == server.DESKTOP_BACKEND_CONTRACT
+     finally:
+         server._sessions.pop(sid, None)
+@@ -19315,6 +19347,8 @@ def test_session_create_records_ui_model_as_session_override(monkeypatch):
+     must not mutate the profile default.
+     """
+     monkeypatch.setattr(server, "_enable_gateway_prompts", lambda: None)
++    monkeypatch.setattr(server, "_session_default_model", lambda _session: "profile-model")
++    monkeypatch.setattr(server, "_session_default_provider", lambda _session: "profile-provider")
+     # Don't run the real deferred build in this storage-focused test.
+     monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
+     try:
+@@ -19352,6 +19386,8 @@ def test_session_create_records_ui_model_as_session_override(monkeypatch):
+         assert plain_sess["model_override"] is None
+         assert plain_sess["create_reasoning_override"] is None
+         assert plain_sess["create_service_tier_override"] is None
++        assert plain["result"]["info"]["model"] == "profile-model"
++        assert plain["result"]["info"]["provider"] == "profile-provider"
+     finally:
+         server._sessions.clear()
+ 
+@@ -19766,6 +19802,156 @@ def test_get_usage_safe_when_active_count_raises(monkeypatch):
      assert usage["model"] == "x"
  
  
@@ -6815,7 +7191,7 @@ index 35e268911e95a8d22febfeb521e84d66e9ec0de2..af31e89257bc993f87f85e7ad711eb35
  
  
 diff --git a/HermesLatest/tui_gateway/methods_profiles.py b/HermesLatest/tui_gateway/methods_profiles.py
-index f0c0374f3264c3e7ef1dd46a32db3953e90646d5..14d1548c33a45eabf4bee51d435c8aaf42d89423 100644
+index f0c0374f3264c3e7ef1dd46a32db3953e90646d5..47273c9bdc8e198c64598fb8b204c6509a6910e0 100644
 --- a/HermesLatest/tui_gateway/methods_profiles.py
 +++ b/HermesLatest/tui_gateway/methods_profiles.py
 @@ -44,6 +44,26 @@ def _model_provider_params(params) -> tuple:
@@ -6845,7 +7221,43 @@ index f0c0374f3264c3e7ef1dd46a32db3953e90646d5..14d1548c33a45eabf4bee51d435c8aaf
  def _try(fn, default):
      """``fn()`` or ``default`` on any exception (best-effort sections must never fail each other)."""
      try:
-@@ -475,13 +495,35 @@ def _(rid, params: dict) -> dict:
+@@ -56,6 +76,17 @@ def _best_effort(fn) -> bool:
+     return _try(lambda: (fn(), True)[1], False)
+ 
+ 
++def _read_profile_soul(path) -> str:
++    """Read SOUL.md without platform newline translation."""
++    return path.read_bytes().decode("utf-8", errors="replace") if path.is_file() else ""
++
++
++def _write_profile_soul(path, soul: str) -> None:
++    """Atomically preserve the exact UTF-8 Card prompt bytes in SOUL.md."""
++    from utils import atomic_write_bytes
++    atomic_write_bytes(path, soul.encode("utf-8"))
++
++
+ @contextlib.contextmanager
+ def _hermes_home_scope(path):
+     """Scope config/auth resolution to ``path`` for the block."""
+@@ -411,7 +442,7 @@ def _(rid, params: dict) -> dict:
+         _best_effort(lambda: profiles_mod.check_alias_collision(name) or profiles_mod.create_wrapper_script(name))
+     soul = params.get("soul")
+     soul_written = isinstance(soul, str) and bool(soul.strip()) and _best_effort(
+-        lambda: (path / "SOUL.md").write_text(soul, encoding="utf-8"))
++        lambda: _write_profile_soul(path / "SOUL.md", soul))
+     mirrored = _mirror_launch_credentials(path, params)
+     model, provider = _model_provider_params(params)
+     model_set = False
+@@ -466,7 +497,7 @@ def _(rid, params: dict) -> dict:
+             for md in (iter_skill_index_files(skills_root, "SKILL.md") if skills_root.is_dir() else ())]
+         toolsets_out, pinned_set = _describe_toolsets(cfg)
+         soul_path = profile_dir / "SOUL.md"
+-        soul = _try(lambda: soul_path.read_text(encoding="utf-8", errors="replace") if soul_path.is_file() else "", "")
++        soul = _try(lambda: _read_profile_soul(soul_path), "")
+         mcp_cfg = cfg.get("mcp_servers")
+         mcp_out = _try(lambda: [
+             {"name": str(srv_name), "enabled": _mcp_entry_enabled(entry),
+@@ -475,13 +506,35 @@ def _(rid, params: dict) -> dict:
              if isinstance(entry, dict)
          ], []) if isinstance(mcp_cfg, dict) else []
          model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
@@ -6883,7 +7295,7 @@ index f0c0374f3264c3e7ef1dd46a32db3953e90646d5..14d1548c33a45eabf4bee51d435c8aaf
  
  
  def _configure_ui_meta(profile_dir, params, applied) -> None:
-@@ -549,23 +591,96 @@ def _configure_model(profile_dir, params, applied):
+@@ -549,23 +602,96 @@ def _configure_model(profile_dir, params, applied):
          confirm_message = _try(lambda: getattr(warn(model, provider=provider or None), "message", None), None)
      if confirm_message is None:
          applied["model"] = _best_effort(lambda: _pin_profile_model(profile_dir, provider, model))
@@ -6983,7 +7395,7 @@ index f0c0374f3264c3e7ef1dd46a32db3953e90646d5..14d1548c33a45eabf4bee51d435c8aaf
      save_config(cfg)
  
  
-@@ -594,9 +709,34 @@ def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
+@@ -594,9 +720,34 @@ def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
      save_config(cfg)
  
  
@@ -7019,7 +7431,16 @@ index f0c0374f3264c3e7ef1dd46a32db3953e90646d5..14d1548c33a45eabf4bee51d435c8aaf
      catalog (unknown names skipped); credentials stay in .env/auth."""
      want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
      launch_mcp = {}
-@@ -640,8 +780,11 @@ def _(rid, params: dict) -> dict:
+@@ -634,14 +785,19 @@ def _(rid, params: dict) -> dict:
+     if isinstance(params.get("ui_meta"), dict):
+         _configure_ui_meta(profile_dir, params, applied)
+     if isinstance(params.get("soul"), str):
+-        applied["soul"] = _best_effort(lambda: (profile_dir / "SOUL.md").write_text(params["soul"], encoding="utf-8"))
++        applied["soul"] = _best_effort(
++            lambda: _write_profile_soul(profile_dir / "SOUL.md", params["soul"])
++        )
+     if isinstance(params.get("description"), str):
+         write_meta = _lazy("hermes_cli.profiles", "write_profile_meta")
          applied["description"] = _best_effort(lambda: write_meta(
              profile_dir, description=params["description"].strip(), description_auto=False))
      confirm_message = _configure_model(profile_dir, params, applied)
@@ -7187,7 +7608,7 @@ index aefcf692321dc828672cd30ea336a97fd69eb69e..cef429bca115fdf7d6894e4dfc64cc00
  
  # ── attachments ─────────────────────────────────────────────────────────────
 diff --git a/HermesLatest/tui_gateway/methods_session.py b/HermesLatest/tui_gateway/methods_session.py
-index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946c05c93fd 100644
+index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..2ec0c89bb747cb84cd562204393f58ef46de9941 100644
 --- a/HermesLatest/tui_gateway/methods_session.py
 +++ b/HermesLatest/tui_gateway/methods_session.py
 @@ -331,11 +331,33 @@ def _create_overrides(params: dict) -> tuple:
@@ -7232,7 +7653,24 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
              "running": False, "session_key": key, "show_reasoning": _load_show_reasoning(), "source": source,
              "slash_worker": None, "tool_progress_mode": _load_tool_progress_mode(), "tool_started_at": {},
              "transport": current_transport() or _stdio_transport,
-@@ -551,6 +574,11 @@ class _Resume:
+@@ -415,14 +438,13 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) ->
+     _schedule_agent_build(sid)
+     _schedule_session_cap_enforcement()  # trim detached idle sessions over the cap
+     cwd = _sessions[sid]["cwd"]
+-    override = session_model_override or {}
++    model, provider = _live_session_identity(_sessions[sid])
+     messages = _history_to_messages(history, profile_home=profile_home)  # hidden seed rows are not on the wire; count what is (as resume does)
+     return _ok(rid, {
+         "session_id": sid, "stored_session_id": key, "message_count": len(messages),
+         **({"messages_omitted": True} if copy_parent_history else {"messages": messages}),
+         # Reflect the override now so the client doesn't clobber its sticky pick.
+-        "info": {"model": override.get("model") if override else _session_default_model(_sessions[sid]),
+-                 **({"provider": override["provider"]} if override.get("provider") else {}),
++        "info": {"model": model, "provider": provider,
+                  "tools": {}, "skills": {}, "cwd": cwd, "branch": git_probe.branch(cwd),
+                  "project": _project_info_for_cwd(cwd), "lazy": True, "desktop_contract": DESKTOP_BACKEND_CONTRACT,
+                  "profile_name": _response_profile_name(profile)}})
+@@ -551,6 +573,11 @@ class _Resume:
          # ``profile`` (app-global remote mode): resume from another local profile's state.db.
          self.profile = (params.get("profile") or "").strip() or None
          self.profile_home = _profile_home(self.profile)
@@ -7244,7 +7682,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
          self.lazy, self.defer_history = _flag(params, "lazy"), _flag(params, "defer_history")
          # Desktop hydrates over REST; suppress the duplicate WS copy only when asked.
          self.omit_messages, self.eager_build = _flag(params, "omit_messages"), _flag(params, "eager_build")
-@@ -574,7 +602,8 @@ class _Resume:
+@@ -574,7 +601,8 @@ class _Resume:
          record = _deferred_session_record(
              self.target, cols=self.cols, cwd=cwd, history=history, lease=None, source=source,
              close_on_disconnect=_flag(self.params, "close_on_disconnect"),
@@ -7254,7 +7692,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
          if follows_profile:
              record.update(
                  follow_profile_config=True,
-@@ -642,6 +671,7 @@ def _resume_live_unpersisted(ctx: _Resume, live_sid: str, live: dict) -> dict:
+@@ -642,6 +670,7 @@ def _resume_live_unpersisted(ctx: _Resume, live_sid: str, live: dict) -> dict:
          else:
              _cancel_ws_orphan_reap(live_sid)
      messages = ctx.messages(live.get("history") or [])  # count the wire, as every other resume path does
@@ -7262,7 +7700,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
      # The chat's own pick, not the profile default: a warm reattach that reported `_resolve_model()` flipped the
      # Desktop picker on every reload while the session was still live, and back once it had been dropped.
      model, provider = _live_session_identity(live)
-@@ -752,6 +782,7 @@ def _resume_reuse_live_locked(ctx: _Resume, sid: str, session: dict) -> dict:
+@@ -752,6 +781,7 @@ def _resume_reuse_live_locked(ctx: _Resume, sid: str, session: dict) -> dict:
      if (refusal := _reattach_refusal(ctx.rid, sid, session)) is not None:
          return refusal
      _cancel_ws_orphan_reap(sid)  # unconditionally: the fast path must never race the reap Timer
@@ -7270,7 +7708,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
      payload = _live_session_payload(sid, session, cols=ctx.cols, touch=True, omit_messages=ctx.omit_messages,
                                      transport=current_transport() or _stdio_transport)
      payload["resumed"] = ctx.target
-@@ -877,7 +908,8 @@ def _resume_eager(ctx: _Resume) -> dict:
+@@ -877,7 +907,8 @@ def _resume_eager(ctx: _Resume) -> dict:
          try:
              with _profile_build_scope(ctx.profile_home):
                  _init_session(sid, ctx.target, agent, history, cols=ctx.cols, cwd=ctx.profile_resume_cwd,
@@ -7280,7 +7718,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
                  # Ownership TRANSFER: the agent holds the handle for life (AIAgent.close() releases it). The
                  # owns_db drop is UNCONDITIONAL — the session is registered against the handle, so the finally
                  # must not close it even if the transfer was refused (a leak beats "closed database" every
-@@ -917,6 +949,8 @@ def _(rid, params: dict) -> dict:
+@@ -917,6 +948,8 @@ def _(rid, params: dict) -> dict:
      if not (target := params.get("session_id", "")):
          return _err(rid, 4006, "session_id required")
      ctx = _Resume(rid, params, target)
@@ -7289,7 +7727,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
      # Profile scope: a DEDICATED handle we own until the agent takes it; else the shared launch db.
      ctx.db, ctx.owns_db = _profile_session_db(ctx.profile_home)
      try:
-@@ -1019,6 +1053,13 @@ def _(rid, params: dict) -> dict:
+@@ -1019,6 +1052,13 @@ def _(rid, params: dict) -> dict:
  def _(rid, params: dict, session: dict) -> dict:
      """Attach the frontend to a live TUI session without closing the previously focused one."""
      sid = str(params.get("session_id") or "")
@@ -7303,7 +7741,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
      # Only the rebind is atomic with grace expiry; the payload (a DB history read unless
      # ``omit_messages``) must not hold the process-wide resume lock.
      with _session_resume_lock:
-@@ -2123,7 +2164,6 @@ def _(rid, params: dict, session: dict) -> dict:
+@@ -2123,7 +2163,6 @@ def _(rid, params: dict, session: dict) -> dict:
  # ── interrupt / steer / redirect ─────────────────────────────────────
  @method("session.interrupt")
  def _(rid, params: dict) -> dict:
@@ -7311,7 +7749,7 @@ index a41aeff7b731f99a69dfc8556b5ade04d30a83f7..c6a4c6bb35d672de9bcc3236ad5f6946
      session, err = _sess_nowait(params, rid)
      if err:
          return err
-@@ -2132,6 +2172,14 @@ def _(rid, params: dict) -> dict:
+@@ -2132,6 +2171,14 @@ def _(rid, params: dict) -> dict:
              task = session.get("_hosted_room_task")
              if not (session.get("running") and isinstance(task, dict) and task.get("task_id") == expected):
                  return _ok(rid, {"status": "not_interrupted", "interrupted": False})
@@ -7351,7 +7789,7 @@ index 856f59fce41ea5da9f5d5a6e41339ef6d064af53..972131dd766ea611dd3e9bf5bf48e8ce
  
  
 diff --git a/HermesLatest/tui_gateway/model_switch.py b/HermesLatest/tui_gateway/model_switch.py
-index fce3191d5270c157c9f5caac04676f0bcc65f9a3..adfa4cdbddd7d9f07cc0dc5ecc8246d34f89334f 100644
+index fce3191d5270c157c9f5caac04676f0bcc65f9a3..084feedbba6f81ad817765d1fe25d00baaa143f5 100644
 --- a/HermesLatest/tui_gateway/model_switch.py
 +++ b/HermesLatest/tui_gateway/model_switch.py
 @@ -1,5 +1,5 @@
@@ -7361,7 +7799,27 @@ index fce3191d5270c157c9f5caac04676f0bcc65f9a3..adfa4cdbddd7d9f07cc0dc5ecc8246d3
  time (method_ctx.bind_module), so they reference server.py globals bare."""
  
  from __future__ import annotations
-@@ -371,42 +371,73 @@ def _apply_switch_reasoning(sid: str, session, agent, effort: str, *, persist_gl
+@@ -148,6 +148,19 @@ def _session_default_model(session: dict) -> str:
+         return _resolve_model()
+ 
+ 
++def _session_default_provider(session: dict) -> str:
++    """The configured provider of the session's own profile.
++
++    Lazy sessions have no built agent yet, but ``SessionLiveInfo`` still
++    promises the provider paired with the profile's default model.
++    """
++    with _session_profile_runtime_scope(
++        {"profile_home": session.get("profile_home") or None},
++        hydrate_secrets=False,
++    ):
++        return _config_model_target()[1]
++
++
+ def _restart_completed_failed_agent_build(sid: str, session: dict, failed_ready: threading.Event | None) -> bool:
+     """Replace one completed failed build generation and start its retry."""
+     if failed_ready is None:
+@@ -371,42 +384,73 @@ def _apply_switch_reasoning(sid: str, session, agent, effort: str, *, persist_gl
          _emit_session_info(sid, session)  # the switch's own emit predates the effort change
  
  
@@ -7448,7 +7906,7 @@ index fce3191d5270c157c9f5caac04676f0bcc65f9a3..adfa4cdbddd7d9f07cc0dc5ecc8246d3
  
  
  def _sync_agent_model_with_config(sid: str, session: dict) -> None:
-@@ -434,6 +465,7 @@ def _sync_agent_model_with_config(sid: str, session: dict) -> None:
+@@ -434,6 +478,7 @@ def _sync_agent_model_with_config(sid: str, session: dict) -> None:
          # the normal config-sync path switch now and prevents the old composer pick resurfacing on rebuild.
          superseded_pin = session.pop("model_override"), composer_profile
          session["composer_override_profile"] = None
@@ -7686,7 +8144,7 @@ index 32cad0497ea2794dc706a21be6d4e14ceffc3bc6..c1a72a01a8fdfe5e63a6b6ed5f387477
              # agent.session_id is re-read because compression may have rotated it (an
              # accepted/finished pair whose id changed IS a rotation trace).
 diff --git a/HermesLatest/tui_gateway/server.py b/HermesLatest/tui_gateway/server.py
-index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca73599015e34563 100644
+index 475d106c4a9bcf7606921d951ee3d4e08ef63642..19b1074e48a251e4c6803ccc27280b5ba6c2f855 100644
 --- a/HermesLatest/tui_gateway/server.py
 +++ b/HermesLatest/tui_gateway/server.py
 @@ -1035,6 +1035,17 @@ def _attach_built_agent(current: dict, agent) -> None:
@@ -7801,7 +8259,17 @@ index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca735990
      comp = getattr(agent, "context_compressor", None)
      if comp:
          from agent.context_breakdown import context_usage_fields
-@@ -2472,6 +2538,8 @@ def _make_agent(
+@@ -2120,7 +2186,8 @@ def _live_session_identity(session: dict) -> tuple[str, str]:
+     model = (str(pending.get("display_model") or "").strip() or mirror.get("model")
+              or getattr(agent, "model", "") or override.get("model") or _session_default_model(session))
+     provider = (str(pending.get("display_provider") or "").strip() or mirror.get("provider")
+-                or getattr(agent, "provider", "") or override.get("provider") or "")
++                or getattr(agent, "provider", "") or override.get("provider")
++                or _session_default_provider(session))
+     return str(model), str(provider or "")
+ 
+ 
+@@ -2472,6 +2539,8 @@ def _make_agent(
          pass_session_id=is_truthy_value(os.environ.get("HERMES_TUI_PASS_SESSION_ID")),
          skip_context_files=ignore_rules, skip_memory=ignore_rules, fallback_model=_load_fallback_model(),
          **_agent_cbs(sid))
@@ -7810,7 +8278,7 @@ index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca735990
      if context_cwd_is_launch_artifact is None:
          context_cwd_is_launch_artifact = _context_cwd_is_launch_artifact(session)
      agent._context_cwd_is_launch_artifact = bool(context_cwd_is_launch_artifact)
-@@ -2516,7 +2584,7 @@ def _hydrate_session_cwd(sid: str, key: str, session_db, profile_home: str | Non
+@@ -2516,7 +2585,7 @@ def _hydrate_session_cwd(sid: str, key: str, session_db, profile_home: str | Non
  def _init_session(
      sid: str, key: str, agent, history: list, cols: int = 80, cwd: str | None = None,
      session_db=None, source: str | None = None, profile_home: str | None = None,
@@ -7819,7 +8287,7 @@ index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca735990
      now = time.time()
      with _sessions_lock:
          _sessions[sid] = {
-@@ -2528,6 +2596,7 @@ def _init_session(
+@@ -2528,6 +2597,7 @@ def _init_session(
              "tool_progress_mode": _load_tool_progress_mode(), "edit_snapshots": {}, "tool_started_at": {},
              # Profile-scoped HERMES_HOME (None = launch); SessionBranch copies the parent's (same state.db).
              "profile_home": profile_home,
@@ -7827,7 +8295,7 @@ index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca735990
              # In-session /model switch, honored on rebuild (/new, resume) — never leaks to siblings via env vars.
              "model_override": None,
              # Async events go to the transport that created the session (stdio for Ink, WS for the dashboard).
-@@ -2535,6 +2604,8 @@ def _init_session(
+@@ -2535,6 +2605,8 @@ def _init_session(
              "auth_user_id": _transport_auth_user_id(current_transport()),
          }
          _session_todo_state(_sessions[sid])
@@ -7836,7 +8304,7 @@ index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca735990
      _hydrate_session_cwd(sid, key, session_db, profile_home)
      _register_session_cwd(_sessions[sid])
      _wire_session_agent(sid, key, agent)  # no eager slash-worker pre-warm (see _start_agent_build)
-@@ -2581,7 +2652,7 @@ def _deferred_session_record(
+@@ -2581,7 +2653,7 @@ def _deferred_session_record(
      close_on_disconnect: bool = False, display_history_prefix: list | None = None,
      profile_home: Path | None = None, lazy: bool = False, model_override=None,
      resume_runtime_overrides: dict | None = None, todo_state: dict | None = None,
@@ -7845,7 +8313,7 @@ index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca735990
      """A live-session record whose AIAgent is built later (lazy watch / cold resume) — _init_session's shape minus the agent."""
      now = time.time()
      return {
-@@ -2592,6 +2663,7 @@ def _deferred_session_record(
+@@ -2592,6 +2664,7 @@ def _deferred_session_record(
          "history_lock": threading.Lock(), "history_version": 0, "image_counter": 0,
          "inflight_turn": None, "last_active": now, "lazy": lazy, "model_override": model_override,
          "pending_title": None,
@@ -7853,6 +8321,19 @@ index 475d106c4a9bcf7606921d951ee3d4e08ef63642..33f8266a62646afd91fe948cca735990
          "profile_home": str(profile_home) if profile_home is not None else None,
          "resume_runtime_overrides": resume_runtime_overrides, "resume_session_id": session_key,
          "running": False, "session_key": session_key, "show_reasoning": _load_show_reasoning(),
+@@ -2830,9 +2903,11 @@ def _fallback_session_info(session: dict) -> dict:
+     # so a client can clear a stale label instead of retaining it — the same contract `_lazy_session_info`
+     # above already follows.
+     cwd = _session_cwd(session)
++    model, provider = _live_session_identity(session)
+     return {
+         "cwd": cwd, "branch": git_probe.branch(cwd), "project": _project_info_for_cwd(cwd), "lazy": True,
+-        "model": _session_default_model(session), "skills": {}, "tools": {}, "desktop_contract": DESKTOP_BACKEND_CONTRACT,
++        "model": model, "provider": provider,
++        "skills": {}, "tools": {}, "desktop_contract": DESKTOP_BACKEND_CONTRACT,
+     }
+ 
+ 
 diff --git a/HermesLatest/tui_gateway/session_auto_continue.py b/HermesLatest/tui_gateway/session_auto_continue.py
 index 442038b0741159f81b4d0d72814e06f3ffff3f8d..72480f0e1f278ca45168af03f8bce45c4eaefab5 100644
 --- a/HermesLatest/tui_gateway/session_auto_continue.py

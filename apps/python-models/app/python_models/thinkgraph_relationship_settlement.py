@@ -9,14 +9,15 @@ from engraphis.core.interfaces import Edge, Node
 
 from .engraphis import canonical_entity_id, existing_entity_for_name
 from .thinkgraph_relationship_classification import (
-    THINKGRAPH_JEV_ABSTAIN,
     current_jev_pair_edges,
     jev_provenance,
     winner_probability,
 )
 from .thinkgraph_relationship_vocabulary import (
     ThinkGraphIntakeError,
+    _promote_project_relationship_label,
     project_relationship_vocabulary,
+    relationship_vocabulary_hash,
 )
 
 
@@ -59,10 +60,30 @@ def apply_accepted_decision(
     """Persist one Jev winner; the Card's free-form phrase is provenance only."""
     winner = str(decision.get("winner") or "")
     vocabulary = project_relationship_vocabulary(store, workspace_id)
-    if winner not in vocabulary or winner == THINKGRAPH_JEV_ABSTAIN:
-        raise ThinkGraphIntakeError(
-            "thinkgraph_relationship_winner_not_canonical"
+    candidate = str(decision.get("novel_relationship_candidate") or "")
+    if winner not in vocabulary:
+        if not candidate or winner != candidate:
+            raise ThinkGraphIntakeError(
+                "thinkgraph_relationship_winner_not_canonical"
+            )
+        vocabulary, promoted = _promote_project_relationship_label(
+            store,
+            workspace_id=workspace_id,
+            label=winner,
         )
+        promotion = "promoted" if promoted else "reused_concurrent"
+    else:
+        promotion = (
+            "reused_concurrent"
+            if candidate and winner == candidate
+            else "not_promoted"
+        )
+    decision = {
+        **decision,
+        "vocabulary_promotion": promotion,
+        "vocabulary_after_hash": relationship_vocabulary_hash(vocabulary),
+        "vocabulary_after_count": len(vocabulary),
+    }
     source_id, source_created = _upsert_canonical_endpoint(
         store,
         workspace_id=workspace_id,

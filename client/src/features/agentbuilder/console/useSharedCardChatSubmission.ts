@@ -248,7 +248,7 @@ export function useSharedCardChatSubmission({
             // never turn an otherwise valid shared-chat message into a failed turn.
           }
         }
-        const { finalText } = await streamSession({
+        const { finalText, state } = await streamSession({
           projectId: canvasProjectId,
           deckId,
           conversationId,
@@ -328,6 +328,23 @@ export function useSharedCardChatSubmission({
             }
           },
         });
+        if (state === 'stopped') {
+          setTranscript((current) => {
+            if (current.key !== conversationKey) return current;
+            const messages = current.messages.filter((item) => (
+              item.messageId !== assistantMessageId
+            ));
+            return {
+              key: conversationKey,
+              messages: messages.map((item) => (
+                item.messageId === userMessageId && item.role === 'user'
+                  ? { ...item, status: 'complete' as const }
+                  : item
+              )),
+            };
+          });
+          return '';
+        }
         const completedText = finalText;
         if (!completedText.trim()) {
           setTurnState({ key: conversationKey, phase: 'idle' });

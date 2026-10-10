@@ -81,14 +81,27 @@ async function ensureHermesTurnModel(args: {
     bot_mode_roster: args.binding.botModeRoster,
   }));
   const info = objectRecord(activated.info);
-  if (
-    String(activated.session_id || '') !== args.binding.sessionId
-    || String(activated.stored_session_id || activated.session_key || '')
-      !== args.binding.storedSessionId
-    || activated.messages_omitted !== true
-    || String(info.provider || '') !== liveProvider
-    || String(info.model || '') !== desired
-  ) throw new SavedCardRunFailure('hermes_session_model_readback_mismatch');
+  const activatedSessionId = String(activated.session_id || '');
+  const activatedStoredSessionId = String(
+    activated.stored_session_id || activated.session_key || '',
+  );
+  const activatedProvider = String(info.provider || '');
+  const activatedModel = String(info.model || '');
+  const mismatches = [
+    ...(activatedSessionId === args.binding.sessionId ? [] : ['live_session_id']),
+    ...(activatedStoredSessionId === args.binding.storedSessionId ? [] : ['stored_session_id']),
+    ...(activated.messages_omitted === true ? [] : ['messages_omitted']),
+    ...(activatedProvider === liveProvider
+      ? [] : [`provider(expected=${liveProvider},actual=${activatedProvider || 'missing'})`]),
+    ...(activatedModel === desired
+      ? [] : [`model(expected=${desired},actual=${activatedModel || 'missing'})`]),
+  ];
+  if (mismatches.length) {
+    throw new SavedCardRunFailure(
+      'hermes_session_model_readback_mismatch',
+      `hermes_session_model_readback_mismatch:${mismatches.join(',')}`,
+    );
+  }
   args.binding.info = info;
   return desired;
 }

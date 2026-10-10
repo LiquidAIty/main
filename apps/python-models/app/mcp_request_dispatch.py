@@ -15,6 +15,7 @@ from app.python_models.tool_registry import operation_definition, required_tool_
 from mcp.types import CallToolResult, TextContent
 
 MCP_CALL_TIMEOUT_SECONDS = 30.0
+ENGRAPHIS_OPERATION_TIMEOUT_SECONDS = 120.0
 MAG_ONE_COMPLETION_TIMEOUT_SECONDS = 570.0
 SPECIALIST_CARD_TOOL_TIMEOUT_SECONDS = 570.0
 def request_tool_is_allowed(
@@ -277,6 +278,10 @@ def mcp_tool_timeout_seconds(name: str) -> float:
     if name == "engraphis_remember":
         # Semantic extraction and storage can exceed the ordinary read deadline.
         return 190.0
+    if name.startswith("engraphis_"):
+        # Engraphis semantic reads may cold-load the embedding/reranking stack.
+        # Keep one bounded provider-family budget instead of per-tool exceptions.
+        return ENGRAPHIS_OPERATION_TIMEOUT_SECONDS
     if name == "run_mag_one":
         return MAG_ONE_COMPLETION_TIMEOUT_SECONDS
     return MCP_CALL_TIMEOUT_SECONDS

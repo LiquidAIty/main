@@ -86,3 +86,12 @@ def test_configure_toggle_is_what_the_runtime_resolver_and_describe_see(profile_
     assert not any("disabled" in entry for entry in on_disk.values())
     assert enabled_mcp_server_names({"mcp_servers": on_disk}) == {"keep", "legacy"}
     assert _described() == {"keep": True, "drop": False, "legacy": True}
+
+
+def test_configure_soul_roundtrips_exact_mixed_newlines(profile_dir):
+    soul = "first\r\nsecond\nthird\r\n"
+
+    _call("profiles.configure", {"soul": soul})
+
+    assert (profile_dir / "SOUL.md").read_bytes() == soul.encode("utf-8")
+    assert _call("profiles.describe", {})["soul"] == soul

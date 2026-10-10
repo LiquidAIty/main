@@ -12,7 +12,7 @@
 import type { DeckCard } from '../../../types/agentgraph';
 
 export type HermesSessionEvent = {
-  kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
+  kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'stopped' | 'error' | 'end' | string;
   [key: string]: unknown;
 };
 
@@ -162,7 +162,7 @@ export async function streamSession(args: {
   dataAnchors?: DataAnchor[];
   onEvent: (event: HermesSessionEvent) => void;
   signal?: AbortSignal;
-}): Promise<{ finalText: string }> {
+}): Promise<{ finalText: string; state: 'completed' | 'stopped' }> {
   const res = await fetch(`${BASE}/turn`, {
     method: 'POST',
     credentials: 'include',
@@ -200,6 +200,7 @@ export async function streamSession(args: {
   let buffer = '';
   let finalText = '';
   let streamFailure: SessionStreamError | null = null;
+  let stopped = false;
   let sawEnd = false;
   while (true) {
     const { done, value } = await reader.read();
@@ -220,6 +221,18 @@ export async function streamSession(args: {
         /* keep empty */
       }
       if (kind === 'done') finalText = String((data as { fullText?: string }).fullText ?? finalText);
+      if (kind === 'stopped') {
+        const code = typeof data.code === 'string' ? data.code : '';
+        if (code === 'hermes_turn_cancelled' || code === 'hermes_turn_interrupted') {
+          stopped = true;
+        } else {
+          streamFailure = new SessionStreamError({
+            code: 'session_stream_stopped_state_invalid',
+            message: 'The chat stream reported an invalid stopped state.',
+            route: `${BASE}/turn`,
+          });
+        }
+      }
       if (kind === 'error') {
         streamFailure = new SessionStreamError({
           code: typeof data.code === 'string' && data.code ? data.code : 'session_stream_failed',
@@ -244,7 +257,7 @@ export async function streamSession(args: {
       route: `${BASE}/turn`,
     });
   }
-  return { finalText };
+  return { finalText, state: stopped ? 'stopped' : 'completed' };
 }
 
 export async function stopSession(args: {

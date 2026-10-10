@@ -26,6 +26,7 @@ GRANT_FIELDS = {
 KNOWN_RUNTIME_OPTION_FIELDS = {
     "tools", "skills", "toolsets", "mcpConnectionIds",
     "provider", "modelKey", "providerModelId", "accessMode", "enabled",
+    "reasoningEffort", "temperature", "maxTokens", "maxTurns",
 }
 
 SUBAGENT_MODEL_FIELDS = {
@@ -264,6 +265,10 @@ def stable_card_record(card: dict[str, Any]) -> dict[str, Any]:
         "modelKey": options.get("modelKey"),
         "providerModelId": options.get("providerModelId") or card.get("providerModelId"),
         "accessMode": access_mode,
+        "reasoningEffort": options.get("reasoningEffort"),
+        "temperature": options.get("temperature"),
+        "maxTokens": options.get("maxTokens"),
+        "maxTurns": options.get("maxTurns"),
         "enabled": card.get("enabled", options.get("enabled", True)) is not False,
         "enabledLocation": (
             "card" if "enabled" in card

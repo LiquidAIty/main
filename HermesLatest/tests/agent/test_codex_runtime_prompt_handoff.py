@@ -5,7 +5,11 @@ codex early-return used to send only cwd + raw user text, so SOUL.md / memory / 
 composed and then silently dropped.
 """
 
+import json
+import threading
 from types import SimpleNamespace
+
+import pytest
 
 from agent import codex_runtime
 from agent.transports import codex_app_server_session as sess_mod
@@ -73,3 +77,85 @@ def test_runtime_retires_thread_when_prompt_composition_changes(monkeypatch):
     starts = [p["developerInstructions"] for (m, p) in client.requests if m == "thread/start"]
     assert starts == ["SOUL: you are Hermes\n\nAlways start with ZZZ", "SOUL: you are Hermes\n\nPersonality: pirate"]
     assert client.closed == 1  # the stale thread's client was closed, not leaked
+
+
+@pytest.mark.parametrize("roster,expected", [(None, False), ([], False), (["knowgraph"], True)])
+def test_codex_projects_message_agent_only_for_an_authorized_roster(
+    monkeypatch, roster, expected,
+):
+    from tools import bot_mode_dm
+
+    agent = _agent(_dynamic_tools=[], _bot_mode_roster=roster)
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "message_agent_authorized",
+        lambda value: bool(value._bot_mode_roster),
+    )
+
+    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
+    message_tools = [item for item in projected if item["name"] == "message_agent"]
+
+    assert bool(message_tools) is expected
+    assert ("message_agent" in canonical_names) is expected
+    if expected:
+        function = bot_mode_dm.message_agent_tool_schema()["function"]
+        assert message_tools == [{
+            "type": "function",
+            "name": "message_agent",
+            "canonicalName": "message_agent",
+            "description": function["description"],
+            "inputSchema": function["parameters"],
+        }]
+
+
+def test_codex_message_agent_uses_the_exact_hermes_inline_owner(monkeypatch):
+    from agent import inline_tool_executors
+    from tools import bot_mode_dm
+
+    calls = []
+    agent = _agent(_dynamic_tools=[], _bot_mode_roster=["knowgraph"])
+    monkeypatch.setattr(bot_mode_dm, "message_agent_authorized", lambda _agent: True)
+    monkeypatch.setitem(
+        inline_tool_executors.INLINE_TOOL_EXECUTORS,
+        "message_agent",
+        lambda actual_agent, arguments, context: calls.append(
+            (actual_agent, arguments, context.effective_task_id, context.tool_call_id),
+        ) or json.dumps({"status": "queued", "delivery_id": "delivery-one"}),
+    )
+    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
+    executor = codex_runtime._dynamic_tool_executor(
+        agent, canonical_names, "task-one",
+    )
+
+    result = executor(
+        "message_agent",
+        {"target": "knowgraph", "message": "Research Rocket Lab."},
+        "call-one",
+        threading.Event(),
+    )
+
+    assert any(item["name"] == "message_agent" for item in projected)
+    assert calls == [(
+        agent,
+        {"target": "knowgraph", "message": "Research Rocket Lab."},
+        "task-one",
+        "call-one",
+    )]
+    assert result["success"] is True
+    assert json.loads(result["contentItems"][0]["text"])["delivery_id"] == "delivery-one"
+
+
+def test_codex_rejects_a_card_tool_named_message_agent(monkeypatch):
+    from tools import bot_mode_dm
+
+    agent = _agent(_dynamic_tools=[{
+        "type": "function",
+        "name": "message_agent",
+        "canonical_name": "application.message_agent",
+        "description": "invalid collision",
+        "input_schema": {"type": "object", "properties": {}},
+    }], _bot_mode_roster=["knowgraph"])
+    monkeypatch.setattr(bot_mode_dm, "message_agent_authorized", lambda _agent: True)
+
+    with pytest.raises(ValueError, match="dynamic_tool_name_collision:message_agent"):
+        codex_runtime._dynamic_tools_configuration(agent)

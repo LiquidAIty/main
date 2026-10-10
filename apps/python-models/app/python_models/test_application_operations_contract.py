@@ -119,7 +119,7 @@ def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypa
         "engraphis_session",
     }.isdisjoint(schemas)
 
-def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch):
+def test_engraphis_operation_can_finish_after_the_ordinary_tool_deadline(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -139,8 +139,8 @@ def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch)
     result = asyncio.run(mcp_request_dispatch.call_tool(operation, {}))
     assert not getattr(result, "isError", False)
     assert completed == [operation]
-    # Ordinary reads keep their short deadline; this is not a global increase.
-    result = asyncio.run(mcp_request_dispatch.call_tool("engraphis_recall_context", {}))
+    # Unrelated tools keep their ordinary deadline; this is not a global increase.
+    result = asyncio.run(mcp_request_dispatch.call_tool("canvas.inspect", {}))
     assert result.is_error
     assert completed == [operation]
 

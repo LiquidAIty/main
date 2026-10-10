@@ -61,8 +61,22 @@ def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
 
 def test_saved_profiles_stay_unique_and_stable_grants_are_preserved():
     controller = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
+    controller["runtimeOptions"].update({
+        "reasoningEffort": "low", "temperature": 0.25,
+        "maxTokens": 1200, "maxTurns": 6,
+    })
     stable = saved_card_contract.stable_card_record(controller)
     assert stable["grants"]["tools"] == controller["runtimeOptions"]["tools"]
+    assert {
+        key: stable[key]
+        for key in ("reasoningEffort", "temperature", "maxTokens", "maxTurns")
+    } == {
+        "reasoningEffort": "low", "temperature": 0.25,
+        "maxTokens": 1200, "maxTurns": 6,
+    }
+    assert not {
+        "reasoningEffort", "temperature", "maxTokens", "maxTurns"
+    } & stable["runtimeExtensions"].keys()
     duplicate = _agent("separate", runtime={"kind": "hermes", "mode": "delegate", "profile": "MAIN"})
     with pytest.raises(saved_card_contract.CardDomainError, match="card_profile_duplicate"):
         saved_cards._validated_deck_collections({

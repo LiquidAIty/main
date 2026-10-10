@@ -326,8 +326,6 @@ class CodexAppServerSession:
         # Hermes supplies the agent identity through its own system prompt; ``personality: "none"`` strips
         # codex's built-in "# Personality" section from the base instructions so it cannot compete (#72104).
         params: dict[str, Any] = {"cwd": self._cwd, "personality": "none"}
-        if self._dynamic_tools:
-            params["dynamicTools"] = copy.deepcopy(self._dynamic_tools)
         if self._developer_instructions and self._developer_instructions.strip():
             params["developerInstructions"] = self._developer_instructions
         if self._model_provider:
@@ -339,6 +337,8 @@ class CodexAppServerSession:
             thread_id = self._resume_thread(wanted, params)
             logger.info("codex app-server thread resumed: id=%s cwd=%s", thread_id[:8], self._cwd)
         else:
+            if self._dynamic_tools:
+                params["dynamicTools"] = copy.deepcopy(self._dynamic_tools)
             if self._history_seed:
                 params["developerInstructions"] = "\n\n".join(
                     part for part in (params.get("developerInstructions"), self._history_seed) if part)
@@ -353,8 +353,12 @@ class CodexAppServerSession:
         return thread_id
 
     def _resume_thread(self, wanted: str, params: dict[str, Any]) -> str:
-        """``thread/resume`` for the stored id; the same thread/start params ride along so the resumed thread
-        carries the CURRENT prompt composition and provider (accepted by the resume schema, codex 0.147)."""
+        """Resume with the supported start-like fields (prompt/provider/model/cwd/personality).
+
+        Codex CLI 0.159 does not accept ``dynamicTools`` in ``ThreadResumeParams``; it restores the
+        creation-time definitions from rollout SessionMeta. The runtime therefore resumes only a stored
+        thread whose persisted Dynamic Tools fingerprint exactly matches the current projected contract.
+        """
         assert self._client is not None
         try:
             result = self._client.request("thread/resume", {"threadId": wanted, **params}, timeout=15)

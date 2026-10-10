@@ -14957,7 +14957,7 @@ def test_session_create_lazy_info_reports_desktop_contract(monkeypatch):
     server._sessions.pop(resp["result"]["session_id"], None)
 
 
-def test_session_activate_lazy_info_reports_desktop_contract():
+def test_session_activate_lazy_info_reports_desktop_contract(monkeypatch):
     """Activating an already-live *lazy* session (agent not built yet) must
     still advertise desktop_contract. _live_session_payload falls back to
     _fallback_session_info while session["agent"] is None; the desktop reads a
@@ -14965,6 +14965,9 @@ def test_session_activate_lazy_info_reports_desktop_contract():
     a current backend (#68392). The sibling session.create path was fixed in
     #36112; this pins the session.activate path."""
     import threading
+
+    monkeypatch.setattr(server, "_session_default_model", lambda _session: "profile-model")
+    monkeypatch.setattr(server, "_session_default_provider", lambda _session: "profile-provider")
 
     sid = "lazy-activate-contract"
     server._sessions[sid] = {
@@ -14987,6 +14990,7 @@ def test_session_activate_lazy_info_reports_desktop_contract():
         )
         info = resp["result"]["info"]
         assert info["lazy"] is True
+        assert (info["model"], info["provider"]) == ("profile-model", "profile-provider")
         assert info["desktop_contract"] == server.DESKTOP_BACKEND_CONTRACT
     finally:
         server._sessions.pop(sid, None)
@@ -19343,6 +19347,8 @@ def test_session_create_records_ui_model_as_session_override(monkeypatch):
     must not mutate the profile default.
     """
     monkeypatch.setattr(server, "_enable_gateway_prompts", lambda: None)
+    monkeypatch.setattr(server, "_session_default_model", lambda _session: "profile-model")
+    monkeypatch.setattr(server, "_session_default_provider", lambda _session: "profile-provider")
     # Don't run the real deferred build in this storage-focused test.
     monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
     try:
@@ -19380,6 +19386,8 @@ def test_session_create_records_ui_model_as_session_override(monkeypatch):
         assert plain_sess["model_override"] is None
         assert plain_sess["create_reasoning_override"] is None
         assert plain_sess["create_service_tier_override"] is None
+        assert plain["result"]["info"]["model"] == "profile-model"
+        assert plain["result"]["info"]["provider"] == "profile-provider"
     finally:
         server._sessions.clear()
 

@@ -85,7 +85,7 @@ class TestModuleSurface:
         from agent.transports.hermes_tools_mcp_server import EXPOSED_TOOLS
         forbidden = {
             "terminal", "shell", "read_file", "write_file", "patch",
-            "search_files", "process",
+            "search_files", "process", "message_agent",
         }
         leaked = forbidden & set(EXPOSED_TOOLS)
         assert not leaked, (

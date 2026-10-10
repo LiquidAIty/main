@@ -34,6 +34,10 @@ function runFailureCode(error: unknown): string {
   return /^[a-z][a-z0-9_]{2,120}$/.test(candidate) ? candidate : 'hermes_inference_failed';
 }
 
+function isIntentionalHermesStop(code: string): boolean {
+  return code === 'hermes_turn_cancelled' || code === 'hermes_turn_interrupted';
+}
+
 export async function sharedChatTurn(req: Request, res: Response) {
   const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || DEFAULT_PROJECT_DECK_ID).trim();
@@ -260,16 +264,21 @@ export async function sharedChatTurn(req: Request, res: Response) {
     } catch (settlementError) {
       reportedError = settlementError;
     }
-    writeSse(res, 'error', {
-      ...identity,
-      code: runFailureCode(reportedError),
-      message: reportedError instanceof Error
-        ? reportedError.message
-        : 'The Hermes turn failed.',
-      correlationId: run.runId,
-      route: '/api/shared-chat/turn',
-      status: 502,
-    });
+    const code = runFailureCode(reportedError);
+    if (isIntentionalHermesStop(code)) {
+      writeSse(res, 'stopped', { ...identity, state: 'stopped', code });
+    } else {
+      writeSse(res, 'error', {
+        ...identity,
+        code,
+        message: reportedError instanceof Error
+          ? reportedError.message
+          : 'The Hermes turn failed.',
+        correlationId: run.runId,
+        route: '/api/shared-chat/turn',
+        status: 502,
+      });
+    }
   } finally {
     writeSse(res, 'end', identity);
     res.end();

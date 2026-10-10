@@ -148,6 +148,19 @@ def _session_default_model(session: dict) -> str:
         return _resolve_model()
 
 
+def _session_default_provider(session: dict) -> str:
+    """The configured provider of the session's own profile.
+
+    Lazy sessions have no built agent yet, but ``SessionLiveInfo`` still
+    promises the provider paired with the profile's default model.
+    """
+    with _session_profile_runtime_scope(
+        {"profile_home": session.get("profile_home") or None},
+        hydrate_secrets=False,
+    ):
+        return _config_model_target()[1]
+
+
 def _restart_completed_failed_agent_build(sid: str, session: dict, failed_ready: threading.Event | None) -> bool:
     """Replace one completed failed build generation and start its retry."""
     if failed_ready is None:

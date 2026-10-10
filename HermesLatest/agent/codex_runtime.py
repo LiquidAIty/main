@@ -5,6 +5,7 @@ AIAgent first: ``run_codex_app_server_turn`` drives one ``codex app-server`` sub
 from __future__ import annotations
 
 import contextvars
+import copy
 import hashlib
 import json
 import logging
@@ -445,14 +446,83 @@ def _close_codex_session(agent) -> None:
 
 def _dynamic_tools_configuration(agent) -> tuple[list[dict], dict[str, str]]:
     from agent.dynamic_tools import dynamic_tools_configuration
+    from tools.bot_mode_dm import (
+        MESSAGE_AGENT_TOOL_NAME,
+        message_agent_authorized,
+        message_agent_tool_schema,
+    )
 
-    return dynamic_tools_configuration(agent)
+    projected, canonical_names = dynamic_tools_configuration(agent)
+    if not message_agent_authorized(agent):
+        return projected, canonical_names
+    if MESSAGE_AGENT_TOOL_NAME in canonical_names:
+        raise ValueError(f"dynamic_tool_name_collision:{MESSAGE_AGENT_TOOL_NAME}")
+    schema = message_agent_tool_schema().get("function") or {}
+    parameters = schema.get("parameters")
+    if (
+        schema.get("name") != MESSAGE_AGENT_TOOL_NAME
+        or not isinstance(parameters, dict)
+    ):
+        raise ValueError("message_agent_dynamic_tool_invalid")
+    projected.append({
+        "type": "function",
+        "name": MESSAGE_AGENT_TOOL_NAME,
+        "canonicalName": MESSAGE_AGENT_TOOL_NAME,
+        "description": str(schema.get("description") or ""),
+        "inputSchema": copy.deepcopy(parameters),
+    })
+    canonical_names[MESSAGE_AGENT_TOOL_NAME] = MESSAGE_AGENT_TOOL_NAME
+    return projected, canonical_names
 
 
-def _dynamic_tool_executor(agent, canonical_names: dict[str, str]):
+def _dynamic_tool_executor(
+    agent,
+    canonical_names: dict[str, str],
+    effective_task_id: str = "",
+):
     from agent.dynamic_tools import dynamic_tool_executor
+    from agent.inline_tool_executors import INLINE_TOOL_EXECUTORS, InlineToolContext
+    from tools.bot_mode_dm import MESSAGE_AGENT_TOOL_NAME
 
-    return dynamic_tool_executor(agent, canonical_names)
+    application_names = {
+        name: canonical
+        for name, canonical in canonical_names.items()
+        if name != MESSAGE_AGENT_TOOL_NAME
+    }
+    application_executor = dynamic_tool_executor(agent, application_names)
+    if MESSAGE_AGENT_TOOL_NAME not in canonical_names:
+        return application_executor
+
+    def execute(name: str, arguments: dict, call_id: str, interrupt_event) -> dict:
+        if name != MESSAGE_AGENT_TOOL_NAME:
+            if application_executor is None:
+                raise ValueError("dynamic_tool_not_selected")
+            return application_executor(name, arguments, call_id, interrupt_event)
+        if interrupt_event.is_set():
+            result = json.dumps({"error": "dynamic_tool_cancelled"})
+            return {
+                "success": False,
+                "contentItems": [{"type": "inputText", "text": result}],
+            }
+        result = INLINE_TOOL_EXECUTORS[MESSAGE_AGENT_TOOL_NAME](
+            agent,
+            arguments,
+            InlineToolContext(
+                effective_task_id=effective_task_id,
+                tool_call_id=call_id,
+            ),
+        )
+        text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        try:
+            decoded = json.loads(text)
+        except (TypeError, json.JSONDecodeError):
+            decoded = None
+        return {
+            "success": not (isinstance(decoded, dict) and bool(decoded.get("error"))),
+            "contentItems": [{"type": "inputText", "text": text}],
+        }
+
+    return execute
 
 
 def _consume_user_interrupt(agent, active: bool = True) -> tuple[bool, Any]:
@@ -473,29 +543,44 @@ def _codex_developer_instructions(agent) -> str:
     return developer_instructions
 
 
-# Durable codex thread binding: ``sessions.model_config.codex_thread_id`` (hermes_state), written after the
-# turn's projected rows were committed, read by the next AIAgent built for the same Hermes session so an
-# API-server restart (or the per-request agents of /api/sessions/{id}/chat) resumes the model-side thread
-# instead of starting an empty one while Hermes' own transcript continues (#100531).
+# Durable codex thread binding: ``sessions.model_config`` stores the thread id and the exact projected Dynamic
+# Tools fingerprint together after the turn's projected rows were committed. The next AIAgent resumes only an
+# exact-match binding; legacy/mismatched bindings start one fresh history-seeded thread because codex restores
+# Dynamic Tools from the rollout's creation-time SessionMeta (#100531).
 _CODEX_THREAD_ID_KEY = "codex_thread_id"
+_CODEX_DYNAMIC_TOOLS_FINGERPRINT_KEY = "codex_dynamic_tools_fingerprint"
 _CODEX_THREAD_RESUME_NOTICE = "Codex thread could not be resumed; starting a new one."
 
 
-def _stored_codex_thread_id(agent) -> str | None:
+def _stored_codex_thread_binding(agent) -> tuple[str | None, str | None]:
     db, session_id = getattr(agent, "_session_db", None), getattr(agent, "session_id", None)
     if db is None or not session_id:
-        return None
+        return None, None
     thread_id = db.get_session_model_config_value(session_id, _CODEX_THREAD_ID_KEY)
-    return thread_id if isinstance(thread_id, str) and thread_id else None
+    fingerprint = db.get_session_model_config_value(session_id, _CODEX_DYNAMIC_TOOLS_FINGERPRINT_KEY)
+    return (
+        thread_id if isinstance(thread_id, str) and thread_id else None,
+        fingerprint if isinstance(fingerprint, str) and fingerprint else None,
+    )
 
 
-def _store_codex_thread_id(agent, thread_id: str | None) -> None:
-    """Merge (``None`` clears) the binding into the session row; a failed write only logs — the turn is done."""
+def _store_codex_thread_binding(
+    agent,
+    thread_id: str | None,
+    dynamic_tools_fingerprint: str | None,
+) -> None:
+    """Atomically merge (``None`` clears) the binding; a failed write only logs — the turn is done."""
     db, session_id = getattr(agent, "_session_db", None), getattr(agent, "session_id", None)
     if db is None or not session_id:
         return
-    _call_guarded(db.patch_session_model_config, "codex thread id could not be stored on the session row",
-                  args=(session_id, {_CODEX_THREAD_ID_KEY: thread_id}))
+    _call_guarded(
+        db.patch_session_model_config,
+        "codex thread binding could not be stored on the session row",
+        args=(session_id, {
+            _CODEX_THREAD_ID_KEY: thread_id,
+            _CODEX_DYNAMIC_TOOLS_FINGERPRINT_KEY: dynamic_tools_fingerprint,
+        }),
+    )
 
 
 def _start_codex_thread(agent) -> str:
@@ -507,12 +592,16 @@ def _start_codex_thread(agent) -> str:
         return agent._codex_session.ensure_started()
     except CodexThreadResumeError as exc:
         logger.warning("%s; starting a new codex thread (session=%s)", exc.message, getattr(agent, "session_id", None))
-        _store_codex_thread_id(agent, None)
+        _store_codex_thread_binding(agent, None, None)
         agent._emit_diagnostic_status(_CODEX_THREAD_RESUME_NOTICE)
         return agent._codex_session.ensure_started()
 
 
-def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -> None:
+def _ensure_codex_session(
+    agent,
+    messages: List[Dict[str, Any]] | None = None,
+    effective_task_id: str = "",
+) -> None:
     """Lazily spawn one CodexAppServerSession per AIAgent (reused across turns, closed by the _cleanup hook).
     A live session whose thread was started with a different prompt composition (TUI/Desktop ``/personality``
     or a prompt mirror mutate the agent in place) is retired first so the new thread carries the current one.
@@ -536,10 +625,14 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
             == dynamic_fingerprint
         ):
             agent._codex_session._tool_executor = _dynamic_tool_executor(
-                agent, canonical_names)
+                agent, canonical_names, effective_task_id)
             return
         _close_codex_session(agent)
-    resume_thread_id = None if getattr(agent, "_codex_session_prompt", None) is not None else _stored_codex_thread_id(agent)
+    resume_thread_id = None
+    if getattr(agent, "_codex_session_prompt", None) is None:
+        stored_thread_id, stored_dynamic_fingerprint = _stored_codex_thread_binding(agent)
+        if stored_dynamic_fingerprint == dynamic_fingerprint:
+            resume_thread_id = stored_thread_id
     from agent.runtime_cwd import resolve_agent_cwd
     from agent.transports.codex_app_server_session import CodexAppServerSession, _ServerRequestRouting
     from hermes_cli.codex_runtime_switch import get_configured_codex_binary
@@ -587,7 +680,7 @@ def _ensure_codex_session(agent, messages: List[Dict[str, Any]] | None = None) -
         model=getattr(agent, "model", None) if model_provider else None, model_provider=model_provider,
         resume_thread_id=resume_thread_id, history_seed=history_seed,
         dynamic_tools=dynamic_tools,
-        tool_executor=_dynamic_tool_executor(agent, canonical_names),
+        tool_executor=_dynamic_tool_executor(agent, canonical_names, effective_task_id),
     )
 
 
@@ -660,7 +753,7 @@ def run_codex_app_server_turn(agent, *, user_message: str, original_user_message
         from agent.conversation_compression import _checkpoint_blocked
         raise _checkpoint_blocked("codex_app_server owns the authoritative thread and compacts it "
                                   "without a truthful pre-compaction transcript boundary")
-    _ensure_codex_session(agent, messages)
+    _ensure_codex_session(agent, messages, effective_task_id)
     try:
         _start_codex_thread(agent)
         turn = agent._codex_session.run_turn(user_input=user_message)
@@ -680,7 +773,11 @@ def run_codex_app_server_turn(agent, *, user_message: str, original_user_message
     # The binding is published only once the transcript it belongs to is durable, and never for a
     # retired thread (the next agent would only resume into the same wedge).
     if _persist_projected_messages(agent, turn, messages) and not getattr(turn, "should_retire", False):
-        _store_codex_thread_id(agent, turn.thread_id)
+        _store_codex_thread_binding(
+            agent,
+            turn.thread_id,
+            agent._codex_session.dynamic_tools_fingerprint,
+        )
     usage_result = _finish_codex_turn(
         agent, turn, messages, original_user_message=original_user_message, should_review_memory=should_review_memory,
     )

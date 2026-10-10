@@ -72,6 +72,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '054_rename_remaining_hermes_run_aggregates.sql', applied: true }),
       expect.objectContaining({ filename: '055_remove_bot_mode_card_tool_grant.sql', applied: true }),
       expect.objectContaining({ filename: '056_rename_project_code_folder.sql', applied: true }),
+      expect.objectContaining({ filename: '057_card_run_selection_and_usage.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -362,7 +363,7 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
-  it('accepts an applied 053 ledger and schedules only the three forward corrections', async () => {
+  it('accepts an applied 053 ledger and schedules only the four forward corrections', async () => {
     const migrationsDirectory = resolve(__dirname, '../../migrations');
     const fresh = await applyBackendMigrations({
       client: fakeClient() as any,
@@ -382,8 +383,22 @@ describe('canonical backend migrations', () => {
       '054_rename_remaining_hermes_run_aggregates.sql',
       '055_remove_bot_mode_card_tool_grant.sql',
       '056_rename_project_code_folder.sql',
+      '057_card_run_selection_and_usage.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 3);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 4);
+  });
+
+  it('adds Card Run selection and usage fields without another metrics store', async () => {
+    const source = await readFile(
+      migrationPath('057_card_run_selection_and_usage.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain('ADD COLUMN auto_tools_decision JSONB');
+    expect(source).toContain('ADD COLUMN auto_model_decision JSONB');
+    expect(source).toContain('ADD COLUMN provider_total_tokens BIGINT');
+    expect(source).toContain('ADD COLUMN cost_status TEXT');
+    expect(source).not.toContain('CREATE TABLE');
   });
 
   it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {

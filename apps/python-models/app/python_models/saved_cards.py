@@ -223,7 +223,9 @@ def _insert_revision(
             sha256_text(stable["basePrompt"]), stable["stableOutputContract"], stable["runtime"]["kind"],
             stable["runtime"]["mode"], stable["runtime"].get("profile"),
             stable["provider"], stable["modelKey"],
-            stable["providerModelId"], stable["accessMode"], None, None, None, None,
+            stable["providerModelId"], stable["accessMode"],
+            stable["reasoningEffort"], stable["temperature"],
+            stable["maxTokens"], stable["maxTurns"],
             stable["enabled"], stable["enabledLocation"],
             canonical_json(stable["runtimeExtensions"]), revision_sha,
         ),
@@ -298,6 +300,9 @@ def load_saved_deck_with_cursor(
         for key, column in (
             ("provider", "provider"), ("modelKey", "model_key"),
             ("providerModelId", "provider_model_id"), ("accessMode", "access_mode"),
+            ("reasoningEffort", "reasoning_effort"),
+            ("temperature", "temperature"), ("maxTokens", "max_tokens"),
+            ("maxTurns", "max_turns"),
         ):
             if row.get(column) is not None:
                 options[key] = row[column]

@@ -22,14 +22,19 @@ or fallback checkout is retained.
 ## Extension families
 
 1. Experimental Dynamic Tools: project one accepted turn's exact authorized tool schemas into Hermes,
-   dispatch each call through the authenticated MCP callback, and cancel the exact in-flight call on Stop.
+   dispatch each application call through the authenticated MCP callback, present an authorized session's
+   Hermes-owned `message_agent` to Codex without publishing it in the application catalog, and cancel the
+   exact in-flight call on Stop. Codex CLI 0.159 accepts Dynamic Tools only at `thread/start` and restores
+   them from rollout SessionMeta on resume, so Hermes atomically binds each thread ID to the exact projected
+   fingerprint and retires legacy, missing-fingerprint, or mismatched bindings into a fresh history-seeded thread.
 2. Card Python: present one valid saved Script as `card_python`, execute it through Hermes's existing
    child-process Python path, and route only its declared nested tool calls through the same callback.
 3. Bot roster scoping: constrain Hermes `message_agent` to the exact Project-session orange roster.
 4. Card profile capability fencing: apply/read only Card-owned profile fields, scope learning reads to the
    addressed profile, preserve unknown/learned state, ship Builder's selected inspection skill through
    Hermes's bundled-skill mechanism, and rebuild a session only when its capability fingerprint is stale.
-5. Exact turn evidence: correlate submission, Stop, completion, actual provider/model and turn-local usage
+5. Exact turn evidence: correlate submission, Stop, completion, actual provider/model and turn-local usage;
+   report the profile-scoped provider/model on lazy session create/resume/activate before the agent is built,
    without replacing Hermes queue/session ownership.
 6. AutoTeam / Team TaskGraph: mark an ordinary saved Team profile, create one bounded Team root, use
    temporary workers, and synthesize on that same root through Hermes's task ledger.
@@ -52,12 +57,12 @@ Files may appear in more than one family because one accepted turn carries all o
 
 | File | Family | Symbols / reason |
 | --- | --- | --- |
-| `agent/codex_runtime.py` | Dynamic Tools / Card Python | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session`: fingerprint exact turn tools and retire/reuse Codex sessions accordingly. |
+| `agent/codex_runtime.py` | Dynamic Tools / Card Python / Bot roster | `_dynamic_tools_configuration`, `_dynamic_tool_executor`, `_ensure_codex_session`: fingerprint exact turn tools, expose authorized Hermes `message_agent` only inside the Codex session, dispatch it through Hermes's existing inline owner with exact task/call identity, atomically bind the thread ID to that fingerprint, and resume only an exact match. |
 | `agent/conversation_loop.py` | Profile fencing | `_profile_capability_prompt_stale`, `_persist_system_prompt`, `_restore_or_build_system_prompt`: refresh profile-following prompts when the real capability epoch changes. |
 | `agent/inline_tool_executors.py` | Dynamic Tools / Card Python | `resolve_invoke_tool_executor`: prefer the current turn's exact executor before shipped memory/registry lookup. |
 | `agent/system_prompt.py` | Bot roster / profile fencing | `_profile_capability_parts`, `_post_workspace_parts`: describe only the authorized Bot roster and bind the prompt to the profile capability epoch. |
 | `agent/tool_executor.py` | Dynamic Tools / Card Python | `_resolve_sequential_dispatch`: route current-turn tools through agent-local authority, never a replacement global registry. |
-| `agent/transports/codex_app_server_session.py` | Dynamic Tools | Validate the experimental handshake, definitions, thread/turn/call identity and exactly-once server-request response; propagate the existing interrupt event. |
+| `agent/transports/codex_app_server_session.py` | Dynamic Tools | Validate the experimental handshake, definitions, thread/turn/call identity and exactly-once server-request response; send Dynamic Tools only on `thread/start` for Codex CLI 0.159 and propagate the existing interrupt event. |
 | `gateway/kanban_watchers_dispatcher.py` | AutoTeam | `_record_team_decomposition_failure`, `_decompose_one`: apply the breaker only to marked Team roots. |
 | `hermes_cli/config_defaults.py` | AutoTeam | `kanban.task_mode`: empty preserves shipped behavior; `team` is explicit profile configuration. |
 | `hermes_cli/kanban_db.py` | AutoTeam / Magnetic | Store Team workflow fields and `allowed_assignees`; inherit/narrow/enforce the creator-tree ceiling, build same-root Team synthesis context, and expose `append_task_event` so the Magnetic adapter records its authority event without importing Hermes's private `_append_event`. No custom claim capability is retained. |
@@ -77,13 +82,13 @@ Files may appear in more than one family because one accepted turn carries all o
 | `tui_gateway/contracts/prompt_voice.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Declare exact tool, Script, callback, roster, fingerprint and submission fields on `prompt.submit`. Voice behavior is otherwise unchanged. |
 | `tui_gateway/contracts/sessions.py` | Bot roster / exact Stop | Declare session roster input and `expected_submission_id`. |
 | `tui_gateway/contracts/tools_mcp_plugins.py` | Profile fencing | Add explicit profile identity to Hermes learning reads/edits. |
-| `tui_gateway/methods_profiles.py` | Bot roster / profile fencing / AutoTeam | Configure/read only declared Card fields, preserve explicit empty toolset pins, canonicalize session rosters and return the capability fingerprint. |
+| `tui_gateway/methods_profiles.py` | Bot roster / profile fencing / AutoTeam | Configure/read only declared Card fields, atomically preserve exact UTF-8 Card PromptBlock bytes in `SOUL.md` across platform newline modes, preserve explicit empty toolset pins, canonicalize session rosters and return the capability fingerprint. |
 | `tui_gateway/methods_prompt.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Validate one complete callback/Script/roster/fingerprint envelope and forward the exact accepted authority. |
-| `tui_gateway/methods_session.py` | Bot roster / exact Stop | Apply the roster to create/resume/activate and refuse interruption of a different submission. |
+| `tui_gateway/methods_session.py` | Bot roster / exact Stop / turn evidence | Apply the roster to create/resume/activate, report the exact profile-scoped lazy model/provider pair, and refuse interruption of a different submission. |
 | `tui_gateway/methods_tools.py` | Profile fencing | Forward learning operations to Hermes's existing implementation for the exact profile. |
-| `tui_gateway/model_switch.py` | Profile fencing / model evidence | Rebuild only against the expected capability fingerprint and clear stale resume overrides without choosing a model for the application. |
+| `tui_gateway/model_switch.py` | Profile fencing / model evidence | Resolve a lazy session's model and provider from that session's own profile, rebuild only against the expected capability fingerprint, and clear stale resume overrides without choosing a model for the application. |
 | `tui_gateway/prompt_turn.py` | All turn-scoped families | Fence before provider work, install/restore exact tools and Script, emit submission events, and calculate the turn-local usage delta. |
-| `tui_gateway/server.py` | Bot roster / profile fencing / turn evidence | Preserve explicit empty toolsets, carry roster/session authority, fence profile builds, and expose available Hermes usage evidence. |
+| `tui_gateway/server.py` | Bot roster / profile fencing / turn evidence | Preserve explicit empty toolsets, carry roster/session authority, return the same model/provider identity for built and lazy sessions, fence profile builds, and expose available Hermes usage evidence. |
 | `tui_gateway/session_auto_continue.py` | Dynamic Tools / Card Python / Bot roster / turn evidence | Preserve the accepted envelope and submission identity when Hermes queues and later drains a busy-session turn. |
 
 `tui_gateway/methods_config_set.py` is not part of the overlay. The rejected Builder Docker/configuration
@@ -110,6 +115,7 @@ Current frozen generation (2026-10-09):
 
 ```text
 tests/agent/test_card_script_dynamic_tools.py
+tests/agent/test_codex_runtime_prompt_handoff.py
 tests/agent/test_system_prompt.py
 tests/agent/test_system_prompt_restore.py
 tests/agent/transports/test_codex_app_server_session.py

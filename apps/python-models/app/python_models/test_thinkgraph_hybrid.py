@@ -24,6 +24,9 @@ from app.python_models import (
     thinkgraph_relationship_vocabulary as relationship_vocabulary,
 )
 from app.python_models.jev_edge_ontology import SHARED_JEV_RELATIONSHIPS
+from app.python_models.thinkgraph_relationship_vocabulary import (
+    relationship_choice_plan,
+)
 
 
 @pytest.fixture()
@@ -113,16 +116,14 @@ def _decision(
     winner: str = "USES",
     *,
     vocabulary: tuple[str, ...] | None = None,
+    choices: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     vocabulary = vocabulary or tuple(SHARED_JEV_RELATIONSHIPS)
-    choices = relationship_classification.relationship_choices(vocabulary)
+    choices = choices or vocabulary
     distribution = {name: 0.0 for name in choices}
-    if winner == relationship_classification.THINKGRAPH_JEV_ABSTAIN:
-        distribution[winner] = 0.76
-        distribution["USES"] = 0.24
-    else:
-        distribution[winner] = 0.76
-        distribution[relationship_classification.THINKGRAPH_JEV_ABSTAIN] = 0.24
+    distribution[winner] = 0.76
+    alternate = next(name for name in choices if name != winner)
+    distribution[alternate] = 0.24
     return {
         "decision_id": "jev-decision-one",
         "winner": winner,
@@ -139,10 +140,17 @@ def _decision(
 
 
 def _classifier(winner: str = "USES") -> Callable[..., dict[str, Any]]:
-    def classify(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+    def classify(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        vocabulary = tuple(kwargs["relationship_vocabulary"])
+        plan = relationship_choice_plan(
+            str(args[5]), vocabulary,
+        )
+        assert kwargs["novel_relationship_candidate"] == plan["novel_candidate"]
+        assert kwargs["relationship_proposal_status"] == plan["proposal_status"]
         return _decision(
             winner,
-            vocabulary=tuple(kwargs["relationship_vocabulary"]),
+            vocabulary=vocabulary,
+            choices=tuple(plan["choices"]),
         )
 
     return classify
@@ -195,6 +203,25 @@ def test_custom_schema_requires_exactly_one_episodic_think() -> None:
     assert "think" in str(schema)
     assert "Return exactly one object in the facts array" in prompt
     assert "Jev alone" in prompt
+
+
+def test_relationship_choice_plan_has_no_abstention_option() -> None:
+    vocabulary = tuple(SHARED_JEV_RELATIONSHIPS)
+    long_proposal = relationship_choice_plan(
+        "operates as its current launch vehicle",
+        vocabulary,
+    )
+    novel = relationship_choice_plan(
+        "amplifies",
+        vocabulary,
+    )
+
+    assert "NONE" not in long_proposal["choices"]
+    assert long_proposal["proposal_status"] == "invalid_novel_label"
+    assert long_proposal["choices"] == vocabulary
+    assert novel["novel_candidate"] == "AMPLIFIES"
+    assert novel["choices"] == (*vocabulary, "AMPLIFIES")
+    assert "NONE" not in novel["choices"]
 
 
 def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
@@ -335,6 +362,7 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
 
     entities = engraphis_service.store.list_entities()
     assert {entity.name for entity in entities} == {"Rocket Lab", "Electron"}
+    entity_ids = {entity.name: entity.id for entity in entities}
     incidence = engraphis_service.store.list_memory_entities(
         memory_ids=[settled["thinkMemoryId"]]
     )
@@ -350,9 +378,16 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     edges = engraphis_service.store.neighbors([entity.id for entity in entities])
     assert len(edges) == 1
     edge = edges[0]
+    assert (edge.src, edge.dst) == (
+        entity_ids["Rocket Lab"], entity_ids["Electron"],
+    )
     assert edge.relation == "USES"
     assert edge.relation != think["relationships"][0]["relation"]
     assert edge.weight == pytest.approx(0.76)
+    assert settled["relationships"][0]["choice_options"] == list(
+        SHARED_JEV_RELATIONSHIPS
+    )
+    assert "NONE" not in settled["relationships"][0]["choice_options"]
     jev = edge.provenance["jev"]
     assert jev["decision_id"] == "jev-decision-one"
     assert jev["winner"] == "USES"
@@ -365,6 +400,9 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     assert jev["natural_relationship"] == (
         "operates as its current launch vehicle"
     )
+    assert jev["relationship_proposal_status"] == "invalid_novel_label"
+    assert jev["novel_relationship_candidate"] == ""
+    assert jev["vocabulary_promotion"] == "not_promoted"
     supports = engraphis_service.store.edge_supports_in_scope([edge.id])
     assert len(supports) == 1
     assert supports[0]["memory_id"] == settled["thinkMemoryId"]
@@ -401,10 +439,21 @@ def test_every_freeform_proposal_is_classified_before_one_atomic_write(
         proposal: str,
         *,
         relationship_vocabulary: tuple[str, ...],
+        novel_relationship_candidate: str,
+        relationship_proposal_status: str,
     ) -> dict[str, Any]:
         calls.append((source, proposal, target))
         winner = "USES" if source == "Rocket Lab" else "SUPPORTS"
-        return _decision(winner, vocabulary=relationship_vocabulary)
+        plan = relationship_choice_plan(
+            proposal, relationship_vocabulary,
+        )
+        assert novel_relationship_candidate == plan["novel_candidate"]
+        assert relationship_proposal_status == plan["proposal_status"]
+        return _decision(
+            winner,
+            vocabulary=relationship_vocabulary,
+            choices=tuple(plan["choices"]),
+        )
 
     settled = _settle(
         engraphis_service,
@@ -436,6 +485,56 @@ def test_every_freeform_proposal_is_classified_before_one_atomic_write(
         if row["source_kind"] == "structured_extractor"
     ]
     assert len(direct_incidence) == 3
+
+
+def test_valid_novel_predicate_is_selected_promoted_and_persisted(
+    engraphis_service: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = _structured_output(
+        summary="Rocket Lab amplifies Electron launch capability.",
+        entities=["Rocket Lab", "Electron"],
+        relations=[{
+            "source": "Rocket Lab",
+            "relation": "amplifies",
+            "target": "Electron",
+        }],
+    )
+
+    settled = _settle(
+        engraphis_service,
+        monkeypatch,
+        payload=_settle_payload(output=output),
+        classifier=_classifier("AMPLIFIES"),
+    )
+
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
+    vocabulary = relationship_vocabulary.project_relationship_vocabulary(
+        engraphis_service.store,
+        workspace_id,
+    )
+    assert vocabulary[-1] == "AMPLIFIES"
+    assert vocabulary.count("AMPLIFIES") == 1
+    assert settled["relationshipVocabulary"]["labels"] == list(vocabulary)
+    assert settled["relationships"][0]["relation"] == "AMPLIFIES"
+    assert settled["relationships"][0]["vocabulary_promotion"] == "promoted"
+    assert settled["relationships"][0]["vocabulary_after_count"] == len(vocabulary)
+    edge = engraphis_service.store.neighbors(
+        [settled["relationships"][0]["source"]]
+    )[0]
+    assert (edge.src, edge.dst) == (
+        settled["relationships"][0]["source"],
+        settled["relationships"][0]["target"],
+    )
+    assert edge.relation == "AMPLIFIES"
+    assert edge.provenance["jev"]["relationship_proposal_status"] == (
+        "novel_candidate"
+    )
+    assert edge.provenance["jev"]["novel_relationship_candidate"] == (
+        "AMPLIFIES"
+    )
+    assert edge.provenance["jev"]["vocabulary_promotion"] == "promoted"
+    assert edge.provenance["jev"]["vocabulary_after_count"] == len(vocabulary)
 
 
 def test_duplicate_pair_is_exact_noop_without_another_jev_call(
@@ -489,19 +588,6 @@ def test_jev_provider_failure_creates_no_rows(
     assert not any(_table_counts(engraphis_service).values())
 
 
-def test_jev_abstention_creates_no_rows(
-    engraphis_service: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with pytest.raises(relationship_classification.JevRelationshipError, match="abstained"):
-        _settle(
-            engraphis_service,
-            monkeypatch,
-            classifier=_classifier(relationship_classification.THINKGRAPH_JEV_ABSTAIN),
-        )
-    assert not any(_table_counts(engraphis_service).values())
-
-
 def test_invalid_jev_winner_creates_no_rows(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -521,13 +607,33 @@ def test_edge_store_failure_rolls_back_think_entities_and_supports(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    output = _structured_output(
+        relations=[{
+            "source": "Rocket Lab",
+            "relation": "amplifies",
+            "target": "Electron",
+        }],
+    )
+
     def fail_edge(*_args: Any, **_kwargs: Any) -> str:
         raise RuntimeError("edge-store-failed")
 
     monkeypatch.setattr(engraphis_service.store, "upsert_edge", fail_edge)
     with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError, match="think_store_failed"):
-        _settle(engraphis_service, monkeypatch)
+        _settle(
+            engraphis_service,
+            monkeypatch,
+            payload=_settle_payload(output=output),
+            classifier=_classifier("AMPLIFIES"),
+        )
     assert not any(_table_counts(engraphis_service).values())
+    workspace_id = engraphis_service.store.get_or_create_workspace("project-one")
+    assert "AMPLIFIES" not in (
+        relationship_vocabulary.project_relationship_vocabulary(
+            engraphis_service.store,
+            workspace_id,
+        )
+    )
 
 
 def test_later_pair_reuses_subject_and_reports_only_new_endpoint(
@@ -606,7 +712,10 @@ def test_real_jev_request_is_bounded_and_uses_only_declared_pair_context(
     captured: dict[str, Any] = {}
     vocabulary = tuple(SHARED_JEV_RELATIONSHIPS)
     response_decision = _decision("USES", vocabulary=vocabulary)
-    choices = relationship_classification.relationship_choices(vocabulary)
+    choices = tuple(relationship_choice_plan(
+        "operates as its current launch vehicle",
+        vocabulary,
+    )["choices"])
 
     class Response:
         def raise_for_status(self) -> None:
@@ -681,6 +790,7 @@ def test_real_jev_request_is_bounded_and_uses_only_declared_pair_context(
         "MAIN:\nRocket Lab uses Electron, whose cadence can affect launch revenue."
     )
     assert set(body["questions"]["relationship"]["criteria"]) == set(choices)
+    assert "NONE" not in body["questions"]["relationship"]["criteria"]
 
 
 def test_official_remember_many_is_atomic(engraphis_service: Any) -> None:

@@ -323,6 +323,10 @@ def _settle_new_completed_pair(
             "changedNodeIds": [],
             "changedEdgeIds": [],
         }
+    relationship_vocabulary_after = project_relationship_vocabulary(
+        store,
+        workspace_id,
+    )
     revision = graph_revision(store, workspace_id)
     return {
         "ok": True,
@@ -340,7 +344,7 @@ def _settle_new_completed_pair(
         "relationships": settled_graph["relationships"],
         "newSubjects": settled_graph["newSubjects"],
         "relationshipVocabulary": relationship_vocabulary_state(
-            relationship_vocabulary
+            relationship_vocabulary_after
         ),
         "changedNodeIds": settled_graph["changedNodeIds"],
         "changedEdgeIds": settled_graph["changedEdgeIds"],

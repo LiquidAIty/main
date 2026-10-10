@@ -76,6 +76,17 @@ def _best_effort(fn) -> bool:
     return _try(lambda: (fn(), True)[1], False)
 
 
+def _read_profile_soul(path) -> str:
+    """Read SOUL.md without platform newline translation."""
+    return path.read_bytes().decode("utf-8", errors="replace") if path.is_file() else ""
+
+
+def _write_profile_soul(path, soul: str) -> None:
+    """Atomically preserve the exact UTF-8 Card prompt bytes in SOUL.md."""
+    from utils import atomic_write_bytes
+    atomic_write_bytes(path, soul.encode("utf-8"))
+
+
 @contextlib.contextmanager
 def _hermes_home_scope(path):
     """Scope config/auth resolution to ``path`` for the block."""
@@ -431,7 +442,7 @@ def _(rid, params: dict) -> dict:
         _best_effort(lambda: profiles_mod.check_alias_collision(name) or profiles_mod.create_wrapper_script(name))
     soul = params.get("soul")
     soul_written = isinstance(soul, str) and bool(soul.strip()) and _best_effort(
-        lambda: (path / "SOUL.md").write_text(soul, encoding="utf-8"))
+        lambda: _write_profile_soul(path / "SOUL.md", soul))
     mirrored = _mirror_launch_credentials(path, params)
     model, provider = _model_provider_params(params)
     model_set = False
@@ -486,7 +497,7 @@ def _(rid, params: dict) -> dict:
             for md in (iter_skill_index_files(skills_root, "SKILL.md") if skills_root.is_dir() else ())]
         toolsets_out, pinned_set = _describe_toolsets(cfg)
         soul_path = profile_dir / "SOUL.md"
-        soul = _try(lambda: soul_path.read_text(encoding="utf-8", errors="replace") if soul_path.is_file() else "", "")
+        soul = _try(lambda: _read_profile_soul(soul_path), "")
         mcp_cfg = cfg.get("mcp_servers")
         mcp_out = _try(lambda: [
             {"name": str(srv_name), "enabled": _mcp_entry_enabled(entry),
@@ -774,7 +785,9 @@ def _(rid, params: dict) -> dict:
     if isinstance(params.get("ui_meta"), dict):
         _configure_ui_meta(profile_dir, params, applied)
     if isinstance(params.get("soul"), str):
-        applied["soul"] = _best_effort(lambda: (profile_dir / "SOUL.md").write_text(params["soul"], encoding="utf-8"))
+        applied["soul"] = _best_effort(
+            lambda: _write_profile_soul(profile_dir / "SOUL.md", params["soul"])
+        )
     if isinstance(params.get("description"), str):
         write_meta = _lazy("hermes_cli.profiles", "write_profile_meta")
         applied["description"] = _best_effort(lambda: write_meta(

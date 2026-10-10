@@ -276,11 +276,48 @@ def test_timed_out_call_does_not_block_completed_sibling(monkeypatch):
     assert timed_out.is_error is True
     assert json.loads(timed_out.content[0].text)["failureCode"] == "timeout"
 
+
+def test_engraphis_family_budget_outlives_the_ordinary_deadline(monkeypatch):
+    import asyncio
+
+    async def dispatch(name, arguments):
+        if name.startswith("engraphis_") or arguments.get("speed") == "slow":
+            await asyncio.sleep(0.05)
+        return [TextContent(type="text", text=json.dumps({"ok": True, "name": name}))]
+
+    monkeypatch.setattr(mcp_request_dispatch, "dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(
+        mcp_request_dispatch, "ENGRAPHIS_OPERATION_TIMEOUT_SECONDS", 0.2,
+    )
+
+    async def check():
+        engraphis = asyncio.create_task(
+            mcp_request_dispatch.call_tool("engraphis_recall_context", {}),
+        )
+        ordinary = asyncio.create_task(
+            mcp_request_dispatch.call_tool("canvas.inspect", {"speed": "slow"}),
+        )
+        sibling = await mcp_request_dispatch.call_tool(
+            "agentgraph.inspect", {"speed": "sibling"},
+        )
+        return await engraphis, await ordinary, sibling
+
+    engraphis, ordinary, sibling = asyncio.run(check())
+    assert json.loads(engraphis[0].text) == {
+        "ok": True, "name": "engraphis_recall_context",
+    }
+    assert json.loads(ordinary.content[0].text)["failureCode"] == "timeout"
+    assert json.loads(sibling[0].text) == {"ok": True, "name": "agentgraph.inspect"}
+
 def test_long_running_provider_tools_use_their_owned_timeouts(monkeypatch):
     import mcp_host
     from app import backend_operation_transport
 
     monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 30.0)
+    monkeypatch.setattr(
+        mcp_request_dispatch, "ENGRAPHIS_OPERATION_TIMEOUT_SECONDS", 120.0,
+    )
     monkeypatch.setattr(
         mcp_provider_operations, "CBM_REQUEST_TIMEOUT_SECONDS", 300.0,
     )
@@ -292,6 +329,13 @@ def test_long_running_provider_tools_use_their_owned_timeouts(monkeypatch):
     assert mcp_request_dispatch.mcp_tool_timeout_seconds("thinkgraph.reason") == 570.0
     assert mcp_request_dispatch.mcp_tool_timeout_seconds("knowgraph.research") == 570.0
     assert mcp_request_dispatch.mcp_tool_timeout_seconds("engraphis_remember") == 190.0
+    for operation in (
+        "engraphis_session", "engraphis_recall_context",
+        "engraphis_discover_actions", "engraphis_execute_read",
+        "engraphis_execute_action", "engraphis_get_memory",
+        "engraphis_update_memory", "engraphis_conflict_review",
+    ):
+        assert mcp_request_dispatch.mcp_tool_timeout_seconds(operation) == 120.0
     assert mcp_request_dispatch.mcp_tool_timeout_seconds("cbm.search_graph") == 30.0
     assert mcp_request_dispatch.mcp_tool_timeout_seconds("graphiti.search_nodes") == 30.0
 

@@ -218,4 +218,34 @@ describe('saved Card Run settlement truth', () => {
       profile: 'main', session_id: 'live-main', omit_messages: true, bot_mode_roster: [],
     });
   });
+
+  it('identifies the exact Hermes session readback field that disagrees', async () => {
+    const client = {
+      onEvent: () => () => undefined,
+      onState: () => () => undefined,
+      request: vi.fn(async (method: string) => {
+        if (method !== 'session.activate') throw new Error(`unexpected:${method}`);
+        return {
+          session_id: 'live-main', stored_session_id: 'stored-main',
+          messages_omitted: true,
+          info: { provider: 'openai', model: 'binding-model' },
+        };
+      }),
+    } as any;
+
+    await expect(submitHermesTurn({
+      client,
+      binding: structuredClone(binding),
+      profile: 'main',
+      runRequest: {
+        provider: { providerModelId: 'binding-model' },
+        runtimeOptions: {},
+      },
+      text: 'task', submissionId: 'run-one', dynamicTools: [],
+      toolEndpoint: 'http://tools', toolAuthorization: 'token',
+      onEvent: () => undefined,
+    })).rejects.toThrow(
+      'hermes_session_model_readback_mismatch:provider(expected=openai-codex,actual=openai)',
+    );
+  });
 });

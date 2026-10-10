@@ -30,21 +30,20 @@ from .jev_validation import (
 )
 from .thinkgraph_completed_pair_preparation import source_pair, text_hash
 from .thinkgraph_relationship_vocabulary import (
-    JEV_CHOICE_OPTION_MAXIMUM,
     PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
     ThinkGraphIntakeError,
+    relationship_choice_plan,
     relationship_vocabulary_hash,
 )
 
 
 JEV_MODEL = "typesafe/jev-1.13"
 JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
-THINKGRAPH_JEV_ABSTAIN = "NONE"
 _MAX_JEV_RELATIONSHIP_CONCURRENCY = 4
 
 
 class JevRelationshipError(RuntimeError):
-    """A durable-edge Jev classification failed or explicitly abstained."""
+    """A durable-edge Jev normalization failed."""
 
 
 def _utc_now() -> str:
@@ -78,17 +77,6 @@ def winner_probability(decision: dict[str, Any]) -> float:
         return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError, OverflowError):
         return 0.0
-
-
-def relationship_choices(
-    relationship_vocabulary: tuple[str, ...],
-) -> tuple[str, ...]:
-    choices = (*relationship_vocabulary, THINKGRAPH_JEV_ABSTAIN)
-    if len(choices) > JEV_CHOICE_OPTION_MAXIMUM:
-        raise JevRelationshipError(
-            "thinkgraph_relationship_choice_capacity_exceeded"
-        )
-    return choices
 
 
 def _validate_relationship_decision(
@@ -210,59 +198,80 @@ def classify_relationship(
     relationship_proposal: str,
     *,
     relationship_vocabulary: tuple[str, ...],
+    novel_relationship_candidate: str = "",
+    relationship_proposal_status: str = "",
 ) -> dict[str, Any]:
     """Ask TypeSafe Jev, not the saved Card, for one canonical edge label."""
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         raise JevRelationshipError("jev_openrouter_key_unavailable")
-    choices = relationship_choices(relationship_vocabulary)
+    choice_plan = relationship_choice_plan(
+        relationship_proposal,
+        relationship_vocabulary,
+    )
+    if (
+        novel_relationship_candidate
+        and novel_relationship_candidate != choice_plan["novel_candidate"]
+    ):
+        raise JevRelationshipError("jev_relationship_choice_plan_invalid")
+    if (
+        relationship_proposal_status
+        and relationship_proposal_status != choice_plan["proposal_status"]
+    ):
+        raise JevRelationshipError("jev_relationship_choice_plan_invalid")
+    choices = tuple(choice_plan["choices"])
     criteria = {
         label: SHARED_JEV_RELATIONSHIP_CRITERIA.get(
             label,
             f"The proposed directed relationship is best represented by {label}.",
         )
-        for label in relationship_vocabulary
+        for label in choices
     }
-    criteria[THINKGRAPH_JEV_ABSTAIN] = (
-        "The completed pair and proposal do not support any durable directed "
-        "relationship in the supplied project vocabulary."
-    )
+    state: dict[str, Any] = {
+        "description": (
+            "One completed observable User/Main pair, one model-authored "
+            "free-form directed relationship proposal, and bounded existing "
+            "ThinkGraph context. The saved ThinkGraph Card already supplied "
+            "the endpoints, direction, and relationship meaning. Normalize "
+            "that A -> B proposal to the closest supplied project predicate."
+        ),
+        "source_node_a": source,
+        "target_node_b": target,
+        "direction": "A -> B",
+        "current_event": (
+            f"USER:\n{payload['userMessage']}\n\n"
+            f"MAIN:\n{payload['mainResponse']}"
+        ),
+        "thinkgraph_card_freeform_relationship_proposal": (
+            relationship_proposal
+        ),
+        "supporting_think": supporting_think,
+        "bounded_local_graph": graph_context,
+        "current_project_relationship_vocabulary": list(
+            relationship_vocabulary
+        ),
+    }
+    if choice_plan["novel_candidate"]:
+        state["optional_novel_relationship_candidate"] = choice_plan[
+            "novel_candidate"
+        ]
     body = {
         "model": JEV_MODEL,
-        "state": {
-            "description": (
-                "One completed observable User/Main pair, one model-authored "
-                "free-form directed relationship proposal, and bounded existing "
-                "ThinkGraph context. Classify A -> B into the current project "
-                "vocabulary or abstain."
-            ),
-            "source_node_a": source,
-            "target_node_b": target,
-            "direction": "A -> B",
-            "current_event": (
-                f"USER:\n{payload['userMessage']}\n\n"
-                f"MAIN:\n{payload['mainResponse']}"
-            ),
-            "thinkgraph_card_freeform_relationship_proposal": (
-                relationship_proposal
-            ),
-            "supporting_think": supporting_think,
-            "bounded_local_graph": graph_context,
-            "current_project_relationship_vocabulary": list(
-                relationship_vocabulary
-            ),
-        },
+        "state": state,
         "questions": {
             "relationship": {
                 "type": "choice",
                 "instructions": (
-                    "Classify the saved ThinkGraph Card's free-form A -> B "
-                    "proposal. Choose exactly one supplied canonical project "
-                    "predicate only when the completed pair supports it; otherwise "
-                    "choose NONE. The Card's wording is evidence, never a canonical "
-                    "label or fallback. Use bounded graph context only for "
-                    "normalization continuity. Do not invent, rename, reverse, or "
-                    "add endpoints or relationships."
+                    "Choose the supplied predicate that most closely normalizes "
+                    "the saved ThinkGraph Card's free-form source_node_a -> "
+                    "target_node_b relationship. Endpoint existence, direction, "
+                    "and relationship meaning are already model-owned and "
+                    "structurally validated; do not admit, reject, reverse, or "
+                    "rewrite them. Prefer an existing canonical predicate when "
+                    "it accurately expresses the meaning. An optional novel "
+                    "predicate is only another Choice option and may win only "
+                    "when it is more accurate than every existing predicate. "
+                    "Use bounded graph context only for normalization continuity."
                 ),
                 "criteria": criteria,
             }
@@ -314,6 +323,9 @@ def classify_relationship(
             relationship_vocabulary
         ),
         "vocabulary_count": len(relationship_vocabulary),
+        "vocabulary_at_maximum": choice_plan["vocabulary_at_maximum"],
+        "relationship_proposal_status": choice_plan["proposal_status"],
+        "novel_relationship_candidate": choice_plan["novel_candidate"],
     }
 
 
@@ -328,7 +340,6 @@ def classify_relationships(
     relationship_vocabulary: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     """Obtain every Jev decision before the Engraphis graph can be mutated."""
-    choices = relationship_choices(relationship_vocabulary)
     prior_thinks = _turn_start_prior_think_snapshot(
         store,
         workspace_id=workspace_id,
@@ -336,6 +347,10 @@ def classify_relationships(
     )
     work: list[dict[str, Any]] = []
     for index, relationship in enumerate(relationships):
+        choice_plan = relationship_choice_plan(
+            relationship["relation"],
+            relationship_vocabulary,
+        )
         source_row = existing_entity_for_name(
             store,
             workspace_id=workspace_id,
@@ -351,6 +366,7 @@ def classify_relationships(
         work.append({
             "index": index,
             "relationship": relationship,
+            "relationship_choice_plan": choice_plan,
             "context": _bounded_relationship_context(
                 store,
                 workspace_id=workspace_id,
@@ -368,6 +384,7 @@ def classify_relationships(
 
     def decide(item: dict[str, Any]) -> dict[str, Any]:
         relationship = item["relationship"]
+        choice_plan = item["relationship_choice_plan"]
         value = classifier(
             relationship["source"],
             relationship["target"],
@@ -375,9 +392,23 @@ def classify_relationships(
             summary,
             item["context"],
             relationship["relation"],
-            relationship_vocabulary=relationship_vocabulary,
+            relationship_vocabulary=choice_plan["vocabulary"],
+            novel_relationship_candidate=choice_plan["novel_candidate"],
+            relationship_proposal_status=choice_plan["proposal_status"],
         )
-        return _validate_relationship_decision(value, choices=choices)
+        validated = _validate_relationship_decision(
+            value,
+            choices=tuple(choice_plan["choices"]),
+        )
+        return {
+            **validated,
+            "vocabulary_version": PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+            "vocabulary_hash": choice_plan["vocabulary_hash"],
+            "vocabulary_count": len(choice_plan["vocabulary"]),
+            "vocabulary_at_maximum": choice_plan["vocabulary_at_maximum"],
+            "relationship_proposal_status": choice_plan["proposal_status"],
+            "novel_relationship_candidate": choice_plan["novel_candidate"],
+        }
 
     with ThreadPoolExecutor(
         max_workers=min(_MAX_JEV_RELATIONSHIP_CONCURRENCY, len(work)),
@@ -400,11 +431,6 @@ def classify_relationships(
     validated = [decision for decision in decisions if decision is not None]
     if len(validated) != len(relationships):
         raise JevRelationshipError("jev_relationship_unavailable")
-    if any(
-        decision["winner"] == THINKGRAPH_JEV_ABSTAIN
-        for decision in validated
-    ):
-        raise JevRelationshipError("jev_relationship_abstained")
     return validated
 
 
@@ -440,6 +466,15 @@ def jev_provenance(
         "source_event": _source_event_reference(payload),
         "usage": deepcopy(decision.get("usage") or {}),
     }
+    for key in (
+        "relationship_proposal_status",
+        "novel_relationship_candidate",
+        "vocabulary_promotion",
+        "vocabulary_after_hash",
+        "vocabulary_after_count",
+    ):
+        if key in decision:
+            jev[key] = deepcopy(decision[key])
     return {
         "source": "jev_relationship_classifier",
         "memory_id": memory_id,

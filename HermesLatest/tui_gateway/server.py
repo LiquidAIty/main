@@ -2186,7 +2186,8 @@ def _live_session_identity(session: dict) -> tuple[str, str]:
     model = (str(pending.get("display_model") or "").strip() or mirror.get("model")
              or getattr(agent, "model", "") or override.get("model") or _session_default_model(session))
     provider = (str(pending.get("display_provider") or "").strip() or mirror.get("provider")
-                or getattr(agent, "provider", "") or override.get("provider") or "")
+                or getattr(agent, "provider", "") or override.get("provider")
+                or _session_default_provider(session))
     return str(model), str(provider or "")
 
 
@@ -2902,9 +2903,11 @@ def _fallback_session_info(session: dict) -> dict:
     # so a client can clear a stale label instead of retaining it — the same contract `_lazy_session_info`
     # above already follows.
     cwd = _session_cwd(session)
+    model, provider = _live_session_identity(session)
     return {
         "cwd": cwd, "branch": git_probe.branch(cwd), "project": _project_info_for_cwd(cwd), "lazy": True,
-        "model": _session_default_model(session), "skills": {}, "tools": {}, "desktop_contract": DESKTOP_BACKEND_CONTRACT,
+        "model": model, "provider": provider,
+        "skills": {}, "tools": {}, "desktop_contract": DESKTOP_BACKEND_CONTRACT,
     }
 
 

@@ -34,6 +34,7 @@ const REQUIRED_MIGRATIONS = [
   '054_rename_remaining_hermes_run_aggregates.sql',
   '055_remove_bot_mode_card_tool_grant.sql',
   '056_rename_project_code_folder.sql',
+  '057_card_run_selection_and_usage.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;
