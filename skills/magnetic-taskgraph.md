@@ -9,13 +9,13 @@ Use this procedure for LiquidAIty's saved Magnetic Card and its Hermes task/depe
    authorizes that source to call Magnetic. The explicit invocation starts an approved run; the wire itself
    never starts or controls Magnetic.
 3. Enabled saved `magentic_option` edges own the complete worker roster and mean only that those Cards are available to Magnetic.
-4. One saved Card may be orange-connected to an orchestrator and blue-connected to Magnetic at the same time. Orange
-   invokes that Card directly; blue makes the same identity available through Hermes' SQLite task ledger.
+4. One saved Card may have orange topology and be blue-connected to Magnetic at the same time. Blue makes
+   the saved identity available through Hermes' SQLite task ledger; the meanings remain distinct.
 5. Resolve exact current Card revisions and Hermes bindings; never infer membership from titles, prompts,
    installed profiles, or global discovery.
 6. The transient Mag One input and selected provider references pass through the one canonical reloaded
-   `in.idf`. `run_mag_one` enters through the authenticated tool dispatcher; a visible addressed turn enters
-   through `/api/shared-chat/turn`. Both resolve the same saved Magnetic Card and Python preparation owner.
+   `in.idf`. `run_mag_one` enters through the authenticated tool dispatcher and resolves the saved Magnetic
+   Card through its Python preparation owner.
 7. Hermes SQLite owns tasks, dependencies, attempts, assignment, retries, dispatch, and summaries.
    PostgreSQL keeps only the one outer product Run and final result; do not copy Hermes task rows.
 8. The root task carries an inherited assignee ceiling containing only the saved Mag One profile and the

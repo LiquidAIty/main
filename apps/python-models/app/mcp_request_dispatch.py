@@ -17,7 +17,6 @@ from mcp.types import CallToolResult, TextContent
 MCP_CALL_TIMEOUT_SECONDS = 30.0
 ENGRAPHIS_OPERATION_TIMEOUT_SECONDS = 120.0
 MAG_ONE_COMPLETION_TIMEOUT_SECONDS = 570.0
-SPECIALIST_CARD_TOOL_TIMEOUT_SECONDS = 570.0
 def request_tool_is_allowed(
     name: str,
     definition: OperationDefinition | None = None,
@@ -85,15 +84,11 @@ SERVER_OWNED_ARGUMENTS = {
     "_callerRuntimeMode",
     "_sourceCardId",
     "_sourceRunId",
-    "_effectTargetCardId",
-    "_effectTargetCardRevisionId",
-    "_effectTargetDeckRevision",
     "_builderOperation",
     "_mainContext",
     "_catalogDiagnostics",
     "_authenticatedUserEdit",
     "_authenticatedProjectId",
-    "_principalKind",
 }
 def enforce_tool_caller(
     name: str,
@@ -187,8 +182,6 @@ async def dispatch_tool(
                 args["_callerCardId"] = str(context["mainCardId"])
             if "_authenticatedProjectId" in dispatcher_context:
                 args["_authenticatedProjectId"] = str(context["projectId"])
-            if "_principalKind" in dispatcher_context:
-                args["_principalKind"] = str(context.get("principalKind") or "")
             if "_authenticatedUserEdit" in dispatcher_context:
                 args["_authenticatedUserEdit"] = bool(
                     context.get("principalKind") is None and principal is None
@@ -273,8 +266,6 @@ async def dispatch_tool(
 
 
 def mcp_tool_timeout_seconds(name: str) -> float:
-    if name in {"thinkgraph.reason", "knowgraph.research"}:
-        return SPECIALIST_CARD_TOOL_TIMEOUT_SECONDS
     if name == "engraphis_remember":
         # Semantic extraction and storage can exceed the ordinary read deadline.
         return 190.0

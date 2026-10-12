@@ -29,7 +29,7 @@ Do not implement a second timeline, transcript, index, or TypeScript semantic so
 ## Quick Web evidence handoff — deferred
 
 Hermes agents should not be crippled when fast current information is part of their saved role. The
-approved direction permits bounded quick Web use by Main, Builder, and deliberately granted specialists,
+approved direction permits bounded quick Web use by Main, Builder, and deliberately granted saved Cards,
 while KnowGraph retains durable evidence correlation and Graphiti persistence.
 
 The handoff mechanism is not implemented. A later bounded design may carry the research question, exact
@@ -78,12 +78,8 @@ implementation is authorized by this document.
 
 ## Voice
 
-- The existing shared-chat voice UI remains a required product seam, but it is not currently connected:
-  the client calls `/api/shared-chat/voice/start` and `/api/shared-chat/voice/stop` and no backend route
-  owns those requests. Do not describe voice as working until a real round trip passes.
-- Implement only a thin exact-Card/session adapter to Hermes' existing voice start, stop, event, and
-  completion contracts. Hermes remains the voice/session owner; do not add a LiquidAIty voice engine,
-  HUD runtime, alternate provider path, or fake readiness state.
+- The unowned voice client and UI were removed with the rejected TypeScript runtime.
+- Any future voice surface must use Hermes' existing voice contracts and requires separate approval.
 - Keep voice outside the current launch acceptance run unless the owner explicitly brings it back into
   scope. Its inactive state must remain visible and must not affect text chat.
 

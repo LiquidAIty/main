@@ -458,42 +458,6 @@ def materialize_invocation(
     }
 
 
-def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
-    """Preview saved Main authority without starting a Run."""
-    project_ref = required_text(payload.get("projectId"), "project_id")
-    deck_id = required_text(payload.get("deckId"), "deck_id")
-    loaded = saved_cards.load_deck(project_ref, deck_id)
-    main_cards = [
-        card for card in loaded["deck"]["nodes"]
-        if card_runtime(card).get("kind") == "hermes"
-        and card_runtime(card).get("mode") == "main"
-    ]
-    if len(main_cards) != 1:
-        raise CardDomainError("main_card_identity_ambiguous")
-    message = str(payload.get("message") or "")
-    prepared = _prepare_invocation({
-        **payload,
-        "projectId": loaded["projectId"],
-        "deckId": deck_id,
-        "cardId": main_cards[0]["id"],
-        "assignment": "",
-    }, require_assignment=False, include_tool_definitions=True)
-    prepared.pop("_outputRequirements", None)
-    prepared.pop("_autoTools", None)
-    prepared.pop("_autoModel", None)
-    prepared.pop("_requestedReasoningEffort", None)
-    prepared.pop("_ordinaryBaselineTools", None)
-    prepared.pop("_ordinaryToolContracts", None)
-    prepared.pop("assignment", None)
-    call_config = prepared.pop("_callConfig")
-    prepared.pop("_toolDefinitions")
-    return {
-        **prepared,
-        **({"message": message} if message else {}),
-        "sessionProfile": call_config,
-    }
-
-
 def resolve_magnetic_taskgraph_card(
     project_ref: str,
     deck_id: str,

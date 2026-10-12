@@ -56,12 +56,7 @@ def authorize_invocation_sender(
             for edge in edges
         )
     else:
-        authorized = any(
-            target["cardId"] == card_id
-            for target in agentgraph_topology.direct_orchestrator_targets(
-                sender_id, cards, edges
-            )
-        )
+        authorized = False
     if sender is None or not authorized:
         raise CardDomainError("card_invocation_edge_authority_required")
 

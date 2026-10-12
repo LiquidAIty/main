@@ -339,7 +339,7 @@ other proven protocol bridges, and event delivery. It is not an agent brain.
 
 Python owns configured agent execution, Mag One runtime preparation, tool execution, parameterized SQL/Cypher,
 data processing, graph/data adapters, research ingestion, deterministic validation/computation, and
-specialist runtimes.
+domain runtimes.
 
 Use the user-facing name **Python rails**, not “sidecar.” If Python rails changes, report once:
 
@@ -457,24 +457,12 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 
 One authority and one writer per graph.
 
-Main reads bounded graph context and answers in chat; it is not the owner of ThinkGraph writes. After an
-ordinary Main User/assistant turn has completed and its visible response has returned, the exact completed
-pair enters the Engraphis-owned intake. Preparation is non-persisting; an existing authoritative Think for
-the same completed-pair identity stops a duplicate as a `noop`. Otherwise the existing saved ThinkGraph Card runs
-through the normal saved-Card/App Server path with its saved model and Engraphis `llm_structured` prompt/schema.
-It returns zero or more self-contained Entity-specific `think` payloads, never more than one Think for the
-same Entity in one completed pair, plus free-form directed relationship proposals. Settlement atomically
-writes one append-only native Engraphis `EPISODIC` Memory per returned Think with
-`resolve_conflicts=False`; direct node association requires both validated Think metadata and native
-`memory_entities` incidence with `source_kind="structured_extractor"`. The saved ThinkGraph Card proposes
-Entity names, endpoints, direction, and a natural relationship; Jev classifies that proposal and
-chooses the durable edge label, distribution, and strength before graph mutation. The transaction rejects
-unclassified proposals, but Jev is not a separate endpoint or graph authority. Generic Engraphis
-co-occurrence edges never become ThinkGraph semantic authority.
-The September 9 removal remains the historical removal of the old proxy/replay path, not a prohibition on
-this native lifecycle. No candidate graph, approval state, shadow graph, raw conversation Memory, regex-first
-skeleton, or broad cleanup path returns. KnowGraph retains sourced research through its existing research
-agent and queued Graphiti intake. Its dedicated Entity write records one exact structural `ABOUT` edge while
+Main is not the owner of ThinkGraph writes. The completed-pair Python preparation and settlement rails remain,
+but the TypeScript child-Card executor and revision relay were removed without replacement. No automatic
+User/Main-pair intake is current until a separately approved native-Hermes caller exists. No candidate graph,
+approval state, shadow graph, raw conversation Memory, regex-first skeleton, broad cleanup path, or direct
+target runner may substitute for that missing seam. KnowGraph retains sourced research through its existing
+research agent and queued Graphiti intake. Its dedicated Entity write records one exact structural `ABOUT` edge while
 leaving extracted `MENTIONS` independent. Only Entities render as Project graph nodes; Thinks, Knows,
 Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Native Engraphis
 and Graphiti reads produce bounded candidates, Jev ranks them against the current request, and the ordinary

@@ -66,16 +66,11 @@ owns source boundaries. A historical report is evidence, never permission to act
 Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; native CBM owns CodeGraph; AGE owns
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
-Main reads bounded context and may delegate, but it is not the owner of ThinkGraph writes. One current path
-is the owner-approved completed User/Main pair lifecycle: preparation is non-persisting; the existing saved
-ThinkGraph Card supplies zero or more Entity-specific native Engraphis `EPISODIC` Thinks, never more than one
-Think for the same Entity in one pair, plus free-form directed relationship proposals; native direct
-structured-extractor incidence associates each Think to its one exact Entity; and graph-aware Jev classifies
-each Card-proposed relationship before mutation,
-choosing the canonical edge label, distribution, and strength without becoming an endpoint authority. Thinks are
-append-only and excluded from episodic consolidation. This is not the removed proxy/replay design. Do not add
-a regex-first graph skeleton, pending-candidate queue, approval state, shadow graph, broad historical
-deletion, direct model edge writer, second extractor, or database-side semantic shortcut.
+Main is not the owner of ThinkGraph writes. The completed-pair Python preparation and settlement rails remain,
+but the rejected TypeScript child-Card executor was removed and no current automatic caller is claimed.
+Do not reconnect those rails through a direct target runner, regex-first graph skeleton, pending-candidate
+queue, approval state, shadow graph, broad historical deletion, direct model edge writer, second extractor,
+or database-side semantic shortcut.
 KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write
 records one exact structural `ABOUT` attachment; `MENTIONS` remains extraction output, not attachment authority.
 One Know is one atomic `know.v1` episode with both a cited supporting idea and a cited counter idea. Do not

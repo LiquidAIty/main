@@ -312,7 +312,6 @@ def test_engraphis_family_budget_outlives_the_ordinary_deadline(monkeypatch):
 
 def test_long_running_provider_tools_use_their_owned_timeouts(monkeypatch):
     import mcp_host
-    from app import backend_operation_transport
 
     monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(
@@ -325,9 +324,6 @@ def test_long_running_provider_tools_use_their_owned_timeouts(monkeypatch):
 
     assert mcp_request_dispatch.mcp_tool_timeout_seconds("run_mag_one") == 570.0
     assert mcp_provider_operations.CBM_REQUEST_TIMEOUT_SECONDS == 300.0
-    assert backend_operation_transport.SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS == 540.0
-    assert mcp_request_dispatch.mcp_tool_timeout_seconds("thinkgraph.reason") == 570.0
-    assert mcp_request_dispatch.mcp_tool_timeout_seconds("knowgraph.research") == 570.0
     assert mcp_request_dispatch.mcp_tool_timeout_seconds("engraphis_remember") == 190.0
     for operation in (
         "engraphis_session", "engraphis_recall_context",
@@ -344,14 +340,12 @@ def test_removed_generic_card_bridge_has_no_route_or_long_running_policy(monkeyp
     from app import (
         backend_operation_transport,
         main_worldview_operations,
-        saved_graph_specialist_operations,
     )
 
     monkeypatch.setattr(mcp_request_dispatch, "MCP_CALL_TIMEOUT_SECONDS", 30.0)
 
     routes = {
         main_worldview_operations.WORLDVIEW_ACTION_ROUTE,
-        saved_graph_specialist_operations.SAVED_SPECIALIST_ROUTE,
     }
     assert not any("run_configured_card" in route for route in routes)
     assert not any("describe_connected_agents" in route for route in routes)

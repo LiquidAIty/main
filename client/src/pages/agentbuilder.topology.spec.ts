@@ -5,20 +5,13 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
-import {
-  isWorldSignalsAgentCard,
-  isWorldViewCard,
-} from '../features/agentbuilder/rail/railVisibility';
 import AgentCardChooserDialog from '../features/agentbuilder/project/AgentCardChooserDialog';
 import AgentBuilderInspectorDrawer from '../features/agentbuilder/inspector/AgentBuilderInspectorDrawer';
-import { builderTerminalBinding } from '../features/agentbuilder/console/agentBuilderChatWorkSurfacePolicy';
 import {
   CARD_CONFIGURATION_TABS,
   cardInspectorTabs,
-  isCardCliEligible,
   isTaskLedgerCard,
 } from '../features/agentbuilder/inspector/agentCardInspectorPolicy';
-import { projectCardChatTargets } from '../features/agentbuilder/console/sharedChatClient';
 
 afterEach(cleanup);
 
@@ -73,58 +66,27 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(attachSaved).toHaveBeenCalledExactlyOnceWith(choice);
   });
 
-  it('derives exact configuration, Tasks, and CLI tabs from saved Card identity', () => {
+  it('derives exact configuration and Tasks tabs from saved Card identity', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((card) => [card.id, card]));
     const mainCardId = 'card_main_chat';
     const builderCardId = 'builder';
     const tabs = (cardId: string) => cardInspectorTabs({
-      card: byId.get(cardId), mainCardId, builderCardId,
+      card: byId.get(cardId),
     });
 
     expect(CARD_CONFIGURATION_TABS).toEqual([
       'Prompt', 'Runtime', 'Memory', 'Skills', 'Tools',
     ]);
-    expect(tabs('card_knowgraph')).toEqual([...CARD_CONFIGURATION_TABS, 'CLI']);
+    expect(tabs('card_knowgraph')).toEqual([...CARD_CONFIGURATION_TABS]);
     expect(tabs(mainCardId)).toEqual([...CARD_CONFIGURATION_TABS]);
     expect(tabs(builderCardId)).toEqual([...CARD_CONFIGURATION_TABS]);
     expect(tabs('card_magentic')).toEqual([...CARD_CONFIGURATION_TABS, 'Tasks']);
     expect(tabs('card_team')).toEqual([...CARD_CONFIGURATION_TABS, 'Tasks']);
     expect(isTaskLedgerCard(byId.get('card_magentic'))).toBe(true);
     expect(isTaskLedgerCard(byId.get('card_team'))).toBe(true);
-    expect(isCardCliEligible({
-      card: byId.get('card_knowgraph'), mainCardId, builderCardId,
-    })).toBe(true);
-    for (const cardId of [mainCardId, builderCardId, 'card_magentic', 'card_team']) {
-      expect(isCardCliEligible({ card: byId.get(cardId), mainCardId, builderCardId }))
-        .toBe(false);
-    }
     expect(tabs('card_magentic')).not.toEqual(expect.arrayContaining(['Kanban', 'Results']));
   });
 
-  it('binds the permanent under-chat terminal to the saved Builder Card', () => {
-    const builder = INITIAL_DECK.nodes.find((card) => card.id === 'builder')!;
-    const binding = builderTerminalBinding({
-      canvasProjectId: 'project-one',
-      conversationId: 'conversation-one',
-      builderCard: builder,
-    });
-
-    expect(binding).toMatchObject({
-      cardId: 'builder',
-      key: 'project-one:builder:builder',
-    });
-    expect(binding?.identity).toEqual({
-      projectId: 'project-one',
-      deckId: INITIAL_DECK.id,
-      cardId: 'builder',
-      conversationId: 'conversation-one',
-    });
-    expect(builderTerminalBinding({
-      canvasProjectId: null,
-      conversationId: 'conversation-one',
-      builderCard: builder,
-    })).toBeNull();
-  });
   it('uses the clean KnowGraph identity', () => {
     const serialized = JSON.stringify(INITIAL_DECK);
     expect(serialized).not.toMatch(/thinkgraph_agent|codegraph_agent|knowgraph_agent/);
@@ -193,36 +155,6 @@ describe('Main / Hermes / graph authority topology', () => {
       .toBe('true');
     expect(screen.getByTestId('worldsignals-inspector-note').textContent)
       .toContain('layer controls appear once the map is mounted');
-  });
-
-  it('selects direct chat responders from exact Card-owned companion surfaces without topology mutation', () => {
-    const before = JSON.stringify(INITIAL_DECK);
-    const currentCards = INITIAL_DECK.nodes.map((card) => ({
-      ...card,
-      _cardRevisionId: `revision:${card.id}`,
-    }));
-    const directChatTargets = projectCardChatTargets(currentCards);
-    const targetIds = new Set(directChatTargets.map((target) => target.cardId));
-    const worldSignalsCardId = currentCards.find(isWorldSignalsAgentCard)?.id;
-    const worldViewCards = currentCards.filter(isWorldViewCard);
-    const tradingCardId = currentCards.find(
-      (card) => card.id === 'card_trading_workbench',
-    )?.id;
-
-    expect(worldSignalsCardId).toBeTruthy();
-    expect(tradingCardId).toBeTruthy();
-    expect(targetIds.has(worldSignalsCardId!)).toBe(true);
-    for (const worldViewCard of worldViewCards) {
-      expect(targetIds.has(worldViewCard.id)).toBe(true);
-    }
-    expect(targetIds.has(tradingCardId!)).toBe(true);
-    expect(directChatTargets.every((target) => (
-      INITIAL_DECK.nodes.some((card) => card.id === target.cardId)
-    ))).toBe(true);
-    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
-      source: 'card_main_chat', target: 'card_worldsignals_agent', edgeType: 'flow',
-    }));
-    expect(JSON.stringify(INITIAL_DECK)).toBe(before);
   });
 
   it('stores bounded write authority without the retired public Card-run model tool', () => {
@@ -306,8 +238,8 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
     expect(main?.runtimeOptions?.providerModelId).toBe('gpt-5.6-sol');
     expect(main?.runtimeOptions?.toolsets ?? []).toEqual([]);
-    expect(main?.prompt).toContain('persistent user-facing front door and system orchestrator');
-    expect(main?.prompt).toContain('only through Bot Mode and the exact permitted profile roster');
+    expect(main?.prompt).toContain('persistent user-facing front door');
+    expect(main?.prompt).not.toContain('Bot Mode');
     expect(main?.prompt).toContain('a wire grants outbound authority but never starts work');
     expect(main?.prompt).toContain('Do not copy the conversation or Main memory into another Card');
     expect(main?.prompt).toContain('Invoke run_mag_one only once for the exact approved mission');
@@ -337,7 +269,6 @@ describe('Main / Hermes / graph authority topology', () => {
           'graphiti.get_episode_entities', 'graphiti.get_entity_edge',
           'graphiti.build_communities', 'graphiti.delete_episode',
           'graphiti.delete_entity_edge', 'graphiti.clear_graph',
-          'thinkgraph.reason', 'knowgraph.research',
         ],
       },
     });

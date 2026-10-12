@@ -371,69 +371,6 @@ def _insert_run(
         return str(existing["run_id"]), str(existing["correlation_id"]), False
 
 
-def shared_conversation_task(
-    message: str,
-    value: Any,
-    target_label: str,
-) -> str:
-    """Mechanically include the bounded shared transcript for one selected Card."""
-
-    if value is None:
-        return message
-    target_label = required_text(
-        target_label,
-        "shared_conversation_target_label",
-    )
-    if not isinstance(value, list) or len(value) > 24:
-        raise CardDomainError("shared_conversation_context_invalid")
-    rendered: list[str] = []
-    total_characters = 0
-    allowed = {
-        "role", "speakerCardId", "speakerLabel", "targetCardId", "targetLabel", "content"
-    }
-    for raw in value:
-        if not isinstance(raw, dict) or set(raw) != allowed:
-            raise CardDomainError("shared_conversation_context_invalid")
-        if raw.get("role") not in {"user", "assistant"}:
-            raise CardDomainError("shared_conversation_context_invalid")
-        if any(not isinstance(raw.get(key), str) for key in allowed - {"role"}):
-            raise CardDomainError("shared_conversation_context_invalid")
-        content = str(raw["content"])
-        speaker = str(raw["speakerLabel"]).strip()
-        target = str(raw["targetLabel"]).strip()
-        if not content or not speaker:
-            raise CardDomainError("shared_conversation_context_invalid")
-        total_characters += len(content)
-        if total_characters > 12_000:
-            raise CardDomainError("shared_conversation_context_too_large")
-        heading = f"{speaker} -> {target}" if target else speaker
-        rendered.append(f"{heading}:\n{content}")
-    if not rendered:
-        return message
-    return "\n\n".join((
-        f"## Shared conversation before this {target_label} turn",
-        *rendered,
-        f"## Current user message to {target_label}",
-        message,
-    ))
-
-
-def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Resolve Main, then use the one canonical saved-Card Run function."""
-    message = required_content(payload.get("message"), "message")
-    main = card_invocation_preparation.prepare_main_chat({
-        **payload, "message": "",
-    })
-    return begin_run({
-        **payload,
-        "projectId": main["projectId"],
-        "deckId": main["deckId"],
-        "cardId": main["cardIdentity"]["cardId"],
-        "assignment": message,
-        "sharedConversationTargetLabel": main["cardIdentity"]["title"],
-    })
-
-
 def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Accept one outer request, then prepare its existing Run identity."""
 
@@ -477,30 +414,10 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Create one Run, retain its one IDF, then expose one Hermes request."""
 
     current_request = required_content(payload.get("assignment"), "assignment")
-    effective_payload = payload
-    shared_target_label: str | None = None
-    if "sharedConversation" in payload:
-        shared_target_label = required_text(
-            payload.get("sharedConversationTargetLabel"),
-            "shared_conversation_target_label",
-        )
-        effective_payload = {
-            **payload,
-            "assignment": shared_conversation_task(
-                current_request,
-                payload.get("sharedConversation"),
-                shared_target_label,
-            ),
-        }
     prepared = card_invocation_preparation.prepare_run_invocation(
-        effective_payload,
+        payload,
         selection_request=current_request,
     )
-    if (
-        shared_target_label is not None
-        and str(prepared["cardIdentity"].get("title") or "") != shared_target_label
-    ):
-        raise CardDomainError("shared_conversation_target_mismatch")
     run_id = required_text(payload.get("runId"), "run_id")
     correlation_id = required_text(payload.get("correlationId"), "correlation_id")
     card_identity = prepared["cardIdentity"]

@@ -11,7 +11,6 @@ import {
   type SetStateAction,
 } from 'react';
 
-import CardTerminalPanel from '../console/CardTerminalPanel';
 import CardSubsystemTab from '../subsystems/CardSubsystemTab';
 import MagneticTasksTab from '../tasks/MagneticTasksTab';
 import { BUILDER_CARD_ID, DEFAULT_PROJECT_DECK_ID } from '../deck/newProjectDeck';
@@ -20,7 +19,6 @@ import { safeText } from '../deck/deckPrimitives';
 import {
   CARD_CONFIGURATION_TABS,
   cardInspectorTabs,
-  isCardCliEligible,
   isTaskLedgerCard,
 } from './agentCardInspectorPolicy';
 import type { CardEditorConfiguration } from '../cardConfigurationEditor';
@@ -81,14 +79,11 @@ class CardEditorErrorBoundary extends Component<
 
 type AgentCardInspectorPanelProps = {
   canvasProjectId: string;
-  conversationId: string;
   deck: DeckDocument;
   selectedCard: DeckCard | null;
   selectedCardConfig: CardEditorConfiguration | null;
   tab: string;
   setTab: Dispatch<SetStateAction<string>>;
-  mainCardId: string | null;
-  builderCardId: string | null;
   cardTitlesByProfile: Record<string, string>;
   cardDraftFlushRef: MutableRefObject<(() => Promise<boolean>) | null>;
   registerCardDraftFlush: (save: (() => Promise<boolean>) | null) => void;
@@ -100,14 +95,11 @@ type AgentCardInspectorPanelProps = {
 
 export default function AgentCardInspectorPanel({
   canvasProjectId,
-  conversationId,
   deck,
   selectedCard,
   selectedCardConfig,
   tab,
   setTab,
-  mainCardId,
-  builderCardId,
   cardTitlesByProfile,
   cardDraftFlushRef,
   registerCardDraftFlush,
@@ -147,10 +139,8 @@ export default function AgentCardInspectorPanel({
   const tabs = useMemo(() => {
     return cardInspectorTabs({
       card: selectedCard,
-      mainCardId,
-      builderCardId,
     });
-  }, [builderCardId, mainCardId, selectedCard]);
+  }, [selectedCard]);
 
   const selectedSubsystem = useMemo(
     () => readCardSubsystemAttachments(selectedCard?.runtimeOptions)
@@ -190,21 +180,6 @@ export default function AgentCardInspectorPanel({
           : selectedSubsystem.id === 'gods-eye'
             ? '/api/worldview/readiness'
             : null}
-      />
-    );
-  } else if (
-    tab === 'CLI'
-    && isCardCliEligible({ card: selectedCard, mainCardId, builderCardId })
-  ) {
-    content = (
-      <CardTerminalPanel
-        key={`${canvasProjectId}:${DEFAULT_PROJECT_DECK_ID}:${selectedCard.id}:${selectedCard.runtime.profile}`}
-        identity={{
-          projectId: canvasProjectId,
-          deckId: DEFAULT_PROJECT_DECK_ID,
-          cardId: selectedCard.id,
-          conversationId,
-        }}
       />
     );
   } else if (CARD_CONFIGURATION_TABS.some((entry) => entry === tab)) {

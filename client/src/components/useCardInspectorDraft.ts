@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
-  parseCardListEditorText,
-  toggleSavedToolAssignment,
   type CardEditorConfiguration,
   type CardPromptFields,
 } from '../features/agentbuilder/cardConfigurationEditor';
@@ -19,9 +17,7 @@ import {
 } from './cardInspectorDraftPayload';
 import { useCardInspectorDraftPersistence } from './useCardInspectorDraftPersistence';
 import { useCardInspectorEditorOptions } from './useCardInspectorEditorOptions';
-import { useCardInspectorHermesProfile } from './useCardInspectorHermesProfile';
 import { useCardInspectorScriptDraft } from './useCardInspectorScriptDraft';
-import { useCardToolOptions } from './useCardToolOptions';
 
 export function useCardInspectorDraft({
   cardId,
@@ -89,20 +85,9 @@ export function useCardInspectorDraft({
   });
 
   const markCardDraftDirtyRef = useRef<() => void>(() => undefined);
-  const markProfileDraftActivityRef = useRef<() => void>(() => undefined);
   const markScriptDraftDirty = useCallback(() => {
     markCardDraftDirtyRef.current();
   }, []);
-  const markProfileDraftActivity = useCallback(() => {
-    markProfileDraftActivityRef.current();
-  }, []);
-
-  const profile = useCardInspectorHermesProfile({
-    projectId,
-    deckId,
-    cardId,
-    onDraftDirty: markProfileDraftActivity,
-  });
   const script = useCardInspectorScriptDraft({
     cardId,
     savedScript: localConfig.runtime_options?.script,
@@ -158,16 +143,12 @@ export function useCardInspectorDraft({
   const persistence = useCardInspectorDraftPersistence({
     buildCurrentLocalPayload,
     onSaveLocalConfig,
-    captureProfileDraft: profile.captureDraft,
-    saveCapturedProfileDraft: profile.saveCapturedDraft,
-    hasDirtyProfileDraft: profile.hasDirtyDraft,
     registerCardDraftFlush,
   });
 
   useLayoutEffect(() => {
     markCardDraftDirtyRef.current = persistence.markDraftDirty;
-    markProfileDraftActivityRef.current = persistence.markProfileDraftActivity;
-  }, [persistence.markDraftDirty, persistence.markProfileDraftActivity]);
+  }, [persistence.markDraftDirty]);
 
   useEffect(() => {
     // A response to an earlier save must not replace edits made while it was pending.
@@ -212,13 +193,6 @@ export function useCardInspectorDraft({
     setToolsetsText(cardInspectorListDraft(localConfig.toolsets));
     setMcpConnectionIdsText(cardInspectorListDraft(localConfig.mcp_connection_ids));
   }, [cardId, localConfig, persistence.isHydrationBlocked, script.hydrateFromSaved]);
-
-  const savedHermesToolsetNames = parseCardListEditorText(toolsetsText);
-  const toolOptions = useCardToolOptions({
-    toolsText,
-    setToolsText,
-    markDraftDirty: persistence.markDraftDirty,
-  });
 
   const changeOrchestrator = useCallback((enabled: boolean) => {
     setOrchestratorEnabled(enabled);
@@ -271,27 +245,6 @@ export function useCardInspectorDraft({
     });
     persistence.markDraftDirty();
   }, [editorOptions.subagentCatalogOptions, persistence.markDraftDirty]);
-  const changeSkillGrants = useCallback((value: string) => {
-    setSkillsText(value);
-    persistence.markDraftDirty();
-  }, [persistence.markDraftDirty]);
-  const changeAutoTools = useCallback((enabled: boolean) => {
-    setAutoToolsEnabled(enabled);
-    persistence.markDraftDirty();
-  }, [persistence.markDraftDirty]);
-  const toggleHermesToolset = useCallback((name: string, enabled: boolean) => {
-    setToolsetsText(toggleSavedToolAssignment(
-      savedHermesToolsetNames,
-      name,
-      enabled,
-    ).join('\n'));
-    persistence.markDraftDirty();
-  }, [persistence.markDraftDirty, savedHermesToolsetNames]);
-  const changeMcpConnections = useCallback((value: string) => {
-    setMcpConnectionIdsText(value);
-    persistence.markDraftDirty();
-  }, [persistence.markDraftDirty]);
-
   return {
     saveCardStatus: persistence.saveCardStatus,
     saveCardErrorMessage: persistence.saveCardErrorMessage,
@@ -323,9 +276,6 @@ export function useCardInspectorDraft({
     accessModeOptions: editorOptions.accessModeOptions,
     preservesHermesAutoTeam: editorOptions.preservesHermesAutoTeam,
     runtimeDictionaryReady: editorOptions.runtimeDictionaryReady,
-    savedHermesToolsetNames,
-    toolOptions,
-    profile,
     actions: {
       submitProjectFolder: editorOptions.submitProjectFolder,
       changeProjectFolder: editorOptions.changeProjectFolder,
@@ -338,11 +288,7 @@ export function useCardInspectorDraft({
       changeAutoModel,
       changeSubagentType,
       changeSubagentModel,
-      changeSkillGrants,
-      changeAutoTools,
-      toggleHermesToolset,
       changeScript: script.changeScript,
-      changeMcpConnections,
     },
   };
 }

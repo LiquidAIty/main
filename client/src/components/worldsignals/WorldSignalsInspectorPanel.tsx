@@ -160,10 +160,7 @@ function LayersSection({
 }): React.ReactElement {
   const grouped = useMemo(() => {
     if (!layerState) return null;
-    return {
-      worldIntelligence: groupInOrder(layerState.layers.filter((layer) => !layer.specialist)),
-      specialist: groupInOrder(layerState.layers.filter((layer) => layer.specialist)),
-    };
+    return groupInOrder(layerState.layers);
   }, [layerState]);
 
   if (!bridge || !layerState || !grouped) {
@@ -173,29 +170,15 @@ function LayersSection({
   const enabled = new Set(layerState.enabledLayerIds);
   const countOn = (layers: WorldSignalsLayerDescriptor[]) =>
     layers.filter((layer) => enabled.has(layer.id)).length;
-  const worldIntelLayers = layerState.layers.filter((layer) => !layer.specialist);
-  const specialistLayers = layerState.layers.filter((layer) => layer.specialist);
 
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <GlassInspectorSection
         title="World Intelligence"
-        signal={`${countOn(worldIntelLayers)}/${worldIntelLayers.length} on`}
+        signal={`${countOn(layerState.layers)}/${layerState.layers.length} on`}
         testId="worldsignals-inspector-layers-world"
       >
-        <LayerGroups groups={grouped.worldIntelligence} enabled={enabled} bridge={bridge} />
-      </GlassInspectorSection>
-
-      <GlassInspectorSection
-        title="Specialist"
-        signal={`${countOn(specialistLayers)}/${specialistLayers.length} on`}
-        defaultOpen={false}
-        testId="worldsignals-inspector-layers-specialist"
-      >
-        <div style={{ fontSize: 10.5, color: GRAPH_THEME.drawer.inputMuted, marginBottom: 2 }}>
-          Off by default in the World Intelligence profile. Enable deliberately.
-        </div>
-        <LayerGroups groups={grouped.specialist} enabled={enabled} bridge={bridge} />
+        <LayerGroups groups={grouped} enabled={enabled} bridge={bridge} />
       </GlassInspectorSection>
 
       <button

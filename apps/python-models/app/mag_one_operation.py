@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from app.python_models.operation_definition import OperationDefinition
 from app.python_models.magnetic_taskgraph_authority import MagneticTaskGraphError
-from app.saved_graph_specialist_operations import grounded_data_anchors_schema
+from app.python_models.graph_reference_contracts import grounded_data_anchors_schema
 from mcp.types import CallToolResult, TextContent
 
 

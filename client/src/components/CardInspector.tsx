@@ -1,9 +1,6 @@
 import type { CardEditorConfiguration } from '../features/agentbuilder/cardConfigurationEditor';
-import { CardInspectorMemoryTab } from './CardInspectorMemoryTab';
 import { CardInspectorPromptTab } from './CardInspectorPromptTab';
 import { CardInspectorRuntimeTab } from './CardInspectorRuntimeTab';
-import { CardInspectorSkillsTab } from './CardInspectorSkillsTab';
-import { CardInspectorToolsTab } from './CardInspectorToolsTab';
 import { useCardInspectorDraft } from './useCardInspectorDraft';
 
 interface CardInspectorProps {
@@ -54,18 +51,7 @@ export function CardInspector({
     onSetProjectCodeFolder,
     registerCardDraftFlush,
   });
-  const { profile, toolOptions, actions } = draft;
-  const {
-    page: toolDictionaryPage,
-    query: toolDictionaryQuery,
-    namespace: toolDictionaryNamespace,
-    showSelectedOnly: showSelectedToolsOnly,
-    busy: toolDictionaryBusy,
-    error: toolOptionsError,
-    savedToolNames,
-    selectedRows: selectedToolRows,
-    availableRows: availableToolRows,
-  } = toolOptions;
+  const { actions } = draft;
 
   const sectionBody = activeTab === 'Prompt'
     ? (
@@ -138,87 +124,7 @@ export function CardInspector({
             }}
           />
         )
-      : activeTab === 'Memory'
-        ? (
-            <CardInspectorMemoryTab
-              view={{
-                profileStatus: profile.profileStatus,
-                profileError: profile.profileError,
-              }}
-            />
-          )
-        : activeTab === 'Skills'
-          ? (
-              <CardInspectorSkillsTab
-                view={{
-                  skillsText: draft.skillsText,
-                  profile: {
-                    state: profile.profileState,
-                    status: profile.profileStatus,
-                    error: profile.profileError,
-                  },
-                  learning: {
-                    detail: profile.learningDetail,
-                    draft: profile.learningDraft,
-                    status: profile.learningStatus,
-                    error: profile.learningError,
-                  },
-                }}
-                actions={{
-                  changeSkillGrants: actions.changeSkillGrants,
-                  openLearningNode: profile.openLearningNode,
-                  changeLearningDraft: profile.changeLearningDraft,
-                }}
-              />
-            )
-          : activeTab === 'Tools'
-            ? (
-                <CardInspectorToolsTab
-                  view={{
-                    dictionary: {
-                      autoToolsEnabled: draft.autoToolsEnabled,
-                      autoToolsVisible: draft.runtimeMode !== 'magentic_one',
-                      query: toolDictionaryQuery,
-                      namespace: toolDictionaryNamespace,
-                      page: toolDictionaryPage,
-                      showSelectedOnly: showSelectedToolsOnly,
-                      busy: toolDictionaryBusy,
-                      error: toolOptionsError,
-                      savedToolNames,
-                      selectedRows: selectedToolRows,
-                      availableRows: availableToolRows,
-                    },
-                    hermes: {
-                      profileState: profile.profileState,
-                      profileStatus: profile.profileStatus,
-                      profileError: profile.profileError,
-                      savedToolsetNames: draft.savedHermesToolsetNames,
-                      mcpChecks: profile.mcpChecks,
-                    },
-                    script: {
-                      cardId,
-                      script: draft.scriptDraft,
-                      selectedTools: savedToolNames,
-                    },
-                    mcpConnectionIdsText: draft.mcpConnectionIdsText,
-                  }}
-                  actions={{
-                    changeToolQuery: toolOptions.changeQuery,
-                    changeAutoTools: actions.changeAutoTools,
-                    changeToolNamespace: toolOptions.changeNamespace,
-                    changeShowSelectedOnly: toolOptions.changeShowSelectedOnly,
-                    clearSelectedTools: toolOptions.clearSelectedTools,
-                    toggleTool: toolOptions.toggleTool,
-                    showPreviousToolPage: toolOptions.showPreviousPage,
-                    showNextToolPage: toolOptions.showNextPage,
-                    toggleHermesToolset: actions.toggleHermesToolset,
-                    changeScript: actions.changeScript,
-                    changeMcpConnections: actions.changeMcpConnections,
-                    checkMcpServer: profile.checkMcpServer,
-                  }}
-                />
-              )
-            : null;
+      : null;
 
   if (!sectionBody) {
     return null;

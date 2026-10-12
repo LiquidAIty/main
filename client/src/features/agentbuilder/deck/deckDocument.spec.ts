@@ -118,15 +118,7 @@ describe('requested initial Card topology', () => {
     expect(knowGraph?.prompt).not.toContain('exact Graphiti readback verifies');
   });
 
-  it('seeds only Builder with the two fixed saved-specialist tools', () => {
-    const specialistTools = ['thinkgraph.reason', 'knowgraph.research'];
-    const builder = INITIAL_DECK.nodes.find((card) => card.id === 'builder');
-    expect(builder?.runtimeOptions?.tools).toEqual(expect.arrayContaining(specialistTools));
-    for (const card of INITIAL_DECK.nodes.filter((node) => node.id !== 'builder')) {
-      expect(card.runtimeOptions?.tools ?? []).not.toEqual(
-        expect.arrayContaining(specialistTools),
-      );
-    }
+  it('seeds graph-native tools on the graph Cards', () => {
     const thinkGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_thinkgraph');
     expect(thinkGraph?.runtimeOptions?.tools).toEqual(expect.arrayContaining([
       'engraphis_recall_context',

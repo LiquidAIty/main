@@ -63,8 +63,6 @@ export const BUILDER_CARD_TOOLS = [
   'graphiti.delete_episode',
   'graphiti.delete_entity_edge',
   'graphiti.clear_graph',
-  'thinkgraph.reason',
-  'knowgraph.research',
 ] as const;
 export const MAIN_CARD_TOOLS = [
   'canvas.inspect',

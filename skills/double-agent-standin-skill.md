@@ -3,7 +3,6 @@
 @skill id=double-agent-standin
 @type Skill
 @status active
-@related_to conversation-graph-acceptance
 
 Use one ordinary product task to evaluate useful output, tool access, context, attribution and cost.
 Keep the evaluator's expectations and diagnoses outside product prompts, conversations and graphs.

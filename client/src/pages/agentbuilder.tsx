@@ -13,9 +13,6 @@ import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import AgentBuilderCompanionSurfaces from '../features/agentbuilder/core/AgentBuilderCompanionSurfaces';
-import AgentBuilderChatWorkSurface from '../features/agentbuilder/console/AgentBuilderChatWorkSurface';
-import useAgentBuilderSharedChat from '../features/agentbuilder/console/useAgentBuilderSharedChat';
-import { selectedConversationId } from '../features/agentbuilder/console/sharedChatClient';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
 } from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -187,44 +184,19 @@ export default function AgentBuilder(): ReactElement {
   }, []);
   const inspectorBridges = useAgentBuilderInspectorBridges();
   const {
-    mainCardId,
-    directChatTargets,
-    builderCard,
     cardTitlesByProfile,
     worldSignalsCardId,
     worldViewCard,
     tradingCard,
   } = useMemo(() => deriveAgentBuilderWorkspaceIdentity(deck), [deck]);
-  const [conversationId] = useState(() => selectedConversationId(window.location.search));
+  const [conversationId] = useState(() => (
+    new URLSearchParams(window.location.search).get('conversationId')?.trim() || 'main'
+  ));
   const knowledgeGraphs = useAgentBuilderKnowledgeGraphs({
     projectId: activeProject,
     deckId: DEFAULT_PROJECT_DECK_ID,
     conversationId,
   });
-  const {
-    setCurrentResponderCardId,
-    entityFocusRequest,
-    sharedChatProps,
-  } = useAgentBuilderSharedChat({
-    activeProject,
-    canvasProjectId,
-    conversationId,
-    workspaceView,
-    setWorkspaceView,
-    canonicalDeckReady,
-    setDeckStatusMessage,
-    mainCardId,
-    directChatTargets,
-    knowledgeGraphs,
-    worldSignalsCardId,
-    worldViewCard,
-    tradingCard,
-    worldViewBridge: inspectorBridges.worldViewBridge,
-    colors: AGENT_BUILDER_COLORS,
-  });
-  const relevanceQuery = useMemo(() => (
-    [...sharedChatProps.messages].reverse().find(message => message.role === 'user')?.text.trim() || ''
-  ), [sharedChatProps.messages]);
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -422,16 +394,6 @@ export default function AgentBuilder(): ReactElement {
     return true;
   }, []);
 
-  const chatSurface = (
-    <AgentBuilderChatWorkSurface
-      activeProject={activeProject}
-      canvasProjectId={canvasProjectId}
-      conversationId={conversationId}
-      builderCard={builderCard}
-      sharedChatProps={sharedChatProps}
-    />
-  );
-
   const canvasSurface = (
     <AgentCanvas
       surfaceRole="large"
@@ -463,7 +425,6 @@ export default function AgentBuilder(): ReactElement {
   } = useAgentBuilderWorkspaceNavigation({
     cardDraftFlushRef,
     closeInspectorDrawer,
-    setCurrentResponderCardId,
     setDeckStatusMessage,
     setInspectorDrawerOpen,
     setWorkspaceView,
@@ -504,9 +465,9 @@ export default function AgentBuilder(): ReactElement {
         errors: knowledgeGraphs.errors,
         statuses: knowledgeGraphs.statuses,
         onReadFocusNeighborhood: knowledgeGraphs.readProviderNeighborhood,
-        relevanceQuery,
+        relevanceQuery: '',
         onReadEntityContext: knowledgeGraphs.readEntityContext,
-        entityFocusRequest,
+        entityFocusRequest: null,
       }}
       tradingProps={{
         symbol: 'RDW',
@@ -541,14 +502,11 @@ export default function AgentBuilder(): ReactElement {
         onOpen: () => setInspectorDrawerOpen(true),
         panelProps: {
           canvasProjectId,
-          conversationId,
           deck,
           selectedCard,
           selectedCardConfig,
           tab,
           setTab,
-          mainCardId,
-          builderCardId: builderCard?.id || null,
           cardTitlesByProfile,
           cardDraftFlushRef,
           registerCardDraftFlush,
@@ -600,7 +558,7 @@ export default function AgentBuilder(): ReactElement {
           surfaceName="chat"
           chatPanelWidth={chatPanelWidth}
           chatMinWidth={chatMinWidth}
-          chat={chatSurface}
+          chat={null}
           splitterActive={splitterActive}
           onSplitterPointerEnter={onSplitterPointerEnter}
           onSplitterPointerLeave={onSplitterPointerLeave}

@@ -116,12 +116,12 @@ Main does not receive:
 
 | Capability | Reason |
 | --- | --- |
-| Hermes Web | **CURRENT:** Main's source-default Card has no Web toolset, so outside-research work is delegated to a deliberately connected KnowGraph or another saved specialist. **APPROVED DIRECTION:** Main may later gain bounded quick Web research without taking over KnowGraph's durable evidence correlation. That grant/prompt change is not implemented by this document. |
+| Hermes Web | **CURRENT:** Main's source-default Card has no Web toolset. **APPROVED DIRECTION:** Main may later gain bounded quick Web research without taking over KnowGraph's durable evidence correlation. That grant/prompt change is not implemented by this document. |
 | Hermes Files, Terminal, Browser, Vision, or Code Execution | Main is the fast conversation/orchestration front door, not the implementation worker. |
 | Graphiti writes | KnowGraph owns sourced persistence. |
 | Card create/update/wire tools | Builder owns agent construction and configuration. |
 | Broad CBM tools | Main needs only enough structural awareness to identify the owner and direct Builder. |
-| Direct ThinkGraph metadata maintenance | Normal User/Main pairs enter the approved completed-pair intake; explicit deeper memory work can be addressed to ThinkGraph. |
+| Direct ThinkGraph metadata maintenance | The completed-pair Python rails remain, but no automatic caller is current after removal of the TypeScript executor. |
 
 ### Builder
 
@@ -140,9 +140,9 @@ session, Bot transport, process, and Kanban control operations remain internal.
 
 ### ThinkGraph
 
-ThinkGraph does not receive Hermes Web or development toolsets. Its jobs are the
-automatic completed User/Main-pair intake and explicit historical reasoning,
-recall, durable Think creation, and deliberate relationship/correction work.
+ThinkGraph does not receive Hermes Web or development toolsets. Its Python rails retain historical
+reasoning, recall, durable Think creation, and deliberate relationship/correction contracts; no
+automatic conversation caller is current.
 
 ### KnowGraph
 
@@ -157,7 +157,7 @@ Magnetic receives no LiquidAIty product tools. Hermes owns its task/dependency
 ledger, blue-roster dispatch, retries, worker attempts, and final synthesis.
 `run_mag_one` belongs to Main.
 
-### Team and specialist Cards
+### Team and domain Cards
 
 Team remains an explicitly reviewed wildcard selection for MVP. It may enable AutoTools to narrow
 its broad saved grant, but it never receives the whole catalog automatically and Jev cannot widen its

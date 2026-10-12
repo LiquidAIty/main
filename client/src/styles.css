@@ -20,7 +20,7 @@
   }
 
   /* One scrollbar look everywhere: small, neutral grey, transparent track —
-     the same recipe SharedCardChat already proved locally. Kills the default
+     a neutral, consistent scrollbar across application panels. Kills the default
      chunky white Windows scrollbars on every panel, drawer, console, and
      graph surface. */
   * {

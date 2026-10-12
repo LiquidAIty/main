@@ -9,10 +9,8 @@ from app.python_models import (
     agentgraph_query,
     agentgraph_run_observations,
     agentgraph_topology,
-    card_invocation_preparation,
     card_invocation_tools,
     saved_card_contract,
-    saved_cards,
 )
 
 
@@ -241,7 +239,7 @@ def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_
         "worldview", indexed, edges,
     )] == ["worldsignals"]
 
-def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
+def test_flow_creation_reconnection_and_main_bot_authority():
     controller = _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     receivers = [_agent(name, runtime={"kind": "hermes", "mode": "delegate", "profile": name})
                  for name in ("builder", "graph", "disconnected")]
@@ -255,15 +253,6 @@ def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
     agentgraph_topology.validate_card_topology(nodes, edges)
     assert [target["cardId"] for target in agentgraph_topology.direct_orchestrator_targets("main", cards, edges)] == ["builder", "graph"]
     assert agentgraph_topology.direct_orchestrator_targets("builder", cards, edges) == []
-    monkeypatch.setattr(saved_cards, "load_deck", lambda *_: {
-        "projectId": "p", "deck": {"nodes": nodes, "edges": edges},
-    })
-    received = card_invocation_preparation._prepare_invocation({
-        "projectId": "p", "deckId": "d", "cardId": "builder", "senderCardId": "main", "assignment": "Inspect",
-    })
-    assert received["_callConfig"]["runtime"] == receivers[0]["runtime"]
-    assert received["_callConfig"]["systemPrompt"] == receivers[0]["prompt"]
-    assert received["_callConfig"]["provider"]["modelKey"] == receivers[0]["runtimeOptions"]["modelKey"]
     assert json.dumps(nodes, sort_keys=True) == before
     for mutation in ({"source": "builder"}, {"target": "main"}):
         invalid = [{**edges[0], **mutation}]
@@ -275,14 +264,6 @@ def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
     agentgraph_topology.validate_card_topology(nodes, edges)
     assert len(edges) == 2
     assert list(cards) == ["main", "builder", "graph", "disconnected"]
-    assert card_invocation_preparation._prepare_invocation({
-        "projectId": "p", "deckId": "d", "cardId": "builder", "senderCardId": "main", "assignment": "Allowed",
-    })["cardIdentity"]["cardId"] == "builder"
-    with pytest.raises(saved_card_contract.CardDomainError, match="card_invocation_edge_authority_required"):
-        card_invocation_preparation._prepare_invocation({
-            "projectId": "p", "deckId": "d", "cardId": "main",
-            "senderCardId": "builder", "assignment": "Reverse is not authorized",
-        })
 
 
 def test_direct_orchestrator_targets_allow_saved_hermes_cards_including_magnetic() -> None:

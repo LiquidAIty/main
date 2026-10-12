@@ -37,6 +37,31 @@ DATA_ANCHOR_ID_FIELDS: tuple[str, ...] = (
 )
 
 
+def grounded_data_anchors_schema() -> dict[str, Any]:
+    id_fields = {
+        field: {"type": "string", "minLength": 1}
+        for field in DATA_ANCHOR_ID_FIELDS
+    }
+    return {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 16,
+        "items": {
+            "type": "object",
+            "properties": {
+                **id_fields,
+                "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "priority": {"type": "integer"},
+                "boundedExpansion": {"type": "integer", "minimum": 0, "maximum": 3},
+                "resultLimit": {"type": "integer", "minimum": 1, "maximum": 24},
+            },
+            "required": ["reason", "priority", "boundedExpansion", "resultLimit"],
+            "oneOf": [{"required": [field]} for field in id_fields],
+            "additionalProperties": False,
+        },
+    }
+
+
 def graph_record_identity(value: dict[str, Any]) -> tuple[str, str]:
     populated = [
         field

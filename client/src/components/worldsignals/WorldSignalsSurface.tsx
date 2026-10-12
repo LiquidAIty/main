@@ -37,7 +37,6 @@ export type WorldSignalsLayerDescriptor = {
   id: string;
   label: string;
   group: string;
-  specialist: boolean;
   available: boolean;
 };
 

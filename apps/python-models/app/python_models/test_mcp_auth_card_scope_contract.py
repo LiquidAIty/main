@@ -455,7 +455,7 @@ def test_builder_update_uses_explicit_target_and_revisions_with_saved_grants(mon
     assert json.loads(result.content[0].text)["ok"] is True
     assert observed == [({**args, "projectId": "project-1", "deckId": "deck_builder"},
                          {"caller_card_id": "builder", "authenticated_user_edit": False})]
-    for forged in ("_builderOperation", "_effectTargetCardId", "authenticated_user_edit"):
+    for forged in ("_builderOperation", "authenticated_user_edit"):
         rejected = asyncio.run(mcp_request_dispatch.dispatch_tool("card.update_configuration", {**args, forged: True}))
         assert json.loads(rejected[0].text)["ok"] is False
     assert len(observed) == 1

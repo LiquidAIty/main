@@ -15,7 +15,6 @@ from mcp.types import TextContent
 BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 DEFAULT_BACKEND_OPERATION_TIMEOUT_SECONDS = 30.0
 WORLDVIEW_ACTION_HTTP_TIMEOUT_SECONDS = 40.0
-SPECIALIST_CARD_HTTP_TIMEOUT_SECONDS = 540.0
 
 
 def _internal_secret(*, required: bool) -> str:
@@ -90,39 +89,3 @@ async def post_backend_text(
     )
     return [TextContent(type="text", text=text)]
 
-
-async def post_backend_json(
-    route: str,
-    payload: dict[str, Any],
-    *,
-    timeout_seconds: float,
-    invalid_result_error: str,
-    http_error_prefix: str,
-) -> dict[str, Any]:
-    secret = _internal_secret(required=True)
-    import httpx2
-
-    async with httpx2.AsyncClient(
-        headers={
-            "Content-Type": "application/json",
-            "X-LiquidAIty-Internal-MCP-Secret": secret,
-        },
-        timeout=httpx2.Timeout(timeout_seconds),
-        trust_env=False,
-    ) as client:
-        response = await client.post(
-            _loopback_url(route),
-            json=payload,
-        )
-        try:
-            result = response.json()
-        except (TypeError, ValueError) as error:
-            raise RuntimeError(invalid_result_error) from error
-    if not isinstance(result, dict):
-        raise RuntimeError(invalid_result_error)
-    if response.status_code >= 400 and not result.get("error"):
-        return {
-            "ok": False,
-            "error": f"{http_error_prefix}_{response.status_code}",
-        }
-    return result

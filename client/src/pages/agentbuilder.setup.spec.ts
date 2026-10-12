@@ -101,8 +101,7 @@ describe('agentbuilder authoring flow', () => {
         'graphiti.search_memory_facts', 'graphiti.search_nodes', 'graphiti.get_episodes',
         'graphiti.get_episode_entities', 'graphiti.get_entity_edge',
         'graphiti.build_communities', 'graphiti.delete_episode',
-        'graphiti.delete_entity_edge', 'graphiti.clear_graph',
-        'thinkgraph.reason', 'knowgraph.research'],
+        'graphiti.delete_entity_edge', 'graphiti.clear_graph'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');
     expect(INITIAL_DECK.nodes

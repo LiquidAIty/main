@@ -32,5 +32,4 @@ relationship. Native extraction quality must be inspected independently of visua
 
 ThinkGraph holds reasoning/intent; CodeGraph holds repository structure; profile skills hold
 operating procedures. Do not silently merge these into KnowGraph or ingest test instructions.
-See [conversation-graph-acceptance.md](conversation-graph-acceptance.md) for independent
-ingestion, recall, source attribution and visible product proof.
+Test ingestion, recall, source attribution, and visible product proof independently.

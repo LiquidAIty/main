@@ -61,18 +61,9 @@ profile, or historical screenshot cannot establish one Project's current configu
 
 ### ThinkGraph
 
-After an ordinary Main response is persisted and returned, the completed User/Main pair enters the
-saved ThinkGraph Card lifecycle. Preparation is non-persisting. An identical completed-pair identity
-no-ops; otherwise the saved Card returns zero or more Entity-specific structured episodic Thinks, with at
-most one Think per Entity in that pair. Python settles the batch atomically as one append-only Engraphis
-Memory per Think with one exact structured-extractor incidence. Each Think has one compact summary and an
-optional technical `detail` rendered behind **More**.
-
-Completed-pair preparation now receives the same Relevant/Recent packet. Think candidates are selected
-to faithfully steelman the user's current idea, so the saved ThinkGraph Card can prefer a refinement,
-correction, contradiction, genuinely new idea, or no-op over a near-duplicate. Jev separately classifies
-each Card-proposed directed Relationship and supplies its canonical predicate, distribution, and strength;
-it is not an independent endpoint or graph authority.
+The completed-pair Python preparation and settlement rails remain intact, but there is currently no
+LiquidAIty TypeScript agent-execution caller. Automatic User/Main-pair intake is therefore not current
+product behavior. A later native-Hermes integration requires a separate approved implementation.
 
 ### KnowGraph
 

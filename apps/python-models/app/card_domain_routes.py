@@ -4,7 +4,7 @@ from typing import Any
 from app.python_models.saved_card_contract import CardDomainError
 from app.python_models.saved_cards import load_deck, save_deck
 from app.python_models.card_run_execution import start_run
-from app.python_models.card_run_preparation import begin_main_chat_run, begin_run
+from app.python_models.card_run_preparation import begin_run
 from app.python_models.card_run_readback import read_run, read_run_history
 from app.python_models.card_run_settlement import finish_run
 from app.python_models.card_script import CardScriptValidationError, generate_card_script_header, saved_script
@@ -137,14 +137,6 @@ def domain_deck_write(project_id: str, deck_id: str, payload: dict[str, Any]):
 def domain_run_begin(payload: dict[str, Any]):
     try:
         return begin_run(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@router.post("/domain/main/runs/begin")
-def domain_main_run_begin(payload: dict[str, Any]):
-    try:
-        return begin_main_chat_run(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

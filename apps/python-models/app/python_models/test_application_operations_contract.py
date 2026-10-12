@@ -350,14 +350,6 @@ def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
         "parentRunId": "req_source",
         "mainCardId": "card_main_chat",
     })
-    external_main = asyncio.run(mcp_request_dispatch.dispatch_tool("knowgraph.research", {
-        "request": "not a Card-runtime call",
-    }))
-    assert external_main.is_error is True
-    assert json.loads(external_main.content[0].text) == {
-        "ok": False,
-        "error": "authenticated_card_context_required",
-    }
     assert len(calls) == 1
 
 def test_worldview_main_write_rejects_delegate_card_before_storage(monkeypatch):
@@ -474,8 +466,6 @@ def test_application_operation_catalog_preserves_order_and_literal_dispatcher_ow
         "project_graph.list_entities",
         "project_graph.read_entity_context",
         "run_mag_one",
-        "thinkgraph.reason",
-        "knowgraph.research",
         "canvas.inspect",
         "card.create",
         "card.update_configuration",
@@ -500,12 +490,6 @@ def test_application_operation_catalog_preserves_order_and_literal_dispatcher_ow
             "app.project_graph_operations.read_entity_context"
         ),
         "run_mag_one": "app.mag_one_operation.run_mag_one",
-        "thinkgraph.reason": (
-            "app.saved_graph_specialist_operations.thinkgraph_reason"
-        ),
-        "knowgraph.research": (
-            "app.saved_graph_specialist_operations.knowgraph_research"
-        ),
         "canvas.inspect": (
             "app.application_operation_handlers.canvas_inspect_operation"
         ),

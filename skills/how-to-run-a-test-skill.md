@@ -3,7 +3,6 @@
 @skill id=how-to-run-a-test
 @type Skill
 @status active
-@related_to conversation-graph-acceptance
 @related_to double-agent-standin
 
 Use to choose and execute a meaningful test for the requested behavior. Recovered from

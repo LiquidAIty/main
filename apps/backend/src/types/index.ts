@@ -9,11 +9,11 @@ export type CardRuntime = {
   profile: string;
 };
 
-// flow = ORANGE Main bot-team authority; magentic_option = BLUE Magnetic
+// flow = persisted directed topology; magentic_option = BLUE Magnetic
 // task-ledger worker availability. Blue never starts or controls Magnetic.
 // 'invalid' is a real persisted classification, not an error case: an edge whose
 // type we do not recognise must stay visible and inert. Folding it into 'flow'
-// (the old default) silently handed invocation authority to malformed data.
+// (the old default) silently gave malformed data a valid relationship type.
 export type DeckEdgeType = 'magentic_option' | 'flow' | 'invalid';
 
 export type CardSubsystemCapability =
@@ -40,11 +40,7 @@ export type SavedCardConfiguration = {
   autoModel?: boolean;
   /** Legacy-compatible Card availability persisted inside runtime options. */
   enabled?: boolean;
-  /** Saved outbound orange Card-to-Card delegation authority. Main has this
-   * authority by its runtime role; another non-Magnetic Card must opt in. */
-  orchestrator?: boolean;
-  /** Temporary Hermes children for one Card turn. This is unrelated to
-   * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
+  /** Temporary Hermes children for one Card turn. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
    * Python/Hermes capability. The receiving Card's IDF carries this exact value. */
@@ -119,7 +115,7 @@ export type DeckCard = {
   _cardRevisionSha256?: string;
   kind?: DeckNodeKind;
   templateId: string;
-  /** Stable LiquidAIty Card-to-Card capability description. */
+  /** Stable saved Card capability description. */
   role?: string | null;
   prompt?: string | null;
   /** LiquidAIty-owned result validation/presentation contract. */

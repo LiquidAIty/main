@@ -20,7 +20,6 @@ export type AgentBuilderCanvasFocus = { zone: 'agents'; nonce: number } | null;
 export default function useAgentBuilderWorkspaceNavigation({
   cardDraftFlushRef,
   closeInspectorDrawer,
-  setCurrentResponderCardId,
   setDeckStatusMessage,
   setInspectorDrawerOpen,
   setWorkspaceView,
@@ -32,7 +31,6 @@ export default function useAgentBuilderWorkspaceNavigation({
 }: {
   cardDraftFlushRef: MutableRefObject<(() => Promise<boolean>) | null>;
   closeInspectorDrawer: () => Promise<boolean>;
-  setCurrentResponderCardId: (cardId: string | null) => boolean;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
   setInspectorDrawerOpen: Dispatch<SetStateAction<boolean>>;
   setWorkspaceView: Dispatch<SetStateAction<AgentBuilderWorkspaceView>>;
@@ -44,30 +42,27 @@ export default function useAgentBuilderWorkspaceNavigation({
 }) {
   const showCanvasWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
-    setCurrentResponderCardId(null);
     setWorkspaceView('canvas');
     showCanvasWorkspaceInUrl();
     setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
-  }, [closeInspectorDrawer, setCanvasFocusZone, setCurrentResponderCardId, setWorkspaceView]);
+  }, [closeInspectorDrawer, setCanvasFocusZone, setWorkspaceView]);
 
   const showKnowledgeWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
-    setCurrentResponderCardId(null);
     setWorkspaceView('knowledge');
     showKnowledgeWorkspaceInUrl();
-  }, [closeInspectorDrawer, setCurrentResponderCardId, setWorkspaceView]);
+  }, [closeInspectorDrawer, setWorkspaceView]);
 
   const showTradingWorkspace = useCallback(async () => {
     if (cardDraftFlushRef.current && !(await cardDraftFlushRef.current())) return;
-    if (!tradingCard?.id || !setCurrentResponderCardId(tradingCard.id)) {
-      setDeckStatusMessage('Trading saved Card is unavailable for direct chat.');
+    if (!tradingCard?.id) {
+      setDeckStatusMessage('Trading saved Card is unavailable.');
       return;
     }
     setInspectorDrawerOpen(false);
     setWorkspaceView('trading');
   }, [
     cardDraftFlushRef,
-    setCurrentResponderCardId,
     setDeckStatusMessage,
     setInspectorDrawerOpen,
     setWorkspaceView,
@@ -76,14 +71,13 @@ export default function useAgentBuilderWorkspaceNavigation({
 
   const showWorldSignalsWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
-    if (!worldSignalsCardId || !setCurrentResponderCardId(worldSignalsCardId)) {
-      setDeckStatusMessage('WorldSignals saved Card is unavailable for direct chat.');
+    if (!worldSignalsCardId) {
+      setDeckStatusMessage('WorldSignals saved Card is unavailable.');
       return;
     }
     setWorkspaceView('worldsignals');
   }, [
     closeInspectorDrawer,
-    setCurrentResponderCardId,
     setDeckStatusMessage,
     setWorkspaceView,
     worldSignalsCardId,
@@ -91,8 +85,8 @@ export default function useAgentBuilderWorkspaceNavigation({
 
   const showWorldViewWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
-    if (!worldViewCard?.id || !setCurrentResponderCardId(worldViewCard.id)) {
-      setDeckStatusMessage('WorldView saved Card is unavailable for direct chat.');
+    if (!worldViewCard?.id) {
+      setDeckStatusMessage('WorldView saved Card is unavailable.');
       return;
     }
     setWorkspaceView('worldview');
@@ -100,7 +94,6 @@ export default function useAgentBuilderWorkspaceNavigation({
     showWorldViewWorkspaceInUrl();
   }, [
     closeInspectorDrawer,
-    setCurrentResponderCardId,
     setDeckStatusMessage,
     setWorkspaceView,
     setWorldViewInspectorOpen,
