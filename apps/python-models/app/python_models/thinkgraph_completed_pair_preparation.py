@@ -14,14 +14,27 @@ from .engraphis import (
     validated_think_metadata,
 )
 from .thinkgraph_completed_pair_extraction import llm_structured_contract
+from .project_graph_relevance import build_project_graph_grounding
 
 
-def _subject_directory_for_project(project: str) -> dict[str, Any]:
-    from app.python_models.canonical_subject_directory import (
-        build_canonical_subject_directory,
+def _entity_map_for_project(project: str) -> dict[str, Any]:
+    from app.python_models.project_entity_map import (
+        build_project_entity_map,
     )
 
-    return build_canonical_subject_directory(project)
+    return build_project_entity_map(project)
+
+
+def _grounding_for_completed_pair(
+    project: str,
+    user_message: str,
+    main_response: str,
+) -> dict[str, Any]:
+    return build_project_graph_grounding(
+        project,
+        user_message,
+        context=main_response,
+    )
 
 
 def text_hash(value: str) -> str:
@@ -139,11 +152,17 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
                     "status": "duplicate_noop",
                 },
             }
-        subject_directory = _subject_directory_for_project(project)
+        entity_map = _entity_map_for_project(project)
+        graph_grounding = _grounding_for_completed_pair(
+            project,
+            payload["userMessage"],
+            payload["mainResponse"],
+        )
         enrichment_input = {
             "exact_user_message": payload["userMessage"],
             "exact_main_response": payload["mainResponse"],
-            "canonical_subject_directory": subject_directory,
+            "project_entity_map": entity_map,
+            "project_graph_grounding": graph_grounding,
         }
         enrichment_schema, enrichment_prompt = llm_structured_contract(
             pair_text,
@@ -162,5 +181,6 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             "enrichmentSchema": enrichment_schema,
             "enrichmentPrompt": enrichment_prompt,
             "enrichmentInput": enrichment_input,
-            "canonicalSubjectDirectory": subject_directory,
+            "projectEntityMap": entity_map,
+            "projectGraphGrounding": graph_grounding,
         }

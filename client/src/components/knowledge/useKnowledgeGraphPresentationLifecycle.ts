@@ -9,7 +9,8 @@ import {
   type GraphLayout, type GraphPresentationPreferences, type GraphStyle,
 } from './knowledgeGraphPresentationPreferences';
 import {
-  DEFAULT_SOLARPUNK_COLORS, type GraphProjectionV1, type JoinedGraphPresentation, type SolarpunkColors,
+  DEFAULT_SOLARPUNK_COLORS, type GraphProjectionV1, type JoinedGraphPresentation,
+  type KnowledgeGraphViewMode, type SolarpunkColors,
 } from './joinedKnowledgeGraphProjection';
 import type { JevGraphPhysicsProfile } from './jevGraphPhysics';
 import { useKnowledgeGraphManualFocus } from './useKnowledgeGraphManualFocus';
@@ -25,16 +26,22 @@ type AutomaticPresentation = {
 
 export function useKnowledgeGraphPresentationLifecycle({
   projection, joinedPresentation, onReadProviderFocusNeighborhood, selectedId,
-  onInspectNode, onInspectEdge, onClearSelection,
+  onInspectNode, onInspectEdge, onClearSelection, viewMode,
 }: {
   projection: GraphProjectionV1; joinedPresentation: JoinedGraphPresentation;
   onReadProviderFocusNeighborhood?: ReadProviderFocusNeighborhood;
   selectedId: string | null; onInspectNode: (id: string) => void; onInspectEdge: (id: string) => void;
   onClearSelection: () => void;
+  viewMode: KnowledgeGraphViewMode;
 }) {
   const savedPresentationRef = useRef(safePresentationPreferences());
   const savedPresentation = savedPresentationRef.current;
-  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6;
+  const savedPresentationIsCurrent = savedPresentation.schemaVersion === 6
+    || savedPresentation.schemaVersion === 7;
+  const [viewLayouts, setViewLayouts] = useState({
+    thinkgraph: savedPresentation.viewLayouts?.thinkgraph || 'galaxy' as GraphLayout,
+    knowgraph: savedPresentation.viewLayouts?.knowgraph || 'communities' as GraphLayout,
+  });
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<EngraphisRenderer | null>(null);
   const callbacksRef = useRef({ onInspectNode, onInspectEdge, onClearSelection });
@@ -43,7 +50,7 @@ export function useKnowledgeGraphPresentationLifecycle({
   const exitFocusRef = useRef<() => void>(() => undefined);
   const [settings, setSettings] = useState<Record<string, number | boolean | string>>(
     savedPresentationIsCurrent ? savedPresentation.settings || {} : { ...(savedPresentation.settings || {}), size: 5 });
-  const [layout, setLayout] = useState<GraphLayout>(savedPresentation.layout || 'compact');
+  const [layout, setLayout] = useState<GraphLayout>('compact');
   const [style, setStyle] = useState<GraphStyle>(initialPresentationStyle(
     savedPresentationIsCurrent ? savedPresentation.style : undefined));
   const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(savedPresentation.physicsProfile || 'galaxy');
@@ -91,7 +98,7 @@ export function useKnowledgeGraphPresentationLifecycle({
             callbacksRef.current.onClearSelection();
           },
         },
-        savedPresentation,
+        savedPresentation: { ...savedPresentation, layout: 'compact' },
         savedPresentationIsCurrent,
       });
       setLayout(mounted.layout); setStyle(mounted.style); setPhysicsProfile(mounted.physicsProfile);
@@ -105,18 +112,33 @@ export function useKnowledgeGraphPresentationLifecycle({
   }, [savedPresentationIsCurrent]);
 
   useEffect(() => {
+    if (focus.blackholePresentationActive) return;
+    const nextLayout = viewMode === 'combined' ? 'compact' : viewLayouts[viewMode];
+    if (layout === nextLayout) return;
+    const defaults = graphRef.current?.setPreset(nextLayout);
+    const normalizedDefaults = defaults
+      ? { ...defaults, linkw: Math.max(1, Number(defaults.linkw) || 1) }
+      : defaults;
+    setAppliedPresetNodeSize(null);
+    setLayout(nextLayout);
+    if (normalizedDefaults) {
+      setSettings(current => ({ ...current, ...normalizedDefaults }));
+    }
+  }, [focus.blackholePresentationActive, layout, viewLayouts.knowgraph, viewLayouts.thinkgraph, viewMode]);
+
+  useEffect(() => {
     graphRef.current?.setThemeColors(knowledgeGraphRendererThemeColors(style, solarpunkColors));
   }, [solarpunkColors, style]);
 
   useEffect(() => {
     try {
       window.localStorage.setItem(presentationStorageKey(), JSON.stringify({
-        schemaVersion: 6, layout, style, physicsProfile, settings, solarpunkColors,
+        schemaVersion: 7, layout, viewLayouts, style, physicsProfile, settings, solarpunkColors,
       } satisfies GraphPresentationPreferences));
     } catch {
       // Presentation preferences are optional; graph rendering remains authoritative.
     }
-  }, [layout, physicsProfile, settings, solarpunkColors, style]);
+  }, [layout, physicsProfile, settings, solarpunkColors, style, viewLayouts]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -231,13 +253,16 @@ export function useKnowledgeGraphPresentationLifecycle({
   };
 
   const presentationControls = {
+    viewMode,
     physicsProfile,
     changePhysicsProfile: (value: JevGraphPhysicsProfile) => {
       recordManualChange('physics'); setPhysicsProfile(value);
     },
     layout,
     changeLayout: (next: GraphLayout) => {
+      if (viewMode === 'combined') return;
       recordManualChange('layout'); setAppliedPresetNodeSize(null);
+      setViewLayouts(current => ({ ...current, [viewMode]: next }));
       const preset = graphRef.current?.setPreset(next);
       const defaults = preset ? { ...preset, linkw: Math.max(1, Number(preset.linkw) || 1) } : preset;
       setLayout(next); setSettings(current => ({ ...current, ...defaults }));

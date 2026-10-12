@@ -2,7 +2,7 @@
 
 `engraphis-prime-agent` is the first-party [PrimeIntellect prime-agent](https://github.com/PrimeIntellect-ai/prime-agent)
 integration for durable, local-first Engraphis memory. It lazily launches the existing
-`engraphis-mcp` server on stdio and exposes the same nine-tool Smart MCP surface
+`engraphis-mcp` server on stdio and exposes the same ten-tool Smart MCP surface
 that every other Engraphis host uses, so a prime-agent fleet gets prompt-ready
 context, durable facts, and governed governance actions through one shared local
 gateway.
@@ -20,10 +20,10 @@ At runtime the integration has three layers:
    it spawns one `engraphis-mcp` process over JSON-RPC stdio. Every tool call
    from every sub-agent goes through that one process.
 2. **A shared `EngraphisMcpClient`.** Owns the subprocess, exposes the
-   Smart nine-tool surface, and serializes
+   Smart ten-tool surface, and serializes
    concurrent calls through an `asyncio.Lock` at the JSON-RPC frame layer.
 3. **Eight named `EngraphisPrimeAgent` sub-agents.** Each one holds its own
-   session id, lazily started on first tool use, and the same nine tool
+   session id, lazily started on first tool use, and the same ten tool
    bindings. Sub-agent identity doubles as the default `repo` scope, so
    per-role memory isolation is the default.
 
@@ -35,7 +35,7 @@ client are still shared.
 
 ## When to use this vs. the Pi extension vs. the commandcode hook
 
-All three integrations expose the same nine-tool Smart MCP surface against the
+All three integrations expose the same ten-tool Smart MCP surface against the
 local Engraphis gateway. Choose by host, not by feature set.
 
 | Integration | Host | Best for | Concurrency | Install |
@@ -52,7 +52,7 @@ zero-config, one-shot context warm-up at session start.
 ## Install
 
 Install Engraphis 1.5.x with Python 3.10 or later. Version 1.5 introduced the
-nine-tool Smart MCP contract required by this integration:
+ten-tool Smart MCP contract required by this integration:
 
 ```bash
 python -m pip install --upgrade "engraphis[mcp]>=1.5,<2"
@@ -140,7 +140,7 @@ duplicating it. Use `--uninstall` to remove the entry.
 If prime-agent expects a different tool-registration surface, the single
 adapter point is `EngraphisPrimeAgent.register()`. Pass any object with a
 `register_tool(name, fn, schema=...)` method; the integration registers all
-nine Smart tools with that target. Override the method (or pass a thin
+ten Smart tools with that target. Override the method (or pass a thin
 adapter) if prime-agent's real API differs.
 
 ## Configuration
@@ -161,13 +161,14 @@ never the full environment:
 - `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH` on Windows (so the gateway can
   resolve the per-user config and log paths)
 
-## The nine Smart tools
+## The ten Smart tools
 
 | Tool | Purpose |
 |---|---|
 | `engraphis_session` | Start, resume, or end a session for the calling sub-agent. |
 | `engraphis_recall_context` | Compact, cited, token-budgeted context for the current task. |
 | `engraphis_remember` | Persist a durable fact, decision, preference, or procedure. |
+| `engraphis_remember_entities` | Atomically persist one memory per exact Entity. |
 | `engraphis_discover_actions` | Find a best-fit advanced capability with a version-bound schema. |
 | `engraphis_execute_read` | Run a discovered read-only advanced capability. |
 | `engraphis_execute_action` | Run a discovered write/admin/destructive advanced capability. |
@@ -252,7 +253,7 @@ else.
 |---|---|---|
 | `ModuleNotFoundError: No module named 'mcp'` | The MCP Python SDK is not installed | `pip install "engraphis[mcp]"` (or `pip install -e ".[test]"` for development) |
 | `ERROR: engraphis-prime-agent requires Python >=3.10` (or a hard `SyntaxError` on import) | The active interpreter is 3.9 or older | Use Python 3.10+. The Engraphis 1.5 MCP server and the MCP SDK both require 3.10+ |
-| `engraphis-mcp` is on `PATH` but the server starts and the tool list is empty or the Smart nine tools are missing | The installed `engraphis` is older than 1.5 | `pip install --upgrade "engraphis[mcp]>=1.5,<2"`. Version 1.5 introduced the nine-tool Smart contract this integration depends on |
+| `engraphis-mcp` is on `PATH` but the server starts and the tool list is empty or the Smart tools are missing | The installed `engraphis` is older than the integration | Upgrade `engraphis[mcp]` to the version required by this integration. |
 | `ConnectionRefusedError` / `FileNotFoundError` / `OSError: [Errno 2] No such file or directory: 'engraphis-mcp'` when the fleet enters | `engraphis-mcp` is not on `PATH` for the Python that imports the integration | Install `engraphis[mcp]` in the same environment, or set `ENGRAPHIS_MCP_COMMAND` to the absolute path of the `engraphis-mcp` console script (for example `.venv/bin/engraphis-mcp` or `~/.local/bin/engraphis-mcp`) |
 | `engraphis_prime_agent.cli` returns exit code 2 with "binary not on PATH" | Same as above, surfaced by the CLI check | Install `engraphis[mcp]`, or `pipx install "engraphis[mcp]"` if you intentionally keep the integration in a different venv |
 | `pytest` cannot import `engraphis_prime_agent` from the repo checkout | The package was not installed in editable mode | From `integrations/prime_agent/`, run `pip install -e ".[test]"` |
@@ -266,7 +267,7 @@ against your environment — it returns one of the documented exit codes
 ## Contributing
 
 The integration has one adapter point. Everything else — the eight named
-sub-agents, the shared `EngraphisMcpClient`, the nine Smart tool bindings,
+sub-agents, the shared `EngraphisMcpClient`, the ten Smart tool bindings,
 the stdio subprocess lifecycle, and the per-agent session bootstrap — is
 fixed and reviewed as a unit.
 

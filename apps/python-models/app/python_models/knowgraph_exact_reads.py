@@ -1,4 +1,4 @@
-"""Exact project-scoped KnowGraph subject, episode, and reference reads."""
+"""Exact Project-scoped KnowGraph Entity, episode, and reference reads."""
 
 from __future__ import annotations
 
@@ -19,12 +19,162 @@ from app.python_models.knowgraph_graphiti_read_support import (
     graphiti_project_scope_ids,
     knowgraph_driver,
     neo4j_rows,
-    project_portable_know,
+    persisted_knowgraph_jev,
     without_graphiti_embedding_vectors,
 )
+from app.python_models.knowgraph_know_contract import know_from_properties
 _KNOWGRAPH_EPISODE_LIMIT = 50
 _KNOWGRAPH_EPISODE_PREVIEW_CHARS = 1_000
-def read_knowgraph_subject_directory(project_id: str) -> dict[str, Any]:
+
+
+def _read_knowgraph_entity_knows(
+    project_id: str,
+    graphiti_entity_id: str,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read bounded Knows attached by exact structural ABOUT edges."""
+
+    entity_id = str(graphiti_entity_id or "").strip()
+    if not entity_id:
+        raise DataAnchorError("graphiti_entity_id_required")
+    driver, database = knowgraph_driver()
+    scope_ids = graphiti_project_scope_ids(project_id)
+    try:
+        with driver.session(database=database) as session:
+            rows = neo4j_rows(session.run(
+                """
+                MATCH (episode:Episodic)-[:ABOUT]->(entity:Entity)
+                WHERE (elementId(entity) = $entityId OR toString(entity.uuid) = $entityId)
+                  AND toString(entity.group_id) IN $scopeIds
+                  AND toString(episode.group_id) IN $scopeIds
+                  AND toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
+                RETURN coalesce(toString(episode.uuid), elementId(episode)) AS episodeId,
+                       coalesce(toString(entity.uuid), elementId(entity)) AS entityId,
+                       properties(episode) AS properties
+                ORDER BY coalesce(episode.valid_at, episode.created_at) DESC,
+                         episode.created_at DESC,
+                         episodeId DESC
+                LIMIT $limit
+                """,
+                entityId=entity_id,
+                scopeIds=scope_ids,
+                limit=limit,
+            ))
+    except Exception as error:
+        if isinstance(error, DataAnchorError):
+            raise
+        raise DataAnchorError("knowgraph_entity_know_read_failed") from error
+    finally:
+        close = getattr(driver, "close", None)
+        if callable(close):
+            close()
+
+    knows: list[dict[str, Any]] = []
+    for row in rows:
+        properties = without_graphiti_embedding_vectors(
+            row.get("properties") if isinstance(row.get("properties"), dict) else {}
+        )
+        know = know_from_properties(properties)
+        if know is None:
+            continue
+        knows.append({
+            "graphitiEpisodeId": str(row.get("episodeId") or ""),
+            "graphitiEntityId": str(row.get("entityId") or entity_id),
+            "idea": know["idea"],
+            "counterIdea": know["counterIdea"],
+            "validFrom": properties.get("valid_at"),
+            "ingestedAt": properties.get("created_at"),
+        })
+    return knows
+
+
+def read_knowgraph_entity_knows(
+    project_id: str,
+    graphiti_entity_id: str,
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """Read the at-most-two exact Knows allowed by the public Entity context."""
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 12:
+        raise DataAnchorError("knowgraph_entity_know_limit_invalid")
+    return _read_knowgraph_entity_knows(
+        project_id, graphiti_entity_id, limit=limit,
+    )
+
+
+def read_knowgraph_entity_know_candidates(
+    project_id: str,
+    graphiti_entity_id: str,
+    *,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Read a bounded exact candidate pool for native-search/Jev relevance."""
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 24:
+        raise DataAnchorError("knowgraph_entity_candidate_limit_invalid")
+    return _read_knowgraph_entity_knows(
+        project_id, graphiti_entity_id, limit=limit,
+    )
+
+
+def read_recent_knowgraph_knows(
+    project_id: str,
+    *,
+    limit: int = 1,
+) -> list[dict[str, Any]]:
+    """Read the newest exact ABOUT Knows across one Project."""
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 12:
+        raise DataAnchorError("knowgraph_recent_know_limit_invalid")
+    scope_ids = graphiti_project_scope_ids(project_id)
+    driver, database = knowgraph_driver()
+    try:
+        with driver.session(database=database) as session:
+            rows = neo4j_rows(session.run(
+                """
+                MATCH (episode:Episodic)-[:ABOUT]->(entity:Entity)
+                WHERE toString(entity.group_id) IN $scopeIds
+                  AND toString(episode.group_id) IN $scopeIds
+                  AND toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
+                RETURN coalesce(toString(episode.uuid), elementId(episode)) AS episodeId,
+                       coalesce(toString(entity.uuid), elementId(entity)) AS entityId,
+                       properties(episode) AS properties
+                ORDER BY coalesce(episode.valid_at, episode.created_at) DESC,
+                         episode.created_at DESC,
+                         episodeId DESC
+                LIMIT $limit
+                """,
+                scopeIds=scope_ids,
+                limit=limit,
+            ))
+    except Exception as error:
+        raise DataAnchorError("knowgraph_recent_know_read_failed") from error
+    finally:
+        close = getattr(driver, "close", None)
+        if callable(close):
+            close()
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        properties = without_graphiti_embedding_vectors(
+            row.get("properties") if isinstance(row.get("properties"), dict) else {}
+        )
+        know = know_from_properties(properties)
+        if know is None:
+            continue
+        records.append({
+            "graphitiEpisodeId": str(row.get("episodeId") or ""),
+            "graphitiEntityId": str(row.get("entityId") or ""),
+            "idea": know["idea"],
+            "counterIdea": know["counterIdea"],
+            "validFrom": properties.get("valid_at"),
+            "ingestedAt": properties.get("created_at"),
+        })
+    return records
+
+
+def read_knowgraph_entity_directory(project_id: str) -> dict[str, Any]:
     """Read every current project-scoped KnowGraph entity header."""
 
     driver, database = knowgraph_driver()
@@ -33,20 +183,19 @@ def read_knowgraph_subject_directory(project_id: str) -> dict[str, Any]:
         with driver.session(database=database) as session:
             count_rows = neo4j_rows(session.run(
                 """
-                MATCH (subject:Entity)
-                WHERE toString(subject.group_id) IN $scopeIds
-                RETURN count(DISTINCT coalesce(toString(subject.uuid), elementId(subject))) AS count
+                MATCH (entity:Entity)
+                WHERE toString(entity.group_id) IN $scopeIds
+                RETURN count(DISTINCT coalesce(toString(entity.uuid), elementId(entity))) AS count
                 """,
                 scopeIds=scope_ids,
             ))
             rows = neo4j_rows(session.run(
                 """
-                MATCH (subject:Entity)
-                WHERE toString(subject.group_id) IN $scopeIds
+                MATCH (entity:Entity)
+                WHERE toString(entity.group_id) IN $scopeIds
                 RETURN DISTINCT
-                       coalesce(toString(subject.uuid), elementId(subject)) AS entityId,
-                       coalesce(toString(subject.name), '') AS canonicalName,
-                       labels(subject) AS labels
+                       coalesce(toString(entity.uuid), elementId(entity)) AS entityId,
+                       coalesce(toString(entity.name), '') AS canonicalName
                 ORDER BY entityId
                 """,
                 scopeIds=scope_ids,
@@ -54,13 +203,13 @@ def read_knowgraph_subject_directory(project_id: str) -> dict[str, Any]:
     except Exception as error:
         if isinstance(error, DataAnchorError):
             raise
-        raise DataAnchorError("subject_directory_knowgraph_unavailable") from error
+        raise DataAnchorError("entity_directory_knowgraph_unavailable") from error
     finally:
         close = getattr(driver, "close", None)
         if callable(close):
             close()
     if len(count_rows) != 1:
-        raise DataAnchorError("subject_directory_knowgraph_count_invalid")
+        raise DataAnchorError("entity_directory_knowgraph_count_invalid")
     raw_count = count_rows[0].get("count")
     # Normalize scalar wrappers at the provider boundary before projection.
     if hasattr(raw_count, "to_native"):
@@ -68,28 +217,22 @@ def read_knowgraph_subject_directory(project_id: str) -> dict[str, Any]:
     if hasattr(raw_count, "toNumber"):
         raw_count = raw_count.toNumber()
     if isinstance(raw_count, bool) or not isinstance(raw_count, (int, float)):
-        raise DataAnchorError("subject_directory_knowgraph_count_invalid")
-    subjects: list[dict[str, str]] = []
+        raise DataAnchorError("entity_directory_knowgraph_count_invalid")
+    entities: list[dict[str, str]] = []
     for row in rows:
-        labels = row.get("labels")
-        entity_labels = [
-            str(label).strip() for label in labels
-            if str(label).strip() and str(label).strip() != "Entity"
-        ] if isinstance(labels, list) else []
-        subjects.append({
+        entities.append({
             "graphitiEntityId": str(row.get("entityId") or "").strip(),
             "canonicalName": str(row.get("canonicalName") or ""),
-            "entityKind": entity_labels[0] if entity_labels else "Entity",
         })
     count = int(raw_count)
     revision = hashlib.sha256(
-        canonical_json(subjects).encode("utf-8")
+        canonical_json(entities).encode("utf-8")
     ).hexdigest()
     return {
-        "complete": count == len(subjects),
+        "complete": count == len(entities),
         "count": count,
         "revision": revision,
-        "subjects": subjects,
+        "entities": entities,
     }
 
 
@@ -280,13 +423,6 @@ def read_knowgraph_exact(
     episode_ids = graphiti_episode_ids(properties) if relationship_center else []
     episodes = read_knowgraph_episodes_exact(project_id, episode_ids) if episode_ids else []
     endpoint_nodes = center.get("endpointNodes") if relationship_center else []
-    endpoints = endpoint_nodes if isinstance(endpoint_nodes, list) else []
-    source_endpoint = endpoints[0] if endpoints and isinstance(endpoints[0], dict) else {}
-    target_endpoint = endpoints[1] if len(endpoints) > 1 and isinstance(endpoints[1], dict) else {}
-    source_properties = source_endpoint.get("properties") \
-        if isinstance(source_endpoint.get("properties"), dict) else {}
-    target_properties = target_endpoint.get("properties") \
-        if isinstance(target_endpoint.get("properties"), dict) else {}
     identifier = str(center.get("graphitiId") or identifier)
     resolved_id_field = (
         "graphitiRelationshipId" if relationship_center
@@ -295,22 +431,14 @@ def read_knowgraph_exact(
     )
     if resolved_id_field != id_field:
         return None
-    portable_know = project_portable_know(
-        identifier,
-        properties,
-        source_id=str(center.get("sourceGraphitiId") or ""),
-        target_id=str(center.get("targetGraphitiId") or ""),
-        source_name=str(source_properties.get("name") or ""),
-        target_name=str(target_properties.get("name") or ""),
-        episodes=episodes,
-    ) if relationship_center else None
+    jev = persisted_knowgraph_jev(identifier, properties) \
+        if relationship_center else None
     return {
         "graphSystem": "graphiti",
         **graph_record_fields(resolved_id_field, identifier),
         "recordKind": "relationship" if relationship_center else (
             "episode" if resolved_id_field == "graphitiEpisodeId" else "entity"
         ),
-        **({"portableKind": "know"} if relationship_center else {}),
         "type": str(labels[0] if labels else "Neo4jObject"),
         "title": str(properties.get("name") or properties.get("title") or identifier),
         "content": json.dumps(
@@ -323,8 +451,7 @@ def read_knowgraph_exact(
         "endpointNodes": endpoint_nodes,
         "sourceId": str(center.get("sourceGraphitiId") or ""),
         "targetId": str(center.get("targetGraphitiId") or ""),
-        **({"know": portable_know, "jev": portable_know.get("jev")}
-           if portable_know is not None else {}),
+        **({"jev": jev} if jev is not None else {}),
         "relationshipEvidence": neighborhood,
         "provenance": {
             **{

@@ -5,9 +5,9 @@ import json
 import pytest
 
 
-from app.python_models.canonical_subject_directory import (
-    append_canonical_subject_directory,
-    assemble_canonical_subject_directory,
+from app.python_models.canonical_entity_directory import (
+    append_canonical_entity_directory,
+    assemble_canonical_entity_directory,
 )
 from app.python_models.data_anchor import (
     empty_graph_projection,
@@ -20,6 +20,7 @@ from app.python_models.data_anchor_contract import (
 )
 from app.python_models.codegraph_reference_reads import read_codegraph_exact
 from app.python_models.knowgraph_exact_reads import (
+    read_knowgraph_entity_knows,
     read_knowgraph_episodes_exact,
     read_knowgraph_exact,
 )
@@ -118,7 +119,7 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_engraphis_evidenc
         "project-1", "engraphisEntityId", "entity-one",
     )
 
-    assert record["portableKind"] == "think"
+    assert "portableKind" not in record
     assert record["content"] == "Self-contained structured Think."
     assert [item["memory_id"] for item in record["metadata"]["thinks"]] == [
         "mem_think"
@@ -255,6 +256,7 @@ def _projection_node_rows() -> list[dict]:
     return [{
         "node_id": "entity-a",
         "node_labels": ["Entity"],
+        "community_id": "community-one",
         "node_props": {
             "name": "Alpha",
             "source": "Graphiti",
@@ -265,7 +267,7 @@ def _projection_node_rows() -> list[dict]:
         },
     }, {
         "node_id": "entity-b",
-        "node_labels": ["Company"],
+        "node_labels": ["Entity", "Company"],
         "node_props": {"name": "Beta", "owlClass": "Organization"},
     }]
 
@@ -298,31 +300,53 @@ def _projection_relationship_rows() -> list[dict]:
         "from_labels": ["Entity"],
         "from_props": {"name": "Alpha"},
         "to_id": "entity-b",
-        "to_labels": ["Company"],
+        "to_labels": ["Entity", "Company"],
         "to_props": {"name": "Beta", "owlClass": "Organization"},
     }]
 
 
-def _projection_episode_rows() -> list[dict]:
+def _attached_know_rows() -> list[dict]:
     return [{
-        "node_id": "episode-1",
-        "node_labels": ["Episodic"],
-        "node_props": {
-            "name": "Primary source",
-            "source_url": "https://example.test/source",
-            "content": "source body",
-            "content_embedding": [0.1, 0.2],
+        "entity_id": "entity-a",
+        "episode_id": f"know-{index}",
+        "episode_labels": ["Episodic"],
+        "episode_props": {
+            "name": f"Know {index}",
+            "content": json.dumps({
+                "schemaVersion": "know.v1",
+                "idea": {
+                    "body": f"Compact For {index}.",
+                    "detail": "Supporting detail.",
+                    "citations": [{
+                        "url": f"https://example.test/for-{index}",
+                        "supports": f"Supports For {index}.",
+                    }],
+                },
+                "counterIdea": {
+                    "body": f"Compact Against {index}.",
+                    "citations": [{
+                        "url": f"https://example.test/against-{index}",
+                        "supports": f"Supports Against {index}.",
+                    }],
+                },
+            }),
+            "source_description": json.dumps([
+                f"https://example.test/for-{index}",
+                f"https://example.test/against-{index}",
+            ]),
+            "created_at": f"2026-10-0{index}T12:00:00Z",
+            "valid_at": f"2026-10-0{index}T00:00:00Z",
         },
-    }]
+    } for index in (3, 2, 1)]
 
 
-def test_knowgraph_projection_preserves_ui_shape_and_provider_semantics(
+def test_knowgraph_projection_preserves_only_entity_nodes_and_relationship_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     driver = _FakeNeo4jDriver([
         _projection_node_rows(),
+        [],
         _projection_relationship_rows(),
-        _projection_episode_rows(),
     ])
     monkeypatch.setattr(
         knowgraph_projection_reads,
@@ -332,34 +356,33 @@ def test_knowgraph_projection_preserves_ui_shape_and_provider_semantics(
     projection = read_knowgraph_projection("project-1", 200)
 
     nodes = {node["id"]: node for node in projection["nodes"]}
-    assert list(nodes) == ["entity-a", "entity-b", "episode-1"]
+    assert list(nodes) == ["entity-a", "entity-b"]
     assert nodes["entity-a"] == {
         "id": "entity-a",
         "label": "Alpha",
         "type": "Entity",
-        "source": "know",
+        "source": "knowgraph",
+        "community_id": "community-one",
         "properties": {
             "name": "Alpha",
             "source": "Graphiti",
             "nested": {"retained": "yes"},
+            "communityId": "community-one",
         },
     }
-    assert nodes["entity-b"]["type"] == "Organization"
-    assert nodes["episode-1"]["properties"]["source_url"] == (
-        "https://example.test/source"
-    )
-    assert "content_embedding" not in nodes["episode-1"]["properties"]
+    assert nodes["entity-b"]["type"] == "Entity"
+    assert nodes["entity-b"]["properties"]["providerType"] == "Organization"
     assert [
         (
             relationship["id"], relationship["from"], relationship["to"],
-            relationship["type"], relationship["source"],
+            relationship["type"],
         )
         for relationship in projection["relationships"]
-    ] == [("fact-1", "entity-a", "entity-b", "PROVIDES", "know")]
+    ] == [("fact-1", "entity-a", "entity-b", "PROVIDES")]
     properties = projection["relationships"][0]["properties"]
-    assert properties["authority"] == "know"
+    assert properties["authority"] == "knowgraph"
     assert properties["graphitiStore"] == "neo4j"
-    assert properties["portableKind"] == "know"
+    assert "portableKind" not in properties
     assert properties["graphitiFactUuid"] == "fact-1"
     assert properties["graphitiRelationshipType"] == "RELATES_TO"
     assert properties["graphitiRelation"] == "was awarded a launch services contract by"
@@ -375,13 +398,13 @@ def test_knowgraph_projection_preserves_ui_shape_and_provider_semantics(
     assert driver.closed is True
 
 
-def test_knowgraph_neighborhood_preserves_one_hop_direction_and_episode_nodes(
+def test_knowgraph_neighborhood_preserves_one_hop_direction_with_entity_nodes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     driver = _FakeNeo4jDriver([
         [_projection_node_rows()[0]],
         _projection_relationship_rows(),
-        _projection_episode_rows(),
+        [],
     ])
     monkeypatch.setattr(
         knowgraph_projection_reads,
@@ -391,11 +414,11 @@ def test_knowgraph_neighborhood_preserves_one_hop_direction_and_episode_nodes(
     neighborhood = read_knowgraph_neighborhood("project-1", "entity-a", 50)
 
     assert {node["id"] for node in neighborhood["nodes"]} == {
-        "entity-a", "entity-b", "episode-1",
+        "entity-a", "entity-b",
     }
     assert neighborhood["relationships"][0]["from"] == "entity-a"
     assert neighborhood["relationships"][0]["to"] == "entity-b"
-    assert "MATCH (a)-[r]-(b)" in driver.calls[1][0]
+    assert "MATCH (a:Entity)-[r:RELATES_TO]-(b:Entity)" in driver.calls[1][0]
     assert driver.calls[1][1] == {
         "nodeId": "entity-a",
         "projectScopeIds": ["liquidaity-project-1"],
@@ -404,49 +427,146 @@ def test_knowgraph_neighborhood_preserves_one_hop_direction_and_episode_nodes(
     assert driver.closed is True
 
 
-def _subject(graph_system: str, index: int) -> dict[str, str]:
+def test_knowgraph_projection_attaches_only_two_exact_about_knows_to_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _FakeNeo4jDriver([
+        _projection_node_rows(),
+        _attached_know_rows(),
+        _projection_relationship_rows(),
+    ])
+    monkeypatch.setattr(
+        knowgraph_projection_reads,
+        "knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+
+    projection = read_knowgraph_projection("project-1", 200)
+    nodes = {node["id"]: node for node in projection["nodes"]}
+
+    evidence = nodes["entity-a"]["properties"]["evidence"]
+    assert [item["graphitiEpisodeId"] for item in evidence] == ["know-3", "know-2"]
+    assert all(item["graphitiEntityId"] == "entity-a" for item in evidence)
+    assert nodes["entity-a"]["properties"]["attachedWordCount"] == 24
+    assert "evidence" not in nodes["entity-b"]["properties"]
+    assert all("ABOUT" in query for query, _params in driver.calls if "episode:Episodic" in query
+               and "entity:Entity" in query)
+    assert all("MENTIONS" not in query for query, _params in driver.calls)
+
+
+def test_exact_entity_know_read_returns_one_literal_two_sided_know_and_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _FakeNeo4jDriver([[{
+        "episodeId": row["episode_id"],
+        "entityId": row["entity_id"],
+        "properties": row["episode_props"],
+    } for row in _attached_know_rows()[:2]]])
+    monkeypatch.setattr(
+        knowgraph_exact_reads,
+        "knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+
+    knows = read_knowgraph_entity_knows("project-1", "entity-a", limit=2)
+
+    assert [know["graphitiEpisodeId"] for know in knows] == ["know-3", "know-2"]
+    assert all(know["graphitiEntityId"] == "entity-a" for know in knows)
+    assert knows[0]["idea"]["body"] == "Compact For 3."
+    assert knows[0]["idea"]["citations"] == [{
+        "url": "https://example.test/for-3",
+        "supports": "Supports For 3.",
+    }]
+    assert knows[0]["counterIdea"]["body"] == "Compact Against 3."
+    assert knows[0]["counterIdea"]["citations"] == [{
+        "url": "https://example.test/against-3",
+        "supports": "Supports Against 3.",
+    }]
+    assert "ABOUT" in driver.calls[0][0]
+    assert driver.calls[0][1]["limit"] == 2
+
+
+def _entity(
+    graph_system: str,
+    index: int,
+    *,
+    canonical_name: str | None = None,
+) -> dict[str, str]:
     id_field = (
         "engraphisEntityId" if graph_system == "ThinkGraph" else "graphitiEntityId"
     )
     return {
         id_field: f"{graph_system.lower()}-{index:03d}",
-        "canonicalName": f"Subject {graph_system} {index:03d}",
-        "entityKind": "person_or_concept" if graph_system == "ThinkGraph" else "Entity",
+        "canonicalName": canonical_name or f"Entity {graph_system} {index:03d}",
     }
 
 
-def test_complete_subject_directory_keeps_all_37_plus_11_headers_without_truncation() -> None:
-    directory = assemble_canonical_subject_directory(
+def test_complete_entity_directory_keeps_all_37_plus_11_identities_without_truncation() -> None:
+    directory = assemble_canonical_entity_directory(
         "project-1",
         {"complete": True, "count": 37, "revision": "think-r1",
-         "subjects": [_subject("ThinkGraph", index) for index in range(37)]},
+         "entities": [_entity("ThinkGraph", index) for index in range(37)]},
         {"complete": True, "count": 11, "revision": "know-r1",
-         "subjects": [_subject("KnowGraph", index) for index in range(11)]},
+         "entities": [_entity("KnowGraph", index) for index in range(11)]},
         read_duration_ms=12.3456,
     )
 
-    assert directory["schemaVersion"] == "graph-subject-directory"
+    assert directory["schemaVersion"] == "graph-entity-directory"
     assert directory["complete"] is True
     assert directory["counts"] == {"engraphis": 37, "graphiti": 11, "total": 48}
     assert directory["revisions"] == {
         "engraphis": "think-r1", "graphiti": "know-r1",
     }
-    assert len(directory["subjects"]) == 48
+    assert len(directory["entities"]) == 48
     assert all(
-        set(subject) in (
-            {"engraphisEntityId", "canonicalName", "entityKind"},
-            {"graphitiEntityId", "canonicalName", "entityKind"},
+        set(entity) in (
+            {"engraphisEntityId", "canonicalName", "authority"},
+            {"graphitiEntityId", "canonicalName", "authority"},
         )
-        for subject in directory["subjects"]
+        for entity in directory["entities"]
     )
     assert directory["bytes"] > 0
     assert directory["estimatedTokens"] == (directory["bytes"] + 3) // 4
     assert directory["bytes"] < GRAPH_CONTEXT_BYTE_LIMIT
     assert directory["readDurationMs"] == 12.346
-    model_context = append_canonical_subject_directory("", directory)
-    assert "Complete Cross-Graph Subject Directory" in model_context
-    assert "Subject ThinkGraph 036" in model_context
-    assert "Subject KnowGraph 010" in model_context
+    model_context = append_canonical_entity_directory("", directory)
+    assert "Complete Cross-Graph Entity Directory" in model_context
+    assert "Entity ThinkGraph 036" in model_context
+    assert "Entity KnowGraph 010" in model_context
+
+
+def test_entity_directory_exact_name_merge_preserves_native_ids_and_authority() -> None:
+    directory = assemble_canonical_entity_directory(
+        "project-1",
+        {"complete": True, "count": 2, "revision": "think-r1", "entities": [
+            _entity("ThinkGraph", 1, canonical_name="Rocket Lab"),
+            _entity("ThinkGraph", 2, canonical_name="Electron"),
+        ]},
+        {"complete": True, "count": 2, "revision": "know-r1", "entities": [
+            _entity("KnowGraph", 1, canonical_name="Rocket Lab"),
+            _entity("KnowGraph", 2, canonical_name="NASA"),
+        ]},
+    )
+
+    assert directory["counts"] == {"engraphis": 2, "graphiti": 2, "total": 3}
+    assert directory["entities"] == [
+        {
+            "canonicalName": "Electron",
+            "engraphisEntityId": "thinkgraph-002",
+            "authority": "thinkgraph",
+        },
+        {
+            "canonicalName": "NASA",
+            "graphitiEntityId": "knowgraph-002",
+            "authority": "knowgraph",
+        },
+        {
+            "canonicalName": "Rocket Lab",
+            "engraphisEntityId": "thinkgraph-001",
+            "graphitiEntityId": "knowgraph-001",
+            "authority": "both",
+        },
+    ]
 
 
 @pytest.mark.parametrize(
@@ -456,28 +576,28 @@ def test_complete_subject_directory_keeps_all_37_plus_11_headers_without_truncat
         (lambda source: source.update(count=2), "authority_invalid"),
     ],
 )
-def test_subject_directory_rejects_incomplete_count_mismatch_and_duplicate(
+def test_entity_directory_rejects_incomplete_or_count_mismatch(
     mutate,
     error: str,
 ) -> None:
     think = {"complete": True, "count": 1, "revision": "think-r1",
-             "subjects": [_subject("ThinkGraph", 1)]}
+             "entities": [_entity("ThinkGraph", 1)]}
     mutate(think)
     with pytest.raises(DataAnchorError, match=error):
-        assemble_canonical_subject_directory(
+        assemble_canonical_entity_directory(
             "project-1", think,
-            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+            {"complete": True, "count": 0, "revision": "know-empty", "entities": []},
         )
 
 
-def test_subject_directory_rejects_duplicate_authority_provider_identity() -> None:
-    duplicate = _subject("ThinkGraph", 1)
-    with pytest.raises(DataAnchorError, match="subject_duplicate"):
-        assemble_canonical_subject_directory(
+def test_entity_directory_rejects_duplicate_authority_provider_identity() -> None:
+    duplicate = _entity("ThinkGraph", 1)
+    with pytest.raises(DataAnchorError, match="entity_duplicate"):
+        assemble_canonical_entity_directory(
             "project-1",
             {"complete": True, "count": 2, "revision": "think-r1",
-             "subjects": [duplicate, dict(duplicate)]},
-            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+             "entities": [duplicate, dict(duplicate)]},
+            {"complete": True, "count": 0, "revision": "know-empty", "entities": []},
         )
 
 
@@ -488,65 +608,63 @@ def test_subject_directory_rejects_duplicate_authority_provider_identity() -> No
             "engraphisEntityId": "think-001",
             "graphitiEntityId": "know-001",
             "canonicalName": "Dual identity",
-            "entityKind": "person_or_concept",
         },
         {
             "canonicalName": "Missing identity",
-            "entityKind": "person_or_concept",
         },
     ],
 )
-def test_subject_directory_rejects_dual_or_missing_provider_id(
+def test_entity_directory_source_rejects_dual_or_missing_provider_id(
     malformed: dict[str, str],
 ) -> None:
-    with pytest.raises(DataAnchorError, match="subject_invalid"):
-        assemble_canonical_subject_directory(
+    with pytest.raises(DataAnchorError, match="entity_invalid"):
+        assemble_canonical_entity_directory(
             "project-1",
             {"complete": True, "count": 1, "revision": "think-r1",
-             "subjects": [malformed]},
-            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+             "entities": [malformed]},
+            {"complete": True, "count": 0, "revision": "know-empty", "entities": []},
         )
 
 
-def test_subject_directory_rejects_ambiguous_same_authority_canonical_name() -> None:
-    first = _subject("ThinkGraph", 1)
-    second = {**_subject("ThinkGraph", 2), "canonicalName": first["canonicalName"]}
-    with pytest.raises(DataAnchorError, match="subject_name_duplicate"):
-        assemble_canonical_subject_directory(
+def test_entity_directory_rejects_ambiguous_same_authority_canonical_name() -> None:
+    first = _entity("ThinkGraph", 1)
+    second = {**_entity("ThinkGraph", 2), "canonicalName": first["canonicalName"]}
+    with pytest.raises(DataAnchorError, match="entity_name_duplicate"):
+        assemble_canonical_entity_directory(
             "project-1",
             {"complete": True, "count": 2, "revision": "think-r1",
-             "subjects": [first, second]},
-            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+             "entities": [first, second]},
+            {"complete": True, "count": 0, "revision": "know-empty", "entities": []},
         )
 
 
-def test_subject_directory_preserves_writer_canonical_name_bytes() -> None:
-    think = _subject("ThinkGraph", 1)
-    know = _subject("KnowGraph", 1)
-    think["canonicalName"] = "  Writer-preserved subject  "
-    know["canonicalName"] = "Writer-preserved subject"
+def test_entity_directory_preserves_writer_canonical_name_bytes() -> None:
+    think = _entity("ThinkGraph", 1)
+    know = _entity("KnowGraph", 1)
+    think["canonicalName"] = "  Writer-preserved Entity  "
+    know["canonicalName"] = "Writer-preserved Entity"
 
-    directory = assemble_canonical_subject_directory(
+    directory = assemble_canonical_entity_directory(
         "project-1",
         {"complete": True, "count": 1, "revision": "think-r1",
-         "subjects": [think]},
+         "entities": [think]},
         {"complete": True, "count": 1, "revision": "know-r1",
-         "subjects": [know]},
+         "entities": [know]},
     )
 
-    assert [item["canonicalName"] for item in directory["subjects"]] == [
-        "  Writer-preserved subject  ", "Writer-preserved subject",
+    assert [item["canonicalName"] for item in directory["entities"]] == [
+        "  Writer-preserved Entity  ", "Writer-preserved Entity",
     ]
 
 
-def test_subject_directory_rejects_combined_context_over_existing_limit() -> None:
-    directory = assemble_canonical_subject_directory(
+def test_entity_directory_rejects_combined_context_over_existing_limit() -> None:
+    directory = assemble_canonical_entity_directory(
         "project-1",
-        {"complete": True, "count": 0, "revision": "think-empty", "subjects": []},
-        {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+        {"complete": True, "count": 0, "revision": "think-empty", "entities": []},
+        {"complete": True, "count": 0, "revision": "know-empty", "entities": []},
     )
     with pytest.raises(DataAnchorError, match="data_anchor_seed_limit_exceeded"):
-        append_canonical_subject_directory("x" * GRAPH_CONTEXT_BYTE_LIMIT, directory)
+        append_canonical_entity_directory("x" * GRAPH_CONTEXT_BYTE_LIMIT, directory)
 
 
 def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance(
@@ -625,7 +743,7 @@ def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope(
     assert driver.closed is True
 
 
-def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources(
+def test_knowgraph_exact_relationship_preserves_endpoints_sources_and_jev(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     driver = _FakeNeo4jDriver([[], [{
@@ -676,44 +794,19 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources(
     )
 
     assert record is not None
-    assert record["portableKind"] == "know"
     assert record["graphitiRelationshipId"] == "fact-1"
-    assert record["know"] == {
-        "portableKind": "know",
-        "graphitiFactUuid": "fact-1",
-        "sourceEntity": {"uuid": "entity-a", "name": "Alpha"},
-        "targetEntity": {"uuid": "entity-b", "name": "Beta"},
-        "graphitiRelation": "partners with",
-        "fact": "Alpha partners with Beta.",
-        "supportingEpisodeUuids": ["episode-1"],
-        "supportingEpisodes": [episode],
-        "createdAt": "2026-09-23T12:00:00Z",
-        "referenceTime": None,
-        "validAt": "2026-09-01T00:00:00Z",
-        "invalidAt": None,
-        "expiredAt": None,
-        "temporalStatus": "current",
-        "jevCanonicalRelation": "ASSOCIATED_WITH",
-        "relationship_strength": 1.0,
-        "jev": {
-            "graphitiFactUuid": "fact-1",
-            "status": "success",
-            "winner": "ASSOCIATED_WITH",
-            "distribution": {"ASSOCIATED_WITH": 1.0},
-            "label_confidence": 1.0,
-            "requested_model": "typesafe/jev-1.13",
-            "resolved_model": "typesafe/jev-1.13",
-            "evaluated_at": "2026-09-24T12:00:00Z",
-            "question_schema_version": "knowgraph.relationship-choice.v2",
-            "vocabulary_version": "jev.semantic-relationships.v1",
-            "vocabulary_hash": "hash-1",
-        },
-    }
+    assert record["recordKind"] == "relationship"
+    assert record["sourceId"] == "entity-a"
+    assert record["targetId"] == "entity-b"
+    assert record["properties"]["name"] == "partners with"
+    assert record["properties"]["fact"] == "Alpha partners with Beta."
+    assert "portableKind" not in record
+    assert "know" not in record
     assert record["jev"]["winner"] == "ASSOCIATED_WITH"
     assert record["provenance"]["episodes"] == [episode]
 
 
-def test_knowgraph_exact_fact_preserves_graphiti_fact_when_jev_readback_is_malformed(
+def test_knowgraph_exact_relationship_preserves_provider_text_when_jev_is_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     driver = _FakeNeo4jDriver([[], [{
@@ -758,15 +851,14 @@ def test_knowgraph_exact_fact_preserves_graphiti_fact_when_jev_readback_is_malfo
 
     assert record is not None
     assert record["graphitiRelationshipId"] == "fact-malformed"
-    assert record["know"]["graphitiFactUuid"] == "fact-malformed"
-    assert record["know"]["graphitiRelation"] == "supports"
-    assert record["know"]["fact"] == "Alpha supports Beta."
-    assert record["know"]["sourceEntity"] == {"uuid": "entity-a", "name": "Alpha"}
-    assert record["know"]["targetEntity"] == {"uuid": "entity-b", "name": "Beta"}
-    assert record["know"]["supportingEpisodes"] == [episode]
-    assert "jev" not in record["know"]
-    assert "jevCanonicalRelation" not in record["know"]
-    assert "relationship_strength" not in record["know"]
+    assert record["properties"]["name"] == "supports"
+    assert record["properties"]["fact"] == "Alpha supports Beta."
+    assert record["sourceId"] == "entity-a"
+    assert record["targetId"] == "entity-b"
+    assert record["provenance"]["episodes"] == [episode]
+    assert "portableKind" not in record
+    assert "know" not in record
+    assert "jev" not in record
     assert driver.closed is True
 
 

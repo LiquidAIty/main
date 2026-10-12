@@ -50,27 +50,31 @@ export const BUILDER_CARD_TOOLS = [
   'canvas.upsert_wire',
   ...CODEBASE_MEMORY_TOOLS,
   'engraphis_recall_context',
+  'engraphis_get_memory',
+  'engraphis_discover_actions',
+  'engraphis_execute_read',
+  'engraphis_execute_action',
   'graphiti.search_memory_facts',
   'graphiti.search_nodes',
   'graphiti.get_episodes',
+  'graphiti.get_episode_entities',
+  'graphiti.get_entity_edge',
+  'graphiti.build_communities',
+  'graphiti.delete_episode',
+  'graphiti.delete_entity_edge',
+  'graphiti.clear_graph',
   'thinkgraph.reason',
   'knowgraph.research',
 ] as const;
 export const MAIN_CARD_TOOLS = [
   'canvas.inspect',
-  'engraphis_recall_context',
-  'graphiti.search_memory_facts',
-  'graphiti.search_nodes',
-  'graphiti.get_episodes',
-  'cbm.search_graph',
-  'cbm.trace_path',
   'run_mag_one',
   'worldview.set_capability',
 ] as const;
 export const THINKGRAPH_CARD_TOOLS = [
   'engraphis_recall_context',
   'engraphis_get_memory',
-  'engraphis_remember',
+  'engraphis_remember_entities',
   'engraphis_discover_actions',
   'engraphis_execute_read',
 ] as const;
@@ -80,7 +84,8 @@ export const KNOWGRAPH_CARD_TOOLS = [
   'graphiti.search_nodes',
   'graphiti.get_episodes',
   'graphiti.get_episode_entities',
-  'graphiti.add_memory',
+  'graphiti.add_memory_to_entity',
+  'graphiti.summarize_saga',
 ] as const;
 
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {

@@ -8,9 +8,9 @@ import { SharedCardChatViewport } from './SharedCardChatViewport';
 import type { SharedCardRunInput } from './sharedChatTranscript';
 import type { SharedCardVoicePhase } from './useSharedCardVoice';
 import type {
-  CanonicalSubjectFocusTarget,
-  CanonicalSubjectMatcher,
-} from '../../../components/knowledge/canonicalSubjectLinks';
+  CanonicalEntityFocusTarget,
+  CanonicalEntityMatcher,
+} from '../../../components/knowledge/canonicalEntityLinks';
 
 type SharedCardChatProps = {
   messages: SharedCardChatDisplayMessage[];
@@ -34,8 +34,8 @@ type SharedCardChatProps = {
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
-  subjectMatcher?: CanonicalSubjectMatcher | null;
-  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
+  entityMatcher?: CanonicalEntityMatcher | null;
+  onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
 };
 
 export default function SharedCardChat({
@@ -56,8 +56,8 @@ export default function SharedCardChat({
   onStop,
   draft,
   onDraftChange,
-  subjectMatcher,
-  onSubjectFocus,
+  entityMatcher,
+  onEntityFocus,
 }: SharedCardChatProps) {
   return (
     <div data-testid="shared-card-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>
@@ -89,8 +89,8 @@ export default function SharedCardChat({
         messages={messages}
         mainCardId={mainCardId}
         colors={colors}
-        subjectMatcher={subjectMatcher}
-        onSubjectFocus={onSubjectFocus}
+        entityMatcher={entityMatcher}
+        onEntityFocus={onEntityFocus}
       />
       <SharedCardChatComposer
         directChatTargets={directChatTargets}

@@ -13,6 +13,7 @@ from engraphis.core.interfaces import SearchFilter
 from .engraphis import (
     THINK_INCIDENCE_KIND,
     SERVICE_LOCK,
+    exact_think_entity_ids,
     newest_think_sort_key,
     public_think_metadata,
     validated_think_metadata,
@@ -30,6 +31,7 @@ WRITE_TOOLS = frozenset({
     "engraphis_execute_action",
     "engraphis_recall_context",
     "engraphis_remember",
+    "engraphis_remember_entities",
     "engraphis_session",
     "engraphis_update_memory",
 })
@@ -208,10 +210,20 @@ def inspect(project: str, id_field: str, identifier: str) -> dict:
                 str(row["memory_id"]) for row in direct
             ))
             memories = service.store.get_memories(memory_ids)
+            exact_entities = exact_think_entity_ids(
+                service.store,
+                workspace_id=workspace_id,
+                memory_ids=memory_ids,
+            )
+            canonical_entity_id = str(entity.get("canonical_id") or identifier)
             for row in direct:
                 memory_id = str(row["memory_id"])
                 memory = memories.get(memory_id)
-                if memory is None or validated_think_metadata(memory) is None:
+                if (
+                    memory is None
+                    or validated_think_metadata(memory) is None
+                    or exact_entities.get(memory_id) != canonical_entity_id
+                ):
                     continue
                 evidence_by_id[memory_id] = {
                     "memory_id": memory.id,
@@ -257,6 +269,29 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict:
         with SERVICE_LOCK:
             return get_service().retire(memory_id, workspace=project,
                 reason="Removed in ThinkGraph", actor="user")
+    if operation == "retire_relationship":
+        if set(arguments) != {"edgeId"}:
+            raise ValueError("engraphis_relationship_reference_invalid")
+        edge_id = str(arguments.get("edgeId") or "").strip()
+        if not edge_id:
+            raise ValueError("engraphis_relationship_reference_invalid")
+        with SERVICE_LOCK:
+            service = get_service()
+            workspace = service.store.conn.execute(
+                "SELECT id FROM workspaces WHERE name=?",
+                (project,),
+            ).fetchone()
+            if workspace is None:
+                raise ValueError("engraphis_relationship_not_found")
+            edge = service.store.conn.execute(
+                "SELECT id FROM edges WHERE id=? AND workspace_id=? "
+                "AND valid_to IS NULL AND expired_at IS NULL",
+                (edge_id, str(workspace["id"])),
+            ).fetchone()
+            if edge is None:
+                raise ValueError("engraphis_relationship_not_found")
+            service.store.invalidate_edge(edge_id)
+            return {"ok": True, "edgeId": edge_id, "operation": "retire"}
     if operation == "delete_workspace":
         if arguments != {"confirmed": True}:
             raise ValueError("thinkgraph_workspace_delete_requires_confirmation")

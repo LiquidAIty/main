@@ -8,9 +8,9 @@ import SharedCardChatMessage, {
   type SharedCardChatDisplayMessage,
 } from './SharedCardChatMessage';
 import type {
-  CanonicalSubjectFocusTarget,
-  CanonicalSubjectMatcher,
-} from '../../../components/knowledge/canonicalSubjectLinks';
+  CanonicalEntityFocusTarget,
+  CanonicalEntityMatcher,
+} from '../../../components/knowledge/canonicalEntityLinks';
 
 export function followLatestOutput(atBottom: boolean): 'auto' | false {
   return atBottom ? 'auto' : false;
@@ -27,14 +27,14 @@ export function SharedCardChatViewport({
   messages,
   mainCardId,
   colors,
-  subjectMatcher,
-  onSubjectFocus,
+  entityMatcher,
+  onEntityFocus,
 }: {
   messages: SharedCardChatDisplayMessage[];
   mainCardId?: string;
   colors: SharedCardChatColors;
-  subjectMatcher?: CanonicalSubjectMatcher | null;
-  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
+  entityMatcher?: CanonicalEntityMatcher | null;
+  onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
 }) {
   const [messageLaneWidth, setMessageLaneWidth] = useState<number | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -72,16 +72,16 @@ export function SharedCardChatViewport({
       mainCardId={mainCardId}
       message={message}
       messageCount={renderableMessages.length}
-      subjectMatcher={subjectMatcher}
-      onSubjectFocus={onSubjectFocus}
+      entityMatcher={entityMatcher}
+      onEntityFocus={onEntityFocus}
     />
   ), [
     colors,
     mainCardId,
     messageLaneWidth,
-    onSubjectFocus,
+    onEntityFocus,
     renderableMessages.length,
-    subjectMatcher,
+    entityMatcher,
   ]);
 
   const returnToLatest = useCallback(() => {

@@ -13,6 +13,7 @@ from typing import Any
 from mcp.types import CallToolResult, TextContent, Tool
 
 from app import mcp_cbm_provider, mcp_graphiti_provider, mcp_observability
+from app.python_models.knowgraph_know_contract import encode_know_payload
 from app.python_models.operation_definition import OperationDefinition
 from app.python_models.tool_registry import (
     graphiti_operation_policy,
@@ -44,6 +45,11 @@ _CARD_CATALOG_PROVIDER_TOOL_NAMES = {
     }),
     "graphiti": frozenset({
         "add_memory",
+        "add_memory_to_entity",
+        "build_communities",
+        "clear_graph",
+        "delete_entity_edge",
+        "delete_episode",
         "get_entity_edge",
         "get_episode_entities",
         "get_episodes",
@@ -54,6 +60,73 @@ _CARD_CATALOG_PROVIDER_TOOL_NAMES = {
 }
 _GRAPHITI_SERVER_INJECTED_ARGUMENTS = frozenset({"group_id", "group_ids"})
 _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _know_side_input_schema(label: str) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "description": (
+            f"The {label} side of the same Know. It must remain readable on its own "
+            "and carry its own source links."
+        ),
+        "properties": {
+            "body": {"type": "string", "minLength": 1, "maxLength": 8000},
+            "detail": {"type": "string", "minLength": 1, "maxLength": 40000},
+            "citations": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 12,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "minLength": 1, "maxLength": 8000},
+                        "title": {"type": "string", "maxLength": 1000},
+                        "publisher": {"type": "string", "maxLength": 1000},
+                        "locator": {"type": "string", "maxLength": 1000},
+                        "supports": {"type": "string", "maxLength": 4000},
+                    },
+                    "required": ["url"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["body", "citations"],
+        "additionalProperties": False,
+    }
+
+
+def _project_entity_know_tool(payload: dict[str, Any]) -> None:
+    """Expose Graphiti's exact attachment as LiquidAIty's one atomic Know write."""
+
+    schema = copy.deepcopy(payload.get("inputSchema") or {})
+    properties = schema.setdefault("properties", {})
+    for field in ("episode_body", "source_description", "source"):
+        properties.pop(field, None)
+    properties["idea"] = _know_side_input_schema("supporting idea")
+    properties["counterIdea"] = _know_side_input_schema("counter idea")
+    schema["required"] = ["entity_name", "name", "idea", "counterIdea"]
+    schema["additionalProperties"] = False
+    payload["inputSchema"] = schema
+    payload["title"] = "Add Know to Entity"
+    payload["description"] = (
+        "Queue one atomic two-sided Know with an exact Entity attachment. The supporting "
+        "idea and counter idea are inseparable parts of one Know and each requires its "
+        "own citations. Graphiti keeps its native queued extraction, provenance, time, "
+        "relationship, Community, and Saga behavior."
+    )
+
+
+def _entity_know_provider_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    provider_arguments = dict(arguments)
+    idea = provider_arguments.pop("idea", None)
+    counter_idea = provider_arguments.pop("counterIdea", None)
+    episode_body, source_description = encode_know_payload(idea, counter_idea)
+    provider_arguments.update({
+        "episode_body": episode_body,
+        "source_description": source_description,
+        "source": "json",
+    })
+    return provider_arguments
 
 
 def is_provider_operation_name(name: str) -> bool:
@@ -88,6 +161,8 @@ def namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             "connectionKind": "external-mcp",
         }
         payload["_meta"] = meta
+        if provider == "graphiti" and provider_tool_name == "add_memory_to_entity":
+            _project_entity_know_tool(payload)
         if provider == "graphiti" and provider_tool_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
@@ -199,6 +274,8 @@ def register_graphiti_catalog(tools: list[Tool]) -> None:
             **arguments: Any,
         ) -> Any:
             provider_arguments = dict(arguments)
+            if _provider_tool_name == "add_memory_to_entity":
+                provider_arguments = _entity_know_provider_arguments(provider_arguments)
             include_body = bool(provider_arguments.pop("include_body", False))
             preview_chars = max(0, min(
                 2000, int(provider_arguments.pop("body_preview_chars", 400)),

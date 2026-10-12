@@ -1,6 +1,6 @@
 {
   "schema": "engraphis-mcp-contract/v1",
-  "sha256": "c45b4e1de83058b50b6da9def894fd5d5d8a5cc7c37466cd9dbef65c1fcf2b5d",
+  "sha256": "27220229ada7a24df77dcfbf9b3d1f0d8811e964c3f85ad27d594cf0a327d518",
   "surfaces": {
     "classic": [
       {
@@ -2731,6 +2731,104 @@
           "idempotentHint": false,
           "openWorldHint": false,
           "readOnlyHint": false,
+          "title": "Remember facts about exact entities"
+        },
+        "description": "Atomically store one memory per exact Entity.",
+        "inputSchema": {
+          "properties": {
+            "facts": {
+              "description": "content, entity_name, optional entity_id.",
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "maxItems": 500,
+              "minItems": 1,
+              "title": "Facts",
+              "type": "array"
+            },
+            "mtype": {
+              "default": "episodic",
+              "description": "Default memory type.",
+              "title": "Mtype",
+              "type": "string"
+            },
+            "repo": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Optional repository scope.",
+              "title": "Repo"
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Visibility: session, repo, workspace, or user.",
+              "title": "Scope"
+            },
+            "session_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Optional active session.",
+              "title": "Session Id"
+            },
+            "source": {
+              "default": "agent",
+              "description": "Origin label.",
+              "maxLength": 200,
+              "title": "Source",
+              "type": "string"
+            },
+            "trusted": {
+              "default": true,
+              "description": "Local-agent confidence label.",
+              "title": "Trusted",
+              "type": "boolean"
+            },
+            "workspace": {
+              "default": "default",
+              "description": "Top-level workspace.",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Workspace",
+              "type": "string"
+            }
+          },
+          "required": [
+            "facts"
+          ],
+          "title": "engraphis_remember_entitiesArguments",
+          "type": "object"
+        },
+        "name": "engraphis_remember_entities"
+      },
+      {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false,
+          "readOnlyHint": false,
           "title": "Remember a batch of facts"
         },
         "description": "Store a batch of facts from parallel agents in one atomic, deduplicated write.\n\nUse this instead of many ``engraphis_remember`` calls when one turn produced a\nset of findings (fan-out sub-agents, a research sweep, a review council): the\nwhole batch lands in a single transaction, each fact is resolved against the\nothers (duplicates reinforce, keyed claims supersede), and facts sharing a\n``subject_key`` or an explicit per-fact ``evidence_source`` get\nevidence-labeled graph edges so the merge is a growing graph rather than a\npile of prose.\n\nReturns:\n    str: JSON ``{\"workspace\",\"repo\",\"scope\",\"stored\":true,\"total\",\"ops\",\n    \"results\":[{\"id\",\"op\",...}]}`` with one entry per input fact, in order.\n    Returns ``\"Error: <reason>\"`` if validation fails or any fact cannot be\n    stored (the whole batch rolls back in that case).",
@@ -3829,6 +3927,52 @@
           "type": "object"
         },
         "name": "engraphis_remember"
+      },
+      {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false,
+          "readOnlyHint": false,
+          "title": "Remember Entity facts"
+        },
+        "description": "Store by Entity.",
+        "inputSchema": {
+          "properties": {
+            "facts": {
+              "description": "Facts with content, entity_name, and optional exact entity_id.",
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "maxItems": 500,
+              "minItems": 1,
+              "title": "Facts",
+              "type": "array"
+            },
+            "workspace": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Workspace.",
+              "title": "Workspace"
+            }
+          },
+          "required": [
+            "facts"
+          ],
+          "title": "smart_remember_entitiesArguments",
+          "type": "object"
+        },
+        "name": "engraphis_remember_entities"
       },
       {
         "annotations": {

@@ -11,9 +11,10 @@ httpx2>=2.10
 # Official MCP Python SDK v2 owns protocol negotiation and legacy-client
 # compatibility. Pre-launch follows the supported stable major.
 mcp>=2,<3
-# Official Graphiti MCP server and temporal graph engine. Pre-launch follows
-# upstream main so provider schemas and behavior stay current together.
-mcp-server @ git+https://github.com/getzep/graphiti.git#subdirectory=mcp_server
+# Controlled Graphiti fork. The root engine and its native MCP server remain
+# separate upstream packages while resolving from the same reviewed source tree.
+-e ./GraphitiLatest
+-e ./GraphitiLatest/mcp_server
 # Graphiti's minimum SDK uses the existing httpx transport. OpenAI 3 switches
 # to httpx2/truststore, which recurses with Windows pip-system-certs injection.
 openai==2.41.0

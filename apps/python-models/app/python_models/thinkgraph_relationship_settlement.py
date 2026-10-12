@@ -21,7 +21,7 @@ from .thinkgraph_relationship_vocabulary import (
 )
 
 
-def _upsert_canonical_endpoint(
+def upsert_canonical_entity(
     store: Any,
     *,
     workspace_id: str,
@@ -43,6 +43,7 @@ def _upsert_canonical_endpoint(
             repo_id=None,
         ),
         commit=False,
+        _derive_text_incidence=False,
     )
     canonical_id = canonical_entity_id(store, written_id) or written_id
     return canonical_id, canonical_id == written_id
@@ -84,12 +85,12 @@ def apply_accepted_decision(
         "vocabulary_after_hash": relationship_vocabulary_hash(vocabulary),
         "vocabulary_after_count": len(vocabulary),
     }
-    source_id, source_created = _upsert_canonical_endpoint(
+    source_id, source_created = upsert_canonical_entity(
         store,
         workspace_id=workspace_id,
         name=relationship["source"],
     )
-    target_id, target_created = _upsert_canonical_endpoint(
+    target_id, target_created = upsert_canonical_entity(
         store,
         workspace_id=workspace_id,
         name=relationship["target"],
@@ -160,7 +161,7 @@ def apply_accepted_decision(
         "replaced_edge_ids": replaced_ids,
         "source": source_id,
         "target": target_id,
-        "new_subjects": [
+        "new_entities": [
             {"canonicalName": name, "engraphisEntityId": entity_id}
             for name, entity_id, created in (
                 (relationship["source"], source_id, source_created),

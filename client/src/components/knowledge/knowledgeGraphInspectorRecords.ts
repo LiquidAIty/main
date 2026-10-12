@@ -1,22 +1,12 @@
-import type {
-  GraphProjectionEdge,
-  GraphProjectionNode,
-} from './joinedKnowledgeGraphProjection';
-
-export function graphitiFactIdentity(edge: GraphProjectionEdge): string | null {
-  const properties = edge.properties;
-  if (properties?.portableKind !== 'know') return null;
-  const graphitiFactUuid = typeof properties.graphitiFactUuid === 'string'
-    ? properties.graphitiFactUuid.trim()
-    : '';
-  return graphitiFactUuid || null;
-}
+import type { GraphProjectionNode } from './joinedKnowledgeGraphProjection';
 
 export type SourceLinkView = {
   url: string;
   label: string;
   publisher: string;
   fingerprint: string | null;
+  locator?: string;
+  supports?: string;
 };
 
 function sourcePathLabel(url: URL): string {
@@ -70,6 +60,12 @@ export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[
       label: explicitLabel || sourcePathLabel(parsed),
       publisher: String(candidate.publisher || parsed.hostname),
       fingerprint,
+      ...(String(candidate.locator || '').trim()
+        ? { locator: String(candidate.locator).trim() }
+        : {}),
+      ...(String(candidate.supports || '').trim()
+        ? { supports: String(candidate.supports).trim() }
+        : {}),
     };
     links.set(fingerprint ? `fingerprint:${fingerprint}` : `url:${url}`, item);
   }
@@ -85,7 +81,25 @@ export function sourceDocument(node: GraphProjectionNode) {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed;
     } catch { /* Plain-text episodes keep their original content. */ }
   }
-  const candidates = [{ ...properties, ...body }, ...(Array.isArray(body.sources) ? body.sources : []), ...(Array.isArray(body.findings) ? body.findings : [])];
+  const candidates = [
+    { ...properties, ...body },
+    ...(Array.isArray(body.citations) ? body.citations : []),
+    ...(
+      body.idea && typeof body.idea === 'object' && !Array.isArray(body.idea)
+        && Array.isArray((body.idea as Record<string, unknown>).citations)
+        ? (body.idea as Record<string, unknown>).citations as unknown[]
+        : []
+    ),
+    ...(
+      body.counterIdea && typeof body.counterIdea === 'object'
+        && !Array.isArray(body.counterIdea)
+        && Array.isArray((body.counterIdea as Record<string, unknown>).citations)
+        ? (body.counterIdea as Record<string, unknown>).citations as unknown[]
+        : []
+    ),
+    ...(Array.isArray(body.sources) ? body.sources : []),
+    ...(Array.isArray(body.findings) ? body.findings : []),
+  ];
   const links = new Map<string, { url: string; label: string }>();
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object') continue;
@@ -94,6 +108,65 @@ export function sourceDocument(node: GraphProjectionNode) {
     }
   }
   return { links: [...links.values()] };
+}
+
+export type KnowSideView = {
+  body: string;
+  detail: string | null;
+  citations: SourceLinkView[];
+};
+
+function knowSidePresentation(value: unknown): KnowSideView {
+  const side = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const body = typeof side.body === 'string' ? side.body.trim() : '';
+  const detail = typeof side.detail === 'string' && side.detail.trim()
+    ? side.detail.trim()
+    : null;
+  const citations = new Map<string, SourceLinkView>();
+  const rawCitations = Array.isArray(side.citations) ? side.citations : [];
+  for (const candidate of rawCitations) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    for (const citation of sourceLinks(candidate as Record<string, unknown>)) {
+      citations.set(citation.url, citation);
+    }
+  }
+  return { body, detail, citations: [...citations.values()] };
+}
+
+export function knowRecordPresentation(item: Record<string, any>): {
+  idea: KnowSideView;
+  counterIdea: KnowSideView;
+} {
+  const properties = item.properties && typeof item.properties === 'object'
+    ? item.properties as Record<string, unknown>
+    : {};
+  const raw = String(item.body || item.content || properties.content || '');
+  let structured: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      structured = parsed as Record<string, unknown>;
+    }
+  } catch { /* Plain-text Knows use their content directly. */ }
+  return {
+    idea: knowSidePresentation(item.idea ?? structured.idea),
+    counterIdea: knowSidePresentation(item.counterIdea ?? structured.counterIdea),
+  };
+}
+
+export function thinkRecordDetail(item: Record<string, any>): string | null {
+  if (typeof item.detail === 'string' && item.detail.trim()) return item.detail.trim();
+  const metadata = item.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const structured = metadata.structured_extraction;
+  if (!structured || typeof structured !== 'object' || Array.isArray(structured)) return null;
+  const think = structured.think;
+  if (!think || typeof think !== 'object' || Array.isArray(think)) return null;
+  return typeof think.detail === 'string' && think.detail.trim()
+    ? think.detail.trim()
+    : null;
 }
 
 export function observedEntryTime(value: unknown): { dateTime: string; label: string } | null {
@@ -130,44 +203,4 @@ export function probabilityLabel(value: unknown): string | null {
   return `${(Math.max(0, Math.min(1, numeric)) * 100).toFixed(1)}%`;
 }
 
-export function engraphisThinkRelationships(item: Record<string, any>): string[] {
-  const metadata = item.metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
-  const structured = metadata.structured_extraction;
-  const raw = structured && typeof structured === 'object' && !Array.isArray(structured)
-    ? structured.relations
-    : metadata.relations;
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((value): string[] => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-    const relation = value as Record<string, unknown>;
-    const source = typeof relation.source === 'string' ? relation.source.trim() : '';
-    const predicate = typeof relation.relation === 'string' ? relation.relation.trim() : '';
-    const target = typeof relation.target === 'string' ? relation.target.trim() : '';
-    return source && predicate && target ? [`${source} ${predicate} ${target}`] : [];
-  });
-}
-
-export type KnowInspectorRecord = {
-  kind: 'episode' | 'fact';
-  graphitiId: string;
-  know: Record<string, any>;
-  episodes: Record<string, any>[];
-};
-
-export const INSPECTOR_RECORD_LIMIT = 2;
-
-export function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
-  const sources = new Map<string, SourceLinkView>();
-  for (const record of records) {
-    for (const episode of record.episodes) {
-      for (const link of sourceLinks(episode)) {
-        sources.set(
-          link.fingerprint ? `fingerprint:${link.fingerprint}` : `url:${link.url}`,
-          link,
-        );
-      }
-    }
-  }
-  return [...sources.values()];
-}
+export const INSPECTOR_RECORD_LIMIT = 12;

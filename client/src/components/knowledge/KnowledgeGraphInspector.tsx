@@ -3,18 +3,12 @@ import { useEffect, useState, type RefObject } from 'react';
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 import { providerMemberKey, type GraphAuthority, type GraphProjectionEdge, type GraphProjectionNode, type GraphProjectionV1, type JoinedGraphPresentation } from './joinedKnowledgeGraphProjection';
 import {
-  graphitiFactIdentity,
   INSPECTOR_RECORD_LIMIT,
   observedEntryTime,
   probabilityLabel,
   sourceDocument,
-  type KnowInspectorRecord,
 } from './knowledgeGraphInspectorRecords';
-import {
-  KnowGraphKnow,
-  KnowSourceList,
-  ThinkRecordCard,
-} from './KnowledgeGraphRecordCards';
+import { KnowRecordCard, ThinkRecordCard } from './KnowledgeGraphRecordCards';
 
 export function KnowledgeGraphInspector({
   containerRef,
@@ -24,16 +18,24 @@ export function KnowledgeGraphInspector({
   inspectedAuthority,
   inspectedProjection,
   activeJoinedPresentation,
+  selectedEntityContext,
+  entityContextError,
+  entityContextQuery,
+  entityContextLimit,
   directThinkAvailable,
-  directKnowAvailable,
+  knowgraphEntityAvailable,
   focusRequestPending,
   focused,
   onToggleFocus,
   onSelectAuthority,
+  onSearchEntityContext,
+  onSetEntityContextLimit,
   onInspectNode,
   onRefreshSelection,
   onRemoveThinkGraphEvidence,
+  onRemoveThinkGraphRelationship,
   onRemoveKnowGraphEvidence,
+  onRemoveKnowGraphRelationship,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
   selectedVisual: GraphProjectionNode | undefined;
@@ -42,12 +44,18 @@ export function KnowledgeGraphInspector({
   inspectedAuthority: GraphAuthority | null;
   inspectedProjection: GraphProjectionV1 | null;
   activeJoinedPresentation: JoinedGraphPresentation;
+  selectedEntityContext?: Record<string, any> | null;
+  entityContextError?: string | null;
+  entityContextQuery?: string;
+  entityContextLimit?: number;
   directThinkAvailable: boolean;
-  directKnowAvailable: boolean;
+  knowgraphEntityAvailable: boolean;
   focusRequestPending: boolean;
   focused: boolean;
   onToggleFocus(): void;
   onSelectAuthority(authority: GraphAuthority): void;
+  onSearchEntityContext?: (query: string) => void;
+  onSetEntityContextLimit?: (limit: number) => void;
   onInspectNode(
     visualId: string,
     authority: GraphAuthority | null,
@@ -55,26 +63,23 @@ export function KnowledgeGraphInspector({
   ): void;
   onRefreshSelection(): void;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
-  onRemoveKnowGraphEvidence?: (graphitiFactUuid: string) => Promise<void>;
+  onRemoveThinkGraphRelationship?: (edgeId: string) => Promise<void>;
+  onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
+  onRemoveKnowGraphRelationship?: (graphitiRelationshipId: string) => Promise<void>;
 }) {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [recordView, setRecordView] = useState<'relevant' | 'recent'>('relevant');
+  const [searchDraft, setSearchDraft] = useState(String(entityContextQuery || ''));
   useEffect(() => {
     setRemoveError(null);
   }, [selected?.id, selectedEdge?.id]);
+  useEffect(() => {
+    setRecordView('relevant');
+    setSearchDraft(String(entityContextQuery || ''));
+  }, [entityContextQuery, inspectedAuthority, selected?.id]);
   const selectedProperties = selected?.properties || {};
   const evidenceIds = new Set<string>(selected ? [selected.id] : []);
-  for (const episodeId of selected?.provenanceEpisodeIds || []) {
-    evidenceIds.add(episodeId);
-  }
-  for (const edge of selectedEdge ? [selectedEdge] : []) {
-    for (const value of [edge.properties?.episodes, edge.properties?.supportingEpisodeUuids]) {
-      for (const id of Array.isArray(value) ? value : typeof value === 'string' ? [value] : []) {
-        evidenceIds.add(String(id));
-      }
-    }
-    if (edge.predicate === 'MENTIONS') evidenceIds.add(edge.source);
-  }
   const evidence = [
     ...(inspectedProjection?.nodes || []),
     ...(inspectedProjection?.provenanceNodes || []),
@@ -90,6 +95,9 @@ export function KnowledgeGraphInspector({
   const directThinks = inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
     ? evidenceRecords
     : [];
+  const directKnows = inspectedAuthority === 'knowgraph' && selected && !selectedEdge
+    ? evidenceRecords
+    : [];
   const thinks = directThinks.map((item, index) => ({ item, index }))
     .sort((left, right) => {
       const leftTime = observedEntryTime(left.item.ingestedAt)?.dateTime || '';
@@ -97,88 +105,63 @@ export function KnowledgeGraphInspector({
       return rightTime.localeCompare(leftTime) || left.index - right.index;
     })
     .map(({ item }) => item);
-  const visibleThinks = thinks.slice(0, INSPECTOR_RECORD_LIMIT);
-  const earlierThinks = thinks.slice(INSPECTOR_RECORD_LIMIT);
+  const thinkSelection = selectedEntityContext?.thinks;
+  const knowSelection = selectedEntityContext?.knows;
+  const contextThinks = (value: unknown): Record<string, any>[] => (
+    Array.isArray(value) ? value.flatMap((item) => (
+      item && typeof item === 'object' && !Array.isArray(item)
+        && typeof item.engraphisMemoryId === 'string'
+        ? [{
+          ...item,
+          id: item.engraphisMemoryId,
+          summary: item.body,
+          content: item.body,
+        }]
+        : []
+    )) : []
+  );
+  const recentThinks = inspectedAuthority === 'thinkgraph'
+    ? (thinkSelection ? contextThinks(thinkSelection.recent).slice(
+      0, Math.min(entityContextLimit || 1, INSPECTOR_RECORD_LIMIT),
+    ) : thinks.slice(0, 1))
+    : [];
+  const relevantThinks = inspectedAuthority === 'thinkgraph' && thinkSelection
+    ? contextThinks(thinkSelection.relevant).slice(
+      0, Math.min(entityContextLimit || 1, INSPECTOR_RECORD_LIMIT),
+    )
+    : [];
+  const knows = directKnows.map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftTime = observedEntryTime(left.item.ingestedAt)?.dateTime || '';
+      const rightTime = observedEntryTime(right.item.ingestedAt)?.dateTime || '';
+      return rightTime.localeCompare(leftTime) || left.index - right.index;
+    })
+    .map(({ item }) => item);
+  const visibleKnows = knows.slice(0, 1);
+  const contextKnows = (value: unknown): Record<string, any>[] => (
+    Array.isArray(value) ? value.flatMap((item) => (
+      item && typeof item === 'object' && !Array.isArray(item)
+        && typeof item.graphitiEpisodeId === 'string'
+        ? [{ ...item, id: item.graphitiEpisodeId }]
+        : []
+    )) : []
+  );
+  const recentKnows = inspectedAuthority === 'knowgraph'
+    ? (knowSelection ? contextKnows(knowSelection.recent).slice(
+      0, Math.min(entityContextLimit || 1, INSPECTOR_RECORD_LIMIT),
+    ) : visibleKnows.slice(0, 1))
+    : [];
+  const relevantKnows = inspectedAuthority === 'knowgraph' && knowSelection
+    ? contextKnows(knowSelection.relevant).slice(
+      0, Math.min(entityContextLimit || 1, INSPECTOR_RECORD_LIMIT),
+    )
+    : [];
+  const activeRecordView = String(entityContextQuery || '').trim()
+    ? recordView
+    : 'recent';
   const providerLabel = (id: string) => (
     inspectedProjection?.nodes.find((node) => node.id === id)?.label || id
   );
-  const provenanceById = new Map<string, Record<string, any>>(
-    (inspectedProjection?.provenanceNodes || []).map((node) => [node.id, {
-      uuid: node.id,
-      name: node.label,
-      ...(node.properties || {}),
-    }]),
-  );
-  const directKnowItems: KnowInspectorRecord[] = (
-    inspectedAuthority === 'knowgraph' && selected && !selectedEdge
-  ) ? (() => {
-      const incidentEdges = (inspectedProjection?.edges || [])
-        .filter((edge) => edge.source === selected.id || edge.target === selected.id);
-      const episodeIds = new Set<string>((selected.provenanceEpisodeIds || []).map(String));
-      for (const edge of incidentEdges) {
-        const ids = edge.properties?.supportingEpisodeUuids ?? edge.properties?.episodes;
-        for (const id of Array.isArray(ids) ? ids : typeof ids === 'string' ? [ids] : []) {
-          episodeIds.add(String(id));
-        }
-      }
-      const episodesWithContent = new Set<string>();
-      const episodeRecords = [...episodeIds].flatMap((episodeId): KnowInspectorRecord[] => {
-        const episode = provenanceById.get(episodeId);
-        if (!episode) return [];
-        const body = typeof episode.content === 'string' ? episode.content.trim() : '';
-        if (!body) return [];
-        episodesWithContent.add(episodeId);
-        return [{
-          kind: 'episode',
-          graphitiId: episodeId,
-          know: {
-            portableKind: 'know',
-            title: String(episode.name || episode.source_name || episodeId),
-            fact: body,
-            observedAt: episode.created_at,
-            sourceDate: episode.reference_time,
-          },
-          episodes: [episode],
-        }];
-      });
-      const factRecords = incidentEdges.flatMap((edge): KnowInspectorRecord[] => {
-        const graphitiFactUuid = graphitiFactIdentity(edge);
-        const fact = typeof edge.properties?.fact === 'string'
-          ? edge.properties.fact.trim()
-          : '';
-        if (!graphitiFactUuid || !fact) return [];
-        const ids = edge.properties?.supportingEpisodeUuids ?? edge.properties?.episodes;
-        const supportingIds = (
-          Array.isArray(ids) ? ids : typeof ids === 'string' ? [ids] : []
-        ).map(String);
-        if (supportingIds.some((id) => episodesWithContent.has(id))) return [];
-        return [{
-          kind: 'fact',
-          graphitiId: graphitiFactUuid,
-          know: {
-            ...(edge.properties || {}),
-            portableKind: 'know',
-            title: String(edge.properties?.title || edge.predicate || graphitiFactUuid),
-            fact,
-            observedAt: edge.properties?.createdAt ?? edge.properties?.created_at,
-            sourceDate: edge.properties?.referenceTime ?? edge.properties?.validAt,
-            graphitiRelation: edge.properties?.graphitiRelation || edge.predicate,
-          },
-          episodes: supportingIds.flatMap((id) => {
-            const episode = provenanceById.get(id);
-            return episode ? [episode] : [];
-          }),
-        }];
-      });
-      return [...episodeRecords, ...factRecords].sort((left, right) => {
-        const leftTime = observedEntryTime(left.know.observedAt)?.dateTime || '';
-        const rightTime = observedEntryTime(right.know.observedAt)?.dateTime || '';
-        return rightTime.localeCompare(leftTime) || left.graphitiId.localeCompare(right.graphitiId);
-      });
-    })() : [];
-  const visibleKnowItems = directKnowItems.slice(0, INSPECTOR_RECORD_LIMIT);
-  const earlierKnowItems = directKnowItems.slice(INSPECTOR_RECORD_LIMIT);
-  const knowSourceListId = 'knowgraph-subject-sources';
   const jev = selectedEdge?.properties?.jev
     && typeof selectedEdge.properties.jev === 'object'
     && !Array.isArray(selectedEdge.properties.jev)
@@ -199,7 +182,7 @@ export function KnowledgeGraphInspector({
   const availableNodeAuthorities = (['thinkgraph', 'knowgraph'] as const)
     .filter((candidate) => candidate === 'thinkgraph'
       ? directThinkAvailable
-      : directKnowAvailable);
+      : knowgraphEntityAvailable);
   const visualNodeIdForProvider = (entityId: string) => inspectedAuthority
     ? activeJoinedPresentation.visualNodeIdByProviderMember.get(
       providerMemberKey(inspectedAuthority, entityId),
@@ -225,12 +208,28 @@ export function KnowledgeGraphInspector({
       setRemovingId(null);
     }
   };
-  const deleteKnow = async (graphitiFactUuid: string) => {
-    if (!onRemoveKnowGraphEvidence) return;
-    setRemovingId(graphitiFactUuid);
+  const deleteRelationship = async (graphitiRelationshipId: string) => {
+    const remove = inspectedAuthority === 'thinkgraph'
+      ? onRemoveThinkGraphRelationship
+      : onRemoveKnowGraphRelationship;
+    if (!remove) return;
+    setRemovingId(graphitiRelationshipId);
     setRemoveError(null);
     try {
-      await onRemoveKnowGraphEvidence(graphitiFactUuid);
+      await remove(graphitiRelationshipId);
+      onRefreshSelection();
+    } catch (failure) {
+      setRemoveError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setRemovingId(null);
+    }
+  };
+  const deleteKnow = async (episodeId: string) => {
+    if (!onRemoveKnowGraphEvidence) return;
+    setRemovingId(episodeId);
+    setRemoveError(null);
+    try {
+      await onRemoveKnowGraphEvidence(episodeId);
       onRefreshSelection();
     } catch (failure) {
       setRemoveError(failure instanceof Error ? failure.message : String(failure));
@@ -278,14 +277,14 @@ export function KnowledgeGraphInspector({
                 fontWeight: 700,
               }}
             >
-              {candidate === 'thinkgraph' ? 'Think' : 'Know'}
+              {candidate === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph'}
             </button>
           ))}
         </div>
       ) : null}
       {selected ? (
         <span
-          className="graph-inspector-subject"
+          className="graph-inspector-entity"
           tabIndex={-1}
           aria-hidden="true"
           data-testid={`${inspectedAuthority}-node-inspector`}
@@ -294,10 +293,67 @@ export function KnowledgeGraphInspector({
           {selected.label}
         </span>
       ) : null}
-      {visibleThinks.length ? (
+      {selected && !selectedEdge && onSearchEntityContext ? (
+        <form
+          className="graph-context-search"
+          aria-label="Knowledge search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const query = searchDraft.trim();
+            if (query) onSearchEntityContext(query);
+          }}
+          style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <input
+            aria-label="Search"
+            placeholder="Search"
+            value={searchDraft}
+            onChange={(event) => setSearchDraft(event.target.value)}
+            style={{ minWidth: 0, flex: 1 }}
+          />
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10 }}>
+            Results
+            <select
+              aria-label="Results"
+              value={Math.min(entityContextLimit || 1, INSPECTOR_RECORD_LIMIT)}
+              onChange={(event) => onSetEntityContextLimit?.(Number(event.target.value))}
+              style={{ width: 42, padding: '2px 3px', fontSize: 10 }}
+            >
+              {Array.from({ length: INSPECTOR_RECORD_LIMIT }, (_, index) => index + 1)
+                .map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            aria-label={recordView === 'relevant' ? 'Show Recent' : 'Show Relevant'}
+            title={recordView === 'relevant' ? 'Recent' : 'Relevant'}
+            onClick={() => setRecordView(current => (
+              current === 'relevant' ? 'recent' : 'relevant'
+            ))}
+            style={{ width: 24, minWidth: 24, padding: '2px 4px', fontSize: 14 }}
+          >
+            {recordView === 'relevant' ? '›' : '‹'}
+          </button>
+        </form>
+      ) : null}
+      {activeRecordView === 'relevant' && relevantThinks.length ? (
+        <section className="graph-inspector-records" data-testid="think-relevant-records">
+          <h4>Relevant</h4>
+          {relevantThinks.map((item) => <ThinkRecordCard
+            key={item.id}
+            item={item}
+            heading="Think"
+            removing={removingId === item.id}
+            onRemove={onRemoveThinkGraphEvidence
+              ? () => { void deleteThink(item.id); }
+              : undefined}
+          />)}
+        </section>
+      ) : null}
+      {activeRecordView === 'recent' && recentThinks.length ? (
         <section className="graph-inspector-records" data-testid="think-records">
-          <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
-          {visibleThinks.map((item) => (
+          <h4>Recent</h4>
+          {recentThinks.map((item) => (
             <ThinkRecordCard
               key={item.id}
               item={item}
@@ -310,57 +366,35 @@ export function KnowledgeGraphInspector({
           ))}
         </section>
       ) : null}
-      {earlierThinks.length ? (
-        <details className="graph-think-history">
-          <summary>Earlier Thinks ({earlierThinks.length})</summary>
-          <div>{earlierThinks.map((item) => (
-            <ThinkRecordCard
-              key={item.id}
-              item={item}
-              heading="Think"
-              removing={removingId === item.id}
-              onRemove={onRemoveThinkGraphEvidence
-                ? () => { void deleteThink(item.id); }
-                : undefined}
-            />
-          ))}</div>
-        </details>
-      ) : null}
-      {visibleKnowItems.length ? (
-        <section className="graph-inspector-records" data-testid="know-records">
-          <h4>{visibleKnowItems.length > 1 ? 'Current Knows' : 'Current Know'}</h4>
-          {visibleKnowItems.map((record, index) => (
-            <KnowGraphKnow
-              key={record.graphitiId}
-              record={record}
-              heading={visibleKnowItems.length > 1 ? `Know ${index + 1}` : 'Know'}
-              removing={removingId === record.graphitiId}
-              onRemove={onRemoveKnowGraphEvidence && record.kind === 'fact'
-                ? () => { void deleteKnow(record.graphitiId); }
-                : undefined}
-            />
-          ))}
+      {activeRecordView === 'relevant' && relevantKnows.length ? (
+        <section className="graph-inspector-records" data-testid="know-relevant-records">
+          <h4>Relevant</h4>
+          {relevantKnows.map((item) => <KnowRecordCard
+            key={item.id}
+            item={item}
+            removing={removingId === item.id}
+            onRemove={onRemoveKnowGraphEvidence
+              ? () => { void deleteKnow(item.id); }
+              : undefined}
+          />)}
         </section>
       ) : null}
-      {earlierKnowItems.length ? (
-        <details className="graph-know-history">
-          <summary>Earlier Knows ({earlierKnowItems.length})</summary>
-          <div>{earlierKnowItems.map((record, index) => (
-            <KnowGraphKnow
-              key={record.graphitiId}
-              record={record}
-              heading={`Earlier Know ${index + 1}`}
-              removing={removingId === record.graphitiId}
-              onRemove={onRemoveKnowGraphEvidence && record.kind === 'fact'
-                ? () => { void deleteKnow(record.graphitiId); }
-                : undefined}
-            />
-          ))}</div>
-        </details>
+      {activeRecordView === 'recent' && recentKnows.length ? (
+        <section className="graph-inspector-records" data-testid="know-records">
+          <h4>Recent</h4>
+          {recentKnows.map((item) => <KnowRecordCard
+            key={item.id}
+            item={item}
+            removing={removingId === item.id}
+            onRemove={onRemoveKnowGraphEvidence
+              ? () => { void deleteKnow(item.id); }
+              : undefined}
+          />)}
+        </section>
       ) : null}
-      {inspectedAuthority === 'knowgraph' && selected && !selectedEdge
-        ? <KnowSourceList records={directKnowItems} id={knowSourceListId} />
-        : null}
+      {activeRecordView === 'relevant' && entityContextError ? (
+        <p role="status" title={entityContextError}>Relevant unavailable</p>
+      ) : null}
       {selectedEdge ? (
         <article
           data-testid={`${inspectedAuthority}-edge-inspector`}
@@ -380,6 +414,21 @@ export function KnowledgeGraphInspector({
           <button type="button" onClick={() => inspectProviderNode(selectedEdge.target)}>
             {providerLabel(selectedEdge.target)}
           </button>
+          {((inspectedAuthority === 'knowgraph' && onRemoveKnowGraphRelationship)
+            || (inspectedAuthority === 'thinkgraph' && onRemoveThinkGraphRelationship)) ? (
+            <button
+              type="button"
+              aria-label="Remove Relationship"
+              disabled={removingId === selectedEdge.id}
+              onClick={() => {
+                if (window.confirm('Remove this Relationship?')) {
+                  void deleteRelationship(selectedEdge.id);
+                }
+              }}
+            >
+              {removingId === selectedEdge.id ? 'Removing…' : 'Remove'}
+            </button>
+          ) : null}
         </article>
       ) : null}
       {selectedEdge ? (
@@ -415,7 +464,7 @@ export function KnowledgeGraphInspector({
         </details>
       ) : null}
       {removeError ? <p role="alert">{removeError}</p> : null}
-      {evidence.length && !(selected && inspectedAuthority === 'knowgraph') ? (
+      {evidence.length ? (
         <section className="knowgraph-sources">
           <h4>Sources</h4>
           {evidence.map(({ node, links }) => (

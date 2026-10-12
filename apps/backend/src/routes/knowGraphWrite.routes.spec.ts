@@ -164,4 +164,40 @@ describe('KnowGraph document project authority', () => {
       await closeServer(server);
     }
   });
+
+  it('proxies one authenticated project-scoped Graphiti episode deletion', async () => {
+    process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (String(input) === 'http://knowgraph.test/delete_episode') {
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true, graphiti_episode_uuid: 'episode-1',
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      return realFetch(input, init);
+    });
+    const { server, baseUrl } = await createApiServer('user-1');
+    try {
+      const response = await fetch(`${baseUrl}/delete-episode`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project_id: 'project-alias', graphiti_episode_uuid: 'episode-1',
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        ok: true, graphiti_episode_uuid: 'episode-1',
+      });
+      const forwarded = upstreamFetch.mock.calls.find(([input]) => (
+        String(input) === 'http://knowgraph.test/delete_episode'
+      ));
+      expect(JSON.parse(String(forwarded?.[1]?.body))).toEqual({
+        project_id: 'project-canonical', graphiti_episode_uuid: 'episode-1',
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
 });

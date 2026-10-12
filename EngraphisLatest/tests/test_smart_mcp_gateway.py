@@ -21,6 +21,7 @@ SMART_TOOL_NAMES = {
     "engraphis_session",
     "engraphis_recall_context",
     "engraphis_remember",
+    "engraphis_remember_entities",
     "engraphis_discover_actions",
     "engraphis_execute_read",
     "engraphis_execute_action",
@@ -34,7 +35,7 @@ SMART_TOOL_NAMES = {
 CLASSIC_TOOL_NAMES = {
     "engraphis_list_workspaces", "engraphis_get_workspace_routing",
     "engraphis_set_workspace_routing",
-    "engraphis_remember", "engraphis_remember_many",
+    "engraphis_remember", "engraphis_remember_many", "engraphis_remember_entities",
     "engraphis_recall", "engraphis_recall_context",
     "engraphis_why", "engraphis_timeline", "engraphis_recall_proactive",
     "engraphis_retire", "engraphis_forget", "engraphis_secure_erase",
@@ -94,7 +95,7 @@ def test_normal_mcp_exposes_only_the_smart_gateway_tools(monkeypatch):
 
     tools = _tools(server, "mcp")
     assert set(tools) == SMART_TOOL_NAMES
-    assert len(tools) == 9
+    assert len(tools) == 10
     assert "scope" not in tools["engraphis_remember"].input_schema.get("properties", {})
     # The documented safe-supersession mechanism must stay reachable through the
     # served gateway surface: subject_key/claim_kind forward to the classic tool.
@@ -139,6 +140,33 @@ def test_smart_remember_tool_persists_exact_source_binding(monkeypatch):
     assert record.content[binding["start"]:binding["end"]] == "Δ-42"
 
 
+def test_smart_remember_entities_attaches_each_memory_once(monkeypatch):
+    from engraphis.core.interfaces import SearchFilter
+
+    server = _memory_server(monkeypatch)
+    response = asyncio.run(server.mcp.call_tool("engraphis_remember_entities", {
+        "workspace": "acme",
+        "facts": [
+            {"content": "Apollo coordinates with Beacon.", "entity_name": "Apollo"},
+            {"content": "Beacon coordinates with Apollo.", "entity_name": "Beacon"},
+        ],
+    }))
+    stored = _payload(response.content[0].text)
+
+    assert stored["total"] == 2
+    assert all(result.get("entity_id") for result in stored["results"])
+    workspace_id = server._service.store.conn.execute(
+        "SELECT id FROM workspaces WHERE name='acme'"
+    ).fetchone()["id"]
+    rows = server._service.store.list_memory_entities(
+        SearchFilter(workspace_id=workspace_id)
+    )
+    assert [(row["memory_id"], row["entity_id"]) for row in rows] == [
+        (stored["results"][0]["id"], stored["results"][0]["entity_id"]),
+        (stored["results"][1]["id"], stored["results"][1]["entity_id"]),
+    ]
+
+
 @pytest.mark.parametrize(("content", "value", "value_type"), [
     ("Deployment token is Δ-42.", "absent", "identifier"),
     ("Deployment token is Δ-42.", "Δ-42", "unsupported-type"),
@@ -162,7 +190,7 @@ def test_classic_mcp_retains_the_named_tool_compatibility_surface(monkeypatch):
 
     classic = _tools(server, "classic_mcp")
     assert set(classic) == CLASSIC_TOOL_NAMES
-    assert len(classic) == 39
+    assert len(classic) == 40
     # These aliases carry distinct historical defaults and must not disappear.
     assert {"engraphis_answer", "engraphis_forget"} <= set(classic)
 
@@ -420,6 +448,7 @@ def test_gateway_context_usage_counts_authoritative_receipt_once(monkeypatch):
     ("engraphis_stats", "viewer"),
     ("engraphis_remember", "member"),
     ("engraphis_remember_many", "member"),
+    ("engraphis_remember_entities", "member"),
     ("engraphis_correct", "member"),
     ("engraphis_retire", "member"),
     ("engraphis_secure_erase", "member"),

@@ -272,3 +272,86 @@ def test_graphiti_add_memory_dispatch_preserves_provider_arguments(monkeypatch):
         "episode_body": "Current primary-source evidence.",
         "source": "text",
     }
+
+
+def test_entity_know_projection_queues_one_two_sided_episode(
+    monkeypatch, clear_live_provider_operations,
+):
+    import asyncio
+    from mcp.types import Tool
+    from app.python_models.tool_registry import operation_definition
+
+    calls: list[tuple[str, dict]] = []
+
+    async def call(name: str, arguments: dict):
+        calls.append((name, arguments))
+        return {"episode_uuid": "episode-one", "entity_uuid": "entity-one"}
+
+    monkeypatch.setattr(mcp_provider_operations, "call_graphiti_operation", call)
+    provider_tool = Tool(
+        name="add_memory_to_entity",
+        description="Generic exact Entity episode.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity_name": {"type": "string"},
+                "name": {"type": "string"},
+                "episode_body": {"type": "string"},
+                "source_description": {"type": "string"},
+                "source": {"type": "string"},
+                "group_id": {"type": "string"},
+                "update_communities": {"type": "boolean"},
+            },
+            "required": [
+                "entity_name", "name", "episode_body", "source_description",
+            ],
+        },
+    )
+    projected = mcp_provider_operations.namespace_provider_tools(
+        "graphiti", [provider_tool],
+    )[0]
+    assert projected.input_schema["required"] == [
+        "entity_name", "name", "idea", "counterIdea",
+    ]
+    assert "episode_body" not in projected.input_schema["properties"]
+    assert "source_description" not in projected.input_schema["properties"]
+
+    mcp_provider_operations.register_graphiti_catalog([projected])
+    definition = operation_definition("graphiti.add_memory_to_entity")
+    assert definition is not None
+    result = asyncio.run(definition.handler(
+        _authenticatedProjectId="project-one",
+        entity_name="Rocket Lab",
+        name="Launch demand",
+        idea={
+            "body": "Demand is supported.",
+            "citations": [{"url": "https://example.test/for"}],
+        },
+        counterIdea={
+            "body": "Execution risk remains.",
+            "citations": [{"url": "https://example.test/against"}],
+        },
+        update_communities=True,
+    ))
+
+    assert result["episode_uuid"] == "episode-one"
+    assert calls[0][0] == "add_memory_to_entity"
+    arguments = calls[0][1]
+    assert arguments["group_id"] == "liquidaity-project-one"
+    assert arguments["source"] == "json"
+    assert json.loads(arguments["episode_body"]) == {
+        "schemaVersion": "know.v1",
+        "idea": {
+            "body": "Demand is supported.",
+            "citations": [{"url": "https://example.test/for"}],
+        },
+        "counterIdea": {
+            "body": "Execution risk remains.",
+            "citations": [{"url": "https://example.test/against"}],
+        },
+    }
+    assert json.loads(arguments["source_description"]) == [
+        "https://example.test/for", "https://example.test/against",
+    ]
+    assert "idea" not in arguments
+    assert "counterIdea" not in arguments

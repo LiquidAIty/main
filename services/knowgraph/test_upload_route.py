@@ -196,6 +196,29 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             "error": {"message": "KnowGraph item not found."},
         })
 
+    def test_delete_episode_routes_one_project_scoped_know_to_graphiti(self) -> None:
+        delete_episode = AsyncMock(
+            return_value={"graphiti_episode_uuid": "episode-1"}
+        )
+        with patch.object(app, "_delete_graphiti_episode", delete_episode):
+            response = asyncio.run(_request(
+                "POST",
+                "/delete_episode",
+                json={
+                    "project_id": "project-1",
+                    "graphiti_episode_uuid": "episode-1",
+                },
+            ))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "ok": True,
+            "graphiti_episode_uuid": "episode-1",
+        })
+        payload = delete_episode.await_args.args[0]
+        self.assertEqual(payload.project_id, "project-1")
+        self.assertEqual(payload.graphiti_episode_uuid, "episode-1")
+
     def test_delete_fact_removes_only_a_fact_in_the_requested_project(self) -> None:
         edge = SimpleNamespace(
             group_id="liquidaity-project-1",

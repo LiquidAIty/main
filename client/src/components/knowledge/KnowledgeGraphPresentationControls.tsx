@@ -5,7 +5,7 @@ import {
   JEV_GRAPH_PHYSICS_PROFILES,
   type JevGraphPhysicsProfile,
 } from './jevGraphPhysics';
-import type { SolarpunkColors } from './joinedKnowledgeGraphProjection';
+import type { KnowledgeGraphViewMode, SolarpunkColors } from './joinedKnowledgeGraphProjection';
 import {
   SOLARPUNK_HEX,
   type GraphLayout,
@@ -14,6 +14,7 @@ import {
 
 export function KnowledgeGraphPresentationControls({
   containerRef,
+  viewMode,
   physicsProfile,
   changePhysicsProfile,
   layout,
@@ -28,6 +29,7 @@ export function KnowledgeGraphPresentationControls({
   appliedPresetNodeSize,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
+  viewMode: KnowledgeGraphViewMode;
   physicsProfile: JevGraphPhysicsProfile;
   changePhysicsProfile: (value: JevGraphPhysicsProfile) => void;
   layout: GraphLayout;
@@ -41,6 +43,13 @@ export function KnowledgeGraphPresentationControls({
   resetPresetDefaults: () => void;
   appliedPresetNodeSize: number | null;
 }) {
+  const viewOptions: Array<[GraphLayout, string]> = [
+    ['compact', 'Compact'],
+    ['original', 'Original'],
+    ['communities', 'Communities'],
+    ['radial', 'Radial'],
+    ['galaxy', 'Galaxy gravity'],
+  ];
   return <div ref={containerRef} className="knowledge-authority-controls">
     <label>Physics profile<select aria-label="Physics profile" value={physicsProfile} onChange={event => {
       changePhysicsProfile(event.target.value as JevGraphPhysicsProfile);
@@ -49,13 +58,11 @@ export function KnowledgeGraphPresentationControls({
         {JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}
       </option>)}
     </select></label>
-    <label>Layout<select aria-label="Layout" value={layout} onChange={event => {
+    {viewMode !== 'combined' ? <label>View<select aria-label={`${viewMode === 'thinkgraph' ? 'Think' : 'Know'} view`} value={layout} onChange={event => {
       changeLayout(event.target.value as GraphLayout);
     }}>
-      <option value="compact">Compact</option><option value="original">Original</option>
-      <option value="communities">Communities</option><option value="radial">Radial</option>
-      <option value="galaxy">Galaxy gravity</option>
-    </select></label>
+      {viewOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+    </select></label> : null}
     <label>Style<select aria-label="Style" value={style} onChange={event => {
       changeStyle(event.target.value as GraphStyle);
     }}>

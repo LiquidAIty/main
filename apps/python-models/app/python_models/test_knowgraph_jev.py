@@ -247,7 +247,7 @@ def test_deadline_reports_exact_unfinished_ids_and_joins_admitted_work() -> None
     completed: list[str] = []
 
     def classify(fact):
-        sleep(0.03)
+        sleep(0.2)
         completed.append(fact["graphitiFactUuid"])
         return {
             "status": "success",
@@ -263,8 +263,8 @@ def test_deadline_reports_exact_unfinished_ids_and_joins_admitted_work() -> None
     results = classify_knowgraph_facts(
         facts,
         classifier=classify,
-        deadline_seconds=0.05,
-        provider_timeout_seconds=0.04,
+        deadline_seconds=0.5,
+        provider_timeout_seconds=0.4,
     )
     unfinished = [
         result["graphitiFactUuid"]

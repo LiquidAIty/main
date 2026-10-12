@@ -8,7 +8,7 @@ import pytest
 
 from engraphis.backends.vector_numpy import NumpyVectorIndex
 from engraphis.core.engine import MemoryEngine
-from engraphis.core.interfaces import MemoryRecord, MemoryType, Node, Scope, SearchFilter
+from engraphis.core.interfaces import FactSpec, MemoryRecord, MemoryType, Node, Scope, SearchFilter
 
 
 class _RecordingExternalIndex:
@@ -76,6 +76,26 @@ def test_entity_incidence_includes_title_only_mentions_on_write_and_backfill():
     assert (legacy, legacy_entity) in pairs
 
 
+def test_explicit_entity_upsert_can_skip_text_incidence_derivation():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    memory_id = eng.remember(
+        "Apollo appears in this independently stored text.",
+        workspace_id=wid,
+        resolve_conflicts=False,
+    )
+
+    entity_id = eng.store.upsert_entity(
+        Node(id="", name="Apollo", ntype="project", workspace_id=wid),
+        _derive_text_incidence=False,
+    )
+
+    assert (memory_id, entity_id) not in {
+        (row["memory_id"], row["entity_id"])
+        for row in eng.store.list_memory_entities(SearchFilter(workspace_id=wid))
+    }
+
+
 def test_repo_memory_links_existing_workspace_entity_on_write():
     """A repo write must see the workspace ancestor entity already in scope."""
     eng = MemoryEngine.create(":memory:")
@@ -96,6 +116,113 @@ def test_repo_memory_links_existing_workspace_entity_on_write():
     assert (memory_id, entity_id) in {
         (row["memory_id"], row["entity_id"]) for row in rows
     }
+
+
+def test_remember_many_exact_finalizer_owns_graph_incidence():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+    apollo = eng.store.upsert_entity(Node(
+        id="", name="Apollo", ntype="project", workspace_id=wid,
+    ))
+    beacon = eng.store.upsert_entity(Node(
+        id="", name="Beacon", ntype="project", workspace_id=wid,
+    ))
+
+    def finalize(results):
+        for result, entity_id in zip(results, (apollo, beacon), strict=True):
+            eng.store.link_memory_entity(
+                memory_id=result["id"], entity_id=entity_id,
+                workspace_id=wid, repo_id=None,
+                source_kind="structured_extractor", commit=False,
+            )
+
+    results = eng.remember_many(
+        [
+            FactSpec(content="Apollo coordinates with Beacon."),
+            FactSpec(content="Beacon coordinates with Apollo."),
+        ],
+        workspace_id=wid,
+        resolve_conflicts=False,
+        _automatic_graph_enrichment=False,
+        _transactional_finalizer=finalize,
+    )
+
+    assert len(results) == 2
+    rows = eng.store.list_memory_entities(SearchFilter(workspace_id=wid))
+    assert [(row["memory_id"], row["entity_id"], row["source_kind"]) for row in rows] == [
+        (results[0]["id"], apollo, "structured_extractor"),
+        (results[1]["id"], beacon, "structured_extractor"),
+    ]
+
+
+def test_remember_entities_writes_one_exact_incidence_per_memory():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+
+    results = eng.remember_entities(
+        [
+            FactSpec(content="Apollo coordinates with Beacon."),
+            FactSpec(content="Beacon coordinates with Apollo."),
+        ],
+        [
+            Node(id="", name="Apollo", workspace_id=wid),
+            Node(id="", name="Beacon", workspace_id=wid),
+        ],
+        workspace_id=wid,
+        resolve_conflicts=False,
+        source_kind="explicit",
+    )
+
+    rows = eng.store.list_memory_entities(SearchFilter(workspace_id=wid))
+    assert [(row["memory_id"], row["entity_id"], row["source_kind"]) for row in rows] == [
+        (results[0]["id"], results[0]["entity_id"], "explicit"),
+        (results[1]["id"], results[1]["entity_id"], "explicit"),
+    ]
+    assert results[0]["entity_id"] != results[1]["entity_id"]
+
+
+def test_remember_entities_finalizer_failure_rolls_back_memories_and_incidence():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+
+    def fail(_results):
+        raise RuntimeError("entity finalizer failed")
+
+    with pytest.raises(RuntimeError, match="entity finalizer failed"):
+        eng.remember_entities(
+            [FactSpec(content="Apollo state.")],
+            [Node(id="", name="Apollo", workspace_id=wid)],
+            workspace_id=wid,
+            resolve_conflicts=False,
+            _transactional_finalizer=fail,
+        )
+
+    assert eng.store.conn.execute(
+        "SELECT COUNT(*) AS n FROM memories"
+    ).fetchone()["n"] == 0
+    assert eng.store.conn.execute(
+        "SELECT COUNT(*) AS n FROM memory_entities"
+    ).fetchone()["n"] == 0
+
+
+def test_remember_many_finalizer_failure_rolls_back_the_batch():
+    eng = MemoryEngine.create(":memory:")
+    wid = eng.store.get_or_create_workspace("w")
+
+    def fail(_results):
+        raise RuntimeError("finalizer failed")
+
+    with pytest.raises(RuntimeError, match="finalizer failed"):
+        eng.remember_many(
+            [FactSpec(content="First."), FactSpec(content="Second.")],
+            workspace_id=wid,
+            resolve_conflicts=False,
+            _transactional_finalizer=fail,
+        )
+
+    assert eng.store.conn.execute(
+        "SELECT COUNT(*) AS n FROM memories"
+    ).fetchone()["n"] == 0
 
 
 def test_link_memory_entities_commits_a_standalone_enrichment():

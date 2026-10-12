@@ -5,19 +5,19 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Callable
 
-from engraphis.core.interfaces import MemoryType, Scope
+from engraphis.core.interfaces import FactSpec, MemoryType, Node, Scope
 
 from .engraphis import (
     THINK_INCIDENCE_KIND,
     THINKGRAPH_INTAKE_LOCK,
-    existing_entity_for_name,
+    exact_think_entity_ids,
     get_service,
     graph_revision,
     validated_think_metadata,
 )
 from .thinkgraph_completed_pair_extraction import (
     extract_saved_card_facts,
-    project_saved_card_think,
+    project_saved_card_thinks,
 )
 from .thinkgraph_completed_pair_preparation import (
     existing_source_pair_thinks,
@@ -29,7 +29,9 @@ from .thinkgraph_relationship_classification import (
     classify_relationship,
     classify_relationships,
 )
-from .thinkgraph_relationship_settlement import apply_accepted_decision
+from .thinkgraph_relationship_settlement import (
+    apply_accepted_decision,
+)
 from .thinkgraph_relationship_vocabulary import (
     ThinkGraphIntakeError,
     project_relationship_vocabulary,
@@ -37,26 +39,25 @@ from .thinkgraph_relationship_vocabulary import (
 )
 
 
-def _save_think_memory(
-    service: Any,
+def _think_metadata(
     *,
-    workspace_id: str,
     completed: dict[str, Any],
     output: dict[str, Any],
     card_run: dict[str, str],
     pair_reference_value: str,
-    finalizer: Callable[[str], None],
+    fact_index: int,
+    fact_count: int,
 ) -> dict[str, Any]:
-    """Append one Engraphis Think and settle its preclassified graph atomically."""
-    source_pair_value = source_pair(completed)
-    metadata = {
-        # Keep the Card's free-form relationship language inside the Think. By
-        # nesting it below `think`, Engraphis's structured graph feeder cannot
-        # mistake those proposals for already-classified durable edges.
+    """Build one exact Entity-specific Think envelope for Engraphis."""
+
+    return {
+        # The free-form proposals remain Think metadata and cannot become durable
+        # edges until the finalizer applies their already-computed Jev decisions.
         "structured_extraction": {
             "think": {
                 "summary": output["summary"],
-                "entities": deepcopy(output["entities"]),
+                **({"detail": output["detail"]} if output.get("detail") else {}),
+                "entity": output["entity"],
                 "relationships": deepcopy(output["relationships"]),
             },
         },
@@ -72,9 +73,9 @@ def _save_think_memory(
             "resolved_provider": card_run["resolvedProvider"],
             "resolved_model": card_run["resolvedModel"],
             "completed_pair_reference": pair_reference_value,
-            "fact_index": 0,
-            "fact_count": 1,
-            "source_pair": source_pair_value,
+            "fact_index": fact_index,
+            "fact_count": fact_count,
+            "source_pair": source_pair(completed),
         },
         "provenance": {
             "source": "saved_thinkgraph_card",
@@ -84,7 +85,41 @@ def _save_think_memory(
         },
     }
 
-    def existing() -> dict[str, Any] | None:
+
+def _save_think_batch(
+    service: Any,
+    *,
+    workspace_id: str,
+    completed: dict[str, Any],
+    outputs: list[dict[str, Any]],
+    card_run: dict[str, str],
+    pair_reference_value: str,
+    finalizer: Callable[[list[dict[str, Any]]], None],
+) -> list[dict[str, Any]]:
+    """Append all Entity-specific Thinks and settle their graph state atomically."""
+
+    fact_count = len(outputs)
+    specs = [
+        FactSpec(
+            content=output["summary"],
+            title=output["title"],
+            mtype=MemoryType.EPISODIC,
+            importance=output["importance"],
+            keywords=output["keywords"],
+            metadata=_think_metadata(
+                completed=completed,
+                output=output,
+                card_run=card_run,
+                pair_reference_value=pair_reference_value,
+                fact_index=index,
+                fact_count=fact_count,
+            ),
+            claim_kind="think",
+        )
+        for index, output in enumerate(outputs)
+    ]
+
+    def existing() -> list[dict[str, Any]] | None:
         matches = existing_source_pair_thinks(
             service.store,
             workspace_id=workspace_id,
@@ -92,27 +127,35 @@ def _save_think_memory(
         )
         if not matches:
             return None
-        return {
-            "id": matches[0].id,
-            "op": "noop",
-            "reason": "completed pair already has an authoritative Think",
-        }
+        return [
+            {
+                "id": memory.id,
+                "op": "noop",
+                "reason": "completed pair already has authoritative Thinks",
+            }
+            for memory in matches
+        ]
 
-    return service.engine.remember_with_resolution(
-        output["summary"],
+    return service.engine.remember_entities(
+        specs,
+        [
+            Node(
+                id="",
+                name=output["entity"],
+                ntype="person_or_concept",
+                workspace_id=workspace_id,
+                repo_id=None,
+            )
+            for output in outputs
+        ],
         workspace_id=workspace_id,
         mtype=MemoryType.EPISODIC,
         scope=Scope.WORKSPACE,
-        title=output["title"],
-        importance=output["importance"],
-        keywords=output["keywords"],
-        metadata=metadata,
         resolve_conflicts=False,
-        subject_key=f"thinkgraph:{pair_reference_value}",
-        claim_kind="think",
         _trusted_graph_keys=frozenset({"structured_extraction"}),
         _transactional_validator=existing,
         _transactional_finalizer=finalizer,
+        source_kind=THINK_INCIDENCE_KIND,
     )
 
 
@@ -158,22 +201,34 @@ def _existing_completed_pair_result(
     pair_reference_value: str,
     card_run: dict[str, str],
     revision_before: str,
-    memory_id: str,
+    memories: list[Any],
+    entity_ids: dict[str, str],
 ) -> dict[str, Any]:
+    memory_ids = [str(memory.id) for memory in memories]
+    thinks = [
+        {
+            "engraphisMemoryId": memory_id,
+            "engraphisEntityId": entity_ids[memory_id],
+        }
+        for memory_id in memory_ids
+        if memory_id in entity_ids
+    ]
+    if len(thinks) != len(memory_ids):
+        raise ThinkGraphIntakeError("thinkgraph_existing_attachment_invalid")
     return {
         "ok": True,
         "projectId": project,
         "pairReference": pair_reference_value,
-        "thinkMemoryId": memory_id,
-        "thinkMemoryIds": [memory_id],
+        "thinkMemoryIds": memory_ids,
+        "thinks": thinks,
         "intakeOperation": "noop",
-        "intakeOperations": ["noop"],
+        "intakeOperations": ["noop"] * len(memory_ids),
         "revision": revision_before,
         "revisionChanged": False,
         "status": "completed",
         "cardRun": card_run,
         "relationships": [],
-        "newSubjects": [],
+        "newEntities": [],
         "changedNodeIds": [],
         "changedEdgeIds": [],
         "affectedNodeIds": [],
@@ -205,104 +260,135 @@ def _settle_new_completed_pair(
         },
         card_run=card_run,
     )
-    output = project_saved_card_think(facts)
-    relationship_vocabulary = project_relationship_vocabulary(
-        store,
-        workspace_id,
-    )
-    decisions = classify_relationships(
-        store,
-        workspace_id=workspace_id,
-        payload=completed,
-        summary=output["summary"],
-        relationships=output["relationships"],
-        classifier=classifier,
-        relationship_vocabulary=relationship_vocabulary,
-    )
-    settled_graph: dict[str, Any] = {
-        "relationships": [],
-        "newSubjects": [],
-        "changedNodeIds": [],
-        "changedEdgeIds": [],
-    }
-
-    def finalize(memory_id: str) -> None:
-        memory = store.get_memory(memory_id)
-        if memory is None:
-            raise ThinkGraphIntakeError("thinkgraph_think_store_failed")
-        relationships: list[dict[str, Any]] = []
-        new_subjects: dict[str, dict[str, Any]] = {}
-        changed_node_ids: list[str] = []
-        changed_edge_ids: list[str] = []
-        for relationship, decision in zip(
-            output["relationships"], decisions, strict=True,
-        ):
-            written = apply_accepted_decision(
+    outputs = project_saved_card_thinks(facts)
+    relationship_vocabulary = project_relationship_vocabulary(store, workspace_id)
+    if not outputs:
+        return {
+            "ok": True,
+            "projectId": project,
+            "pairReference": pair_reference_value,
+            "thinkMemoryIds": [],
+            "thinks": [],
+            "intakeOperation": "noop",
+            "intakeOperations": [],
+            "revision": revision_before,
+            "revisionChanged": False,
+            "status": "completed",
+            "cardRun": card_run,
+            "relationships": [],
+            "newEntities": [],
+            "relationshipVocabulary": relationship_vocabulary_state(
+                relationship_vocabulary
+            ),
+            "changedNodeIds": [],
+            "changedEdgeIds": [],
+            "affectedNodeIds": [],
+        }
+    decisions_by_output: list[list[dict[str, Any]]] = []
+    for output in outputs:
+        relationships = output["relationships"]
+        decisions_by_output.append(
+            classify_relationships(
                 store,
                 workspace_id=workspace_id,
                 payload=completed,
-                memory_id=memory_id,
-                relationship=relationship,
-                decision=decision,
+                summary=output["summary"],
+                relationships=relationships,
+                classifier=classifier,
+                relationship_vocabulary=relationship_vocabulary,
             )
-            relationships.append({"id": written["edge_id"], **written})
-            changed_node_ids.extend((written["source"], written["target"]))
-            changed_edge_ids.append(written["edge_id"])
-            changed_edge_ids.extend(written["replaced_edge_ids"])
-            for subject in written["new_subjects"]:
-                entity_id = str(subject["engraphisEntityId"])
-                new_subjects[entity_id] = {
-                    **subject,
-                    "engraphisMemoryId": memory_id,
+            if relationships
+            else []
+        )
+
+    settled_graph: dict[str, Any] = {
+        "attachments": [],
+        "relationships": [],
+        "newEntities": [],
+        "changedNodeIds": [],
+        "changedEdgeIds": [],
+    }
+    existing_entity_ids = {
+        str(entity.id) for entity in store.list_entities()
+        if entity.workspace_id == workspace_id and entity.repo_id is None
+    }
+
+    def finalize(results: list[dict[str, Any]]) -> None:
+        if len(results) != len(outputs) or any(
+            str(result.get("op") or "") != "add" for result in results
+        ):
+            raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed")
+        memories = []
+        for result in results:
+            memory = store.get_memory(str(result.get("id") or ""))
+            if memory is None:
+                raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed")
+            memories.append(memory)
+
+        relationships: list[dict[str, Any]] = []
+        new_entities: dict[str, dict[str, Any]] = {}
+        changed_node_ids: list[str] = []
+        changed_edge_ids: list[str] = []
+        attachments: list[dict[str, str]] = []
+        for output, decisions, memory, result in zip(
+            outputs, decisions_by_output, memories, results, strict=True
+        ):
+            for relationship, decision in zip(
+                output["relationships"], decisions, strict=True
+            ):
+                written = apply_accepted_decision(
+                    store,
+                    workspace_id=workspace_id,
+                    payload=completed,
+                    memory_id=memory.id,
+                    relationship=relationship,
+                    decision=decision,
+                )
+                relationships.append({"id": written["edge_id"], **written})
+                changed_node_ids.extend((written["source"], written["target"]))
+                changed_edge_ids.append(written["edge_id"])
+                changed_edge_ids.extend(written["replaced_edge_ids"])
+                for entity in written["new_entities"]:
+                    entity_id = str(entity["engraphisEntityId"])
+                    new_entities[entity_id] = dict(entity)
+
+            entity_id = str(result.get("entity_id") or "")
+            if not entity_id:
+                raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed")
+            entity_created = entity_id not in existing_entity_ids
+            attachments.append({
+                "engraphisMemoryId": memory.id,
+                "engraphisEntityId": entity_id,
+            })
+            changed_node_ids.append(entity_id)
+            if entity_created:
+                new_entities[entity_id] = {
+                    "canonicalName": output["entity"],
+                    "engraphisEntityId": entity_id,
+                }
+            if entity_id in new_entities:
+                new_entities[entity_id].update({
+                    "engraphisMemoryId": memory.id,
                     "thinkContext": {
                         "title": output["title"],
                         "summary": output["summary"],
                     },
-                }
+                })
 
-        # Direct structured-extractor incidence is the only authority that
-        # attaches this Think to its accepted canonical endpoints.
-        for entity_name in output["entities"]:
-            row = existing_entity_for_name(
-                store,
-                workspace_id=workspace_id,
-                name=entity_name,
-            )
-            if row is None:
-                raise ThinkGraphIntakeError(
-                    "thinkgraph_structured_entity_unsettled"
-                )
-            entity_id = str(row["id"])
-            store.link_memory_entity(
-                memory_id=memory_id,
-                entity_id=entity_id,
-                workspace_id=workspace_id,
-                repo_id=None,
-                source_kind=THINK_INCIDENCE_KIND,
-                confidence=1.0,
-                valid_from=memory.valid_from,
-                ingested_at=memory.ingested_at,
-                provenance={
-                    "source": "structured_extractor",
-                    "source_kind": THINK_INCIDENCE_KIND,
-                    "memory_id": memory_id,
-                },
-                commit=False,
-            )
-            changed_node_ids.append(entity_id)
         settled_graph.update({
+            "attachments": attachments,
             "relationships": relationships,
-            "newSubjects": list(new_subjects.values()),
+            "newEntities": list(new_entities.values()),
             "changedNodeIds": list(dict.fromkeys(changed_node_ids)),
             "changedEdgeIds": list(dict.fromkeys(changed_edge_ids)),
         })
 
     try:
-        saved_think = _save_think_memory(
+        saved_thinks = _save_think_batch(
             service,
             workspace_id=workspace_id,
             completed=completed,
-            output=output,
+            outputs=outputs,
             card_run=card_run,
             pair_reference_value=pair_reference_value,
             finalizer=finalize,
@@ -310,39 +396,80 @@ def _settle_new_completed_pair(
     except ThinkGraphIntakeError:
         raise
     except Exception as error:
-        raise ThinkGraphIntakeError("thinkgraph_think_store_failed") from error
-    memory_id = str(saved_think.get("id") or "")
-    memory = store.get_memory(memory_id) if memory_id else None
-    if memory is None or validated_think_metadata(memory) is None:
-        raise ThinkGraphIntakeError("thinkgraph_think_store_failed")
-    operation = str(saved_think.get("op") or "")
-    if operation == "noop" and not settled_graph["relationships"]:
-        settled_graph = {
-            "relationships": [],
-            "newSubjects": [],
-            "changedNodeIds": [],
-            "changedEdgeIds": [],
-        }
-    relationship_vocabulary_after = project_relationship_vocabulary(
+        raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed") from error
+
+    operations = [str(result.get("op") or "") for result in saved_thinks]
+    if operations and all(operation == "noop" for operation in operations):
+        existing = existing_source_pair_thinks(
+            store,
+            workspace_id=workspace_id,
+            pair_reference=pair_reference_value,
+        )
+        exact_entities = exact_think_entity_ids(
+            store,
+            workspace_id=workspace_id,
+            memory_ids=[str(memory.id) for memory in existing],
+        )
+        return _existing_completed_pair_result(
+            project=project,
+            pair_reference_value=pair_reference_value,
+            card_run=card_run,
+            revision_before=revision_before,
+            memories=existing,
+            entity_ids=exact_entities,
+        )
+    if len(saved_thinks) != len(outputs) or any(operation != "add" for operation in operations):
+        raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed")
+
+    memory_ids = [str(result.get("id") or "") for result in saved_thinks]
+    exact_entities = exact_think_entity_ids(
         store,
-        workspace_id,
+        workspace_id=workspace_id,
+        memory_ids=memory_ids,
+    )
+    for memory_id in memory_ids:
+        memory = store.get_memory(memory_id)
+        if (
+            memory is None
+            or validated_think_metadata(memory) is None
+            or memory_id not in exact_entities
+        ):
+            raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed")
+    if settled_graph["attachments"] != [
+        {
+            "engraphisMemoryId": memory_id,
+            "engraphisEntityId": exact_entities[memory_id],
+        }
+        for memory_id in memory_ids
+    ]:
+        raise ThinkGraphIntakeError("thinkgraph_think_batch_store_failed")
+
+    relationship_vocabulary_after = project_relationship_vocabulary(
+        store, workspace_id
     )
     revision = graph_revision(store, workspace_id)
     return {
         "ok": True,
         "projectId": project,
         "pairReference": pair_reference_value,
-        "thinkMemoryId": memory_id,
-        "thinkMemoryIds": [memory_id],
-        "intakeOperation": operation,
-        "intakeOperations": [operation],
+        "thinkMemoryIds": memory_ids,
+        "thinks": [
+            {
+                **attachment,
+                "body": output["summary"],
+            }
+            for attachment, output in zip(
+                settled_graph["attachments"], outputs, strict=True
+            )
+        ],
+        "intakeOperation": "add",
+        "intakeOperations": operations,
         "revision": revision,
         "revisionChanged": revision != revision_before,
         "status": "completed",
         "cardRun": card_run,
-        "pairSummary": output["summary"],
         "relationships": settled_graph["relationships"],
-        "newSubjects": settled_graph["newSubjects"],
+        "newEntities": settled_graph["newEntities"],
         "relationshipVocabulary": relationship_vocabulary_state(
             relationship_vocabulary_after
         ),
@@ -357,7 +484,8 @@ def settle_completed_pair(
     *,
     classifier: Callable[..., dict[str, Any]] = classify_relationship,
 ) -> dict[str, Any]:
-    """Append one Engraphis episodic Think and only its Jev-classified edges."""
+    """Append at most one Think per Entity plus separately classified Jev edges."""
+
     completed, pair_reference_value, card_output, card_run = (
         _validate_settle_payload(payload)
     )
@@ -373,12 +501,18 @@ def settle_completed_pair(
             pair_reference=pair_reference_value,
         )
         if existing:
+            exact_entities = exact_think_entity_ids(
+                store,
+                workspace_id=workspace_id,
+                memory_ids=[str(memory.id) for memory in existing],
+            )
             return _existing_completed_pair_result(
                 project=project,
                 pair_reference_value=pair_reference_value,
                 card_run=card_run,
                 revision_before=revision_before,
-                memory_id=str(existing[0].id),
+                memories=existing,
+                entity_ids=exact_entities,
             )
         return _settle_new_completed_pair(
             service=service,

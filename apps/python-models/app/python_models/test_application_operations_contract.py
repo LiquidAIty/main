@@ -74,6 +74,7 @@ def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypa
         "engraphis_recall_context",
         "engraphis_get_memory",
         "engraphis_remember",
+        "engraphis_remember_entities",
         "engraphis_discover_actions",
         "engraphis_execute_read",
         "engraphis_execute_action",
@@ -113,6 +114,9 @@ def test_canonical_catalog_publishes_engraphis_schemas_with_owned_scope(monkeypa
     jsonschema.validate({"content": "A tentative assistant suggestion",
                          "importance": 0.3},
                         schemas["engraphis_remember"])
+    jsonschema.validate({
+        "facts": [{"content": "A compact Think.", "entity_name": "Rocket Lab"}],
+    }, schemas["engraphis_remember_entities"])
     assert {
         "engraphis_update_memory",
         "engraphis_conflict_review",
@@ -467,6 +471,8 @@ def test_application_operation_catalog_preserves_order_and_literal_dispatcher_ow
         "worldview.set_capability",
         "worldview.action",
         "agentgraph.inspect",
+        "project_graph.list_entities",
+        "project_graph.read_entity_context",
         "run_mag_one",
         "thinkgraph.reason",
         "knowgraph.research",
@@ -486,6 +492,12 @@ def test_application_operation_catalog_preserves_order_and_literal_dispatcher_ow
         "worldview.action": "app.main_worldview_operations.worldview_action",
         "agentgraph.inspect": (
             "app.application_operation_handlers.agentgraph_inspect"
+        ),
+        "project_graph.list_entities": (
+            "app.project_graph_operations.list_entities"
+        ),
+        "project_graph.read_entity_context": (
+            "app.project_graph_operations.read_entity_context"
         ),
         "run_mag_one": "app.mag_one_operation.run_mag_one",
         "thinkgraph.reason": (

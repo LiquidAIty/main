@@ -1,4 +1,4 @@
-"""9 Smart tool factories, each a (args, ctx) -> dict callable.
+"""10 Smart tool factories, each a (args, ctx) -> dict callable.
 
 Schemas are generated from the registered Smart MCP tools. The resulting callables work with
 both EngraphisPrimeAgent and any prime-agent tool-registration surface that
@@ -43,6 +43,7 @@ _SCHEMAS["engraphis_discover_actions"]["properties"]["category"]["enum"] = [
 _SESSION_SCHEMA = _SCHEMAS["engraphis_session"]
 _RECALL_CONTEXT_SCHEMA = _SCHEMAS["engraphis_recall_context"]
 _REMEMBER_SCHEMA = _SCHEMAS["engraphis_remember"]
+_REMEMBER_ENTITIES_SCHEMA = _SCHEMAS["engraphis_remember_entities"]
 _GET_MEMORY_SCHEMA = _SCHEMAS["engraphis_get_memory"]
 _UPDATE_MEMORY_SCHEMA = _SCHEMAS["engraphis_update_memory"]
 _CONFLICT_REVIEW_SCHEMA = _SCHEMAS["engraphis_conflict_review"]
@@ -73,6 +74,10 @@ _DESC: dict[str, str] = {
         "load-bearing decisions (architecture, conventions, gotchas) and "
         "always write a self-contained `content` — do NOT store "
         "credentials, API keys, raw log lines, or PII."
+    ),
+    "engraphis_remember_entities": (
+        "Atomically store one durable memory per exact Entity. Each fact "
+        "requires content and entity_name and may reuse an exact entity_id."
     ),
     "engraphis_discover_actions": (
         "Discover advanced capabilities (governance / code / ops) for a "
@@ -122,6 +127,7 @@ TOOL_SPECS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("engraphis_session", _SESSION_SCHEMA),
     ("engraphis_recall_context", _RECALL_CONTEXT_SCHEMA),
     ("engraphis_remember", _REMEMBER_SCHEMA),
+    ("engraphis_remember_entities", _REMEMBER_ENTITIES_SCHEMA),
     ("engraphis_discover_actions", _DISCOVER_ACTIONS_SCHEMA),
     ("engraphis_execute_read", _EXECUTE_READ_SCHEMA),
     ("engraphis_execute_action", _EXECUTE_ACTION_SCHEMA),

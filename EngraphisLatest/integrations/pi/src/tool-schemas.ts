@@ -7,6 +7,7 @@ import { SMART_SCHEMAS } from "./generated-contract.ts";
 export const SESSION_PARAMETERS = Type.Unsafe<Record<string, unknown>>(SMART_SCHEMAS.engraphis_session);
 export const RECALL_CONTEXT_PARAMETERS = Type.Unsafe<Record<string, unknown>>(SMART_SCHEMAS.engraphis_recall_context);
 export const REMEMBER_PARAMETERS = Type.Unsafe<Record<string, unknown>>(SMART_SCHEMAS.engraphis_remember);
+export const REMEMBER_ENTITIES_PARAMETERS = Type.Unsafe<Record<string, unknown>>(SMART_SCHEMAS.engraphis_remember_entities);
 export const GET_MEMORY_PARAMETERS = Type.Unsafe<Record<string, unknown>>(SMART_SCHEMAS.engraphis_get_memory);
 export const UPDATE_MEMORY_PARAMETERS = Type.Unsafe<Record<string, unknown>>(SMART_SCHEMAS.engraphis_update_memory);
 export const CONFLICT_REVIEW_PARAMETERS = Type.Unsafe<Record<string, unknown>>(SMART_SCHEMAS.engraphis_conflict_review);

@@ -9,10 +9,10 @@ import {
 } from 'react';
 
 import {
-  createCanonicalSubjectMatcher,
-  type CanonicalSubjectFocusRequest,
-  type CanonicalSubjectFocusTarget,
-} from '../../../components/knowledge/canonicalSubjectLinks';
+  createCanonicalEntityMatcher,
+  type CanonicalEntityFocusRequest,
+  type CanonicalEntityFocusTarget,
+} from '../../../components/knowledge/canonicalEntityLinks';
 import type { GodsEyeBridge } from '../../../components/worldsignals/GodsEyeSurface';
 import type useAgentBuilderKnowledgeGraphs from '../state/useAgentBuilderKnowledgeGraphs';
 import type { DeckCard } from '../../../types/agentgraph';
@@ -69,26 +69,26 @@ export default function useAgentBuilderSharedChat({
   const sharedChatDraftKey = mainCardId
     ? JSON.stringify([canvasProjectId, conversationId, mainCardId])
     : '';
-  const canonicalSubjectMatcher = useMemo(
-    () => createCanonicalSubjectMatcher({
+  const canonicalEntityMatcher = useMemo(
+    () => createCanonicalEntityMatcher({
       thinkgraph: knowledgeGraphs.projections.thinkgraph,
       knowgraph: knowledgeGraphs.projections.knowgraph,
     }),
     [knowledgeGraphs.projections.knowgraph, knowledgeGraphs.projections.thinkgraph],
   );
-  const subjectFocusRequestIdentityRef = useRef(0);
-  const [subjectFocusRequest, setSubjectFocusRequest] =
-    useState<CanonicalSubjectFocusRequest | null>(null);
+  const entityFocusRequestIdentityRef = useRef(0);
+  const [entityFocusRequest, setEntityFocusRequest] =
+    useState<CanonicalEntityFocusRequest | null>(null);
   useEffect(() => {
-    if (workspaceView !== 'knowledge') setSubjectFocusRequest(null);
+    if (workspaceView !== 'knowledge') setEntityFocusRequest(null);
   }, [activeProject, workspaceView]);
-  const handleCanonicalSubjectFocus = useCallback((target: CanonicalSubjectFocusTarget) => {
+  const handleCanonicalEntityFocus = useCallback((target: CanonicalEntityFocusTarget) => {
     if (!activeProject || target.projectId !== activeProject) return;
-    subjectFocusRequestIdentityRef.current += 1;
+    entityFocusRequestIdentityRef.current += 1;
     setWorkspaceView('knowledge');
-    setSubjectFocusRequest({
+    setEntityFocusRequest({
       ...target,
-      requestId: subjectFocusRequestIdentityRef.current,
+      requestId: entityFocusRequestIdentityRef.current,
     });
   }, [activeProject, setWorkspaceView]);
   const prepareRunImages = useCallback(async (targetCardId: string | null) => {
@@ -136,7 +136,7 @@ export default function useAgentBuilderSharedChat({
 
   return {
     setCurrentResponderCardId: chat.setCurrentResponderCardId,
-    subjectFocusRequest,
+    entityFocusRequest,
     sharedChatProps: {
       messages: chat.messages,
       mainCardId: mainCardId || undefined,
@@ -156,8 +156,8 @@ export default function useAgentBuilderSharedChat({
         });
       },
       knowledgeProjectId: activeProject,
-      subjectMatcher: canonicalSubjectMatcher,
-      onSubjectFocus: handleCanonicalSubjectFocus,
+      entityMatcher: canonicalEntityMatcher,
+      onEntityFocus: handleCanonicalEntityFocus,
       colors,
       busy: chat.sessionActive,
       connecting: chat.sessionConnecting,

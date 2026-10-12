@@ -6479,12 +6479,25 @@ class Store:
         return [(row["id"], float(row["score"])) for row in rows]
 
     # ── graph ─────────────────────────────────────────────────────────────────
-    def upsert_entity(self, node: Node, *, commit: bool = True) -> str:
+    def upsert_entity(
+        self,
+        node: Node,
+        *,
+        commit: bool = True,
+        _derive_text_incidence: bool = True,
+    ) -> str:
         """Persist an entity and its derived incidence atomically."""
         with self._write_operation("upsert_entity", commit=commit):
-            return self._upsert_entity_impl(node)
+            return self._upsert_entity_impl(
+                node, derive_text_incidence=_derive_text_incidence
+            )
 
-    def _upsert_entity_impl(self, node: Node) -> str:
+    def _upsert_entity_impl(
+        self,
+        node: Node,
+        *,
+        derive_text_incidence: bool = True,
+    ) -> str:
         if node.id:
             ids.assert_id_kind(node.id, "entity")
         normalized = normalize_entity_name(node.name)
@@ -6517,9 +6530,10 @@ class Store:
                 (nid, node.workspace_id, node.repo_id, node.name, node.ntype,
                  canonical_id, normalized, method, 1.0, now_ts()),
             )
-        self._backfill_entity_text_mentions(
-            nid, name=node.name, workspace_id=node.workspace_id, repo_id=node.repo_id,
-        )
+        if derive_text_incidence:
+            self._backfill_entity_text_mentions(
+                nid, name=node.name, workspace_id=node.workspace_id, repo_id=node.repo_id,
+            )
         self._live_canonicalize_entity(
             nid, name=node.name, workspace_id=node.workspace_id, repo_id=node.repo_id,
         )

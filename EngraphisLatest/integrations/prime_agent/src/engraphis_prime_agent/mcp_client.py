@@ -61,7 +61,7 @@ class EngraphisMcpToolError(RuntimeError):
 
 
 class EngraphisCompatibilityError(RuntimeError):
-    """Gateway is reachable but does not expose the Smart 9-tool surface."""
+    """Gateway is reachable but does not expose the Smart 10-tool surface."""
 
 
 class EngraphisMcpClient:

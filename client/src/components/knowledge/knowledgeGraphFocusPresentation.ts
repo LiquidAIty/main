@@ -117,8 +117,8 @@ export function composeFocusNeighborhoodPresentation(
       nodes: [...nodes.values()],
       edges: boundedEdges,
       ...(authority === 'thinkgraph'
-        ? { canonicalSubjectDirectory:
-          base.providerProjections.thinkgraph.canonicalSubjectDirectory }
+        ? { canonicalEntityDirectory:
+          base.providerProjections.thinkgraph.canonicalEntityDirectory }
         : {}),
     };
   };
@@ -305,7 +305,7 @@ export function composeManualFocusPresentation(
     const probability = isCenter ? 1 : probabilityByNode.get(node.id) || 0;
     // Manual focus is a calm, local navigation view. Probability remains intact
     // in the decision/inspector; this bounded curve only controls transient paint
-    // and gravity so one subject cannot consume the complete canvas.
+    // and gravity so one Entity cannot consume the complete canvas.
     const gravityMass = isCenter ? 7 : 1.5 + (4 * probability);
     const visualRadius = 1.2 * (1.5 + (2 * Math.pow(gravityMass, 2 / 3)));
     return {
@@ -520,5 +520,4 @@ export function composeFocusReleasePresentation(
     } : edge),
   };
 }
-
 

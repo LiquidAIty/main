@@ -25,6 +25,7 @@ import {
 	GET_MEMORY_PARAMETERS,
 	RECALL_CONTEXT_PARAMETERS,
 	REMEMBER_PARAMETERS,
+	REMEMBER_ENTITIES_PARAMETERS,
 	SESSION_PARAMETERS,
 	UPDATE_MEMORY_PARAMETERS,
 	applyScopeDefaults,
@@ -153,6 +154,20 @@ export default function engraphisPiExtension(pi: ExtensionAPI) {
 		parameters: REMEMBER_PARAMETERS,
 		execute: async (_toolCallId, params, signal) =>
 			call("engraphis_remember", applyScopeDefaults(params, runtimeConfig), signal),
+	});
+
+	pi.registerTool({
+		name: "engraphis_remember_entities",
+		label: "Remember Entity Facts",
+		description: "Atomically store one memory per exact Entity.",
+		promptSnippet: "Store Entity-specific memories without multi-attachment.",
+		promptGuidelines: [
+			"Each fact requires content and entity_name; reuse entity_id when the exact Entity already exists.",
+		],
+		executionMode: "sequential",
+		parameters: REMEMBER_ENTITIES_PARAMETERS,
+		execute: async (_toolCallId, params, signal) =>
+			call("engraphis_remember_entities", applyScopeDefaults(params, runtimeConfig), signal),
 	});
 
 	pi.registerTool({

@@ -36,6 +36,7 @@ class _StructuredModel(BaseModel):
 
 class ThinkGraphThink(_StructuredModel):
     summary: str = Field(min_length=1, max_length=100_000)
+    detail: str | None = Field(default=None, min_length=1)
 
 
 class ThinkGraphStructuredRelation(_StructuredModel):
@@ -52,16 +53,17 @@ class ThinkGraphStructuredRelation(_StructuredModel):
 
 
 class ThinkGraphStructuredFact(_StructuredModel):
-    """The one saved-Card Think accepted by the Engraphis structured extractor."""
+    """One Entity-specific Think accepted by the Engraphis structured extractor."""
 
     content: str = Field(min_length=1, max_length=100_000)
     title: str = Field(min_length=1, max_length=256)
     mtype: Literal["episodic"] = "episodic"
     importance: float = Field(default=0.0, ge=0.0, le=1.0)
     keywords: list[str] = Field(default_factory=list, max_length=16)
-    entities: list[str] = Field(min_length=2, max_length=20)
+    entity: str = Field(min_length=1, max_length=256)
+    entities: list[str] = Field(min_length=1, max_length=20)
     relations: list[ThinkGraphStructuredRelation] = Field(
-        min_length=1,
+        default_factory=list,
         max_length=10,
     )
     think: ThinkGraphThink
@@ -72,14 +74,19 @@ class ThinkGraphStructuredFact(_StructuredModel):
             raise ValueError("thinkgraph_card_content_summary_mismatch")
         entity_keys = [value.casefold() for value in self.entities]
         if len(entity_keys) != len(set(entity_keys)):
-            raise ValueError("thinkgraph_card_entity_duplicate")
-        endpoint_keys: list[str] = []
+            raise ValueError("thinkgraph_card_chunk_entity_duplicate")
+        if self.entity.casefold() not in set(entity_keys):
+            raise ValueError("thinkgraph_card_entity_missing_from_chunk")
         relationship_keys: set[tuple[str, str, str]] = set()
         for relationship in self.relations:
             source_key = relationship.source.casefold()
             target_key = relationship.target.casefold()
             if source_key == target_key:
                 raise ValueError("thinkgraph_card_pair_self_reference")
+            if source_key != self.entity.casefold():
+                raise ValueError("thinkgraph_card_relationship_source_must_match_entity")
+            if source_key not in set(entity_keys) or target_key not in set(entity_keys):
+                raise ValueError("thinkgraph_card_relationship_entity_missing_from_chunk")
             identity = (
                 source_key,
                 relationship.relation.casefold(),
@@ -88,11 +95,6 @@ class ThinkGraphStructuredFact(_StructuredModel):
             if identity in relationship_keys:
                 raise ValueError("thinkgraph_card_pair_duplicate")
             relationship_keys.add(identity)
-            endpoint_keys.extend((source_key, target_key))
-        if set(entity_keys) != set(endpoint_keys):
-            raise ValueError(
-                "thinkgraph_card_entities_must_be_relationship_endpoints"
-            )
         return self
 
 
@@ -114,7 +116,7 @@ def _engraphis_structured_extractor(llm: Any) -> Any:
     extractor_type = StructuredLLMExtractor.with_schema(
         ThinkGraphStructuredFact
     )
-    return extractor_type(llm, max_facts=1)
+    return extractor_type(llm, max_facts=20)
 
 
 def llm_structured_contract(
@@ -130,19 +132,35 @@ def llm_structured_contract(
         context=context_text,
     )
     prompt += (
-        "\nTHINKGRAPH TEMPORAL THINK:\n"
-        "Return exactly one object in the facts array with mtype='episodic' and "
-        "one `think` object. Store the same complete combined meaning in `content` "
-        "and `think.summary`. Preserve material decisions, questions, preferences, "
-        "corrections, assumptions, and uncertainty in that one self-contained summary. "
-        "Extract canonical concept names and only meaningful directed relationships "
-        "grounded in this completed pair. Every entity must be a source or target, and "
-        "every source and target must be present in entities. Each relation object has "
-        "exactly source, relation, and target. The relation is concise free-form semantic "
-        "language from the pair, not a normalized edge label. Do not choose or emit a "
-        "canonical ThinkGraph predicate: Jev alone performs that later classification. "
-        "Do not browse, research, infer from the subject directory, read prior Think "
-        "bodies, split the pair into multiple memories, or add generic wrapper concepts.\n"
+        "\nTHINKGRAPH ENTITY-SPECIFIC THINKS:\n"
+        "Return zero or more objects in the facts array with mtype='episodic'. Return an "
+        "empty facts array when the completed pair adds no useful current Project reasoning. A completed "
+        "pair may yield Thinks for several useful Entities, but never more than one Think "
+        "for the same Entity in this pair. Every Think attaches only to its exact `entity`. "
+        "Write `think.summary` as one simple, concise, self-contained paragraph sized for "
+        "the compact Entity card. Use optional `think.detail` for any longer technical "
+        "explanation, Relationship reasoning, caveats, or other depth; detail remains part "
+        "of the same Think and may be as long as useful. Store the identical compact body in "
+        "`content` and `think.summary`. Do not copy one Entity's Think onto another Entity. "
+        "The supplied project_graph_grounding contains one most Relevant and one distinct most "
+        "Recent record per authority. Treat the Relevant record as stronger context than mere "
+        "recency. Steelman the user's actual intent, compare the new pair with prior "
+        "Thinks, and return a refinement, correction, contradiction, genuinely new idea, or "
+        "empty facts; never restate a near-duplicate basic idea as new. "
+        "Preserve material decisions, questions, preferences, corrections, assumptions, "
+        "and uncertainty relevant to that Entity. Relationships remain separate directed "
+        "Entity-to-Entity edges: list each relationship exactly once, under the fact whose "
+        "`entity` is its source. Each relation object has exactly source, relation, and "
+        "target. In each fact, `entities` contains its one Think Entity plus every exact "
+        "target Entity used by that fact's Relationships. Use concise free-form "
+        "relationship language grounded in the pair, not a "
+        "normalized edge label. Jev alone chooses the durable relationship label and math. "
+        "Inspect the supplied Project Entity map before naming Entities. Reuse an exact "
+        "existing canonical name when it is the same Entity; add a new canonical name only "
+        "when the completed pair genuinely introduces a distinct Entity. The map supplies "
+        "identity and Relationships, never hidden Think or Know content. Do not browse, "
+        "research, infer facts from the Entity map, read prior Think "
+        "bodies, create multiple Thinks for one Entity, or add generic wrapper concepts.\n"
     )
     return schema, prompt
 
@@ -159,9 +177,11 @@ def extract_saved_card_facts(
         not isinstance(strict_value, dict)
         or set(strict_value) != {"facts"}
         or not isinstance(strict_value.get("facts"), list)
-        or len(strict_value["facts"]) != 1
+        or not 0 <= len(strict_value["facts"]) <= 20
     ):
-        raise ThinkGraphIntakeError("thinkgraph_card_single_think_required")
+        raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
+    if not strict_value["facts"]:
+        return []
     extractor = _engraphis_structured_extractor(
         _SavedCardStructuredResult(
             strict_value,
@@ -173,7 +193,7 @@ def extract_saved_card_facts(
         pair_text,
         context=json.dumps(context, ensure_ascii=False, sort_keys=True),
     )
-    if len(facts) != 1 or any(
+    if len(facts) != len(strict_value["facts"]) or any(
         isinstance(fact.metadata, dict)
         and fact.metadata.get("extraction_fallback")
         for fact in facts
@@ -182,32 +202,57 @@ def extract_saved_card_facts(
     return facts
 
 
-def project_saved_card_think(facts: list[Any]) -> dict[str, Any]:
-    """Mechanically project the one validated Engraphis structured fact."""
-    if len(facts) != 1:
-        raise ThinkGraphIntakeError("thinkgraph_card_single_think_required")
-    fact = facts[0]
-    if fact.mtype != MemoryType.EPISODIC:
-        raise ThinkGraphIntakeError("thinkgraph_card_single_think_required")
-    metadata = fact.metadata if isinstance(fact.metadata, dict) else {}
-    structured = metadata.get("structured_extraction")
-    if not isinstance(structured, dict):
-        raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
-    raw_think = structured.get("think")
-    entities = structured.get("entities")
-    relationships = structured.get("relations")
-    if (
-        not isinstance(raw_think, dict)
-        or raw_think.get("summary") != fact.content
-        or not isinstance(entities, list)
-        or not isinstance(relationships, list)
-    ):
-        raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
-    return {
-        "summary": str(fact.content),
-        "title": str(fact.title or ""),
-        "importance": float(fact.importance),
-        "keywords": list(fact.keywords),
-        "entities": deepcopy(entities),
-        "relationships": deepcopy(relationships),
-    }
+def project_saved_card_thinks(facts: list[Any]) -> list[dict[str, Any]]:
+    """Mechanically project one validated Think per distinct Entity."""
+
+    if not 0 <= len(facts) <= 20:
+        raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
+    outputs: list[dict[str, Any]] = []
+    entity_keys: set[str] = set()
+    relationship_keys: set[tuple[str, str, str]] = set()
+    relationship_count = 0
+    for fact in facts:
+        if fact.mtype != MemoryType.EPISODIC:
+            raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
+        metadata = fact.metadata if isinstance(fact.metadata, dict) else {}
+        structured = metadata.get("structured_extraction")
+        if not isinstance(structured, dict):
+            raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
+        raw_think = structured.get("think")
+        entity = structured.get("entity")
+        relationships = structured.get("relations", [])
+        if (
+            not isinstance(raw_think, dict)
+            or raw_think.get("summary") != fact.content
+            or not isinstance(entity, str)
+            or not entity.strip()
+            or not isinstance(relationships, list)
+        ):
+            raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
+        entity_key = entity.casefold()
+        if entity_key in entity_keys:
+            raise ThinkGraphIntakeError("thinkgraph_card_entity_duplicate")
+        entity_keys.add(entity_key)
+        for relationship in relationships:
+            if not isinstance(relationship, dict):
+                raise ThinkGraphIntakeError("thinkgraph_card_think_payload_invalid")
+            identity = tuple(
+                str(relationship.get(key) or "").casefold()
+                for key in ("source", "relation", "target")
+            )
+            if identity in relationship_keys:
+                raise ThinkGraphIntakeError("thinkgraph_card_pair_duplicate")
+            relationship_keys.add(identity)
+        relationship_count += len(relationships)
+        if relationship_count > 20:
+            raise ThinkGraphIntakeError("thinkgraph_card_relationship_limit_invalid")
+        outputs.append({
+            "summary": str(fact.content),
+            "detail": raw_think.get("detail"),
+            "title": str(fact.title or ""),
+            "importance": float(fact.importance),
+            "keywords": list(fact.keywords),
+            "entity": entity,
+            "relationships": deepcopy(relationships),
+        })
+    return outputs

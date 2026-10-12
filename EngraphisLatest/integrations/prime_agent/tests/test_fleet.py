@@ -231,7 +231,7 @@ async def test_register_requires_register_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_registers_all_nine_tools() -> None:
+async def test_register_registers_all_ten_tools() -> None:
     fleet = PrimeAgentFleet(workspace="x")
     registered: list[tuple[str, dict]] = []
 
@@ -241,7 +241,7 @@ async def test_register_registers_all_nine_tools() -> None:
 
     target = _Target()
     fleet["researcher"].register(target)
-    assert len(registered) == 9
+    assert len(registered) == 10
     for name, schema in registered:
         assert name.startswith("engraphis_")
         assert "parameters" in schema
@@ -462,7 +462,7 @@ async def test_register_calls_register_tool_exactly_n_times() -> None:
 
 @pytest.mark.asyncio
 async def test_register_invokes_for_each_agent_independently() -> None:
-    """Each sub-agent's register() registers its OWN 9 tools. Registering
+    """Each sub-agent's register() registers its OWN 10 tools. Registering
     one agent must not bleed into another agent's binding."""
     f = PrimeAgentFleet(workspace="x")
     researcher_calls: list[str] = []
@@ -477,8 +477,8 @@ async def test_register_invokes_for_each_agent_independently() -> None:
 
     f["researcher"].register(_T(researcher_calls))
     f["coder"].register(_T(coder_calls))
-    assert len(researcher_calls) == 9
-    assert len(coder_calls) == 9
+    assert len(researcher_calls) == 10
+    assert len(coder_calls) == 10
     assert researcher_calls == coder_calls  # same tool surface
 
 

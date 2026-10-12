@@ -158,6 +158,40 @@ def test_inspector_removal_retires_only_selected_memory(engraphis_adapter):
                for evidence in node["properties"]["evidence"])
 
 
+def test_inspector_removal_retires_only_selected_relationship(engraphis_adapter):
+    from engraphis.core.interfaces import Edge, Node
+
+    service = engraphis_adapter.get_service()
+    workspace_id = service.store.get_or_create_workspace("project-edge-remove")
+    source = service.store.upsert_entity(Node(
+        id="", name="Source", ntype="person_or_concept", workspace_id=workspace_id,
+    ))
+    target = service.store.upsert_entity(Node(
+        id="", name="Target", ntype="person_or_concept", workspace_id=workspace_id,
+    ))
+    edge_id = service.store.upsert_edge(Edge(
+        id="",
+        src=source,
+        dst=target,
+        relation="SUPPORTS",
+        workspace_id=workspace_id,
+    ))
+
+    result = operations.private_operation(
+        "project-edge-remove", "retire_relationship", {"edgeId": edge_id},
+    )
+
+    assert result == {"ok": True, "edgeId": edge_id, "operation": "retire"}
+    row = service.store.conn.execute(
+        "SELECT valid_to FROM edges WHERE id=?", (edge_id,),
+    ).fetchone()
+    assert row["valid_to"] is not None
+    with pytest.raises(ValueError, match="engraphis_relationship_not_found"):
+        operations.private_operation(
+            "project-one", "retire_relationship", {"edgeId": edge_id},
+        )
+
+
 def test_discovered_read_uses_engine_schema_and_project_binding(engraphis_adapter):
     discovered = call(engraphis_adapter, "engraphis_discover_actions", task="stats", intent="read", limit=3)
     action = next(item for item in discovered["actions"] if item["canonical_action"] == "stats")
@@ -189,12 +223,12 @@ def _focus_request(candidate_count: int = 10) -> dict:
         authority = "ThinkGraph" if index % 2 == 0 else "KnowGraph"
         center_entity_id = "center-think" if authority == "ThinkGraph" else "center-know"
         visual_id = "visual-paired" if index < 2 else f"visual-{index}"
-        entity_id = f"subject-{index}"
+        entity_id = f"entity-{index}"
         candidates.append({
             "visualId": visual_id,
             "authority": authority,
             "entityId": entity_id,
-            "title": f"Subject {index}",
+            "title": f"Entity {index}",
             "description": None if index == 1 else f"Stored engraphis_adapter description {index}.",
             "incidentRelationships": [{
                 "edgeId": f"visual-edge-{index}",
@@ -204,7 +238,7 @@ def _focus_request(candidate_count: int = 10) -> dict:
                 "sourceTitle": "Shared center",
                 "targetVisualId": visual_id,
                 "targetId": entity_id,
-                "targetTitle": f"Subject {index}",
+                "targetTitle": f"Entity {index}",
                 "predicate": "EXPLAINS",
                 "direction": "outgoing",
                 "relationshipWeight": 0.31 + index / 100,
@@ -223,7 +257,7 @@ def _focus_request(candidate_count: int = 10) -> dict:
     }
 
 
-def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
+def test_focus_jev_makes_one_entity_choice_and_selects_eight_visual_bundles(
     monkeypatch: pytest.MonkeyPatch,
 ):
     payload = _focus_request()
@@ -278,10 +312,10 @@ def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
     body = calls[0][1]["json"]
     assert list(body["questions"]) == ["focus"]
     assert set(body["questions"]["focus"]["criteria"]) == set(choice_ids)
-    assert len(body["state"]["connected_subject_options"]) == 10
+    assert len(body["state"]["connected_entity_options"]) == 10
     assert all(
         "relationshipWeight" not in relationship
-        for option in body["state"]["connected_subject_options"]
+        for option in body["state"]["connected_entity_options"]
         for relationship in option["incident_relationships"]
     )
     assert decision["sourceRevision"] == "combined-projection:17"

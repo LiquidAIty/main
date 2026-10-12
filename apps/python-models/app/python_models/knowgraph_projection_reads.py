@@ -12,6 +12,21 @@ from app.python_models.knowgraph_graphiti_read_support import (
     persisted_knowgraph_jev,
     without_graphiti_embedding_vectors,
 )
+from app.python_models.knowgraph_know_contract import (
+    know_from_properties,
+    know_word_count,
+)
+
+_KNOWS_PER_ENTITY_LIMIT = 2
+
+
+def _node_type(labels: list[str]) -> str:
+    for label in ("Entity", "Episodic", "Community", "Saga"):
+        if label in labels:
+            return label
+    return labels[0] if labels else "NeoEntity"
+
+
 def _knowgraph_node_label(
     identifier: str,
     properties: dict[str, Any],
@@ -43,15 +58,84 @@ def _upsert_projection_node(
     nodes[node_id] = {
         "id": node_id,
         "label": _knowgraph_node_label(node_id, safe_properties),
-        "type": str(safe_properties.get("owlClass") or (
-            safe_labels[0] if safe_labels else "NeoEntity"
-        )),
-        "source": "know",
-        "properties": safe_properties,
+        "type": _node_type(safe_labels),
+        "source": "knowgraph",
+        "properties": {
+            **safe_properties,
+            **({"providerType": str(safe_properties["owlClass"])}
+               if safe_properties.get("owlClass") else {}),
+        },
     }
 
 
-def _portable_ui_fact(
+def _attach_entity_knows(
+    session: Any,
+    project_scope_ids: list[str],
+    nodes: dict[str, dict[str, Any]],
+    entity_ids: list[str],
+) -> None:
+    """Attach at most two exact ABOUT episodes to each projected Entity."""
+
+    if not entity_ids:
+        return
+    rows = neo4j_rows(session.run(
+        """
+        MATCH (episode:Episodic)-[:ABOUT]->(entity:Entity)
+        WHERE coalesce(toString(entity.uuid), elementId(entity)) IN $entityIds
+          AND toString(entity.group_id) IN $projectScopeIds
+          AND toString(episode.group_id) IN $projectScopeIds
+          AND toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
+        RETURN coalesce(toString(entity.uuid), elementId(entity)) AS entity_id,
+               coalesce(toString(episode.uuid), elementId(episode)) AS episode_id,
+               properties(episode) AS episode_props
+        ORDER BY entity_id,
+                 coalesce(episode.valid_at, episode.created_at) DESC,
+                 episode.created_at DESC,
+                 episode_id DESC
+        """,
+        entityIds=entity_ids,
+        projectScopeIds=project_scope_ids,
+    ))
+    counts: dict[str, int] = {}
+    for row in rows:
+        entity_id = str(row.get("entity_id") or "").strip()
+        episode_id = str(row.get("episode_id") or "").strip()
+        if not entity_id or not episode_id or entity_id not in nodes:
+            continue
+        count = counts.get(entity_id, 0)
+        properties = without_graphiti_embedding_vectors(
+            row.get("episode_props")
+            if isinstance(row.get("episode_props"), dict)
+            else {}
+        )
+        know = know_from_properties(properties)
+        if know is None:
+            continue
+        entity_properties = nodes[entity_id].setdefault("properties", {})
+        entity_properties["attachedWordCount"] = int(
+            entity_properties.get("attachedWordCount") or 0
+        ) + know_word_count(know)
+        if count >= _KNOWS_PER_ENTITY_LIMIT:
+            continue
+        content = str(properties.get("content") or "")
+        evidence = entity_properties.setdefault("evidence", [])
+        evidence.append({
+            "id": episode_id,
+            "graphitiEpisodeId": episode_id,
+            "graphitiEntityId": entity_id,
+            "title": str(properties.get("name") or "Know"),
+            "idea": know["idea"],
+            "counterIdea": know["counterIdea"],
+            "body": content,
+            "content": content,
+            "properties": properties,
+            "validFrom": properties.get("valid_at"),
+            "ingestedAt": properties.get("created_at"),
+        })
+        counts[entity_id] = count + 1
+
+
+def _relationship_properties(
     fact_uuid: str,
     graphiti_relationship_type: str,
     properties: dict[str, Any],
@@ -67,9 +151,8 @@ def _portable_ui_fact(
     jev = persisted_knowgraph_jev(fact_uuid, properties)
     return {
         **properties,
-        "authority": "know",
+        "authority": "knowgraph",
         "graphitiStore": "neo4j",
-        "portableKind": "know",
         "graphitiFactUuid": fact_uuid,
         "graphitiRelationshipType": graphiti_relationship_type,
         "graphitiRelation": str(
@@ -118,7 +201,7 @@ def _projection_relationship(
     target_properties = without_graphiti_embedding_vectors(
         row.get("to_props") if isinstance(row.get("to_props"), dict) else {}
     )
-    properties = _portable_ui_fact(
+    properties = _relationship_properties(
         relationship_id,
         relationship_type,
         relationship_properties,
@@ -136,40 +219,8 @@ def _projection_relationship(
             or properties.get("graphitiRelation")
             or relationship_type
         ),
-        "source": "know",
         "properties": properties,
     }
-
-
-def _hydrate_projection_episode_nodes(
-    session: Any,
-    relationships: list[dict[str, Any]],
-    project_scope_ids: list[str],
-    nodes: dict[str, dict[str, Any]],
-) -> None:
-    episode_ids = list(dict.fromkeys(
-        episode_id
-        for relationship in relationships
-        for episode_id in graphiti_episode_ids(relationship.get("properties") or {})
-    ))
-    if not episode_ids:
-        return
-    rows = neo4j_rows(session.run(
-        """
-        MATCH (episode:Episodic)
-        WHERE toString(episode.uuid) IN $episodeIds
-          AND toString(episode.group_id) IN $projectScopeIds
-        RETURN toString(episode.uuid) AS node_id,
-               labels(episode) AS node_labels,
-               properties(episode) AS node_props
-        """,
-        episodeIds=episode_ids,
-        projectScopeIds=project_scope_ids,
-    ))
-    for row in rows:
-        _upsert_projection_node(
-            nodes, row.get("node_id"), row.get("node_labels"), row.get("node_props")
-        )
 
 
 def read_knowgraph_projection(
@@ -189,11 +240,17 @@ def read_knowgraph_projection(
         with driver.session(database=database) as session:
             node_rows = neo4j_rows(session.run(
                 """
-                MATCH (n)
+                MATCH (n:Entity)
                 WHERE toString(n.group_id) IN $projectScopeIds
+                OPTIONAL MATCH (community:Community)-[:HAS_MEMBER]->(n)
+                WHERE toString(community.group_id) IN $projectScopeIds
+                WITH n,
+                     min(coalesce(toString(community.uuid), elementId(community)))
+                       AS community_id
                 RETURN DISTINCT coalesce(toString(n.uuid), elementId(n)) AS node_id,
                        labels(n) AS node_labels,
-                       properties(n) AS node_props
+                       properties(n) AS node_props,
+                       community_id
                 ORDER BY node_id
                 LIMIT $limit
                 """,
@@ -208,10 +265,16 @@ def read_knowgraph_projection(
                     row.get("node_labels"),
                     row.get("node_props"),
                 )
-            node_ids = list(nodes)
-            relationship_rows = [] if not node_ids else neo4j_rows(session.run(
+                node_id = str(row.get("node_id") or "").strip()
+                community_id = str(row.get("community_id") or "").strip()
+                if node_id in nodes and community_id:
+                    nodes[node_id]["community_id"] = community_id
+                    nodes[node_id]["properties"]["communityId"] = community_id
+            entity_ids = list(nodes)
+            _attach_entity_knows(session, project_scope_ids, nodes, entity_ids)
+            relationship_rows = [] if not entity_ids else neo4j_rows(session.run(
                 """
-                MATCH (a)-[r]->(b)
+                MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
                 WITH a, r, b,
                      coalesce(toString(a.uuid), elementId(a)) AS from_id,
                      coalesce(toString(b.uuid), elementId(b)) AS to_id
@@ -232,7 +295,7 @@ def read_knowgraph_projection(
                 LIMIT $relationshipLimit
                 """,
                 projectScopeIds=project_scope_ids,
-                nodeIds=node_ids,
+                nodeIds=entity_ids,
                 relationshipLimit=min(1_000, limit * 4),
             ))
             relationships = [
@@ -240,9 +303,6 @@ def read_knowgraph_projection(
                 for row in relationship_rows
                 if (projected := _projection_relationship(row, nodes)) is not None
             ]
-            _hydrate_projection_episode_nodes(
-                session, relationships, project_scope_ids, nodes
-            )
             return {"nodes": list(nodes.values()), "relationships": relationships}
     finally:
         close = getattr(driver, "close", None)
@@ -271,7 +331,7 @@ def read_knowgraph_neighborhood(
         with driver.session(database=database) as session:
             center_rows = neo4j_rows(session.run(
                 """
-                MATCH (n)
+                MATCH (n:Entity)
                 WHERE (elementId(n) = $nodeId OR toString(n.uuid) = $nodeId)
                   AND toString(n.group_id) IN $projectScopeIds
                 RETURN coalesce(toString(n.uuid), elementId(n)) AS node_id,
@@ -294,10 +354,10 @@ def read_knowgraph_neighborhood(
                 )
             relationship_rows = neo4j_rows(session.run(
                 """
-                MATCH (center)
+                MATCH (center:Entity)
                 WHERE (elementId(center) = $nodeId OR toString(center.uuid) = $nodeId)
                   AND toString(center.group_id) IN $projectScopeIds
-                MATCH (a)-[r]-(b)
+                MATCH (a:Entity)-[r:RELATES_TO]-(b:Entity)
                 WHERE (a = center OR b = center)
                   AND toString(a.group_id) IN $projectScopeIds
                   AND toString(b.group_id) IN $projectScopeIds
@@ -323,8 +383,11 @@ def read_knowgraph_neighborhood(
                 for row in relationship_rows
                 if (projected := _projection_relationship(row, nodes)) is not None
             ]
-            _hydrate_projection_episode_nodes(
-                session, relationships, project_scope_ids, nodes
+            _attach_entity_knows(
+                session,
+                project_scope_ids,
+                nodes,
+                list(nodes),
             )
             return {"nodes": list(nodes.values()), "relationships": relationships}
     finally:

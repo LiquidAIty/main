@@ -19,11 +19,40 @@ models = semantic reasoning
 saved Cards and graph topology = identity and authority
 ```
 
+## MVP roles and status vocabulary
+
+The MVP is a persistent Project workbench. A new agent Project attaches six core saved Cards by
+their current persisted revisions: Main, Builder, ThinkGraph, Magnetic, Team, and KnowGraph. The
+server seed adds Main → Builder as orange `flow` authority and Team ↔ Magnetic as blue
+`magentic_option` membership. Optional/domain Cards such as WorldView, WorldSignals, Trading, Analyst,
+or Quant exist only when deliberately attached to a saved Project; client examples and historical
+screenshots are not universal topology authority.
+
+The core roles are:
+
+- **Main:** fast human-facing Project conversation and bounded orchestration. Its current source-default
+  Card has no Hermes Web toolset and no ordinary coding tools. Its saved prompt delegates sustained work,
+  grounds replies in both Project reasoning and known evidence, and compares two plausible options with a
+  recommendation when a material part is questionable; no deterministic router enforces that prose flow.
+- **Builder:** construction specialist for PromptSpecs, Cards, applications, UI, code, artifacts, and
+  executable missions. Hermes owns its terminal and environment.
+- **ThinkGraph:** saved Engraphis reasoning specialist and the current completed User/Main-pair intake.
+- **KnowGraph:** saved sourced-research specialist with Hermes Web and Graphiti read/queued-write tools.
+- **Magnetic:** approved saved-Card TaskGraph over an exact blue roster.
+- **Team:** separate generic native Hermes Team/Kanban behavior owned by saved `card_team`/profile
+  `team`; it is not ordinary delegation and is not KnowGraph behavior.
+
+Every behavioral statement in canonical documentation is classified as **CURRENT**, **APPROVED
+DIRECTION**, or **DEFERRED**. A source-defined operation, seed, test, or UI does not prove loaded or
+persisted behavior for an existing Project.
+
 ## Source-owner map
 
-Use Codebase Memory first for covered structural discovery, then read the complete current source.
-When CBM is unavailable or a path is excluded, use the bounded direct-source fallback in
-[`skills/codebasedmemory.md`](skills/codebasedmemory.md).
+For PromptSpec repository work, the Primary uses the Codebase Memory CLI as a bounded directional map,
+then reads complete current source. Support scouts receive the resulting anchors and use direct source;
+they do not independently operate CBM. Product Cards separately use only their saved granted `cbm.*`
+operations. See [`skills/codebasedmemory.md`](skills/codebasedmemory.md) for coverage, source fallback,
+and inverse deletion/rename mechanics.
 
 | Concern | Current owner | Contract |
 | --- | --- | --- |
@@ -41,7 +70,7 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | Official MCP host | `apps/python-models/app/{mcp_host,mcp_auth,mcp_catalog_runtime,mcp_catalog_projection,mcp_provider_operations,mcp_observability,mcp_request_dispatch,mcp_transport}.py` | One SDK transport/dispatch host with literal owners for authentication, process-wide frozen catalog lifecycle, stateless SDK/provider projection, provider publication/calls, request dispatch, transport, and diagnostics; external clients and Hermes callbacks consume the same canonical definitions |
 | CodeGraph | Official Codebase Memory MCP through the application host | Repository structure and source relationships; CBM is the sole graph writer |
 | ThinkGraph | Engraphis through `engraphis.py` and the responsibility-specific `engraphis_operations.py`, `thinkgraph_projection.py`, `thinkgraph_completed_pair_extraction.py`, `thinkgraph_completed_pair_preparation.py`, `thinkgraph_completed_pair_settlement.py`, `thinkgraph_relationship_vocabulary.py`, `thinkgraph_relationship_classification.py`, and `thinkgraph_relationship_settlement.py` modules in `apps/python-models/app/python_models/` | Project reasoning, canonical entities, the exact saved-Card structured extraction contract, completed-pair identity/dedup/non-writing preparation, append-only native episodic Think settlement, project relationship vocabulary/promotion, Jev source-pair classification/provenance, accepted-decision graph settlement, structured-extractor incidence, and the sole persistent ThinkGraph store |
-| KnowGraph | Graphiti/Neo4j through `services/knowgraph` | Sourced knowledge and provenance |
+| KnowGraph | Controlled `GraphitiLatest/` fork plus `services/knowgraph` and the Python provider adapter | Sourced Entity Knows, citations, exact structural `ABOUT` attachment, native Relationships, Communities, Sagas, provenance, queued ingestion, exact reads, and native single-record removal |
 | AgentGraph | AGE/PostgreSQL through `agentgraph_topology.py` and `agentgraph_run_observations.py` | Saved Card relationships/authorization and truthful Run/reference/artifact observations remain separate writers over one AGE authority |
 
 ## Authority chain
@@ -152,6 +181,22 @@ authentication remains scoped to the Hermes installation/profile mechanisms; Liq
 proven distinct per-user provider credentials while two users share one reusable Card profile. Do not
 claim that multi-user credential-isolation requirement from the profile/session isolation tests alone.
 
+## Ordinary delegation, Team, and Magnetic
+
+These are separate execution contracts:
+
+| Mechanism | Current owner | Current meaning |
+| --- | --- | --- |
+| Ordinary delegation | Saved `subagentType` projected by `profileMaterialization.ts`, executed by Hermes `delegate_task` | `none`, leaf depth one, or recursive depth two; transient child work inside the owning Card |
+| Team | Saved `card_team`/profile `team` plus Hermes `kanban.task_mode: team` | One durable Team root, native decomposition into temporary same-profile workers, review, and synthesis in Hermes SQLite Kanban |
+| Magnetic | Saved `card_magentic`, exact blue topology, and `magnetic_taskgraph_*` Python owners | One approved mission and exact saved worker ceiling; the same Magnetic root orchestrates dependency rounds and supplies the final result |
+
+The internal Team workflow marker remains `auto-team-v1`; it names the current generic Hermes Team
+implementation and does not authorize rejected KnowGraph AutoTeam behavior. Team workers cannot open a
+nested Team, leaf, or recursive delegation tree. Magnetic may assign the saved Team Card as one blue
+worker. When Team is the only exact blue worker, current source deliberately stages the native Team root
+directly; that bounded integration does not collapse the two mechanisms.
+
 ## MCP and Codebase Memory
 
 `apps/python-models/app/mcp_host.py` is the one official MCP composition/launch boundary;
@@ -162,7 +207,7 @@ protocol-neutral Python operation definitions through the Hermes Dynamic Tools c
 Catalog/readback tests and loaded internal-tool execution are proven separately from external-client live
 acceptance.
 
-Codebase Memory is an official MCP dependency of that host. Canonical startup resolves the current official
+Codebase Memory is an official MCP dependency of the product host. Canonical startup resolves the current official
 `codebase-memory-mcp` command from the machine's normal installed PATH; the repository does not retain a
 versioned copy or checksum pin. LiquidAIty owns one long-lived application stdio frontend. Codex Desktop may own one separate
 frontend through its official direct registration, independent of LiquidAIty and GPT/plugin availability. Both
@@ -170,9 +215,15 @@ join the same upstream per-account daemon/cache/runtime identity outside the rep
 plugins, and connectors do not launch another frontend. The upstream watcher owns ordinary freshness;
 indexing/deletion are explicit application-MCP administrative operations.
 
-CodeGraph reads use granted `cbm.*` MCP tools and bounded CBM references selected into the canonical
+Product CodeGraph reads use granted `cbm.*` MCP tools and bounded CBM references selected into the canonical
 IDF. There is no separate browser CodeGraph route or catalog. Builder and other authorized Cards call
 the official CBM provider through the application MCP host; saved Card grants remain the ceiling.
+
+Codex repository development is a separate consumer. During a PromptSpec, only the Primary uses the
+installed one-shot CBM CLI, before dispatching read-only scouts. It uses CBM as a directional map of
+symbols and relationships, passes exact anchors to the scouts, and verifies every material claim against
+current source. Support agents do not open their own CBM connection. CBM does not decide intent,
+architecture, completion, or runtime truth.
 
 The canonical project is `C-Projects-LiquidAIty-main` at `C:/Projects/LiquidAIty/main`.
 
@@ -187,37 +238,115 @@ AgentGraph = AGE Card topology and truthful execution observations
 
 Each graph has one authority and one writer. Run-scoped Context Selections may carry bounded provider
 IDs, data, and provenance together in `in.idf`; that transport is not another graph and does not copy
-ownership. Main retains explicit ThinkGraph writes and deliberate delegation. It also submits an exact
-completed User/Main pair to the approved Engraphis lifecycle only after the visible Main turn and
-conversation persistence complete:
+ownership. Main may read bounded graph context and deliberately delegate, but it is not the owner of
+ThinkGraph writes. After the visible Main turn and conversation persistence complete, the exact completed
+User/Main pair enters the Engraphis-owned lifecycle:
 
 ```text
 non-persisting completed-pair preparation
-  existing authoritative Think -> duplicate noop -> stop
+  existing authoritative Think for the exact completed-pair identity -> duplicate noop -> stop
   new pair
     -> exact saved ThinkGraph Card through the normal saved-Card/App Server Run path
-    -> Engraphis llm_structured: exactly one episodic Think + canonical entities/concepts
-       + free-form directed relationship proposals
-    -> freeze the turn-start latest-prior-Think snapshot for existing endpoints
+    -> Engraphis llm_structured: zero or more Entity-specific episodic Thinks,
+       at most one Think per Entity + free-form directed Relationship proposals
     -> bounded graph-aware Jev classification of every proposed durable edge
-    -> append exactly one native EPISODIC Memory with validated structured_extraction.think
-       and resolve_conflicts=False
-    -> native direct structured_extractor incidence for accepted/reused canonical entities
-    -> accepted native endpoints plus Jev winner/distribution/strength edges only
+    -> atomically append one native EPISODIC Memory per Think with validated
+       structured_extraction.think and resolve_conflicts=False
+    -> one native direct structured_extractor incidence from each Think to its exact Entity
+    -> upsert Card-proposed accepted endpoints only after every relationship classification succeeds
+    -> persist Jev winner/distribution/strength edges only
     -> event-driven settled projection refresh
 ```
 
-Engraphis owns canonical identity, memory/entity incidence, bi-temporal fields, native evidence, graph scene
-projection, and its existing force/galaxy vocabulary. One portable ThinkGraph unit is a **Think**: exactly one
-completed User/Main pair stored as one native append-only `EPISODIC` Memory whose semantic authority is
-`structured_extraction.think`. Native code owns entry time and saved-Card/run provenance. A canonical entity's
-Latest Think and Earlier Thinks are resolved only through direct `memory_entities` incidence with
+Engraphis owns Entity identity, memory/entity incidence, bi-temporal fields, native evidence, graph scene
+projection, and its existing force/galaxy vocabulary. One portable ThinkGraph unit is a **Think**: one
+Entity-specific native append-only `EPISODIC` Memory whose semantic authority is
+`structured_extraction.think`. Its compact `summary` is the card face and its optional unbounded technical
+`detail` is the same Think's **More** disclosure. Native code owns entry time and saved-Card/run provenance.
+An Entity's Thinks are resolved only through direct `memory_entities` incidence with
 `source_kind="structured_extractor"` plus a validated Think payload, newest-first by native Engraphis time.
-The Card's free-form relationship remains structured context, while Jev independently chooses the canonical
-edge winner, full distribution, and relationship strength. Thinks are excluded from Engraphis semantic
+The Card chooses proposed Entity names, endpoints, direction, and free-form Relationships. Jev
+independently chooses the canonical edge winner, full distribution, and relationship strength. The
+all-classifications-before-mutation transaction prevents unclassified endpoint persistence; Jev does not
+semantically choose or authorize the endpoints themselves. Thinks are excluded from Engraphis semantic
 distillation, retention archival, and profile consolidation. The old automatic proxy/replay and regex-first
 paths remain removed; there is no candidate system, approval state, shadow graph, second extractor, direct
 model edge writer, or whole-graph reclassification loop. This lifecycle does not write KnowGraph.
+
+### Current graph context
+
+Model-facing graph context includes exact provider Data Anchors plus one automatically supplied,
+identity-and-Relationship-only canonical Entity map. Python implements `project_graph.list_entities` and
+`project_graph.read_entity_context`. Main, Builder, ThinkGraph, and KnowGraph preparation use native
+Engraphis recall and native Graphiti Entity search/exact `ABOUT` hydration to produce bounded candidates,
+then ask Jev for one non-persisting relevance distribution per authority. Deterministic code selects the
+highest-probability record and excludes the Recent record from those candidates. The default packet is:
+
+```text
+current user request
++ complete exact Entity/Relationship map
++ one most Relevant Think + one distinct most Recent Think
++ one most Relevant Know + one distinct most Recent Know
+```
+
+Thinks are selected for the strongest faithful optimistic steelman of the user's current idea. Every valid
+Know already contains its cited supporting idea and cited counter idea. Equal Think/Know counts therefore
+make the prepared content intentionally two-thirds supportive and one-third challenging. Missing native
+records shrink the packet honestly; Jev never creates graph content, truth, authority, or write permission.
+Jev failure leaves relevance unavailable and never relabels recency as relevance.
+
+The exact Entity inspector performs the same native-read/Jev pattern inside that Entity. It defaults to one
+Relevant record; one small arrow swaps the same space to the distinct Recent record. `Search` supplies the
+current Entity query and transient `Results` may request 1–12 records for the detailed inspector only.
+Main/Builder's automatic packet remains at the one-result default. KnowGraph is the landing authority when
+an Entity has both Think and Know data; ThinkGraph remains the left tab and KnowGraph the right tab.
+
+One Know is one atomic `know.v1` Graphiti episode:
+
+```text
+idea.body + optional idea.detail + one or more idea.citations
++ counterIdea.body + optional counterIdea.detail + one or more counterIdea.citations
+= one Know attached to exactly one Entity
+```
+
+Python rails projects `graphiti.add_memory_to_entity` as that strict model-facing schema, canonicalizes the
+single JSON episode and exact URL list, then invokes Graphiti's unchanged native queued operation. A missing
+side or side without a citation fails validation; a one-sided cited episode is not projected as a Know.
+Only Entities render as Project graph nodes. Thinks, Knows, Graphiti episodes, citations, native references,
+and supporting episode IDs remain attached properties/evidence/provenance. Each visible body is compact and
+each side's optional depth remains inside the same record behind **More**.
+
+The combined view uses one fixed presentation. The ordinary color-key labels **Think** and **Know** select
+authority-only projections; clicking renderer background returns to combined. Know defaults to native
+Graphiti Community grouping and Think defaults to the existing Engraphis Galaxy layout, while the detailed
+graph settings inspector retains the native layout choices. Entity radius linearly normalizes the complete
+attached Think-and-Know word count from least to most. That transient visual metric never changes Jev edge
+probability, gravity mass, retrieval, or stored graph meaning.
+
+KnowGraph may use selected Thinks only as research framing. Sourced Knows remain Graphiti evidence.
+Its dedicated queued `add_memory_to_entity` path writes one structural `ABOUT` edge to an exact Entity in
+the same native episode transaction, leaves extraction-owned `MENTIONS` independent, updates Graphiti
+communities by default, and accepts native Saga continuity. The public generic `add_memory` behavior remains
+unchanged. Quick-Web evidence handoff and a requested-time sorting interaction remain unimplemented and must
+not be described as current.
+
+### Jev current boundary
+
+CURRENT Jev responsibilities are bounded and optional:
+
+- classify each saved ThinkGraph Card-proposed directed relationship before graph mutation, choosing
+  the canonical edge label, distribution, and strength without choosing the endpoints;
+- perform read-only graph focus/reranking only when the explicit focus path is invoked;
+- narrow an existing authorized Card tool set only when saved AutoTools is enabled; failure preserves
+  the baseline set and Jev never widens the saved ceiling;
+- choose only among backend-authored compatible model candidates when saved AutoModel is enabled, with
+  no provider or model fallback.
+
+Default Engraphis recall may use its local vector, lexical, and graph retrieval arms, but remote
+Jev/LLM retrieval-plan selection is not the default: current calls use planning off and
+`jev_assisted=false` unless an explicit path opts in. The source-defined KnowGraph Jev classification
+route has no proven production caller, and no current source owner makes Jev a final request-fulfillment
+judge, scheduler, graph writer, or endpoint authority.
 
 Visual activity may be driven only by real reads, selections, deliveries, traversals, writes, Run
 completion, or failure. There is no compatibility attention graph or generic tool-event
@@ -289,7 +418,7 @@ LiquidAIty execution boundary. No other Hermes customization is accepted by this
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The seven bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Experimental Dynamic Tools, Card Python, session-scoped Bot roster enforcement, Card-owned profile fields/capability fencing/profile-scoped learning and the additive bundled Builder inspection skill, exact submission/Stop/model/usage evidence, AutoTeam/Team TaskGraph, and Magnetic assignment ceiling/lineage. Hermes retains profile creation, bundled-skill seeding, execution, sessions, Bot delivery, learning, queue, task-ledger, and PTY ownership. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
+| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. This Entity/Think/Know pass does not add or redesign Team, AutoTeam, Magnetic, bearer, settlement, cancellation, task-ledger, or session behavior. Hermes retains profile creation, bundled-skill seeding, execution, sessions, Bot delivery, learning, queue, task-ledger, and PTY ownership. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
 `HermesLatest/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
@@ -317,14 +446,21 @@ The controlled upstream globe import has this bounded local divergence:
 | `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/satellites.js::_handleSatelliteClick,_installClickHandler`; `src/data/satellitesClickSelection.test.mjs` | When the current tracked marker is the top Cesium pick, use native `drillPick` to inspect the first distinct hit instead of ignoring a different satellite underneath it. Ordinary frontmost picking, sibling-layer ownership, current-only no-op, empty-click clear, tracking, labels, catalogs, orbital propagation and rendering stay on their existing paths. No public adapter can resolve this native click-handler early return. | The production callback regression covers ordinary and occluded A-to-B switching plus current-only, sibling and empty-click behavior. A mounted WorldView second click changed tracking from NORAD 45358 to 28474 and showed the new native readout. Fork cost is one conditional deeper pick and a test seam; remove these hunks when upstream supplies equivalent click resolution. No saved data or runtime configuration is migrated. |
 | `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/traffic.js::disable,destroy`; `src/data/trafficTiming.test.mjs` | Make traffic teardown idempotent when serialized React/native remount cleanup reaches an already-removed point collection. The existing application lifecycle and DataLayerManager remain the owners; the guard creates no second teardown path, viewer, layer state, or fallback. | A loaded WorldView remount reproduced the null point-collection write through the real DataLayerManager teardown. The focused native test destroys traffic twice after initialization and requires no error while retaining the traffic timing invariants. Fork cost is one null guard plus the regression assertion. Roll back both together when upstream teardown becomes idempotent; no saved Project, camera, layer, graph, or source state is migrated. |
 
+The vendored Graphiti fork has this bounded additive divergence:
+
+| Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
+| --- | --- | --- | --- |
+| `getzep/graphiti` core `0.30.2` / MCP `1.1.0` at `86f1c941bea7bf53fa45fe4e08c03244b4990eee` | `GraphitiLatest/graphiti_core/{edges.py,graphiti.py}`; `graphiti_core/models/edges/edge_db_queries.py`; `driver/kuzu_driver.py`; `utils/{bulk_utils.py,maintenance/node_operations.py}`; `mcp_server/src/{graphiti_mcp_server.py,models/response_types.py,services/queue_service.py}`; exact attachment tests; `apps/python-models/requirements.txt` | Add one structural `ABOUT` edge and one queued `add_memory_to_entity` tool for a caller-declared exact Entity UUID/name. A missing exact Entity may be created in the same native episode transaction; semantic extraction cannot deduplicate it onto a different Entity. `ABOUT` never substitutes for extraction-owned `MENTIONS`. The dedicated tool preserves native episode extraction, facts, provenance, temporal fields, community refresh (on by default), Saga continuity, queue ordering, and native episode removal. Existing `add_memory`, `add_triplet`, search, community, Saga, and deletion behavior remains available and unchanged. LiquidAIty imports the controlled fork directly instead of maintaining a Graphiti replacement. | Core exact-attachment/atomicity tests and MCP queue/signature/parity tests cover the additive path and ordinary no-attachment behavior. Fork cost is one edge type, optional exact-attachment arguments, and one additive MCP tool suitable for an upstream PR. Rollback removes those additions and returns the Python requirement to upstream Graphiti; existing Entity, episode, fact, Community, and Saga data require no rewrite, while records that rely on `ABOUT` would lose only that new attachment view. |
+
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
-| `Coding-Dev-Tools/engraphis` `1.7.9` from upstream `main` at `619f49860f293ab1826aaf4e11a158bc22f03fcf` | `EngraphisLatest/pyproject.toml`, `requirements.txt`; `engraphis/mcp_server.py::{classic_mcp,smart_mcp,_safe_run_stdio_async}`; `engraphis/{mcp_http_cli,dashboard_app}.py`; `integrations/prime_agent/src/engraphis_prime_agent/mcp_client.py`; corresponding MCP/HTTP/package/Prime tests | Port only Engraphis's MCP binding and bundled client from SDK v1 `FastMCP`/`ClientSession` to official SDK v2 `MCPServer`/`Client(mode="auto")`. Preserve all 39 Classic compatibility handlers, the Smart 9 handlers, memory/Think semantics, schemas, storage, consent, authentication, stdio wire isolation, and HTTP DNS-rebinding protection. LiquidAIty publishes only the Smart 9; advanced Classic actions remain reachable only through Engraphis's own discover/execute gateway. | Upstream MCP, HTTP, consent, dispatch, packaging, contract, annotation, and Prime client tests pass; direct disposable modern (`2026-07-28`) and legacy (`2025-11-25`) clients list the same Smart 9 and complete remember/recall/get/update/discovery/read/conflict/session flows. Fork cost is one mechanical SDK-major port. Remove this row and return `apps/python-models/requirements.txt` to upstream Engraphis when upstream ships the equivalent v2 port; no memory database or saved Card migration is required. |
+| `Coding-Dev-Tools/engraphis` `1.7.9` from upstream `main` at `619f49860f293ab1826aaf4e11a158bc22f03fcf` | `EngraphisLatest/pyproject.toml`, `requirements.txt`; `engraphis/mcp_server.py::{classic_mcp,smart_mcp,_safe_run_stdio_async}`; `engraphis/{mcp_http_cli,dashboard_app}.py`; `integrations/prime_agent/src/engraphis_prime_agent/mcp_client.py`; corresponding MCP/HTTP/package/Prime tests | Port Engraphis's MCP binding and bundled client from SDK v1 `FastMCP`/`ClientSession` to official SDK v2 `MCPServer`/`Client(mode="auto")`. Preserve all 40 Classic handlers, the Smart 10 handlers, memory/Think semantics, schemas, storage, consent, authentication, stdio wire isolation, and HTTP DNS-rebinding protection. LiquidAIty publishes the Smart surface; advanced Classic actions remain reachable through Engraphis's own discover/execute gateway. | Upstream MCP, HTTP, consent, dispatch, packaging, contract, annotation, and Prime client tests pass; direct disposable modern (`2026-07-28`) and legacy (`2025-11-25`) clients list the same Smart 10 and complete remember/recall/get/update/discovery/read/conflict/session flows. Fork cost is one mechanical SDK-major port. Remove this row and return `apps/python-models/requirements.txt` to upstream Engraphis when upstream ships the equivalent v2 port; no memory database or saved Card migration is required. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::resolve_capability`; `apps/python-models/app/python_models/engraphis_operations.py::_invoke_tool` | Promote the existing capability-ID/schema-digest resolver to a public function so the authenticated Project adapter can inspect the exact discovered Smart action schema and inject `workspace` only when that action declares it. The resolver body, TTL/HMAC validation, availability gate, LRU refresh, action selection and execution remain unchanged. | Required proof is the focused Engraphis Smart discovery/execute suite plus the application operation/catalog contract. Fork cost is one identifier/API promotion suitable for an upstream PR. Remove the application dependency when upstream exposes an equivalent public capability-inspection API; never copy or reimplement its capability index. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::smart_tool_catalog`; `EngraphisLatest/engraphis/backends/extractor.py::StructuredLLMExtractor.extraction_contract`; `apps/python-models/app/python_models/engraphis_operations.py`; `apps/python-models/app/python_models/thinkgraph_completed_pair_extraction.py` | Expose two read-only integration contracts that Engraphis already owns: the exact registered Smart MCP Tool models for synchronous host composition, and the exact structured-extraction prompt/schema for a saved Card that performs the model call. The application no longer reads MCPServer's private `_tool_manager` or extractor-private prompt/schema helpers, and it does not copy either contract. | Focused Smart MCP and extractor tests require each public result to equal the actually served/generated contract; application ThinkGraph and operation tests cover the consumers. Fork cost is two additive public methods suitable for upstream submission. Retire either method when upstream exposes an equivalent supported API. |
-| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: `semanticRelationshipStrength`, `semanticRelationshipWidth`, `semanticRelationshipDistance`, `semanticRelationshipSpring`, `turnHeatIntensity`, `preserveRefreshPosition`, `solarpunkMaterialRecipe`, `paintSolarpunkMaterial`, `materialCacheKey`, `handleNodeClick`, and the existing force/paint/`setData` call sites | Render Jev relationship strength through native edge width/spring/distance, preserve mature coordinates/camera across authoritative revisions, paint transient current-turn heat, and opt explicitly annotated render nodes into one cached Solarpunk material seam: blue-dominant Think with a soft green material accent, orange-dominant Know with a soft yellow material accent, or a unified dark paired surface with separate blue and orange authority treatment. Lavender marks recent turn activity; neutral cyan-white remains available for selection/Focus emphasis, and the opposite authority hue never decorates a single-authority node. Node-provided authority colors and active state key the cache without changing modality. When an embed supplies `onNodeDoubleClick`, the renderer resolves the click pair before either callback so a single-click inspector cannot move or cover the second hit; embeds without that option retain immediate upstream click behavior. Existing public style names, presets, palettes, shared node geometry, graph scene, inspectors, Galaxy black-hole authority/physics, controls, focus behavior, and layout engine remain authoritative. No second style, layout, or graph is introduced. | `ThinkGraphSemanticPhysics.spec.ts` exercises the real renderer internals for all three canonical-color modalities, single-authority secondary accents, lavender turn activity, unified paired material, and active exposure/cache identity; focused renderer and graph-state tests plus client production typecheck cover the retained seams. Sync cost is a small call-site rebase when deliberately adopting a later renderer asset. Rollback removes these helpers/call-site mappings and restores the upstream width/force/refresh behavior without changing graph data. |
+| Same Engraphis baseline | `EngraphisLatest/engraphis/core/engine.py::remember_entities`; `engraphis/service.py::remember_entities`; `engraphis/mcp_server.py::engraphis_remember_entities`; generated MCP contracts, bundled integrations, docs, and tests | Add one exact Entity-memory batch operation. Each Fact has exactly one caller-declared Entity incidence; an existing explicit ID/name mismatch fails, new exact Entities and their memories/incidences settle atomically, and automatic text-derived incidence is disabled for this path. Existing generic remember, extraction, graph, and Smart discovery behavior is unchanged. | Engine rollback and incidence tests, Smart/classic inventory and dispatch tests, generated-contract checks, bundled integration tests, and application settlement tests cover the path. Fork cost is one additive service/Smart/Classic operation suitable for an upstream PR. Rollback removes that operation and returns ThinkGraph to no exact Entity attachment; existing Engraphis data needs no migration. |
+| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: existing semantic physics/material/click helpers plus `explicitVisualSizeWeight`, `linearVisualNodeRadius`, and their render call site | Preserve Jev relationship width/spring/distance and gravity/centrality while accepting one optional transient normalized size weight. Entity radius then scales linearly from least to most attached Think-and-Know words without rewriting `gravity_mass`, relationship probability, storage, or retrieval. Existing styles—including the work-in-progress Solarpunk material—presets, palettes, graph scene, inspectors, Galaxy Focus physics, controls, and layout engine remain unchanged. | `ThinkGraphSemanticPhysics.spec.ts` exercises real renderer relationship physics and exact linear sizing; focused projection/surface tests prove all-history word aggregation, combined sums, isolated views, and Relevant/Recent inspector swapping. Fork cost is two pure radius helpers plus one render branch. Rollback removes the optional field handling and restores native degree/mass sizing without changing graph data. |
 
 ## Current proof limits
 

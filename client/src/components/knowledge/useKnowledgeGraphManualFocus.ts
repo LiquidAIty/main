@@ -234,7 +234,7 @@ export function useKnowledgeGraphManualFocus({
             status: decision.status,
             decision,
             readWarning: readWarning || (
-              `Provider neighborhood has ${candidates.length} subjects; `
+              `Provider neighborhood has ${candidates.length} Entities; `
               + `JevFocus accepts at most ${MAX_JEV_FOCUS_CANDIDATES}.`
             ),
           }

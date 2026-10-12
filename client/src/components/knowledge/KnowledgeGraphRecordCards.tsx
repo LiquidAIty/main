@@ -1,8 +1,7 @@
 import {
-  engraphisThinkRelationships,
+  knowRecordPresentation,
   observedEntryTime,
-  uniqueRecordSources,
-  type KnowInspectorRecord,
+  thinkRecordDetail,
 } from './knowledgeGraphInspectorRecords';
 
 export function ThinkRecordCard({
@@ -22,7 +21,7 @@ export function ThinkRecordCard({
     : typeof item.content === 'string' && item.content.trim()
       ? item.content
       : null;
-  const relationships = engraphisThinkRelationships(item);
+  const detail = thinkRecordDetail(item);
   return <section className="graph-note graph-think" data-memory-id={item.id}>
     <div className="graph-think-heading">
       <h4>{String(item.title || heading)}</h4>
@@ -31,78 +30,51 @@ export function ThinkRecordCard({
       {entryTime.label}
     </time></p> : null}
     {summary ? <p>{summary}</p> : null}
-    {relationships.length ? <section className="graph-think-section">
-      <h5>Relationships</h5>
-      <ul>{relationships.map(value => <li key={value}>{value}</li>)}</ul>
-    </section> : null}
-    {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
+    {detail ? <details><summary>More</summary><p>{detail}</p></details> : null}
+    {onRemove ? <button type="button" aria-label="Remove Think" disabled={removing}
       style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
-      if (window.confirm('Delete this record?')) onRemove();
+      if (window.confirm('Remove this Think?')) onRemove();
     }}>
-      {removing ? 'Deleting…' : 'Delete'}
+      {removing ? 'Removing…' : 'Remove'}
     </button> : null}
   </section>;
 }
 
-export function KnowRecordCitation({ record }: { record: KnowInspectorRecord }) {
-  const sources = uniqueRecordSources([record]);
-  if (!sources.length) return null;
-  const source = sources[0];
-  return <p className="graph-know-citation">
-    <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a>
-    <span>{source.publisher}</span>
-  </p>;
-}
-
-export function KnowGraphKnow({
-  record,
-  heading,
+export function KnowRecordCard({
+  item,
   removing = false,
   onRemove,
 }: {
-  record: KnowInspectorRecord;
-  heading: string;
+  item: Record<string, any>;
   removing?: boolean;
   onRemove?: () => void;
 }) {
-  const { graphitiId, know } = record;
-  const entryTime = observedEntryTime(know.observedAt);
-  const sourceDate = observedEntryTime(know.sourceDate);
-  return <section className="graph-note graph-know" data-graphiti-id={graphitiId}>
-    <div className="graph-think-heading"><h5>{String(know.title || heading)}</h5>
-      {typeof know.graphitiRelation === 'string' && know.graphitiRelation
-        ? <span>{know.graphitiRelation}</span> : null}
-    </div>
-    {typeof know.fact === 'string' && know.fact ? <p>{know.fact}</p> : null}
-    <KnowRecordCitation record={record} />
-    {entryTime ? <p className="graph-record-time"><span>Observed</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
-    {sourceDate ? <p className="graph-record-time"><span>Source date</span>{' '}<time dateTime={sourceDate.dateTime}>{sourceDate.label}</time></p> : null}
-    {onRemove ? <button
-      type="button"
-      aria-label="Delete record"
-      disabled={removing}
-      style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }}
-      onClick={() => {
-        if (window.confirm('Delete this record?')) onRemove();
-      }}
-    >{removing ? 'Deleting…' : 'Delete'}</button> : null}
-  </section>;
-}
-
-export function KnowSourceList({
-  records,
-  id,
-}: {
-  records: KnowInspectorRecord[];
-  id: string;
-}) {
-  const sources = uniqueRecordSources(records);
-  if (!sources.length) return null;
-  return <section id={id} className="knowgraph-sources graph-subject-sources">
-    <h4>Sources</h4>
-    {sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
-      <span>{source.label}</span>
-      <small>{source.publisher}</small>
-    </a>)}
+  const entryTime = observedEntryTime(item.ingestedAt);
+  const { idea, counterIdea } = knowRecordPresentation(item);
+  const sides = [
+    { label: 'For', value: idea },
+    { label: 'Against', value: counterIdea },
+  ] as const;
+  return <section className="graph-note graph-know" data-episode-id={item.id}>
+    <h5>{String(item.title || 'Know')}</h5>
+    {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>
+      {entryTime.label}
+    </time></p> : null}
+    {sides.map(({ label, value }) => <section key={label} data-know-side={label.toLowerCase()}>
+      <h6>{label}</h6>
+      {value.body ? <p>{value.body}</p> : null}
+      {value.detail ? <details><summary>More</summary><p>{value.detail}</p></details> : null}
+      {value.citations.map(citation => <p className="graph-know-citation" key={citation.url}>
+        <a href={citation.url} target="_blank" rel="noreferrer">{citation.label}</a>
+        <span>{[citation.publisher, citation.locator].filter(Boolean).join(' · ')}</span>
+        {citation.supports ? <span>{citation.supports}</span> : null}
+      </p>)}
+    </section>)}
+    {onRemove ? <button type="button" aria-label="Remove Know" disabled={removing}
+      style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
+      if (window.confirm('Remove this Know?')) onRemove();
+    }}>
+      {removing ? 'Removing…' : 'Remove'}
+    </button> : null}
   </section>;
 }

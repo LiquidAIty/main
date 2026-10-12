@@ -449,7 +449,9 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
             read_only=policy["access"] == "read",
             annotations_override=policy["annotations"],
         ))
-        if canonical_name in {"graphiti.add_memory", "graphiti.search_nodes"}:
+        if canonical_name in {
+            "graphiti.add_memory", "graphiti.clear_graph", "graphiti.search_nodes",
+        }:
             expected_names.add(canonical_name)
 
     async def cbm_tools():
@@ -518,7 +520,8 @@ def test_complete_catalog_is_frozen_before_listing_and_preserves_provider_metada
     assert "web_search" not in canonical_by_name
     assert canonical_by_name["cbm.search_graph"].meta["liquidaityAccess"] == "read"
     assert "cbm.unfamiliar_current_tool" not in canonical_by_name
-    assert "graphiti.clear_graph" not in canonical_by_name
+    assert canonical_by_name["graphiti.clear_graph"].meta["liquidaityAccess"] == "write"
+    assert canonical_by_name["graphiti.clear_graph"].annotations.destructive_hint is True
     assert "graphiti.get_status" not in canonical_by_name
     assert "questionEvidence" not in canonical_by_name[
         "graphiti.add_memory"

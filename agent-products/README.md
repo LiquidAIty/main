@@ -18,9 +18,11 @@ UI assets, package files, and deployable artifacts live here or in a
 Project-owned managed code folder.
 
 Builder sessions use one saved `projectCodeFolder`. LiquidAIty resolves that
-portable folder name beneath managed Project storage and Hermes mounts only the
-resolved folder into Builder's Docker terminal. The LiquidAIty checkout is not
-Builder's default working directory and is never mounted as a fallback.
+portable folder name beneath managed Project storage and supplies the resolved
+folder as Builder's Hermes session workspace. HermesLatest's native terminal,
+PTY, file tools, and active profile configuration own the execution environment.
+LiquidAIty applies no Docker policy and never substitutes the LiquidAIty checkout
+as a fallback workspace.
 
 Imported projects remain controlled upstream forks. Keep LiquidAIty-specific
 changes narrow, record them in `ARCHITECTURE.md`, and repair all startup/import

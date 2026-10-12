@@ -7,13 +7,17 @@ product prompt and not a substitute for current source, tests, or runtime proof.
 
 Before doing anything else:
 
-1. Read the current operating rules in [DONT.md](./DONT.md); consult its historical removal record for the affected boundary.
-2. Read [PLAN.md](./PLAN.md) completely.
-3. Read only the relevant reusable `skills/*.md` procedures; verify their named owners against current source.
-4. Establish Git and native Codebase Memory state.
-5. Use CBM to resolve the structural slice, with the documented direct-source fallback for excluded or unavailable coverage.
-6. Direct-read the current source CBM identified.
-7. Only then plan or edit.
+1. When a PromptSpec is active, load the installed `promptspec-receiver` skill first. It owns the
+   repository process for that run or stage.
+2. Read the current operating rules in [DONT.md](./DONT.md); consult its historical removal record only
+   for the affected boundary.
+3. Read [PLAN.md](./PLAN.md) completely.
+4. Read only relevant reusable `skills/*.md` procedures; domain skills defer generic process control to
+   `promptspec-receiver`.
+5. The Primary uses the Codebase Memory CLI for a bounded directional map, then direct-reads current
+   source. Support scouts receive exact anchors and use direct source; they do not operate CBM.
+6. Establish the permitted working-tree state without violating a current no-Git instruction.
+7. Build the task waterfall and exact execution plan before any edit.
 
 The repository has deleted well over 200,000 lines of layered experiments. The most important rule is:
 
@@ -105,12 +109,23 @@ If a new explicit decision replaces an older approach:
 4. delete the superseded path when the replacement is actually implemented and proven;
 5. update canonical docs so contradictory plans do not coexist.
 
-### Implementation workers
+### PromptSpec support agents
 
-Use subagents when bounded work can run independently. Choose the lowest-capability reliable
-worker: Luna for small bounded work, Terra for normal implementation, and Sol for code or
-important reasoning. Never use Astra for a subagent. The lead and final integrator uses Sol.
-Product Card stand-ins instead match the actual saved Card exactly and report unsupported parity.
+For an active PromptSpec, the Primary is the only implementation writer. It may use at most three
+support agents total, normally:
+
+1. a read-only code/ownership scout;
+2. a read-only contract/prompt/documentation/test scout;
+3. one fresh independent final reviewer.
+
+Scouts may propose ordered tasks with a Key Objective and Definition of Done, but they never edit.
+The final reviewer receives the frozen implementation, writes only repo-root `turn.md`, and returns a
+minimal PASS/FAIL envelope plus the reviewed-snapshot checksum. The Primary does not patch after final
+review begins. A FAIL stops the run for the owner's save, wipe/revert, or clean-retry decision.
+
+Product Cards exercised through the real loaded product are the system under test, not repository
+support agents. Stand-ins match the actual saved Card and report unsupported parity; they never substitute
+for live agent acceptance.
 
 ### Existing branded technical identifiers
 
@@ -150,38 +165,33 @@ experiment recommendation; the agent should record the tradeoff rather than cove
 ## Codebase Memory binding
 
 The canonical project is `C-Projects-LiquidAIty-main` at `C:/Projects/LiquidAIty/main`. Before code or
-architecture work, read [skills/codebasedmemory.md](./skills/codebasedmemory.md) completely and follow its
-ordered discovery recipe. That skill is the sole detailed authority for CBM discovery, coverage fallback, and
-the mandatory inverse deletion/rename audit.
+architecture work, read [skills/codebasedmemory.md](./skills/codebasedmemory.md) completely. That skill owns
+the detailed CLI queries, freshness/coverage interpretation, source fallback, and inverse deletion/rename
+audit.
 
-CBM uses the current official `codebase-memory-mcp` command resolved from the machine's normal installed PATH;
-the repository does not pin, copy, or install a client-specific build. It indexes the canonical host checkout
-`C:/Projects/LiquidAIty/main`, which derives the one canonical project name `C-Projects-LiquidAIty-main`.
-LiquidAIty's official Python MCP host owns exactly one long-lived application stdio frontend. Codex Desktop may
-own exactly one separate frontend through its official user registration. Both frontends use the same upstream
-per-account coordination daemon, watcher, cache, and runtime identity outside the repository. Docker does not
-own or launch CBM.
+For PromptSpec repository work:
 
-Codex repository work uses its directly registered official CBM server and does not depend on LiquidAIty,
-GPT Web, or the LiquidAIty plugin. Hermes, Cards, plugins, connectors, and application UI use only
-LiquidAIty's application-published `cbm.*` tools. At repository-task start, and whenever CBM reports a closed
-transport, inspect the official CBM process ownership. Keep at most the one application frontend and the one
-Codex Desktop frontend described above; stop stale or duplicate CBM frontend/coordination processes, restart the
-selected official frontend exactly once through its normal registered command, and verify `list_projects` plus
-`index_status` before continuing. Do not leave duplicate instances running, repeatedly retry a dead transport,
-or substitute complaint/reporting for this bounded recovery. Normal index freshness remains the upstream
-watcher's responsibility. Initial or destructive projection maintenance is an explicit application-MCP
-administrative operation, never an automatic coding-agent hook.
+- only the Primary operates Codebase Memory;
+- use the installed `codebase-memory-mcp cli` command, not CBM MCP;
+- use it before dispatching scouts, only as a bounded directional map;
+- pass returned qualified names, paths, relationships, generation/freshness limits, and unresolved questions
+  to the direct-source scouts;
+- current source wins every disagreement;
+- a zero graph result is never sufficient absence/dead-code proof;
+- perform the owner-required one official CLI reindex at the start of each PromptSpec run exactly as
+  documented in `skills/codebasedmemory.md`; any additional reindex, restart, trace ingestion, project
+  deletion, or other lifecycle mutation requires a new explicit owner instruction for that exact operation.
 
-Begin with `search_graph`; retain real native IDs/provenance supplied by Main or the IDF actual-graph-data section; never fabricate
-symbols or graph seeds; and read complete current source before changing behavior. Any production deletion or
-rename must resolve actual qualified identities, traverse inverse relationships, repair surviving neighbors,
-and prove residue absence according to the skill.
+Support agents do not operate CBM and do not repair its process or index. They verify supplied anchors through
+`rg`, direct source, callers, contracts, and tests. Any deletion or rename must still resolve actual qualified
+identities, traverse inverse relationships, repair surviving neighbors, and prove exact residue absence.
 
-The current derived projection intentionally excludes controlled imported roots listed in `.cbmignore`.
-Never open or manipulate CBM SQLite/cache files, create backups, change global Codex configuration, or bypass
-LiquidAIty's application MCP boundary. The required duplicate-process cleanup and one official-frontend restart
-above must reuse the configured command and must not create an additional persistent CBM instance.
+Product execution is separate: Hermes Cards and application clients use only their saved granted `cbm.*`
+operations through LiquidAIty's application-published provider. Repository CLI policy does not remove or
+widen product Card grants.
+
+Never open or manipulate CBM cache/database files, install another indexer, launch a second persistent
+frontend, fabricate graph records, or promote a derived graph result into architecture or runtime truth.
 
 ---
 
@@ -190,7 +200,7 @@ above must reuse the configured command and must not create an additional persis
 Treat `HermesLatest/`, `agent-products/gods-eye-view/`,
 `agent-products/shadowbroker/`, `agent-products/kronos/`, and other explicitly
 vendored or imported runtimes as controlled upstream forks, not ordinary LiquidAIty cleanup targets.
-Before a nontrivial vendor edit, the active ImplementationPacket must record:
+Before a nontrivial vendor edit, the active PromptSpec task and frozen review evidence must record:
 
 ```text
 VENDORED PROJECT
@@ -298,7 +308,7 @@ data, card topology, UI controls, tool grants, authentication, session behavior,
 - a test is deleted, weakened, skipped, or redefined to match a bug;
 - unrelated saved Cards are damaged while Builder changes;
 - a graph animation claims an operation that did not happen;
-- code scope expands opportunistically beyond the active ImplementationPacket.
+- code scope expands opportunistically beyond the active PromptSpec task.
 
 Regression Ratio:
 
@@ -350,23 +360,37 @@ regex, substring, keyword, or lookup-table logic.
 ### Main
 
 The saved Main card executes through the repo-owned Hermes persistent chat adapter. Main is the fast
-LiquidAIty front door, not the name of a third-party UI. Its default execution mode is `single`, but
-Main is not a distinct card type and must not be structurally forbidden from using the same card-owned
-Hermes Kanban/swarm capability when explicitly selected. The adapter preserves saved prompt/profile/
-model/tool authority and real streaming/session/failure behavior.
+LiquidAIty front door, not the name of a third-party UI. Its saved runtime mode is `main`; Team/Kanban
+belongs only to the saved Team Card/profile. Main's current source-default Card uses
+`subagentType: none`, has no Hermes Web toolset, and is not a coding worker. Ordinary leaf/recursive
+Hermes delegation remains a separate saved option when explicitly configured on an eligible Card. The
+adapter preserves saved prompt/profile/model/tool authority and real streaming/session/failure behavior.
+Main is optimized for work it can answer in seconds. It sends sustained construction to Builder,
+historical Project reasoning to ThinkGraph, and sourced research to KnowGraph. Every answer distinguishes
+current Project reasoning from known evidence. Straightforward requests may receive a normal direct answer;
+when a material part is questionable, Main compares the two most plausible options, recommends one, and
+uses that recommendation as the reversible default unless the user redirects. This is saved-prompt model
+discipline, never a deterministic TypeScript timer, classifier, parser, or router.
+Before inference, Python rails automatically appends the complete Entity/Relationship map and the default
+current-request grounding to Main, Builder, ThinkGraph, and KnowGraph: one Jev-ranked most Relevant plus one
+distinct most Recent record per authority. Think retrieval favors the strongest faithful optimistic steelman.
+Every valid Know already contains a cited For and cited Against, producing the intended two-thirds supportive,
+one-third challenging balance at equal record counts. Relevance failure never promotes Recent as Relevant.
 Each non-Magnetic Hermes Card has one explicit saved `Orchestrator` setting. When enabled, its outbound
 orange `flow` edges authorize that Card to address those exact saved Bot/Card targets; an edge grants no
-reverse authority. Main is the seeded and currently configured direct orchestrator, while another Card may
+reverse authority. Main is a source-default direct orchestrator, while another Card may
 deliberately enable the same setting for a bounded series such as Signal -> WorldSignals. Only an enabled
 orchestrator renders an orange connection dot. The same target may also have a blue `magentic_option` edge,
 which independently makes that saved identity available to Magnetic's Hermes SQLite task ledger. Main remains
 the default chat front door and uses the same compact rounded Card geometry wherever a Card preview is rendered;
-presentation never creates a second Card type or orchestration authority. Main, Builder, ThinkGraph, KnowGraph,
-and Magnetic remain visible as the orange system topology; that visibility does not make them members of
-Magnetic's independently blue-connected Trading worker roster.
+presentation never creates a second Card type or orchestration authority. Card visibility does not create an
+orange edge, grant reverse authority, or make a Card a member of Magnetic's independent blue roster. The
+server's new-Project seed currently creates Main → Builder only; additional saved edges remain Project-owned
+persisted configuration.
 Each Hermes Card also owns one saved desired native subagent model. Run start materializes that
 selection into the bound native profile and reads it back before inference; actual child provider/model
-and any fallback belong in the Run receipt. The selector never rewrites the parent model, another Card,
+and any runtime-reported deviation or failure belong in the Run receipt. LiquidAIty supplies no provider
+or model fallback. The selector never rewrites the parent model, another Card,
 Mag One worker selection or the ThinkGraph engine. External-memory selection remains native
 profile configuration. LiquidAIty exposes Honcho setup/status only for Main and never projects a
 general Card memory-provider field or reconfigures memory at Run start.
@@ -377,6 +401,11 @@ The saved `card_knowgraph` Card, visible as `KnowGraph` and bound one-to-one to 
 `knowgraph`, is the persistent sourced-research and KnowGraph helper. It is an ordinary Hermes-backed
 Card in `delegate` mode with `subagentType: none` for the launch baseline. It may read deliberately
 selected ThinkGraph and CodeGraph context, but Neo4j/Graphiti remains its graph authority and writer.
+The source-default Card uses Sol for the deeper factual/reality-check role; persisted saved Card model choice
+remains authority. One Know is one atomic `know.v1` episode about one Entity with mandatory cited supporting
+and counter ideas. Python rails validates and encodes both sides before invoking Graphiti's queued
+`add_memory_to_entity`; a one-sided episode is not projected as a Know. KnowGraph must make the strongest
+supported case on both sides and may not use a weak counter as a strawman.
 Main PDF attachment ingestion writes through the Graphiti service directly; it is not a KnowGraph Card
 turn and must never borrow this Card's model or system prompt. The retired Steward/Stuart identities,
 Team delegation residue, and compatibility aliases must not return.
@@ -389,6 +418,9 @@ missions and chooses granted tools for files, terminal, research, prompts, Card 
 and application/UI construction. Card creation and configuration use explicit tool arguments,
 exact targets, current revisions and saved grants. No prefilled operation tasks or hidden modes.
 Saving a Card and invoking a Card remain separate actions. Builder has no Mag One edge.
+Builder receives the same default Relevant/Recent graph grounding as Main so construction retains the user's
+faithful steelman and the two-sided cited reality check. Its expanded inspector/search tools do not widen the
+automatic packet.
 
 ### Mag One
 
@@ -399,8 +431,9 @@ bindings; titles, prompts, installed profiles, and global discovery never add wo
 
 The headless Mag One adapter submits one bounded root mission to Hermes' existing SQLite
 task/dependency runtime. The saved Mag One profile decomposes the mission, assigns work only to the
-projected worker identities, creates exactly one dependency sink assigned back to itself for final
-synthesis, and returns that native summary as the outer Run result. Hermes' native assignment scope
+projected worker identities, links required worker tasks back to the same root, dependency-blocks that
+root while needed work is unfinished, and later completes the same root with final synthesis. It never
+creates a separate synthesis sink. Hermes' native assignment scope
 rejects root assignments outside the exact blue roster and keeps manually created worker descendants
 self-scoped, without changing unrestricted ordinary tasks.
 
@@ -424,22 +457,30 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 
 One authority and one writer per graph.
 
-Main reads ThinkGraph, answers in chat, and retains explicit Engraphis writes. After an ordinary Main
-User/assistant turn has completed and its visible response has returned, the exact completed pair enters
-the approved Engraphis-owned intake. Preparation is non-persisting; an existing authoritative Think for the
-same completed-pair identity stops a duplicate as a `noop`. Otherwise the existing saved ThinkGraph Card runs
+Main reads bounded graph context and answers in chat; it is not the owner of ThinkGraph writes. After an
+ordinary Main User/assistant turn has completed and its visible response has returned, the exact completed
+pair enters the Engraphis-owned intake. Preparation is non-persisting; an existing authoritative Think for
+the same completed-pair identity stops a duplicate as a `noop`. Otherwise the existing saved ThinkGraph Card runs
 through the normal saved-Card/App Server path with its saved model and Engraphis `llm_structured` prompt/schema.
-It returns exactly one self-contained custom `think` payload, canonical entities/concepts, and free-form
-directed relationship proposals. Settlement writes exactly one append-only native Engraphis `EPISODIC`
-Memory with `resolve_conflicts=False`; direct node association requires both validated Think metadata and
-native `memory_entities` incidence with `source_kind="structured_extractor"`. Jev alone admits every new
-endpoint through an accepted directed relationship and chooses every durable edge label, distribution, and
-strength. Generic Engraphis co-occurrence edges never become ThinkGraph semantic authority.
+It returns zero or more self-contained Entity-specific `think` payloads, never more than one Think for the
+same Entity in one completed pair, plus free-form directed relationship proposals. Settlement atomically
+writes one append-only native Engraphis `EPISODIC` Memory per returned Think with
+`resolve_conflicts=False`; direct node association requires both validated Think metadata and native
+`memory_entities` incidence with `source_kind="structured_extractor"`. The saved ThinkGraph Card proposes
+Entity names, endpoints, direction, and a natural relationship; Jev classifies that proposal and
+chooses the durable edge label, distribution, and strength before graph mutation. The transaction rejects
+unclassified proposals, but Jev is not a separate endpoint or graph authority. Generic Engraphis
+co-occurrence edges never become ThinkGraph semantic authority.
 The September 9 removal remains the historical removal of the old proxy/replay path, not a prohibition on
 this native lifecycle. No candidate graph, approval state, shadow graph, raw conversation Memory, regex-first
 skeleton, or broad cleanup path returns. KnowGraph retains sourced research through its existing research
-agent and Graphiti intake. Operating instructions belong in saved Cards; dynamic input carries the actual
-task and selected data. Do not submit system-design guidance as test chatter.
+agent and queued Graphiti intake. Its dedicated Entity write records one exact structural `ABOUT` edge while
+leaving extracted `MENTIONS` independent. Only Entities render as Project graph nodes; Thinks, Knows,
+Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Native Engraphis
+and Graphiti reads produce bounded candidates, Jev ranks them against the current request, and the ordinary
+Entity inspector defaults to Relevant with a small switch to distinct Recent. Search and its 1–12 Results
+count are transient inspector reads and never expand Main/Builder's default. Operating instructions belong in saved Cards; dynamic input carries
+the actual task and selected data. Do not submit system-design guidance as test chatter.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
 - Transient context selection may reference native authorities for bounded IDF hydration; it is not another graph
@@ -609,62 +650,56 @@ validate structure and safety; it may not pretend to understand meaning.
 
 ## Active execution contract
 
-The active ImplementationPacket prompt is the complete current task and spec. Do not persist it as another task
-file.
+For substantial repository work, the active PromptSpec plus the installed `promptspec-receiver` skill
+form the complete current specification. Do not persist a competing spec, task ledger, or reconstructed
+implementation packet.
 
-An ImplementationPacket contains:
-
-```text
-requested outcome
-requirements
-scope and files in/out
-CBM anchors and freshness
-relevant selected skills
-Preservation Set
-proof commands
-stop conditions
-forbidden work
-expected ImplementationReport shape
-```
-
-Execution order:
-
-1. Read repository law and selected skills.
-2. Establish Git and CBM state.
-3. Resolve symbols, relationships, contracts, and tests through CBM.
-4. Direct-read current source.
-5. Run the smallest meaningful pre-edit baseline.
-6. Make the smallest complete change.
-7. Delete the replaced path when replacement proof exists.
-8. Run requested-delta and Preservation Set proof.
-9. Typecheck/build the touched production boundary.
-10. Inspect current source and diff for unrelated change.
-11. Report exact completion, gaps, and Regression Ratio.
-12. Stop; do not start the next job without instruction.
-
-### ImplementationReport
-
-Every meaningful implementation returns:
+Required sequence:
 
 ```text
-verdict
-Requested Delta comparison
-completed/incomplete/changed requirements
-Preservation Set proof
-files read
-files changed
-CBM before/after and coverage limits
-proof commands and results
-known baseline failures
-new regressions
-Regression Ratio
-blockers and assumptions
-chosen and rejected approaches
-reusable skill candidate, if genuinely proven
-next recommended bounded task
+SPECIFY
+→ Primary initial plan
+→ Primary CBM CLI map
+→ up to two read-only direct-source scouts
+→ Primary reconciliation
+→ ordered tasks with Key Objective + Definition of Done
+→ exact execution plan
+→ implementation by Primary only
+→ deterministic proof
+→ real loaded-agent proof when behavior depends on a model
+→ documentation-coherence review
+→ freeze exact implementation bytes
+→ independent Agent 3 review
+→ Agent 3 writes turn.md + per-file hashes + REVIEW_SNAPSHOT_SHA256
+→ STOP
 ```
 
-Never return vague “done.”
+This controlled waterfall exists because prior runs expanded into side quests, mixed rejected designs,
+changed broad unrelated file sets, used tests to bless the wrong behavior, and stacked repairs onto an
+incorrect structure. Creativity belongs in proposals; the authorized implementation remains literal.
+
+Every PromptSpec task record contains:
+
+```text
+Task ID
+Key Objective
+requirements served
+current owner
+allowed files
+dependencies
+implementation moves
+authorized proof
+Definition of Done
+```
+
+A task is complete only when its Definition of Done is satisfied, not when code or prose merely exists.
+
+The final review has no same-run repair loop. Once Agent 3 begins, the Primary does not modify production,
+tests, prompts, grants, schemas, configuration, or reviewed documentation. PASS stops for owner review/save.
+FAIL also stops; the owner decides whether to inspect, accept, wipe/revert, or retry from a clean checkpoint.
+
+For staged work, apply this sequence to exactly one approved stage and wait for explicit approval before the
+next. Product agents executed as acceptance tests do not become repository implementation workers.
 
 ---
 
@@ -693,7 +728,7 @@ generators, or restrictions. No feature-manifest or automatic LLM wiki system is
 not inject every skill into every prompt. Do not create a skill merely because a task completed.
 
 A skill is promoted only when a lesson is reusable and proven through real work. Skills are not task
-nodes, raw history, ImplementationReports, or specs.
+nodes, raw history, per-run review reports, or specs.
 
 ---
 
@@ -702,6 +737,7 @@ nodes, raw history, ImplementationReports, or specs.
 Canonical durable documents are:
 
 ```text
+README.md
 PLAN.md
 AGENTS.md
 DONT.md
@@ -710,6 +746,18 @@ FUTURE.md
 skills/*.md
 repo-intake/*.md only when explicitly required
 ```
+
+One exception is the PromptSpec review artifact:
+
+```text
+turn.md
+```
+
+Agent 3 overwrites `turn.md` for each completed PromptSpec run or stage after the implementation is frozen.
+It records the exact reviewed-file SHA-256 manifest, combined `REVIEW_SNAPSHOT_SHA256`, task/Definition-of-Done
+review, proof tiers, documentation coherence, findings, and PASS/FAIL. It is not architecture authority,
+durable product memory, a task queue, or authority for a later run. The next turn may read it only under the
+owner's continuation or disposition instruction.
 
 Do not create:
 
@@ -721,6 +769,7 @@ progress or checkpoint docs
 handoff/evidence files
 raw diff dumps
 persistent prompt/task packets
+additional review reports beside turn.md
 parallel skill directories
 random architecture runbooks
 ```

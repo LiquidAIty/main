@@ -37,7 +37,6 @@ def _materialized_record_sha256(record: dict[str, Any]) -> str:
             "title": record["title"],
             "metadata": record.get("metadata") or {},
         },
-        "know": record.get("know") if isinstance(record.get("know"), dict) else None,
         "relationshipEvidence": record.get("relationshipEvidence") or [],
         "content": record.get("content"),
     }
@@ -104,10 +103,6 @@ def _render_anchor(
         f"Materialized provider record SHA-256: {_materialized_record_sha256(record)}",
         f"Verified provider provenance: {json.dumps(record.get('provenance') or {}, ensure_ascii=False, separators=(',', ':'), default=str)}",
         f"Verified provider properties: {json.dumps(properties, ensure_ascii=False, separators=(',', ':'), default=str)}",
-        *(
-            [f"Portable Know with persisted Jev classification: {json.dumps(record['know'], ensure_ascii=False, separators=(',', ':'), default=str)}"]
-            if isinstance(record.get("know"), dict) else []
-        ),
         *(
             [f"Verified relationship evidence: {json.dumps(record['relationshipEvidence'], ensure_ascii=False, separators=(',', ':'), default=str)}"]
             if record.get("relationshipEvidence") else []
@@ -298,9 +293,7 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
             source_id = source_id or str(evidence[0].get("sourceNodeUuid") or "").strip()
             target_id = target_id or str(evidence[0].get("targetNodeUuid") or "").strip()
         edge_properties = dict(record.get("properties") or {})
-        portable_know = record.get("know") if isinstance(record.get("know"), dict) else {}
         jev = record.get("jev") if isinstance(record.get("jev"), dict) else {}
-        edge_properties.update(portable_know)
         if jev:
             edge_properties["jev"] = jev
             if jev.get("status") == "success" and jev.get("winner"):

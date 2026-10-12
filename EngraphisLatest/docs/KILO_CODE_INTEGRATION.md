@@ -41,7 +41,7 @@ Everything runs on your machine. The whole store is a single SQLite file. Local 
 You interact with Engraphis through three surfaces, all backed by the *same* engine (`MemoryService`), so they can never drift apart:
 
 - **The dashboard WebUI** (`engraphis-dashboard`, `http://127.0.0.1:8700`): a visual product to see, search, and curate memory.
-- **The MCP server** (`engraphis-mcp`): a nine-tool Smart gateway for routine memory work plus
+- **The MCP server** (`engraphis-mcp`): a ten-tool Smart gateway for routine memory work plus
   automatic discovery and validated execution of advanced capabilities. **This is the surface
   Kilo Code uses.**
 - **The Python library** (`from engraphis.service import MemoryService`): for direct programmatic use.
@@ -206,7 +206,7 @@ You can also click **Approve Always** on any tool at runtime to write the same r
 
 ## 4. Smart tools and the Classic compatibility surface
 
-Normal `engraphis-mcp` setup exposes exactly these nine Smart tools. Routine memory work stays
+Normal `engraphis-mcp` setup exposes exactly these ten Smart tools. Routine memory work stays
 compact; for everything else, discovery returns the exact schema, capability ID, and side-effect
 class, and the appropriate executor revalidates all of it before running.
 
@@ -215,6 +215,7 @@ class, and the appropriate executor revalidates all of it before running.
 | `engraphis_session` | Start or end a work session and receive the handoff. |
 | `engraphis_recall_context` | Fetch a hard-budget, prompt-ready context packet. |
 | `engraphis_remember` | Store a durable memory. |
+| `engraphis_remember_entities` | Atomically store one memory per exact Entity. |
 | `engraphis_discover_actions` | Find the best advanced capability and its exact schema. |
 | `engraphis_execute_read` | Run a discovered read-only/idempotent capability. |
 | `engraphis_execute_action` | Run a discovered stateful, administrative, or destructive-capable action. |
@@ -226,12 +227,13 @@ class, and the appropriate executor revalidates all of it before running.
 preserves the named-tool compatibility surface below; new Kilo Code installations should keep the zero-config
 Smart command shown above.
 
-### Classic 39-tool inventory
+### Classic 40-tool inventory
 
 | Category | Tool | What it does |
 |---|---|---|
 | **Write** | `engraphis_remember` | Store a fact; deterministically resolved to add / reinforce (noop) / supersede (invalidate). |
 | Write | `engraphis_remember_many` | Store a fan-out batch of facts in one transaction; within-batch dedup/supersession, plus evidence-labeled edges between siblings sharing a `subject_key` or declared `evidence_source`. |
+| Write | `engraphis_remember_entities` | Atomically store one memory per exact Entity without text-derived multi-attachment. |
 | Write | `engraphis_record_event` | Append one raw occurrence to an event ledger; event rows are not recalled, deduplicated, or consolidated as memories. |
 | Write | `engraphis_link` | Explicitly connect two related memories (e.g. a bug ↔ its fix). |
 | Write | `engraphis_ingest` | Store raw/undistilled text; extracts discrete facts first when an LLM extractor is configured. |

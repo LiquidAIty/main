@@ -5,9 +5,9 @@ import {
   tightChatBubbleTextWidth,
 } from './pretextBubbleLayout';
 import type {
-  CanonicalSubjectFocusTarget,
-  CanonicalSubjectMatcher,
-} from '../../../components/knowledge/canonicalSubjectLinks';
+  CanonicalEntityFocusTarget,
+  CanonicalEntityMatcher,
+} from '../../../components/knowledge/canonicalEntityLinks';
 
 export type SharedCardChatColors = {
   primary: string;
@@ -45,7 +45,7 @@ export function shouldRenderSharedCardMessage(
   return message.role !== 'assistant' || Boolean(message.text.trim());
 }
 
-export const CANONICAL_SUBJECT_LINK_STYLE = Object.freeze({
+export const CANONICAL_ENTITY_LINK_STYLE = Object.freeze({
   display: 'inline',
   margin: 0,
   padding: 0,
@@ -68,18 +68,18 @@ export const MESSAGE_LANE_MAX_WIDTH = 760;
 function linkedChatText(
   text: string,
   role: SharedCardChatDisplayMessage['role'],
-  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
-  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  entityMatcher: CanonicalEntityMatcher | null | undefined,
+  onEntityFocus: ((target: CanonicalEntityFocusTarget) => void) | undefined,
   keyPrefix: string,
 ): ReactNode[] {
-  const segments = subjectMatcher?.segmentMessage(role, text) || [{ text }];
-  return segments.map((segment, index) => segment.target && onSubjectFocus ? (
+  const segments = entityMatcher?.segmentMessage(role, text) || [{ text }];
+  return segments.map((segment, index) => segment.target && onEntityFocus ? (
     <button
-      key={`${keyPrefix}:subject:${index}`}
+      key={`${keyPrefix}:entity:${index}`}
       type="button"
       aria-label={`Open ${segment.text} in graph`}
-      onClick={() => onSubjectFocus(segment.target!)}
-      style={CANONICAL_SUBJECT_LINK_STYLE}
+      onClick={() => onEntityFocus(segment.target!)}
+      style={CANONICAL_ENTITY_LINK_STYLE}
     >
       {segment.text}
     </button>
@@ -98,8 +98,8 @@ function safeMarkdownUrl(value: string): string | null {
 function inlineChatMarkdown(
   text: string,
   role: SharedCardChatDisplayMessage['role'],
-  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
-  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  entityMatcher: CanonicalEntityMatcher | null | undefined,
+  onEntityFocus: ((target: CanonicalEntityFocusTarget) => void) | undefined,
   keyPrefix: string,
 ): ReactNode[] {
   const output: ReactNode[] = [];
@@ -110,8 +110,8 @@ function inlineChatMarkdown(
     output.push(...linkedChatText(
       value,
       role,
-      subjectMatcher,
-      onSubjectFocus,
+      entityMatcher,
+      onEntityFocus,
       `${keyPrefix}:${token++}`,
     ));
   };
@@ -134,8 +134,8 @@ function inlineChatMarkdown(
             {inlineChatMarkdown(
               text.slice(cursor + 2, close),
               role,
-              subjectMatcher,
-              onSubjectFocus,
+              entityMatcher,
+              onEntityFocus,
               `${keyPrefix}:strong:${current}`,
             )}
           </strong>,
@@ -154,8 +154,8 @@ function inlineChatMarkdown(
             {inlineChatMarkdown(
               text.slice(cursor + 1, close),
               role,
-              subjectMatcher,
-              onSubjectFocus,
+              entityMatcher,
+              onEntityFocus,
               `${keyPrefix}:em:${current}`,
             )}
           </em>,
@@ -192,8 +192,8 @@ function inlineChatMarkdown(
               {inlineChatMarkdown(
                 text.slice(cursor + 1, labelEnd),
                 role,
-                subjectMatcher,
-                onSubjectFocus,
+                entityMatcher,
+                onEntityFocus,
                 `${keyPrefix}:link-label`,
               )}
             </a>,
@@ -219,8 +219,8 @@ function inlineChatMarkdown(
 function renderChatMarkdown(
   text: string,
   role: SharedCardChatDisplayMessage['role'],
-  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
-  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  entityMatcher: CanonicalEntityMatcher | null | undefined,
+  onEntityFocus: ((target: CanonicalEntityFocusTarget) => void) | undefined,
 ): ReactNode[] {
   const lines = text.split('\n');
   return lines.flatMap((rawLine, index) => {
@@ -230,8 +230,8 @@ function renderChatMarkdown(
     const inline = inlineChatMarkdown(
       content,
       role,
-      subjectMatcher,
-      onSubjectFocus,
+      entityMatcher,
+      onEntityFocus,
       `line:${index}`,
     );
     const line = heading
@@ -255,15 +255,15 @@ function SharedCardChatMessageBubble({
   laneWidth,
   mainCardId,
   message,
-  subjectMatcher,
-  onSubjectFocus,
+  entityMatcher,
+  onEntityFocus,
 }: {
   colors: SharedCardChatColors;
   laneWidth: number | null;
   mainCardId?: string;
   message: SharedCardChatDisplayMessage;
-  subjectMatcher?: CanonicalSubjectMatcher | null;
-  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
+  entityMatcher?: CanonicalEntityMatcher | null;
+  onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
 }) {
   const text = message.text;
   const isUser = message.role !== 'assistant';
@@ -353,7 +353,7 @@ function SharedCardChatMessageBubble({
         >
           {isUser
             ? text
-            : renderChatMarkdown(text, message.role, subjectMatcher, onSubjectFocus)}
+            : renderChatMarkdown(text, message.role, entityMatcher, onEntityFocus)}
         </div>
       </div>
     </div>
@@ -367,8 +367,8 @@ export default function SharedCardChatMessage({
   mainCardId,
   message,
   messageCount,
-  subjectMatcher,
-  onSubjectFocus,
+  entityMatcher,
+  onEntityFocus,
 }: {
   colors: SharedCardChatColors;
   index: number;
@@ -376,8 +376,8 @@ export default function SharedCardChatMessage({
   mainCardId?: string;
   message: SharedCardChatDisplayMessage;
   messageCount: number;
-  subjectMatcher?: CanonicalSubjectMatcher | null;
-  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
+  entityMatcher?: CanonicalEntityMatcher | null;
+  onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
 }) {
   return (
     <div
@@ -397,8 +397,8 @@ export default function SharedCardChatMessage({
         laneWidth={laneWidth}
         mainCardId={mainCardId}
         message={message}
-        subjectMatcher={subjectMatcher}
-        onSubjectFocus={onSubjectFocus}
+        entityMatcher={entityMatcher}
+        onEntityFocus={onEntityFocus}
       />
     </div>
   );

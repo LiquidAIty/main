@@ -333,7 +333,7 @@ def _request_jev_focus(
         "model": JEV_MODEL,
         "state": {
             "description": (
-                "One fixed user-selected graph subject and at most twelve directly connected "
+                "One fixed user-selected graph Entity and at most twelve directly connected "
                 "provider entity candidates with bounded stored content and real relationships."
             ),
             "fixed_center": {
@@ -347,14 +347,14 @@ def _request_jev_focus(
                        if "description" in member else {}),
                 } for member in center["providerMembers"]],
             },
-            "connected_subject_options": options,
+            "connected_entity_options": options,
         },
         "questions": {
             "focus": {
                 "type": "choice",
                 "instructions": (
                     "The user is exploring the fixed center. The center is not a candidate. "
-                    "Rank the supplied connected subjects by how useful they are for "
+                    "Rank the supplied connected Entities by how useful they are for "
                     "understanding the center, using only their supplied provider content and "
                     "real relationships. Prioritize direct explanatory relevance over generic "
                     "popularity, graph degree, on-screen distance, or persisted edge weights. "

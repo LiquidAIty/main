@@ -10,6 +10,24 @@ import {
 } from './joinedKnowledgeGraphProjection';
 import type { GraphStyle } from './knowledgeGraphPresentationPreferences';
 
+function attachedWordCount(node: GraphProjectionNode): number {
+  const value = Number(node.properties?.attachedWordCount);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+export function linearAttachedWordSizeWeights(
+  nodes: GraphProjectionNode[],
+): Map<string, number> {
+  if (!nodes.length) return new Map();
+  const counts = nodes.map(attachedWordCount);
+  const minimum = Math.min(...counts);
+  const maximum = Math.max(...counts);
+  return new Map(nodes.map((node, index) => [
+    node.id,
+    maximum === minimum ? (maximum > 0 ? 1 : 0) : (counts[index] - minimum) / (maximum - minimum),
+  ]));
+}
+
 export function compactProbability(value: unknown): string | null {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
@@ -69,10 +87,15 @@ export function projectKnowledgeRendererData({
       ? scene.edges
       : displayProjection?.edges || [];
   const projectionEdgesById = new Map((displayProjection?.edges || []).map(edge => [edge.id, edge]));
+  const projectedNodes = displayProjection?.nodes || [];
+  const sizeWeights = linearAttachedWordSizeWeights(projectedNodes);
   return {
     ...(scene || {}),
     nodes: sceneNodes.map((rawNode) => {
-      const node = rawNode as GraphProjectionNode;
+      const node = {
+        ...(rawNode as GraphProjectionNode),
+        visual_size_weight: sizeWeights.get(String((rawNode as GraphProjectionNode).id)) || 0,
+      };
       if (style !== 'solarpunk') return withoutSolarpunkMaterial(node);
       const variants = activeJoinedPresentation.nodeVariants.get(node.id) || [];
       const sourceKind = visualSourceKind(variants);

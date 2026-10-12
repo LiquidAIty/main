@@ -10,6 +10,14 @@ implementation is useless. A provider may retain an operation for its own engine
 CLI, tests, or explicit operator maintenance without making it a model-selectable
 Card tool.
 
+## Tool minimalism and prompt alignment
+
+The MVP rule is **less is more**: provider capability is not a Card default grant. Each saved Card gets
+the smallest stable corridor needed for its actual job. A prompt that tells a Card to use a capability
+must match a real effective grant; when a granted tool could be confused with another owner's job, the
+prompt must explain its intended boundary. A broad provider catalog, source-defined operation, editor
+toggle, or historical grant is not proof that the current saved Card can call it.
+
 ## Return-to-catalog rule
 
 An excluded capability returns only when all of the following are true:
@@ -26,6 +34,10 @@ An excluded capability returns only when all of the following are true:
 "It might be useful someday" is not sufficient. A concrete workflow and proof are
 required. Restoring one tool never authorizes restoring the rest of its provider's
 catalog.
+
+Repository-development discovery is separate from this product catalog. During a PromptSpec, only the
+Primary uses the one-shot Codebase Memory CLI as a directional map before dispatching direct-source
+scouts. That process rule neither removes nor widens saved product Card `cbm.*` grants.
 
 ## Not in the MVP Card catalog
 
@@ -84,7 +96,7 @@ with the Graphiti provider rather than an application-side semantic merger.
 
 | Tool | Why it is excluded from the MVP Card catalog | Underlying owner / future route |
 | --- | --- | --- |
-| `web_search` | The redundant LiquidAIty Tavily adapter is deleted. KnowGraph receives Hermes's Web toolset and owns outside research, citation, and Graphiti persistence; a second search doorway would split that authority. | HermesLatest already supplies selectable Tavily and Firecrawl web providers. Configure the intended provider on KnowGraph's reusable profile instead of restoring an application tool. If that path fails, report the gap rather than adding a fallback. |
+| `web_search` | The redundant LiquidAIty Tavily adapter is deleted. Authorized Cards use Hermes's saved Web toolset when their role requires current information; a second application search doorway would duplicate that capability. KnowGraph owns durable sourced-evidence correlation and Graphiti persistence, not every Web lookup. | HermesLatest already supplies selectable Web providers. Configure and grant the intended provider on the exact saved Card instead of restoring an application tool. If that path fails, report the gap rather than adding a fallback. |
 | Hermes internal `message_agent` capability (not a catalog ID) | Bot delivery is Hermes session behavior authorized by the saved orange roster, not a Card-catalog tool. | Hermes Bot Mode and saved Project topology. |
 
 `current_datetime` and `calculator` remain ordinary Card-eligible utilities.
@@ -104,7 +116,7 @@ Main does not receive:
 
 | Capability | Reason |
 | --- | --- |
-| Hermes Web | Every outside-research request goes to KnowGraph. |
+| Hermes Web | **CURRENT:** Main's source-default Card has no Web toolset, so outside-research work is delegated to a deliberately connected KnowGraph or another saved specialist. **APPROVED DIRECTION:** Main may later gain bounded quick Web research without taking over KnowGraph's durable evidence correlation. That grant/prompt change is not implemented by this document. |
 | Hermes Files, Terminal, Browser, Vision, or Code Execution | Main is the fast conversation/orchestration front door, not the implementation worker. |
 | Graphiti writes | KnowGraph owns sourced persistence. |
 | Card create/update/wire tools | Builder owns agent construction and configuration. |
@@ -149,10 +161,15 @@ ledger, blue-roster dispatch, retries, worker attempts, and final synthesis.
 
 Team remains an explicitly reviewed wildcard selection for MVP. It may enable AutoTools to narrow
 its broad saved grant, but it never receives the whole catalog automatically and Jev cannot widen its
-saved ceiling. Trader, WorldSignals,
-WorldView, Analyst, and Quant keep their existing domain grants until their real
-workflows are separately exercised. Their preservation is not approval to add
-their tools to unrelated Cards.
+saved ceiling. When Trader, WorldSignals, WorldView, Analyst, or Quant is present in a saved Project,
+that exact Card keeps its saved domain grants until its real workflow is separately exercised. Client
+examples and historical Projects do not make those Cards universal. Their preservation is not approval
+to add their tools to unrelated Cards.
+
+The saved Team Card is materialized with Hermes `task_mode: team`; it does not use
+`delegate_task(role="team")`. Hermes's internal `auto-team-v1` marker is the current generic Team/Kanban
+implementation identity, not rejected KnowGraph AutoTeam. Magnetic remains a separate exact-blue-roster
+TaskGraph even when Team is one of its workers.
 
 ## Deferred, not rejected
 

@@ -3,7 +3,8 @@ import { Component, Suspense, lazy, type ReactNode } from 'react';
 import { GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import { GRAPH_THEME, graphDrawerSectionStyle } from '../graph/graphVisualTokens';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
-import type { CanonicalSubjectFocusRequest } from './canonicalSubjectLinks';
+import type { CanonicalEntityFocusRequest } from './canonicalEntityLinks';
+import type { CanonicalEntityHeader } from './canonicalEntityDirectory';
 import type { GraphProjectionV1 } from './joinedKnowledgeGraphProjection';
 import type { ReadProviderFocusNeighborhood } from './knowledgeGraphFocusPresentation';
 
@@ -19,9 +20,18 @@ type Props = {
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses?: Partial<Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>>;
   onReadFocusNeighborhood?: ReadProviderFocusNeighborhood;
+  relevanceQuery?: string;
+  onReadEntityContext?: (
+    entity: CanonicalEntityHeader,
+    query: string,
+    limit?: number,
+    signal?: AbortSignal,
+  ) => Promise<Record<string, any>>;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
-  onRemoveKnowGraphEvidence?: (graphitiFactUuid: string) => Promise<void>;
-  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
+  onRemoveThinkGraphRelationship?: (edgeId: string) => Promise<void>;
+  onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
+  onRemoveKnowGraphRelationship?: (graphitiRelationshipId: string) => Promise<void>;
+  entityFocusRequest?: CanonicalEntityFocusRequest | null;
 };
 
 class KnowledgeGraphErrorBoundary extends Component<
@@ -80,9 +90,13 @@ export default function KnowledgeGraphFramework({
   errors,
   statuses,
   onReadFocusNeighborhood,
+  relevanceQuery,
+  onReadEntityContext,
   onRemoveThinkGraphEvidence,
+  onRemoveThinkGraphRelationship,
   onRemoveKnowGraphEvidence,
-  subjectFocusRequest,
+  onRemoveKnowGraphRelationship,
+  entityFocusRequest,
 }: Props) {
   return (
     <KnowledgeGraphErrorBoundary>
@@ -121,9 +135,13 @@ export default function KnowledgeGraphFramework({
               ...(errors.knowgraph ? { knowgraph: errors.knowgraph } : {}),
             }}
             onReadProviderFocusNeighborhood={onReadFocusNeighborhood}
+            relevanceQuery={relevanceQuery}
+            onReadEntityContext={onReadEntityContext}
             onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
+            onRemoveThinkGraphRelationship={onRemoveThinkGraphRelationship}
             onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
-            subjectFocusRequest={subjectFocusRequest}
+            onRemoveKnowGraphRelationship={onRemoveKnowGraphRelationship}
+            entityFocusRequest={entityFocusRequest}
             />
         </Suspense>
       </div>

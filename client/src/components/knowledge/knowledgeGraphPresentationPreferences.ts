@@ -11,8 +11,9 @@ export type GraphLayout = 'compact' | 'original' | 'communities' | 'radial' | 'g
 export type GraphStyle = 'classic' | 'cyber' | 'galaxy' | 'solar' | 'solarpunk';
 export type RendererGraphStyle = Exclude<GraphStyle, 'solarpunk'>;
 export type GraphPresentationPreferences = {
-  schemaVersion: 2 | 3 | 4 | 5 | 6;
+  schemaVersion: 2 | 3 | 4 | 5 | 6 | 7;
   layout: GraphLayout;
+  viewLayouts?: { thinkgraph: GraphLayout; knowgraph: GraphLayout };
   style: GraphStyle;
   physicsProfile: JevGraphPhysicsProfile;
   settings: Record<string, number | boolean | string>;
@@ -73,12 +74,20 @@ export function safePresentationPreferences(): Partial<GraphPresentationPreferen
       String(rawColors.thinkRelationship || ''),
     );
     return {
-      ...([2, 3, 4, 5, 6].includes(parsed.schemaVersion)
-        ? { schemaVersion: parsed.schemaVersion as 2 | 3 | 4 | 5 | 6 }
+      ...([2, 3, 4, 5, 6, 7].includes(parsed.schemaVersion)
+        ? { schemaVersion: parsed.schemaVersion as 2 | 3 | 4 | 5 | 6 | 7 }
         : {}),
       ...(GRAPH_LAYOUTS.has(parsed.layout) ? { layout: parsed.layout } : {}),
       ...(GRAPH_STYLES.has(parsed.style) ? { style: parsed.style } : {}),
       ...(JEV_PHYSICS.has(parsed.physicsProfile) ? { physicsProfile: parsed.physicsProfile } : {}),
+      ...(parsed.viewLayouts && typeof parsed.viewLayouts === 'object'
+        && GRAPH_LAYOUTS.has(parsed.viewLayouts.thinkgraph)
+        && GRAPH_LAYOUTS.has(parsed.viewLayouts.knowgraph)
+        ? { viewLayouts: {
+          thinkgraph: parsed.viewLayouts.thinkgraph,
+          knowgraph: parsed.viewLayouts.knowgraph,
+        } }
+        : {}),
       ...(settings ? { settings } : {}),
       solarpunkColors: {
         think: !legacyThinkColor && SOLARPUNK_HEX.test(String(rawColors.think || ''))

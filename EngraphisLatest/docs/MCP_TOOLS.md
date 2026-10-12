@@ -22,7 +22,7 @@ class, and execution revalidates availability, scope, authorization, and argumen
 | `engraphis_update_memory` | Edits memory metadata; content changes use the governed correction path. |
 | `engraphis_conflict_review` | Lists pending, quarantined, or conflicting memories for review. |
 
-The Smart gateway exposes these nine tools directly; advanced capabilities remain available through
+The Smart gateway exposes these ten tools directly; advanced capabilities remain available through
 discovery and the validated executors.
 
 For a deliberate cross-agent handoff, pass the source ID as `session_id` when starting
@@ -64,7 +64,7 @@ nor `auto` silently switches to BYOK.
 
 No user profile choice or tool switching is required. The dashboard `/mcp` endpoint and
 `engraphis-mcp-http` use this Smart surface by default. `engraphis-mcp-classic` (or
-`engraphis-mcp-http --classic`) preserves the 39 direct tools below for integrations that pin
+`engraphis-mcp-http --classic`) preserves the 40 direct tools below for integrations that pin
 their historical names and response shapes.
 
 Hosts which already own chat history should use `POST /api/adaptive-context`, not an MCP action.
@@ -171,6 +171,7 @@ an omitted mode means it was not recorded, and is not inferred from current defa
 |---|---|---|
 | Write | `engraphis_remember` | Stores a fact and resolves it as a new memory, reinforcement, safe supersession, or related memory. |
 | Write | `engraphis_remember_many` | Stores a fan-out batch of facts in one transaction: within-batch dedup/supersession, plus evidence-labeled edges between siblings sharing a `subject_key` or declared `evidence_source`. |
+| Write | `engraphis_remember_entities` | Atomically stores one memory per exact Entity without text-derived multi-attachment. |
 | Write | `engraphis_record_event` | Appends one raw occurrence to the event ledger; event rows are not recalled, deduplicated, reinforced, or consolidated as memories. |
 | Write | `engraphis_link` | Connects two related memories. |
 | Write | `engraphis_ingest` | Applies the configured extractor (`chunk`, `llm`, or `llm_structured`). With `none`, it stores one verbatim memory. |

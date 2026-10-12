@@ -60,6 +60,20 @@ describe('ThinkGraph Jev semantic physics', () => {
     expect(internals.semanticRelationshipSpring({}, 0.5)).toBe(0.5);
   });
 
+  it('scales explicit knowledge volume linearly without rewriting relationship gravity mass', () => {
+    const internals = (window as any).EngraphisGraph._internals;
+    expect(internals.explicitVisualSizeWeight({ visual_size_weight: -1 })).toBe(0);
+    expect(internals.explicitVisualSizeWeight({ visual_size_weight: 0.5 })).toBe(0.5);
+    expect(internals.explicitVisualSizeWeight({ visual_size_weight: 2 })).toBe(1);
+    expect(internals.explicitVisualSizeWeight({ gravity_mass: 99 })).toBeNull();
+    const smallest = internals.linearVisualNodeRadius(5, 0);
+    const middle = internals.linearVisualNodeRadius(5, 0.5);
+    const largest = internals.linearVisualNodeRadius(5, 1);
+    expect(middle - smallest).toBeCloseTo(largest - middle);
+    expect(smallest).toBeLessThan(middle);
+    expect(middle).toBeLessThan(largest);
+  });
+
   it('renders current-turn heat without turning it into permanent semantic mass', () => {
     const internals = (window as any).EngraphisGraph._internals;
     expect(internals.turnHeatIntensity({ turn_heat_active: false, turn_heat: 99 })).toBe(0);

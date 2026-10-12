@@ -39,7 +39,7 @@ middleware. Do not expose it through a LAN address or proxy. For a remote deploy
 authenticated `/mcp` endpoint instead.
 
 Use `engraphis-mcp-http --classic` only for an existing integration that requires the 36 direct
-tool names. New integrations should keep the nine-tool Smart default.
+tool names. New integrations should keep the ten-tool Smart default.
 
 Engraphis documents and tests generic MCP transports; it does not claim client-specific support
 unless that client has a maintained setup guide and integration test.

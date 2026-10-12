@@ -1037,39 +1037,131 @@ def test_invocation_rejects_every_non_graph_context_field(
     ):
         card_invocation_preparation.materialize_invocation(payload)
 
-def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
+@pytest.mark.parametrize(
+    ("card_id", "profile"),
+    [
+        ("card_main_chat", "main"),
+        ("builder", "builder"),
+        ("card_thinkgraph", "thinkgraph"),
+        ("card_knowgraph", "knowgraph"),
+    ],
+)
+def test_main_builder_thinkgraph_and_knowgraph_receive_current_graph_grounding(
     monkeypatch: pytest.MonkeyPatch,
+    card_id: str,
+    profile: str,
 ) -> None:
-    from app.python_models.canonical_subject_directory import (
-        assemble_canonical_subject_directory,
-    )
-
     loaded = _destination_fixture(monkeypatch)
     target = loaded["deck"]["nodes"][1]
-    target["id"] = "card_knowgraph"
-    target["runtime"]["profile"] = "knowgraph"
-    loaded["deck"]["edges"][0]["target"] = "card_knowgraph"
-    subjects = assemble_canonical_subject_directory(
-        loaded["projectId"],
-        {"complete": True, "count": 1, "revision": "think-r1", "subjects": [{
+    target["id"] = card_id
+    target["runtime"]["profile"] = profile
+    loaded["deck"]["edges"][0]["target"] = card_id
+    entity_map = {
+        "schemaVersion": "project-entity-map",
+        "projectId": loaded["projectId"],
+        "complete": True,
+        "entities": [{
+            "canonicalName": "Rocket Lab",
+            "authority": "both",
             "engraphisEntityId": "think-rocket",
-            "canonicalName": "Rocket Lab", "entityKind": "person_or_concept",
-        }]},
-        {"complete": True, "count": 1, "revision": "know-r1", "subjects": [{
             "graphitiEntityId": "know-rocket",
-            "canonicalName": "Rocket Lab", "entityKind": "Entity",
-        }]},
+        }],
+        "relationships": [{
+            "authority": "thinkgraph",
+            "engraphisRelationshipId": "relationship-one",
+            "sourceEngraphisEntityId": "think-rocket",
+            "sourceCanonicalName": "Rocket Lab",
+            "targetEngraphisEntityId": "think-electron",
+            "targetCanonicalName": "Electron",
+            "label": "OPERATES",
+            "state": {"labelConfidence": 0.9},
+        }],
+        "counts": {
+            "engraphis": 1,
+            "graphiti": 1,
+            "total": 1,
+            "thinkgraphRelationships": 1,
+            "knowgraphRelationships": 0,
+            "relationships": 1,
+        },
+        "revisions": {
+            "engraphis": "think-r1",
+            "graphiti": "know-r1",
+            "entities": "entity-r1",
+            "relationships": "relationship-r1",
+        },
+        "sha256": "a" * 64,
+        "bytes": 512,
+        "estimatedTokens": 128,
+        "readDurationMs": 1.0,
+    }
+    monkeypatch.setattr(
+        card_invocation_preparation,
+        "build_project_entity_map",
+        lambda _project: entity_map,
     )
-    monkeypatch.setattr(card_invocation_preparation, "build_canonical_subject_directory", lambda _project: subjects,
+    grounding = {
+        "schemaVersion": "project-graph.grounding.v1",
+        "projectId": loaded["projectId"],
+        "authorities": {
+            "thinkgraph": {
+                "recent": [{
+                    "engraphisMemoryId": "think-recent",
+                    "engraphisEntityId": "think-rocket",
+                    "body": "Recent compact Think.",
+                }],
+                "relevant": [{
+                    "engraphisMemoryId": "think-relevant",
+                    "engraphisEntityId": "think-rocket",
+                    "body": "Relevant compact Think.",
+                }],
+            },
+            "knowgraph": {
+                "recent": [],
+                "relevant": [{
+                    "graphitiEpisodeId": "know-relevant",
+                    "graphitiEntityId": "know-rocket",
+                    "idea": {
+                        "body": "Relevant cited For.",
+                        "citations": [{"url": "https://example.test/for"}],
+                    },
+                    "counterIdea": {
+                        "body": "Relevant cited Against.",
+                        "citations": [{"url": "https://example.test/against"}],
+                    },
+                }],
+            },
+        },
+        "revision": "b" * 64,
+    }
+    grounding_calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        card_invocation_preparation,
+        "build_project_graph_grounding",
+        lambda project, query, context="": (
+            grounding_calls.append((project, query, context)) or grounding
+        ),
     )
     invocation = card_invocation_preparation.materialize_invocation(
-        _destination_payload("card_knowgraph")
+        _destination_payload(card_id)
     )
 
-    assert invocation["canonicalSubjectDirectory"] == subjects
+    assert invocation["projectEntityMap"] == entity_map
+    assert invocation["projectGraphGrounding"] == grounding
+    assert grounding_calls == [(
+        loaded["projectId"],
+        _destination_payload(card_id)["assignment"],
+        "",
+    )]
     graph_text = invocation["idf"]["actualGraphData"]["modelText"]
-    assert "Complete Cross-Graph Subject Directory" in graph_text
-    assert graph_text.count("Rocket Lab") == 2
+    assert "Current Project Entity Map" in graph_text
+    assert "Rocket Lab" in graph_text
+    assert "OPERATES" in graph_text
+    assert "PROJECT GRAPH GROUNDING (CURRENT REQUEST)" in graph_text
+    assert "Relevant compact Think." in graph_text
+    assert "Relevant cited For." in graph_text
+    assert "Relevant cited Against." in graph_text
+    assert '"body":' not in json.dumps(entity_map)
     assert invocation["inputSummary"]["estimatedGraphContextTokens"] > 0
 
 def test_context_cascade_rejects_duplicate_and_recursive_handoffs(

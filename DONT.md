@@ -66,15 +66,27 @@ owns source boundaries. A historical report is evidence, never permission to act
 Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; native CBM owns CodeGraph; AGE owns
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
-Main reads context and retains explicit writes and focused delegation. One additional current path is the
-owner-approved completed User/Main pair lifecycle: preparation is non-persisting; the existing saved
-ThinkGraph Card supplies exactly one native Engraphis `EPISODIC` Think, canonical entities/concepts, and
-free-form directed pair proposals; native direct structured-extractor incidence associates that Think to
-accepted canonical nodes; and graph-aware Jev alone admits endpoints and classifies final edges. Thinks are
+Main reads bounded context and may delegate, but it is not the owner of ThinkGraph writes. One current path
+is the owner-approved completed User/Main pair lifecycle: preparation is non-persisting; the existing saved
+ThinkGraph Card supplies zero or more Entity-specific native Engraphis `EPISODIC` Thinks, never more than one
+Think for the same Entity in one pair, plus free-form directed relationship proposals; native direct
+structured-extractor incidence associates each Think to its one exact Entity; and graph-aware Jev classifies
+each Card-proposed relationship before mutation,
+choosing the canonical edge label, distribution, and strength without becoming an endpoint authority. Thinks are
 append-only and excluded from episodic consolidation. This is not the removed proxy/replay design. Do not add
 a regex-first graph skeleton, pending-candidate queue, approval state, shadow graph, broad historical
 deletion, direct model edge writer, second extractor, or database-side semantic shortcut.
-KnowGraph retains actual sourced research through its existing owner.
+KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write
+records one exact structural `ABOUT` attachment; `MENTIONS` remains extraction output, not attachment authority.
+One Know is one atomic `know.v1` episode with both a cited supporting idea and a cited counter idea. Do not
+store or project a one-sided cited statement as a Know, split its two sides into separate Knows, or attach the
+same Know to multiple Entities. Only Entities are visible Project graph nodes; episodes and citations remain
+attached evidence/provenance.
+
+Current grounding is one most Relevant plus one distinct most Recent record from each authority by default.
+Native owners produce candidates and Jev ranks them; TypeScript must not rank prose, substitute recency for
+failed relevance, or persist a relevance decision as graph truth. Inspector Search/Results is transient and
+must not widen Main/Builder's default packet.
 
 Keep entity identity, attributed claims, uncertainty, meaningful relationships and provenance distinct.
 A stored note, queued episode, native ID or attractive graph is not proof of useful knowledge.

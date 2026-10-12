@@ -33,6 +33,7 @@ from engraphis.core.interfaces import (
     MemoryRecord,
     MemoryType,
     FactSpec,
+    Node,
     GraphTraversalPolicy,
     QueryPlanner,
     RetentionDecision,
@@ -1064,7 +1065,16 @@ class MemoryEngine:
     def remember_many(self, facts, *, workspace_id: str,
                       repo_id: Optional[str] = None, session_id: Optional[str] = None,
                       mtype: MemoryType = MemoryType.SEMANTIC,
-                      scope: Optional[Scope] = None) -> list[dict]:
+                      scope: Optional[Scope] = None,
+                      resolve_conflicts: bool = True,
+                      _trusted_graph_keys: Optional[frozenset] = None,
+                      _transactional_finalizer: Optional[
+                          Callable[[list[dict]], None]
+                      ] = None,
+                      _transactional_validator: Optional[
+                          Callable[[], Optional[list[dict]]]
+                      ] = None,
+                      _automatic_graph_enrichment: bool = True) -> list[dict]:
         """Store a batch of facts with within-batch resolution and evidence edges.
 
         Implements the fan-out → collect → wire lifecycle for parallel-agent output:
@@ -1078,7 +1088,9 @@ class MemoryEngine:
 
         Accepts ``FactSpec`` items or bare strings. Returns one result dict per fact,
         in input order, with the same shape as ``remember_with_resolution`` results.
-        The whole batch rolls back if any fact fails.
+        The whole batch rolls back if any fact or the optional transactional
+        finalizer fails. Internal trusted callers may disable automatic graph
+        enrichment when the finalizer supplies exact graph incidence itself.
         """
         specs: list[FactSpec] = []
         for fact in facts:
@@ -1267,6 +1279,12 @@ class MemoryEngine:
                 elif not caller_owned_transaction:
                     self.store.conn.execute("BEGIN IMMEDIATE")
                     owns_transaction = True
+                if _transactional_validator is not None:
+                    replay = _transactional_validator()
+                    if replay is not None:
+                        if owns_transaction:
+                            self.store.conn.commit()
+                        return replay
                 with self.store.conn.defer_commits():
                     target = index_repair_identity(self.index, self.store)
                     if target is not None:
@@ -1289,15 +1307,17 @@ class MemoryEngine:
                             confidence=None, keywords=item["keywords"],
                             metadata=item["metadata"],
                             valid_from=item["valid_from"],
-                            resolve_conflicts=True, candidate_k=5,
+                            resolve_conflicts=resolve_conflicts, candidate_k=5,
                             subject_key=item["subject_key"],
                             claim_kind=item["claim_kind"],
+                            trusted_graph_keys=_trusted_graph_keys,
                             poisoning=item["poisoning"],
                             trusted_write=item["trusted_write"],
                             # A Store-sharing native table must publish inside
                             # this batch transaction, so its failure rolls back
                             # every canonical and derived row together.
                             defer_external_index=external_index,
+                            automatic_graph_enrichment=_automatic_graph_enrichment,
                             extra_neighbors=extra_neighbors,
                         )
                         results.append(result)
@@ -1323,6 +1343,8 @@ class MemoryEngine:
                             pending_vectors.append((mid, item["vec"]))
                     linked_pairs = self._evolve_batch(inserted)
                     self._audit_batch_evolve(linked_pairs)
+                    if _transactional_finalizer is not None:
+                        _transactional_finalizer(results)
                 if owns_transaction:
                     self.store.conn.commit()
                 for memory_id, vec in pending_vectors:
@@ -1333,6 +1355,118 @@ class MemoryEngine:
                         and self.store.conn.transaction_owned_by_current_thread()):
                     self.store.conn.rollback()
                 raise
+
+    def remember_entities(
+        self,
+        facts,
+        entities: list[Node],
+        *,
+        workspace_id: str,
+        repo_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        mtype: MemoryType = MemoryType.EPISODIC,
+        scope: Optional[Scope] = None,
+        resolve_conflicts: bool = False,
+        source_kind: str = "explicit",
+        _trusted_graph_keys: Optional[frozenset] = None,
+        _transactional_finalizer: Optional[Callable[[list[dict]], None]] = None,
+        _transactional_validator: Optional[
+            Callable[[], Optional[list[dict]]]
+        ] = None,
+    ) -> list[dict]:
+        """Store one memory per exact Entity and attach each atomically.
+
+        The two lists are positional and must have identical length. Each supplied
+        Entity is resolved through the native entity store, but no text-derived
+        incidence is added; the resulting memory receives exactly one explicit
+        incidence. Ordinary ``remember`` and ``remember_many`` behavior is unchanged.
+        """
+
+        if not isinstance(entities, list) or len(entities) != len(facts):
+            raise ValueError("facts and entities must have the same length")
+        if not entities:
+            return []
+        exact_entities: list[Node] = []
+        for entity in entities:
+            if not isinstance(entity, Node):
+                raise TypeError("entities must contain Node instances")
+            name = str(entity.name or "").strip()
+            if not name:
+                raise ValueError("entity name must not be empty")
+            if entity.workspace_id not in (None, workspace_id):
+                raise ValueError("entity belongs to a different workspace")
+            if entity.repo_id not in (None, repo_id):
+                raise ValueError("entity belongs to a different repo")
+            if entity.id:
+                existing = self.store.conn.execute(
+                    "SELECT name, workspace_id, repo_id FROM entities WHERE id=?",
+                    (entity.id,),
+                ).fetchone()
+                if existing is not None and (
+                    existing["name"] != name
+                    or existing["workspace_id"] != workspace_id
+                    or existing["repo_id"] != repo_id
+                ):
+                    raise ValueError("entity id does not match the exact Entity")
+            exact_entities.append(Node(
+                id=str(entity.id or ""),
+                name=name,
+                ntype=str(entity.ntype or ""),
+                workspace_id=workspace_id,
+                repo_id=repo_id,
+                canonical_id=entity.canonical_id,
+            ))
+
+        def attach(results: list[dict]) -> None:
+            if len(results) != len(exact_entities):
+                raise RuntimeError("entity memory result count mismatch")
+            for result, entity in zip(results, exact_entities, strict=True):
+                memory_id = str(result.get("id") or "")
+                if not memory_id:
+                    raise RuntimeError("entity memory result is missing its id")
+                memory = self.store.get_memory(memory_id)
+                if memory is None:
+                    raise RuntimeError("entity memory was not stored")
+                entity_id = self.store.upsert_entity(
+                    entity,
+                    commit=False,
+                    _derive_text_incidence=False,
+                )
+                self.store.link_memory_entity(
+                    memory_id=memory_id,
+                    entity_id=entity_id,
+                    workspace_id=workspace_id,
+                    repo_id=repo_id,
+                    source_kind=source_kind,
+                    confidence=1.0,
+                    valid_from=memory.valid_from,
+                    valid_to=memory.valid_to,
+                    valid_to_recorded_at=memory.valid_to_recorded_at,
+                    ingested_at=memory.ingested_at,
+                    expired_at=memory.expired_at,
+                    provenance={
+                        "source": source_kind,
+                        "memory_id": memory_id,
+                    },
+                    commit=False,
+                )
+                result["entity_id"] = entity_id
+            if _transactional_finalizer is not None:
+                _transactional_finalizer(results)
+
+        return self.remember_many(
+            facts,
+            workspace_id=workspace_id,
+            repo_id=repo_id,
+            session_id=session_id,
+            mtype=mtype,
+            scope=scope,
+            resolve_conflicts=resolve_conflicts,
+            _trusted_graph_keys=_trusted_graph_keys,
+            _transactional_validator=_transactional_validator,
+            _transactional_finalizer=attach,
+            _automatic_graph_enrichment=False,
+        )
 
     def _evolve_batch(self, inserted: list) -> list[tuple[str, str, str]]:
         """Wire evidence-based edges between batch siblings.
@@ -1444,6 +1578,7 @@ class MemoryEngine:
                            trusted_write: bool = True,
                            transactional_finalizer: Optional[Callable[[str], None]] = None,
                            defer_external_index: bool = False,
+                           automatic_graph_enrichment: bool = True,
                            extra_neighbors: Optional[list] = None) -> dict:
         """The resolve→insert body of ``remember_with_resolution``. The caller holds
         ``self._write_lock`` for the whole call (atomicity of the resolve decision).
@@ -1722,6 +1857,8 @@ class MemoryEngine:
         # ``meta`` was demoted above, so any graph hint still here was vouched for by
         # ingest(), not merely asserted by whoever built the metadata dictionary.
         if (
+            automatic_graph_enrichment
+            and
             trusted_write
             and scope != Scope.SESSION
             and self.graph_feeder is not None
@@ -1746,6 +1883,8 @@ class MemoryEngine:
             except Exception as exc:
                 self._warn_redacted_failure("structured graph enrichment", exc)
         if (
+            automatic_graph_enrichment
+            and
             trusted_write
             and scope != Scope.SESSION
             and self.graph_extractor is not None
@@ -1769,7 +1908,7 @@ class MemoryEngine:
                 )
             except Exception as exc:
                 self._warn_redacted_failure("graph extraction", exc)
-        if trusted_write and scope != Scope.SESSION:
+        if automatic_graph_enrichment and trusted_write and scope != Scope.SESSION:
             self._link_memory_entities(
                 mid, f"{title}\n{content}", workspace_id=workspace_id, repo_id=repo_id,
                 valid_from=rec.valid_from,

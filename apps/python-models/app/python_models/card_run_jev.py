@@ -39,12 +39,17 @@ def _bounded_body(body: dict[str, Any], error_code: str) -> dict[str, Any]:
     return body
 
 
-def _post_jev(body: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+def _post_jev(
+    body: dict[str, Any],
+    *,
+    prefix: str,
+    timeout_seconds: float = JEV_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         raise _JevSelectionError("unavailable", f"{prefix}_openrouter_key_unavailable")
     try:
-        with httpx.Client(timeout=JEV_TIMEOUT_SECONDS, follow_redirects=False) as client:
+        with httpx.Client(timeout=timeout_seconds, follow_redirects=False) as client:
             response = client.post(
                 JEV_ENDPOINT,
                 headers={
@@ -95,3 +100,41 @@ def _choice_answer(
     if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence")
     return winner, round(confidence * 100.0, 2)
+
+
+def request_jev_decision(
+    body: dict[str, Any],
+    *,
+    prefix: str,
+    timeout_seconds: float = JEV_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Use the one bounded Jev transport for an application-owned Choice."""
+
+    return _post_jev(
+        _bounded_body(body, f"{prefix}_input_limit"),
+        prefix=prefix,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def validated_choice_distribution(
+    response: dict[str, Any],
+    question_id: str,
+    choice_ids: tuple[str, ...],
+) -> tuple[str, dict[str, float], float]:
+    """Return one validated decision id, full distribution, and confidence."""
+
+    answer = response["answers"][question_id]
+    if not isinstance(answer, dict) or answer.get("type") != "choice":
+        raise ValueError("answer")
+    distribution = validate_rounded_probability_distribution(
+        answer["probabilities"], choice_ids,
+    )
+    validate_rounded_choice_winner(str(answer["choice"]), distribution)
+    confidence = answer["confidence"]
+    if isinstance(confidence, bool):
+        raise ValueError("confidence")
+    confidence_value = float(confidence)
+    if not math.isfinite(confidence_value) or not 0.0 <= confidence_value <= 1.0:
+        raise ValueError("confidence")
+    return _decision_id(response), distribution, confidence_value

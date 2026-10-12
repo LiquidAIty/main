@@ -99,6 +99,42 @@ def canonical_entity_id(store: Any, entity_id: str) -> str:
     return str(row.get("canonical_id") or row["id"]) if row else ""
 
 
+def exact_think_entity_ids(
+    store: Any,
+    *,
+    workspace_id: str,
+    memory_ids: list[str],
+) -> dict[str, str]:
+    """Return only Think memories with one exact current Entity incidence."""
+
+    requested = list(dict.fromkeys(
+        str(memory_id or "").strip()
+        for memory_id in memory_ids
+        if str(memory_id or "").strip()
+    ))
+    if not requested:
+        return {}
+    marks = ",".join("?" for _ in requested)
+    rows = store.conn.execute(
+        "SELECT me.memory_id, COALESCE(e.canonical_id,e.id) AS entity_id "
+        "FROM memory_entities me JOIN entities e ON e.id=me.entity_id "
+        f"WHERE me.workspace_id=? AND me.memory_id IN ({marks}) "
+        "AND me.source_kind=? AND me.valid_to IS NULL AND me.expired_at IS NULL "
+        "ORDER BY me.memory_id, entity_id",
+        (workspace_id, *requested, THINK_INCIDENCE_KIND),
+    ).fetchall()
+    attached: dict[str, set[str]] = {}
+    for row in rows:
+        attached.setdefault(str(row["memory_id"]), set()).add(
+            str(row["entity_id"])
+        )
+    return {
+        memory_id: next(iter(entity_ids))
+        for memory_id, entity_ids in attached.items()
+        if len(entity_ids) == 1
+    }
+
+
 def existing_entity_for_name(
     store: Any,
     *,
@@ -145,16 +181,16 @@ def validated_think_metadata(memory: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     summary = value.get("summary")
-    entities = value.get("entities", structured.get("entities"))
+    entity = value.get("entity")
     relationships = value.get("relationships", structured.get("relations"))
+    detail = value.get("detail")
     if (
         not isinstance(summary, str)
         or not summary.strip()
-        or not isinstance(entities, list)
-        or not entities
-        or any(not isinstance(item, str) or not item.strip() for item in entities)
+        or not isinstance(entity, str)
+        or not entity.strip()
         or not isinstance(relationships, list)
-        or not relationships
+        or (detail is not None and (not isinstance(detail, str) or not detail.strip()))
         or any(
             not isinstance(item, dict)
             or set(item) != {"source", "relation", "target"}
@@ -168,7 +204,8 @@ def validated_think_metadata(memory: Any) -> dict[str, Any] | None:
         return None
     return {
         "summary": summary,
-        "entities": deepcopy(entities),
+        **({"detail": detail} if detail is not None else {}),
+        "entity": entity,
         "relationships": deepcopy(relationships),
     }
 
@@ -256,6 +293,11 @@ def _bounded_snapshot_thinks(
     memories = store.get_memories(
         list(dict.fromkeys(str(row["memory_id"]) for row in incidences))
     )
+    exact_entities = exact_think_entity_ids(
+        store,
+        workspace_id=workspace_id,
+        memory_ids=list(memories),
+    )
     thinks: list[dict[str, Any]] = []
     for row in incidences:
         memory = memories.get(str(row["memory_id"]))
@@ -264,14 +306,19 @@ def _bounded_snapshot_thinks(
         think = validated_think_metadata(memory)
         if think is None or row.get("source_kind") != THINK_INCIDENCE_KIND:
             continue
+        exact_entity_id = exact_entities.get(memory.id)
+        row_entity_id = canonical_by_member.get(
+            str(row["entity_id"]), str(row["entity_id"])
+        )
+        if exact_entity_id != row_entity_id:
+            continue
         thinks.append({
-            "entity_id": canonical_by_member.get(
-                str(row["entity_id"]), str(row["entity_id"])
-            ),
+            "entity_id": row_entity_id,
             "memory_id": memory.id,
             "title": memory.title,
             "content": memory.content,
             "summary": think["summary"],
+            **({"detail": think["detail"]} if think.get("detail") else {}),
             "keywords": list(memory.keywords)[:16],
             "relations": deepcopy(think["relationships"]),
             "valid_from": memory.valid_from,
@@ -409,6 +456,7 @@ def endpoint_thinks(
     if not member_ids:
         return []
     marks = ",".join("?" for _ in member_ids)
+    source_limit = max(limit * 8, 128)
     rows = store.conn.execute(
         "SELECT DISTINCT m.id FROM memory_entities me "
         "JOIN memories m ON m.id=me.memory_id "
@@ -418,12 +466,20 @@ def endpoint_thinks(
         "AND m.valid_to IS NULL AND m.expired_at IS NULL "
         "ORDER BY COALESCE(m.ingested_at,me.ingested_at,0) DESC, m.id DESC "
         "LIMIT ?",
-        (workspace_id, *member_ids, THINK_INCIDENCE_KIND, limit),
+        (workspace_id, *member_ids, THINK_INCIDENCE_KIND, source_limit),
     ).fetchall()
+    exact_entities = exact_think_entity_ids(
+        store,
+        workspace_id=workspace_id,
+        memory_ids=[str(row["id"]) for row in rows],
+    )
     entity = _entity_row(store, canonical_id) or {}
     result: list[dict[str, Any]] = []
     for row in rows:
-        memory = store.get_memory(str(row["id"]))
+        memory_id = str(row["id"])
+        if exact_entities.get(memory_id) != canonical_id:
+            continue
+        memory = store.get_memory(memory_id)
         if memory is None:
             continue
         think = validated_think_metadata(memory)
@@ -442,11 +498,103 @@ def endpoint_thinks(
             "valid_from": memory.valid_from,
             "valid_to": memory.valid_to,
         })
+        if len(result) == limit:
+            break
     return result
 
 
-def read_subject_directory(project: str) -> dict[str, Any]:
-    """Return every canonical project subject header without Think bodies or edges."""
+def read_entity_thinks(
+    project: str,
+    engraphis_entity_id: str,
+    *,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """Read current/recent Thinks for one exact native Engraphis Entity ID."""
+
+    service = get_service()
+    project = project_id(project)
+    entity_id = str(engraphis_entity_id or "").strip()
+    if not entity_id:
+        raise ValueError("engraphis_entity_id_required")
+    with SERVICE_LOCK:
+        workspace = service.store.conn.execute(
+            "SELECT id FROM workspaces WHERE name=?",
+            (project,),
+        ).fetchone()
+        if workspace is None:
+            return []
+        return endpoint_thinks(
+            service.store,
+            workspace_id=str(workspace["id"]),
+            canonical_id=entity_id,
+            limit=limit,
+        )
+
+
+def read_entity_think_candidates(
+    project: str,
+    engraphis_entity_id: str,
+    *,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Read a bounded exact candidate pool for native-recall/Jev relevance."""
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 24:
+        raise ValueError("thinkgraph_entity_candidate_limit_invalid")
+    return read_entity_thinks(project, engraphis_entity_id, limit=limit)
+
+
+def read_recent_project_thinks(
+    project: str,
+    *,
+    limit: int = 1,
+) -> list[dict[str, Any]]:
+    """Read the newest exact Entity-attached Thinks across one Project."""
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 12:
+        raise ValueError("thinkgraph_recent_think_limit_invalid")
+    service = get_service()
+    project = project_id(project)
+    with SERVICE_LOCK:
+        workspace = service.store.conn.execute(
+            "SELECT id FROM workspaces WHERE name=?", (project,),
+        ).fetchone()
+        if workspace is None:
+            return []
+        workspace_id = str(workspace["id"])
+        rows = service.store.conn.execute(
+            "SELECT id FROM memories WHERE workspace_id=? "
+            "AND valid_to IS NULL AND expired_at IS NULL "
+            "ORDER BY COALESCE(ingested_at,0) DESC, id DESC LIMIT 128",
+            (workspace_id,),
+        ).fetchall()
+        memory_ids = [str(row["id"]) for row in rows]
+        exact_entities = exact_think_entity_ids(
+            service.store, workspace_id=workspace_id, memory_ids=memory_ids,
+        )
+        records: list[dict[str, Any]] = []
+        for memory_id in memory_ids:
+            memory = service.store.get_memory(memory_id)
+            think = validated_think_metadata(memory) if memory is not None else None
+            entity_id = exact_entities.get(memory_id)
+            if memory is None or think is None or not entity_id:
+                continue
+            records.append({
+                "engraphisMemoryId": memory.id,
+                "engraphisEntityId": entity_id,
+                "body": think["summary"],
+                **({"detail": think["detail"]} if think.get("detail") else {}),
+                "validFrom": memory.valid_from,
+                "validTo": memory.valid_to,
+                "ingestedAt": memory.ingested_at,
+            })
+            if len(records) == limit:
+                break
+        return records
+
+
+def read_entity_directory(project: str) -> dict[str, Any]:
+    """Return every canonical Project Entity identity without Think bodies or edges."""
 
     service = get_service()
     project = project_id(project)
@@ -458,7 +606,7 @@ def read_subject_directory(project: str) -> dict[str, Any]:
             empty_revision = hashlib.sha256(b"[]").hexdigest()
             return {
                 "complete": True, "count": 0, "revision": empty_revision,
-                "subjects": [],
+                "entities": [],
             }
         workspace_id = str(row["id"])
         rows = service.store.conn.execute(
@@ -473,25 +621,24 @@ def read_subject_directory(project: str) -> dict[str, Any]:
             if canonical is None:
                 return {
                     "complete": False, "count": len(rows), "revision": "invalid",
-                    "subjects": [],
+                    "entities": [],
                 }
             by_canonical[canonical_id] = {
                 "engraphisEntityId": canonical_id,
                 "canonicalName": str(canonical.get("name") or ""),
-                "entityKind": str(canonical.get("etype") or ""),
             }
-        subjects = sorted(
+        entities = sorted(
             by_canonical.values(),
             key=lambda item: (item["canonicalName"], item["engraphisEntityId"]),
         )
         revision = hashlib.sha256(
             json.dumps(
-                subjects, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                entities, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode("utf-8")
         ).hexdigest()
         return {
             "complete": True,
-            "count": len(subjects),
+            "count": len(entities),
             "revision": f"{graph_revision(service.store, workspace_id)}:{revision}",
-            "subjects": subjects,
+            "entities": entities,
         }

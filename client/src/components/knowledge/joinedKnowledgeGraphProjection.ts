@@ -1,18 +1,18 @@
 import {
-  isCanonicalSubjectDirectory,
-  readCanonicalSubjectProviderPointer,
-  type CanonicalSubjectDirectory,
-  type CanonicalSubjectHeader,
-} from './canonicalSubjectDirectory';
+  isCanonicalEntityDirectory,
+  readCanonicalEntityProviderPointers,
+  type CanonicalEntityDirectory,
+  type CanonicalEntityHeader,
+} from './canonicalEntityDirectory';
 import { GRAPH_THEME, SOLARPUNK_PALETTE } from '../graph/graphVisualTokens';
 
 export type GraphAuthority = 'thinkgraph' | 'knowgraph';
+export type KnowledgeGraphViewMode = 'combined' | GraphAuthority;
 // The server-owned graph projection contract rendered by the knowledge surfaces.
 export type GraphProjectionNode = {
   id: string;
   canonicalId?: string;
   canonicalName?: string;
-  entityKind?: string;
   label: string;
   title?: string;
   type?: string;
@@ -36,11 +36,11 @@ export type GraphProjectionNode = {
   properties?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
   provenanceCount?: number;
-  provenanceEpisodeIds?: string[];
   degree?: number;
   semantic_mass?: number;
   gravity_mass?: number;
   visual_radius?: number;
+  visual_size_weight?: number;
   etype?: string;
   anchor_role?: 'global' | 'community' | null;
   system_anchor_id?: string;
@@ -107,8 +107,8 @@ export type GraphProjectionV1 = {
   counts?: { nodes: number; edges: number };
   nodes: GraphProjectionNode[];
   edges: GraphProjectionEdge[];
-  canonicalSubjectDirectory?: CanonicalSubjectDirectory | null;
-  /** Provider provenance records retained for inspectors, never rendered as subjects. */
+  canonicalEntityDirectory?: CanonicalEntityDirectory | null;
+  /** Provider source records retained for Relationship inspection, never rendered as Entities. */
   provenanceNodes?: GraphProjectionNode[];
 };
 
@@ -216,43 +216,44 @@ function namedRenderId(name: string): string {
   return `node-name:${encodeURIComponent(name)}`;
 }
 
-type CanonicalSubjectIndex = {
-  directory: CanonicalSubjectDirectory;
-  byEntityId: Record<GraphAuthority, Map<string, CanonicalSubjectHeader>>;
+type CanonicalEntityIndex = {
+  directory: CanonicalEntityDirectory;
+  byEntityId: Record<GraphAuthority, Map<string, CanonicalEntityHeader>>;
 };
 
-function canonicalSubjectIndex(
+function canonicalEntityIndex(
   thinkProjection: GraphProjectionV1,
   knowProjection: GraphProjectionV1,
-): CanonicalSubjectIndex | null {
-  const directory = thinkProjection.canonicalSubjectDirectory;
-  if (!isCanonicalSubjectDirectory(directory)
+): CanonicalEntityIndex | null {
+  const directory = thinkProjection.canonicalEntityDirectory;
+  if (!isCanonicalEntityDirectory(directory)
     || !thinkProjection.projectId
     || thinkProjection.projectId !== knowProjection.projectId
     || directory.projectId !== thinkProjection.projectId) return null;
 
-  const byEntityId: CanonicalSubjectIndex['byEntityId'] = {
+  const byEntityId: CanonicalEntityIndex['byEntityId'] = {
     thinkgraph: new Map(),
     knowgraph: new Map(),
   };
-  for (const subject of directory.subjects) {
-    const pointer = readCanonicalSubjectProviderPointer(subject);
-    if (!pointer) return null;
-    byEntityId[pointer.authority].set(pointer.entityId, subject);
+  for (const entity of directory.entities) {
+    const pointers = readCanonicalEntityProviderPointers(entity);
+    if (!pointers) return null;
+    for (const pointer of pointers) {
+      byEntityId[pointer.authority].set(pointer.entityId, entity);
+    }
   }
   return { directory, byEntityId };
 }
 
-function canonicalSubjectHeader(
-  index: CanonicalSubjectIndex | null,
+function canonicalEntityHeader(
+  index: CanonicalEntityIndex | null,
   authority: GraphAuthority,
   node: GraphProjectionNode,
-): CanonicalSubjectHeader | null {
+): CanonicalEntityHeader | null {
   const header = index?.byEntityId[authority].get(node.id);
   if (!header
     || node.canonicalName !== header.canonicalName
     || node.label !== header.canonicalName
-    || node.entityKind !== header.entityKind
     || node.projectId !== index!.directory.projectId
     || node.episodeId !== undefined
     || node.memoryType !== undefined) return null;
@@ -265,20 +266,24 @@ function presentationNode(
 ): GraphProjectionNode {
   const primary = variants.find(variant => variant.authority === 'thinkgraph') || variants[0];
   const sourceKind = visualSourceKind(variants);
+  const attachedWordCount = variants.reduce((total, variant) => {
+    const raw = Number(variant.node.properties?.attachedWordCount);
+    return total + (Number.isFinite(raw) && raw > 0 ? raw : 0);
+  }, 0);
   return {
     ...primary.node,
     id: visualId,
     canonicalId: undefined,
     authority: 'joined',
     ...solarpunkMaterialFields(sourceKind, false, false),
-    properties: { ...(primary.node.properties || {}) },
+    properties: { ...(primary.node.properties || {}), attachedWordCount },
   } as GraphProjectionNode;
 }
 
 /**
  * Builds one non-authoritative renderer view over the two provider projections.
- * A complete current subject directory supplies each authority's exact
- * stored canonical name, kind, entity identity, Project, and revision. The
+ * A complete current Entity directory supplies each authority's exact
+ * stored canonical name, native Entity identity, Project, and revision. The
  * single mixed presentation
  * co-covers a name only when exactly one projection record from each authority
  * byte-matches its own header. No label normalization, fuzzy/alias inference,
@@ -292,13 +297,13 @@ export function composeThinkKnowPresentation(
     thinkgraph: thinkProjection,
     knowgraph: knowProjection,
   };
-  const subjectIndex = canonicalSubjectIndex(thinkProjection, knowProjection);
+  const entityIndex = canonicalEntityIndex(thinkProjection, knowProjection);
   const eligibleByName: Record<GraphAuthority, Map<string, GraphProjectionNode[]>> = {
     thinkgraph: new Map(),
     knowgraph: new Map(),
   };
   const registerEligible = (authority: GraphAuthority, node: GraphProjectionNode) => {
-    const header = canonicalSubjectHeader(subjectIndex, authority, node);
+    const header = canonicalEntityHeader(entityIndex, authority, node);
     if (!header) return;
     const records = eligibleByName[authority].get(header.canonicalName) || [];
     records.push(node);
@@ -313,7 +318,7 @@ export function composeThinkKnowPresentation(
   const nodeVariants = new Map<string, JoinedGraphNodeVariant[]>();
   const visualNodeIdByProviderMember = new Map<string, string>();
   const addNode = (authority: GraphAuthority, node: GraphProjectionNode) => {
-    const header = canonicalSubjectHeader(subjectIndex, authority, node);
+    const header = canonicalEntityHeader(entityIndex, authority, node);
     const visualId = header && pairedNames.has(header.canonicalName)
       ? namedRenderId(header.canonicalName)
       : providerRenderId(authority, node.id);
@@ -366,8 +371,8 @@ export function composeThinkKnowPresentation(
       counts: { nodes: nodes.length, edges: edges.length },
       nodes,
       edges,
-      ...(subjectIndex
-        ? { canonicalSubjectDirectory: subjectIndex.directory }
+      ...(entityIndex
+        ? { canonicalEntityDirectory: entityIndex.directory }
         : {}),
     },
     providerProjections,
@@ -377,9 +382,44 @@ export function composeThinkKnowPresentation(
   };
 }
 
+function emptyProviderProjection(
+  authority: GraphAuthority,
+  source: GraphProjectionV1,
+  directory: CanonicalEntityDirectory | null | undefined,
+): GraphProjectionV1 {
+  return {
+    schemaVersion: `${authority}.empty-view.v1`,
+    authority,
+    projectId: source.projectId,
+    nodes: [],
+    edges: [],
+    counts: { nodes: 0, edges: 0 },
+    ...(directory ? { canonicalEntityDirectory: directory } : {}),
+  };
+}
+
+/** Select one transient renderer view without changing either graph authority. */
+export function selectThinkKnowPresentation(
+  joined: JoinedGraphPresentation,
+  viewMode: KnowledgeGraphViewMode,
+): JoinedGraphPresentation {
+  if (viewMode === 'combined') return joined;
+  const think = joined.providerProjections.thinkgraph;
+  const know = joined.providerProjections.knowgraph;
+  const directory = think.canonicalEntityDirectory;
+  return viewMode === 'thinkgraph'
+    ? composeThinkKnowPresentation(
+      think,
+      emptyProviderProjection('knowgraph', know, directory),
+    )
+    : composeThinkKnowPresentation(
+      emptyProviderProjection('thinkgraph', think, directory),
+      know,
+    );
+}
+
 export function visualSourceKind(variants: JoinedGraphNodeVariant[]): 'think' | 'know' | 'paired' {
   const authorities = new Set(variants.map(variant => variant.authority));
   return authorities.size > 1 ? 'paired'
     : authorities.has('knowgraph') ? 'know' : 'think';
 }
-

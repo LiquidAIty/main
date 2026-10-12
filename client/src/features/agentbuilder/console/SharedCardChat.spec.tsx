@@ -9,7 +9,7 @@ import {
   followLatestOutput,
   sharedCardMessageKey,
 } from './SharedCardChatViewport';
-import { CANONICAL_SUBJECT_LINK_STYLE } from './SharedCardChatMessage';
+import { CANONICAL_ENTITY_LINK_STYLE } from './SharedCardChatMessage';
 
 const colors = {
   primary: '#4fa2ad',
@@ -89,22 +89,22 @@ describe('SharedCardChat', () => {
     })).toBe('message-index:7');
   });
 
-  it('keeps canonical subject links neutral and quietly italic', () => {
-    expect(CANONICAL_SUBJECT_LINK_STYLE).toMatchObject({
+  it('keeps canonical Entity links neutral and quietly italic', () => {
+    expect(CANONICAL_ENTITY_LINK_STYLE).toMatchObject({
       color: '#A7B0BA',
       fontStyle: 'italic',
       textDecorationStyle: 'dotted',
     });
-    expect(CANONICAL_SUBJECT_LINK_STYLE.color).not.toBe(colors.primary);
+    expect(CANONICAL_ENTITY_LINK_STYLE.color).not.toBe(colors.primary);
   });
 
-  it('renders Markdown around canonical subject links without exposing markers', async () => {
-    const onSubjectFocus = vi.fn();
+  it('renders Markdown around canonical Entity links without exposing markers', async () => {
+    const onEntityFocus = vi.fn();
     const targets = new Map(['Electron', 'Neutron', 'Rocket Lab'].map(name => [name, {
       canonicalName: name,
       members: [{ authority: 'thinkgraph', entityId: `entity-${name}` }],
     }]));
-    const subjectMatcher = {
+    const entityMatcher = {
       revisionKey: 'markdown-link-proof',
       segmentMessage: (role: string, text: string) => {
         if (role !== 'assistant') return [{ text }];
@@ -137,8 +137,8 @@ describe('SharedCardChat', () => {
           onSend={vi.fn()}
           knowledgeProjectId="project-1"
           colors={colors}
-          subjectMatcher={subjectMatcher}
-          onSubjectFocus={onSubjectFocus}
+          entityMatcher={entityMatcher}
+          onEntityFocus={onEntityFocus}
         />
       </VirtuosoMockContext.Provider>,
     );
@@ -152,7 +152,7 @@ describe('SharedCardChat', () => {
     expect(rocket.parentElement?.textContent).toContain('Rocket Lab, thesis.');
     expect(screen.getByTestId('shared-card-chat-message-frame').textContent).not.toContain('*');
     fireEvent.click(rocket);
-    expect(onSubjectFocus).toHaveBeenCalledWith(targets.get('Rocket Lab'));
+    expect(onEntityFocus).toHaveBeenCalledWith(targets.get('Rocket Lab'));
   });
 
   it('does not present connection setup as an active provider turn', () => {

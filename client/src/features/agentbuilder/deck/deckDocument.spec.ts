@@ -103,15 +103,16 @@ describe('requested initial Card topology', () => {
   it('seeds KnowGraph to ingest verified research without requiring an existing graph target', () => {
     const knowGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_knowgraph');
     expect(knowGraph?.prompt).toContain(
-      'persist each focused finding through graphiti.add_memory before answering',
+      'persist each focused finding through graphiti.add_memory_to_entity before answering',
     );
     expect(knowGraph?.prompt).toContain(
       'does not require a preexisting node, edge, target Card, or selected graph reference',
     );
     expect(knowGraph?.prompt).toContain('Do not write one large report and slice it afterward');
-    expect(knowGraph?.prompt).toContain('explain exactly what that citation supports');
+    expect(knowGraph?.prompt).toContain('explain exactly what each citation supports');
+    expect(knowGraph?.prompt).toContain('Both sides are mandatory and inseparable');
     expect(knowGraph?.prompt).toContain(
-      'Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake',
+      'Use graphiti.add_memory_to_entity rather than graphiti.add_triplet for sourced research intake',
     );
     expect(knowGraph?.prompt).toContain('do not synchronously poll or reread your own write');
     expect(knowGraph?.prompt).not.toContain('exact Graphiti readback verifies');
@@ -130,7 +131,7 @@ describe('requested initial Card topology', () => {
     expect(thinkGraph?.runtimeOptions?.tools).toEqual(expect.arrayContaining([
       'engraphis_recall_context',
       'engraphis_get_memory',
-      'engraphis_remember',
+      'engraphis_remember_entities',
       'engraphis_discover_actions',
       'engraphis_execute_read',
     ]));

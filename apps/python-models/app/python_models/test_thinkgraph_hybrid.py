@@ -74,8 +74,10 @@ def _fact(
     *,
     summary: str = "Rocket Lab uses Electron, and its cadence can affect launch revenue.",
     title: str = "Electron cadence and launch revenue",
+    entity: str = "Rocket Lab",
     entities: list[str] | None = None,
     relations: list[dict[str, str]] | None = None,
+    detail: str | None = None,
 ) -> dict[str, Any]:
     return {
         "content": summary,
@@ -83,18 +85,21 @@ def _fact(
         "mtype": "episodic",
         "importance": 0.8,
         "keywords": ["Rocket Lab", "Electron", "launch revenue"],
+        "entity": entity,
         "entities": entities or ["Rocket Lab", "Electron"],
         "relations": relations or [{
             "source": "Rocket Lab",
             "relation": "operates as its current launch vehicle",
             "target": "Electron",
         }],
-        "think": {"summary": summary},
+        "think": {"summary": summary, **({"detail": detail} if detail else {})},
     }
 
 
-def _structured_output(**kwargs: Any) -> dict[str, Any]:
-    return {"facts": [_fact(**kwargs)]}
+def _structured_output(*facts: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    if facts and kwargs:
+        raise ValueError("pass facts or one fact's keyword fields, not both")
+    return {"facts": list(facts) if facts else [_fact(**kwargs)]}
 
 
 def _settle_payload(
@@ -181,9 +186,9 @@ def _settle(
     )
 
 
-def test_custom_schema_requires_exactly_one_episodic_think() -> None:
+def test_custom_schema_supports_at_most_one_episodic_think_per_entity() -> None:
     schema, prompt = completed_pair_extraction.llm_structured_contract(
-        "USER: x\nMAIN: y", {"canonical_subject_directory": {}}
+        "USER: x\nMAIN: y", {"project_entity_map": {}}
     )
     facts = completed_pair_extraction.extract_saved_card_facts(
         _structured_output(),
@@ -191,18 +196,62 @@ def test_custom_schema_requires_exactly_one_episodic_think() -> None:
         context={},
         card_run=_card_run(),
     )
-    projected = completed_pair_extraction.project_saved_card_think(facts)
+    projected = completed_pair_extraction.project_saved_card_thinks(facts)
 
     assert len(facts) == 1
     assert facts[0].mtype == service_adapter.MemoryType.EPISODIC
-    assert projected["summary"] == facts[0].content
-    assert projected["entities"] == ["Rocket Lab", "Electron"]
-    assert projected["relationships"][0]["relation"] == (
+    assert projected[0]["summary"] == facts[0].content
+    assert projected[0]["entity"] == "Rocket Lab"
+    assert projected[0]["relationships"][0]["relation"] == (
         "operates as its current launch vehicle"
     )
     assert "think" in str(schema)
-    assert "Return exactly one object in the facts array" in prompt
+    assert "never more than one Think for the same Entity" in prompt
     assert "Jev alone" in prompt
+
+
+def test_optional_think_detail_remains_inside_the_same_structured_think() -> None:
+    detail = "Technical Relationship reasoning remains available under More."
+    facts = completed_pair_extraction.extract_saved_card_facts(
+        _structured_output(detail=detail),
+        pair_text="USER: x\nMAIN: y",
+        context={},
+        card_run=_card_run(),
+    )
+
+    projected = completed_pair_extraction.project_saved_card_thinks(facts)
+
+    assert projected[0]["detail"] == detail
+    assert projected[0]["summary"] == facts[0].content
+
+
+def test_multiple_entity_chunks_are_distinct_and_relationships_are_source_owned() -> None:
+    output = _structured_output(
+        _fact(),
+        _fact(
+            entity="Electron",
+            summary="Electron is the launch vehicle whose cadence affects the current revenue thesis.",
+            title="Electron cadence",
+            entities=["Electron", "Launch revenue"],
+            relations=[{
+                "source": "Electron",
+                "relation": "can support repeatable",
+                "target": "Launch revenue",
+            }],
+        ),
+    )
+    facts = completed_pair_extraction.extract_saved_card_facts(
+        output,
+        pair_text="USER: x\nMAIN: y",
+        context={},
+        card_run=_card_run(),
+    )
+    projected = completed_pair_extraction.project_saved_card_thinks(facts)
+
+    assert [item["entity"] for item in projected] == ["Rocket Lab", "Electron"]
+    assert [item["relationships"][0]["source"] for item in projected] == [
+        "Rocket Lab", "Electron",
+    ]
 
 
 def test_relationship_choice_plan_has_no_abstention_option() -> None:
@@ -228,13 +277,22 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    directory = {
-        "schemaVersion": "graph-subject-directory",
+    entity_map = {
+        "schemaVersion": "project-entity-map",
         "projectId": "project-one",
         "complete": True,
-        "counts": {"engraphis": 0, "graphiti": 0, "total": 0},
-        "revisions": {"engraphis": "0:test", "graphiti": "test"},
-        "subjects": [],
+        "counts": {
+            "engraphis": 0, "graphiti": 0, "total": 0,
+            "thinkgraphRelationships": 0,
+            "knowgraphRelationships": 0,
+            "relationships": 0,
+        },
+        "revisions": {
+            "engraphis": "0:test", "graphiti": "test",
+            "entities": "test", "relationships": "test",
+        },
+        "entities": [],
+        "relationships": [],
         "sha256": "test",
         "bytes": 0,
         "estimatedTokens": 0,
@@ -243,8 +301,20 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
     monkeypatch.setattr(service_adapter, "_service", engraphis_service)
     monkeypatch.setattr(
         completed_pair_preparation,
-        "_subject_directory_for_project",
-        lambda _project: directory,
+        "_entity_map_for_project",
+        lambda _project: entity_map,
+    )
+    grounding = {
+        "schemaVersion": "project-graph.grounding.v1",
+        "authorities": {
+            "thinkgraph": {"recent": [], "relevant": []},
+            "knowgraph": {"recent": [], "relevant": []},
+        },
+    }
+    monkeypatch.setattr(
+        completed_pair_preparation,
+        "_grounding_for_completed_pair",
+        lambda *_args: grounding,
     )
     before = _table_counts(engraphis_service)
 
@@ -259,23 +329,24 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
     assert prepared["preparation"] == {
         "status": "completed_without_graph_mutation"
     }
-    assert prepared["canonicalSubjectDirectory"] == directory
-    assert prepared["enrichmentInput"]["canonical_subject_directory"] == directory
+    assert prepared["projectEntityMap"] == entity_map
+    assert prepared["projectGraphGrounding"] == grounding
+    assert prepared["enrichmentInput"]["project_entity_map"] == entity_map
+    assert prepared["enrichmentInput"]["project_graph_grounding"] == grounding
     assert "think" in str(prepared["enrichmentSchema"])
-    assert "THINKGRAPH TEMPORAL THINK" in prepared["enrichmentPrompt"]
+    assert "THINKGRAPH ENTITY-SPECIFIC THINKS" in prepared["enrichmentPrompt"]
     assert _table_counts(engraphis_service) == before
 
 
 @pytest.mark.parametrize(
     "structured_output",
     [
-        {"facts": []},
         {"facts": [_fact(), _fact(title="duplicate second fact")]},
         {"facts": [{key: value for key, value in _fact().items() if key != "think"}]},
         {"wrong": [_fact()]},
     ],
 )
-def test_invalid_or_multiple_card_output_creates_no_graph_rows(
+def test_invalid_or_duplicate_entity_card_output_creates_no_graph_rows(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
     structured_output: dict[str, Any],
@@ -307,22 +378,56 @@ def test_invalid_or_multiple_card_output_creates_no_graph_rows(
     }
 
 
+def test_empty_entity_card_output_is_a_true_noop(
+    engraphis_service: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def classify(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return _decision()
+
+    before = _table_counts(engraphis_service)
+    settled = _settle(
+        engraphis_service,
+        monkeypatch,
+        payload=_settle_payload(output={"facts": []}),
+        classifier=classify,
+    )
+
+    assert settled["intakeOperation"] == "noop"
+    assert settled["thinkMemoryIds"] == []
+    assert settled["thinks"] == []
+    assert settled["revisionChanged"] is False
+    assert settled["changedNodeIds"] == []
+    assert settled["changedEdgeIds"] == []
+    assert calls == 0
+    assert _table_counts(engraphis_service) == before
+
+
 def test_one_pair_writes_one_think_and_only_jev_edge(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completed = _completed()
+    detail = "Technical Relationship reasoning remains available under More."
     settled = _settle(
         engraphis_service,
         monkeypatch,
-        payload=_settle_payload(completed),
+        payload=_settle_payload(completed, output=_structured_output(detail=detail)),
     )
 
     assert settled["intakeOperation"] == "add"
-    assert settled["thinkMemoryIds"] == [settled["thinkMemoryId"]]
-    assert len(settled["newSubjects"]) == 2
+    assert len(settled["thinkMemoryIds"]) == 1
+    assert len(settled["newEntities"]) == 2
+    assert len(settled["thinks"]) == 1
+    memory_id = settled["thinkMemoryIds"][0]
+    assert settled["thinks"][0]["engraphisMemoryId"] == memory_id
+    assert settled["thinks"][0]["engraphisEntityId"]
 
-    memory = engraphis_service.store.get_memory(settled["thinkMemoryId"])
+    memory = engraphis_service.store.get_memory(memory_id)
     assert memory is not None
     assert memory.mtype == service_adapter.MemoryType.EPISODIC
     assert memory.metadata["consolidation_exempt"] is True
@@ -354,6 +459,8 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     assert set(memory.metadata["structured_extraction"]) == {"think"}
     think = memory.metadata["structured_extraction"]["think"]
     assert think["summary"] == memory.content
+    assert think["detail"] == detail
+    assert think["entity"] == "Rocket Lab"
     assert think["relationships"][0]["relation"] == (
         "operates as its current launch vehicle"
     )
@@ -364,15 +471,15 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     assert {entity.name for entity in entities} == {"Rocket Lab", "Electron"}
     entity_ids = {entity.name: entity.id for entity in entities}
     incidence = engraphis_service.store.list_memory_entities(
-        memory_ids=[settled["thinkMemoryId"]]
+        memory_ids=[memory_id]
     )
-    assert {row["entity_id"] for row in incidence} == {entity.id for entity in entities}
+    assert {row["entity_id"] for row in incidence} == {entity_ids["Rocket Lab"]}
     direct_incidence = [
         row for row in incidence if row["source_kind"] == "structured_extractor"
     ]
-    assert len(direct_incidence) == 2
+    assert len(direct_incidence) == 1
     assert {row["entity_id"] for row in direct_incidence} == {
-        entity.id for entity in entities
+        entity_ids["Rocket Lab"]
     }
 
     edges = engraphis_service.store.neighbors([entity.id for entity in entities])
@@ -405,7 +512,7 @@ def test_one_pair_writes_one_think_and_only_jev_edge(
     assert jev["vocabulary_promotion"] == "not_promoted"
     supports = engraphis_service.store.edge_supports_in_scope([edge.id])
     assert len(supports) == 1
-    assert supports[0]["memory_id"] == settled["thinkMemoryId"]
+    assert supports[0]["memory_id"] == memory_id
 
 
 def test_every_freeform_proposal_is_classified_before_one_atomic_write(
@@ -414,20 +521,26 @@ def test_every_freeform_proposal_is_classified_before_one_atomic_write(
 ) -> None:
     calls: list[tuple[str, str, str]] = []
     output = _structured_output(
-        summary="Rocket Lab uses Electron, and cadence supports launch revenue.",
-        entities=["Rocket Lab", "Electron", "Launch revenue"],
-        relations=[
-            {
+        _fact(
+            summary="Rocket Lab operates Electron as the launch vehicle in its cadence thesis.",
+            entities=["Rocket Lab", "Electron"],
+            relations=[{
                 "source": "Rocket Lab",
                 "relation": "operates as its current launch vehicle",
                 "target": "Electron",
-            },
-            {
+            }],
+        ),
+        _fact(
+            summary="Electron cadence can support repeatable launch revenue.",
+            title="Electron cadence and revenue",
+            entity="Electron",
+            entities=["Electron", "Launch revenue"],
+            relations=[{
                 "source": "Electron",
                 "relation": "can support repeatable launch revenue",
                 "target": "Launch revenue",
-            },
-        ],
+            }],
+        ),
     )
 
     def classify(
@@ -465,7 +578,7 @@ def test_every_freeform_proposal_is_classified_before_one_atomic_write(
         ("Rocket Lab", "operates as its current launch vehicle", "Electron"),
         ("Electron", "can support repeatable launch revenue", "Launch revenue"),
     ]
-    assert len(settled["thinkMemoryIds"]) == 1
+    assert len(settled["thinkMemoryIds"]) == 2
     assert {item["relation"] for item in settled["relationships"]} == {
         "USES", "SUPPORTS",
     }
@@ -473,18 +586,27 @@ def test_every_freeform_proposal_is_classified_before_one_atomic_write(
     assert {key: counts[key] for key in (
         "memories", "entities", "edges", "edge_supports",
     )} == {
-        "memories": 1,
+        "memories": 2,
         "entities": 3,
         "edges": 2,
         "edge_supports": 2,
     }
     direct_incidence = [
         row for row in engraphis_service.store.list_memory_entities(
-            memory_ids=[settled["thinkMemoryId"]]
+            memory_ids=settled["thinkMemoryIds"]
         )
         if row["source_kind"] == "structured_extractor"
     ]
-    assert len(direct_incidence) == 3
+    assert len(direct_incidence) == 2
+    entity_ids = {
+        entity.name: entity.id for entity in engraphis_service.store.list_entities()
+    }
+    assert {
+        row["memory_id"]: row["entity_id"] for row in direct_incidence
+    } == {
+        settled["thinkMemoryIds"][0]: entity_ids["Rocket Lab"],
+        settled["thinkMemoryIds"][1]: entity_ids["Electron"],
+    }
 
 
 def test_valid_novel_predicate_is_selected_promoted_and_persisted(
@@ -548,7 +670,7 @@ def test_duplicate_pair_is_exact_noop_without_another_jev_call(
 
     assert prepared["intakeOperation"] == "noop"
     assert prepared["structuredExtractionRequired"] is False
-    assert prepared["thinkMemoryIds"] == [first["thinkMemoryId"]]
+    assert prepared["thinkMemoryIds"] == first["thinkMemoryIds"]
     assert prepared["revisionChanged"] is False
     assert _table_counts(engraphis_service) == before
 
@@ -562,9 +684,13 @@ def test_duplicate_pair_is_exact_noop_without_another_jev_call(
         classifier=forbidden,
     )
     assert repeated["intakeOperation"] == "noop"
-    assert repeated["thinkMemoryId"] == first["thinkMemoryId"]
+    assert repeated["thinkMemoryIds"] == first["thinkMemoryIds"]
+    assert repeated["thinks"] == [{
+        "engraphisMemoryId": first["thinkMemoryIds"][0],
+        "engraphisEntityId": first["thinks"][0]["engraphisEntityId"],
+    }]
     assert repeated["relationships"] == []
-    assert repeated["newSubjects"] == []
+    assert repeated["newEntities"] == []
     assert _table_counts(engraphis_service) == before
 
 
@@ -619,7 +745,7 @@ def test_edge_store_failure_rolls_back_think_entities_and_supports(
         raise RuntimeError("edge-store-failed")
 
     monkeypatch.setattr(engraphis_service.store, "upsert_edge", fail_edge)
-    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError, match="think_store_failed"):
+    with pytest.raises(relationship_vocabulary.ThinkGraphIntakeError, match="think_batch_store_failed"):
         _settle(
             engraphis_service,
             monkeypatch,
@@ -636,7 +762,7 @@ def test_edge_store_failure_rolls_back_think_entities_and_supports(
     )
 
 
-def test_later_pair_reuses_subject_and_reports_only_new_endpoint(
+def test_later_pair_reuses_entity_and_reports_only_new_endpoint(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -668,13 +794,41 @@ def test_later_pair_reuses_subject_and_reports_only_new_endpoint(
         classifier=_classifier("REQUIRES"),
     )
 
-    assert first["thinkMemoryId"] != second["thinkMemoryId"]
-    assert {item["canonicalName"] for item in second["newSubjects"]} == {
+    assert first["thinkMemoryIds"][0] != second["thinkMemoryIds"][0]
+    assert {item["canonicalName"] for item in second["newEntities"]} == {
         "Cash generation",
     }
     entities = engraphis_service.store.list_entities()
     assert sum(entity.name == "Rocket Lab" for entity in entities) == 1
     assert _table_counts(engraphis_service)["memories"] == 2
+
+
+def test_projection_attaches_only_the_two_card_pair_but_counts_all_think_words() -> None:
+    scene = {"nodes": [{
+        "id": "entity-one",
+        "label": "Entity One",
+        "type": "person_or_concept",
+        "x": 0,
+        "y": 0,
+        "properties": {},
+    }]}
+    supporting = {
+        "think-new": {"id": "think-new", "summary": "Newest complete atomic Think.", "ingestedAt": 3},
+        "think-relevant": {"id": "think-relevant", "summary": "Relevant reusable Think.", "ingestedAt": 2},
+        "think-old": {"id": "think-old", "summary": "Older retained Think.", "ingestedAt": 1},
+    }
+
+    nodes = projection_adapter._project_scene_nodes(
+        scene,
+        project="project-one",
+        supporting=supporting,
+        entity_thinks={"entity-one": ["think-old", "think-new", "think-relevant"]},
+    )
+
+    assert [item["id"] for item in nodes[0]["properties"]["evidence"]] == [
+        "think-new", "think-relevant",
+    ]
+    assert nodes[0]["properties"]["attachedWordCount"] == 10
 
 
 def test_projection_and_anchor_keep_entity_ids_separate_from_think_id(
@@ -684,11 +838,11 @@ def test_projection_and_anchor_keep_entity_ids_separate_from_think_id(
     from app.python_models.thinkgraph_reference_reads import read_thinkgraph_exact
 
     settled = _settle(engraphis_service, monkeypatch)
-    monkeypatch.setattr(projection_adapter, "_projection_subject_directory", lambda _project: None)
+    monkeypatch.setattr(projection_adapter, "_projection_entity_directory", lambda _project: None)
     projection = projection_adapter.projection("project-one")
     node_ids = {str(node["id"]) for node in projection["nodes"]}
     assert node_ids
-    assert settled["thinkMemoryId"] not in node_ids
+    assert settled["thinkMemoryIds"][0] not in node_ids
     assert all(edge["source"] in node_ids and edge["target"] in node_ids
                for edge in projection["edges"])
 
@@ -817,7 +971,7 @@ def test_projection_excludes_memory_nodes(
 
     monkeypatch.setattr(service_adapter, "_service", engraphis_service)
     monkeypatch.setattr(engraphis_service, "graph_scene", graph_scene)
-    monkeypatch.setattr(projection_adapter, "_projection_subject_directory", lambda _project: None)
+    monkeypatch.setattr(projection_adapter, "_projection_entity_directory", lambda _project: None)
 
     result = projection_adapter.projection("project-one")
     assert result["counts"] == {"nodes": 0, "edges": 0}

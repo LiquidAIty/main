@@ -77,11 +77,12 @@ test("ignores whitespace-only optional configuration", () => {
 	assert.equal(config.defaultWorkspace, undefined);
 });
 
-test("keeps exactly the nine Smart MCP tools in the direct surface", () => {
+test("keeps exactly the ten Smart MCP tools in the direct surface", () => {
 	assert.deepEqual(CORE_DIRECT_TOOLS, [
 		"engraphis_session",
 		"engraphis_recall_context",
 		"engraphis_remember",
+		"engraphis_remember_entities",
 		"engraphis_discover_actions",
 		"engraphis_execute_read",
 		"engraphis_execute_action",

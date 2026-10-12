@@ -5,6 +5,7 @@ export const CORE_DIRECT_TOOLS = [
 	"engraphis_session",
 	"engraphis_recall_context",
 	"engraphis_remember",
+	"engraphis_remember_entities",
 	"engraphis_discover_actions",
 	"engraphis_execute_read",
 	"engraphis_execute_action",

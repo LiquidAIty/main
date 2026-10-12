@@ -264,9 +264,10 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 name for name in first_catalog if name.startswith("engraphis_")
             } == {
                 "engraphis_recall_context",
-                "engraphis_get_memory",
-                "engraphis_remember",
-                "engraphis_discover_actions",
+                    "engraphis_get_memory",
+                    "engraphis_remember",
+                    "engraphis_remember_entities",
+                    "engraphis_discover_actions",
                 "engraphis_execute_read",
                 "engraphis_execute_action",
             }

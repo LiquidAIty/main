@@ -2255,7 +2255,9 @@ class MemoryService:
                       source: str = "agent", trusted: bool = False,
                       _local_agent_operator: bool = False,
                       _ingress: str = "service",
-                      redact_secrets: bool = False) -> dict:
+                      redact_secrets: bool = False,
+                      _entity_nodes: Optional[list[Node]] = None,
+                      _entity_source_kind: str = "explicit") -> dict:
         """Store a fan-out batch with within-batch resolution and evidence edges.
 
         Unlike :meth:`remember_batch` (which loops ordinary single writes and can
@@ -2387,10 +2389,21 @@ class MemoryService:
             ))
 
         try:
-            results = self.engine.remember_many(
-                specs, workspace_id=wid, repo_id=rid, session_id=session_id,
-                scope=sc,
-            )
+            if _entity_nodes is None:
+                results = self.engine.remember_many(
+                    specs, workspace_id=wid, repo_id=rid, session_id=session_id,
+                    scope=sc,
+                )
+            else:
+                results = self.engine.remember_entities(
+                    specs,
+                    _entity_nodes,
+                    workspace_id=wid,
+                    repo_id=rid,
+                    session_id=session_id,
+                    scope=sc,
+                    source_kind=_entity_source_kind,
+                )
         except ValueError as exc:
             if str(exc).startswith("valid_from "):
                 raise ValidationError(str(exc)) from exc
@@ -2407,6 +2420,7 @@ class MemoryService:
             "total": len(results), "ops": ops,
             "results": [
                 {"id": r.get("id"), "op": r.get("op"),
+                 **({"entity_id": r["entity_id"]} if r.get("entity_id") else {}),
                  **({"reason": r["reason"]} if r.get("reason") else {}),
                  **({"superseded": r["superseded"]}
                     if r.get("superseded") is not None else {})}
@@ -2419,6 +2433,57 @@ class MemoryService:
             status="batch", metadata={"scope": sc.value, "ops": ops},
         )
         return out
+
+    def remember_entities(
+        self,
+        facts: list[dict],
+        *,
+        workspace: str,
+        repo: Optional[str] = None,
+        session_id: Optional[str] = None,
+        mtype: str = "episodic",
+        scope: Optional[str] = None,
+        source: str = "agent",
+        trusted: bool = False,
+        _local_agent_operator: bool = False,
+        _ingress: str = "service",
+    ) -> dict:
+        """Store one fact per exact Entity through one atomic native batch."""
+
+        if not isinstance(facts, list) or not facts:
+            raise ValidationError("facts list must not be empty")
+        clean_facts: list[dict] = []
+        entities: list[Node] = []
+        for fact in facts:
+            if not isinstance(fact, dict):
+                raise ValidationError("each fact must be a dict")
+            entity_name = _clean_text(
+                fact.get("entity_name"),
+                field="entity_name",
+                max_chars=MAX_NAME_CHARS,
+            )
+            raw_entity_id = str(fact.get("entity_id") or "").strip()
+            entity_id = raw_entity_id or make_id("entity")
+            clean_facts.append({
+                key: value
+                for key, value in fact.items()
+                if key not in {"entity_id", "entity_name"}
+            })
+            entities.append(Node(id=entity_id, name=entity_name))
+        return self.remember_many(
+            clean_facts,
+            workspace=workspace,
+            repo=repo,
+            session_id=session_id,
+            mtype=mtype,
+            scope=scope,
+            source=source,
+            trusted=trusted,
+            _local_agent_operator=_local_agent_operator,
+            _ingress=_ingress,
+            _entity_nodes=entities,
+            _entity_source_kind="explicit",
+        )
 
     def ingest(self, content: str, *, workspace: str, repo: Optional[str] = None,
                session_id: Optional[str] = None, mtype: str = "semantic",

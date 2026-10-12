@@ -209,7 +209,7 @@ function deck() {
       card('card_main_chat', 'Main', 'main', 'main'),
       card('builder', 'Builder', 'builder', 'delegate'),
       card('card_thinkgraph', 'ThinkGraph', 'thinkgraph', 'delegate', {
-        tools: ['engraphis_recall_context'],
+        tools: ['engraphis_get_memory'],
       }),
       card('card_knowgraph', 'KnowGraph', 'knowgraph', 'delegate', {
         tools: ['graphiti.add_memory'],

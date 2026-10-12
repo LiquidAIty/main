@@ -1,127 +1,146 @@
 # LiquidAIty current plan
 
-[Execution law](AGENTS.md) · [Known failures](DONT.md) · [Current architecture](ARCHITECTURE.md) · [Deferred work](FUTURE.md)
+[Overview](README.md) · [Execution law](AGENTS.md) · [Known failures](DONT.md) · [Current architecture](ARCHITECTURE.md) · [Deferred work](FUTURE.md)
 
-This file records only the current route and the next proof boundary. It is not a runtime input,
-incident diary, or historical implementation record. Git preserves superseded implementations.
+This file records current status and the next approved boundary. It is not runtime input, a task
+ledger, a historical report, or authority to begin deferred work.
 
 ## Product outcome
 
-A user talks to Main or directly addresses an authorized saved Card. The exact saved Card revision,
-current input, selected references, and effective grants produce one canonical `in.idf`; HermesLatest
-performs the real turn; and LiquidAIty shows the actual response, references, Run state, usage,
-failures, and lineage without inventing another execution owner.
+LiquidAIty's MVP is a persistent Project workbench where:
 
-Builder remains saved Card `builder` and owns the lower terminal. ThinkGraph is Engraphis,
-KnowGraph is Graphiti, CodeGraph is Codebase Memory, and AgentGraph is AGE/PostgreSQL. Team and
-Magnetic use the retained HermesLatest task/dependency extensions beneath their existing saved Cards
-and topology.
+- saved Cards own durable identity, prompt, provider/model/profile, grants, and topology;
+- Main is the human-facing Project conversation and bounded orchestration agent;
+- ThinkGraph compounds Project reasoning in Engraphis;
+- KnowGraph preserves sourced evidence and provenance in Graphiti/Neo4j;
+- Builder turns Project reasoning and evidence into PromptSpecs, Cards, applications, code, artifacts,
+  and executable missions;
+- Magnetic executes one approved mission across an exact saved blue worker roster;
+- Team provides the separate generic Hermes Team/Kanban mechanism;
+- specialized domain Cards add bounded capabilities without becoming graph authorities.
 
-## Current source
+One canonical `in.idf` carries the exact saved Card revision, current dynamic input, selected provider
+references/data, images, and effective grants into Hermes.
 
-The current working tree is the final source-cleanup and acceptance boundary. Git history retains the
-removed runtime/catalog generations; this file deliberately avoids pinning a working-tree claim to an
-older checkpoint SHA.
+## Current source truth
 
-- Saved Cards and orange/blue topology own durable identity, configuration, grants, and authority.
-- Python rails owns Card/Run preparation, the canonical operation registry, deterministic validation,
-  the single IDF materializer, tool dispatch, graph adapters, and durable Run settlement.
-- The backend owns authenticated HTTP/SSE transport, exact Card/Project/conversation mapping, one
-  shared Hermes Gateway client connection, submission correlation, and truthful result projection.
-- Saved Card execution enters through `sharedChatTurn.ts`, `savedSpecialistRun.ts`, or the completed-pair
-  handler in `thinkGraphRevision.routes.ts`, using the shared `savedCardAuthority`, `hermesCardSession`,
-  `savedCardRunLedger`, `savedCardHermesToolProjection`, and `savedCardHermesTurn` services.
-  Registration/history/event/Stop routes do not own execution.
-- Builder's Project-owned `projectCodeFolder` is source-wired to managed Project storage and a
-  Hermes session workspace for Builder only. HermesLatest's standard terminal and PTY remain the sole
-  terminal/process owner; LiquidAIty applies no Docker policy.
-- HermesLatest owns profiles, sessions, inference, its built-in tools, Bot delivery, queue behavior,
-  retries, terminal/PTY, Team task execution, Magnetic task/dependency execution, and synthesis.
-- Dynamic Tools present only the current Run's authorized Card capabilities and call the existing
-  authenticated Python dispatcher. Bot Mode is not a product tool.
-- The flat live catalog is the selectable product projection. IDD consumes that projection for
-  Builder/editor choices and never authorizes, validates, or dispatches an ordinary Run.
-- `POST /api/cards/runs/read` is a read-only latest/history/status projection. Main and addressed-Card
-  execution use `/api/shared-chat/turn`; the internal saved-specialist bridge uses
-  `/api/saved-specialists/invoke`.
-- `run_mag_one` keeps the exact tool call open while its one correlated Hermes root runs, records
-  progress from that invocation, and settles the outer Run from the observed terminal root result.
-  A bounded completion timeout remains visibly pending and never lets a status read manufacture a
-  terminal result.
-- One durable Card maps to one reusable Hermes profile. Projects and conversations create distinct
-  sessions; Project topology and private/session state are not written into the shared profile.
-- After an ordinary Main response is persisted and returned, the restored saved ThinkGraph Card
-  lifecycle may process the exact completed User/Main pair into one Engraphis episodic Think. Jev
-  alone admits and classifies durable semantic edges.
-- KnowGraph remains Graphiti-backed sourced research. Its automatic research follow-up remains off
-  until the manual `knowgraph.research` path succeeds in real product acceptance.
-- The Card inspector's compact **Last run** metrics show only the latest/current Run's model, elapsed
-  time, token count, estimated cost, and tool-call count. They are a projection of durable Run data,
-  not another runtime dashboard or event store.
+### Saved Cards and new Projects
 
-## Source structure established; execution proof pending
+The server attaches six core Cards to a new agent Project: Main, Builder, ThinkGraph, Magnetic, Team,
+and KnowGraph. The default server topology contains Main → Builder and Team ↔ Magnetic only. Client
+seed examples also contain optional/domain Cards, but those examples are not the saved-state authority
+for an existing Project.
 
-- The application-owned AgentTerminal/CardRuntime process, registry, reconciler, per-Card Gateway,
-  loopback Card-tools plugin, and startup ownership generations are deleted.
-- Current source has one shared Hermes Gateway client, one Card/profile/session binding service, one
-  Python Run authority, and one canonical operation-definition/catalog/dispatcher chain.
-- The catalog reduction and saved-grant reconciliation use the one canonical operation-definition
-  set; Engraphis exposes the Smart surface selected for the product.
-- The first-party TypeScript production import graph has no cycle after canonical subject-directory
-  validation was given one literal owner. The Python production module-level import graph has no cycle;
-  deferred catalog lookups remain covered by the catalog contract gate.
-- Ignored build/cache output from removed generations is not runtime proof and must be regenerated or
-  removed before the coordinated reload.
+PostgreSQL current Card revisions and grants remain authoritative. A source seed, title, installed
+profile, or historical screenshot cannot establish one Project's current configuration.
 
-Static tests, a successful process start, loaded runtime behavior, external MCP/plugin behavior, and
-visual acceptance remain separate proof tiers.
+### Graph context
 
-## Current cleanup gate
+- The canonical Entity directory is a complete union of separate Engraphis and Graphiti rows. It does
+  not persist a merged identity.
+- Exact Data Anchors resolve provider-owned IDs and bounded data before Python materializes the single
+  IDF.
+- `project_graph.list_entities` returns the complete exact directory. The read-only
+  `project_graph.read_entity_context` requires exact directory references plus a current query. It uses
+  exact native Entity reads followed by Jev relevance and defaults to one Relevant plus one distinct
+  Recent Think and Know; the detailed inspector may request 1–12 results without changing agent defaults.
+- The joined graph may visually pair exact same-name provider members without becoming another graph.
+- Only Entities render as graph nodes. Thinks and Knows are attached properties; Graphiti episodes,
+  citations, and supporting IDs remain evidence/provenance and never become visible Project nodes.
+- The Entity inspector defaults to KnowGraph when both authorities exist. It opens on Relevant and one
+  small arrow replaces that view with Recent. A compact Search field and transient Results count rerun
+  exact Entity context; the default remains one result.
+- Main, Builder, ThinkGraph, and KnowGraph receive the current Entity/Relationship map and a non-persisting
+  default packet containing one most Relevant and one distinct most Recent record from each authority.
+  Engraphis and Graphiti produce native candidates; Jev alone ranks them. Relevant is presented first and
+  outweighs recency, preventing the last exchange from becoming a repeating context loop.
+- The **Think** and **Know** color-key labels select isolated native layouts and an empty-canvas click
+  returns the fixed combined view. Graph settings remain in the detailed inspector.
+- Entity radius scales linearly from least to most attached Think-and-Know words. Jev relationship
+  probability remains movement/centrality input and is not replaced by word count.
 
-Before another reload:
+### ThinkGraph
 
-1. finish the inverse audit of deleted runtime, route, catalog, graph-reference, and Hermes identities;
-2. remove only proven dead callers, generated residue, unsupported contract members, and stale
-   current-state documentation;
-3. keep checksum-bound recovery exports, append-only migrations, saved data, and provider stores unchanged;
-4. reconcile `HermesLatest/LIQUIDAITY_PATCHES.md` and its generated overlay with the actual bounded fork,
-   then clean-apply-check that overlay against the recorded upstream baseline;
-5. include `HermesLatest/` in the canonical CBM project, reindex once after source freeze, and repeat the
-   inverse searches;
-6. run focused Python, backend, client, catalog, shared-chat, profile/session, terminal, Team/Magnetic,
-   and Hermes overlay proof plus both TypeScript typechecks and production builds.
+After an ordinary Main response is persisted and returned, the completed User/Main pair enters the
+saved ThinkGraph Card lifecycle. Preparation is non-persisting. An identical completed-pair identity
+no-ops; otherwise the saved Card returns zero or more Entity-specific structured episodic Thinks, with at
+most one Think per Entity in that pair. Python settles the batch atomically as one append-only Engraphis
+Memory per Think with one exact structured-extractor incidence. Each Think has one compact summary and an
+optional technical `detail` rendered behind **More**.
 
-## One coordinated reload and real acceptance
+Completed-pair preparation now receives the same Relevant/Recent packet. Think candidates are selected
+to faithfully steelman the user's current idea, so the saved ThinkGraph Card can prefer a refinement,
+correction, contradiction, genuinely new idea, or no-op over a near-duplicate. Jev separately classifies
+each Card-proposed directed Relationship and supplies its canonical predicate, distribution, and strength;
+it is not an independent endpoint or graph authority.
 
-After the static gate is green, run `npm run dev:fresh` once and verify in dependency order:
+### KnowGraph
 
-1. HermesLatest, backend, Python rails, KnowGraph, MCP, frontend, and WorldView become healthy, with
-   executable/source identities from the current checkout only;
-2. the application CBM catalog dependency becomes ready, MCP `/health/ready` succeeds, and the
-   existing ngrok publication comes online without creating a second tunnel;
-3. the live flat catalog and every saved Card grant reconcile with zero unknown, duplicate,
-   orphaned, or undispatchable entries; IDD failure cannot block an ordinary turn;
-4. Main completes one natural ordinary turn without invoking Magnetic and keeps the submitted user
-   message continuously visible;
-5. an addressed Builder turn completes a real read-only CBM call and its Hermes PTY attaches;
-6. an addressed KnowGraph turn completes a real granted Graphiti read;
-7. Team and Magnetic prepare through HermesLatest; do not execute a Mag One mission without a new
-   explicitly approved mission;
-8. Run history identifies the exact Card, conversation, and submission, and Stop interrupts only the
-   correlated submission;
-9. the refreshed external GPT plugin sees the same ordinary authenticated MCP projection and completes
-   representative read-only Main, Canvas, CBM, Engraphis, and Graphiti calls;
-10. Jeremiah performs the final visual acceptance in Preview.
+KnowGraph has Hermes Web plus its saved Graphiti read/write corridor. A deliberately supplied Think is
+framing, not evidence. Useful sourced findings enter Graphiti through native queued
+`add_memory_to_entity`, which binds the episode to one exact Entity through `ABOUT`, leaves extracted
+`MENTIONS` independent, updates native communities by default, and may associate the continuing research
+thread with one Saga. One Know is one atomic `know.v1` episode with a cited supporting idea and a cited
+counter idea; both compact bodies and both citation sets are mandatory, while each side may place depth
+behind **More**. Python rails validates and encodes that structure before the unchanged Graphiti queue.
+One-sided episodes are not projected as Knows. The source-default KnowGraph Card uses Sol; ThinkGraph
+remains Luna. Queue acceptance does not prove materialization. KnowGraph is not Team-enabled and has no
+current Team integration.
 
-If a live gate fails, repair that exact seam. Do not reopen the runtime architecture, restore a deleted
-manager, add a fallback engine, replay a user request, or broaden into voice, trading, God's Eye,
-repository-to-agent automation, or graph redesign.
+### Execution
 
-## Explicitly outside this acceptance pass
+- Ordinary Hermes delegation, native Team/Kanban, and Magnetic are three different mechanisms.
+- Only saved Card `card_team` receives Hermes `task_mode: team`.
+- Magnetic uses saved blue topology as its worker ceiling; its same root remains both orchestrator and
+  final result task.
+- Hermes owns native task rows, dependencies, attempts, dispatch, retries, workers, and synthesis.
+- LiquidAIty owns one outer product Run and does not copy the Hermes task ledger.
 
-- voice/HUD work beyond standard Hermes behavior;
-- a new learning graph or memory subsystem;
-- automatic KnowGraph research before the manual path succeeds;
-- a Mag One mission or state-changing research/trading/graph-write proof;
-- new tool-request automation or Card-face metrics beyond the existing compact inspector block;
-- dependency upgrades unrelated to a demonstrated acceptance failure.
+## Current gaps before live acceptance
+
+These are source/documentation gaps, not permission to repair them during this documentation run:
+
+1. Main's approved quick-Web direction is not present in its source-default toolsets.
+2. Main's source-default prompt describes ThinkGraph/KnowGraph use, but the server's default new-Project
+   topology does not attach those orange edges.
+3. Quick-Web evidence handoff to durable KnowGraph correlation is not implemented.
+4. Existing saved Projects remain governed by their persisted Card revisions; the new source-default
+   prompts, grants, and KnowGraph model do not silently overwrite saved authority.
+5. Loaded Main, Builder, ThinkGraph, KnowGraph, Team, Magnetic, external MCP, and visual acceptance remain separate
+   proof tiers.
+
+## Current acceptance boundary
+
+The active Entity/Think/Know contract pass must leave:
+
+- one coherent CURRENT / APPROVED DIRECTION / DEFERRED narrative;
+- one PromptSpec process authority;
+- no active-looking obsolete PromptSpec or removed WorldView bridge;
+- exact structural storage, native retrieval plus Jev ranking, Relevant/Recent visibility, two-sided Knows,
+  Entity-only graph nodes, and native removal without another graph authority or semantic router;
+- a frozen documentation snapshot;
+- an independent `turn.md` review with exact file hashes and combined checksum.
+
+A PASS means the frozen source and documents agree on the current Entity/Think/Know contract and the
+reported proof tiers. It does not mean every loaded product path is live-proven.
+
+## Next graph boundary — not approved
+
+No additional graph feature is approved by this plan. A later subtle time-sort interaction, paid-setting
+entitlement, Project retention/billing policy, global default reset, report surface, or quick-Web evidence
+handoff requires its own exact authority and acceptance packet. None may change the current Relevant-first,
+one-result default or create deterministic semantic ranking in TypeScript.
+
+## Proof tiers still separate
+
+1. source and residue inspection;
+2. deterministic contract tests;
+3. typecheck/build;
+4. loaded service health and exact source identity;
+5. real saved Card behavior through the loaded Hermes path;
+6. persistence/readback;
+7. external client acceptance;
+8. owner visual acceptance.
+
+A lower tier never proves a higher one. No Magnetic mission, graph write, trading action, or service
+restart is authorized by this plan alone.

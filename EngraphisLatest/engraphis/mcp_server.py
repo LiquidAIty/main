@@ -695,6 +695,48 @@ def engraphis_remember_many(
 
 
 @mcp.tool(
+    name="engraphis_remember_entities",
+    annotations={"title": "Remember facts about exact entities", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def engraphis_remember_entities(
+    facts: Annotated[List[dict], Field(
+        description="content, entity_name, optional entity_id.",
+        min_length=1,
+        max_length=500,
+    )],
+    workspace: Annotated[str, Field(description="Top-level workspace.",
+                                    min_length=1, max_length=200)] = "default",
+    repo: Annotated[Optional[str], Field(description="Optional repository scope.",
+                                         max_length=200)] = None,
+    session_id: Annotated[Optional[str], Field(description="Optional active session.")] = None,
+    mtype: Annotated[str, Field(description="Default memory type.")] = "episodic",
+    scope: Annotated[Optional[str], Field(
+        description="Visibility: session, repo, workspace, or user."
+    )] = None,
+    source: Annotated[str, Field(description="Origin label.", max_length=200)] = "agent",
+    trusted: Annotated[bool, Field(description="Local-agent confidence label.")] = True,
+) -> str:
+    """Atomically store one memory per exact Entity."""
+
+    try:
+        return _ok(service().remember_entities(
+            facts,
+            workspace=workspace,
+            repo=repo,
+            session_id=session_id,
+            mtype=mtype,
+            scope=scope,
+            source=source,
+            trusted=trusted,
+            _local_agent_operator=bool(trusted),
+            _ingress="mcp",
+        ))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool(
     name="engraphis_recall",
     annotations={"title": "Recall relevant memories", "readOnlyHint": False,
                  "destructiveHint": False, "idempotentHint": False,
@@ -3605,6 +3647,38 @@ def smart_remember(
         mtype=mtype, importance=importance,
         subject_key=subject_key, claim_kind=claim_kind,
         exact_value=exact_value, exact_value_type=exact_value_type,
+    )
+    if isinstance(result, str) and result.startswith("Error:"):
+        return _smart_error_from_string(result)
+    return result
+
+
+@smart_mcp.tool(
+    name="engraphis_remember_entities",
+    annotations={"title": "Remember Entity facts", "readOnlyHint": False,
+                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+    structured_output=False,
+)
+def smart_remember_entities(
+    facts: Annotated[List[dict], Field(
+        description="Facts with content, entity_name, and optional exact entity_id.",
+        min_length=1,
+        max_length=500,
+    )],
+    workspace: Annotated[Optional[str], Field(
+        description="Workspace.",
+        min_length=1,
+        max_length=200,
+    )] = None,
+) -> str:
+    """Store by Entity."""
+
+    result = engraphis_remember_entities(
+        facts=facts,
+        workspace=workspace or "default",
+        mtype="episodic",
+        source="agent",
+        trusted=True,
     )
     if isinstance(result, str) and result.startswith("Error:"):
         return _smart_error_from_string(result)

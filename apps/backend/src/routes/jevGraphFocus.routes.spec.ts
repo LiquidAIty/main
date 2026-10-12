@@ -72,7 +72,7 @@ async function serve(
 }
 
 describe('bounded JevFocus transport', () => {
-  it('forwards the exact versioned provider-subject request to Python rails', async () => {
+  it('forwards the exact versioned provider-Entity request to Python rails', async () => {
     const result = {
       schemaVersion: 'jev-focus.v1',
       sourceRevision: 'combined-projection:17',

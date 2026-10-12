@@ -538,7 +538,7 @@ def test_primary_github_release_targets_repository_without_checkout():
 def test_public_capability_and_support_docs_match_the_shipped_tree():
     server = _text("engraphis/mcp_server.py")
     tools = re.findall(r'@mcp\.tool\(\s*name="(engraphis_[^"]+)"', server)
-    assert len(tools) == len(set(tools)) == 39
+    assert len(tools) == len(set(tools)) == 40
 
     readme = _text("README.md")
     licensing = _text("docs/LICENSING.md")
@@ -550,9 +550,9 @@ def test_public_capability_and_support_docs_match_the_shipped_tree():
         assert "28 MCP tools" not in content
         assert "28-tool" not in content
         assert "(28 of them)" not in content
-    assert "Smart MCP (9 tools)" in architecture
-    assert "Classic MCP (39 tools)" in architecture
-    assert "default Smart MCP surface has nine" in skill
+    assert "Smart MCP (10 tools)" in architecture
+    assert "Classic MCP (40 tools)" in architecture
+    assert "default Smart MCP surface has ten" in skill
     assert "Classic direct-tool guide" in skill
     assert "engraphis-mcp-classic" in skill
     assert "recall_context (compact)" in architecture

@@ -19,14 +19,15 @@ def client(mcp_client) -> EngraphisMcpClient:
     return mcp_client
 
 
-def test_tool_specs_cover_nine_tools() -> None:
-    assert len(TOOL_SPECS) == 9
+def test_tool_specs_cover_ten_tools() -> None:
+    assert len(TOOL_SPECS) == 10
     names = [name for name, _ in TOOL_SPECS]
     assert names == [
         "engraphis_session",
-        "engraphis_recall_context",
-        "engraphis_remember",
-        "engraphis_discover_actions",
+            "engraphis_recall_context",
+            "engraphis_remember",
+            "engraphis_remember_entities",
+            "engraphis_discover_actions",
         "engraphis_execute_read",
         "engraphis_execute_action",
         "engraphis_get_memory",
@@ -142,9 +143,9 @@ async def test_session_id_is_injected_when_bound(client, fake_mcp_server) -> Non
     assert fake_mcp_server.call_log[-1][1].get("session_id") == "ses_test_1"
 
 
-def test_all_tools_returns_nine_pairs(client) -> None:
+def test_all_tools_returns_ten_pairs(client) -> None:
     pairs = all_tools(client, client.config)
-    assert len(pairs) == 9
+    assert len(pairs) == 10
     for fn, meta in pairs:
         assert callable(fn)
         assert meta["name"] in [name for name, _ in TOOL_SPECS]
@@ -393,10 +394,10 @@ def test_all_tools_with_session_id_returns_independent_callables(client) -> None
     closure-captured name. Reusing a session_id must not collapse the
     tools into a single shared callable."""
     pairs = all_tools(client, client.config, session_id="ses_shared")
-    assert len(pairs) == 9
+    assert len(pairs) == 10
     callables = [fn for fn, _ in pairs]
     # Each callable has a unique __name__ or at least is a different object.
-    assert len({id(fn) for fn in callables}) == 9
+    assert len({id(fn) for fn in callables}) == 10
 
 
 def test_build_tool_meta_description_matches_descriptor_table(client) -> None:

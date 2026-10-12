@@ -11,6 +11,12 @@ Use to choose and execute a meaningful test for the requested behavior. Recovere
 ordinary Main chat as a Magnetic test is obsolete. Builder/CLI tests require an actual
 Builder/CLI task and authorization, not merely available controls.
 
+When a PromptSpec is active, load the PromptSpec Receiver first. The PromptSpec owns test
+authorization, required live-agent acceptance, evidence assembly, freeze and final review. This
+skill supplies repository-specific test selection and execution cautions only. A mock, scaffold,
+unit test or stand-in can support deterministic diagnosis, but cannot replace a required real
+saved-Card/native-runtime proof.
+
 1. Name the behavior, affected preservation invariants, and what result could disprove success.
 2. Inspect the existing test and current runtime owner. Run the smallest useful baseline.
 3. Use focused structural tests for deterministic behavior. Use actual ordinary user input
@@ -19,6 +25,27 @@ Builder/CLI task and authorization, not merely available controls.
    Test persistence or later recall only when relevant; do not script Main into readback loops.
 5. Record time and actual token receipts for model tests. Reuse retained failures for diagnosis
    before repeating expensive runs. Repeat only for a changed hypothesis or unresolved failure.
+
+## Standard natural-user agent acceptance
+
+When the active PromptSpec authorizes a live Main acceptance, use ordinary user language and the real
+loaded saved-Card/runtime path. Do not mention tools, graphs, expected calls, or evaluator criteria to
+Main. A standard sequence is:
+
+1. “I'm comparing SpaceX and Rocket Lab as investments. Which looks more interesting and what actually matters?”
+2. “Rocket Lab is public and SpaceX isn't really directly investable for most people, so for Rocket Lab what would you actually watch?”
+3. “I keep coming back to launch cadence, but more launches don't automatically mean it's a better investment, right?”
+4. “What would show that the extra cadence is actually improving margins or cash generation?”
+5. “Can you check the latest evidence and tell me if anything changes the thesis?”
+6. “Okay, now think about it as a trade instead of a long-term investment. What setup or evidence would make you interested, and what would make you stay out?”
+7. “What if cadence rises but cash burn gets worse?”
+
+Follow the conversation naturally rather than forcing every line after an earlier answer makes one
+irrelevant. Inspect whether Main remains Main, reasoning compounds without repetitive Thinks, real
+research occurs only when needed, sources and KnowGraph behavior are real where relevant, and every
+prompt/tool claim matches the effective loaded grants. A truthful unavailable capability may pass its
+boundary; a mock call, fabricated citation, fake graph success, stand-in, or unit helper cannot satisfy
+live-agent acceptance.
 
 Inspect the existing canonical stack before startup. Do not launch duplicate services. When
 startup is authorized and needed, `npm run dev:fresh` owns the full application tree; do not

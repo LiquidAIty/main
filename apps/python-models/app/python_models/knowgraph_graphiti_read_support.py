@@ -1,4 +1,4 @@
-"""Shared Graphiti/Neo4j read connection and KnowGraph fact projection."""
+"""Shared Graphiti/Neo4j read connection and Relationship metadata."""
 
 from __future__ import annotations
 
@@ -167,40 +167,3 @@ def persisted_knowgraph_jev(
     }
 
 
-def project_portable_know(
-    graphiti_fact_uuid: str,
-    properties: dict[str, Any],
-    *,
-    source_id: str,
-    target_id: str,
-    source_name: str = "",
-    target_name: str = "",
-    episodes: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Project one Graphiti fact without creating another stored object."""
-
-    episode_ids = graphiti_episode_ids(properties)
-    invalid_at = properties.get("invalid_at")
-    expired_at = properties.get("expired_at")
-    jev = persisted_knowgraph_jev(graphiti_fact_uuid, properties)
-    return {
-        "portableKind": "know",
-        "graphitiFactUuid": graphiti_fact_uuid,
-        "sourceEntity": {"uuid": source_id, **({"name": source_name} if source_name else {})},
-        "targetEntity": {"uuid": target_id, **({"name": target_name} if target_name else {})},
-        "graphitiRelation": str(properties.get("name") or properties.get("edge_type") or "Fact"),
-        "fact": str(properties.get("fact") or ""),
-        "supportingEpisodeUuids": episode_ids,
-        "supportingEpisodes": list(episodes or []),
-        "createdAt": properties.get("created_at"),
-        "referenceTime": properties.get("reference_time"),
-        "validAt": properties.get("valid_at"),
-        "invalidAt": invalid_at,
-        "expiredAt": expired_at,
-        "temporalStatus": "historical" if invalid_at or expired_at else "current",
-        **({
-            "jevCanonicalRelation": jev["winner"],
-            "relationship_strength": jev["label_confidence"],
-            "jev": jev,
-        } if jev is not None else {}),
-    }

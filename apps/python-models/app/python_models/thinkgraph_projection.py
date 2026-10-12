@@ -13,6 +13,7 @@ from .engraphis import (
     THINK_INCIDENCE_KIND,
     bounded_graph_snapshot,
     endpoint_thinks,
+    exact_think_entity_ids,
     newest_think_sort_key,
     validated_think_metadata,
     get_service,
@@ -22,16 +23,30 @@ from .engraphis_operations import inspect
 from .thinkgraph_relationship_classification import winner_probability
 
 
-def _projection_subject_directory(project: str) -> dict[str, Any] | None:
+def _text_word_count(value: Any) -> int:
+    return len(str(value or "").split())
+
+
+def _think_word_count(item: dict[str, Any]) -> int:
+    detail = item.get("detail")
+    if not detail:
+        metadata = item.get("metadata")
+        structured = metadata.get("structured_extraction") if isinstance(metadata, dict) else None
+        think = structured.get("think") if isinstance(structured, dict) else None
+        detail = think.get("detail") if isinstance(think, dict) else None
+    return _text_word_count(item.get("summary") or item.get("content")) + _text_word_count(detail)
+
+
+def _projection_entity_directory(project: str) -> dict[str, Any] | None:
     """Attach one current cross-authority identity snapshot when both owners read."""
 
-    from app.python_models.canonical_subject_directory import (
-        build_canonical_subject_directory,
+    from app.python_models.canonical_entity_directory import (
+        build_canonical_entity_directory,
     )
     from app.python_models.data_anchor_contract import DataAnchorError
 
     try:
-        return build_canonical_subject_directory(project)
+        return build_canonical_entity_directory(project)
     except DataAnchorError:
         # ThinkGraph remains independently readable when KnowGraph is unavailable.
         # Joined then fails closed because it has no complete authority snapshot.
@@ -77,7 +92,6 @@ def _bounded_entity_nodes(
             "id": entity_id,
             "canonicalId": str(engraphis_entity.get("canonical_id") or entity_id),
             "canonicalName": title,
-            "entityKind": str(engraphis_entity.get("type") or "Concept"),
             "label": title,
             "title": title,
             "type": str(engraphis_entity.get("type") or "Concept"),
@@ -90,6 +104,10 @@ def _bounded_entity_nodes(
                 "nodeType": str(engraphis_entity.get("type") or "Concept"),
                 "focus": bool(engraphis_entity.get("focus")),
                 "evidence": evidence,
+                "attachedWordCount": sum(
+                    _think_word_count(item)
+                    for item in evidence
+                ),
             },
         })
     return nodes, think_limit_hit
@@ -300,15 +318,26 @@ def _scene_think_evidence(
         if row.get("source_kind") == THINK_INCIDENCE_KIND
     ))
     direct_memories = service.store.get_memories(direct_incidence_ids)
+    workspace = service.store.conn.execute(
+        "SELECT id FROM workspaces WHERE name=?", (project,),
+    ).fetchone()
+    workspace_id = str(workspace["id"]) if workspace is not None else ""
+    exact_entities = exact_think_entity_ids(
+        service.store,
+        workspace_id=workspace_id,
+        memory_ids=direct_incidence_ids,
+    ) if workspace_id else {}
     valid_think_ids = {
         memory_id for memory_id, memory in direct_memories.items()
         if validated_think_metadata(memory) is not None
+        and memory_id in exact_entities
     }
     entity_thinks = {node_id: list(dict.fromkeys(
         row["memory_id"] for row in incidences
         if row["entity_id"] in members
         and row.get("source_kind") == THINK_INCIDENCE_KIND
         and row["memory_id"] in valid_think_ids
+        and exact_entities[row["memory_id"]] == node_id
     )) for node_id, members in entity_members.items()}
     evidence_groups = [edge.get("support_memory_ids", []) for edge in scene["edges"]]
     evidence_groups.extend(entity_thinks.values())
@@ -347,11 +376,16 @@ def _project_scene_nodes(
             key=lambda memory_id: newest_think_sort_key(supporting[memory_id])
             if memory_id in supporting else (0.0, memory_id)
         )
+        all_evidence = [
+            supporting[memory_id]
+            for memory_id in evidence_ids
+            if memory_id in supporting
+        ]
+        evidence = all_evidence[:2]
         nodes.append({
             **node,
             "canonicalId": node["id"],
             "canonicalName": node["label"],
-            "entityKind": node["type"],
             "title": node["label"],
             "type": node["type"],
             "authority": "engraphis",
@@ -366,11 +400,10 @@ def _project_scene_nodes(
                 "semantic_mass": node.get("semantic_mass", 0.0),
                 "gravity_mass": node.get("gravity_mass"),
                 "visual_radius": node.get("visual_radius"),
-                "evidence": [
-                    supporting[memory_id]
-                    for memory_id in evidence_ids
-                    if memory_id in supporting
-                ],
+                "evidence": evidence,
+                "attachedWordCount": sum(
+                    _think_word_count(item) for item in all_evidence
+                ),
             },
         })
     return nodes
@@ -440,6 +473,6 @@ def projection(project: str, entity_id: str | None = None) -> dict:
             "revision": revision, "nodes": nodes, "edges": edges, "scene": scene,
             "counts": {"nodes": len(nodes), "edges": len(edges)},
             "truncated": scene["meta"]["truncated"],
-            "canonicalSubjectDirectory": _projection_subject_directory(project),
+            "canonicalEntityDirectory": _projection_entity_directory(project),
             "embedding": {"state": "ready" if service.stats(workspace=project).get("embedding", {}).get("ready") else "unavailable"},
             "runtime": {"engine": "engraphis", "version": ENGRAPHIS_VERSION}}

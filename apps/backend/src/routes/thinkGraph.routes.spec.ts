@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   fetchThinkGraphProjection: vi.fn(),
   fetchThinkGraphNeighborhood: vi.fn(),
+  requestPythonRailsJson: vi.fn(),
 }));
 
 vi.mock('./projectAccess', () => ({
@@ -15,6 +16,7 @@ vi.mock('./projectAccess', () => ({
 vi.mock('../services/pythonRailsClient', () => ({
   fetchThinkGraphProjection: mocks.fetchThinkGraphProjection,
   fetchThinkGraphNeighborhood: mocks.fetchThinkGraphNeighborhood,
+  requestPythonRailsJson: mocks.requestPythonRailsJson,
 }));
 
 import thinkGraphRoutes from './thinkGraph.routes';
@@ -40,6 +42,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   mocks.fetchThinkGraphProjection.mockReset();
   mocks.fetchThinkGraphNeighborhood.mockReset();
+  mocks.requestPythonRailsJson.mockReset();
 });
 
 describe('ThinkGraph Engraphis read transport', () => {
@@ -66,6 +69,30 @@ describe('ThinkGraph Engraphis read transport', () => {
       const response = await fetch(`${baseUrl}/neighborhood?projectId=project-1`);
       expect(response.status).toBe(400);
       expect(mocks.fetchThinkGraphNeighborhood).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('retires one exact ThinkGraph relationship through Python rails', async () => {
+    mocks.requestPythonRailsJson.mockResolvedValue({ ok: true, edgeId: 'edge-1' });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/retire-relationship`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: 'project-1', edgeId: 'edge-1' }),
+      });
+      expect(response.status).toBe(200);
+      expect(mocks.requestPythonRailsJson).toHaveBeenCalledWith('/thinkgraph/operation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          operation: 'retire_relationship',
+          arguments: { edgeId: 'edge-1' },
+        }),
+      });
     } finally {
       await closeServer(server);
     }

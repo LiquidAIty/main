@@ -2,7 +2,7 @@
 
 `@engraphis/pi` is the first-party [Pi](https://pi.dev) extension for durable,
 local-first Engraphis memory. It lazily launches the existing `engraphis-mcp`
-server on stdio when a memory tool is used, and exposes the same nine-tool Smart
+server on stdio when a memory tool is used, and exposes the same ten-tool Smart
 MCP surface as native Pi tools. This keeps the extension zero-configuration:
 routine memory work is direct, while advanced capabilities are discovered and
 executed automatically through the gateway.
@@ -12,6 +12,7 @@ It exposes the Smart MCP tools as direct Pi tools:
 - `engraphis_session`
 - `engraphis_recall_context`
 - `engraphis_remember`
+- `engraphis_remember_entities`
 - `engraphis_discover_actions`
 - `engraphis_execute_read`
 - `engraphis_execute_action`
@@ -28,7 +29,7 @@ runs it.
 ## Install
 
 Install Engraphis 1.5.x with Python 3.10 or later. Version 1.5 introduced the
-nine-tool Smart MCP contract required by this extension:
+ten-tool Smart MCP contract required by this extension:
 
 ```bash
 python -m pip install --upgrade "engraphis[mcp]>=1.5,<2"

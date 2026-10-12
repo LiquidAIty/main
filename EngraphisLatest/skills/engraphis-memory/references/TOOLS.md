@@ -1,7 +1,7 @@
 # Engraphis MCP tools: reference
 
-The Classic server registers 39 direct tools and the Smart gateway registers nine; two names
-overlap, for 46 distinct public tool names. Parameters are `name (type, default)`: no default
+The Classic server registers 40 direct tools and the Smart gateway registers ten; three names
+overlap, for 47 distinct public tool names. Parameters are `name (type, default)`: no default
 means required. Every tool returns a JSON string; on failure it returns `"Error: <reason>"`
 instead of raising.
 Governance tools (`retire`/`pin`/`correct`/`link`) verify the memory actually belongs to the
@@ -83,6 +83,17 @@ same declared `evidence_source` get `related` graph edges labeled with that evid
 with no declared evidence stay unwired ("no shared source, no edge"). Returns
 `{workspace, repo, scope, stored:true, total, ops:[…], results:[{id, op}, …]}` with one entry
 per input fact, in order.
+
+### `engraphis_remember_entities`
+Atomically store one memory per exact Entity without deriving attachment from mentioned text.
+
+- `facts (list[dict])`: each item requires `content` and `entity_name`; pass `entity_id` to
+  reuse an exact existing Entity. Other optional memory fields match `engraphis_remember_many`.
+- `workspace (str, "default")`, `repo (str, None)`, `session_id (str, None)`.
+- `mtype (str, "episodic")`, `scope (str, None)`, `source (str, "agent")`,
+  `trusted (bool, true)`.
+
+The batch is all-or-nothing. Each result includes `id`, `op`, and the exact `entity_id`.
 
 ### `engraphis_record_event`
 Append one raw occurrence to the append-only event ledger. Event rows are not memories: they are
@@ -532,12 +543,12 @@ The `compaction` field is the context tokens the sweep saved (before → after).
 
 ## Smart gateway
 
-These nine tools are the default Smart MCP surface. The seven tools below expose session,
+These ten tools are the default Smart MCP surface. The seven tools below expose session,
 discovery, execution, inspection, update, and review operations that are not part of the classic
 direct-tool inventory above. Discovery returns the exact capability schema; executors reject stale
 or mismatched schemas and enforce the declared side-effect boundary.
 
-The two overlapping names deliberately have smaller Smart schemas than their Classic sections
+The three overlapping names deliberately have smaller Smart schemas than their Classic sections
 above. Smart `engraphis_remember` accepts only `content`, `workspace`, `repo`, `session_id`,
 `mtype`, `importance`, `subject_key`, `claim_kind`, `exact_value`, and `exact_value_type`;
 safe provenance is fixed internally. Exact values must occur uniquely and verbatim in
@@ -549,6 +560,9 @@ than routine. Setting `allow_remote=true` with a `public` or `internal` classifi
 to bounded route selection and grants consent for that call only. Defaults stay deterministic/local.
 Remote route selection requires explicit BYOK. Managed and `auto` do not admit `query_planning`
 or silently select BYOK; unsupported managed planning retains deterministic local order.
+
+Smart `engraphis_remember_entities` accepts `facts` plus optional `workspace`; each fact carries
+`content`, `entity_name`, and an optional exact `entity_id`.
 
 ### `engraphis_session`
 Start or resume a session, or end it with a next-session handoff.

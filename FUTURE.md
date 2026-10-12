@@ -18,6 +18,43 @@ Named-Card conversation/Bot Mode remains a separate feature; do not mix it into 
 
 These calls require explicit approval. Structural tests must not be presented as live proof.
 
+## Project graph time exploration — unaccepted refinement
+
+Native candidate retrieval, Jev ranking, and the Relevant/Recent Entity inspector are current and therefore
+not future work. A later optional time interaction may expose requested chronological exploration without
+changing the default one-result Relevant view. The owner suggested an almost-hidden column-sort-style tab;
+its exact gesture, time field, direction, result bound, paid entitlement, and reset behavior are not decided.
+Do not implement a second timeline, transcript, index, or TypeScript semantic sorter to approximate it.
+
+## Quick Web evidence handoff — deferred
+
+Hermes agents should not be crippled when fast current information is part of their saved role. The
+approved direction permits bounded quick Web use by Main, Builder, and deliberately granted specialists,
+while KnowGraph retains durable evidence correlation and Graphiti persistence.
+
+The handoff mechanism is not implemented. A later bounded design may carry the research question, exact
+Entity references, source-backed claim, bounded interpretation, source URL/metadata, and why the evidence
+mattered. It must not carry whole chats, hidden reasoning, or every search result, and it must reuse an
+existing background/Bot/Card path rather than create a queue.
+
+## Project Knowledge Dashboard — deferred derived artifact
+
+A future Builder-created Project Knowledge Dashboard may combine exact current graph reads into:
+
+- a machine-consumable Project context or PromptSpec;
+- an attractive human-facing scientific, business, code, or other plan/report;
+- an exportable standalone HTML/data-document artifact that may temporarily replace the center view.
+
+Its deterministic layer may include canonical Entities, selected Relevant/Recent Think/Know context,
+relationships, references, provenance, and unresolved gaps. A generated layer may summarize current
+direction, tensions, decisions, opportunities, and mission-specific context.
+
+This is a regenerable artifact. It is not another graph, memory, writer, authorization source, or
+persistence truth. A later ordinary-surface action may be labelled simply **Report** and send the selected
+Entity/Relationship context to Builder; the detailed artifact surface may use the technical controls needed
+for inspection and export. No report action, center-view replacement, export format, or dashboard
+implementation is authorized by this document.
+
 ## Reveal and graph attention
 
 - Tune progressive reveal pacing so fast native reads remain understandable without slowing agents.
@@ -83,7 +120,7 @@ tool-call counts on Card faces from the same observed events, without queue text
 Keep the attention palette semantically small and consistent with the existing Solarpunk material: blue remains
 Think authority, orange remains Know authority, purple marks a confirmed provider write/change, green marks a
 confirmed read/context delivery/use, and cyan/white remains explicit user Focus/selection. Activity rings never
-replace the node's authority color. A canonical entity mention in Main chat should be an exact clickable subject:
+replace the node's authority color. A canonical Entity mention in Main chat should be an exact clickable Entity:
 clicking it focuses the real Combined provider member(s) and opens the existing right inspector with recent
 Thinks, current Knows, relationships, source/provenance, provider IDs and current/latest Run attention evidence.
 Implement this as ordinary React state over provider records and observed events, never DOM scraping or prose

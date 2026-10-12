@@ -96,8 +96,12 @@ describe('agentbuilder authoring flow', () => {
       toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'canvas.upsert_wire',
         'cbm.search_graph', 'cbm.search_code', 'cbm.trace_path', 'cbm.get_code_snippet',
-        'cbm.check_index_coverage', 'engraphis_recall_context', 'graphiti.search_memory_facts',
-        'graphiti.search_nodes', 'graphiti.get_episodes',
+        'cbm.check_index_coverage', 'engraphis_recall_context', 'engraphis_get_memory',
+        'engraphis_discover_actions', 'engraphis_execute_read', 'engraphis_execute_action',
+        'graphiti.search_memory_facts', 'graphiti.search_nodes', 'graphiti.get_episodes',
+        'graphiti.get_episode_entities', 'graphiti.get_entity_edge',
+        'graphiti.build_communities', 'graphiti.delete_episode',
+        'graphiti.delete_entity_edge', 'graphiti.clear_graph',
         'thinkgraph.reason', 'knowgraph.research'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');

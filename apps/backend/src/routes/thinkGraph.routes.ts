@@ -25,6 +25,28 @@ thinkGraphRoutes.post('/retire', async (req, res) => {
   }
 });
 
+thinkGraphRoutes.post('/retire-relationship', async (req, res) => {
+  const { projectId, edgeId } = req.body || {};
+  if (typeof projectId !== 'string' || !projectId || typeof edgeId !== 'string' || !edgeId) {
+    return res.status(400).json({ error: 'projectId and edgeId required' });
+  }
+  try {
+    if (!await requireOwnedProject(req, res, projectId)) return undefined;
+    return res.json(await requestPythonRailsJson('/thinkgraph/operation', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        operation: 'retire_relationship',
+        arguments: { edgeId },
+      }),
+    }));
+  } catch (error: any) {
+    return res.status(409).json({
+      error: String(error?.message || 'thinkgraph_relationship_remove_failed'),
+    });
+  }
+});
+
 // Transport only: Python/Engraphis owns the projection and its graph data.
 thinkGraphRoutes.get('/projection', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();

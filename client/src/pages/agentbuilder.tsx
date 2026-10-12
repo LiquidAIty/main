@@ -203,7 +203,7 @@ export default function AgentBuilder(): ReactElement {
   });
   const {
     setCurrentResponderCardId,
-    subjectFocusRequest,
+    entityFocusRequest,
     sharedChatProps,
   } = useAgentBuilderSharedChat({
     activeProject,
@@ -222,6 +222,9 @@ export default function AgentBuilder(): ReactElement {
     worldViewBridge: inspectorBridges.worldViewBridge,
     colors: AGENT_BUILDER_COLORS,
   });
+  const relevanceQuery = useMemo(() => (
+    [...sharedChatProps.messages].reverse().find(message => message.role === 'user')?.text.trim() || ''
+  ), [sharedChatProps.messages]);
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -495,11 +498,15 @@ export default function AgentBuilder(): ReactElement {
         surfaceRole: 'companion',
         projections: knowledgeGraphs.projections,
         onRemoveThinkGraphEvidence: knowledgeGraphs.removeThinkGraphEvidence,
+        onRemoveThinkGraphRelationship: knowledgeGraphs.removeThinkGraphRelationship,
         onRemoveKnowGraphEvidence: knowledgeGraphs.removeKnowGraphEvidence,
+        onRemoveKnowGraphRelationship: knowledgeGraphs.removeKnowGraphRelationship,
         errors: knowledgeGraphs.errors,
         statuses: knowledgeGraphs.statuses,
         onReadFocusNeighborhood: knowledgeGraphs.readProviderNeighborhood,
-        subjectFocusRequest,
+        relevanceQuery,
+        onReadEntityContext: knowledgeGraphs.readEntityContext,
+        entityFocusRequest,
       }}
       tradingProps={{
         symbol: 'RDW',

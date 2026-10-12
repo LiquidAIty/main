@@ -113,7 +113,7 @@ def _check(as_json: bool) -> int:
                     "ok": False,
                     "error": str(exc),
                     "hint": (
-                        "The server is reachable but is missing the Smart 9-tool "
+                        "The server is reachable but is missing the Smart 10-tool "
                         "surface. Upgrade with: pip install --upgrade "
                         "\"engraphis[mcp]>=1.5,<2\""
                     ),
@@ -180,7 +180,7 @@ def _status(as_json: bool) -> int:
                     "ok": False,
                     "error": str(exc),
                     "hint": (
-                        "The server is reachable but is missing the Smart 9-tool "
+                        "The server is reachable but is missing the Smart 10-tool "
                         "surface. Upgrade with: pip install --upgrade "
                         "\"engraphis[mcp]>=1.5,<2\""
                     ),

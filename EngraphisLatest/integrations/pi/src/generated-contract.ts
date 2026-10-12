@@ -400,6 +400,41 @@ export const SMART_SCHEMAS = {
     "title": "smart_rememberArguments",
     "type": "object"
   },
+  "engraphis_remember_entities": {
+    "properties": {
+      "facts": {
+        "description": "Facts with content, entity_name, and optional exact entity_id.",
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "maxItems": 500,
+        "minItems": 1,
+        "title": "Facts",
+        "type": "array"
+      },
+      "workspace": {
+        "anyOf": [
+          {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Workspace.",
+        "title": "Workspace"
+      }
+    },
+    "required": [
+      "facts"
+    ],
+    "title": "smart_remember_entitiesArguments",
+    "type": "object"
+  },
   "engraphis_session": {
     "properties": {
       "action": {

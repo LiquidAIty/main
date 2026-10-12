@@ -18,6 +18,7 @@ _GRAPHITI_READ_OPERATIONS = frozenset({
 })
 _GRAPHITI_WRITE_OPERATIONS = frozenset({
     "graphiti.add_memory",
+    "graphiti.add_memory_to_entity",
     "graphiti.add_triplet",
     "graphiti.build_communities",
     "graphiti.clear_graph",

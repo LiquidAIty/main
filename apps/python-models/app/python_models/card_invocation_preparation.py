@@ -24,10 +24,6 @@ from app.python_models.card_script import (
     CardScriptValidationError,
     script_presentation,
 )
-from app.python_models.canonical_subject_directory import (
-    append_canonical_subject_directory,
-    build_canonical_subject_directory,
-)
 from app.python_models.data_anchor import empty_graph_projection, resolve_data_anchors
 from app.python_models.data_anchor_contract import DataAnchorError
 from app.python_models.graph_reference_contracts import (
@@ -39,6 +35,14 @@ from app.python_models.graph_reference_contracts import (
 from app.python_models.idf import materialize_idf
 from app.python_models.idf_contract import InputMaterializationError
 from app.python_models.idf_projection import estimate_text_tokens, idf_public
+from app.python_models.project_entity_map import (
+    append_project_entity_map,
+    build_project_entity_map,
+)
+from app.python_models.project_graph_relevance import (
+    append_project_graph_grounding,
+    build_project_graph_grounding,
+)
 from app.python_models.saved_card_contract import (
     CardDomainError,
     card_is_enabled,
@@ -50,6 +54,9 @@ from app.python_models.saved_card_contract import (
 
 
 _DATA_ANCHOR_LIMIT = 16
+_PROJECT_ENTITY_MAP_CARD_IDS = frozenset({
+    "card_main_chat", "builder", "card_thinkgraph", "card_knowgraph",
+})
 
 _FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
     "builderOperation", "agentBuilderOperation", "agentBuilderGuidance",
@@ -379,15 +386,24 @@ def materialize_invocation(
     images = resolved["images"]
     auto_tools_decision = resolved["autoToolsDecision"]
     auto_model_decision = resolved["autoModelDecision"]
-    subject_directory: dict[str, Any] | None = None
-    if prepared["cardIdentity"]["cardId"] == "card_knowgraph":
+    project_entity_map: dict[str, Any] | None = None
+    project_graph_grounding: dict[str, Any] | None = None
+    if prepared["cardIdentity"]["cardId"] in _PROJECT_ENTITY_MAP_CARD_IDS:
         try:
-            subject_directory = build_canonical_subject_directory(
-                prepared["projectId"]
+            project_entity_map = build_project_entity_map(prepared["projectId"])
+            graph_seed = append_project_entity_map(
+                graph_seed, project_entity_map
             )
-            graph_seed = append_canonical_subject_directory(
-                graph_seed, subject_directory
-            )
+            relevance_query = str(selection_request or assignment).strip()
+            if relevance_query:
+                project_graph_grounding = build_project_graph_grounding(
+                    prepared["projectId"],
+                    relevance_query,
+                    context=assignment if assignment != relevance_query else "",
+                )
+                graph_seed = append_project_graph_grounding(
+                    graph_seed, project_graph_grounding,
+                )
         except DataAnchorError as error:
             raise CardDomainError(str(error)) from error
     try:
@@ -431,8 +447,10 @@ def materialize_invocation(
         **prepared,
         "resolvedGraphReads": anchor_references,
         "resolvedGraphProjection": graph_projection,
-        **({"canonicalSubjectDirectory": subject_directory}
-           if subject_directory is not None else {}),
+        **({"projectEntityMap": project_entity_map}
+           if project_entity_map is not None else {}),
+        **({"projectGraphGrounding": project_graph_grounding}
+           if project_graph_grounding is not None else {}),
         "autoToolsDecision": auto_tools_decision,
         "autoModelDecision": auto_model_decision,
         **idf_public(materialized),

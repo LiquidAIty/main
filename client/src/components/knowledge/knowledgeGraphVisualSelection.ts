@@ -6,7 +6,6 @@ import {
   type JoinedGraphNodeVariant,
   type JoinedGraphPresentation,
 } from './joinedKnowledgeGraphProjection';
-import { graphitiFactIdentity } from './knowledgeGraphInspectorRecords';
 
 export function deriveKnowledgeGraphVisualSelection({
   displayProjection,
@@ -34,23 +33,23 @@ export function deriveKnowledgeGraphVisualSelection({
       item !== null && typeof item === 'object' && !Array.isArray(item)
     ))
   ));
-  const graphitiEdges = activeJoinedPresentation.providerProjections.knowgraph.edges;
+  const knowgraphEntityAvailable = selectedNodeVariants.some(
+    variant => variant.authority === 'knowgraph',
+  );
   const directKnowAvailable = selectedNodeVariants.some(variant => (
     variant.authority === 'knowgraph'
-    && graphitiEdges.some(edge => (
-      (edge.source === variant.node.id || edge.target === variant.node.id)
-      && edge.predicate !== 'MENTIONS'
-      && graphitiFactIdentity(edge) !== null
-      && typeof edge.properties?.fact === 'string'
-      && edge.properties.fact.trim().length > 0
+    && Array.isArray(variant.node.properties?.evidence)
+    && variant.node.properties.evidence.some((item: unknown) => (
+      item !== null && typeof item === 'object' && !Array.isArray(item)
     ))
   ));
-  const defaultSelectedAuthority = directThinkAvailable
-    ? 'thinkgraph'
-    : directKnowAvailable ? 'knowgraph' : null;
+  const defaultSelectedAuthority = directKnowAvailable
+    ? 'knowgraph'
+    : directThinkAvailable ? 'thinkgraph'
+      : knowgraphEntityAvailable ? 'knowgraph' : null;
   const inspectedNodeAuthority = selectedAuthority
     && ((selectedAuthority === 'thinkgraph' && directThinkAvailable)
-      || (selectedAuthority === 'knowgraph' && directKnowAvailable))
+      || (selectedAuthority === 'knowgraph' && knowgraphEntityAvailable))
     ? selectedAuthority
     : defaultSelectedAuthority;
   const selectedAuthorityVariants = selectedNodeVariants.filter(
@@ -73,7 +72,7 @@ export function deriveKnowledgeGraphVisualSelection({
   return {
     selectedVisual,
     directThinkAvailable,
-    directKnowAvailable,
+    knowgraphEntityAvailable,
     selected,
     selectedEdge,
     inspectedAuthority,

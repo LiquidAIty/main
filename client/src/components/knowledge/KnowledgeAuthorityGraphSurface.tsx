@@ -4,16 +4,22 @@ import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 import {
-  resolveCanonicalSubjectFocusVisualId,
-  type CanonicalSubjectFocusRequest,
-} from './canonicalSubjectLinks';
+  resolveCanonicalEntityFocusVisualId,
+  type CanonicalEntityFocusRequest,
+} from './canonicalEntityLinks';
 import {
   composeThinkKnowPresentation,
+  selectThinkKnowPresentation,
   type GraphAuthority,
   type GraphProjectionV1,
   type JoinedGraphPresentation,
+  type KnowledgeGraphViewMode,
 } from './joinedKnowledgeGraphProjection';
-import type { CanonicalSubjectDirectory } from './canonicalSubjectDirectory';
+import {
+  readCanonicalEntityProviderPointers,
+  type CanonicalEntityDirectory,
+  type CanonicalEntityHeader,
+} from './canonicalEntityDirectory';
 import {
   selectedFocusCandidates,
   type ReadProviderFocusNeighborhood,
@@ -29,17 +35,30 @@ export function JoinedKnowledgeGraphSurface({
   statuses,
   errors,
   onReadProviderFocusNeighborhood,
+  relevanceQuery,
+  onReadEntityContext,
   onRemoveThinkGraphEvidence,
+  onRemoveThinkGraphRelationship,
   onRemoveKnowGraphEvidence,
-  subjectFocusRequest,
+  onRemoveKnowGraphRelationship,
+  entityFocusRequest,
 }: {
   projections: Record<GraphAuthority, GraphProjectionV1>;
   statuses?: Partial<Record<GraphAuthority, 'idle' | 'loading' | 'ready' | 'error'>>;
   errors?: Partial<Record<GraphAuthority, string>>;
   onReadProviderFocusNeighborhood?: ReadProviderFocusNeighborhood;
+  relevanceQuery?: string;
+  onReadEntityContext?: (
+    entity: CanonicalEntityHeader,
+    query: string,
+    limit?: number,
+    signal?: AbortSignal,
+  ) => Promise<Record<string, any>>;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
-  onRemoveKnowGraphEvidence?: (graphitiFactUuid: string) => Promise<void>;
-  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
+  onRemoveThinkGraphRelationship?: (edgeId: string) => Promise<void>;
+  onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
+  onRemoveKnowGraphRelationship?: (graphitiRelationshipId: string) => Promise<void>;
+  entityFocusRequest?: CanonicalEntityFocusRequest | null;
 }) {
   const presentation = useMemo(
     () => composeThinkKnowPresentation(
@@ -70,52 +89,73 @@ export function JoinedKnowledgeGraphSurface({
     : null;
   return (
     <JoinedKnowledgeGraphProjectionSurface
-      canonicalSubjectDirectory={
-        projections.thinkgraph.canonicalSubjectDirectory
+      canonicalEntityDirectory={
+        projections.thinkgraph.canonicalEntityDirectory
       }
-      subjectFocusRequest={subjectFocusRequest}
-      projection={presentation.projection}
+      entityFocusRequest={entityFocusRequest}
       joinedPresentation={presentation}
       onReadProviderFocusNeighborhood={onReadProviderFocusNeighborhood}
+      relevanceQuery={relevanceQuery}
+      onReadEntityContext={onReadEntityContext}
       status={status}
       error={error}
       warning={warning}
       onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
+      onRemoveThinkGraphRelationship={onRemoveThinkGraphRelationship}
       onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
+      onRemoveKnowGraphRelationship={onRemoveKnowGraphRelationship}
     />
   );
 }
 function JoinedKnowledgeGraphProjectionSurface({
-  projection,
   status,
   error,
   warning,
   joinedPresentation,
   onReadProviderFocusNeighborhood,
+  relevanceQuery,
+  onReadEntityContext,
   onRemoveThinkGraphEvidence,
+  onRemoveThinkGraphRelationship,
   onRemoveKnowGraphEvidence,
-  canonicalSubjectDirectory,
-  subjectFocusRequest,
+  onRemoveKnowGraphRelationship,
+  canonicalEntityDirectory,
+  entityFocusRequest,
 }: {
-  projection: GraphProjectionV1;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   warning?: string | null;
   joinedPresentation: JoinedGraphPresentation;
   onReadProviderFocusNeighborhood?: ReadProviderFocusNeighborhood;
+  relevanceQuery?: string;
+  onReadEntityContext?: (
+    entity: CanonicalEntityHeader,
+    query: string,
+    limit?: number,
+    signal?: AbortSignal,
+  ) => Promise<Record<string, any>>;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
-  onRemoveKnowGraphEvidence?: (graphitiFactUuid: string) => Promise<void>;
-  canonicalSubjectDirectory?: CanonicalSubjectDirectory | null;
-  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
+  onRemoveThinkGraphRelationship?: (edgeId: string) => Promise<void>;
+  onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
+  onRemoveKnowGraphRelationship?: (graphitiRelationshipId: string) => Promise<void>;
+  canonicalEntityDirectory?: CanonicalEntityDirectory | null;
+  entityFocusRequest?: CanonicalEntityFocusRequest | null;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedAuthority, setSelectedAuthority] = useState<GraphAuthority | null>(null);
   const [selectedMemberKey, setSelectedMemberKey] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<KnowledgeGraphViewMode>('combined');
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [selectedEntityContext, setSelectedEntityContext] = useState<Record<string, any> | null>(null);
+  const [entityContextError, setEntityContextError] = useState<string | null>(null);
+  const [entityContextQuery, setEntityContextQuery] = useState(
+    String(relevanceQuery || '').trim(),
+  );
+  const [entityContextLimit, setEntityContextLimit] = useState(1);
   const inspectNodeRef = useRef<(id: string) => void>(() => undefined);
-  const consumedSubjectFocusRequestRef = useRef<number | null>(null);
+  const consumedEntityFocusRequestRef = useRef<number | null>(null);
   const panelBodyRef = useRef<HTMLDivElement>(null);
   const openNodeInspector = (visualNodeId: string) => {
     setControlsOpen(false);
@@ -125,6 +165,10 @@ function JoinedKnowledgeGraphProjectionSurface({
     setInspectorOpen(true);
   };
   inspectNodeRef.current = openNodeInspector;
+  const viewPresentation = useMemo(
+    () => selectThinkKnowPresentation(joinedPresentation, viewMode),
+    [joinedPresentation, viewMode],
+  );
   const {
     activeJoinedPresentation,
     displayProjection,
@@ -144,8 +188,8 @@ function JoinedKnowledgeGraphProjectionSurface({
     presentationControls,
     camera,
   } = useKnowledgeGraphPresentationLifecycle({
-    projection,
-    joinedPresentation,
+    projection: viewPresentation.projection,
+    joinedPresentation: viewPresentation,
     onReadProviderFocusNeighborhood,
     selectedId,
     onInspectNode: visualNodeId => inspectNodeRef.current(visualNodeId),
@@ -157,17 +201,19 @@ function JoinedKnowledgeGraphProjectionSurface({
       setInspectorOpen(true);
     },
     onClearSelection: () => {
+      setViewMode('combined');
       setSelectedMemberKey(null);
       setSelectedId(null);
       setSelectedEdgeId(null);
       setInspectorOpen(false);
       setControlsOpen(false);
     },
+    viewMode,
   });
   const {
     selectedVisual,
     directThinkAvailable,
-    directKnowAvailable,
+    knowgraphEntityAvailable,
     selected,
     selectedEdge,
     inspectedAuthority,
@@ -182,36 +228,73 @@ function JoinedKnowledgeGraphProjectionSurface({
   });
 
   useEffect(() => {
+    setEntityContextQuery(String(relevanceQuery || '').trim());
+    setEntityContextLimit(1);
+  }, [relevanceQuery, selectedId]);
+
+  useEffect(() => {
+    setSelectedEntityContext(null);
+    setEntityContextError(null);
+    const query = entityContextQuery.trim();
+    if (!selected || selectedEdge || !inspectedAuthority || !query || !onReadEntityContext
+      || !canonicalEntityDirectory) return undefined;
+    const selectedEntityId = selected.id;
+    const exactEntity = canonicalEntityDirectory.entities.find((entity) => (
+      entity.canonicalName === selected.label
+      && readCanonicalEntityProviderPointers(entity)?.some((pointer) => (
+        pointer.authority === inspectedAuthority && pointer.entityId === selectedEntityId
+      ))
+    ));
+    if (!exactEntity) return undefined;
+    const controller = new AbortController();
+    void onReadEntityContext(exactEntity, query, entityContextLimit, controller.signal).then(
+      setSelectedEntityContext,
+      (error) => {
+        if (controller.signal.aborted) return;
+        setEntityContextError(error instanceof Error ? error.message : String(error));
+      },
+    );
+    return () => controller.abort();
+  }, [
+    canonicalEntityDirectory,
+    entityContextLimit,
+    entityContextQuery,
+    inspectedAuthority,
+    onReadEntityContext,
+    selected,
+    selectedEdge,
+  ]);
+
+  useEffect(() => {
     if (!controlsOpen) return;
     const scrollHost = panelBodyRef.current?.parentElement;
     if (scrollHost) scrollHost.scrollTop = 0;
   }, [controlsOpen]);
 
   useEffect(() => {
-    if (!subjectFocusRequest
-      || consumedSubjectFocusRequestRef.current === subjectFocusRequest.requestId
+    if (!entityFocusRequest
+      || consumedEntityFocusRequestRef.current === entityFocusRequest.requestId
       || !displayProjection) return;
-    const baseProjection = joinedPresentation.projection;
-    const visualNodeId = resolveCanonicalSubjectFocusVisualId({
+    const baseProjection = viewPresentation.projection;
+    const visualNodeId = resolveCanonicalEntityFocusVisualId({
       projection: baseProjection,
-      joinedPresentation,
-      directory: canonicalSubjectDirectory,
-      request: subjectFocusRequest,
+      joinedPresentation: viewPresentation,
+      directory: canonicalEntityDirectory,
+      request: entityFocusRequest,
     });
     if (!visualNodeId) return;
     if (!displayProjection.nodes.some(node => node.id === visualNodeId)) {
       if (manualNavigationActive) exitManualFocus();
       return;
     }
-    consumedSubjectFocusRequestRef.current = subjectFocusRequest.requestId;
+    consumedEntityFocusRequestRef.current = entityFocusRequest.requestId;
     inspectNodeRef.current(visualNodeId);
   }, [
-    canonicalSubjectDirectory,
+    canonicalEntityDirectory,
     displayProjection,
-    joinedPresentation,
+    viewPresentation,
     manualNavigationActive,
-    projection,
-    subjectFocusRequest,
+    entityFocusRequest,
   ]);
 
   useEffect(() => {
@@ -242,7 +325,7 @@ function JoinedKnowledgeGraphProjectionSurface({
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
 
   return (
-    <div data-testid="knowledge-joined-surface" className="knowledge-authority-graph" data-layout={layout} data-style={style} data-physics-profile={physicsProfile} data-focus-phase={successfulFocusedEntry ? 'manual_blackhole_focus' : focusRequestPending ? 'focus_preparing' : focusRelease ? 'focus_release' : 'local_relational'} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
+    <div data-testid="knowledge-joined-surface" className="knowledge-authority-graph" data-layout={layout} data-style={style} data-physics-profile={physicsProfile} data-view-mode={viewMode} data-focus-phase={successfulFocusedEntry ? 'manual_blackhole_focus' : focusRequestPending ? 'focus_preparing' : focusRelease ? 'focus_release' : 'local_relational'} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
       onKeyDown={event => {
         if (event.key !== 'Escape') return;
         if (focusedEntry) {
@@ -256,6 +339,25 @@ function JoinedKnowledgeGraphProjectionSurface({
       }}>
       <GraphPaperBackground viewport={paperViewport} />
       <div className="knowledge-authority-canvas">
+        <div className="knowledge-authority-view-key" aria-label="Knowledge graph view">
+          {([['thinkgraph', 'Think'], ['knowgraph', 'Know']] as const).map(([mode, label]) => (
+            <button key={mode} type="button" aria-label={`${label} view`}
+              aria-pressed={viewMode === mode} data-active={viewMode === mode}
+              data-authority={mode}
+              style={{ color: mode === 'thinkgraph'
+                ? GRAPH_THEME.accent.think : GRAPH_THEME.accent.solar }} onClick={() => {
+                exitManualFocus();
+                setSelectedMemberKey(null);
+                setSelectedId(null);
+                setSelectedEdgeId(null);
+                setInspectorOpen(false);
+                setViewMode(mode);
+              }}>
+              <span aria-hidden="true" style={{ background: mode === 'thinkgraph'
+                ? GRAPH_THEME.accent.think : GRAPH_THEME.accent.solar }} />{label}
+            </button>
+          ))}
+        </div>
         <div ref={hostRef} className="knowledge-authority-network graph-canvas"
           data-renderer="engraphis-1.7.1"
           onWheelCapture={camera.beginCameraGesture}
@@ -346,8 +448,12 @@ function JoinedKnowledgeGraphProjectionSurface({
               inspectedAuthority={inspectedAuthority}
               inspectedProjection={inspectedProjection}
               activeJoinedPresentation={activeJoinedPresentation}
+              selectedEntityContext={selectedEntityContext}
+              entityContextError={entityContextError}
+              entityContextQuery={entityContextQuery}
+              entityContextLimit={entityContextLimit}
               directThinkAvailable={directThinkAvailable}
-              directKnowAvailable={directKnowAvailable}
+              knowgraphEntityAvailable={knowgraphEntityAvailable}
               focusRequestPending={focusRequestPending}
               focused={successfulFocusedEntry !== null}
               onToggleFocus={() => {
@@ -358,6 +464,14 @@ function JoinedKnowledgeGraphProjectionSurface({
                 setSelectedAuthority(nextAuthority);
                 setSelectedMemberKey(null);
               }}
+              onSearchEntityContext={onReadEntityContext
+                ? (query) => setEntityContextQuery(query.trim())
+                : undefined}
+              onSetEntityContextLimit={onReadEntityContext
+                ? (limit) => setEntityContextLimit(
+                  Math.max(1, Math.min(12, Math.trunc(limit))),
+                )
+                : undefined}
               onInspectNode={(visualId, nextAuthority, memberKey) => {
                 inspectNodeRef.current(visualId);
                 setSelectedAuthority(nextAuthority);
@@ -367,7 +481,9 @@ function JoinedKnowledgeGraphProjectionSurface({
                 if (selectedVisual) inspectNodeRef.current(selectedVisual.id);
               }}
               onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
+              onRemoveThinkGraphRelationship={onRemoveThinkGraphRelationship}
               onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
+              onRemoveKnowGraphRelationship={onRemoveKnowGraphRelationship}
             />
           ) : null}
         </RightGlassDrawer>

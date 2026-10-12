@@ -73,7 +73,6 @@ def read_thinkgraph_exact(
             "graphSystem": "engraphis",
             "engraphisEntityId": entity["canonical_id"],
             "recordKind": "entity",
-            "portableKind": "think",
             "recordId": entity["canonical_id"], "type": entity["type"], "title": entity["label"],
             "content": body[:ANCHOR_BODY_LIMIT],
             "metadata": {"thinks": bounded_thinks, "evidence": bounded_evidence},

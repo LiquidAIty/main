@@ -9,6 +9,10 @@ description: Test whether ordinary saved Main conversation becomes correctly att
 @type Skill
 @status active
 
+When a PromptSpec is active, load `promptspec-receiver` first and defer repository process control,
+live-agent proof authorization, final review, and completion reporting to it. This skill contributes
+only conversation-to-graph attribution, native readback, and usefulness checks.
+
 Use this procedure when graph records exist but their usefulness, attribution, recall, or downstream
 consumption is uncertain. It is a testing procedure, not an ingestion prompt or permission to run models.
 Follow the current task's execution authorization and repository law. Keep observations in the response
@@ -16,14 +20,24 @@ and existing native Runs; do not create another evidence store or task document.
 
 ## Establish the actual path
 
-Use `skills/codebasedmemory.md` to resolve the affected owners, then read current source. The current
+Use the Primary's supplied CBM CLI anchors, then read current source. The current
 seams are `data_anchor.py::resolve_data_anchors` for explicitly selected graph context,
 `idf.py::materialize_idf` for exact input, `engraphis.py` for ThinkGraph,
 `mcp_host.py` for tool publication, and native Hermes `message_agent` for Main's outbound
-orange-connected saved Cards. Automatic completed-pair processing is removed. Main chooses direct writes
-or focused delegated extraction; conversation completion does not launch a graph worker or perform an
-automatic graph search.
+orange-connected saved Cards. After an ordinary Main turn settles and its visible response is persisted,
+the backend asynchronously runs the current completed-pair lifecycle through the exact saved ThinkGraph
+Card. Preparation writes nothing; an exact already-processed pair no-ops, while a new pair currently
+may produce zero or more Entity-specific episodic Thinks, never more than one Think for the same Entity
+in that pair. This path does not automatically invoke KnowGraph or perform Web research.
 Verify these pointers before relying on them.
+
+Current preparation automatically supplies Main, Builder, ThinkGraph, and KnowGraph with the exact
+Entity/Relationship map plus one most Relevant and one distinct most Recent record per authority. Native
+Engraphis recall and Graphiti Entity search/exact `ABOUT` reads produce candidates; Jev ranks them against
+the current request. Think selection must faithfully steelman the user's idea. Every valid Know already
+contains both cited sides, so relevance ranks a whole Know and never separates or suppresses its counter idea.
+An identical completed-pair identity still no-ops before extraction; semantic context may guide a model-authored
+no-op, but is not another deterministic duplicate gate.
 
 Read saved Card IDs, prompts, parent models, native subagent selections, grants, Scripts, topology,
 and current deck revision. Compare saved selections with the loaded native profile and actual Run
@@ -56,9 +70,10 @@ tools or understand graphs. Adapt the content; do not reuse a memorized expected
 6. Return later with a paraphrase that should retrieve the earlier context.
 
 After an actual write or delegation, inspect its correlated tool call, receiving Run when applicable,
-and native IDs before increasing volume. An ordinary reply need not create a ThinkGraph Run.
-Prove the recipient boundary: conversation completion must not invoke KnowGraph, send it the
-conversation, or depend on that Card being present. Research is separately delegated; its useful sourced
+and native IDs before increasing volume. An ordinary non-direct Main reply is expected to attempt the
+saved ThinkGraph completed-pair path after the reply returns; a direct-addressed Card turn is not.
+Prove the separate recipient boundary: completion must not invoke KnowGraph, send it the conversation,
+or depend on that Card being present. Research is separately delegated; its useful sourced
 findings are retained in KnowGraph. The removed automatic research stage demonstrated unwanted delivery
 and extra profile activity, not a useful research benefit. A busy response is a failed handoff, not
 accepted research; do not add another runner or restart the existing child to make a test succeed.
@@ -67,7 +82,7 @@ accepted research; do not add another runner or restart the existing child to ma
 
 Compare each retained claim against the actual user and assistant messages, the submitted write
 arguments, and any delegated task's retained `in.idf`. Preserve speaker attribution; do not reconstruct
-a completed-pair payload or send the conversation through a removed ingestion path.
+or bypass the current completed-pair owner with a second payload or ingestion path.
 
 Check:
 
@@ -79,9 +94,18 @@ Check:
   readback and transport. Automatically created semantic links are not proof of agent-authored links.
   Missing native strength or justification must not become a fabricated confidence value or explanation.
 - Source fidelity: an assistant's company list is not verified financial evidence. KnowGraph claims
-  require the source actually read, relevant date, and native episode/entity/fact references.
+  require the source actually read, relevant date, and native episode/entity/fact references. Each Know must
+  include a cited supporting idea and a separately cited counter idea; a one-sided cited statement is not a Know.
 - Context usefulness: preserved information helps a later task. More nodes, longer summaries, and
   successful extraction counts are not quality metrics by themselves.
+- Entity attachment: every Think has one exact native Engraphis incidence and every Know has one exact
+  structural Graphiti `ABOUT` edge. `MENTIONS`, label similarity, and Relationship endpoints do not prove
+  attachment.
+- Human usefulness: each visible Think or Know side is one simple, self-contained paragraph. Optional technical
+  depth belongs to the same record/side behind **More**. The Entity inspector lands on Relevant; its small
+  arrow replaces that view with Recent rather than stacking an unnoticed history.
+- Projection fidelity: only Entities appear as Project graph nodes. Thinks, Knows, source episodes,
+  citations, and supporting native IDs remain attached properties or evidence/provenance.
 
 When a claim is wrong, stop increasing test volume. Determine whether the earliest divergence is in
 the saved prompt, selected context, delegated input, model-authored write, ingestion, or projection.
@@ -94,8 +118,10 @@ capabilities; do not require every conversation to become a Q&A workflow or an a
 
 ## Verify research and handoff independently
 
-Read the actual granted Graphiti ingestion implementation. A similarly named ingestion helper may not
-be the MCP operation used by the saved KnowGraph Card. Attribute chunking problems only after comparing
+Read the actual granted `graphiti.add_memory_to_entity` model-facing schema and its native provider
+implementation. Confirm Python rails requires `idea` and `counterIdea`, canonicalizes one `know.v1` episode,
+and then calls the unchanged queued Graphiti operation. A similarly named ingestion helper
+may not be the MCP operation used by the saved KnowGraph Card. Attribute chunking problems only after comparing
 the actual source content, submitted ingestion payload, native processing result, and retrieved facts.
 A queued episode is not a completed materialized knowledge graph.
 
@@ -114,6 +140,8 @@ application queue, temporary saved Cards, or a second scheduler to work around a
 Record cold initialization/warmup, warm semantic recall, exact read, native write, projection, Main
 preload, first useful answer, full Main response, background processing, research, and synthesis.
 Keep the existing bounded preload budget. Missing optional context must not block ordinary Main chat.
+Verify that inspector `Search` and `Results` change only the exact Entity read. Main/Builder preparation must
+remain at one Relevant and one Recent record per authority regardless of the transient inspector count.
 
 For Main and every affected system Card, inventory the saved prompt, Script, selected tools, skills,
 MCP connections and delegation mode. Measure each exercised component's elapsed time and returned

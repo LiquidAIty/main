@@ -8,7 +8,14 @@
 Use one ordinary product task to evaluate useful output, tool access, context, attribution and cost.
 Keep the evaluator's expectations and diagnoses outside product prompts, conversations and graphs.
 This procedure does not authorize a model run, subagents, writes, service changes or profile changes.
-The current PromptSpec and [PLAN](../PLAN.md#controlled-agent-test-plan) govern the permitted case.
+Load the PromptSpec Receiver first when a PromptSpec is active. The PromptSpec and
+[PLAN](../PLAN.md#proof-tiers-still-separate) govern the permitted case, evidence boundary,
+freeze and final review. This skill supplies only repository-specific test design.
+
+A stand-in is a diagnostic instrument, not acceptance proof for agent behavior. When the active
+PromptSpec requires real live agent acceptance, exercise the actual saved Card, native runtime,
+tools and observable product path. Never replace that proof with a mock, scaffold, unit-test
+substitute or a Codex role-play.
 
 ## Choose the role
 
@@ -146,7 +153,9 @@ extractor model without a saved Card Run; count actual provider requests, not on
 
 ## Report and stop
 
-Keep the report in the coding conversation:
+For a PromptSpec run, return this evidence to the Primary for the frozen review packet; Agent 3's
+repo-root `turn.md` is the final reviewed report. Do not create a competing implementation report.
+For a non-PromptSpec diagnostic, keep the report in the coding conversation:
 
 ```text
 Case / role / commit / Card and Run identities:

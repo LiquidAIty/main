@@ -52,12 +52,13 @@ vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 import {
   JoinedKnowledgeGraphSurface,
 } from './KnowledgeAuthorityGraphSurface';
-import { graphitiFactIdentity, sourceLinks } from './knowledgeGraphInspectorRecords';
+import { sourceLinks } from './knowledgeGraphInspectorRecords';
+import { linearAttachedWordSizeWeights } from './knowledgeGraphRendererProjection';
 import {
   composeThinkKnowPresentation as composeProviderThinkKnowPresentation,
   type GraphProjectionV1,
 } from './joinedKnowledgeGraphProjection';
-import type { CanonicalSubjectHeader } from './canonicalSubjectDirectory';
+import type { CanonicalEntityHeader } from './canonicalEntityDirectory';
 import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
 afterEach(() => {
@@ -76,6 +77,18 @@ describe('knowledge authority graph surfaces', () => {
     edges: [],
   });
 
+  it('maps total attached Think and Know words onto one exact linear size scale', () => {
+    const weights = linearAttachedWordSizeWeights([
+      { id: 'least', label: 'Least', properties: { attachedWordCount: 10 } },
+      { id: 'middle', label: 'Middle', properties: { attachedWordCount: 30 } },
+      { id: 'most', label: 'Most', properties: { attachedWordCount: 50 } },
+    ]);
+
+    expect(weights.get('least')).toBe(0);
+    expect(weights.get('middle')).toBe(0.5);
+    expect(weights.get('most')).toBe(1);
+  });
+
   const currentProjections = (
     think: GraphProjectionV1,
     know: GraphProjectionV1,
@@ -83,41 +96,51 @@ describe('knowledge authority graph surfaces', () => {
     const thinkNodes = think.nodes.map(node => ({
       ...node,
       canonicalName: node.canonicalName ?? node.label,
-      entityKind: node.entityKind ?? node.type ?? 'person_or_concept',
       projectId: node.projectId ?? think.projectId,
     }));
     const knowNodes = know.nodes.map(node => ({
       ...node,
       canonicalName: node.canonicalName ?? node.label,
-      entityKind: node.entityKind ?? node.type ?? 'Entity',
       projectId: node.projectId ?? know.projectId,
     }));
-    const thinkSubjects = thinkNodes.filter(node => Boolean(node.canonicalName));
-    const knowSubjects = knowNodes.filter(node => (
+    const thinkEntities = thinkNodes.filter(node => Boolean(node.canonicalName));
+    const knowEntities = knowNodes.filter(node => (
       Boolean(node.canonicalName) && node.type !== 'Episodic'
     ));
+    const byName = new Map<string, CanonicalEntityHeader>();
+    for (const node of thinkEntities) {
+      byName.set(node.canonicalName!, {
+        authority: 'thinkgraph',
+        engraphisEntityId: node.id,
+        canonicalName: node.canonicalName!,
+      });
+    }
+    for (const node of knowEntities) {
+      const current = byName.get(node.canonicalName!);
+      byName.set(node.canonicalName!, current?.authority === 'thinkgraph'
+        ? {
+          authority: 'both',
+          engraphisEntityId: current.engraphisEntityId,
+          graphitiEntityId: node.id,
+          canonicalName: node.canonicalName!,
+        }
+        : {
+          authority: 'knowgraph',
+          graphitiEntityId: node.id,
+          canonicalName: node.canonicalName!,
+        });
+    }
     const directory = {
-      schemaVersion: 'graph-subject-directory' as const,
+      schemaVersion: 'graph-entity-directory' as const,
       projectId: think.projectId,
       complete: true as const,
       counts: {
-        engraphis: thinkSubjects.length,
-        graphiti: knowSubjects.length,
-        total: thinkSubjects.length + knowSubjects.length,
+        engraphis: thinkEntities.length,
+        graphiti: knowEntities.length,
+        total: byName.size,
       },
       revisions: { engraphis: 'think-current', graphiti: 'know-current' },
-      subjects: [
-        ...thinkSubjects.map(node => ({
-          engraphisEntityId: node.id,
-          canonicalName: node.canonicalName,
-          entityKind: node.entityKind,
-        })),
-        ...knowSubjects.map(node => ({
-          graphitiEntityId: node.id,
-          canonicalName: node.canonicalName,
-          entityKind: node.entityKind,
-        })),
-      ],
+      entities: [...byName.values()],
       sha256: 'a'.repeat(64),
       bytes: 512,
       estimatedTokens: 128,
@@ -127,7 +150,7 @@ describe('knowledge authority graph surfaces', () => {
       thinkgraph: {
         ...think,
         nodes: thinkNodes,
-        canonicalSubjectDirectory: directory,
+        canonicalEntityDirectory: directory,
       },
       knowgraph: { ...know, nodes: knowNodes },
     };
@@ -147,40 +170,42 @@ describe('knowledge authority graph surfaces', () => {
     thinkgraph = empty('thinkgraph'),
     knowgraph = empty('knowgraph'),
     strict = false,
+    relevanceQuery,
+    onReadEntityContext,
     onRemoveThinkGraphEvidence,
+    onRemoveThinkGraphRelationship,
     onRemoveKnowGraphEvidence,
+    onRemoveKnowGraphRelationship,
   }: {
     thinkgraph?: GraphProjectionV1;
     knowgraph?: GraphProjectionV1;
     strict?: boolean;
+    relevanceQuery?: string;
+    onReadEntityContext?: (
+      entity: CanonicalEntityHeader,
+      query: string,
+      limit?: number,
+      signal?: AbortSignal,
+    ) => Promise<Record<string, any>>;
     onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
-    onRemoveKnowGraphEvidence?: (graphitiFactUuid: string) => Promise<void>;
+    onRemoveThinkGraphRelationship?: (edgeId: string) => Promise<void>;
+    onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
+    onRemoveKnowGraphRelationship?: (graphitiRelationshipId: string) => Promise<void>;
   } = {}) => {
     const projections = currentProjections(thinkgraph, knowgraph);
     const surface = (
       <JoinedKnowledgeGraphSurface
         projections={projections}
+        relevanceQuery={relevanceQuery}
+        onReadEntityContext={onReadEntityContext}
         onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
+        onRemoveThinkGraphRelationship={onRemoveThinkGraphRelationship}
         onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
+        onRemoveKnowGraphRelationship={onRemoveKnowGraphRelationship}
       />
     );
     return render(strict ? <StrictMode>{surface}</StrictMode> : surface);
   };
-
-  it('uses only the portable Graphiti fact identity for atomic deletion', () => {
-    expect(graphitiFactIdentity({
-      id: 'visual-edge', source: 'a', target: 'b', predicate: 'RELATES_TO',
-      properties: { portableKind: 'know', graphitiFactUuid: 'fact-graphiti-1' },
-    })).toBe('fact-graphiti-1');
-    expect(graphitiFactIdentity({
-      id: 'visual-edge', source: 'a', target: 'b', predicate: 'RELATES_TO',
-      properties: { portableKind: 'know' },
-    })).toBeNull();
-    expect(graphitiFactIdentity({
-      id: 'visual-edge', source: 'a', target: 'b', predicate: 'RELATES_TO',
-      properties: { graphitiFactUuid: 'fact-graphiti-1' },
-    })).toBeNull();
-  });
 
   it('keeps same-domain documents distinct while collapsing exact source URLs', () => {
     const links = sourceLinks({
@@ -209,7 +234,7 @@ describe('knowledge authority graph surfaces', () => {
       ...empty('thinkgraph'),
       nodes: [
         { id: 'think-1', canonicalId: 'shared-entity', label: 'Shared',
-          properties: { evidence: [{ id: 'think-evidence' }] } },
+          properties: { evidence: [{ id: 'think-evidence' }], attachedWordCount: 10 } },
         { id: 'same-id', label: 'Case', properties: {} },
         { id: 'think-target', label: 'Think target', properties: {} },
         { id: 'empty', label: '', properties: {} },
@@ -223,7 +248,7 @@ describe('knowledge authority graph surfaces', () => {
       ...empty('knowgraph'),
       nodes: [
         { id: 'know-1', canonicalId: 'shared-entity', label: 'Shared',
-          properties: { evidence: [{ id: 'know-evidence' }] } },
+          properties: { evidence: [{ id: 'know-evidence' }], attachedWordCount: 30 } },
         { id: 'same-id', label: 'case', properties: {} },
         { id: 'know-target', label: 'Know target', properties: {} },
         { id: 'empty', label: '', properties: {} },
@@ -250,6 +275,8 @@ describe('knowledge authority graph surfaces', () => {
       ['thinkgraph', [{ id: 'think-evidence' }]],
       ['knowgraph', [{ id: 'know-evidence' }]],
     ]);
+    expect(presentation.projection.nodes.find(node => node.id === sharedVisualId)
+      ?.properties?.attachedWordCount).toBe(40);
     expect(presentation.visualNodeIdByProviderMember.get('thinkgraph:same-id'))
       .not.toBe(presentation.visualNodeIdByProviderMember.get('knowgraph:same-id'));
     expect(presentation.visualNodeIdByProviderMember.get('thinkgraph:empty'))
@@ -353,7 +380,7 @@ describe('knowledge authority graph surfaces', () => {
       .toBe('knowgraph:know-trimmed');
   });
 
-  it('fails closed when provider lookup ids mismatch or a directory row has dual or no ids', () => {
+  it('fails closed when provider lookup ids mismatch or directory authority disagrees with its ids', () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [{ id: 'think-shared', label: 'Shared', properties: {} }],
@@ -363,10 +390,11 @@ describe('knowledge authority graph surfaces', () => {
       nodes: [{ id: 'know-shared', label: 'Shared', properties: {} }],
     };
     const mismatched = currentProjections(think, know);
-    mismatched.thinkgraph.canonicalSubjectDirectory!.subjects[0] = {
+    mismatched.thinkgraph.canonicalEntityDirectory!.entities[0] = {
+      authority: 'both',
       engraphisEntityId: 'stale-think-shared',
+      graphitiEntityId: 'know-shared',
       canonicalName: 'Shared',
-      entityKind: 'person_or_concept',
     };
     const mismatchedPresentation = composeProviderThinkKnowPresentation(
       mismatched.thinkgraph, mismatched.knowgraph,
@@ -377,24 +405,25 @@ describe('knowledge authority graph surfaces', () => {
 
     for (const malformed of [
       {
+        authority: 'thinkgraph',
         engraphisEntityId: 'think-shared', graphitiEntityId: 'know-shared',
-        canonicalName: 'Shared', entityKind: 'person_or_concept',
+        canonicalName: 'Shared',
       },
-      { canonicalName: 'Shared', entityKind: 'person_or_concept' },
+      { authority: 'thinkgraph', canonicalName: 'Shared' },
     ]) {
       const current = currentProjections(think, know);
-      current.thinkgraph.canonicalSubjectDirectory!.subjects[0] = (
-        malformed as unknown as CanonicalSubjectHeader
+      current.thinkgraph.canonicalEntityDirectory!.entities[0] = (
+        malformed as unknown as CanonicalEntityHeader
       );
       const presentation = composeProviderThinkKnowPresentation(
         current.thinkgraph, current.knowgraph,
       );
       expect(presentation.projection.nodes).toHaveLength(2);
-      expect(presentation.projection.canonicalSubjectDirectory).toBeUndefined();
+      expect(presentation.projection.canonicalEntityDirectory).toBeUndefined();
     }
   });
 
-  it('keeps ambiguous and cross-Project subjects separate while joining exact names across provider kinds', () => {
+  it('keeps ambiguous and cross-Project Entities separate while ignoring provider-local types', () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -410,18 +439,17 @@ describe('knowledge authority graph surfaces', () => {
       .toEqual(['thinkgraph:think-a', 'thinkgraph:think-b', 'knowgraph:know-a']);
 
     const current = currentProjections(
-      { ...empty('thinkgraph'), nodes: [{ id: 'think-kind', label: 'Subject', type: 'person_or_concept', properties: {} }] },
-      { ...empty('knowgraph'), nodes: [{ id: 'know-kind', label: 'Subject', type: 'Organization', properties: {} }] },
+      { ...empty('thinkgraph'), nodes: [{ id: 'think-entity', label: 'Entity', type: 'person_or_concept', properties: {} }] },
+      { ...empty('knowgraph'), nodes: [{ id: 'know-entity', label: 'Entity', type: 'Organization', properties: {} }] },
     );
     const currentThink = current.thinkgraph;
-    currentThink.nodes[0] = { ...currentThink.nodes[0], entityKind: 'conflicting-kind' };
     const currentKnow = current.knowgraph;
     expect(composeThinkKnowPresentation(currentThink, currentKnow).projection.nodes.map(node => node.id))
-      .toEqual(['node-name:Subject']);
+      .toEqual(['node-name:Entity']);
 
     const otherProject = { ...currentKnow, projectId: 'project-2' };
     expect(composeThinkKnowPresentation(currentThink, otherProject).projection.nodes.map(node => node.id))
-      .toEqual(['thinkgraph:think-kind', 'knowgraph:know-kind']);
+      .toEqual(['thinkgraph:think-entity', 'knowgraph:know-entity']);
   });
 
   it('joins exact Rocket Lab names while retaining both provider records', () => {
@@ -445,12 +473,19 @@ describe('knowledge authority graph surfaces', () => {
   });
 
   it.each([
-    ['thinkgraph', 'Think', 'Know'],
-    ['knowgraph', 'Know', 'Think'],
+    ['thinkgraph', 'ThinkGraph', 'KnowGraph'],
+    ['knowgraph', 'KnowGraph', 'ThinkGraph'],
   ] as const)('shows only the real authority button for a mixed-canvas %s-only bundle', (authority, realTab, absentTab) => {
     const providerProjection = {
       ...empty(authority),
-      nodes: [{ id: `${authority}-only`, label: 'Single authority', properties: {} }],
+      nodes: [{
+        id: `${authority}-only`,
+        label: 'Single authority',
+        properties: authority === 'thinkgraph' ? { evidence: [{
+          id: 'memory-only', summary: 'One exact Think.',
+          metadata: { thinkgraph_origin: { authority: 'thinkgraph' } },
+        }] } : {},
+      }],
     };
     render(<JoinedKnowledgeGraphSurface
       projections={{
@@ -461,15 +496,15 @@ describe('knowledge authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
 
-    expect(screen.queryAllByRole('tab')).toEqual([]);
-    expect(screen.getByRole('complementary').getAttribute('aria-label')).toBe('Open graph settings');
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.getByRole('tab', { name: realTab })).toBeTruthy();
+    expect(screen.getByRole('complementary').getAttribute('aria-label')).toBe('Single authority');
     expect(screen.getByRole('complementary').textContent).not.toContain(absentTab);
-    expect(realTab).toBe(authority === 'thinkgraph' ? 'Think' : 'Know');
     expect(screen.queryByRole('tab', { name: absentTab })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Load$/ })).toBeNull();
   });
 
-  it('renders only real direct Think and Know records and deletes the exact atomic fact', async () => {
+  it('renders direct Thinks, keeps Relationship facts on edges, and deletes the exact Relationship', async () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [{
@@ -501,7 +536,6 @@ describe('knowledge authority graph surfaces', () => {
         target: 'know-target',
         predicate: 'SUPPORTS',
         properties: {
-          portableKind: 'know',
           graphitiFactUuid: 'fact-graphiti-1',
           fact: 'Direct sourced Know.',
           createdAt: '2026-10-03T12:30:00Z',
@@ -514,32 +548,60 @@ describe('knowledge authority graph surfaces', () => {
     render(<JoinedKnowledgeGraphSurface
       projections={currentProjections(think, know)}
       onRemoveThinkGraphEvidence={removeThink}
-      onRemoveKnowGraphEvidence={removeKnow}
+      onRemoveKnowGraphRelationship={removeKnow}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.label === 'Shared')));
 
-    expect(screen.getByRole('tab', { name: 'Think' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Know' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'ThinkGraph' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'KnowGraph' })).toBeTruthy();
     expect(screen.getByText('Direct Think summary.')).toBeTruthy();
     expect(screen.queryByText('Technical details')).toBeNull();
     expect(screen.queryByText('Reread contents')).toBeNull();
     expect(screen.queryByText('Use selected in chat')).toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
-    expect(screen.getByTestId('know-records').textContent)
+    fireEvent.click(screen.getByRole('tab', { name: 'KnowGraph' }));
+    expect(screen.queryByTestId('know-records')).toBeNull();
+    expect(screen.queryByText('Direct sourced Know.')).toBeNull();
+    act(() => graph.linkClick(graph.data.links.find((edge: any) => (
+      edge.properties?.graphitiFactUuid === 'fact-graphiti-1'
+    ))));
+    expect(screen.getByTestId('knowgraph-edge-inspector').textContent)
       .toContain('Direct sourced Know.');
-    expect(screen.getAllByRole('link').some(link => (
-      link.getAttribute('href') === 'https://example.com/source'
-      && link.textContent?.includes('Source')
-    ))).toBe(true);
+    expect(screen.queryByRole('link')).toBeNull();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Delete record' }));
-    await waitFor(() => expect(removeKnow).toHaveBeenCalledExactlyOnceWith('fact-graphiti-1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Relationship' }));
+    await waitFor(() => expect(removeKnow).toHaveBeenCalledExactlyOnceWith('visual-edge'));
     expect(removeThink).not.toHaveBeenCalled();
   });
 
-  it('defaults joined subjects to Think and preserves the chosen authority lens across node selections', () => {
+  it('removes a ThinkGraph Relationship through the owning authority action', async () => {
+    const remove = vi.fn().mockResolvedValue(undefined);
+    const think = {
+      ...empty('thinkgraph'),
+      nodes: [
+        { id: 'source', label: 'Source', properties: {} },
+        { id: 'target', label: 'Target', properties: {} },
+      ],
+      edges: [{
+        id: 'think-edge', source: 'source', target: 'target', predicate: 'SUPPORTS',
+        properties: { reason: 'Current reasoning Relationship.' },
+      }],
+    };
+    renderJoinedProjection({
+      thinkgraph: think,
+      onRemoveThinkGraphRelationship: remove,
+    });
+    const graph = forceGraphMocks.instances.at(-1);
+    act(() => graph.linkClick(graph.data.links[0]));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Relationship' }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith('think-edge'));
+  });
+
+  it('defaults joined Entities to ThinkGraph and preserves the chosen authority lens across selections', () => {
     const thinkRecord = (id: string, summary: string) => ({
       id,
       ingestedAt: '2026-10-03T12:00:00Z',
@@ -567,13 +629,13 @@ describe('knowledge authority graph surfaces', () => {
       ],
       edges: [
         { id: 'edge-a', source: 'know-a', target: 'target-a', predicate: 'SUPPORTS', properties: {
-          portableKind: 'know', graphitiFactUuid: 'fact-a', fact: 'Know A.', temporalStatus: 'current',
+          graphitiFactUuid: 'fact-a', fact: 'Know A.', temporalStatus: 'current',
         } },
         { id: 'edge-b', source: 'know-b', target: 'target-b', predicate: 'SUPPORTS', properties: {
-          portableKind: 'know', graphitiFactUuid: 'fact-b', fact: 'Know B.', temporalStatus: 'current',
+          graphitiFactUuid: 'fact-b', fact: 'Know B.', temporalStatus: 'current',
         } },
         { id: 'edge-only', source: 'know-only', target: 'target-only', predicate: 'SUPPORTS', properties: {
-          portableKind: 'know', graphitiFactUuid: 'fact-only', fact: 'Know only record.', temporalStatus: 'current',
+          graphitiFactUuid: 'fact-only', fact: 'Know only record.', temporalStatus: 'current',
         } },
       ],
     };
@@ -585,23 +647,59 @@ describe('knowledge authority graph surfaces', () => {
     const node = (label: string) => graph.data.nodes.find((candidate: any) => candidate.label === label);
 
     act(() => graph.nodeClick(node('Joined A')));
-    expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'ThinkGraph' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('Think A.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
-    expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('tab', { name: 'KnowGraph' }));
+    expect(screen.getByRole('tab', { name: 'KnowGraph' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByTestId('know-records')).toBeNull();
 
     act(() => graph.nodeClick(node('Joined B')));
-    expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('Know B.')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'KnowGraph' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByText('Know B.')).toBeNull();
 
     act(() => graph.nodeClick(node('Think only')));
-    expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'ThinkGraph' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('Think only record.')).toBeTruthy();
 
     act(() => graph.nodeClick(node('Know only')));
-    expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('Know only record.')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'KnowGraph' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByText('Know only record.')).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('defaults an Entity with both attached Thinks and Knows to KnowGraph', () => {
+    const think = { ...empty('thinkgraph'), nodes: [{
+      id: 'think-shared', label: 'Shared Entity',
+      properties: { evidence: [{ id: 'think-1', summary: 'Attached Think.', ingestedAt: 1 }] },
+    }] };
+    const know = { ...empty('knowgraph'), nodes: [{
+      id: 'know-shared', label: 'Shared Entity',
+      properties: { evidence: [{
+        id: 'know-1', title: 'Attached Know', ingestedAt: 2,
+        body: JSON.stringify({
+          schemaVersion: 'know.v1',
+          idea: {
+            body: 'Attached Know For.',
+            citations: [{ url: 'https://example.test/know-for' }],
+          },
+          counterIdea: {
+            body: 'Attached Know Against.',
+            citations: [{ url: 'https://example.test/know-against' }],
+          },
+        }),
+        properties: {},
+      }] },
+    }] };
+    render(<JoinedKnowledgeGraphSurface projections={currentProjections(think, know)} />);
+    const graph = forceGraphMocks.instances.at(-1);
+
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+
+    expect(screen.getByRole('tab', { name: 'KnowGraph' }).getAttribute('aria-selected'))
+      .toBe('true');
+    expect(screen.getByText('Attached Know For.')).toBeTruthy();
+    expect(screen.getByText('Attached Know Against.')).toBeTruthy();
+    expect(screen.queryByText('Attached Think.')).toBeNull();
   });
 
   it('resolves a real double-click, expands, and exits Focus through empty canvas without recomputation', async () => {
@@ -627,7 +725,7 @@ describe('knowledge authority graph surfaces', () => {
       edges: [{
         id: 'know-edge', source: 'know-center', target: 'know-neighbor',
         predicate: 'KNOWS_WITH', relationship_strength: 0.54, properties: {
-          portableKind: 'know', graphitiFactUuid: 'know-edge', fact: 'Know center.',
+          graphitiFactUuid: 'know-edge', fact: 'Know center.',
         },
       }],
     };
@@ -818,16 +916,63 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.fit).toHaveBeenCalledOnce();
     expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.getByRole('combobox', { name: 'Layout' }).getAttribute('aria-label')).toBe('Layout');
+    expect(screen.queryByRole('combobox', { name: /view$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Think view' }));
+    expect(screen.getByRole('combobox', { name: 'Think view' })).toBeTruthy();
     expect(graph.setCollapse).toHaveBeenCalledWith(false);
+    expect([...((screen.getByRole('combobox', { name: 'Think view' }) as HTMLSelectElement).options)]
+      .map(option => option.value)).toEqual([
+        'compact', 'original', 'communities', 'radial', 'galaxy',
+      ]);
     for (const value of ['original', 'communities', 'radial', 'galaxy', 'compact']) {
-      fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), { target: { value } });
+      fireEvent.change(screen.getByRole('combobox', { name: 'Think view' }), { target: { value } });
       expect(graph.setPreset).toHaveBeenLastCalledWith(value);
       expect(graph.data.nodes).toEqual([]);
     }
     expect(screen.queryByRole('button', { name: /Freeze|Resume|Reheat|Focus/ })).toBeNull();
     expect(graph.freeze).not.toHaveBeenCalled();
     expect(graph.reheat).not.toHaveBeenCalled();
+  });
+
+  it('switches the color-key labels through native isolated views and empty canvas back to combined', async () => {
+    const think = {
+      ...empty('thinkgraph'),
+      nodes: [{ id: 'think-entity', label: 'Think Entity', properties: { attachedWordCount: 4 } }],
+    };
+    const know = {
+      ...empty('knowgraph'),
+      nodes: [{
+        id: 'know-entity', label: 'Know Entity', community_id: 'community-one',
+        properties: { attachedWordCount: 8, communityId: 'community-one' },
+      }],
+    };
+    render(<JoinedKnowledgeGraphSurface projections={currentProjections(think, know)} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    const surface = screen.getByTestId('knowledge-joined-surface');
+
+    expect(surface.getAttribute('data-view-mode')).toBe('combined');
+    expect(surface.getAttribute('data-layout')).toBe('compact');
+    expect(graph.data.nodes.map((node: any) => node.label).sort()).toEqual([
+      'Know Entity', 'Think Entity',
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Think view' }));
+    await waitFor(() => expect(surface.getAttribute('data-layout')).toBe('galaxy'));
+    expect(surface.getAttribute('data-view-mode')).toBe('thinkgraph');
+    expect(graph.data.nodes.map((node: any) => node.label)).toEqual(['Think Entity']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Know view' }));
+    await waitFor(() => expect(surface.getAttribute('data-layout')).toBe('communities'));
+    expect(surface.getAttribute('data-view-mode')).toBe('knowgraph');
+    expect(graph.data.nodes.map((node: any) => node.label)).toEqual(['Know Entity']);
+    expect(graph.data.nodes[0].community_id).toBe('community-one');
+
+    act(() => graph.backgroundClick());
+    await waitFor(() => expect(surface.getAttribute('data-layout')).toBe('compact'));
+    expect(surface.getAttribute('data-view-mode')).toBe('combined');
+    expect(graph.data.nodes.map((node: any) => node.label).sort()).toEqual([
+      'Know Entity', 'Think Entity',
+    ]);
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)(
@@ -950,8 +1095,8 @@ describe('knowledge authority graph surfaces', () => {
   it('keeps the relationship word and probability hover-only on a ThinkGraph edge', () => {
     const projection = {
       ...empty('thinkgraph'),
-      nodes: [{ id: 'subject', label: 'Subject' }, { id: 'idea', label: 'Idea' }],
-      edges: [{ id: 'edge', source: 'subject', target: 'idea', predicate: 'DEPENDS_ON',
+      nodes: [{ id: 'entity-one', label: 'Entity One' }, { id: 'entity-two', label: 'Entity Two' }],
+      edges: [{ id: 'edge', source: 'entity-one', target: 'entity-two', predicate: 'DEPENDS_ON',
         provenance: { memoryId: 'stored-memory' }, properties: {
           summary: 'Recorded relationship.', relationship_strength: 0.71,
           jev: { winner: 'DEPENDS_ON', distribution: { DEPENDS_ON: 0.71, AFFECTS: 0.29 } },
@@ -967,8 +1112,8 @@ describe('knowledge authority graph surfaces', () => {
     });
     expect(graph.data.links[0].label).toBe('');
     expect(graph.data.nodes.map((node: any) => [node.id, node.label])).toEqual([
-      ['thinkgraph:subject', 'Subject'],
-      ['thinkgraph:idea', 'Idea'],
+      ['thinkgraph:entity-one', 'Entity One'],
+      ['thinkgraph:entity-two', 'Entity Two'],
     ]);
     expect(JSON.stringify(projection)).toBe(before);
     act(() => graph.linkClick(graph.data.links[0]));
@@ -1004,7 +1149,7 @@ describe('knowledge authority graph surfaces', () => {
   it('preserves a valid saved node size on load and visibly applies the current preset default on request', async () => {
     const key = 'liquidaity.graph.joined.presentation.v1';
     window.localStorage.setItem(key, JSON.stringify({
-      schemaVersion: 6,
+      schemaVersion: 7,
       layout: 'compact',
       style: 'solarpunk',
       physicsProfile: 'galaxy',
@@ -1048,7 +1193,7 @@ describe('knowledge authority graph surfaces', () => {
     expect((screen.getByLabelText('Think edges') as HTMLInputElement).value).toBe('#4fa2ad');
     expect((screen.getByLabelText('Know edges') as HTMLInputElement).value).toBe('#f2a64a');
     await waitFor(() => expect(JSON.parse(window.localStorage.getItem(key) || '{}')).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       style: 'solarpunk',
       settings: { size: 5, linkw: 1 },
     }));
@@ -1140,7 +1285,7 @@ describe('knowledge authority graph surfaces', () => {
     window.localStorage.setItem(oldKey, 'leave-this-untouched');
     const projection = {
       ...empty('thinkgraph'),
-      nodes: [{ id: 'subject', label: 'Subject', properties: {} }],
+      nodes: [{ id: 'entity', label: 'Entity', properties: {} }],
     };
     const first = renderJoinedProjection({ thinkgraph: projection });
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
@@ -1173,7 +1318,10 @@ describe('knowledge authority graph surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
 
     expect((screen.getByLabelText('Style') as HTMLSelectElement).value).toBe('solarpunk');
-    expect((screen.getByLabelText('Layout') as HTMLSelectElement).value).toBe('compact');
+    expect(screen.queryByRole('combobox', { name: /view$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Think view' }));
+    expect((screen.getByRole('combobox', { name: 'Think view' }) as HTMLSelectElement).value)
+      .toBe('galaxy');
     expect((screen.getByLabelText('Physics profile') as HTMLSelectElement).value).toBe('galaxy');
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
     expect((screen.getByLabelText('Think nodes') as HTMLInputElement).value).toBe('#4fa2ad');
@@ -1182,7 +1330,7 @@ describe('knowledge authority graph surfaces', () => {
     expect((screen.getByLabelText('Know edges') as HTMLInputElement).value).toBe('#f2a64a');
   });
 
-  it('displays the full union without inventing a join when no subject directory is supplied', async () => {
+  it('displays the full union without inventing a join when no Entity directory is supplied', async () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -1240,8 +1388,30 @@ describe('knowledge authority graph surfaces', () => {
       .toContain('Saved Think.');
   });
 
-  it('shows two complete recent Thinks and keeps older direct Thinks in newest-first history', async () => {
+  it('shows Relevant above distinct Recent and keeps Think depth inside More', async () => {
     const remove = vi.fn().mockRejectedValue(new Error('Removal unavailable'));
+    const readEntityContext = vi.fn().mockResolvedValue({
+      thinks: {
+        relevanceStatus: 'success',
+        decisionId: 'decision-one',
+        relevant: [{
+          engraphisMemoryId: 'memory-relevant',
+          engraphisEntityId: 'stored',
+          body: 'The most relevant optimistic steelman.',
+          detail: 'Technical detail remains inside the same Think.',
+          ingestedAt: 200,
+          relevance: 0.91,
+          relevanceRank: 1,
+        }],
+        recent: [{
+          engraphisMemoryId: 'memory-recent',
+          engraphisEntityId: 'stored',
+          body: 'The distinct most recent Think.',
+          ingestedAt: 300,
+        }],
+      },
+      knows: { relevanceStatus: 'empty', decisionId: null, relevant: [], recent: [] },
+    });
     const paragraph = 'Rocket Lab launch cadence is a useful leading indicator only when the complete '
       + 'launch-services revenue attribution remains tied to completed customer missions across the '
       + 'four-quarter test; missing disclosure leaves the thesis unproven rather than contradicted.';
@@ -1249,47 +1419,175 @@ describe('knowledge authority graph surfaces', () => {
       properties: { evidence: [
         { id: 'memory-new', title: 'Neutron as discounted option value', summary: paragraph, ingestedAt: 300,
           metadata: { keywords: ['latest', 'decision'],
-            thinkgraph_origin: { authority: 'thinkgraph' }, relations: [
-            { source: 'Electron', relation: 'SUPPORTS', target: 'Execution quality' },
-            { source: 'Neutron', relation: 'DEPENDS_ON', target: 'Launch cadence' },
-            { source: 'Dilution', relation: 'AFFECTS', target: 'Neutron' },
-          ] } },
+            thinkgraph_origin: { authority: 'thinkgraph' }, structured_extraction: { think: {
+              detail: 'Technical detail remains inside the same Think.',
+              relationships: [
+                { source: 'Electron', relation: 'SUPPORTS', target: 'Execution quality' },
+                { source: 'Neutron', relation: 'DEPENDS_ON', target: 'Launch cadence' },
+                { source: 'Dilution', relation: 'AFFECTS', target: 'Neutron' },
+              ],
+            } } } },
         { id: 'memory-second', title: 'Second retained Think', summary: 'Second recent saved Think.', ingestedAt: 200,
           metadata: { thinkgraph_origin: { authority: 'thinkgraph' }, relations: [] } },
         { id: 'memory-old', title: 'Earlier retained Think', summary: 'Earlier saved Think.', ingestedAt: 100,
           metadata: { thinkgraph_origin: { authority: 'thinkgraph' }, relations: [] } },
       ] } }] };
-    renderJoinedProjection({ thinkgraph: projection, onRemoveThinkGraphEvidence: remove });
+    renderJoinedProjection({
+      thinkgraph: projection,
+      relevanceQuery: 'current user request',
+      onReadEntityContext: readEntityContext,
+      onRemoveThinkGraphEvidence: remove,
+    });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    expect(screen.getByText('Recent Thinks')).toBeTruthy();
-    expect(screen.getByText(paragraph)).toBeTruthy();
-    expect(paragraph.length).toBeGreaterThan(140);
-    expect(screen.getByText('Second recent saved Think.')).toBeTruthy();
-    expect(screen.getByText('Neutron as discounted option value')).toBeTruthy();
-    expect(screen.getByText('Second retained Think')).toBeTruthy();
-    expect(screen.getByText('Relationships')).toBeTruthy();
-    expect(screen.getByText('Electron SUPPORTS Execution quality')).toBeTruthy();
-    expect(screen.getByText('Neutron DEPENDS_ON Launch cadence')).toBeTruthy();
-    expect(screen.getByText('Dilution AFFECTS Neutron')).toBeTruthy();
-    for (const rejected of ['Importance', 'Confidence', 'Probability', 'Technical details']) {
+    await waitFor(() => expect(screen.getByText('The most relevant optimistic steelman.')).toBeTruthy());
+    expect(screen.getByRole('heading', { name: 'Relevant' })).toBeTruthy();
+    expect(screen.queryByText('The distinct most recent Think.')).toBeNull();
+    expect(screen.queryByText('Relationships')).toBeNull();
+    expect(screen.queryByText('Electron SUPPORTS Execution quality')).toBeNull();
+    fireEvent.click(screen.getByText('More'));
+    expect(screen.getByText('Technical detail remains inside the same Think.')).toBeTruthy();
+    for (const rejected of ['Importance', 'Confidence', 'Probability']) {
       expect(screen.queryByText(rejected)).toBeNull();
     }
-    const earlier = screen.getByText('Earlier Thinks (1)').parentElement as HTMLDetailsElement;
-    expect(earlier.open).toBe(false);
-    expect(earlier.textContent).toContain('Earlier saved Think.');
-    expect(earlier.textContent).toContain('Earlier retained Think');
-    fireEvent.click(screen.getByText('Earlier Thinks (1)'));
-    expect(earlier.open).toBe(true);
-    expect(screen.getByText('Earlier saved Think.')).toBeTruthy();
-    expect(document.querySelector('time')?.getAttribute('datetime'))
-      .toBe('1970-01-01T00:05:00.000Z');
+    expect(screen.queryByText(paragraph)).toBeNull();
+    expect(screen.queryByText('Second recent saved Think.')).toBeNull();
+    expect(screen.queryByText('Earlier saved Think.')).toBeNull();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Delete record' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove Think' })[0]);
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
-    expect(remove).toHaveBeenCalledExactlyOnceWith('memory-new');
-    expect(screen.getByText(paragraph)).toBeTruthy();
+    expect(remove).toHaveBeenCalledExactlyOnceWith('memory-relevant');
+    fireEvent.click(screen.getByRole('button', { name: 'Show Recent' }));
+    expect(screen.getByRole('heading', { name: 'Recent' })).toBeTruthy();
+    expect(screen.getByText('The distinct most recent Think.')).toBeTruthy();
+    expect(screen.queryByText('The most relevant optimistic steelman.')).toBeNull();
     expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['thinkgraph:stored']);
+  });
+
+  it('shows one Relevant and one Recent two-sided Know with citations and More', async () => {
+    const removeKnow = vi.fn().mockResolvedValue(undefined);
+    const readEntityContext = vi.fn().mockResolvedValue({
+      thinks: { relevanceStatus: 'empty', decisionId: null, relevant: [], recent: [] },
+      knows: {
+        relevanceStatus: 'success',
+        decisionId: 'decision-two',
+        relevant: [{
+          graphitiEpisodeId: 'know-relevant',
+          graphitiEntityId: 'rocket-lab',
+          idea: {
+            body: 'Relevant evidence supports the launch thesis.',
+            detail: 'The longer source-grounded explanation remains available on demand.',
+            citations: [{
+              url: 'https://example.test/relevant-for', title: 'For source',
+              publisher: 'Example Space', locator: 'p. 4',
+              supports: 'Supports the completed-launch count.',
+            }],
+          },
+          counterIdea: {
+            body: 'Relevant evidence also shows execution risk.',
+            citations: [{
+              url: 'https://example.test/relevant-against', title: 'Against source',
+            }],
+          },
+          ingestedAt: 200,
+          relevance: 0.92,
+          relevanceRank: 1,
+        }],
+        recent: [{
+          graphitiEpisodeId: 'know-recent',
+          graphitiEntityId: 'rocket-lab',
+          idea: {
+            body: 'Recent evidence supports the current move.',
+            citations: [{ url: 'https://example.test/recent-for' }],
+          },
+          counterIdea: {
+            body: 'Recent evidence challenges the current move.',
+            citations: [{ url: 'https://example.test/recent-against' }],
+          },
+          ingestedAt: 300,
+        }],
+      },
+    });
+    const projection = { ...empty('knowgraph'), nodes: [{
+      id: 'rocket-lab',
+      label: 'Rocket Lab',
+      properties: { evidence: [
+        {
+          id: 'know-new', title: 'Launch cadence', ingestedAt: 300,
+          body: JSON.stringify({
+            body: 'Rocket Lab completed the cited launch cadence.',
+            detail: 'The longer source-grounded explanation remains available on demand.',
+            citations: [{
+              url: 'https://example.test/launch-report',
+              title: 'Launch report',
+              publisher: 'Example Space',
+              locator: 'p. 4',
+              supports: 'Supports the completed-launch count.',
+            }],
+          }),
+          properties: {},
+        },
+        {
+          id: 'know-second', title: 'Revenue attribution', ingestedAt: 200,
+          body: JSON.stringify({
+            body: 'Launch-services revenue remains separately attributable.',
+            citations: [{ url: 'https://example.test/filing', title: 'Annual filing' }],
+          }),
+          properties: {},
+        },
+        {
+          id: 'know-third', title: 'Hidden third Know', ingestedAt: 100,
+          body: 'This third Know must not enter the two-record surface.',
+          properties: { source_url: 'https://example.test/third' },
+        },
+      ] },
+    }] };
+    renderJoinedProjection({
+      knowgraph: projection,
+      relevanceQuery: 'current user request',
+      onReadEntityContext: readEntityContext,
+      onRemoveKnowGraphEvidence: removeKnow,
+    });
+    const graph = forceGraphMocks.instances.at(-1);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+
+    await waitFor(() => expect(screen.getByText('Relevant evidence supports the launch thesis.')).toBeTruthy());
+    expect(screen.getByRole('heading', { name: 'Relevant' })).toBeTruthy();
+    expect(screen.getByText('Relevant evidence also shows execution risk.')).toBeTruthy();
+    expect(screen.queryByText('Recent evidence supports the current move.')).toBeNull();
+    expect(screen.queryByText('Recent evidence challenges the current move.')).toBeNull();
+    expect(screen.getAllByText('For')).toHaveLength(1);
+    expect(screen.getAllByText('Against')).toHaveLength(1);
+    expect(screen.queryByText('This third Know must not enter the two-record surface.')).toBeNull();
+    expect(screen.getByRole('link', { name: 'For source' }).getAttribute('href'))
+      .toBe('https://example.test/relevant-for');
+    expect(screen.getByRole('link', { name: 'Against source' }).getAttribute('href'))
+      .toBe('https://example.test/relevant-against');
+    expect(screen.getByText('Example Space · p. 4')).toBeTruthy();
+    expect(screen.getByText('Supports the completed-launch count.')).toBeTruthy();
+    const more = screen.getByText('More').parentElement as HTMLDetailsElement;
+    expect(more.open).toBe(false);
+    fireEvent.click(screen.getByText('More'));
+    expect(more.open).toBe(true);
+    expect(screen.getByText('The longer source-grounded explanation remains available on demand.'))
+      .toBeTruthy();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove Know' })[0]);
+    await waitFor(() => expect(removeKnow).toHaveBeenCalledExactlyOnceWith('know-relevant'));
+    fireEvent.click(screen.getByRole('button', { name: 'Show Recent' }));
+    expect(screen.getByRole('heading', { name: 'Recent' })).toBeTruthy();
+    expect(screen.getByText('Recent evidence supports the current move.')).toBeTruthy();
+    expect(screen.getByText('Recent evidence challenges the current move.')).toBeTruthy();
+    expect(screen.queryByText('Relevant evidence supports the launch thesis.')).toBeNull();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Results' }), {
+      target: { value: '2' },
+    });
+    await waitFor(() => expect(readEntityContext.mock.calls.at(-1)?.[2]).toBe(2));
+    const search = screen.getByRole('textbox', { name: 'Search' });
+    fireEvent.change(search, { target: { value: 'launch risk' } });
+    fireEvent.submit(screen.getByRole('form', { name: 'Knowledge search' }));
+    await waitFor(() => expect(readEntityContext.mock.calls.at(-1)?.[1]).toBe('launch risk'));
   });
 
   it('opens the exact selected relationship with its recorded claim and keeps diagnostics out of the inspector', () => {
@@ -1376,7 +1674,7 @@ describe('knowledge authority graph surfaces', () => {
     },
   );
 
-  it('follows Graphiti episode references to citations without treating unrelated sources as evidence', () => {
+  it('keeps Citations off Relationship edges while preserving their readable fact and Jev state', () => {
     const projection = {
       ...empty('knowgraph'),
       nodes: [
@@ -1388,7 +1686,7 @@ describe('knowledge authority graph surfaces', () => {
         { id: 'unrelated', label: 'Unrelated source', type: 'Episodic', mentionCount: 1, properties: { source_url: 'https://example.org/unrelated' } },
       ],
       edges: [{ id: 'launch', source: 'company', target: 'mission', predicate: 'PROVIDES', mentionCount: 1, properties: {
-        portableKind: 'know', graphitiFactUuid: 'launch', supportingEpisodeUuids: ['article'],
+        graphitiFactUuid: 'launch', supportingEpisodeUuids: ['article'],
         temporalStatus: 'current', createdAt: '2026-09-23T12:00:00Z',
         validAt: '2022-06-28T00:00:00Z', fact: 'Rocket Lab launched CAPSTONE.',
         graphitiRelation: 'provided launch services for',
@@ -1398,17 +1696,15 @@ describe('knowledge authority graph surfaces', () => {
     renderJoinedProjection({ knowgraph: projection });
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.linkClick(graph.data.links[0]));
-    fireEvent.click(screen.getByText('NASA launch report'));
-    expect(screen.getByRole('link', { name: 'Mission' }).getAttribute('href')).toBe('https://www.nasa.gov/mission');
-    expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
     expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Rocket Lab launched CAPSTONE.');
     expect(screen.queryByTestId('portable-know')).toBeNull();
     expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('PROVIDES');
     expect(screen.getByText('Jev relationship probabilities')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Mission' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Sources' })).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
-  it('shows Graphiti episode citations as direct clickable sources on a selected Know', () => {
+  it('does not fabricate an Entity Know or Citation from an incident Relationship episode', () => {
     const projection = {
       ...empty('knowgraph'),
       nodes: [
@@ -1432,7 +1728,7 @@ describe('knowledge authority graph surfaces', () => {
       edges: [{
         id: 'fact-visual', source: 'company', target: 'market', predicate: 'PARTICIPATES_IN',
         properties: {
-          portableKind: 'know', graphitiFactUuid: 'fact-graphiti',
+          graphitiFactUuid: 'fact-graphiti',
           fact: 'Rocket Lab participates in the launch market.',
           supportingEpisodeUuids: ['article'],
         },
@@ -1442,15 +1738,13 @@ describe('knowledge authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
 
-    expect(screen.getByTestId('know-records').textContent)
-      .toContain('Rocket Lab participates in the launch market.');
-    expect(screen.getAllByRole('link', { name: /SEC filing/ }).some(link => (
-      link.getAttribute('href') === 'https://www.sec.gov/Archives/rocket-lab-10-k'
-    ))).toBe(true);
+    expect(screen.queryByTestId('know-records')).toBeNull();
+    expect(screen.queryByText('Rocket Lab participates in the launch market.')).toBeNull();
+    expect(screen.queryByRole('link', { name: /SEC filing/ })).toBeNull();
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
   });
 
-  it('keeps paragraph Knows intact, limits the calm landing to two, and lists each supporting source', () => {
+  it('keeps long Relationship facts on their arrows and never copies them onto the Entity', () => {
     const paragraph = 'Across the latest four reported quarters, Rocket Lab disclosed completed launch '
       + 'activity and total revenue growth, but the official releases did not provide mission-level '
       + 'launch-services revenue attribution sufficient to prove the proposed cadence thesis.';
@@ -1473,15 +1767,15 @@ describe('knowledge authority graph surfaces', () => {
       }],
       edges: [
         { id: 'edge-one', source: 'company', target: 'one', predicate: 'REPORTS', properties: {
-          portableKind: 'know', graphitiFactUuid: 'fact-one', fact: paragraph,
+          graphitiFactUuid: 'fact-one', fact: paragraph,
           createdAt: '2026-10-03T12:03:00Z', supportingEpisodeUuids: ['package'], temporalStatus: 'current',
         } },
         { id: 'edge-two', source: 'company', target: 'two', predicate: 'REPORTS', properties: {
-          portableKind: 'know', graphitiFactUuid: 'fact-two', fact: 'Second complete current Know.',
+          graphitiFactUuid: 'fact-two', fact: 'Second complete current Know.',
           createdAt: '2026-10-03T12:02:00Z', supportingEpisodeUuids: ['package'], temporalStatus: 'current',
         } },
         { id: 'edge-three', source: 'company', target: 'three', predicate: 'REPORTS', properties: {
-          portableKind: 'know', graphitiFactUuid: 'fact-three', fact: 'Earlier complete Know.',
+          graphitiFactUuid: 'fact-three', fact: 'Earlier complete Know.',
           createdAt: '2026-10-03T12:01:00Z', supportingEpisodeUuids: ['package'], temporalStatus: 'current',
         } },
       ],
@@ -1493,20 +1787,17 @@ describe('knowledge authority graph surfaces', () => {
     act(() => graph.nodeClick(company));
 
     expect(paragraph.length).toBeGreaterThan(140);
+    expect(screen.queryByText(paragraph)).toBeNull();
+    expect(screen.queryByText('Second complete current Know.')).toBeNull();
+    expect(screen.queryByText('Earlier complete Know.')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Sources' })).toBeNull();
+
+    act(() => graph.linkClick(graph.data.links.find((edge: any) => (
+      edge.properties?.graphitiFactUuid === 'fact-one'
+    ))));
     expect(screen.getByText(paragraph)).toBeTruthy();
-    expect(screen.getByText('Second complete current Know.')).toBeTruthy();
-    expect(screen.queryByText(/Research package/)).toBeNull();
-    const earlier = screen.getByText('Earlier Knows (1)').parentElement!;
-    expect(earlier.textContent).toContain('Earlier complete Know.');
-    const sourceList = screen.getByRole('heading', { name: 'Sources' }).parentElement!;
-    const sourceHrefs = Array.from(sourceList.querySelectorAll('a')).map(link => link.getAttribute('href'));
-    expect(sourceHrefs).toEqual([
-      'https://investors.rocketlabcorp.com/news/third-quarter-2025-results',
-      'https://investors.rocketlabcorp.com/news/fourth-quarter-2025-results',
-    ]);
-    expect(sourceList.textContent).toContain('Third quarter 2025 results');
-    expect(sourceList.textContent).toContain('Fourth quarter 2025 results');
-    expect(sourceList.textContent).toContain('investors.rocketlabcorp.com');
+    expect(screen.queryByRole('heading', { name: 'Sources' })).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)('opens a compact movable %s inspector and preserves graph settings without exposing record plumbing', async authority => {
@@ -1514,7 +1805,7 @@ describe('knowledge authority graph surfaces', () => {
     const key = `liquidaity.drawer.${authority}.width`;
     window.localStorage.setItem(key, '390');
     const projection = authority === 'thinkgraph'
-      ? { ...empty(authority), nodes: [{ id: 'entity-1', label: 'Recorded subject',
+      ? { ...empty(authority), nodes: [{ id: 'entity-1', label: 'Recorded Entity',
         runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
         properties: { evidence: [{
           id: 'memory-one', ingestedAt: 100, summary: 'The complete Think summary.',
@@ -1522,12 +1813,12 @@ describe('knowledge authority graph surfaces', () => {
         }] },
         provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] }
       : { ...empty(authority), nodes: [
-        { id: 'entity-1', label: 'Recorded subject', runId: 'run-1', conversationId: 'chat-1' },
+        { id: 'entity-1', label: 'Recorded Entity', runId: 'run-1', conversationId: 'chat-1' },
         { id: 'entity-target', label: 'Recorded target' },
       ], provenanceNodes: [{ id: 'episode-one', label: 'Recorded source', type: 'Episodic',
         properties: { content: 'The complete original statement.' } }], edges: [{
         id: 'fact-one', source: 'entity-1', target: 'entity-target', predicate: 'SUPPORTS',
-        properties: { portableKind: 'know', graphitiFactUuid: 'fact-one',
+        properties: { graphitiFactUuid: 'fact-one',
           fact: 'The complete original statement.', supportingEpisodeUuids: ['episode-one'] },
       }] };
     const { container } = renderJoinedProjection({
@@ -1541,11 +1832,13 @@ describe('knowledge authority graph surfaces', () => {
     act(() => graph.nodeClick(graph.data.nodes[0]));
     const panel = screen.getByRole('complementary');
     expect(panel.style.width).toBe('340px');
-    expect(screen.getByLabelText('Move panel').textContent).toContain('Recorded subject');
+    expect(screen.getByLabelText('Move panel').textContent).toContain('Recorded Entity');
     expect(container.querySelector('[data-testid$="-node-inspector"]')).toBe(document.activeElement);
-    expect(panel.textContent).toContain(authority === 'thinkgraph'
-      ? 'The complete Think summary.'
-      : 'The complete original statement.');
+    if (authority === 'thinkgraph') {
+      expect(panel.textContent).toContain('The complete Think summary.');
+    } else {
+      expect(panel.textContent).not.toContain('The complete original statement.');
+    }
     for (const implementationValue of ['entity-1', 'run-1', 'chat-1', 'Research Agent', 'entity-0']) {
       expect(panel.textContent).not.toContain(implementationValue);
     }
@@ -1576,7 +1869,7 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.getByRole('complementary', { hidden: true }).getAttribute('data-open')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     expect(screen.getByRole('complementary').style.width).toBe('340px');
-    expect(screen.getByLabelText('Move panel').textContent).toContain('Recorded subject');
+    expect(screen.getByLabelText('Move panel').textContent).toContain('Recorded Entity');
     expect(screen.queryByRole('slider', { name: 'Node size' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
     act(() => graph.backgroundClick());
@@ -1599,13 +1892,18 @@ describe('knowledge authority graph surfaces', () => {
     expect(graph.setStyle).toHaveBeenCalledWith('cyber');
     expect(graph.fit).not.toHaveBeenCalled();
     expect(graph.data.nodes.map((node: any) => node.label)).toEqual(
-      authority === 'thinkgraph' ? ['Recorded subject'] : ['Recorded subject', 'Recorded target'],
+      authority === 'thinkgraph' ? ['Recorded Entity'] : ['Recorded Entity', 'Recorded target'],
     );
     act(() => graph.nodeClick(graph.data.nodes[0]));
     act(() => graph.backgroundClick());
     expect(screen.getByRole('complementary', { hidden: true }).getAttribute('data-open')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: /view$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Know view' }));
+    expect([...((screen.getByRole('combobox', { name: 'Know view' }) as HTMLSelectElement).options)]
+      .map(option => option.value)).toEqual([
+        'compact', 'original', 'communities', 'radial', 'galaxy',
+      ]);
     expect(screen.getByRole('complementary').style.width).toBe('340px');
   }, 20_000);
 });
