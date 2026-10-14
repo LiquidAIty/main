@@ -49,9 +49,6 @@ class CardScript(BaseModel):
     paletteFingerprint: str = ""
     compiled: dict[str, Any] = Field(default_factory=dict)
     lastValidation: dict[str, Any] = Field(default_factory=dict)
-    # Retired derived/display fields remain readable for old Card revisions.
-    hermesSupport: dict[str, Any] = Field(default_factory=dict, exclude=True)
-    rollback: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
 
 def _canonical(value: Any) -> str:
@@ -548,4 +545,74 @@ def script_presentation(
             else selected_tools
         ),
         "script": script,
+    }
+
+
+def runtime_card_script_definition(
+    value: Any,
+    *,
+    presentation_mode: str,
+    enabled_tools: list[str],
+    presented_tools: list[str],
+) -> dict[str, Any] | None:
+    """Mechanically project one already-compiled IDF Script into Hermes' turn contract."""
+
+    if presentation_mode != "script":
+        return None
+    try:
+        script = CardScript.model_validate(value)
+    except ValidationError as error:
+        raise CardScriptValidationError("card_script_configuration_invalid") from error
+    compiled = script.compiled
+    if (
+        script.enabled is not True
+        or script.lastValidation.get("status") != "valid"
+        or not script.source.strip()
+        or script.sourceHash != sha256(script.source.encode("utf-8")).hexdigest()
+        or script.compiledHash != str(compiled.get("compiledHash") or "")
+        or compiled.get("mode") != "tool_recipe"
+        or not isinstance(compiled.get("inputSchema"), dict)
+        or not isinstance(compiled.get("outputSchema"), dict)
+        or not isinstance(compiled.get("toolStates"), dict)
+    ):
+        raise CardScriptValidationError("card_script_compiled_contract_invalid")
+    tool_states = dict(compiled["toolStates"])
+    if (
+        set(tool_states) != set(enabled_tools)
+        or any(
+            not isinstance(mode, int)
+            or isinstance(mode, bool)
+            or mode not in TOOL_MODE_VALUES.values()
+            for mode in tool_states.values()
+        )
+    ):
+        raise CardScriptValidationError("card_script_tool_scope_invalid")
+    script_tools = list(compiled.get("scriptToolIds") or [])
+    agent_tools = list(compiled.get("agentToolIds") or [])
+    if (
+        script_tools != [name for name in enabled_tools if tool_states[name] in {1, 3}]
+        or agent_tools != [name for name in enabled_tools if tool_states[name] in {2, 3}]
+        or agent_tools != presented_tools
+    ):
+        raise CardScriptValidationError("card_script_tool_scope_invalid")
+
+    def bounded_integer(field: str, minimum: int, maximum: int) -> int:
+        raw = compiled.get(field)
+        if not isinstance(raw, int) or isinstance(raw, bool) or not minimum <= raw <= maximum:
+            raise CardScriptValidationError("card_script_compiled_budget_invalid")
+        return raw
+
+    return {
+        "version": script.version,
+        "source": script.source,
+        "source_hash": script.sourceHash,
+        "compiled_hash": script.compiledHash,
+        "mode": "tool_recipe",
+        "input_schema": dict(compiled["inputSchema"]),
+        "output_schema": dict(compiled["outputSchema"]),
+        "tool_names": {name: name for name in script_tools},
+        "tool_states": tool_states,
+        "timeout_seconds": bounded_integer("timeoutSeconds", 1, 60),
+        "max_tool_calls": bounded_integer("maxToolCalls", 1, 32),
+        "max_output_bytes": bounded_integer("maxOutputBytes", 256, 50_000),
     }

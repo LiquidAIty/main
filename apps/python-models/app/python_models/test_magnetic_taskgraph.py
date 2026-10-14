@@ -58,13 +58,11 @@ def _execution_payload() -> dict[str, Any]:
                 "cardId": "worker-card-a",
                 "cardRevisionId": "worker-revision-a",
                 "profile": "worker-a",
-                "configurationFingerprint": "a" * 64,
             },
             {
                 "cardId": "worker-card-b",
                 "cardRevisionId": "worker-revision-b",
                 "profile": "worker-b",
-                "configurationFingerprint": "b" * 64,
             },
         ],
     }
@@ -94,27 +92,24 @@ def _team_execution_payload() -> dict[str, Any]:
         "cardId": "card_team",
         "cardRevisionId": "team-revision",
         "profile": "team",
-        "configurationFingerprint": "c" * 64,
     }]
     return payload
 
 
-def test_worker_scope_includes_only_compact_project_eligible_capability_metadata() -> None:
+def test_worker_scope_includes_only_compact_saved_card_capability_metadata() -> None:
     workers = _execution_payload()["workers"]
     workers[0]["capabilities"] = {
         "savedToolIds": ["weather.read", "ais.history"],
-        "projectEligibleToolIds": ["weather.read"],
     }
 
     identities, scope = magnetic_taskgraph_authority._worker_scope(workers)
 
     assert identities == ["worker-a", "worker-b"]
-    assert "Project-eligible tools: weather.read" in scope
-    assert "ais.history" not in scope
-    assert "Project-eligible tools" not in scope.splitlines()[1]
+    assert "Saved Card tools: weather.read, ais.history" in scope
+    assert "Saved Card tools" not in scope.splitlines()[1]
 
 
-def test_worker_scope_rejects_project_capabilities_not_owned_by_the_saved_card() -> None:
+def test_worker_scope_rejects_a_second_capability_authority() -> None:
     workers = _execution_payload()["workers"]
     workers[0]["capabilities"] = {
         "savedToolIds": ["weather.read"],
@@ -157,7 +152,7 @@ def _stub_retained_input(monkeypatch, *, mission: str | None = None) -> dict[str
         magnetic_taskgraph_submission,
         "_ensure_orchestrator_identity",
         lambda _spec, _workers: (
-            "card_magentic", "openai-codex", "gpt-5.6-sol", "codex_app_server",
+            "card_magentic", "openai-codex", "gpt-5.6-sol",
         ),
     )
     monkeypatch.setattr(
@@ -203,7 +198,7 @@ def test_orchestrator_identity_resolves_the_repository_profile_tree(
     assert magnetic_taskgraph_authority._ensure_orchestrator_identity(
         _execution_payload()["orchestrator"],
         [_execution_payload()["workers"][0]],
-    ) == ("card_magentic", "openai-codex", "gpt-5.6-sol", "codex_app_server")
+    ) == ("card_magentic", "openai-codex", "gpt-5.6-sol")
 
 
 @pytest.mark.parametrize(
@@ -274,7 +269,6 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
         "hermesRootId": first["hermesRootId"],
         "hermesProfile": "card_magentic",
         "configuredProvider": "openai-codex",
-        "configuredProviderApiMode": "codex_app_server",
         "configuredModel": "gpt-5.6-sol",
         "tenant": "mag-one:run-one",
         "state": "pending",
@@ -358,7 +352,6 @@ def test_team_only_bypasses_magnetic_model_and_uses_the_same_team_root(
         "hermesRootId": result["hermesRootId"],
         "hermesProfile": "team",
         "configuredProvider": "openai-codex",
-        "configuredProviderApiMode": "codex_app_server",
         "configuredModel": "gpt-5.6-terra",
         "tenant": "mag-one:run-one",
         "state": "pending",
@@ -379,7 +372,7 @@ def test_team_only_bypasses_magnetic_model_and_uses_the_same_team_root(
         assert root.session_id is None
 
 
-def test_submit_rejoin_rejects_changed_immutable_worker_authority(
+def test_submit_rejoin_rejects_changed_worker_revision_before_rebinding(
     hermes_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db_connect as task_db_connect
@@ -388,11 +381,12 @@ def test_submit_rejoin_rejects_changed_immutable_worker_authority(
     payload = _execution_payload()
     first = magnetic_taskgraph_submission.submit_magnetic_taskgraph(payload)
     changed = _execution_payload()
-    changed["workerAuthorities"][0]["configurationFingerprint"] = "d" * 64
+    changed["workers"][0]["cardRevisionId"] = "worker-revision-changed"
+    changed["workerAuthorities"][0]["cardRevisionId"] = "worker-revision-changed"
 
     with pytest.raises(
         magnetic_taskgraph_authority.MagneticTaskGraphError,
-        match="magnetic_taskgraph_worker_authority_binding_mismatch",
+        match="magnetic_taskgraph_hermes_root_readback_mismatch",
     ):
         magnetic_taskgraph_submission.submit_magnetic_taskgraph(changed)
 
@@ -616,7 +610,6 @@ def test_same_root_waits_on_hermes_dependencies_then_returns_its_own_final_resul
     assert status["hermesRunId"] == second_run_id
     assert status["finalResult"] == "The real synthesized answer."
     assert status["configuredProvider"] == "openai-codex"
-    assert status["configuredProviderApiMode"] == "codex_app_server"
     assert status["configuredModel"] == "gpt-5.6-sol"
     assert status["hermesTasks"][0] == {
         "taskId": root_id,

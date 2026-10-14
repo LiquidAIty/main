@@ -80,7 +80,17 @@ current Team integration.
 
 ### Execution
 
-- Ordinary Hermes delegation, native Team/Kanban, and Magnetic are three different mechanisms.
+- Ordinary Hermes delegation, Hermes Team/Kanban, and Magnetic are three different mechanisms.
+- Main and every non-Magnetic saved Hermes Card have one stable profile plus one hidden session per
+  Project. The application supplies only exact profile/session/roster context; Hermes owns inference,
+  queueing, direct Bot delivery, transcript persistence, and each Card terminal.
+- Source now prepares one receiving-Card Run and canonical `in.idf` before Main, terminal, and orange
+  recipient inference. Direct `@Card` delivery observes the recipient session without a second Main
+  synthesis; consultations continue the same open Main Run from Hermes' real completion notification.
+- Saved application tools are exact include-filtered profile MCP tools. AutoTools can narrow that loaded
+  set for one turn but cannot grant a tool. The retired application per-turn callback tool protocol is absent.
+- Valid enabled Card Scripts execute through Hermes' existing child Python runner and exact profile-loaded
+  grants; blank or invalid source is inert. The owner's later general Hooks design remains a separate boundary.
 - Only saved Card `card_team` receives Hermes `task_mode: team`.
 - Magnetic uses saved blue topology as its worker ceiling; its same root remains both orchestrator and
   final result task.
@@ -94,33 +104,55 @@ These are source/documentation gaps, not permission to repair them during this d
 1. Main's approved quick-Web direction is not present in its source-default toolsets.
 2. Main's source-default prompt describes ThinkGraph/KnowGraph use, but the server's default new-Project
    topology does not attach those orange edges.
-3. Quick-Web evidence handoff to durable KnowGraph correlation is not implemented.
-4. Existing saved Projects remain governed by their persisted Card revisions; the new source-default
+3. Automatic completed User/Main-pair ThinkGraph capture remains unconnected. The owner deferred its
+   saved per-Project “Capture Main turns automatically” control and Hermes caller to a later change.
+4. Quick-Web evidence handoff to durable KnowGraph correlation is not implemented.
+5. Existing saved Projects remain governed by their persisted Card revisions; the new source-default
    prompts, grants, and KnowGraph model do not silently overwrite saved authority.
-5. Loaded Main, Builder, ThinkGraph, KnowGraph, Team, Magnetic, external MCP, and visual acceptance remain separate
+6. Loaded Main, direct orange delivery, consultation, Builder/other Card terminals, profile OAuth tools,
+   Card Script execution/failure recovery, ThinkGraph, KnowGraph, Team, Magnetic, external MCP, and visual acceptance remain separate
    proof tiers.
 
-## Current acceptance boundary
+## Source-ready checkpoint — reached 2026-10-14
 
-The active Entity/Think/Know contract pass must leave:
+Current source has one connected path from the restored UI through saved Card authority, one Project
+session per Card, one IDF/Run lifecycle, Hermes profile tools, orange Bot delivery, blue Magnetic
+authority, and each non-Main Card terminal. The old shared-chat/runtime, direct target executor,
+per-turn application tool callback, transport selector, fake status/limit controls, Card-runtime MCP
+principal, and their stale tests are absent from the live application path.
 
-- one coherent CURRENT / APPROVED DIRECTION / DEFERRED narrative;
-- one PromptSpec process authority;
-- no active-looking obsolete PromptSpec or removed WorldView bridge;
-- exact structural storage, native retrieval plus Jev ranking, Relevant/Recent visibility, two-sided Knows,
-  Entity-only graph nodes, and native removal without another graph authority or semantic router;
-- a frozen documentation snapshot;
-- an independent `turn.md` review with exact file hashes and combined checksum.
+The frozen source checkpoint has the following deterministic evidence:
 
-A PASS means the frozen source and documents agree on the current Entity/Think/Know contract and the
-reported proof tiers. It does not mean every loaded product path is live-proven.
+- all application Python tests: 393 passed; one upstream Graphiti Pydantic deprecation warning;
+- all repository TypeScript tests: 403 passed, one skipped;
+- client/backend source and spec TypeScript checks: passed;
+- backend and client production builds: passed; the client retains existing browser-externalization and
+  large-chunk warnings for God’s Eye assets;
+- changed Hermes Card-turn/Bot/Gateway tests: 113 passed, three skipped after deselecting three exact
+  Windows/POSIX-only upstream assertions; the unfiltered run had no other failures;
+- generated Gateway contract hashes remain the frozen values recorded in
+  `HermesLatest/LIQUIDAITY_PATCHES.md`;
+- the regenerated `HermesLatest/LIQUIDAITY_OVERLAY.patch` reverse-apply check passes against this source.
 
-## Next graph boundary — not approved
+## Next acceptance boundary
 
-No additional graph feature is approved by this plan. A later subtle time-sort interaction, paid-setting
-entitlement, Project retention/billing policy, global default reset, report surface, or quick-Web evidence
-handoff requires its own exact authority and acceptance packet. None may change the current Relevant-first,
-one-result default or create deterministic semantic ranking in TypeScript.
+The next ordered tier is a coordinated loaded-stack health and exact-source-identity check, followed by
+one real saved Main turn, one direct orange Card turn, one consultation, one non-Main terminal turn,
+profile OAuth tool readback, and Card Script success/failure recovery. Team, Magnetic, graph writes,
+external-client acceptance, and Jeremiah's visual acceptance remain separate and must not be inferred
+from the source checkpoint.
+
+This checkpoint does not prove that services load, OAuth completes, a provider answers, the UI renders
+correctly, saved Projects migrate as intended, or Jeremiah accepts the result.
+
+## Next graph boundary — deferred
+
+The owner has named, but deferred, a saved ThinkGraph control labeled “Capture Main turns automatically.”
+When off, only explicitly selected data may be sent to ThinkGraph. A later implementation must use the
+real saved ThinkGraph Card through Hermes and the existing completed-pair Python preparation/settlement
+owners; it may not restore the deleted TypeScript child-Card executor. No graph optimization, automatic
+caller, time-sort interaction, entitlement, retention/billing policy, reset, report surface, or quick-Web
+handoff is part of this recovery.
 
 ## Proof tiers still separate
 

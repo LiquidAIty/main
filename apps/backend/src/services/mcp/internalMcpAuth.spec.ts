@@ -39,43 +39,6 @@ describe('internal MCP catalog authentication', () => {
       .toThrow('internal_mcp_principal_kind_invalid');
   });
 
-  it('signs one bounded saved-Card runtime principal without widening its tools', () => {
-    const claims = verifyBearer(createInternalMcpBearer({
-      kind: 'card-runtime',
-      projectId: 'project-one',
-      deckId: 'deck_builder',
-      conversationId: 'main',
-      parentRunId: 'run-one',
-      callerCardId: 'builder',
-      callerRuntimeKind: 'hermes',
-      callerRuntimeMode: 'delegate',
-      grantedTools: ['graphiti.search_nodes', 'cbm.search_graph'],
-      presentedTools: ['cbm.search_graph'],
-    }, env, 1000));
-    expect(claims).toMatchObject({
-      sub: 'card-runtime:builder',
-      principal: {
-        kind: 'card-runtime',
-        callerCardId: 'builder',
-        callerRuntimeMode: 'delegate',
-        grantedTools: ['cbm.search_graph', 'graphiti.search_nodes'],
-        presentedTools: ['cbm.search_graph'],
-      },
-    });
-    expect(() => createInternalMcpBearer({
-      kind: 'card-runtime',
-      projectId: 'project-one',
-      deckId: 'deck_builder',
-      conversationId: 'main',
-      parentRunId: 'run-one',
-      callerCardId: 'builder',
-      callerRuntimeKind: 'hermes',
-      callerRuntimeMode: 'delegate',
-      grantedTools: [],
-      presentedTools: ['cbm.search_graph'],
-    }, env)).toThrow('internal_mcp_presentation_exceeds_grant');
-  });
-
   it('accepts only the canonical loopback MCP seam', () => {
     expect(resolveInternalMcpUrl(env)).toBe('http://127.0.0.1:8765/mcp');
     expect(() => resolveInternalMcpUrl({ ...env, LIQUIDAITY_INTERNAL_MCP_URL: 'https://example.com/mcp' }))

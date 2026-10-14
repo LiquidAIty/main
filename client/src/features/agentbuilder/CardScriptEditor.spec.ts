@@ -117,12 +117,10 @@ describe('CardScriptEditor Monaco contract', () => {
     expect(managerSource).toContain('scriptDraftCacheRef');
     expect(managerSource).toContain('preserveUnsavedScript');
     expect(managerSource).toContain('version: changed ? Number(saved?.version || 0) + 1');
-    expect(managerSource).toContain("sourceHash: saved.sourceHash || ''");
-    expect(managerSource).toContain("compiledHash: saved.compiledHash || ''");
     expect(managerSource).toContain('script: scriptDraft');
     expect(source).toContain("fetch('/api/cards/script/validate'");
     expect(source).toContain('body: JSON.stringify({ runtimeKind, selectedTools, script })');
-    expect(source).toContain('Card Python Script runtime execution is not currently connected.');
-    expect(source).toContain('Editing, validation, and saving remain available');
+    expect(source).toContain('Enable for an eligible saved Run');
+    expect(source).not.toContain('runtime execution is not currently connected');
   });
 });

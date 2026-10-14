@@ -7217,7 +7217,7 @@
       },
       "CardScriptDefinition": {
         "additionalProperties": false,
-        "description": "One validated saved Card Python recipe for this exact turn.\n\n``enabled`` is deliberately absent: nonblank, valid saved source is the\nactivation condition. Tool aliases are the already-authorized per-turn\nDynamic Tool names, never a registry or discovery surface.",
+        "description": "One validated saved Card Python recipe for this exact turn.\n\n``enabled`` is deliberately absent: nonblank, valid saved source is the\nactivation condition. Tool names identify the exact saved capabilities\nalready loaded by the receiving Card's profile.",
         "properties": {
           "version": {
             "minimum": 1,
@@ -7255,11 +7255,11 @@
             "title": "Output Schema",
             "type": "object"
           },
-          "tool_aliases": {
+          "tool_names": {
             "additionalProperties": {
               "type": "string"
             },
-            "title": "Tool Aliases",
+            "title": "Tool Names",
             "type": "object"
           },
           "tool_states": {
@@ -7296,13 +7296,52 @@
           "mode",
           "input_schema",
           "output_schema",
-          "tool_aliases",
+          "tool_names",
           "tool_states",
           "timeout_seconds",
           "max_tool_calls",
           "max_output_bytes"
         ],
         "title": "CardScriptDefinition",
+        "type": "object"
+      },
+      "CardTurnContext": {
+        "additionalProperties": false,
+        "properties": {
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "deck_id": {
+            "title": "Deck Id",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "card_id": {
+            "title": "Card Id",
+            "type": "string"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "project_id",
+          "deck_id",
+          "conversation_id",
+          "card_id",
+          "profile"
+        ],
+        "title": "CardTurnContext",
         "type": "object"
       },
       "CatalogAppState": {
@@ -13092,40 +13131,6 @@
         "title": "DisplayThumbnailResult",
         "type": "object"
       },
-      "DynamicToolDefinition": {
-        "additionalProperties": false,
-        "description": "One exact Card-selected Codex Dynamic Tool.",
-        "properties": {
-          "type": {
-            "title": "Type",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "canonical_name": {
-            "title": "Canonical Name",
-            "type": "string"
-          },
-          "description": {
-            "title": "Description",
-            "type": "string"
-          },
-          "input_schema": {
-            "title": "Input Schema"
-          }
-        },
-        "required": [
-          "type",
-          "name",
-          "canonical_name",
-          "description",
-          "input_schema"
-        ],
-        "title": "DynamicToolDefinition",
-        "type": "object"
-      },
       "EmptyRequestParams": {
         "additionalProperties": false,
         "properties": {
@@ -16764,6 +16769,25 @@
         "title": "McpCatalogResult",
         "type": "object"
       },
+      "McpContextHeaders": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "profile"
+        ],
+        "title": "McpContextHeaders",
+        "type": "object"
+      },
       "McpOauthCallbackParams": {
         "additionalProperties": false,
         "properties": {
@@ -17144,6 +17168,32 @@
             "default": "stdio",
             "title": "Transport",
             "type": "string"
+          },
+          "tool_filter": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tool Filter"
+          },
+          "context_headers": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpContextHeaders"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -17721,6 +17771,21 @@
             ],
             "default": null,
             "title": "Submission Id"
+          },
+          "notification_process_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notification Process Ids"
           },
           "usage": {
             "anyOf": [
@@ -23334,6 +23399,39 @@
             "default": null,
             "title": "Enabled Mcp Servers"
           },
+          "mcp_tool_filters": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mcp Tool Filters"
+          },
+          "mcp_context_headers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/McpContextHeaders"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mcp Context Headers"
+          },
           "delegation": {
             "anyOf": [
               {
@@ -23357,6 +23455,21 @@
             ],
             "default": null,
             "title": "Task Mode"
+          },
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
           }
         },
         "title": "ProfilesConfigureParams",
@@ -23646,21 +23759,6 @@
             ],
             "default": null,
             "title": "Name"
-          },
-          "bot_mode_roster": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Bot Mode Roster"
           }
         },
         "title": "ProfilesDescribeParams",
@@ -23729,16 +23827,46 @@
             "default": null,
             "title": "Task Mode"
           },
-          "capability_fingerprint": {
-            "title": "Capability Fingerprint",
-            "type": "string"
+          "bot_mode_roster": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Roster"
+          },
+          "ui_meta_revisions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Ui Meta Revisions",
+            "type": "object"
+          },
+          "ui_meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ui Meta"
           }
         },
         "required": [
           "name",
           "model",
-          "delegation",
-          "capability_fingerprint"
+          "delegation"
         ],
         "title": "ProfilesDescribeResult",
         "type": "object"
@@ -25652,20 +25780,36 @@
             "default": null,
             "title": "Submission Id"
           },
-          "dynamic_tools": {
+          "card_run_id": {
             "anyOf": [
               {
-                "items": {
-                  "$ref": "#/components/schemas/DynamicToolDefinition"
-                },
-                "type": "array"
+                "pattern": "^[A-Za-z0-9:_-]{1,128}$",
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "title": "Dynamic Tools"
+            "title": "Card Run Id"
+          },
+          "mcp_tool_selection": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mcp Tool Selection"
           },
           "card_script": {
             "anyOf": [
@@ -25677,30 +25821,6 @@
               }
             ],
             "default": null
-          },
-          "tool_endpoint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Tool Endpoint"
-          },
-          "tool_authorization": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Tool Authorization"
           },
           "bot_mode_roster": {
             "anyOf": [
@@ -25732,10 +25852,13 @@
             "default": null,
             "title": "Bot Mode Sessions"
           },
-          "expected_profile_capability_fingerprint": {
+          "bot_mode_reply_delivery": {
             "anyOf": [
               {
-                "pattern": "^[0-9a-f]{12}$",
+                "enum": [
+                  "notification",
+                  "direct"
+                ],
                 "type": "string"
               },
               {
@@ -25743,7 +25866,7 @@
               }
             ],
             "default": null,
-            "title": "Expected Profile Capability Fingerprint"
+            "title": "Bot Mode Reply Delivery"
           },
           "surface": {
             "anyOf": [
@@ -27801,18 +27924,16 @@
             "default": null,
             "title": "Bot Mode Sessions"
           },
-          "expected_profile_capability_fingerprint": {
+          "card_turn_context": {
             "anyOf": [
               {
-                "pattern": "^[0-9a-f]{12}$",
-                "type": "string"
+                "$ref": "#/components/schemas/CardTurnContext"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null,
-            "title": "Expected Profile Capability Fingerprint"
+            "default": null
           }
         },
         "required": [
@@ -29278,6 +29399,17 @@
             ],
             "default": null,
             "title": "Bot Mode Sessions"
+          },
+          "card_turn_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CardTurnContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "title": "SessionCreateParams",
@@ -30674,6 +30806,11 @@
             "title": "Close On Disconnect",
             "type": "boolean"
           },
+          "follow_profile_config": {
+            "default": false,
+            "title": "Follow Profile Config",
+            "type": "boolean"
+          },
           "bot_mode_roster": {
             "anyOf": [
               {
@@ -30703,6 +30840,17 @@
             ],
             "default": null,
             "title": "Bot Mode Sessions"
+          },
+          "card_turn_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CardTurnContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [

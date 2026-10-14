@@ -39,7 +39,7 @@ The core roles are:
 - **ThinkGraph:** saved Engraphis reasoning Card.
 - **KnowGraph:** saved sourced-research Card with Hermes Web and Graphiti read/queued-write tools.
 - **Magnetic:** approved saved-Card TaskGraph over an exact blue roster.
-- **Team:** separate generic native Hermes Team/Kanban behavior owned by saved `card_team`/profile
+- **Team:** separate Hermes Team/Kanban behavior owned by saved `card_team`/profile
   `team`; it is not ordinary delegation and is not KnowGraph behavior.
 
 Every behavioral statement in canonical documentation is classified as **CURRENT**, **APPROVED
@@ -58,13 +58,13 @@ and inverse deletion/rename mechanics.
 | --- | --- | --- |
 | Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_authority.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_preparation.py`, `card_run_inputs.py`, `card_run_readback.py`, `card_run_execution.py`, `card_run_settlement.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, invocation authority, effective tools, graph selection and IDF preparation, Run acceptance/preparation, canonical input retention, readback/projection, execution progress, terminal settlement, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
 | Canonical Run input | `idf.py`, `idf_contract.py`, `idf_graph_records.py`, and `idf_projection.py` under `apps/python-models/app/python_models/`; sole constructor `idf.py::materialize_idf` | Literal contract, bounded graph-record construction, inspection/model projections, and one materializer which writes and rereads one UTF-8 `in.idf` before execution |
-| Card Python Script | `apps/python-models/app/python_models/card_script.py` plus the existing Card editor transport | Saved Card-owned source, structural compilation, live selected-tool validation, honest provider availability, and retained receipt identity; no TypeScript executor |
+| Card Python Script | `apps/python-models/app/python_models/card_script.py`, the existing Card editor transport, and `HermesLatest/agent/{card_turn_tools,card_script_tool}.py` | Saved Card-owned source, structural compilation, live selected-tool validation, one immutable turn contract, and execution through Hermes' existing child Python runner against profile-loaded tools; no TypeScript executor or application callback tool protocol |
 | Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, and no semantic routing |
 | Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; it does not own Hermes processes or sessions |
 | Hermes runtime | `HermesLatest/` | Hermes inference, profiles, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
 | Magnetic TaskGraph | `magnetic_taskgraph_authority.py`, `magnetic_taskgraph_submission.py`, and `magnetic_taskgraph_readback.py` under `apps/python-models/app/python_models/`, with the exact invocation owner in `apps/python-models/app/mag_one_operation.py` | Literal owners for saved profile/worker authority, headless root staging and outer-Run binding, redacted status/final-result observation, and invocation-scoped waiting/progress/terminal outer-Run settlement against Hermes' existing SQLite task/dependency APIs; Card Run reads never reconcile or settle execution |
 | Tool contracts and execution | `application_operation_catalog.py`, `main_worldview_operations.py`, `mag_one_operation.py`, `agent_canvas_card_operations.py`, and `backend_operation_transport.py` under `apps/python-models/app/`; `operation_definition.py`, literal contributor modules, `tool_registry.py`, and `tool_catalog.py` under `apps/python-models/app/python_models/` | One ordered application-operation catalog, literal application handler/schema owners, generic loopback transport mechanics, one authored operation shape, exact Python/provider handlers, live lookup, and deterministic model-facing projection |
-| Official MCP host | `apps/python-models/app/{mcp_host,mcp_auth,mcp_catalog_runtime,mcp_catalog_projection,mcp_provider_operations,mcp_observability,mcp_request_dispatch,mcp_transport}.py` | One SDK transport/dispatch host with literal owners for authentication, process-wide frozen catalog lifecycle, stateless SDK/provider projection, provider publication/calls, request dispatch, transport, and diagnostics; external clients and Hermes callbacks consume the same canonical definitions |
+| Official MCP host | `apps/python-models/app/{mcp_host,mcp_auth,mcp_catalog_runtime,mcp_catalog_projection,mcp_provider_operations,mcp_observability,mcp_request_dispatch,mcp_transport}.py` | One SDK transport/dispatch host with literal owners for authentication, process-wide frozen catalog lifecycle, stateless SDK/provider projection, provider publication/calls, request dispatch, transport, and diagnostics; external clients and Hermes profile MCP connections consume the same canonical definitions |
 | CodeGraph | Official Codebase Memory MCP through the application host | Repository structure and source relationships; CBM is the sole graph writer |
 | ThinkGraph | Engraphis through `engraphis.py` and the responsibility-specific `engraphis_operations.py`, `thinkgraph_projection.py`, `thinkgraph_completed_pair_extraction.py`, `thinkgraph_completed_pair_preparation.py`, `thinkgraph_completed_pair_settlement.py`, `thinkgraph_relationship_vocabulary.py`, `thinkgraph_relationship_classification.py`, and `thinkgraph_relationship_settlement.py` modules in `apps/python-models/app/python_models/` | Project reasoning, canonical entities, the exact saved-Card structured extraction contract, completed-pair identity/dedup/non-writing preparation, append-only native episodic Think settlement, project relationship vocabulary/promotion, Jev source-pair classification/provenance, accepted-decision graph settlement, structured-extractor incidence, and the sole persistent ThinkGraph store |
 | KnowGraph | Controlled `GraphitiLatest/` fork plus `services/knowgraph` and the Python provider adapter | Sourced Entity Knows, citations, exact structural `ABOUT` attachment, native Relationships, Communities, Sagas, provenance, queued ingestion, exact reads, and native single-record removal |
@@ -115,23 +115,25 @@ inside their owning Hermes Card. A Hermes Team is one root boundary: Hermes owns
 worker prompts, retries, synthesis, and child context, so LiquidAIty does not manufacture per-worker
 IDFs from Hermes child IDs.
 
-Card Python Scripts remain optional saved Card configuration. Python rails owns parsing, literal tool
-handle validation, hashes, and compact presentation. The Agent Builder renders the editor below the
-Card's Tools selection; TypeScript only transports the draft and live palette. A valid saved Script is
-presented as one `card_python` tool and executes through HermesLatest's existing child-process Python
-path; selected tools not wrapped by the Script remain ordinary Dynamic Tools. Blank or invalid source is
-inert, and no alternate executor or synthetic Script result exists.
+The Card Python editor/compiler/executor is preserved. The owner's approved purpose for that surface is
+a Hooks IDE, but the restored current UI still presents the existing Script/tool-recipe states; this pass
+does not claim those states satisfy the later general hook-point contract. The current valid Script path
+uses Hermes' existing child Python runner and exact tools already loaded by the profile, with no application
+callback executor; blank or invalid source is inert. No synthetic hook result is accepted.
 
 ## Application routes
 
 `apps/backend/src/routes/index.ts` mounts each domain once. Browser-facing routes use normal user
-authentication. The official Python MCP host's internal Main endpoints use their process-secret or
-signed runtime boundary and are mounted separately from browser authentication.
+authentication. The official Python MCP host's `/api/mcp` Project/profile context, Card-editor
+projection, and Hermes' `/api/card-turn` receiving-Card lifecycle use the existing process-secret
+boundary and are mounted separately from browser authentication.
 
 | Route family | Current responsibility |
 | --- | --- |
 | `/api/cards` | `cardOptions.routes.ts`, `cardRunRead.routes.ts`, and `cardScript.routes.ts` own Card editor options, Script validation, and read-only `POST /runs/read` latest/history/status projection; none executes a Card |
+| `/api/card-turn` | Process-authenticated preparation/start/finish for a receiving Card turn; it delegates to the existing Python Run/IDF owners and stores no session, queue, scheduler, or second transcript |
 | `/api/idd` | `builderIdd.routes.ts` owns Builder/editor-only IDD fields, deterministic live-catalog tool projection, and Script-header projection |
+| `/api/mcp` | `mcpInternal.routes.ts` owns only process-authenticated Project/profile context and the configured-model/IDD projection used by Hermes profile MCP tools |
 | `/api/thinkgraph` and `/api/knowgraph` | Engraphis and Graphiti projections/operations without merging authority |
 | `/api/projects` | Project and deck transport |
 
@@ -143,21 +145,38 @@ Card-runtime and loopback Hermes Card-tools routes remain absent.
 
 ## HermesLatest application boundary
 
-One independently supervised `hermes serve` process starts from `scripts/start-hermes.ps1`. The
+One independently supervised `hermes serve` process starts from the root `dev:hermes` Node package
+script. The
 backend connects through HermesLatest's shipped JSON-RPC client. It does not launch a per-Card
 process, own a session registry, kill Hermes when a client disconnects, supervise retries, or open a
 second Bot/terminal execution path.
 
 The restored Main doorway is `apps/backend/src/routes/mainSession.routes.ts`, mounted with browser
 authentication at `/api/main/session`. It persists user messages before Python Run preparation and
-transports native Hermes events and completions. Unaddressed chat uses the saved Main profile and its
-exact `Bot Chat` session. An explicit `@Card` selects that saved Card's own profile/session; Main does
-not execute or reply for that addressed turn. Model-directed delegation remains Hermes native Bot Mode.
+transports Hermes events and completions. Unaddressed chat uses the saved Main profile and its
+exact Project-scoped Hermes session. The adapter materializes every enabled non-Magnetic Hermes Card's
+saved profile and one hidden Project-scoped session, then gives each orchestrator only its exact outbound
+orange roster and target-session map. An explicit `@Card` still enters Main first and must use Hermes
+`message_agent`; the application observes the exact recipient session and suppresses only the redundant
+later Main synthesis notification. An unaddressed model-directed consultation keeps Hermes' completion
+notification and continues the same still-open Main Run. Main does not execute or impersonate the target.
 
-Main is the sole headless Card. `cardTerminal.routes.ts` and `hermesCardSession.ts` attach every saved
-non-Main Hermes Card to its own native CLI. Builder's lower terminal stays bound to `builder`, mounted,
+Every ordinary receiving Card turn without an already-open application Run calls the process-authenticated
+Card-turn endpoint before inference. Python accepts one Run, materializes and rereads that receiving Card's
+one `in.idf`, and returns the mechanical Hermes message/model/tool/Script projection. Hermes starts and
+settles that same Run around the actual turn. Orange child Runs carry only the parent Run ID into AGE
+lineage; transcript text and IDF bytes remain with their existing owners. A Project target with no live
+exact session fails without falling through to another CLI session. Profile MCP calls add the exact current
+Project/profile/Run headers at call time; saved grants remain the ceiling. A valid Card Script uses only
+tools already loaded by that profile, while blank or invalid source remains inert.
+
+Main is the sole headless Card. `cardTerminal.routes.ts` and
+`mainSession.routes.ts::cardProjectSession` attach every saved
+non-Main Hermes Card to its own Hermes CLI. Builder's lower terminal stays bound to `builder`, mounted,
 and initially collapsed. Profile materialization reads saved Card authority; TypeScript remains
-transport and pixels. `AgentTerminalManager` and the retired specialist execution paths remain absent.
+transport and pixels. Each Project session opts into Hermes `follow_profile_config`; Hermes owns its
+capability epoch and live-agent refresh, and LiquidAIty sends no parallel profile fingerprint.
+`AgentTerminalManager` and the retired specialist execution paths remain absent.
 Source presence does not establish successful product execution; use the current acceptance evidence.
 
 Fresh Card profiles are created with credential mirroring disabled. Current Hermes provider
@@ -171,13 +190,13 @@ These are separate execution contracts:
 
 | Mechanism | Current owner | Current meaning |
 | --- | --- | --- |
-| Team | Saved `card_team`/profile `team` plus Hermes `kanban.task_mode: team` | One durable Team root, native decomposition into temporary same-profile workers, review, and synthesis in Hermes SQLite Kanban |
+| Team | Saved `card_team`/profile `team` plus Hermes `kanban.task_mode: team` | One durable Team root, Hermes decomposition into temporary same-profile workers, review, and synthesis in Hermes SQLite Kanban |
 | Magnetic | Saved `card_magentic`, exact blue topology, and `magnetic_taskgraph_*` Python owners | One approved mission and exact saved worker ceiling; the same Magnetic root orchestrates dependency rounds and supplies the final result |
 
 The internal Team workflow marker remains `auto-team-v1`; it names the current generic Hermes Team
 implementation and does not authorize rejected KnowGraph AutoTeam behavior. Team workers cannot open a
 nested Team, leaf, or recursive delegation tree. Magnetic may assign the saved Team Card as one blue
-worker. When Team is the only exact blue worker, current source deliberately stages the native Team root
+worker. When Team is the only exact blue worker, current source deliberately stages the Hermes Team root
 directly; that bounded integration does not collapse the two mechanisms.
 
 ## MCP and Codebase Memory
@@ -185,8 +204,14 @@ directly; that bounded integration does not collapse the two mechanisms.
 `apps/python-models/app/mcp_host.py` is the one official MCP composition/launch boundary;
 `mcp_transport.py` owns its official SDK transports and `mcp_request_dispatch.py` owns authenticated
 request dispatch. Together they derive one MCP projection from the canonical definitions, preserve provider-owned tool schemas, and dispatch to the existing Python owners. External
-account access uses the configured OAuth resource boundary. Internal Hermes Card tools use the same
-protocol-neutral Python operation definitions through the Hermes Dynamic Tools callback and do not depend on IDD.
+account access uses the configured OAuth resource boundary. Main and every other Card are Hermes profiles:
+their exact saved application-tool selection is an include filter on that profile's Hermes-owned `liquidaity`
+MCP connection, while saved external MCP references remain separate profile servers. The web user's OAuth
+Project grant authorizes data access; the profile whitelist is the agent capability ceiling. Main does not
+inject tools into other profiles, and ordinary Card tools do not use the experimental Dynamic Tools
+callback. God’s Eye Project layer visibility never gates a Card's saved tools. Retired
+`hermes:tool:*` markers are removed on canonical Card read/save; Hermes profile memory is not represented
+as an application tool grant or a LiquidAIty toolset selection. IDD is not runtime authority.
 Catalog/readback tests and loaded internal-tool execution are proven separately from external-client live
 acceptance.
 
@@ -375,14 +400,15 @@ the WorldSignals service is started by package script `dev:worldsignals`. These 
 establish loaded-service or product acceptance.
 
 For Hermes, the retained local extensions are recorded in
-`HermesLatest/LIQUIDAITY_PATCHES.md`. Direct-agent delivery remains Hermes-owned. LiquidAIty has no
-current TypeScript Card-to-Card execution or roster/session adapter. Magnetic changes only assignment authority inside one
+`HermesLatest/LIQUIDAITY_PATCHES.md`. Direct-agent delivery remains Hermes-owned. LiquidAIty's TypeScript
+adapter creates/resumes exact Project-scoped saved-Card sessions and observes Gateway events, but it does
+not execute a target Card, deliver Card-to-Card text, or own a queue. Magnetic changes only assignment authority inside one
 explicitly bounded creator tree and leaves ordinary tasks unrestricted. Upstream ACP is not a
 LiquidAIty execution boundary. No other Hermes customization is accepted by this document.
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. This Entity/Think/Know pass does not add or redesign Team, AutoTeam, Magnetic, bearer, settlement, cancellation, task-ledger, or session behavior. Hermes retains profile creation, bundled-skill seeding, execution, sessions, Bot delivery, learning, queue, task-ledger, and PTY ownership. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
+| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. Hermes keeps profile creation, execution, sessions, Bot delivery, learning, queue, task ledger, PTY, MCP transport, and child Python execution. Local hunks add Project roster/session inputs, receiving-Card Run context, exact process/Run correlation, profile-MCP request headers, Card Script presentation, and the existing Team/Magnetic authority constraints without another runtime. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, per-turn application tool callback, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
 `HermesLatest/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
@@ -430,10 +456,12 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 
 - Source, focused tests, typechecks, a loaded service, a real saved-Card turn, an external MCP call,
   and owner visual acceptance remain separate proof tiers.
-- The MCP v2, Engraphis Smart surface, Graphiti, and Card-grant changes require one coordinated loaded-stack acceptance after all static gates
-  pass. A recent `dev:fresh` compiled and launched local services, but MCP readiness stayed `503`
-  when the application CBM dependency was unavailable and the public tunnel remained unpublished;
-  that process is not external-client acceptance.
+- The MCP v2, Engraphis Smart surface, Graphiti, Card-grant, Project-session, and receiving-Card
+  changes require one coordinated loaded-stack acceptance. The 2026-10-14 source checkpoint passed the
+  application Python suite, repository TypeScript suite, all TypeScript checks, both production builds,
+  and the affected Hermes tests apart from three enumerated Windows/POSIX-only upstream assertions.
+  This recovery has not yet started that loaded stack; source, build, and generated-contract checks are
+  not loaded-product or external-client acceptance.
 - Team and Magnetic preparation must resolve through HermesLatest. Team execution and an actual Mag One
   mission remain separate user-authorized acceptance; this repair does not launch a Magnetic mission.
 - Actual child provider/model, Bot delivery, graph attention, external-provider calls, terminal attachment,

@@ -15,6 +15,49 @@ _SUBAGENT_MODEL_FIELDS = {
 }
 
 
+def _find_saved_card(deck: dict[str, Any], card_id: str) -> dict[str, Any]:
+    for node in deck.get("nodes") or []:
+        if str(node.get("id") or "") == card_id:
+            return node
+    raise ApplicationToolError(f"card_not_found: {card_id}")
+
+
+def _load_saved_deck(
+    project_id: str, deck_id: str,
+) -> tuple[dict[str, Any], str | None]:
+    from app.python_models import saved_cards
+    from app.python_models.saved_card_contract import CardDomainError
+
+    try:
+        loaded = saved_cards.load_deck(project_id, deck_id)
+    except CardDomainError as error:
+        raise ApplicationToolError(str(error)) from error
+    deck = loaded.get("deck")
+    meta = loaded.get("meta")
+    if not isinstance(deck, dict) or not isinstance(meta, dict):
+        raise ApplicationToolError("saved_deck_readback_invalid")
+    revision = str(meta.get("deckRevision") or "").strip() or None
+    return deck, revision
+
+
+def _save_saved_deck(
+    project_id: str,
+    deck_id: str,
+    deck: dict[str, Any],
+    revision: str | None,
+) -> dict[str, Any]:
+    from app.python_models import saved_cards
+    from app.python_models.saved_card_contract import CardDomainError
+
+    try:
+        saved = saved_cards.save_deck(project_id, deck_id, deck, revision)
+    except CardDomainError as error:
+        raise ApplicationToolError(str(error)) from error
+    if not isinstance(saved.get("deck"), dict) or not isinstance(saved.get("meta"), dict):
+        raise ApplicationToolError("saved_deck_write_readback_invalid")
+    return {"ok": True, **saved}
+
+
 def _require(arguments: dict[str, Any], *keys: str) -> None:
     for key in keys:
         if not str(arguments.get(key) or "").strip():
@@ -53,7 +96,7 @@ def _validate_card_provider_selection(
 
 
 def _validate_card_runtime_authority(
-    *, provider: Any, access_mode: Any, openai_runtime: Any, hermes: bool,
+    *, provider: Any, access_mode: Any, hermes: bool,
 ) -> dict[str, Any]:
     from app.python_models.saved_card_contract import (
         CardDomainError,
@@ -64,7 +107,6 @@ def _validate_card_runtime_authority(
         return validate_saved_hermes_runtime_authority(
             provider,
             access_mode,
-            openai_runtime,
             hermes=hermes,
         )
     except CardDomainError as error:

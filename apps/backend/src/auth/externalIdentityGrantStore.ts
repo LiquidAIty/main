@@ -1,19 +1,19 @@
 import { pool } from '../db/pool';
 
-export type ExternalIdentityMainGrant = {
+export type ExternalIdentityProjectGrant = {
   grantId: string;
   userId: string;
   projectId: string;
   projectName: string;
 };
 
-/** Resolve one exact OAuth principal only when the granted project is still
- * owned by the linked LiquidAIty user. The ownership join is the authority;
- * callers cannot select or override a project. */
-export async function resolveExternalIdentityMainGrant(
+/** Resolve one exact OAuth principal to its LiquidAIty user and bootstrap
+ * Project. Each requesting route separately verifies ownership of the exact
+ * Project named by the active Card session. */
+export async function resolveExternalIdentityProjectGrant(
   issuer: string,
   subject: string,
-): Promise<ExternalIdentityMainGrant | null> {
+): Promise<ExternalIdentityProjectGrant | null> {
   const normalizedIssuer = String(issuer || '').trim().replace(/\/+$/, '');
   const normalizedSubject = String(subject || '').trim();
   if (!normalizedIssuer || !normalizedSubject) return null;

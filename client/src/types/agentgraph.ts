@@ -24,7 +24,7 @@ export type CardSubsystemCapability =
   | 'readiness';
 
 /** A saved, product-neutral attachment from one Card to a Python-managed
- * subsystem. The subsystem keeps its native lifecycle; this declaration only
+ * subsystem. The subsystem keeps its own lifecycle; this declaration only
  * exposes the bounded adapter contract and its named Card tab. */
 export type CardSubsystemAttachment = {
   id: string;
@@ -42,7 +42,7 @@ export type AgentCardRuntimeOptions = {
   /** Saved outbound orange Card-to-Card delegation authority. Main has this
    * authority by its runtime role; another non-Magnetic Card must opt in. */
   orchestrator?: boolean;
-  /** Temporary native Hermes children for one Card turn. This is unrelated to
+  /** Temporary Hermes children for one Card turn. This is unrelated to
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
@@ -74,8 +74,6 @@ export type AgentCardRuntimeOptions = {
       compiledHash?: string;
     };
     lastValidation?: Record<string, unknown>;
-    nativeSupport?: Record<string, unknown>;
-    rollback?: Record<string, unknown>;
   } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
@@ -84,31 +82,20 @@ export type AgentCardRuntimeOptions = {
   providerModelId?: string | null;
   /** Let one Run-scoped Jev Choice select among eligible configured models.
    * The saved model remains the durable default and is never overwritten. */
-  autoSelect?: boolean;
+  autoModel?: boolean;
   /** Let one Run-scoped Jev request narrow this Card's own authorized tools.
    * It never grants tools or changes the saved selection. */
   autoTools?: boolean;
-  /** Optional extra evidence for Card-scoped Jev decisions. Required request
-   * and saved-Card inputs remain present for every mode. */
-  jevContext?: {
-    autoTools?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
-    modelChoice?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
-  } | null;
-  openaiRuntime?: 'codex_app_server' | null;
-  /** Saved desired model for bounded native Hermes delegated children and
-   * background skill review. Native profile/readback remains effective truth. */
+  /** Saved desired model for bounded Hermes delegated children and
+   * background skill review. Hermes profile/readback remains effective truth. */
   subagentModel?: {
     provider: string;
     accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
     modelKey: string;
     providerModelId: string;
   } | null;
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
-  temperature?: number | null;
-  maxTokens?: number | null;
-  maxTurns?: number | null;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null;
   tools?: string[] | null;
-  /** Runtime-specific native grants remain distinct from ordinary tool grants. */
   /** Saved skill identities. Runtime homes materialize/cache them separately. */
   skills?: string[] | null;
   /** Named capability bundles; resolution belongs to the owning runtime. */
@@ -125,13 +112,13 @@ export type AgentTemplate = {
   promptTemplate?: string | null;
   model?: string | null;
   provider?: string | null;
-  temperature?: number | null;
-  maxTokens?: number | null;
   tools: string[];
 };
 
 export type AgentCardInstance = {
   id: string;
+  /** Saved Card availability. */
+  enabled?: boolean;
   /** Current server-owned immutable revision identity returned with a loaded deck. */
   _cardRevisionId?: string;
   _cardRevision?: number;
@@ -146,12 +133,9 @@ export type AgentCardInstance = {
   runtime: CardRuntime;
   runtimeOptions?: AgentCardRuntimeOptions | null;
   parentGraphId?: string | null;
-  tools?: string[];
   title: string;
   subtitle?: string;
   position: { x: number; y: number };
-  overrides?: Partial<AgentTemplate>;
-  status?: 'idle' | 'ready' | 'running' | 'error';
 };
 
 export type DeckEdge = {
@@ -167,7 +151,7 @@ export type DeckEdge = {
 export type DeckDocument = {
   id: string;
   name: string;
-  workspaceRoot?: string | null;
+  projectCodeFolder?: string | null;
   promptTemplates: PromptTemplate[];
   nodes: AgentCardInstance[];
   edges: DeckEdge[];

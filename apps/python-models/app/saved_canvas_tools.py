@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from urllib.parse import urlencode
 
 from app.application_tool_error import ApplicationToolError
-from app.saved_deck_http import (
-    find_saved_card,
-    load_saved_deck,
-    request_backend_json,
-    save_saved_deck,
+from app.backend_operation_transport import request_backend_json
+from app.saved_card_operation_validation import (
+    _find_saved_card,
+    _load_saved_deck,
+    _save_saved_deck,
 )
 
 
@@ -69,16 +68,14 @@ def _require(arguments: dict[str, Any], *keys: str) -> None:
             raise ApplicationToolError(f"{key}_required")
 
 
-async def canvas_inspect(
-    args: dict[str, Any], *, caller_card_id: str = "",
-) -> dict[str, Any]:
+async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "deckId")
     from app.python_models.tool_registry import operation_definition
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
     deck, revision = await asyncio.to_thread(
-        load_saved_deck, project_id, deck_id
+        _load_saved_deck, project_id, deck_id
     )
     cards = []
     for node in deck.get("nodes") or []:
@@ -130,21 +127,17 @@ async def canvas_inspect(
     }
     selected_id = str(args.get("cardId") or "").strip()
     if selected_id:
-        result["selectedCard"] = find_saved_card(deck, selected_id)
+        result["selectedCard"] = _find_saved_card(deck, selected_id)
         result["projectCodeFolder"] = deck.get("projectCodeFolder")
     if args.get("includeCatalog") is True:
-        if caller_card_id != "builder":
-            raise ApplicationToolError("builder_idd_projection_requires_builder")
         if not selected_id:
             raise ApplicationToolError("cardId_required_for_catalog")
         catalog = await asyncio.to_thread(
             request_backend_json,
-            "GET",
-            "/api/idd/card-editor?" + urlencode({
-                "projectId": project_id,
-                "deckId": deck_id,
-                "cardId": selected_id,
-            }),
+            "POST",
+            "/api/mcp/card-editor",
+            {"projectId": project_id, "deckId": deck_id, "cardId": selected_id},
+            require_internal_secret=True,
         )
         if catalog.get("ok") is not True:
             raise ApplicationToolError("card_editor_catalog_unavailable")
@@ -275,7 +268,7 @@ def _apply_wire_update(
     edge_type: str,
     wire_id: str,
 ) -> dict[str, Any]:
-    deck, revision = load_saved_deck(project_id, deck_id)
+    deck, revision = _load_saved_deck(project_id, deck_id)
     cards = {str(node.get("id") or ""): node for node in deck.get("nodes") or []}
     edges = list(deck.get("edges") or [])
     prior = next((edge for edge in edges if edge.get("id") == wire_id), None)
@@ -302,7 +295,7 @@ def _apply_wire_update(
             raise ApplicationToolError(f"wire_not_found: {resolved_id}")
     if changed:
         deck["edges"] = edges
-        save_saved_deck(project_id, deck_id, deck, revision)
+        _save_saved_deck(project_id, deck_id, deck, revision)
     return {
         "ok": True,
         "op": op,

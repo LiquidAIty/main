@@ -12,6 +12,22 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function elapsedMilliseconds(run: Record<string, any>): number | null {
+  const start = Date.parse(String(run.createdAt || ''));
+  const end = Date.parse(String(run.finishedAt || ''));
+  if (!Number.isFinite(start)) return null;
+  return Math.max(0, (Number.isFinite(end) ? end : Date.now()) - start);
+}
+
+function runtimeMetrics(run: Record<string, any> | undefined, cardId: string) {
+  if (!run) return null;
+  return {
+    cardId,
+    runtimeMs: elapsedMilliseconds(run),
+    totalTokens: finiteNumber(run.providerTotalTokens),
+  };
+}
+
 function magneticTaskMetrics(value: Record<string, any>): {
   tasksCompleted: number | null;
   tasksTotal: number | null;
@@ -47,8 +63,8 @@ cardRunReadRoutes.post('/runs/read', async (req, res) => {
   if (!projectId || !deckId || !cardId) {
     return res.status(400).json({ ok: false, error: 'card_run_identity_incomplete' });
   }
-  if (action !== 'status') {
-    return res.status(400).json({ ok: false, error: 'card_run_status_action_required' });
+  if (!['metrics', 'status'].includes(action)) {
+    return res.status(400).json({ ok: false, error: 'card_run_read_action_required' });
   }
   if (req.body?.inspectOnly !== true) {
     return res.status(400).json({ ok: false, error: 'card_run_status_must_be_inspect_only' });
@@ -64,6 +80,9 @@ cardRunReadRoutes.post('/runs/read', async (req, res) => {
     }));
     const runs = Array.isArray(history.runs) ? history.runs.map(objectRecord) : [];
     const latest = runs[0];
+    if (action === 'metrics') {
+      return res.json({ ok: true, result: runtimeMetrics(latest, cardId) });
+    }
     if (!latest) return res.json({ ok: true, result: null });
     const hermesRootId = String(latest.hermesRootId || '').trim();
     if (String(latest.runtimeMode || '') === 'magentic_one' && hermesRootId) {

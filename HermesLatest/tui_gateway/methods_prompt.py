@@ -489,9 +489,8 @@ def _persist_session_row_for_submit(rid, session, text=None, display_kind=None):
 
 def _run_after_agent_ready(
     rid, sid, session, text, display_kind, display_metadata, hosted_terminal_callback,
-    turn_author=None, submission_id=None, dynamic_tools=None, tool_endpoint=None,
-    tool_authorization=None, card_script=None, bot_mode_roster=None,
-    expected_profile_capability_fingerprint=None,
+    turn_author=None, submission_id=None, card_script=None, mcp_tool_selection=None,
+    bot_mode_roster=None, card_run_id=None, bot_mode_reply_delivery=None,
 ):
     """Turn thread body: patient wait for a deferred build (a slow build must not eat the
     accepted in-flight message), then run."""
@@ -532,11 +531,11 @@ def _run_after_agent_ready(
     _run_prompt_submit(
         rid, sid, session, text, display_kind=display_kind, display_metadata=display_metadata,
         terminal_callback=hosted_terminal_callback, turn_author=turn_author,
-        submission_id=submission_id, dynamic_tools=dynamic_tools,
-        tool_endpoint=tool_endpoint, tool_authorization=tool_authorization,
+        submission_id=submission_id,
         card_script=card_script,
-        bot_mode_roster=bot_mode_roster,
-        expected_profile_capability_fingerprint=expected_profile_capability_fingerprint)
+        mcp_tool_selection=mcp_tool_selection,
+        bot_mode_roster=bot_mode_roster, card_run_id=card_run_id,
+        bot_mode_reply_delivery=bot_mode_reply_delivery)
 
 
 _TRUNCATION_PARAMS = (
@@ -585,22 +584,18 @@ def _(rid, params: dict) -> dict:
     raw_text = params.get("text", "")
     text = sanitize_user_prompt_text(raw_text) if isinstance(raw_text, str) else raw_text
     submission_id = str(params.get("submission_id") or "").strip() or None
-    dynamic_tools = params.get("dynamic_tools")
+    card_run_id = str(params.get("card_run_id") or "").strip() or None
+    bot_mode_reply_delivery = str(params.get("bot_mode_reply_delivery") or "").strip() or None
+    if bot_mode_reply_delivery not in {None, "notification", "direct"}:
+        return _err(rid, -32602, "bot_mode_reply_delivery_invalid")
+    from agent.card_turn_tools import normalize_turn_mcp_tool_selection
+    try:
+        mcp_tool_selection = normalize_turn_mcp_tool_selection(
+            params.get("mcp_tool_selection")
+        )
+    except ValueError as exc:
+        return _err(rid, -32602, str(exc))
     card_script = params.get("card_script")
-    tool_endpoint = str(params.get("tool_endpoint") or "").strip() or None
-    tool_authorization = str(params.get("tool_authorization") or "").strip() or None
-    expected_profile_capability_fingerprint = str(
-        params.get("expected_profile_capability_fingerprint") or ""
-    ).strip() or None
-    script_uses_tools = bool(
-        isinstance(card_script, dict) and card_script.get("tool_aliases")
-    )
-    callback_required = bool(dynamic_tools) or script_uses_tools
-    if (
-        (tool_endpoint is not None or tool_authorization is not None or callback_required)
-        and not (callback_required and tool_endpoint and tool_authorization)
-    ):
-        return _err(rid, -32602, "dynamic tool context is incomplete")
     # Off-screen sends (widget intents) type the row so no client renders a bubble;
     # whitelisted to "hidden" — this RPC must not mint kinds.
     display_kind = "hidden" if params.get("display_kind") == "hidden" else None
@@ -634,12 +629,6 @@ def _(rid, params: dict) -> dict:
         return _err(rid, -32602, str(exc))
     if bot_mode_roster is not None:
         _apply_session_bot_roster(session, bot_mode_roster, bot_mode_sessions)
-    if expected_profile_capability_fingerprint and (
-        len(expected_profile_capability_fingerprint) != 12
-        or any(character not in "0123456789abcdef"
-               for character in expected_profile_capability_fingerprint)
-    ):
-        return _err(rid, -32602, "profile capability fingerprint is invalid")
     from tools.bot_relay import DeliveryAuthor
 
     # Only the relay handler can build a DeliveryAuthor. A dict here is a client claiming a sender.
@@ -675,14 +664,13 @@ def _(rid, params: dict) -> dict:
     turn_isolation = _session_uses_compute_host(session, _load_dashboard_process_isolation_config())
     if internal_hosted_submit and turn_isolation:
         return _err(rid, 4121, "hosted room turns do not support isolated compute workers yet")
-    if turn_isolation and (dynamic_tools or card_script):
-        return _err(rid, 4125, "Per-turn Card tools do not support isolated compute workers")
-    if turn_isolation and expected_profile_capability_fingerprint:
-        return _err(
-            rid,
-            4125,
-            "Profile-fenced turns do not support isolated compute workers",
-        )
+    if turn_isolation and (
+        card_script
+        or mcp_tool_selection is not None
+        or card_run_id
+        or session.get("card_turn_context") is not None
+    ):
+        return _err(rid, 4125, "Project-scoped Card turns do not support isolated compute workers")
     # Re-bind to the current transport: streaming must stay on the active websocket even
     # if a disconnect/fallback moved the session to stdio. Through _rebind_live_transport so a
     # socket that already closed cannot cancel the orphan reap without coming back (#116464).
@@ -714,11 +702,10 @@ def _(rid, params: dict) -> dict:
         busy_response = _handle_busy_submit(
             rid, sid, session, text, busy_transport, queued=bool(params.get("queued")),
             turn_author=turn_author, submission_id=submission_id,
-            dynamic_tools=dynamic_tools, tool_endpoint=tool_endpoint,
-            tool_authorization=tool_authorization,
             card_script=card_script,
-            bot_mode_roster=bot_mode_roster,
-            expected_profile_capability_fingerprint=expected_profile_capability_fingerprint)
+            mcp_tool_selection=mcp_tool_selection,
+            bot_mode_roster=bot_mode_roster, card_run_id=card_run_id,
+            bot_mode_reply_delivery=bot_mode_reply_delivery)
         if busy_response is not None:
             return busy_response
     raw_rebind_ids = params.get("rebind_survivor_row_ids")
@@ -762,9 +749,9 @@ def _(rid, params: dict) -> dict:
     run_thread = threading.Thread(
         target=lambda: _run_after_agent_ready(
             rid, sid, session, text, display_kind, display_metadata,
-            hosted_terminal_callback, turn_author, submission_id, dynamic_tools,
-            tool_endpoint, tool_authorization, card_script, bot_mode_roster,
-            expected_profile_capability_fingerprint),
+            hosted_terminal_callback, turn_author, submission_id,
+            card_script, mcp_tool_selection,
+            bot_mode_roster, card_run_id, bot_mode_reply_delivery),
         daemon=True)
     # Handle lets session.interrupt tell a live turn from a stuck `running` flag.
     session["_run_thread"] = run_thread

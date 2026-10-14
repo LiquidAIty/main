@@ -228,9 +228,8 @@ describe('BuilderChat', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     const page = readFileSync(path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'), 'utf8');
     expect(page).not.toMatch(/startNewConversation|syncConversationFromUrl|setConversationId|onNewConversation/);
-    // Existing project-scoped history and legacy links remain internal inputs.
-    expect(page).toContain('const [conversationId] = useState');
-    expect(page).toContain('selectedConversationId(window.location.search)');
+    expect(page).toContain('const conversationId = canvasProjectId;');
+    expect(page).not.toContain('selectedConversationId(');
   });
 
   it('keeps delegation and preview controls out of the chat composer', () => {
@@ -384,12 +383,12 @@ describe('BuilderChat', () => {
           {
             cardId: 'builder', cardRevisionId: 'revision-builder',
             profile: 'builder', title: 'Builder',
-            address: 'Builder', aliases: ['builder'],
+            address: 'Builder',
           },
           {
             cardId: 'trading', cardRevisionId: 'revision-trading',
             profile: 'trading', title: 'Trading',
-            address: 'Trading', aliases: ['trading'],
+            address: 'Trading',
           },
         ]}
         onSend={vi.fn()}

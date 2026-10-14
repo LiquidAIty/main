@@ -14,6 +14,7 @@ from app.python_models.saved_card_contract import (
     CardDomainError,
     GRANT_FIELDS,
     canonical_json,
+    canonical_card_tools_and_toolsets,
     card_runtime,
     is_magnetic_taskgraph_runtime,
     json_object,
@@ -28,7 +29,7 @@ from app.python_models.saved_card_contract import (
 def resolve_project_record(cursor: Any, project_id: str) -> dict[str, Any]:
     cursor.execute(
         """
-        SELECT id, code, project_type
+        SELECT id, code
         FROM ag_catalog.projects
         WHERE id::text = %s OR code = %s
         ORDER BY CASE WHEN id::text = %s THEN 0 ELSE 1 END
@@ -206,20 +207,20 @@ def _insert_revision(
         """
         INSERT INTO ag_catalog.agent_card_revisions (
           revision_id, project_id, deck_id, card_id, revision_number,
-          template_id, kind, title, subtitle, role, status, parent_graph_id,
+          template_id, kind, title, subtitle, role, parent_graph_id,
           base_prompt, base_prompt_sha256, stable_output_contract,
           runtime_kind, runtime_mode, runtime_profile, provider, model_key, provider_model_id,
           access_mode, reasoning_effort,
           enabled, enabled_location, runtime_extension_config, revision_sha256
         ) VALUES (
-          %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+          %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
           %s,%s,%s,%s,%s,%s::jsonb,%s
         )
         """,
         (
             revision_id, project_id, deck_id, stable["cardId"], revision_number,
             stable["templateId"], stable["kind"], stable["title"], stable["subtitle"],
-            stable["role"], stable["status"], stable["parentGraphId"], stable["basePrompt"],
+            stable["role"], stable["parentGraphId"], stable["basePrompt"],
             sha256_text(stable["basePrompt"]), stable["stableOutputContract"], stable["runtime"]["kind"],
             stable["runtime"]["mode"], stable["runtime"].get("profile"),
             stable["provider"], stable["modelKey"],
@@ -260,7 +261,7 @@ def load_saved_deck_with_cursor(
     cursor.execute(
         """
         SELECT revision.*, membership.ordinal, membership.position_x, membership.position_y,
-               membership.display_status, membership.presentation_config
+               membership.presentation_config
         FROM ag_catalog.agent_cards AS card
         JOIN ag_catalog.agent_card_revisions AS revision
           ON revision.revision_id = card.current_revision_id
@@ -293,9 +294,14 @@ def load_saved_deck_with_cursor(
     nodes: list[dict[str, Any]] = []
     for row in rows:
         options = dict(row.get("runtime_extension_config") or {})
+        for retired_field in ("openaiRuntime", "team", "writeMode"):
+            options.pop(retired_field, None)
         for field, values in grants_by_revision[str(row["revision_id"])].items():
             if values:
                 options[field] = values
+        tools, toolsets = canonical_card_tools_and_toolsets(options)
+        options["tools"] = tools
+        options["toolsets"] = toolsets
         for key, column in (
             ("provider", "provider"), ("modelKey", "model_key"),
             ("providerModelId", "provider_model_id"), ("accessMode", "access_mode"),
@@ -307,7 +313,7 @@ def load_saved_deck_with_cursor(
         node = {
             **presentation,
             "id": row["card_id"], "kind": row["kind"], "title": row["title"],
-            "prompt": row["base_prompt"], "status": row.get("status") or row.get("display_status"),
+            "prompt": row["base_prompt"],
             "position": {"x": float(row["position_x"]), "y": float(row["position_y"])},
             "subtitle": row.get("subtitle"), "templateId": row["template_id"],
             "runtime": {
@@ -317,10 +323,7 @@ def load_saved_deck_with_cursor(
             },
             "parentGraphId": row.get("parent_graph_id"), "runtimeOptions": options,
         }
-        if row.get("enabled_location") == "card":
-            node["enabled"] = row.get("enabled") is not False
-        elif row.get("enabled_location") == "runtime-options":
-            options["enabled"] = row.get("enabled") is not False
+        node["enabled"] = row.get("enabled") is not False
         if row.get("role") is not None:
             node["role"] = row["role"]
         if row.get("stable_output_contract") is not None:
@@ -411,13 +414,13 @@ def _create_new_deck_with_cursor(
             """
             INSERT INTO ag_catalog.deck_card_memberships (
               project_id, deck_id, card_id, ordinal, position_x, position_y,
-              parent_graph_id, display_status, presentation_config
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+              parent_graph_id, presentation_config
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
             """,
             (
                 project_id, deck_id, card_id, ordinal,
                 float(position.get("x") or 0), float(position.get("y") or 0),
-                node.get("parentGraphId"), node.get("status"),
+                node.get("parentGraphId"),
                 canonical_json(stable_card_record(node)["presentationProperties"]),
             ),
         )
@@ -522,18 +525,17 @@ def _update_existing_deck_with_cursor(
             """
             INSERT INTO ag_catalog.deck_card_memberships (
               project_id, deck_id, card_id, ordinal, position_x, position_y,
-              parent_graph_id, display_status, presentation_config
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+              parent_graph_id, presentation_config
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
             ON CONFLICT (project_id, deck_id, card_id) DO UPDATE SET
               ordinal=EXCLUDED.ordinal, position_x=EXCLUDED.position_x,
               position_y=EXCLUDED.position_y, parent_graph_id=EXCLUDED.parent_graph_id,
-              display_status=EXCLUDED.display_status,
               presentation_config=EXCLUDED.presentation_config
             """,
             (
                 project_id, deck_id, card_id, ordinal,
                 float(position.get("x") or 0), float(position.get("y") or 0),
-                node.get("parentGraphId"), node.get("status"),
+                node.get("parentGraphId"),
                 canonical_json(stable_card_record(node)["presentationProperties"]),
             ),
         )

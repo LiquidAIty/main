@@ -7,7 +7,6 @@ import pytest
 
 from app.python_models.project_worldview import (
     ProjectWorldviewError,
-    resolve_project_worldview,
     set_main_project_worldview_capability,
 )
 
@@ -53,60 +52,6 @@ def connector(rows):
         yield Connection(rows)
 
     return open_connection
-
-
-def test_absent_project_rows_preserve_existing_capability_availability():
-    result = resolve_project_worldview(
-        "project-a",
-        ["satellite.imagery", "weather", "satellite.imagery"],
-        connector=connector([]),
-    )
-
-    assert result == {
-        "schemaVersion": "project-worldview.v1",
-        "projectId": "project-a",
-        "defaultEnabled": True,
-        "candidateCapabilities": ["satellite.imagery", "weather"],
-        "enabledCapabilities": ["satellite.imagery", "weather"],
-        "excludedCapabilities": [],
-        "overrides": [],
-    }
-
-
-def test_user_override_precedes_main_and_off_is_a_hard_candidate_ceiling():
-    result = resolve_project_worldview(
-        "project-a",
-        ["satellite.imagery", "weather", "aircraft"],
-        connector=connector([
-            {
-                "capability_id": "weather",
-                "main_enabled": True,
-                "main_reason": "Research task",
-                "user_enabled": False,
-                "last_origin": "user",
-                "updated_at": datetime(2026, 9, 27, tzinfo=timezone.utc),
-            },
-            {
-                "capability_id": "aircraft",
-                "main_enabled": False,
-                "main_reason": "Not relevant to this Project",
-                "user_enabled": None,
-                "last_origin": "main",
-                "updated_at": datetime(2026, 9, 27, tzinfo=timezone.utc),
-            },
-        ]),
-    )
-
-    assert result["enabledCapabilities"] == ["satellite.imagery"]
-    assert result["excludedCapabilities"] == ["weather", "aircraft"]
-    assert result["overrides"][0] == {
-        "capabilityId": "weather",
-        "enabled": False,
-        "controlledBy": "user",
-        "lastOrigin": "user",
-        "mainReason": "Research task",
-        "updatedAt": "2026-09-27T00:00:00+00:00",
-    }
 
 
 def test_main_write_changes_only_main_fields_and_user_choice_wins_readback():
@@ -177,8 +122,10 @@ def test_main_write_rejects_widened_or_unbounded_values(enabled, reason, error):
 @pytest.mark.parametrize("value", ["", "Bad Source", "UPPER", "../weather"])
 def test_invalid_capability_identity_is_rejected(value):
     with pytest.raises(ProjectWorldviewError, match="project_worldview_capability_id_invalid"):
-        resolve_project_worldview(
+        set_main_project_worldview_capability(
             "project-a",
-            [value],
+            value,
+            True,
+            "Current Project layer choice.",
             connector=connector([]),
         )

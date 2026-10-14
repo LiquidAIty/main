@@ -90,14 +90,23 @@ def requested_provider_families() -> tuple[str, ...]:
     """Resolve external families only from the authorized live MCP request."""
     principal = mcp_auth.internal_mcp_principal()
     if principal is None:
-        return ("cbm", "graphiti") if mcp_auth.access_token_available() else ()
+        if not mcp_auth.access_token_available():
+            return ()
+        context = mcp_auth.authenticated_project_context()
+        selected = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])
+        return tuple(
+            family
+            for family, prefix in mcp_provider_operations.PROVIDER_PREFIXES.items()
+            if any(name.startswith(prefix) for name in selected)
+        )
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
         return tuple(mcp_provider_operations.PROVIDER_PREFIXES)
-    if kind not in {"materializer-read", "card-runtime"}:
+    if kind != "materializer-read":
         return ()
-    key = "presentedTools" if kind == "card-runtime" else "grantedTools"
-    tool_names = mcp_auth.validated_principal_tool_names(principal.get(key)) or frozenset()
+    tool_names = mcp_auth.validated_principal_tool_names(
+        principal.get("grantedTools")
+    ) or frozenset()
     return tuple(
         family
         for family, prefix in mcp_provider_operations.PROVIDER_PREFIXES.items()
@@ -132,7 +141,7 @@ def _apply_authentication(tools: list[Tool]) -> list[Tool]:
     return (
         bind_authenticated_catalog(tools)
         if mcp_auth.OAUTH_ENFORCED
-        or mcp_auth.authenticated_main_context() is not None
+        or mcp_auth.authenticated_project_context() is not None
         else tools
     )
 
@@ -150,7 +159,7 @@ def complete_catalog(application_catalog: list[Tool], provider_catalog: list[Too
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
         raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
-    context = mcp_auth.authenticated_main_context()
+    context = mcp_auth.authenticated_project_context()
     return bind_authenticated_catalog(tools) if mcp_auth.OAUTH_ENFORCED or context is not None else tools
 
 
@@ -173,15 +182,10 @@ def catalog_for_request(tools: list[Tool]) -> list[Tool]:
             and tool.name in granted
             and tool_access(tool.name) == "read"
         )]
-    elif kind == "card-runtime":
-        granted = mcp_auth.validated_principal_tool_names(principal.get("grantedTools"))
-        presented = mcp_auth.validated_principal_tool_names(principal.get("presentedTools"))
-        visible = [tool for tool in visible if (
-            granted is not None
-            and presented is not None
-            and tool.name in granted
-            and tool.name in presented
-        )]
+    elif principal is None and mcp_auth.access_token_available():
+        context = mcp_auth.authenticated_project_context()
+        granted = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])
+        visible = [tool for tool in visible if tool.name in granted]
     names = [tool.name for tool in visible]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})

@@ -1,10 +1,4 @@
-"""Project-owned external-capability availability for one Card Run.
-
-This module performs only an exact structural intersection.  It does not infer
-meaning, select tools, call Jev, or grant authority.  Missing rows deliberately
-preserve existing behavior by leaving a capability enabled; explicit Project
-OFF rows remove it before the existing one-batch Jev choice.
-"""
+"""Project-owned WorldView layer choices written by the Main profile."""
 
 from __future__ import annotations
 
@@ -130,73 +124,4 @@ def set_main_project_worldview_capability(
         "schemaVersion": "project-worldview.v1",
         "projectId": canonical_project_id,
         "capability": capability,
-    }
-
-
-def resolve_project_worldview(
-    project_id: str,
-    candidate_capability_ids: list[str],
-    *,
-    connector: Callable[..., Any] = connect_postgres,
-) -> dict[str, Any]:
-    """Intersect exact candidate IDs with durable Project availability.
-
-    An explicit user value takes precedence over Main's saved suggestion.
-    Absence is compatibility-preserving ON, so existing Projects retain their
-    current Card/tool behavior until the user or Main shapes their WorldView.
-    """
-
-    canonical_project_id = str(project_id or "").strip()
-    if not canonical_project_id:
-        raise ProjectWorldviewError("project_id_required")
-    candidates = _capability_ids(candidate_capability_ids)
-    if not candidates:
-        return {
-            "schemaVersion": "project-worldview.v1",
-            "projectId": canonical_project_id,
-            "defaultEnabled": True,
-            "candidateCapabilities": [],
-            "enabledCapabilities": [],
-            "excludedCapabilities": [],
-            "overrides": [],
-        }
-
-    with connector() as connection, connection.cursor(row_factory=dict_row) as cursor:
-        cursor.execute(
-            """
-            SELECT capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at
-            FROM ag_catalog.project_worldview_capabilities
-            WHERE project_id=%s AND capability_id=ANY(%s::text[])
-            ORDER BY capability_id
-            """,
-            (canonical_project_id, candidates),
-        )
-        rows = cursor.fetchall()
-
-    by_id: dict[str, dict[str, Any]] = {}
-    overrides: list[dict[str, Any]] = []
-    for row in rows:
-        normalized = _capability(row)
-        capability_id = normalized["capabilityId"]
-        if capability_id not in candidates or capability_id in by_id:
-            raise ProjectWorldviewError("project_worldview_state_invalid")
-        by_id[capability_id] = normalized
-        overrides.append(normalized)
-
-    enabled = [
-        capability_id for capability_id in candidates
-        if by_id.get(capability_id, {}).get("enabled", True) is True
-    ]
-    excluded = [
-        capability_id for capability_id in candidates
-        if by_id.get(capability_id, {}).get("enabled", True) is False
-    ]
-    return {
-        "schemaVersion": "project-worldview.v1",
-        "projectId": canonical_project_id,
-        "defaultEnabled": True,
-        "candidateCapabilities": candidates,
-        "enabledCapabilities": enabled,
-        "excludedCapabilities": excluded,
-        "overrides": overrides,
     }

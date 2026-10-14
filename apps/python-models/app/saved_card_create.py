@@ -13,19 +13,21 @@ from app.saved_card_operation_validation import (
     _CAPABILITY_LIST_FIELDS,
     _SUBAGENT_TYPES,
     _normalized_capability_selections,
+    _find_saved_card,
+    _load_saved_deck,
     _require,
+    _save_saved_deck,
     _subagent_model_selection,
     _validate_auto_flags,
     _validate_card_runtime_authority,
     _validate_tool_selections,
 )
-from app.saved_deck_http import find_saved_card, load_saved_deck, save_saved_deck
 
 
 _SUPPORTED_CARD_RUNTIME_MODES = {"hermes": {"main", "delegate", "magentic_one"}}
 _CARD_CREATE_KEYS = {
     "templateId", "projectId", "deckId", "expectedRevision", "title", "role",
-    "prompt", "runtime", "model", "openaiRuntime", "subagentType",
+    "prompt", "runtime", "model", "subagentType",
     "subagentModel", "tools", "skills", "toolsets", "mcpConnectionIds",
     "autoTools", "autoModel", "position",
 }
@@ -39,12 +41,7 @@ _DEFAULT_HERMES_SUBAGENT_MODEL = {
     "modelKey": "gpt-5.6-luna",
     "providerModelId": "gpt-5.6-luna",
 }
-_AGENT_BUILDER_PROFILE = "builder"
-
-
-async def card_create(
-    args: dict[str, Any], *, caller_card_id: str = "",
-) -> dict[str, Any]:
+async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     """Create one saved Card through the canonical optimistic deck authority."""
 
     _require(
@@ -102,7 +99,6 @@ async def card_create(
     authority = _validate_card_runtime_authority(
         provider=provider,
         access_mode=access_mode,
-        openai_runtime=args.get("openaiRuntime"),
         hermes=runtime_kind == "hermes",
     )
     provider = authority["provider"]
@@ -147,21 +143,7 @@ async def card_create(
     expected_revision = str(args["expectedRevision"]).strip()
 
     def apply() -> dict[str, Any]:
-        deck, current_revision = load_saved_deck(project_id, deck_id)
-        try:
-            caller = find_saved_card(deck, caller_card_id)
-        except ApplicationToolError as error:
-            raise ApplicationToolError("card_create_requires_agent_builder") from error
-        caller_runtime = caller.get("runtime") or {}
-        if (
-            caller_runtime.get("kind") != "hermes"
-            or caller_runtime.get("mode") != "delegate"
-            or str(caller_runtime.get("profile") or "").strip()
-            != _AGENT_BUILDER_PROFILE
-        ):
-            raise ApplicationToolError("card_create_requires_agent_builder")
-        if "card.create" not in (caller.get("runtimeOptions") or {}).get("tools", []):
-            raise ApplicationToolError("card_create_not_granted")
+        deck, current_revision = _load_saved_deck(project_id, deck_id)
         from app.python_models.idd import (
             load_input_data_dictionary,
             template_runtime,
@@ -197,8 +179,6 @@ async def card_create(
         for field in ("autoTools", "autoModel"):
             if field in args:
                 runtime_options[field] = args[field]
-        if runtime_kind == "hermes" and authority.get("openaiRuntime") is not None:
-            runtime_options["openaiRuntime"] = authority["openaiRuntime"]
         if subagent_model is not None:
             runtime_options["subagentModel"] = subagent_model
         if raw_subagent_type is not None:
@@ -222,11 +202,11 @@ async def card_create(
             "runtimeOptions": runtime_options,
         }
         deck["nodes"] = [*(deck.get("nodes") or []), card]
-        saved = save_saved_deck(
+        saved = _save_saved_deck(
             project_id, deck_id, deck, expected_revision
         )
         saved_deck = saved.get("deck") if isinstance(saved.get("deck"), dict) else {}
-        saved_card = find_saved_card(saved_deck, card_id)
+        saved_card = _find_saved_card(saved_deck, card_id)
         saved_revision = str((saved.get("meta") or {}).get("deckRevision") or "")
         if not saved_revision:
             raise ApplicationToolError("card_create_revision_missing")

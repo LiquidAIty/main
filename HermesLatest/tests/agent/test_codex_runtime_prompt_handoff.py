@@ -5,6 +5,7 @@ codex early-return used to send only cwd + raw user text, so SOUL.md / memory / 
 composed and then silently dropped.
 """
 
+import hashlib
 import json
 import threading
 from types import SimpleNamespace
@@ -85,7 +86,7 @@ def test_codex_projects_message_agent_only_for_an_authorized_roster(
 ):
     from tools import bot_mode_dm
 
-    agent = _agent(_dynamic_tools=[], _bot_mode_roster=roster)
+    agent = _agent(_bot_mode_roster=roster)
     monkeypatch.setattr(
         bot_mode_dm,
         "message_agent_authorized",
@@ -113,7 +114,7 @@ def test_codex_message_agent_uses_the_exact_hermes_inline_owner(monkeypatch):
     from tools import bot_mode_dm
 
     calls = []
-    agent = _agent(_dynamic_tools=[], _bot_mode_roster=["knowgraph"])
+    agent = _agent(_bot_mode_roster=["knowgraph"])
     monkeypatch.setattr(bot_mode_dm, "message_agent_authorized", lambda _agent: True)
     monkeypatch.setitem(
         inline_tool_executors.INLINE_TOOL_EXECUTORS,
@@ -145,17 +146,27 @@ def test_codex_message_agent_uses_the_exact_hermes_inline_owner(monkeypatch):
     assert json.loads(result["contentItems"][0]["text"])["delivery_id"] == "delivery-one"
 
 
-def test_codex_rejects_a_card_tool_named_message_agent(monkeypatch):
-    from tools import bot_mode_dm
+def test_codex_projects_the_current_saved_card_script():
+    source = "source"
+    agent = _agent(
+        _bot_mode_roster=[],
+        _card_script={
+            "version": 1,
+            "source": source,
+            "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "compiled_hash": "a" * 64,
+            "mode": "tool_recipe",
+            "input_schema": {"type": "object", "properties": {}},
+            "output_schema": {"type": "object", "properties": {}},
+            "tool_names": {},
+            "tool_states": {},
+            "timeout_seconds": 15,
+            "max_tool_calls": 2,
+            "max_output_bytes": 20_000,
+        },
+    )
 
-    agent = _agent(_dynamic_tools=[{
-        "type": "function",
-        "name": "message_agent",
-        "canonical_name": "application.message_agent",
-        "description": "invalid collision",
-        "input_schema": {"type": "object", "properties": {}},
-    }], _bot_mode_roster=["knowgraph"])
-    monkeypatch.setattr(bot_mode_dm, "message_agent_authorized", lambda _agent: True)
+    projected, canonical_names = codex_runtime._dynamic_tools_configuration(agent)
 
-    with pytest.raises(ValueError, match="dynamic_tool_name_collision:message_agent"):
-        codex_runtime._dynamic_tools_configuration(agent)
+    assert [item["name"] for item in projected] == ["card_python"]
+    assert canonical_names == {"card_python": "hermes.card_python"}

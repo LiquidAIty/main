@@ -76,7 +76,6 @@ describe('AgentBuilderProjectDrawer Project creation', () => {
       body: JSON.stringify({
         name: 'Research Room',
         code: 'research-room',
-        project_type: 'agent',
       }),
     }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/decks'))).toBe(false);

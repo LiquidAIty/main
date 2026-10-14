@@ -115,6 +115,15 @@ class SeedMessage(Params):
     display_kind: str | None = None
 
 
+class CardTurnContext(Params):
+    endpoint: str
+    project_id: str
+    deck_id: str
+    conversation_id: str
+    card_id: str
+    profile: str
+
+
 class SessionCreateParams(ProfileParams):
     cols: int | None = None
     source: str | None = None
@@ -132,6 +141,7 @@ class SessionCreateParams(ProfileParams):
     follow_profile_config: bool = False
     bot_mode_roster: list[str] | None = None
     bot_mode_sessions: dict[str, str] | None = None
+    card_turn_context: CardTurnContext | None = None
 
 
 class SessionCreateResult(Result):
@@ -180,8 +190,10 @@ class SessionResumeParams(SessionParams):
     omit_messages: bool = False
     eager_build: bool = False
     close_on_disconnect: bool = False
+    follow_profile_config: bool = False
     bot_mode_roster: list[str] | None = None
     bot_mode_sessions: dict[str, str] | None = None
+    card_turn_context: CardTurnContext | None = None
 
 
 class SessionResumeResult(LiveSessionSnapshot):
@@ -197,9 +209,7 @@ class SessionActivateParams(SessionParams):
     omit_messages: bool = False
     bot_mode_roster: list[str] | None = None
     bot_mode_sessions: dict[str, str] | None = None
-    expected_profile_capability_fingerprint: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{12}$"
-    )
+    card_turn_context: CardTurnContext | None = None
 
 
 class SessionActivateResult(LiveSessionSnapshot):

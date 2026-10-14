@@ -198,6 +198,7 @@ class MessageCompletePayload(Payload):
 
     text: str | JsonValue = ""
     submission_id: str | None = None
+    notification_process_ids: list[str] | None = None
     usage: Usage | None = None
     turn_usage: Usage | None = None
     status: TurnStatus | None = None

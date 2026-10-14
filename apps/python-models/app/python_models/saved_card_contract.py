@@ -23,9 +23,19 @@ GRANT_FIELDS = {
     "mcp_connection": "mcpConnectionIds",
 }
 
+_RETIRED_HERMES_TOOL_MARKER_PREFIX = "hermes:tool:"
+_RETIRED_CARD_TOOL_IDS = frozenset({
+    "card.load_graph_references",
+    "engraphis_correct",
+    "engraphis_ingest",
+    "engraphis_link",
+    "write_mag_one_instructions",
+})
+_RETIRED_RUNTIME_OPTION_FIELDS = frozenset({"openaiRuntime", "team", "writeMode"})
+
 KNOWN_RUNTIME_OPTION_FIELDS = {
     "tools", "skills", "toolsets", "mcpConnectionIds",
-    "provider", "modelKey", "providerModelId", "accessMode", "enabled",
+    "provider", "modelKey", "providerModelId", "accessMode",
     "reasoningEffort",
 }
 
@@ -109,6 +119,26 @@ def string_list(value: Any, field: str) -> list[str]:
         result.append(text)
     return result
 
+
+def canonical_card_tools_and_toolsets(options: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Return the one canonical split between MCP tools and Hermes toolsets.
+
+    Old saved revisions placed fake ``hermes:tool:*`` markers and two removed
+    staging operations in ``tools``. Reads discard that residue in memory and
+    the next save removes it from persisted grants.
+    """
+
+    tools = string_list(options.get("tools"), "tools")
+    toolsets = string_list(options.get("toolsets"), "toolsets")
+    return (
+        [
+            tool_id for tool_id in tools
+            if not tool_id.startswith(_RETIRED_HERMES_TOOL_MARKER_PREFIX)
+            and tool_id not in _RETIRED_CARD_TOOL_IDS
+        ],
+        toolsets,
+    )
+
 def card_runtime(card: dict[str, Any]) -> dict[str, str]:
     runtime = json_object(card.get("runtime"), "card_runtime")
     unknown = set(runtime) - {"kind", "mode", "profile"}
@@ -170,18 +200,9 @@ def validate_saved_provider_selection(
         )
     return pair
 
-def saved_openai_runtime(value: Any, *, required: bool) -> str | None:
-    if value is None and not required:
-        return None
-    normalized = str(value or "").strip().lower()
-    if normalized != "codex_app_server":
-        raise CardDomainError("hermes_saved_openai_runtime_invalid")
-    return normalized
-
 def validate_saved_hermes_runtime_authority(
     provider: Any,
     access_mode: Any,
-    openai_runtime: Any,
     *,
     hermes: bool,
 ) -> dict[str, Any]:
@@ -189,41 +210,36 @@ def validate_saved_hermes_runtime_authority(
         provider, access_mode
     )
     if not hermes:
-        if openai_runtime is not None:
-            raise CardDomainError("card_hermes_execution_authority_unsupported")
-        return {
-            "provider": normalized_provider,
-            "accessMode": normalized_access_mode,
-        }
-    normalized_runtime = saved_openai_runtime(openai_runtime, required=False)
-    if (
-        normalized_runtime == "codex_app_server"
-        and (normalized_provider, normalized_access_mode)
-        != ("openai", "chatgpt-account")
-    ):
-        raise CardDomainError(
-            "hermes_saved_provider_transport_unsupported:"
-            f"{normalized_provider}:{normalized_access_mode}:{normalized_runtime}"
-        )
+        raise CardDomainError("card_runtime_requires_hermes")
     return {
         "provider": normalized_provider,
         "accessMode": normalized_access_mode,
-        "openaiRuntime": normalized_runtime,
     }
 
 def stable_card_record(card: dict[str, Any]) -> dict[str, Any]:
     options = json_object(card.get("runtimeOptions"), "runtime_options")
     runtime = card_runtime(card)
+    if any(field in card for field in ("provider", "providerModelId", *GRANT_FIELDS.values())):
+        raise CardDomainError("card_top_level_runtime_configuration_unsupported")
     # Saved misconfigurations must remain readable through the canonical API so
     # an authenticated update can repair them. Invocation validates the strict
     # Hermes transport/policy and fails closed before starting a Run.
-    provider = str(options.get("provider") or card.get("provider") or "").strip().lower()
+    provider = str(options.get("provider") or "").strip().lower()
     access_mode = str(options.get("accessMode") or "").strip().lower()
+    tools, toolsets = canonical_card_tools_and_toolsets(options)
     grants = {
-        field: string_list(options.get(field, card.get(field)), field)
-        for field in GRANT_FIELDS.values()
+        "tools": tools,
+        "skills": string_list(options.get("skills"), "skills"),
+        "toolsets": toolsets,
+        "mcpConnectionIds": string_list(
+            options.get("mcpConnectionIds"), "mcp_connection_ids",
+        ),
     }
-    extensions = {key: value for key, value in options.items() if key not in KNOWN_RUNTIME_OPTION_FIELDS}
+    extensions = {
+        key: value for key, value in options.items()
+        if key not in KNOWN_RUNTIME_OPTION_FIELDS
+        and key not in _RETIRED_RUNTIME_OPTION_FIELDS
+    }
     # Preserve legacy or partially restored authority fields verbatim here.
     # The authenticated Card API must be able to read and repair them. The
     # invocation boundary below validates the exact current Hermes contract.
@@ -257,22 +273,17 @@ def stable_card_record(card: dict[str, Any]) -> dict[str, Any]:
         "title": required_text(card.get("title"), "card_title"),
         "subtitle": card.get("subtitle"),
         "role": card.get("role"),
-        "status": card.get("status"),
         "parentGraphId": card.get("parentGraphId"),
         "basePrompt": str(card.get("prompt") or ""),
         "stableOutputContract": card.get("outputContract"),
         "runtime": runtime,
         "provider": provider,
         "modelKey": options.get("modelKey"),
-        "providerModelId": options.get("providerModelId") or card.get("providerModelId"),
+        "providerModelId": options.get("providerModelId"),
         "accessMode": access_mode,
         "reasoningEffort": options.get("reasoningEffort"),
-        "enabled": card.get("enabled", options.get("enabled", True)) is not False,
-        "enabledLocation": (
-            "card" if "enabled" in card
-            else "runtime-options" if "enabled" in options
-            else "default"
-        ),
+        "enabled": card.get("enabled", True) is not False,
+        "enabledLocation": "card",
         "runtimeExtensions": extensions,
         "grants": grants,
         "presentationProperties": {
@@ -336,14 +347,13 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
     is_hermes = runtime["kind"] == "hermes"
     validate_auto_runtime_options(options, runtime)
     validate_saved_hermes_runtime_authority(
-        options.get("provider") or card.get("provider"),
+        options.get("provider"),
         options.get("accessMode"),
-        options.get("openaiRuntime"),
         hermes=is_hermes,
     )
     model_key = str(options.get("modelKey") or "").strip()
     provider_model_id = str(
-        options.get("providerModelId") or card.get("providerModelId") or model_key
+        options.get("providerModelId") or model_key
     ).strip()
     if not model_key or not provider_model_id:
         raise CardDomainError("card_model_selection_incomplete")
@@ -378,6 +388,4 @@ def runtime_owner(card: dict[str, Any]) -> str:
     return "hermes"
 
 def card_is_enabled(card: dict[str, Any]) -> bool:
-    options = card.get("runtimeOptions")
-    option_enabled = options.get("enabled") if isinstance(options, dict) else None
-    return card.get("enabled") is not False and option_enabled is not False
+    return card.get("enabled") is not False

@@ -138,6 +138,33 @@ def _wrap_with_dashboard_oauth_flow(coro):
     return _scoped()
 
 
+def _wrap_with_saved_card_turn(coro):
+    """Carry the exact Project/Card/Run binding onto the dedicated MCP loop task."""
+    try:
+        from tui_gateway.saved_card_turn import current_card_turn_context
+
+        turn = current_card_turn_context()
+    except Exception:
+        turn = None
+    if turn is None:
+        return coro
+
+    async def _scoped():
+        from tui_gateway.saved_card_turn import bind_card_turn, reset_card_turn
+
+        token = bind_card_turn(
+            turn,
+            turn["run_id"],
+            externally_managed=turn.get("externally_managed") == "true",
+        )
+        try:
+            return await coro
+        finally:
+            reset_card_turn(token)
+
+    return _scoped()
+
+
 def _running_loop() -> Optional[asyncio.AbstractEventLoop]:
     """The MCP loop when it is up, else None (read under ``_lock``)."""
     with _core._lock:
@@ -156,10 +183,10 @@ def _run_on_mcp_loop(coro_or_factory, timeout: float = 30):
         if asyncio.iscoroutine(coro_or_factory):
             coro_or_factory.close()
         raise RuntimeError("MCP event loop is not running")
-    # run_coroutine_threadsafe copies the LOOP thread's context, so a per-request profile scope
-    # would vanish here; re-establish it inside the task's own context.
-    coro = _wrap_with_dashboard_oauth_flow(_wrap_with_home_override(
-        coro_or_factory() if callable(coro_or_factory) else coro_or_factory))
+    # run_coroutine_threadsafe copies the LOOP thread's context, so caller-bound scopes
+    # would vanish here; re-establish them inside the task's own context.
+    coro = _wrap_with_saved_card_turn(_wrap_with_dashboard_oauth_flow(_wrap_with_home_override(
+        coro_or_factory() if callable(coro_or_factory) else coro_or_factory)))
     future = safe_schedule_threadsafe(coro, loop, logger=logger, log_message="MCP scheduling failed")
     if future is None:
         raise RuntimeError("MCP event loop unavailable (failed to schedule)")

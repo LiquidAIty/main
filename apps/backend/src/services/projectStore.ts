@@ -56,9 +56,8 @@ function projectLookup(projectId: string): { clause: string; params: any[] } {
 
 export async function createProject(
   name: string,
-  code?: string | null,
-  projectType: 'assist' | 'agent' = 'agent',
-  ownerUserId?: string | null,
+  code: string | null,
+  ownerUserId: string,
 ): Promise<ProjectSummary> {
   const ownerId = typeof ownerUserId === 'string' ? ownerUserId.trim() : '';
   // Prisma User ids are CUID strings; only project ids use UUIDs. The route
@@ -71,19 +70,17 @@ export async function createProject(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    let systemCards: Array<{ card_id: string; current_revision_id: string }> = [];
-    if (projectType === 'agent') {
-      // Card revision propagation and Project membership creation take the same
-      // transaction-scoped profile locks.  Whichever operation starts second
-      // therefore reads after the first has committed and cannot reintroduce a
-      // superseded Card revision into a new Project.
-      await lockCardProfiles(client, DEFAULT_PROJECT_CARDS.map((card) => card.profile));
-      const identityParams = DEFAULT_PROJECT_CARDS.flatMap((card) => [card.cardId, card.profile]);
-      const values = DEFAULT_PROJECT_CARDS.map((_, index) => (
-        `($${index * 2 + 1}::text,$${index * 2 + 2}::text)`
-      )).join(',');
-      const result = await client.query(
-        `WITH expected(card_id, runtime_profile) AS (VALUES ${values}),
+    // Card revision propagation and Project membership creation take the same
+    // transaction-scoped profile locks. Whichever operation starts second
+    // therefore reads after the first has committed and cannot reintroduce a
+    // superseded Card revision into a new Project.
+    await lockCardProfiles(client, DEFAULT_PROJECT_CARDS.map((card) => card.profile));
+    const identityParams = DEFAULT_PROJECT_CARDS.flatMap((card) => [card.cardId, card.profile]);
+    const values = DEFAULT_PROJECT_CARDS.map((_, index) => (
+      `($${index * 2 + 1}::text,$${index * 2 + 2}::text)`
+    )).join(',');
+    const result = await client.query(
+      `WITH expected(card_id, runtime_profile) AS (VALUES ${values}),
          ranked AS (
            SELECT expected.card_id, card.current_revision_id,
                   row_number() OVER (
@@ -102,37 +99,35 @@ export async function createProject(
          SELECT card_id, current_revision_id::text
          FROM ranked WHERE rank=1
          ORDER BY card_id`,
-        identityParams,
-      );
-      systemCards = result.rows.map((row) => ({
-        card_id: String(row.card_id),
-        current_revision_id: String(row.current_revision_id),
-      }));
-      const resolved = new Map(systemCards.map((row) => [row.card_id, row.current_revision_id]));
-      const missing = DEFAULT_PROJECT_CARDS.find((card) => !resolved.get(card.cardId));
-      if (missing) throw new Error(`default_project_card_unavailable:${missing.cardId}`);
-    }
+      identityParams,
+    );
+    const systemCards = result.rows.map((row) => ({
+      card_id: String(row.card_id),
+      current_revision_id: String(row.current_revision_id),
+    }));
+    const resolved = new Map(systemCards.map((row) => [row.card_id, row.current_revision_id]));
+    const missing = DEFAULT_PROJECT_CARDS.find((card) => !resolved.get(card.cardId));
+    if (missing) throw new Error(`default_project_card_unavailable:${missing.cardId}`);
 
     const { rows } = await client.query(
       `INSERT INTO ${PROJECTS_TABLE}
-         (id, name, code, status, agent_tools, agent_io_schema, agent_permissions, owner_user_id, project_type)
-       VALUES ($1, $2, $3, 'active', '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, $4, $5)
-       RETURNING id, name, code, status, project_type`,
-      [projectId, name, projectCode, ownerId, projectType],
+         (id, name, code, status, agent_tools, agent_io_schema, agent_permissions, owner_user_id)
+       VALUES ($1, $2, $3, 'active', '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, $4)
+       RETURNING id, name, code, status`,
+      [projectId, name, projectCode, ownerId],
     );
     const row = rows[0];
     if (!row) throw new Error('project_create_failed');
 
-    if (projectType === 'agent') {
-      const deckRevision = randomUUID();
-      await client.query(
+    const deckRevision = randomUUID();
+    await client.query(
         `INSERT INTO ag_catalog.agent_decks
            (project_id, deck_id, name, project_code_folder, document_version, revision, saved_at, updated_at)
          VALUES ($1,$2,'Agent Card Deck',NULL,10,$3,NOW(),NOW())`,
         [projectId, DEFAULT_PROJECT_DECK_ID, deckRevision],
       );
-      const revisionByCard = new Map(systemCards.map((entry) => [entry.card_id, entry.current_revision_id]));
-      for (const [ordinal, card] of DEFAULT_PROJECT_CARDS.entries()) {
+    const revisionByCard = new Map(systemCards.map((entry) => [entry.card_id, entry.current_revision_id]));
+    for (const [ordinal, card] of DEFAULT_PROJECT_CARDS.entries()) {
         const revisionId = revisionByCard.get(card.cardId);
         if (!revisionId) throw new Error(`default_project_card_unavailable:${card.cardId}`);
         await client.query(
@@ -143,12 +138,11 @@ export async function createProject(
         );
         await client.query(
           `INSERT INTO ag_catalog.deck_card_memberships
-             (project_id, deck_id, card_id, ordinal, position_x, position_y,
-              parent_graph_id, display_status, presentation_config)
-           VALUES ($1,$2,$3,$4,$5,$6,NULL,'ready','{}'::jsonb)`,
+           (project_id, deck_id, card_id, ordinal, position_x, position_y,
+              parent_graph_id, presentation_config)
+           VALUES ($1,$2,$3,$4,$5,$6,NULL,'{}'::jsonb)`,
           [projectId, DEFAULT_PROJECT_DECK_ID, card.cardId, ordinal, card.x, card.y],
         );
-      }
     }
     await client.query('COMMIT');
     return {
@@ -156,7 +150,6 @@ export async function createProject(
       name: row.name,
       code: row.code ?? null,
       status: row.status ?? null,
-      project_type: row.project_type,
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -191,7 +184,6 @@ export async function discardFreshProject(projectId: string, ownerUserId: string
 
 export async function listOwnedProjects(
   ownerUserId: string,
-  projectType?: 'assist' | 'agent' | null,
 ): Promise<ProjectSummary[]> {
   const owner = ownerUserId.trim();
   if (!owner) throw new Error('project_owner_required');
@@ -199,13 +191,14 @@ export async function listOwnedProjects(
   const clauses: string[] = [];
   params.push(owner);
   clauses.push(`owner_user_id = $${params.length}`);
-  if (projectType) {
-    params.push(projectType);
-    clauses.push(`project_type = $${params.length}`);
-  }
+  clauses.push(`EXISTS (
+    SELECT 1 FROM ag_catalog.agent_decks AS deck
+    WHERE deck.project_id=${PROJECTS_TABLE}.id
+      AND deck.deck_id='${DEFAULT_PROJECT_DECK_ID}'
+  )`);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
   const { rows } = await pool.query(
-    `SELECT id, name, code, status, project_type
+    `SELECT id, name, code, status
      FROM ${PROJECTS_TABLE}
      ${where}
      ORDER BY updated_at DESC`,
@@ -216,7 +209,6 @@ export async function listOwnedProjects(
     name: row.name,
     code: row.code ?? null,
     status: row.status ?? null,
-    project_type: row.project_type,
   }));
 }
 
@@ -230,9 +222,14 @@ export async function getOwnedProjectByReference(
   const { clause, params } = projectLookup(reference);
   params.push(owner);
   const { rows } = await pool.query(
-    `SELECT id, name, code, status, project_type, owner_user_id
+    `SELECT id, name, code, status, owner_user_id
      FROM ${PROJECTS_TABLE}
      WHERE ${clause} AND owner_user_id = $2
+       AND EXISTS (
+         SELECT 1 FROM ag_catalog.agent_decks AS deck
+         WHERE deck.project_id=${PROJECTS_TABLE}.id
+           AND deck.deck_id='${DEFAULT_PROJECT_DECK_ID}'
+       )
      LIMIT 1`,
     params,
   );
@@ -244,7 +241,6 @@ export async function getOwnedProjectByReference(
     name: row.name,
     code: row.code ?? null,
     status: row.status ?? null,
-    project_type: row.project_type,
     ownerUserId: String(row.owner_user_id || ''),
   };
 }
@@ -253,9 +249,14 @@ export async function getInternalProjectById(projectId: string): Promise<OwnedPr
   const id = String(projectId || '').trim();
   if (!UUID_REGEX.test(id)) return null;
   const { rows } = await pool.query(
-    `SELECT id, name, code, status, project_type, owner_user_id
+    `SELECT id, name, code, status, owner_user_id
      FROM ${PROJECTS_TABLE}
      WHERE id = $1
+       AND EXISTS (
+         SELECT 1 FROM ag_catalog.agent_decks AS deck
+         WHERE deck.project_id=${PROJECTS_TABLE}.id
+           AND deck.deck_id='${DEFAULT_PROJECT_DECK_ID}'
+       )
      LIMIT 1`,
     [id],
   );
@@ -266,7 +267,6 @@ export async function getInternalProjectById(projectId: string): Promise<OwnedPr
     name: row.name,
     code: row.code ?? null,
     status: row.status ?? null,
-    project_type: row.project_type,
     ownerUserId: String(row.owner_user_id || ''),
   };
 }
@@ -436,8 +436,8 @@ export async function attachSavedCardToProject(
     await client.query(
       `INSERT INTO ag_catalog.deck_card_memberships
          (project_id, deck_id, card_id, ordinal, position_x, position_y,
-          parent_graph_id, display_status, presentation_config)
-       VALUES ($1,$2,$3,$4,$5,$6,NULL,'ready','{}'::jsonb)`,
+          parent_graph_id, presentation_config)
+       VALUES ($1,$2,$3,$4,$5,$6,NULL,'{}'::jsonb)`,
       [projectId, deckId, input.cardId, ordinal, input.position.x, input.position.y],
     );
     await client.query('COMMIT');

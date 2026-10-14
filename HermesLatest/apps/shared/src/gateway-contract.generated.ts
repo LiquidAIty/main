@@ -1815,7 +1815,6 @@ export interface ProfileMirrored {
 export interface ProfilesDescribeParams {
   profile?: string | null
   name?: string | null
-  bot_mode_roster?: string[] | null
 }
 /** Editor snapshot; ``toolsets_pinned`` says whether ``platform_toolsets.cli`` is explicit. */
 export interface ProfilesDescribeResult {
@@ -1829,7 +1828,9 @@ export interface ProfilesDescribeResult {
   mcp_servers?: McpServerEntry[]
   delegation: ProfileDelegationSettings
   task_mode?: 'team' | null
-  capability_fingerprint: string
+  bot_mode_roster?: string[] | null
+  ui_meta_revisions?: Record<string, number>
+  ui_meta?: Record<string, unknown> | null
 }
 export interface ProfileModelPin {
   provider?: string
@@ -1851,6 +1852,12 @@ export interface McpServerEntry {
   name: string
   enabled?: boolean
   transport?: string
+  tool_filter?: string[] | null
+  context_headers?: McpContextHeaders | null
+}
+export interface McpContextHeaders {
+  project_id: string
+  profile: string
 }
 export interface ProfileDelegationSettings {
   provider: string
@@ -1874,8 +1881,11 @@ export interface ProfilesConfigureParams {
   disabled_skills?: string[] | null
   enabled_toolsets?: string[] | null
   enabled_mcp_servers?: string[] | null
+  mcp_tool_filters?: Record<string, string[]> | null
+  mcp_context_headers?: Record<string, McpContextHeaders> | null
   delegation?: ProfileDelegationSettings | null
   task_mode?: 'team' | null
+  bot_mode_roster?: string[] | null
 }
 /** ``confirm_required`` mirrors ``config.set``: a guarded model pick wrote nothing yet. */
 export interface ProfilesConfigureResult {
@@ -2457,13 +2467,12 @@ export interface PromptSubmitParams {
   interrupted?: boolean | null
   queued?: boolean | null
   submission_id?: string | null
-  dynamic_tools?: DynamicToolDefinition[] | null
+  card_run_id?: string | null
+  mcp_tool_selection?: Record<string, string[]> | null
   card_script?: CardScriptDefinition | null
-  tool_endpoint?: string | null
-  tool_authorization?: string | null
   bot_mode_roster?: string[] | null
   bot_mode_sessions?: Record<string, string> | null
-  expected_profile_capability_fingerprint?: string | null
+  bot_mode_reply_delivery?: 'notification' | 'direct' | null
   surface?: string | null
   voice_context?: string | null
   title_preview?: string | null
@@ -2474,15 +2483,7 @@ export interface PromptSubmitParams {
   confirm_empty_truncate?: boolean | null
   rebind_survivor_row_ids?: number[] | null
 }
-/** One exact Card-selected Codex Dynamic Tool. */
-export interface DynamicToolDefinition {
-  type: string
-  name: string
-  canonical_name: string
-  description: string
-  input_schema: unknown
-}
-/** One validated saved Card Python recipe for this exact turn. ``enabled`` is deliberately absent: nonblank, valid saved source is the activation condition. Tool aliases are the already-authorized per-turn Dynamic Tool names, never a registry or discovery surface. */
+/** One validated saved Card Python recipe for this exact turn. ``enabled`` is deliberately absent: nonblank, valid saved source is the activation condition. Tool names identify the exact saved capabilities already loaded by the receiving Card's profile. */
 export interface CardScriptDefinition {
   version: number
   source: string
@@ -2491,7 +2492,7 @@ export interface CardScriptDefinition {
   mode: 'tool_recipe'
   input_schema: Record<string, unknown>
   output_schema: Record<string, unknown>
-  tool_aliases: Record<string, string>
+  tool_names: Record<string, string>
   tool_states: Record<string, number>
   timeout_seconds: number
   max_tool_calls: number
@@ -2823,6 +2824,7 @@ export interface SessionCreateParams {
   follow_profile_config?: boolean
   bot_mode_roster?: string[] | null
   bot_mode_sessions?: Record<string, string> | null
+  card_turn_context?: CardTurnContext | null
 }
 /** One create-time transcript row (``session_history._coerce_seed_history``); ``text`` is the legacy alias of ``content``; only ``display_kind: "hidden"`` is accepted from the wire. Clients forward stored rows verbatim (``_row_id``, ``timestamp``, …) and the coercer drops what it does not use, so the row stays open. */
 export interface SeedMessage {
@@ -2831,6 +2833,14 @@ export interface SeedMessage {
   text?: string | null
   display_kind?: string | null
   [key: string]: unknown
+}
+export interface CardTurnContext {
+  endpoint: string
+  project_id: string
+  deck_id: string
+  conversation_id: string
+  card_id: string
+  profile: string
 }
 export interface SessionCreateResult {
   session_id: string
@@ -2893,8 +2903,10 @@ export interface SessionResumeParams {
   omit_messages?: boolean
   eager_build?: boolean
   close_on_disconnect?: boolean
+  follow_profile_config?: boolean
   bot_mode_roster?: string[] | null
   bot_mode_sessions?: Record<string, string> | null
+  card_turn_context?: CardTurnContext | null
 }
 export interface SessionResumeResult {
   session_id: string
@@ -2967,7 +2979,7 @@ export interface SessionActivateParams {
   omit_messages?: boolean
   bot_mode_roster?: string[] | null
   bot_mode_sessions?: Record<string, string> | null
-  expected_profile_capability_fingerprint?: string | null
+  card_turn_context?: CardTurnContext | null
 }
 export interface SessionActivateResult {
   session_id: string
@@ -4420,6 +4432,7 @@ export interface MessageInterimPayload {
 export interface MessageCompletePayload {
   text?: string | unknown
   submission_id?: string | null
+  notification_process_ids?: string[] | null
   usage?: Usage | null
   turn_usage?: Usage | null
   status?: TurnStatus | null

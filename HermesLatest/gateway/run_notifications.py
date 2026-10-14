@@ -2000,6 +2000,19 @@ class GatewayNotificationsMixin:
             "parent_session_id": (
                 watcher.get("parent_session_id") or getattr(session, "parent_session_id", "") or ""
             ),
+            **({
+                "originating_run_id": str(
+                    watcher.get("originating_run_id")
+                    or getattr(session, "originating_run_id", "")
+                ),
+            } if (
+                watcher.get("originating_run_id")
+                or getattr(session, "originating_run_id", "")
+            ) else {}),
+            **({"continue_card_run": True} if (
+                watcher.get("continue_card_run") is True
+                or getattr(session, "continue_card_run", False) is True
+            ) else {}),
         }
 
     def _format_process_final_message(self, session_id: str, session, notify_mode: str) -> str:

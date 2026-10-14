@@ -443,7 +443,6 @@ function shortHash(script: CardScript): string {
 function changedSourceDraft(
   current: CardScript,
   nextSource: string,
-  runtimeKind: 'hermes',
 ): CardScript {
   return {
     ...current,
@@ -456,14 +455,6 @@ function changedSourceDraft(
       executionTested: false,
       errors: [],
       toolHandles: [],
-    },
-    nativeSupport: {
-      available: false,
-      active: false,
-      executor: null,
-      reason: runtimeKind === 'hermes'
-        ? 'card_script_native_bridge_unavailable'
-        : 'card_script_runtime_unsupported',
     },
   };
 }
@@ -589,7 +580,7 @@ export function CardScriptEditor({
         const current = scriptRef.current;
         const nextSource = sourceModel.getValue();
         if (nextSource === current.source) return;
-        onChangeRef.current(changedSourceDraft(current, nextSource, runtimeKind));
+        onChangeRef.current(changedSourceDraft(current, nextSource));
       }));
       disposables.push(editor.onDidChangeCursorPosition((event) => {
         setCursorPosition({ line: event.position.lineNumber, column: event.position.column });
@@ -918,7 +909,7 @@ export function CardScriptEditor({
   const validationStatus = String(validation.status || (script.source.trim() ? 'unvalidated' : 'blank'));
   const validationErrors = Array.isArray(validation.errors) ? validation.errors.map(String) : [];
   const diagnosticCount = validationErrors.length + (validationError ? 1 : 0);
-  const active = script.enabled && script.nativeSupport?.active === true;
+  const active = script.enabled && validationStatus === 'valid';
   const ungrantedCount = Math.max(0, (header?.catalogToolCount || 0) - toolReferences.length);
 
   return (
@@ -936,23 +927,12 @@ export function CardScriptEditor({
             onChange={(event) => onChange({
               ...script,
               enabled: event.target.checked,
-              nativeSupport: { ...(script.nativeSupport || {}), active: false },
             })}
             aria-label="Activate Card Script"
           />
           Enable for an eligible saved Run
         </label>
       </header>
-
-      {runtimeKind !== 'hermes' ? (
-        <div role="status" className="card-script-ide__notice">
-          This Card is not Hermes-backed. Editing remains available; activation stays off and the Card remains MCP-driven.
-        </div>
-      ) : script.nativeSupport?.available !== true ? (
-        <div role="status" className="card-script-ide__notice">
-          Card Python Script runtime execution is not currently connected. Editing, validation, and saving remain available; Runs keep the Card&apos;s selected MCP tools.
-        </div>
-      ) : null}
 
       <div className="card-script-ide__frame">
         <div className="card-script-ide__tabs" role="tablist" aria-label="Card Script files">
@@ -1002,7 +982,7 @@ export function CardScriptEditor({
         <footer className="card-script-ide__status" data-testid="card-script-status-line">
           <div>
             <span>Python</span>
-            <span className={active ? 'is-active' : ''}>{active ? 'Active' : script.enabled ? 'Fallback' : 'Inactive'}</span>
+            <span className={active ? 'is-active' : ''}>{active ? 'Active' : script.enabled ? 'Pending validation' : 'Inactive'}</span>
             <span>{validationStatus}</span>
             <span>v{script.version} · {shortHash(script)}</span>
           </div>
@@ -1021,7 +1001,7 @@ export function CardScriptEditor({
         </button>
         {!script.source.trim() ? (
           <>
-            <button type="button" onClick={() => onChange(changedSourceDraft(script, STARTER_SCRIPT, runtimeKind))}>
+            <button type="button" onClick={() => onChange(changedSourceDraft(script, STARTER_SCRIPT))}>
               Insert bounded starter
             </button>
             {SCRIPT_EXAMPLES.map((example) => (
@@ -1029,7 +1009,7 @@ export function CardScriptEditor({
                 key={example.id}
                 type="button"
                 title={example.description}
-                onClick={() => onChange(changedSourceDraft(script, example.source, runtimeKind))}
+                onClick={() => onChange(changedSourceDraft(script, example.source))}
               >
                 Insert {example.label} example
               </button>
@@ -1057,7 +1037,6 @@ export function CardScriptEditor({
             compiledHash: script.compiledHash,
             paletteFingerprint: script.paletteFingerprint,
             compiled: script.compiled,
-            nativeSupport: script.nativeSupport,
           }, null, 2)}</pre>
         </details>
       ) : null}

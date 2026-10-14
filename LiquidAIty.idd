@@ -132,7 +132,7 @@ fields = [
   { name = "modelKey", label = "Model", section = "Runtime", path = "runtimeOptions.modelKey", source = "CardConfiguration.modelKey", catalog = "configured-models", control = "catalog-select", filteredBy = "provider" },
   { name = "autoModel", label = "Auto Model", section = "Runtime", path = "runtimeOptions.autoModel", source = "CardConfiguration.autoModel", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes", runtimeModeNot = "magentic_one" } },
   { name = "reasoningEffort", label = "Reasoning", section = "Runtime", path = "runtimeOptions.reasoningEffort", source = "CardConfiguration.reasoningEffort" },
-  { name = "autoTools", label = "AutoTools", section = "Tools", path = "runtimeOptions.autoTools", source = "CardConfiguration.autoTools", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes", runtimeModeNot = "magentic_one" } },
+  { name = "autoTools", label = "Auto Tools", section = "Tools", path = "runtimeOptions.autoTools", source = "CardConfiguration.autoTools", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes", runtimeModeNot = "magentic_one" } },
   { name = "tools", label = "Tools", section = "Tools", path = "runtimeOptions.tools", source = "CardConfiguration.tools", catalog = "tools", control = "catalog-multiselect" },
   { name = "subagentModel", label = "Subagent model", section = "Runtime", path = "runtimeOptions.subagentModel", source = "CardConfiguration.subagentModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { runtimeKind = "hermes" } },
 ]

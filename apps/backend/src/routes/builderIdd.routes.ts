@@ -49,6 +49,29 @@ export function scriptPaletteFingerprint(definitions: ToolCatalogDefinition[]): 
   return createHash('sha256').update(JSON.stringify(definitions)).digest('hex');
 }
 
+export async function materializeCardEditor(
+  projectId: string,
+  deckId: string,
+  cardId: string,
+): Promise<Record<string, unknown>> {
+  const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
+  const materialized = await requestPythonRailsJson('/idd/card-editor/materialize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      models: listConfiguredModelOptions(openaiDefault),
+      ...await cardCatalogOptions(projectId, deckId, cardId),
+    }),
+  }) as Record<string, unknown>;
+  if (
+    !materialized?.dictionary
+    || !Array.isArray(materialized.fields)
+    || !materialized.catalogs
+    || typeof materialized.catalogs !== 'object'
+  ) throw new Error('input_data_dictionary_card_editor_invalid');
+  return materialized;
+}
+
 builderIddRoutes.get('/card-editor', async (req, res) => {
   try {
     const projectId = String(req.query.projectId || '').trim();
@@ -58,25 +81,11 @@ builderIddRoutes.get('/card-editor', async (req, res) => {
         error: 'card_editor_project_access_denied',
       });
     }
-    const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
-    const materialized = await requestPythonRailsJson('/idd/card-editor/materialize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        models: listConfiguredModelOptions(openaiDefault),
-        ...await cardCatalogOptions(
-          projectId, String(req.query.deckId || ''), String(req.query.cardId || ''),
-        ),
-      }),
-    }) as Record<string, unknown>;
-    if (
-      !materialized?.dictionary
-      || !Array.isArray(materialized.fields)
-      || !materialized.catalogs
-      || typeof materialized.catalogs !== 'object'
-    ) {
-      throw new Error('input_data_dictionary_card_editor_invalid');
-    }
+    const materialized = await materializeCardEditor(
+      projectId,
+      String(req.query.deckId || ''),
+      String(req.query.cardId || ''),
+    );
     return res.json({ ok: true, ...materialized });
   } catch (error) {
     const reason = safeToolCatalogFailureReason(error);

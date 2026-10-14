@@ -1041,8 +1041,7 @@ def _attach_built_agent(current: dict, agent) -> None:
             agent._bot_mode_sessions = dict(current["bot_mode_sessions"])
     follows_profile = current.get("follow_profile_config") is True
     agent._follow_profile_config = follows_profile
-    project_card_session = isinstance(current.get("bot_mode_sessions"), dict)
-    if follows_profile or project_card_session:
+    if follows_profile:
         fingerprint = str(
             getattr(agent, "_profile_capability_fingerprint", "") or ""
         )
@@ -2591,7 +2590,8 @@ def _init_session(
     sid: str, key: str, agent, history: list, cols: int = 80, cwd: str | None = None,
     session_db=None, source: str | None = None, profile_home: str | None = None,
     explicit_cwd: bool = False, bot_mode_roster: list[str] | None = None,
-    bot_mode_sessions: dict[str, str] | None = None):
+    bot_mode_sessions: dict[str, str] | None = None,
+    card_turn_context: dict[str, str] | None = None):
     now = time.time()
     with _sessions_lock:
         _sessions[sid] = {
@@ -2605,6 +2605,7 @@ def _init_session(
             "profile_home": profile_home,
             "bot_mode_roster": list(bot_mode_roster) if bot_mode_roster is not None else None,
             "bot_mode_sessions": dict(bot_mode_sessions) if bot_mode_sessions is not None else None,
+            "card_turn_context": dict(card_turn_context) if card_turn_context is not None else None,
             # In-session /model switch, honored on rebuild (/new, resume) — never leaks to siblings via env vars.
             "model_override": None,
             # Async events go to the transport that created the session (stdio for Ink, WS for the dashboard).
@@ -2662,7 +2663,8 @@ def _deferred_session_record(
     close_on_disconnect: bool = False, display_history_prefix: list | None = None,
     profile_home: Path | None = None, lazy: bool = False, model_override=None,
     resume_runtime_overrides: dict | None = None, todo_state: dict | None = None,
-    explicit_cwd: bool = False, bot_mode_roster: list[str] | None = None) -> dict:
+    explicit_cwd: bool = False, bot_mode_roster: list[str] | None = None,
+    card_turn_context: dict[str, str] | None = None) -> dict:
     """A live-session record whose AIAgent is built later (lazy watch / cold resume) — _init_session's shape minus the agent."""
     now = time.time()
     return {
@@ -2674,6 +2676,7 @@ def _deferred_session_record(
         "inflight_turn": None, "last_active": now, "lazy": lazy, "model_override": model_override,
         "pending_title": None,
         "bot_mode_roster": list(bot_mode_roster) if bot_mode_roster is not None else None,
+        "card_turn_context": dict(card_turn_context) if card_turn_context is not None else None,
         "profile_home": str(profile_home) if profile_home is not None else None,
         "resume_runtime_overrides": resume_runtime_overrides, "resume_session_id": session_key,
         "running": False, "session_key": session_key, "show_reasoning": _load_show_reasoning(),

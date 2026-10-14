@@ -1,4 +1,4 @@
-import nativeDocument from '../../../../worldsignal/gods-eye-view-main/index.html?raw';
+import nativeDocument from '../../../../agent-products/gods-eye-view/index.html?raw';
 import scopedStyles from 'virtual:worldview-native-css';
 import { importNativeWorldViewMount as importRuntimeWorldViewMount } from 'virtual:worldview-native-mount';
 

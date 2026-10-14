@@ -11,7 +11,7 @@ from uuid import uuid4
 from app import mcp_auth, mcp_catalog_runtime, mcp_observability, mcp_provider_operations
 from app.application_tool_error import ApplicationToolError
 from app.python_models.operation_definition import OperationDefinition, allowed_operation_keys
-from app.python_models.tool_registry import operation_definition, required_tool_caller_runtime, tool_access
+from app.python_models.tool_registry import operation_definition, tool_access
 from mcp.types import CallToolResult, TextContent
 
 MCP_CALL_TIMEOUT_SECONDS = 30.0
@@ -29,18 +29,18 @@ def request_tool_is_allowed(
     ):
         return False
     # The public host preserves the canonical unknown-tool error from dispatch.
-    # An internal Card-scoped connection fails closed before dispatch because it
-    # may call only operations present in the live registry and its exact grants.
+    # Internal catalog/materializer principals remain read-only infrastructure.
     if access is None:
         return principal is None
     if principal is None:
         if not mcp_auth.OAUTH_ENFORCED:
             return True
-        # Preserve the canonical unknown-tool result for names the registry has
-        # never owned, but do not let a stale external client invoke a known
-        # internal-only operation that is absent from this process's frozen
-        # MCP publication catalog.
-        return name in mcp_catalog_runtime.published_mcp_tool_names()
+        context = mcp_auth.authenticated_project_context()
+        granted = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])
+        return (
+            name in mcp_catalog_runtime.published_mcp_tool_names()
+            and name in granted
+        )
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
         return False
@@ -49,16 +49,7 @@ def request_tool_is_allowed(
             principal.get("grantedTools")
         )
         return access == "read" and grants is not None and name in grants
-    if kind != "card-runtime":
-        return False
-    grants = mcp_auth.validated_principal_tool_names(principal.get("grantedTools"))
-    presented = mcp_auth.validated_principal_tool_names(principal.get("presentedTools"))
-    return (
-        grants is not None
-        and presented is not None
-        and name in grants
-        and name in presented
-    )
+    return False
 async def list_resources() -> list[Any]:
     mcp_observability.trace(
         "resources_list",
@@ -80,54 +71,25 @@ SERVER_OWNED_ARGUMENTS = {
     "originatingAgentId",
     "originatingRunId",
     "_callerCardId",
-    "_callerRuntimeKind",
-    "_callerRuntimeMode",
     "_sourceCardId",
     "_sourceRunId",
     "_builderOperation",
     "_mainContext",
     "_catalogDiagnostics",
-    "_authenticatedUserEdit",
     "_authenticatedProjectId",
 }
-def enforce_tool_caller(
-    name: str,
-    args: dict[str, Any],
-    *,
-    authenticated_external: bool = False,
-) -> str | None:
-    expected = required_tool_caller_runtime(name)
-    card_id = str(args.pop("_callerCardId", "") or "").strip()
-    kind = str(args.pop("_callerRuntimeKind", "") or "").strip()
-    mode = str(args.pop("_callerRuntimeMode", "") or "").strip()
-    if authenticated_external and not kind and not mode:
-        # The authenticated account MCP surface is the Main doorway. Internal
-        # runtimes supply their exact saved runtime union instead.
-        kind, mode = "hermes", "main"
-    if expected is None:
-        return None
-    if not card_id or not kind or not mode:
-        return "tool_caller_identity_unavailable"
-    if {"kind": kind, "mode": mode} != expected:
-        return (
-            f"tool_caller_not_authorized: {name} requires "
-            f"{expected['kind']}/{expected['mode']}"
-        )
-    return None
-
-
 async def dispatch_tool(
     name: str,
     arguments: dict[str, Any],
 ) -> Any:
-    context = mcp_auth.authenticated_main_context()
+    context = mcp_auth.authenticated_project_context()
     principal = mcp_auth.internal_mcp_principal()
     if context is None and principal and principal.get("kind") == "materializer-read":
         # Pre-dispatch reads have real project/Card identity but no Run yet.
         # Keep their provider graph scope without fabricating runtime telemetry.
         context = {
             "projectId": principal["projectId"], "deckId": principal["deckId"],
-            "mainCardId": principal["callerCardId"],
+            "callerCardId": principal["callerCardId"],
             "conversationId": principal.get("conversationId", ""),
         }
     if (
@@ -157,13 +119,6 @@ async def dispatch_tool(
             "error": "caller_identity_rejected: "
             + ",".join(supplied_identity),
         }))]
-    required_runtime = required_tool_caller_runtime(name)
-    if context is None and required_runtime is not None:
-        surface = "main" if required_runtime.get("mode") == "main" else "card"
-        return [TextContent(type="text", text=json.dumps({
-            "ok": False,
-            "error": f"authenticated_{surface}_context_required",
-        }))]
     if context is not None:
         try:
             for field in ("projectId", "deckId", "conversationId"):
@@ -175,37 +130,25 @@ async def dispatch_tool(
             if "parentRunId" in dispatcher_context:
                 args["parentRunId"] = str(context.get("parentRunId") or "")
             if "_sourceCardId" in dispatcher_context:
-                args["_sourceCardId"] = str(context["mainCardId"])
+                args["_sourceCardId"] = str(context["callerCardId"])
             if "_sourceRunId" in dispatcher_context:
                 args["_sourceRunId"] = str(context["parentRunId"])
             if "_callerCardId" in dispatcher_context:
-                args["_callerCardId"] = str(context["mainCardId"])
+                args["_callerCardId"] = str(context["callerCardId"])
             if "_authenticatedProjectId" in dispatcher_context:
                 args["_authenticatedProjectId"] = str(context["projectId"])
-            if "_authenticatedUserEdit" in dispatcher_context:
-                args["_authenticatedUserEdit"] = bool(
-                    context.get("principalKind") is None and principal is None
-                )
             if "_mainContext" in dispatcher_context:
                 args["_mainContext"] = {
-                    field: str(context[field]) for field in mcp_auth.MAIN_CONTEXT_FIELDS
+                    field: str(context[field]) for field in mcp_auth.PROJECT_CONTEXT_FIELDS
                 }
             if "_catalogDiagnostics" in dispatcher_context:
                 args["_catalogDiagnostics"] = (
                     mcp_catalog_runtime.catalog_diagnostics()
                 )
             if "senderAgentId" in allowed:
-                args["senderAgentId"] = str(context["mainCardId"])
+                args["senderAgentId"] = str(context["callerCardId"])
             if "correlationId" in allowed:
                 args["correlationId"] = f"external-mcp:{uuid4()}"
-            if required_runtime is not None:
-                args["_callerCardId"] = str(context["mainCardId"])
-                args["_callerRuntimeKind"] = str(
-                    context.get("callerRuntimeKind") or "hermes"
-                )
-                args["_callerRuntimeMode"] = str(
-                    context.get("callerRuntimeMode") or "main"
-                )
             missing_injected = sorted(
                 server_injected - args.keys()
                 if definition.external_source_id != "graphiti"
@@ -218,20 +161,8 @@ async def dispatch_tool(
         except (KeyError, RuntimeError, ValueError) as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     caller_card_id = str(args.get("_callerCardId", "") or "").strip()
-    caller_error = enforce_tool_caller(
-        name,
-        args,
-        authenticated_external=context is not None,
-    )
-    if caller_error:
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps({"ok": False, "error": caller_error}),
-            )
-        ]
     if not caller_card_id and context is not None:
-        caller_card_id = str(context.get("mainCardId") or "").strip()
+        caller_card_id = str(context.get("callerCardId") or "").strip()
     if "_callerCardId" in dispatcher_context:
         args["_callerCardId"] = caller_card_id
     extra = [k for k in args.keys() if k not in allowed]

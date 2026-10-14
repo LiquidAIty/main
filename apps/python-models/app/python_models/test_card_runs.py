@@ -9,7 +9,6 @@ from app.python_models import (
     agentgraph_run_observations,
     agentgraph_topology,
     card_invocation_preparation,
-    card_invocation_tools,
     card_run_execution,
     card_run_inputs,
     card_run_preparation,
@@ -20,25 +19,6 @@ from app.python_models import (
 )
 from app.python_models.card_run_auto_model import AutoModelSelectionError
 
-
-@pytest.fixture(autouse=True)
-def project_worldview_defaults_to_existing_availability(monkeypatch):
-    """Keep unrelated Card tests focused; dedicated tests override the mask."""
-
-    def resolve(project_id, candidate_capability_ids, **_kwargs):
-        candidates = list(dict.fromkeys(candidate_capability_ids))
-        return {
-            "schemaVersion": "project-worldview.v1",
-            "projectId": project_id,
-            "defaultEnabled": True,
-            "candidateCapabilities": candidates,
-            "enabledCapabilities": candidates,
-            "excludedCapabilities": [],
-            "overrides": [],
-        }
-
-    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", resolve)
-    monkeypatch.setattr(agentgraph_topology, "resolve_project_worldview", resolve)
 
 def _agent(card_id: str, **overrides):
     card = {
@@ -123,6 +103,19 @@ def _fake_retain_idf(prepared: dict, **_kwargs) -> tuple[dict, dict, dict]:
             "enabledTools": list(grants.get("enabledTools") or []),
         },
     )
+
+
+def _accepted_run_snapshot() -> dict[str, object]:
+    return {
+        "runId": "run-one",
+        "correlationId": "correlation-one",
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "card-one",
+        "cardRevisionId": "revision-one",
+        "acceptedAt": "2026-10-01T20:00:00+00:00",
+        "preparationStartedAt": "2026-10-01T20:00:00.001+00:00",
+    }
 
 @pytest.mark.parametrize("conversation_matches", [True, False])
 def test_scoped_run_read_checks_provider_conversation_before_output(monkeypatch, conversation_matches):
@@ -241,7 +234,11 @@ def test_new_run_fails_closed_when_root_input_files_cannot_persist(
     prepared = _prepared_grounded_runtime({
         "kind": "hermes", "mode": "delegate", "profile": "card-one",
     })
-    terminal: list[dict] = []
+    settled: list[dict] = []
+    accepted = _accepted_run_snapshot()
+    monkeypatch.setattr(
+        card_run_preparation, "accept_run_request", lambda _payload: accepted,
+    )
     monkeypatch.setattr(
         card_invocation_preparation, "prepare_run_invocation",
         lambda _payload, **_kwargs: prepared,
@@ -254,26 +251,47 @@ def test_new_run_fails_closed_when_root_input_files_cannot_persist(
             saved_card_contract.CardDomainError("input_files_write_failed")
         ),
     )
-    monkeypatch.setattr(card_run_settlement, "finish_run", lambda payload: terminal.append(payload) or {})
+    monkeypatch.setattr(
+        card_run_preparation,
+        "_fail_accepted_run_preparation",
+        lambda snapshot, payload: settled.append({
+            "accepted": snapshot,
+            "payload": payload,
+        }) or {"ok": True},
+    )
 
     with pytest.raises(saved_card_contract.CardDomainError, match="input_files_write_failed"):
         card_run_preparation.begin_run({
             "runId": "run-one", "correlationId": "correlation-one",
             "assignment": "test task",
         })
-    assert terminal == [{
-        "runId": "run-one",
-        "state": "failed",
-        "errorCode": "input_files_materialization_failed",
-        "errorSummary": "input_files_write_failed",
+    assert settled == [{
+        "accepted": accepted,
+        "payload": {
+            "runId": "run-one",
+            "correlationId": "correlation-one",
+            "assignment": "test task",
+            "errorCode": "input_files_write_failed",
+            "errorSummary": "input_files_write_failed",
+        },
     }]
 
-def test_mag_one_participant_validation_still_fails_before_run_creation(
+def test_mag_one_participant_validation_fails_before_runtime_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepared = _prepared_grounded_runtime({
         "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
     })
+    monkeypatch.setattr(
+        card_run_preparation,
+        "accept_run_request",
+        lambda _payload: _accepted_run_snapshot(),
+    )
+    monkeypatch.setattr(
+        card_run_preparation,
+        "_fail_accepted_run_preparation",
+        lambda *_args, **_kwargs: {"ok": True},
+    )
     monkeypatch.setattr(
         card_invocation_preparation, "prepare_run_invocation",
         lambda _payload, **_kwargs: prepared,
@@ -308,6 +326,11 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
         "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
     })
     prepared["idf"]["stableSavedCardContext"]["outputRequirements"] = "Separate output contract"
+    monkeypatch.setattr(
+        card_run_preparation,
+        "accept_run_request",
+        lambda _payload: _accepted_run_snapshot(),
+    )
     workers = [_agent(f"worker-{i}", subtitle=f"Saved capability {i}",
                       runtime={"kind": "hermes", "mode": "delegate", "profile": f"profile-{i}"})
                for i in range(6)]
@@ -341,7 +364,6 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
             "cardRevisionId": worker["_cardRevisionId"],
             "capabilities": {
                 "savedToolIds": [],
-                "projectEligibleToolIds": [],
             },
         }
         for worker in workers
@@ -601,9 +623,7 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
         "runtime_mode": "main",
         "provider": "openai",
         "access_mode": "chatgpt-account",
-        "saved_openai_runtime": "",
         "effective_provider": None,
-        "provider_api_mode": None,
         "hermes_session_ref": "hermes-session",
         "provider_turn_ref": "run-one",
     }
@@ -655,11 +675,11 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
         statement for statement in statements
         if "UPDATE ag_catalog.agent_runs SET state" in statement[0]
     )
-    assert "provider_api_mode=COALESCE(provider_api_mode, %s)" in update_query
+    assert "provider_api_mode" not in update_query
     assert "tool_call_count=COALESCE(%s, tool_call_count)" in update_query
     assert "provider_input_tokens=COALESCE(%s, provider_input_tokens)" in update_query
-    assert update_params[6] == "openai-codex"
-    assert update_params[7] is None
+    assert update_params[4] == "openai-codex"
+    assert update_params[5] == "hermes-session"
     assert result["updated"] is True
     assert result["state"] == "completed"
 
@@ -675,9 +695,7 @@ def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_sess
         "runtime_profile": "card_magentic",
         "provider": "openai",
         "access_mode": "chatgpt-account",
-        "saved_openai_runtime": "codex_app_server",
         "effective_provider": None,
-        "provider_api_mode": None,
         "provider_thread_ref": "t_mag_root",
         "provider_turn_ref": "t_mag_previous_attempt",
     }
@@ -727,9 +745,9 @@ def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_sess
         if "UPDATE ag_catalog.agent_runs SET state" in statement[0]
     )
     assert "hermes_session_ref=COALESCE(hermes_session_ref, %s)" in update_query
-    assert update_params[8] is None
-    assert update_params[9] == "t_mag_root"
-    assert update_params[10] == "t_mag_final"
+    assert update_params[5] is None
+    assert update_params[6] == "t_mag_root"
+    assert update_params[7] == "t_mag_final"
     assert result["updated"] is True
     assert result["state"] == "completed"
     assert result["runRecord"]["runtimeProfile"] == "card_magentic"
@@ -791,6 +809,8 @@ def test_accepted_run_request_is_pending_scoped_and_has_no_hermes_run(
     monkeypatch.setattr(agentgraph_run_observations, "observe_run_acceptance",
         lambda **kwargs: observed.append(kwargs) or True,
     )
+    accepted_at_value = datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(card_run_preparation, "utc_now", lambda: accepted_at_value)
 
     result = card_run_preparation.accept_run_request({
         "projectId": "project-one",
@@ -800,7 +820,6 @@ def test_accepted_run_request_is_pending_scoped_and_has_no_hermes_run(
         "correlationId": "request-one",
         "cardRevisionId": "revision-one",
         "conversationId": "conversation-one",
-        "acceptedAt": "2026-10-01T20:00:00.000Z",
     })
 
     insert_params = next(params for query, params in statements if "INSERT INTO" in query)
@@ -870,7 +889,6 @@ def test_beginning_an_accepted_run_uses_only_run_and_correlation_identity(
                 "deck_id": "deck-one",
                 "target_card_revision_id": "revision-one",
                 "state": "pending",
-                "execution_authority_sha256": None,
             }
 
     class Connection:
@@ -929,7 +947,7 @@ def test_idempotent_run_rejoin_requires_exact_selection_decisions(
                 "deck_id": "deck-one",
                 "target_card_revision_id": "revision-one",
                 "state": "pending",
-                "execution_authority_sha256": "authority-one",
+                "provider": "openai",
                 "auto_tools_decision": {
                     "schemaVersion": "auto-tools-decision.v1",
                     "status": "selected",

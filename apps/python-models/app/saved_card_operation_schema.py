@@ -52,10 +52,6 @@ def saved_card_operation_schema(name: str) -> dict[str, Any]:
             "model": model,
             "subagentType": {"type": "string", "enum": sorted(_SUBAGENT_TYPES)},
             "subagentModel": subagent,
-            "openaiRuntime": {
-                "type": ["string", "null"],
-                "enum": [None, "codex_app_server"],
-            },
             "autoTools": {"type": "boolean"},
             "autoModel": {"type": "boolean"},
             **{key: names for key in sorted(_CAPABILITY_LIST_FIELDS)},
@@ -81,10 +77,6 @@ def saved_card_operation_schema(name: str) -> dict[str, Any]:
             },
             "subagentModel": subagent,
             "subagentType": {"type": "string", "enum": sorted(_SUBAGENT_TYPES)},
-            "openaiRuntime": {
-                "type": ["string", "null"],
-                "enum": [None, "codex_app_server"],
-            },
             "autoTools": {"type": "boolean"},
             "autoModel": {"type": "boolean"},
             "configuration": {"type": "object"},

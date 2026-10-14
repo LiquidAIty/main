@@ -188,16 +188,6 @@ def operation_definition(name: str) -> OperationDefinition | None:
     )
 
 
-def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
-    """Return one explicit runtime requirement; never infer one from a name."""
-
-    definition = operation_definition(name)
-    if definition is None or definition.required_caller_runtime is None:
-        return None
-    kind, mode = definition.required_caller_runtime
-    return {"kind": kind, "mode": mode}
-
-
 def tool_access(name: str) -> str | None:
     """Return explicit effect metadata; never infer it from prose or names."""
 

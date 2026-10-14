@@ -11,6 +11,7 @@ from typing import Any
 from app.python_models import idf_contract as _contract
 from app.python_models import idf_graph_records as _graph
 from app.python_models import idf_projection as _projection
+from app.python_models.card_script import runtime_card_script_definition
 
 
 def _timestamp() -> str:
@@ -180,6 +181,13 @@ def runtime_projection(
     idf = materialized.idf
     stable = idf.stableSavedCardContext
     grants = idf.selectedToolsAndGrants
+    script_presentation = dict(grants.scriptPresentation)
+    card_script = runtime_card_script_definition(
+        stable.runtimeOptions.get("script"),
+        presentation_mode=str(script_presentation.get("mode") or ""),
+        enabled_tools=list(grants.enabledTools),
+        presented_tools=list(grants.presentedTools),
+    )
     return {
         "task": idf.dynamicContext.task,
         "graphContext": idf.actualGraphData.modelText,
@@ -193,7 +201,8 @@ def runtime_projection(
         "unavailableToolReasons": dict(grants.unavailableToolReasons),
         "presentedTools": list(grants.presentedTools),
         "toolDefinitions": list(grants.toolDefinitions),
-        "scriptPresentation": dict(grants.scriptPresentation),
+        "scriptPresentation": script_presentation,
+        "cardScript": card_script,
         "skills": list(grants.skills),
         "toolsets": list(grants.toolsets),
         "mcpConnectionIds": list(grants.mcpConnectionIds),

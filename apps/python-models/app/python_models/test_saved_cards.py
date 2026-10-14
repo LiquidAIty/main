@@ -294,7 +294,7 @@ def test_revision_insert_preserves_reasoning_setting() -> None:
         params for query, params in calls
         if "INSERT INTO ag_catalog.agent_card_revisions" in query
     )
-    assert insert_params[22] == "low"
+    assert insert_params[21] == "low"
 
 
 

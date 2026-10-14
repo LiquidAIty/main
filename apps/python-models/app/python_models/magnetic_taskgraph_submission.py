@@ -139,7 +139,7 @@ def _stage_team_root(
     *, connection: Any, direct_team: dict[str, Any],
     worker_identities: list[str], spec: dict[str, Any], mission: str,
     run_id: str, tenant: str, hermes_home: Path,
-) -> tuple[Any, str, str, str, str, str | None]:
+) -> tuple[Any, str, str, str, str]:
     team_provider = (
         direct_team.get("provider")
         if isinstance(direct_team.get("provider"), dict) else {}
@@ -149,7 +149,7 @@ def _stage_team_root(
         if isinstance(direct_team.get("runtimeOptions"), dict) else {}
     )
     hermes_profile = worker_identities[0]
-    hermes_provider, hermes_model, openai_runtime = _hermes_model(
+    hermes_provider, hermes_model = _hermes_model(
         team_provider, team_options,
     )
     try:
@@ -172,15 +172,15 @@ def _stage_team_root(
         raise MagneticTaskGraphError(
             f"magnetic_taskgraph_team_root_invalid:{error}"
         ) from error
-    return root, root.id, hermes_profile, hermes_provider, hermes_model, openai_runtime
+    return root, root.id, hermes_profile, hermes_provider, hermes_model
 
 
 def _stage_magnetic_root(
     *, connection: Any, task_db: Any, spec: dict[str, Any],
     workers: list[dict[str, Any]], worker_identities: list[str],
     worker_text: str, mission: str, run_id: str, tenant: str,
-) -> tuple[Any, str, str, str, str, str | None]:
-    hermes_profile, hermes_provider, hermes_model, openai_runtime = (
+) -> tuple[Any, str, str, str, str]:
+    hermes_profile, hermes_provider, hermes_model = (
         _ensure_orchestrator_identity(spec, workers)
     )
     allowed_assignees = [hermes_profile, *worker_identities]
@@ -201,7 +201,7 @@ def _stage_magnetic_root(
         or root.provider_override != hermes_provider or root.body != root_body
     ):
         raise MagneticTaskGraphError("magnetic_taskgraph_hermes_root_readback_mismatch")
-    return root, hermes_root_id, hermes_profile, hermes_provider, hermes_model, openai_runtime
+    return root, hermes_root_id, hermes_profile, hermes_provider, hermes_model
 
 
 def submit_magnetic_taskgraph(payload: dict[str, Any]) -> dict[str, Any]:
@@ -229,13 +229,13 @@ def _submit_magnetic_taskgraph(payload: dict[str, Any]) -> dict[str, Any]:
         hermes_root_id = ""
         try:
             if direct_team is not None:
-                root, hermes_root_id, hermes_profile, hermes_provider, hermes_model, openai_runtime = _stage_team_root(
+                root, hermes_root_id, hermes_profile, hermes_provider, hermes_model = _stage_team_root(
                     connection=connection, direct_team=direct_team,
                     worker_identities=worker_identities, spec=spec, mission=mission,
                     run_id=run_id, tenant=tenant, hermes_home=hermes_home,
                 )
             else:
-                root, hermes_root_id, hermes_profile, hermes_provider, hermes_model, openai_runtime = _stage_magnetic_root(
+                root, hermes_root_id, hermes_profile, hermes_provider, hermes_model = _stage_magnetic_root(
                     connection=connection, task_db=task_db, spec=spec,
                     workers=workers, worker_identities=worker_identities,
                     worker_text=worker_text, mission=mission, run_id=run_id,
@@ -257,7 +257,6 @@ def _submit_magnetic_taskgraph(payload: dict[str, Any]) -> dict[str, Any]:
         "hermesRootId": hermes_root_id,
         "hermesProfile": hermes_profile,
         "configuredProvider": hermes_provider,
-        "configuredProviderApiMode": openai_runtime,
         "configuredModel": hermes_model,
         "tenant": tenant,
         "state": "running" if root.status == "running" else "pending",

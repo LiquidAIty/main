@@ -609,7 +609,6 @@ def _prepare_turn_input(
     st: _TurnRun,
     text: Any,
     images: list[str],
-    expected_profile_capability_fingerprint: str | None = None,
 ):
     """Bind scopes, sync the agent, snapshot history, build the run message; returns
     ``(prompt, run_message, cols, streamer)`` or None when @-expansion was refused.
@@ -633,8 +632,6 @@ def _prepare_turn_input(
     # The sudo password callback is thread-local: without re-wiring here, sudo prompts
     # fall through to /dev/tty and hang the headless gateway (re-run is a no-op).
     _wire_callbacks(sid)
-    if st.one_turn_restore and expected_profile_capability_fingerprint:
-        raise RuntimeError("profile_fenced_turn_model_once_unsupported")
     if not st.one_turn_restore:
         # Skip the config-model sync while a /model --once override is active: the once-model is
         # intentionally not pinned as a session model_override (it must not persist), so without this guard
@@ -644,14 +641,7 @@ def _prepare_turn_input(
         _apply_pending_model_switch(sid, session)
         _sync_agent_model_with_config(sid, session)
         _sync_agent_compression_with_config(sid, session)
-        if expected_profile_capability_fingerprint is None:
-            _sync_profile_capabilities(sid, session)
-        else:
-            _sync_profile_capabilities(
-                sid,
-                session,
-                expected_profile_capability_fingerprint,
-            )
+        _sync_profile_capabilities(sid, session)
     _sync_agent_fallback_with_config(sid, session)  # chain added after the chat opened reaches this turn
     _adopt_out_of_band_turns(session)
     agent = session["agent"]
@@ -885,7 +875,33 @@ def _persisted_turn_receipt(st: _TurnRun, raw: Any, status: str) -> dict | None:
     return receipt
 
 
-def _complete_turn_payload(session: dict, st: _TurnRun, status_note: str | None, cols: int):
+def _commit_terminal_receipt(
+    session: dict,
+    st: _TurnRun,
+    *,
+    raw: Any,
+    status: str,
+    error: Any = None,
+) -> None:
+    if st.terminal_callback is not None:
+        st.receipt_attempted = True
+        st.terminal_callback({
+            "status": {"interrupted": "cancelled", "error": "failed"}.get(status, "settled"),
+            "text": raw if isinstance(raw, str) else str(raw),
+            **({"error": str(error or raw)} if status == "error" else {})})
+        st.receipt_committed = True
+    if st.receipt_committed:
+        _retire_turn_marker(session, st.marker_key)
+
+
+def _complete_turn_payload(
+    session: dict,
+    st: _TurnRun,
+    status_note: str | None,
+    cols: int,
+    *,
+    defer_terminal_receipt: bool = False,
+):
     """``(payload, raw, status)`` for message.complete; retains/clears the inflight turn and
     settles the hosted-room terminal receipt."""
     result, agent = st.result, st.agent
@@ -946,15 +962,10 @@ def _complete_turn_payload(session: dict, st: _TurnRun, status_note: str | None,
             payload["partial"] = True
         if _error_surface:
             payload["error_surface"] = _error_surface
-    if st.terminal_callback is not None:
-        st.receipt_attempted = True
-        st.terminal_callback({
-            "status": {"interrupted": "cancelled", "error": "failed"}.get(status, "settled"),
-            "text": raw if isinstance(raw, str) else str(raw),
-            **({"error": str(error_value or raw)} if status == "error" else {})})
-        st.receipt_committed = True
-    if st.receipt_committed:
-        _retire_turn_marker(session, st.marker_key)
+    if not defer_terminal_receipt:
+        _commit_terminal_receipt(
+            session, st, raw=raw, status=status, error=error_value,
+        )
     return payload, raw, status
 
 
@@ -1071,11 +1082,12 @@ def _run_prompt_submit(
     queued_prompt_generation: int | None = None,
     terminal_callback: Callable[[dict[str, Any]], None] | None = None,
     turn_author: dict | None = None, submission_id: str | None = None,
-    dynamic_tools: list[dict] | None = None, tool_endpoint: str | None = None,
-    tool_authorization: str | None = None,
     card_script: dict[str, Any] | None = None,
+    mcp_tool_selection: dict[str, list[str]] | None = None,
     bot_mode_roster: list[str] | None = None,
-    expected_profile_capability_fingerprint: str | None = None,
+    card_run_id: str | None = None,
+    originating_run_id: str | None = None,
+    bot_mode_reply_delivery: str | None = None,
 ) -> bool:
     # Every dispatch binds the session's own row (session_key, real source) before the turn writes:
     # the synthesized turns that enter here directly (crash auto-continue, queued-prompt drain,
@@ -1127,20 +1139,94 @@ def _run_prompt_submit(
         st = _TurnRun(
             session["agent"], session.pop("one_turn_model_restore", None), terminal_callback,
             receipt_committed=terminal_callback is None)
-        dynamic_scope = None
+        card_script_scope = None
+        mcp_tool_scope = None
+        card_turn_token = None
+        prepared_card_turn = None
+        card_turn_finish_attempted = False
+        effective_submission_id = submission_id
+        original_text = text
+        model_text = text
+        effective_mcp_tool_selection = mcp_tool_selection
+        effective_card_script = card_script
+        previous_bot_reply_delivery = getattr(agent, "_bot_mode_reply_delivery", None)
         st.marker_key = _record_turn_marker(session, text, auto_continue=terminal_callback is None,
             notification_category=(display_metadata or {}).get("notification_category"))
         goal_followup = None
         try:
             if bot_mode_roster is not None:
                 _apply_session_bot_roster(session, bot_mode_roster)
+            agent._bot_mode_reply_delivery = bot_mode_reply_delivery or "notification"
+            from tui_gateway.saved_card_turn import (
+                bind_card_turn,
+                normalize_card_turn_context,
+                prepare_saved_card_turn,
+                start_saved_card_turn,
+            )
+
+            turn_context = normalize_card_turn_context(session.get("card_turn_context"))
+            if card_run_id:
+                if turn_context is None:
+                    raise RuntimeError("card_turn_context_missing")
+                card_turn_token = bind_card_turn(
+                    turn_context,
+                    card_run_id,
+                    externally_managed=True,
+                )
+            else:
+                prepared_card_turn = prepare_saved_card_turn(
+                    session,
+                    original_text,
+                    submission_id=submission_id,
+                    originating_run_id=originating_run_id,
+                    turn_author=turn_author,
+                    image_paths=images,
+                )
+                if prepared_card_turn is not None:
+                    effective_submission_id = str(prepared_card_turn["runId"])
+                    model_text = str(prepared_card_turn["message"])
+                    effective_mcp_tool_selection = prepared_card_turn.get("mcpToolSelection")
+                    effective_card_script = prepared_card_turn.get("cardScript")
+                    selected_model = prepared_card_turn.get("model")
+                    selected_model = selected_model if isinstance(selected_model, dict) else {}
+                    desired_model = str(selected_model.get("model") or "").strip()
+                    desired_provider = str(selected_model.get("provider") or "").strip()
+                    if not desired_model or not desired_provider:
+                        raise RuntimeError("card_turn_model_selection_missing")
+                    if (
+                        str(getattr(st.agent, "model", "") or "") != desired_model
+                        or str(getattr(st.agent, "provider", "") or "") != desired_provider
+                    ):
+                        changed = _apply_model_switch(
+                            sid,
+                            session,
+                            f"{desired_model} --provider {desired_provider} --once",
+                            confirm_expensive_model=False,
+                        )
+                        if changed.get("confirm_required") is True:
+                            raise RuntimeError("card_turn_model_confirmation_required")
+                        st.one_turn_restore = session.pop("one_turn_model_restore", None)
+                    card_turn_token = bind_card_turn(
+                        prepared_card_turn["context"],
+                        effective_submission_id,
+                        externally_managed=False,
+                    )
+                    with session["history_lock"]:
+                        session["_active_submission_id"] = effective_submission_id
+                    if not submission_id and not muted:
+                        _emit("prompt.submission.started", sid, {
+                            "submission_id": effective_submission_id,
+                        })
+                    start_saved_card_turn(
+                        prepared_card_turn,
+                        str(session.get("session_key") or ""),
+                    )
             prepared = _prepare_turn_input(
                 sid,
                 session,
                 st,
-                text,
+                model_text,
                 images,
-                expected_profile_capability_fingerprint,
             )
             if prepared is None:
                 if st.terminal_callback is not None and not st.receipt_attempted:
@@ -1150,26 +1236,78 @@ def _run_prompt_submit(
                     st.receipt_committed = True
                 return
             prompt, run_message, cols, streamer = prepared
-            # Bind Dynamic Tools to the final agent selected for THIS turn. The
-            # shared Hermes owner projects them for both the ordinary loop and
-            # Codex App Server, and restores the cached agent after settlement.
-            from agent.dynamic_tools import install_turn_dynamic_tools
+            from agent.card_turn_tools import (
+                install_turn_card_script,
+                install_turn_mcp_tool_selection,
+            )
 
-            dynamic_scope = install_turn_dynamic_tools(
+            card_script_scope = install_turn_card_script(
                 st.agent,
-                dynamic_tools,
-                endpoint=tool_endpoint,
-                authorization=tool_authorization,
-                card_script=card_script,
+                effective_card_script,
+            )
+
+            mcp_tool_scope = install_turn_mcp_tool_selection(
+                st.agent,
+                effective_mcp_tool_selection,
             )
             _invoke_agent(
                 sid, session, st, prompt, run_message, streamer, images, display_kind,
-                display_metadata, turn_author, text)
+                display_metadata, turn_author, original_text)
             status_note = _absorb_turn_result(
-                sid, session, st, text, display_kind, display_metadata)
-            payload, raw, status = _complete_turn_payload(session, st, status_note, cols)
-            if submission_id:
-                payload["submission_id"] = submission_id
+                sid, session, st, original_text, display_kind, display_metadata)
+            defer_terminal_receipt = (
+                prepared_card_turn is not None and st.terminal_callback is not None
+            )
+            payload, raw, status = _complete_turn_payload(
+                session,
+                st,
+                status_note,
+                cols,
+                defer_terminal_receipt=defer_terminal_receipt,
+            )
+            if effective_submission_id:
+                payload["submission_id"] = effective_submission_id
+            if prepared_card_turn is not None:
+                from tui_gateway.saved_card_turn import (
+                    count_tool_calls,
+                    finish_saved_card_turn,
+                )
+
+                card_turn_finish_attempted = True
+                finish_saved_card_turn(
+                    prepared_card_turn,
+                    session_key=str(session.get("session_key") or ""),
+                    state={
+                        "complete": "completed",
+                        "interrupted": "cancelled",
+                        "cancelled": "cancelled",
+                    }.get(status, "failed"),
+                    final_result=raw,
+                    error=str(payload.get("error") or ""),
+                    provider=str(getattr(st.agent, "provider", "") or ""),
+                    model=str(getattr(st.agent, "model", "") or ""),
+                    usage=payload.get("turn_usage") or payload.get("usage"),
+                    tool_call_count=count_tool_calls(st.result, st.agent),
+                )
+            if defer_terminal_receipt:
+                _commit_terminal_receipt(
+                    session,
+                    st,
+                    raw=raw,
+                    status=status,
+                    error=payload.get("error"),
+                )
+            notification_process_ids = (
+                (display_metadata or {}).get("process_ids")
+                if display_kind == "process_complete"
+                else None
+            )
+            if isinstance(notification_process_ids, list):
+                payload["notification_process_ids"] = [
+                    str(process_id).strip()
+                    for process_id in notification_process_ids
+                    if str(process_id).strip()
+                ]
             _emit("message.complete", sid, payload)
             goal_followup = _goal_followup_after_turn(sid, session, st.result, status, raw)
             if status == "complete":
@@ -1179,6 +1317,21 @@ def _run_prompt_submit(
             _publish_session_control_snapshot(sid, session, only_if_present=True)
         except Exception as e:
             _recover_turn_exception(sid, session, st, e)
+            if prepared_card_turn is not None and not card_turn_finish_attempted:
+                try:
+                    from tui_gateway.saved_card_turn import finish_saved_card_turn
+
+                    card_turn_finish_attempted = True
+                    finish_saved_card_turn(
+                        prepared_card_turn,
+                        session_key=str(session.get("session_key") or ""),
+                        state="failed",
+                        error=str(e),
+                        provider=str(getattr(st.agent, "provider", "") or ""),
+                        model=str(getattr(st.agent, "model", "") or ""),
+                    )
+                except Exception:
+                    logger.exception("saved Card Run failure settlement failed")
         finally:
             _finish_turn(sid, session, st)
             _current_runtime_session_record.reset(runtime_session_token)
@@ -1188,14 +1341,26 @@ def _run_prompt_submit(
             with session["history_lock"]:
                 session["running"] = False
                 session["last_active"] = time.time()
-                if session.get("_active_submission_id") == submission_id:
+                if session.get("_active_submission_id") == effective_submission_id:
                     session.pop("_active_submission_id", None)
                 if not st.error_retained:
                     _clear_inflight_turn(session)
                 _release_hosted_room_turn_slot(session)
-            from agent.dynamic_tools import clear_turn_dynamic_tools
+            from agent.card_turn_tools import (
+                clear_turn_card_script,
+                clear_turn_mcp_tool_selection,
+            )
 
-            clear_turn_dynamic_tools(st.agent, dynamic_scope)
+            clear_turn_mcp_tool_selection(st.agent, mcp_tool_scope)
+            clear_turn_card_script(st.agent, card_script_scope)
+            from tui_gateway.saved_card_turn import reset_card_turn
+
+            reset_card_turn(card_turn_token)
+            if previous_bot_reply_delivery is None:
+                with contextlib.suppress(AttributeError):
+                    delattr(st.agent, "_bot_mode_reply_delivery")
+            else:
+                st.agent._bot_mode_reply_delivery = previous_bot_reply_delivery
             # Closing bookend of "tui prompt accepted" — exactly one per accepted prompt.
             # agent.session_id is re-read because compression may have rotated it (an
             # accepted/finished pair whose id changed IS a rotation trace).

@@ -67,8 +67,6 @@ export type ToolCatalogDescriptor = {
   access: 'read' | 'write';
   available: boolean;
   grantEligible: boolean;
-  requiredCallerRuntimeKind?: 'hermes';
-  requiredCallerRuntimeMode?: 'main' | 'delegate' | 'magentic_one';
   inputSchema: Record<string, unknown>;
   canonicalInputSchema: Record<string, unknown>;
   serverInjectedArguments: string[];
@@ -117,12 +115,6 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
       const dispatcherContextArguments = providerSource.dispatcherContextArguments;
       const dispatcherOwner = String(providerSource.dispatcherOwner || '').trim();
       const authenticatedProjection = providerSource.authenticatedProjection;
-      const requiredCallerRuntimeKind = String(
-        providerSource.requiredCallerRuntimeKind || '',
-      ).trim();
-      const requiredCallerRuntimeMode = String(
-        providerSource.requiredCallerRuntimeMode || '',
-      ).trim();
       if (
         !sourceId
         || !namespace
@@ -142,12 +134,6 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
         || !serverInjectedArguments.every((field) => dispatcherContextArguments.includes(field))
         || !dispatcherOwner
         || typeof authenticatedProjection !== 'boolean'
-        || Boolean(requiredCallerRuntimeKind) !== Boolean(requiredCallerRuntimeMode)
-        || (requiredCallerRuntimeKind && requiredCallerRuntimeKind !== 'hermes')
-        || (
-          requiredCallerRuntimeMode
-          && !['main', 'delegate', 'magentic_one'].includes(requiredCallerRuntimeMode)
-        )
       ) {
         throw new Error(`tool_catalog_source_metadata_invalid: ${tool.name}`);
       }
@@ -171,13 +157,6 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
         access: access as 'read' | 'write',
         available,
         grantEligible,
-        ...(requiredCallerRuntimeKind
-          ? {
-            requiredCallerRuntimeKind: 'hermes' as const,
-            requiredCallerRuntimeMode: requiredCallerRuntimeMode as
-              'main' | 'delegate' | 'magentic_one',
-          }
-          : {}),
         inputSchema: tool.inputSchema as Record<string, unknown>,
         canonicalInputSchema: canonicalInputSchema as Record<string, unknown>,
         serverInjectedArguments: [...serverInjectedArguments] as string[],

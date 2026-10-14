@@ -9,6 +9,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from app.application_tool_error import ApplicationToolError
 from mcp.types import TextContent
 
 
@@ -36,6 +37,43 @@ def _loopback_url(route: str) -> str:
     if not route.startswith("/api/"):
         raise KeyError(route)
     return f"{BACKEND}{route}"
+
+
+def request_backend_json(
+    method: str,
+    route: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    require_internal_secret: bool = False,
+    timeout_seconds: float = DEFAULT_BACKEND_OPERATION_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    request = Request(
+        _loopback_url(route),
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
+        headers=_request_headers(
+            require_internal_secret=require_internal_secret,
+        ),
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 — loopback backend only
+            value = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        try:
+            value = json.loads(error.read().decode("utf-8"))
+        except Exception as decode_error:
+            raise ApplicationToolError(
+                f"backend_http_{error.code}: {route}"
+            ) from decode_error
+    except URLError as error:
+        raise ApplicationToolError(
+            f"backend_unreachable: {error.reason}"
+        ) from error
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ApplicationToolError("backend_response_invalid") from error
+    if not isinstance(value, dict):
+        raise ApplicationToolError("backend_response_invalid")
+    return value
 
 
 def post_backend_text_sync(
@@ -88,4 +126,3 @@ async def post_backend_text(
         require_internal_secret=require_internal_secret,
     )
     return [TextContent(type="text", text=text)]
-

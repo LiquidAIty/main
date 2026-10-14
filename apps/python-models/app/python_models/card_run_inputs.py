@@ -6,7 +6,7 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
-from app.python_models import agentgraph_run_observations, card_run_settlement
+from app.python_models import agentgraph_run_observations
 from app.python_models.idf import load_idf, runtime_projection, write_idf
 from app.python_models.idf_contract import InputMaterializationError
 from app.python_models.idf_projection import idf_public
@@ -112,7 +112,7 @@ def retain_required_run_idf(
     run_id: str,
     created: bool,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Fail a newly created Run closed when its canonical inputs cannot persist."""
+    """Retain and reload the canonical input; the accepted-Run owner settles failure."""
 
     try:
         return _retain_run_idf(
@@ -122,16 +122,6 @@ def retain_required_run_idf(
         )
     except Exception as error:
         message = str(error) if isinstance(error, CardDomainError) else "input_files_retention_failed"
-        if created:
-            try:
-                card_run_settlement.finish_run({
-                    "runId": run_id,
-                    "state": "failed",
-                    "errorCode": "input_files_materialization_failed",
-                    "errorSummary": message,
-                })
-            except Exception:
-                pass
         if isinstance(error, CardDomainError):
             raise
         raise CardDomainError(message) from error

@@ -44,7 +44,7 @@ export default function useCardActiveAgentCounts({
     const refresh = async (): Promise<void> => {
       try {
         const statuses = await Promise.all(cardIds.map(async (cardId): Promise<CardRunActivity | null> => {
-          const response = await fetch('/api/cards/run', {
+          const response = await fetch('/api/cards/runs/read', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',

@@ -380,6 +380,19 @@ def _apply_session_bot_roster(
             agent._bot_mode_sessions = dict(session["bot_mode_sessions"])
 
 
+def _session_card_turn_context(params: dict) -> dict[str, str] | None:
+    if "card_turn_context" not in params:
+        return None
+    from tui_gateway.saved_card_turn import normalize_card_turn_context
+
+    return normalize_card_turn_context(params.get("card_turn_context"))
+
+
+def _apply_session_card_turn_context(session: dict, context: dict[str, str] | None) -> None:
+    if context is not None:
+        session["card_turn_context"] = dict(context)
+
+
 def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> dict:
     """``session.create``; ``copy_parent_history`` (``session.branch_stored``) reads the parent's
     transcript server-side and omits it from the reply."""
@@ -388,6 +401,7 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
     try:
         bot_mode_roster = _session_bot_roster(params, profile_home)
         bot_mode_sessions = _session_bot_sessions(params, bot_mode_roster)
+        card_turn_context = _session_card_turn_context(params)
     except ValueError as exc:
         return _err(rid, -32602, str(exc))
     # Reject an incoherent model×provider pair BEFORE any state exists: minting it only defers the
@@ -442,6 +456,7 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
             "profile_home": str(profile_home) if profile_home is not None else None,
             "bot_mode_roster": bot_mode_roster,
             "bot_mode_sessions": bot_mode_sessions,
+            "card_turn_context": card_turn_context,
             "running": False, "session_key": key, "show_reasoning": _load_show_reasoning(), "source": source,
             "slash_worker": None, "tool_progress_mode": _load_tool_progress_mode(), "tool_started_at": {},
             "transport": current_transport() or _stdio_transport,
@@ -607,12 +622,16 @@ class _Resume:
         self.profile = (params.get("profile") or "").strip() or None
         self.profile_home = _profile_home(self.profile)
         self.bot_mode_roster_error = None
+        self.card_turn_context_error = None
         try:
             self.bot_mode_roster = _session_bot_roster(params, self.profile_home)
             self.bot_mode_sessions = _session_bot_sessions(params, self.bot_mode_roster)
+            self.card_turn_context = _session_card_turn_context(params)
         except ValueError as exc:
             self.bot_mode_roster, self.bot_mode_sessions, self.bot_mode_roster_error = None, None, str(exc)
+            self.card_turn_context, self.card_turn_context_error = None, str(exc)
         self.lazy, self.defer_history = _flag(params, "lazy"), _flag(params, "defer_history")
+        self.follow_profile_config = _flag(params, "follow_profile_config")
         # Desktop hydrates over REST; suppress the duplicate WS copy only when asked.
         self.omit_messages, self.eager_build = _flag(params, "omit_messages"), _flag(params, "eager_build")
 
@@ -629,14 +648,15 @@ class _Resume:
         if overrides is not None:
             extra.update(model_override=overrides.get("model_override"), resume_runtime_overrides=overrides or None)
             model_config = _parse_model_config((self.found or {}).get("model_config"), quiet=True)
-            follows_profile = _row_follows_profile(self.found)
+            follows_profile = self.follow_profile_config or _row_follows_profile(self.found)
         else:
-            model_config, follows_profile = {}, False
+            model_config, follows_profile = {}, self.follow_profile_config
         record = _deferred_session_record(
             self.target, cols=self.cols, cwd=cwd, history=history, lease=None, source=source,
             close_on_disconnect=_flag(self.params, "close_on_disconnect"),
             profile_home=self.profile_home, explicit_cwd=bool(self.profile_resume_cwd),
-            bot_mode_roster=self.bot_mode_roster, **extra)
+            bot_mode_roster=self.bot_mode_roster,
+            card_turn_context=self.card_turn_context, **extra)
         record["bot_mode_sessions"] = (
             dict(self.bot_mode_sessions) if self.bot_mode_sessions is not None else None
         )
@@ -647,6 +667,10 @@ class _Resume:
                                            if overrides and overrides.get("model_override") else None),
             )
         return record
+
+    def runtime_overrides(self) -> dict:
+        """Existing Project sessions opt into their current profile without retaining an old pin."""
+        return {} if self.follow_profile_config else _stored_session_runtime_overrides(self.found)
 
     def claim(self, sid: str, record: dict) -> dict | None:
         """Register ``record`` live under the resume lock, or reuse a concurrent winner's session."""
@@ -708,6 +732,7 @@ def _resume_live_unpersisted(ctx: _Resume, live_sid: str, live: dict) -> dict:
             _cancel_ws_orphan_reap(live_sid)
     messages = ctx.messages(live.get("history") or [])  # count the wire, as every other resume path does
     _apply_session_bot_roster(live, ctx.bot_mode_roster, ctx.bot_mode_sessions)
+    _apply_session_card_turn_context(live, ctx.card_turn_context)
     # The chat's own pick, not the profile default: a warm reattach that reported `_resolve_model()` flipped the
     # Desktop picker on every reload while the session was still live, and back once it had been dropped.
     model, provider = _live_session_identity(live)
@@ -819,6 +844,16 @@ def _resume_reuse_live_locked(ctx: _Resume, sid: str, session: dict) -> dict:
         return refusal
     _cancel_ws_orphan_reap(sid)  # unconditionally: the fast path must never race the reap Timer
     _apply_session_bot_roster(session, ctx.bot_mode_roster, ctx.bot_mode_sessions)
+    _apply_session_card_turn_context(session, ctx.card_turn_context)
+    if ctx.follow_profile_config:
+        session["follow_profile_config"] = True
+        session.pop("model_override", None)
+        session.pop("resume_runtime_overrides", None)
+        session.pop("composer_override_profile", None)
+        session.pop("profile_capabilities_seen", None)
+        agent = session.get("agent")
+        if agent is not None:
+            agent._follow_profile_config = True
     payload = _live_session_payload(sid, session, cols=ctx.cols, touch=True, omit_messages=ctx.omit_messages,
                                     transport=current_transport() or _stdio_transport)
     payload["resumed"] = ctx.target
@@ -880,7 +915,7 @@ def _resume_deferred(ctx: _Resume) -> dict:
     """Bounded ack; the transcript hydrates in the background (the ONE history read) and pages over REST."""
     sid, source, cwd = ctx.mint()
     with _profile_build_scope(ctx.profile_home):
-        overrides = _stored_session_runtime_overrides(ctx.found)
+        overrides = ctx.runtime_overrides()
     record = ctx.record(source, cwd, [], overrides)
     record.update(resume_history_ready=threading.Event(), resume_hydrating=True,
                   resume_message_count=int(ctx.found.get("message_count") or 0))
@@ -906,7 +941,7 @@ def _resume_cold(ctx: _Resume) -> dict:
     except Exception as e:
         return _err(ctx.rid, 5000, resume_failed_message(e))
     with _profile_build_scope(ctx.profile_home):
-        overrides = _stored_session_runtime_overrides(ctx.found)
+        overrides = ctx.runtime_overrides()
     record = ctx.record(source, cwd, history, overrides, display_history_prefix=ctx.display_prefix(),
                         todo_state=_todo_state_from_history(history))
     if (reused := ctx.claim(sid, record)) is not None:
@@ -927,7 +962,7 @@ def _resume_eager(ctx: _Resume) -> dict:
             display_history_prefix = ctx.display_prefix()
             # Profile db so turns persist to the right state.db; stored runtime identity so switching chats does
             # not inherit another chat's global model.
-            stored_runtime_overrides = _stored_session_runtime_overrides(ctx.found)
+            stored_runtime_overrides = ctx.runtime_overrides()
             agent = _make_agent_in_context(
                 sid, ctx.target, session_db=ctx.db, platform_override=source,
                 cwd_override=ctx.profile_resume_cwd or None,
@@ -946,7 +981,8 @@ def _resume_eager(ctx: _Resume) -> dict:
                 _init_session(sid, ctx.target, agent, history, cols=ctx.cols, cwd=ctx.profile_resume_cwd,
                               session_db=ctx.db, source=source, explicit_cwd=bool(ctx.profile_resume_cwd),
                               bot_mode_roster=ctx.bot_mode_roster,
-                              bot_mode_sessions=ctx.bot_mode_sessions)
+                              bot_mode_sessions=ctx.bot_mode_sessions,
+                              card_turn_context=ctx.card_turn_context)
                 # Ownership TRANSFER: the agent holds the handle for life (AIAgent.close() releases it). The
                 # owns_db drop is UNCONDITIONAL — the session is registered against the handle, so the finally
                 # must not close it even if the transfer was refused (a leak beats "closed database" every
@@ -958,8 +994,10 @@ def _resume_eager(ctx: _Resume) -> dict:
                 if stored_runtime_overrides.get("model_override") is not None:
                     session["model_override"] = stored_runtime_overrides["model_override"]
                 model_config = _parse_model_config(ctx.found.get("model_config"), quiet=True)
-                if _row_follows_profile(ctx.found):
+                if ctx.follow_profile_config or _row_follows_profile(ctx.found):
                     session["follow_profile_config"] = True
+                    agent._follow_profile_config = True
+                    session.pop("profile_capabilities_seen", None)
                     session["composer_override_profile"] = (
                         model_config.get("composer_override_profile")
                         if stored_runtime_overrides.get("model_override") else None)
@@ -988,6 +1026,8 @@ def _(rid, params: dict) -> dict:
     ctx = _Resume(rid, params, target)
     if ctx.bot_mode_roster_error:
         return _err(rid, -32602, ctx.bot_mode_roster_error)
+    if ctx.card_turn_context_error:
+        return _err(rid, -32602, ctx.card_turn_context_error)
     # Profile scope: a DEDICATED handle we own until the agent takes it; else the shared launch db.
     ctx.db, ctx.owns_db = _profile_session_db(ctx.profile_home)
     try:
@@ -1098,16 +1138,17 @@ def _(rid, params: dict, session: dict) -> dict:
             roster,
             bot_sessions,
         )
+        _apply_session_card_turn_context(
+            session,
+            _session_card_turn_context(params),
+        )
     except ValueError as exc:
         return _err(rid, -32602, str(exc))
     if bot_sessions is not None:
         if (limit_message := _ensure_active_session_slot(sid, session)) is not None:
             reason = getattr(limit_message, "reason", None)
             return _err(rid, 4090, str(limit_message), {"reason": reason} if reason else None)
-    expected_fingerprint = str(
-        params.get("expected_profile_capability_fingerprint") or ""
-    ).strip() or None
-    if expected_fingerprint:
+    if session.get("follow_profile_config") is True:
         if session.get("agent") is None:
             _start_agent_build(sid, session)
             ready = session.get("agent_ready")
@@ -1116,7 +1157,7 @@ def _(rid, params: dict, session: dict) -> dict:
             if session.get("agent") is None:
                 return _err(rid, 5032, str(session.get("agent_error") or "agent initialization failed"))
         try:
-            _sync_profile_capabilities(sid, session, expected_fingerprint)
+            _sync_profile_capabilities(sid, session)
         except RuntimeError as exc:
             return _err(rid, 5064, str(exc))
     # Only the rebind is atomic with grace expiry; the payload (a DB history read unless

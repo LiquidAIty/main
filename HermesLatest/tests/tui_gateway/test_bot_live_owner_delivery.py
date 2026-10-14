@@ -27,6 +27,7 @@ def test_refused_input_commits_failed_mailbox_receipt(tmp_path):
     noop = lambda *args, **kwargs: None
     submit = rebind(prompt_turn._run_prompt_submit, {
         "threading": threading, "time": time, "logger": logging.getLogger(__name__),
+        "contextlib": contextlib,
         "_start_session_work": _start_session_work,
         "_sessions_lock": threading.RLock(), "_sessions": {},
         "_admit_prompt_turn": lambda *args: ([], agent),
@@ -72,7 +73,7 @@ def test_local_work_blocks_mailbox_claim_without_consuming_envelope(monkeypatch,
     owner = {"lease_id": "lease", "live_session_id": "live", "session_id": "chat"}
     author = {"id": "bot:coder", "name": "coder", "is_bot": True}
     pending = [{"id": "receipt", "message": "imported", "author": author}]
-    monkeypatch.setattr(mailbox, "find_canonical_live_owner", lambda home: owner)
+    monkeypatch.setattr(mailbox, "find_live_session_owner", lambda home, session_id: owner)
     monkeypatch.setattr(mailbox, "claim_pending_delivery", lambda home, pinned: pending.pop(0))
     receipts = []
     monkeypatch.setattr(mailbox, "complete_delivery", lambda *args, **kwargs: receipts.append((args, kwargs)))
@@ -107,7 +108,11 @@ def test_mailbox_poll_skips_owner_lookup_without_a_mailbox(monkeypatch, tmp_path
     """No mailbox directory → no state.db open / registry lock per pass; the lookup runs once one exists."""
     import tools.bot_live_delivery as mailbox
     lookups = []
-    monkeypatch.setattr(mailbox, "find_canonical_live_owner", lambda home: lookups.append(home) or None)
+    monkeypatch.setattr(
+        mailbox,
+        "find_live_session_owner",
+        lambda home, session_id: lookups.append((home, session_id)) or None,
+    )
     poll = rebind(session_notifications._poll_bot_live_delivery_once, {
         "_session_home": lambda session: tmp_path, "_session_turn_admission": _session_turn_admission})
     session = {"history_lock": threading.RLock(), "agent": object(), "session_key": "chat",
@@ -116,7 +121,7 @@ def test_mailbox_poll_skips_owner_lookup_without_a_mailbox(monkeypatch, tmp_path
     assert lookups == []
     mailbox._root(tmp_path).mkdir(parents=True)
     assert poll("live", session) is False
-    assert lookups == [tmp_path]
+    assert lookups == [(tmp_path, "chat")]
 
 
 def test_failing_mailbox_poll_warns_once_per_window():
@@ -152,12 +157,18 @@ def test_mailbox_poll_delivers_past_a_schema_damaged_ticket(monkeypatch, tmp_pat
     """A `{}` ticket beside a healthy envelope must not wedge the live poller's claim (real mailbox on disk)."""
     import tools.bot_live_delivery as mailbox
     owner = dict(profile_home=str(tmp_path.resolve()), session_id="chat", lease_id="lease", live_session_id="live")
-    queued = mailbox.deliver_to_live_owner(tmp_path, owner, "healthy", delivery_id="d" * 32)
+    queued = mailbox.deliver_to_live_owner(
+        tmp_path,
+        owner,
+        "healthy",
+        delivery_id="d" * 32,
+        parent_run_id="run-parent",
+    )
     (mailbox._root(tmp_path) / f"{'a' * 32}.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(mailbox, "find_canonical_live_owner", lambda home: owner)
+    monkeypatch.setattr(mailbox, "find_live_session_owner", lambda home, session_id: owner)
     submitted = []
     def submit(rid, sid, session, text, **kwargs):
-        submitted.append(text)
+        submitted.append((text, kwargs.get("originating_run_id")))
         kwargs["terminal_callback"]({"status": "settled", "text": "reply"})
         return True
     poll = rebind(session_notifications._poll_bot_live_delivery_once, {
@@ -169,5 +180,5 @@ def test_mailbox_poll_delivers_past_a_schema_damaged_ticket(monkeypatch, tmp_pat
     session = {"history_lock": threading.RLock(), "agent": object(), "session_key": "chat",
                "active_session_lease": SimpleNamespace(lease_id="lease", released=False)}
     assert poll("live", session) is True
-    assert submitted == ["healthy"]
+    assert submitted == [("healthy", "run-parent")]
     assert mailbox.read_delivery_result(tmp_path, queued["delivery_id"])["status"] == "settled"

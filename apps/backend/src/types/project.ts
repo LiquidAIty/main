@@ -3,5 +3,4 @@ export interface ProjectSummary {
   name: string;
   code?: string | null;
   status?: string | null;
-  project_type: 'assist' | 'agent';
 }

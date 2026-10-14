@@ -3,7 +3,7 @@ export type ToolCatalogDefinition = {
   provider: string;
   providerToolName: string;
   namespace: string;
-  publications: Array<'card-runtime' | 'external-mcp'>;
+  publications: Array<'card-profile' | 'external-mcp'>;
   displayName: string;
   description: string;
   available: boolean;
@@ -16,8 +16,6 @@ export type ToolCatalogDefinition = {
   dispatcherOwner: string;
   annotations: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
-  requiredCallerRuntimeKind?: 'hermes';
-  requiredCallerRuntimeMode?: 'main' | 'delegate' | 'magentic_one';
 };
 
 export type ToolCatalogIndex = {
@@ -134,6 +132,6 @@ export function resolveScriptToolDefinitions(
     .filter((reference) => (
       reference.available
       && reference.grantEligible
-      && reference.publications.includes('card-runtime')
+      && reference.publications.includes('card-profile')
     ));
 }

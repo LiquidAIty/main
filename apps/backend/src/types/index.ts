@@ -9,7 +9,7 @@ export type CardRuntime = {
   profile: string;
 };
 
-// flow = persisted directed topology; magentic_option = BLUE Magnetic
+// flow = directed Hermes Bot messaging authority; magentic_option = BLUE Magnetic
 // task-ledger worker availability. Blue never starts or controls Magnetic.
 // 'invalid' is a real persisted classification, not an error case: an edge whose
 // type we do not recognise must stay visible and inert. Folding it into 'flow'
@@ -40,8 +40,6 @@ export type SavedCardConfiguration = {
   autoModel?: boolean;
   /** Saved outbound orange Card-to-Card authority for an ordinary Hermes Card. */
   orchestrator?: boolean;
-  /** Legacy-compatible Card availability persisted inside runtime options. */
-  enabled?: boolean;
   /** Temporary Hermes children for one Card turn. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
@@ -73,15 +71,12 @@ export type SavedCardConfiguration = {
       compiledHash?: string;
     };
     lastValidation?: Record<string, unknown>;
-    hermesSupport?: Record<string, unknown>;
-    rollback?: Record<string, unknown>;
   } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   providerModelId?: string | null;
-  openaiRuntime?: 'codex_app_server' | null;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null;
   /** Saved desired model for bounded Hermes delegated children and
    * background skill review. Hermes profile/readback remains effective truth. */
@@ -102,15 +97,6 @@ export type SavedCardConfiguration = {
 
 export type DeckNodeKind = 'agent';
 
-export type CardTemplate = {
-  id: string;
-  name: string;
-  promptTemplate?: string | null;
-  model?: string | null;
-  provider?: string | null;
-  tools: string[];
-};
-
 export type DeckCard = {
   id: string;
   /** Current top-level saved Card availability. */
@@ -129,13 +115,9 @@ export type DeckCard = {
   runtime: CardRuntime;
   runtimeOptions?: SavedCardConfiguration | null;
   parentGraphId?: string | null;
-  tools?: string[];
   title: string;
   subtitle?: string;
   position: { x: number; y: number };
-  overrides?: Partial<CardTemplate>;
-  /** Legacy persisted display value. Run state comes from the Run ledger; new Cards omit this field. */
-  status?: 'idle' | 'ready' | 'running' | 'error';
 };
 
 export type DeckEdge = {
@@ -151,8 +133,6 @@ export type DeckEdge = {
 export type DeckDocument = {
   id: string;
   name: string;
-  /** Historical Hermes Bot Mode workspace projection; new saves use projectCodeFolder. */
-  workspaceRoot?: string | null;
   projectCodeFolder?: string | null;
   promptTemplates: PromptTemplate[];
   nodes: DeckCard[];

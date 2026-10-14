@@ -486,10 +486,9 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
     old_agent = session.get("agent")
     profile_home = session.get("profile_home")
     follows_profile = session.get("follow_profile_config") is True
-    tracks_profile_snapshot = follows_profile or isinstance(session.get("bot_mode_sessions"), dict)
     profile_fingerprint_before = (
         _session_profile_capability_fingerprint(session)
-        if tracks_profile_snapshot
+        if follows_profile
         else None
     )
     session_db = getattr(old_agent, "_session_db", None)
@@ -522,7 +521,7 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
                 )
         build_kwargs.update(kwargs)
         agent = _make_agent(sid, session["session_key"], **build_kwargs)
-        if tracks_profile_snapshot:
+        if follows_profile:
             profile_fingerprint_after = _session_profile_capability_fingerprint(session)
             if (
                 profile_fingerprint_before == "unavailable"

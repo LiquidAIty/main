@@ -560,16 +560,16 @@ This is the approved target; the complete consumer parity remains unproven until
 IDD is not runtime authority, an authenticator, a checksum gate or a second IDF materializer.
 Full builder context belongs only to the Agent Builder Card in explicit Agent Builder work directed by
 Main after user approval. Ordinary Runs receive selected values/references, never the
-whole palette. Ordinary prompt prose stays Markdown. Every Card has the same Python editor below its Tools selection
-in the Agent Builder workspace. IDD supplies current tool contracts, while the Card's effective
-Tools-tab grants limit autocomplete and execution. The user or the authenticated Builder profile
-may validate, save and activate the next Script version; a running Card receives one immutable saved
-version/hash and cannot rewrite it. Valid Hermes Scripts execute through Hermes' existing child-process
-Python runner and native tool dispatcher. Literal `tools.call()` handles are replaced by one compact
-Script tool while selected tools not wrapped by the Script remain ordinary MCP tools. Blank/invalid
-Scripts keep the exact selected MCP presentation; runtime failure removes the compact tool and restores
-only its pre-registered wrapped handles for the next model iteration. Never widen to IDD or the complete
-catalog, never add another executor, and never activate Script execution for a non-Hermes Card.
+whole palette. Ordinary prompt prose stays Markdown. Every Card has the same Python Hooks editor below
+its Tools selection in the Agent Builder workspace. IDD supplies current tool contracts for hook
+authoring, while the Card's effective Tools-tab grants remain the execution ceiling. The user or the
+authenticated Builder profile may validate, save and activate the next Hooks version; a running Card
+receives one immutable saved version/hash and cannot rewrite it. Valid Hermes hooks execute through the
+preserved Hermes child-process Python runner and native tool dispatcher at their declared hook points;
+they do not replace, suppress or re-authorize the Card's ordinary profile MCP tools. Blank or invalid
+hooks are inert and keep the exact selected profile-tool presentation. Preserve the existing editor,
+compiler and executor until their loaded application path can be tested. Never widen to IDD or the
+complete catalog, add another executor, or activate hook execution for a non-Hermes Card.
 
 Authority is:
 

@@ -102,15 +102,14 @@ describe('canvas connection validation', () => {
     expect(allowed()).toBe(true);
     expect(allowed({ ...connect, source: connect.target, target: connect.source })).toBe(false);
     const main = deck.nodes.find(card => card.id === connect.source)!;
-    const mainOptions = main.runtimeOptions as typeof main.runtimeOptions & { enabled?: boolean };
     expect(allowed(connect)).toBe(true);
-    mainOptions!.enabled = false;
+    main.enabled = false;
     expect(allowed(connect)).toBe(false);
     expect(allowed(connect, 'reconnected-edge')).toBe(false);
     expect(allowed({ ...connect, target: 'card_magentic', targetHandle: 'card-control' as any })).toBe(false);
     expect(allowed({ ...connect, sourceHandle: null, target: 'card_magentic', targetHandle: 'bus-in-6' as any })).toBe(false);
     expect(allowed({ ...connect, source: 'card_trading_workbench', sourceHandle: null, target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
-    mainOptions!.enabled = true;
+    main.enabled = true;
     deck.nodes.find(card => card.id === connect.target)!.runtime = main.runtime;
     expect(allowed(connect)).toBe(false);
   });

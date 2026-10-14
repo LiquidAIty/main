@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app.python_models.card_script import saved_script
 from app.python_models.idf import load_idf, materialize_idf, runtime_projection, write_idf
 from app.python_models.idf_contract import (
     IDF_FILENAME,
@@ -192,19 +193,38 @@ def test_worldview_turn_context_is_retained_once_and_projected_for_hermes() -> N
 
 
 def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -> None:
+    source = '''CARD_SCRIPT = {
+    "mode": "tool_recipe",
+    "input": {"type": "object", "properties": {}},
+    "output": {"type": "object", "properties": {"result": {}}, "required": ["result"]},
+}
+from hermes_tools import SCRIPT, output, tools
+tools.cbm.search_graph = SCRIPT
+tools.call("cbm.search_graph")
+output.emit({"result": {}})
+'''
+    script = saved_script(
+        {"enabled": True, "source": source},
+        selected_tools=["cbm.search_graph"],
+    )
     presentation = {
         "mode": "script",
     }
     materialized = _idf(capabilities={
-        "presentedTools": ["cbm.search_graph"],
+        "presentedTools": [],
         "unavailableTools": ["graphiti.search_nodes"],
         "scriptPresentation": presentation,
+    }, stable_extra={
+        "runtimeOptions": {"reasoningEffort": "high", "script": script},
     })
     loaded = load_idf_bytes(materialized.idf_bytes)
     assert loaded.idf.selectedToolsAndGrants.scriptPresentation == presentation
     assert loaded.idf.selectedToolsAndGrants.unavailableTools == ["graphiti.search_nodes"]
     assert runtime_projection(loaded)["scriptPresentation"] == presentation
     assert runtime_projection(loaded)["unavailableTools"] == ["graphiti.search_nodes"]
+    assert runtime_projection(loaded)["cardScript"]["tool_names"] == {
+        "cbm.search_graph": "cbm.search_graph",
+    }
 
 
 def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:

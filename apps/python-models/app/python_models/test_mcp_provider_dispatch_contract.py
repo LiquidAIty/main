@@ -168,19 +168,19 @@ def test_ungranted_and_destructive_tools_are_not_callable(
     ))
 
     principal = {
-        "kind": "card-runtime",
+        "kind": "materializer-read",
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "callerCardId": "builder",
         "grantedTools": ["graphiti.add_memory"],
-        "presentedTools": [],
     }
     monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: principal)
     assert mcp_request_dispatch.request_tool_is_allowed("engraphis_remember") is False
     monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: principal)
     assert mcp_request_dispatch.request_tool_is_allowed("cbm.search_graph") is False
     principal["grantedTools"].append("cbm.search_graph")
-    assert mcp_request_dispatch.request_tool_is_allowed("cbm.search_graph") is False
-    principal["presentedTools"].extend(["cbm.search_graph", "graphiti.add_memory"])
     assert mcp_request_dispatch.request_tool_is_allowed("cbm.search_graph") is True
-    assert mcp_request_dispatch.request_tool_is_allowed("graphiti.add_memory") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("graphiti.add_memory") is False
     assert mcp_request_dispatch.request_tool_is_allowed("graphiti.clear_graph") is False
 
 def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkeypatch):

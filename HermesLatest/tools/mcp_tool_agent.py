@@ -120,7 +120,7 @@ def refresh_agent_mcp_tools(
     new_names = {_def_name(t) for t in new_defs}
     # Post-build families re-appended on LOCALS only; live attributes untouched until publish.
     staged_engine_names = _reinject_post_build_tools(agent, new_defs, new_names)
-    _reinject_authorized_dynamic_tools(agent, new_defs, new_names)
+    _reinject_message_agent(agent, new_defs, new_names)
     # Registry membership is read OUTSIDE ``_agent_tools_lock``: taking ``registry._lock``
     # under the tools lock would be the first nesting of the two.
     prefix_registered: Optional[set] = None
@@ -226,7 +226,7 @@ def restore_agent_tool_prefix(agent, saved) -> bool:
     merged.extend(t for t in fresh_defs if _def_name(t) not in pinned_names)
     merged = _drop_gated_carried_tools(merged, carried)
     merged_names = {_def_name(t) for t in merged}
-    _reinject_authorized_dynamic_tools(agent, merged, merged_names)
+    _reinject_message_agent(agent, merged, merged_names)
     merged, merged_names = _drop_side_agent_tools(agent, merged, merged_names)
     changed = merged != fresh_defs
     if changed:
@@ -264,7 +264,7 @@ def _merge_preserving_prefix(current_defs: list, new_defs: list, registered_name
     return merged, {_def_name(t) for t in merged}
 
 
-def _reinject_authorized_dynamic_tools(agent, tools_list: list, name_set: set) -> None:
+def _reinject_message_agent(agent, tools_list: list, name_set: set) -> None:
     """``message_agent`` is injected by an auth gate, never registered, so a registry-derived
     rebuild drops it. Scrub any stale copy from the STAGED pair and re-add it only when the live
     gate re-authorizes, so the publisher exposes a coherent ``(tools, valid_tool_names)``."""

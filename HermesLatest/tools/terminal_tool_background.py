@@ -87,9 +87,11 @@ def _stamp_gateway_routing(proc_session, get_session_env) -> None:
 
 
 def _spawn(process_registry, *, env, env_type, command, cwd, effective_task_id, task_id,
-           session_key, effective_pty):
+           session_key, effective_pty, originating_run_id, continue_card_run):
     common = dict(command=command, cwd=cwd, task_id=effective_task_id,
-                  owner_task_id=task_id or effective_task_id, session_key=session_key)
+                  owner_task_id=task_id or effective_task_id, session_key=session_key,
+                  originating_run_id=originating_run_id,
+                  continue_card_run=continue_card_run)
     if env_type == "local":
         return process_registry.spawn_local(
             env_vars=env.env if hasattr(env, 'env') else None, use_pty=effective_pty, **common)
@@ -130,6 +132,9 @@ def _register_completion_watcher(process_registry, proc_session, session_key) ->
         **{attr.removeprefix("watcher_"): getattr(proc_session, attr)
            for attr, _ in _ROUTING_FIELDS[:-1]},
         "notify_on_complete": True, "parent_session_id": proc_session.parent_session_id,
+        **({"originating_run_id": proc_session.originating_run_id}
+           if proc_session.originating_run_id else {}),
+        **({"continue_card_run": True} if proc_session.continue_card_run else {}),
     }
     runner_ref = getattr(sys.modules.get("gateway.run"), "_gateway_runner_ref", None)
     runner = runner_ref() if callable(runner_ref) else None
@@ -145,6 +150,8 @@ def spawn_background_process(
     completion_output_chars: int = 0,
     pty_disabled_reason: Optional[str],
     heartbeat_seconds: int = 0,
+    originating_run_id: str = "",
+    continue_card_run: bool = False,
 ) -> str:
     """Spawn *command* as a tracked background process and return the JSON result.
 
@@ -163,7 +170,8 @@ def spawn_background_process(
         proc_session = _spawn(
             process_registry, env=env, env_type=env_type, command=command, cwd=effective_cwd,
             effective_task_id=effective_task_id, task_id=task_id, session_key=session_key,
-            effective_pty=effective_pty,
+            effective_pty=effective_pty, originating_run_id=originating_run_id,
+            continue_card_run=continue_card_run,
         )
         result_data = {"output": "Background process started", "session_id": proc_session.id,
                        "pid": proc_session.pid, "exit_code": 0, "error": None}

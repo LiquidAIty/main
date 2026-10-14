@@ -1,4 +1,4 @@
-"""Live catalog, grant, Project WorldView, and Script tool selection."""
+"""Live catalog, saved grants, and Script tool selection."""
 
 from __future__ import annotations
 
@@ -8,11 +8,6 @@ from app.python_models.card_script import (
     CardScriptValidationError,
     script_presentation,
 )
-from app.python_models.postgres import connect_postgres
-from app.python_models.project_worldview import (
-    ProjectWorldviewError,
-    resolve_project_worldview,
-)
 from app.python_models.saved_card_contract import CardDomainError, string_list
 from app.python_models.tool_catalog import materialize_live_tool_catalog_with_failures
 
@@ -21,15 +16,14 @@ _OPTIONAL_TOOL_CATALOG_FAMILIES = frozenset({"cbm", "graphiti"})
 
 
 def resolve_effective_card_tools(
-    payload: dict[str, Any], *, loaded: dict[str, Any],
-    options: dict[str, Any], runtime: dict[str, Any], ceiling: list[str],
+    payload: dict[str, Any], *, options: dict[str, Any],
+    runtime: dict[str, Any], ceiling: list[str],
     call_config: dict[str, Any], runtime_options: dict[str, Any],
 ) -> tuple[
     dict[str, Any],
     list[str],
     list[dict[str, Any]],
     list[dict[str, Any]],
-    dict[str, Any],
 ]:
     catalog_state = str(
         payload.get("discoveredToolCatalogState") or "available"
@@ -91,19 +85,6 @@ def resolve_effective_card_tools(
         raise CardDomainError(
             f"configured_tool_not_grant_eligible:{ineligible_tools[0]}"
         )
-    selected_mcp_connections = set(call_config["mcpConnectionIds"])
-    connection_granted_tools = [
-        item["canonicalId"] for item in catalog
-        if (
-            "external-mcp" in item.get("publications", [])
-            and str(item.get("provider") or "") in selected_mcp_connections
-        )
-    ]
-    # An individual saved tool is its own grant. A saved MCP connection is the
-    # optional broader form: it grants the catalog currently published by that
-    # connection. Neither form depends on the other.
-    catalog_ceiling = list(dict.fromkeys([*catalog_ceiling, *connection_granted_tools]))
-
     def unavailable_reason(name: str) -> str | None:
         if name in tool_catalog_failures:
             return tool_catalog_failures[name]
@@ -127,7 +108,7 @@ def resolve_effective_card_tools(
         if runtime.get("kind") != "hermes":
             return None
         if set(definition.get("publications") or []) & {
-            "card-runtime", "external-mcp",
+            "card-profile", "external-mcp",
         }:
             return None
         return "hermes_capability_owner_unsupported"
@@ -141,26 +122,15 @@ def resolve_effective_card_tools(
         name for name in catalog_ceiling
         if unavailable_reason(name) is None
     ]
-    # The normalized live catalog is the execution-availability and
-    # saved-grant owner. Builder IDD data is not read on this path.
-    try:
-        project_worldview = resolve_project_worldview(
-            loaded["projectId"],
-            list(effective_tools),
-            connector=connect_postgres,
-        )
-    except ProjectWorldviewError as error:
-        raise CardDomainError(str(error)) from error
-    project_enabled_tools = set(project_worldview["enabledCapabilities"])
-    selected_tools = [
-        name for name in effective_tools if name in project_enabled_tools
-    ]
+    # The normalized live catalog supplies execution availability; the saved
+    # Card's Tools tab is the only grant. WorldView layer visibility is a
+    # separate Project UI concern and never removes a Card tool.
+    selected_tools = list(effective_tools)
     call_config["enabledTools"] = selected_tools
     call_config["unavailableTools"] = unavailable_tools
     call_config["unavailableToolReasons"] = unavailable_tool_reasons
     call_config["toolCatalogFailure"] = catalog_failure
     call_config["toolCatalogFailures"] = tool_catalog_failures
-    call_config["projectWorldview"] = project_worldview
     # `tools` remains the saved Card's deliberately selected presentation.
     presented_tools = [
         name for name in catalog_ceiling
@@ -187,5 +157,4 @@ def resolve_effective_card_tools(
         presented_tools,
         ordinary_tool_contracts,
         tool_definitions,
-        project_worldview,
     )

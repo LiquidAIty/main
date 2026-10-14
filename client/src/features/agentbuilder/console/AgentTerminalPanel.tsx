@@ -8,6 +8,7 @@ import {
   type AgentTerminalClient,
   type AgentTerminalIdentity,
   type AgentTerminalSession,
+  type AgentTerminalStream,
 } from './agentTerminalClient';
 
 type AgentTerminalPanelProps = {
@@ -22,12 +23,12 @@ type PendingOpen = {
   promise: Promise<AgentTerminalSession>;
 };
 
-function isRunning(session: AgentTerminalSession | null): session is AgentTerminalSession {
-  return session?.status === 'running';
+function isConnected(session: AgentTerminalSession | null): session is AgentTerminalSession {
+  return session?.status === 'connected';
 }
 
 function isAttached(session: AgentTerminalSession | null): session is AgentTerminalSession {
-  return isRunning(session) && Boolean(session.ptyId);
+  return isConnected(session) && Boolean(session.terminalChannelKey);
 }
 
 export default function AgentTerminalPanel({
@@ -38,6 +39,7 @@ export default function AgentTerminalPanel({
   const terminalRef = useRef<Terminal | null>(null);
   const sizeRef = useRef(DEFAULT_SIZE);
   const sessionRef = useRef<AgentTerminalSession | null>(null);
+  const streamRef = useRef<AgentTerminalStream | null>(null);
   const lastResizeRef = useRef('');
   const pendingOpenRef = useRef<PendingOpen | null>(null);
   const identityKeyRef = useRef('');
@@ -85,15 +87,7 @@ export default function AgentTerminalPanel({
           const sizeKey = `${terminal.cols}x${terminal.rows}`;
           if (isAttached(active) && lastResizeRef.current !== sizeKey) {
             lastResizeRef.current = sizeKey;
-            const resizeIdentityKey = identityKey;
-            const resizeSessionId = active.sessionId;
-            void client.resize(stableIdentity, active.sessionId, terminal.cols, terminal.rows).catch((cause) => {
-              if (lastResizeRef.current === sizeKey) lastResizeRef.current = '';
-              if (
-                identityKeyRef.current === resizeIdentityKey
-                && sessionRef.current?.sessionId === resizeSessionId
-              ) setError(cause instanceof Error ? cause.message : String(cause));
-            });
+            streamRef.current?.resize(terminal.cols, terminal.rows);
           }
         }
       } catch {
@@ -110,6 +104,7 @@ export default function AgentTerminalPanel({
     terminal.loadAddon(fit);
     terminal.open(container);
     terminalRef.current = terminal;
+    const input = terminal.onData((data) => streamRef.current?.write(data));
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleResize);
     observer?.observe(container);
     window.addEventListener('resize', scheduleResize);
@@ -121,13 +116,14 @@ export default function AgentTerminalPanel({
       observer?.disconnect();
       window.removeEventListener('resize', scheduleResize);
       terminal.dispose();
+      input.dispose();
       terminalRef.current = null;
       setTerminalReady(false);
     };
   }, [client, identityKey, stableIdentity]);
 
   useEffect(() => {
-    const needsOpen = !session || (isRunning(session) && !session.ptyId);
+    const needsOpen = !session || (isConnected(session) && !session.terminalChannelKey);
     if (!terminalReady || !needsOpen || error) return;
     const key = `${identityKey}:${session?.sessionId || 'new'}:hermes-tui`;
     let pending = pendingOpenRef.current;
@@ -154,11 +150,7 @@ export default function AgentTerminalPanel({
     if (!session) return;
     let lastSequence = 0;
     const streamIdentityKey = identityKey;
-    const stream = client.stream(
-      stableIdentity,
-      session.sessionId,
-      lastSequence,
-      {
+    const stream = client.stream(session, {
       onOutput: ({ sequence, data }) => {
         if (identityKeyRef.current !== streamIdentityKey || sequence <= lastSequence) return;
         lastSequence = sequence;
@@ -172,21 +164,24 @@ export default function AgentTerminalPanel({
         if (typeof next.error === 'string' && next.error) setError(next.error);
       },
       onTransportError: () => undefined,
-      },
-    );
-    return () => stream.close();
-  }, [client, identityKey, session?.sessionId, stableIdentity]);
+    });
+    streamRef.current = stream;
+    return () => {
+      if (streamRef.current === stream) streamRef.current = null;
+      stream.close();
+    };
+  }, [client, identityKey, session?.sessionId, session?.websocketUrl]);
 
-  const runtimeStatus = session?.status || (error ? 'failed' : 'opening');
+  const connectionStatus = session?.status || (error ? 'failed' : 'opening');
   return (
     <section
       data-testid="agent-terminal-panel"
       data-session-id={session?.sessionId || ''}
       data-card-id={session?.cardId || identity.cardId}
       data-profile={session?.profile || ''}
-      data-pid={session?.pid ?? ''}
-      data-pty-id={session?.ptyId || ''}
-      data-status={runtimeStatus}
+      data-terminal-channel-key={session?.terminalChannelKey || ''}
+      data-close-code={session?.closeCode ?? ''}
+      data-status={connectionStatus}
       aria-label="Card terminal"
       style={{
         display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,

@@ -154,14 +154,14 @@ def test_schema_never_in_global_registry():
 # ── dispatch gate (defense in depth) ─────────────────────────────────────────
 
 
-def test_tool_refuses_outside_bot_chat(tmp_path):
+def test_tool_refuses_an_unauthorized_session(tmp_path):
     home = _managed_home(tmp_path)
     agent = _FakeAgent(home, title="Ordinary chat")
     result = json.loads(
         bot_mode_dm.message_agent_tool(target="researcher", message="hi", agent=agent)
     )
     assert "error" in result
-    assert "Bot Chat" in result["error"]
+    assert "unavailable for this profile/session" in result["error"]
 
 
 def test_tool_refuses_on_unmanaged_install(tmp_path):
@@ -1044,6 +1044,48 @@ def test_ack_names_poll_return_path_when_session_cannot_receive_completions(tmp_
     assert result["status"] == "queued"
     assert result["reply_delivery"] == "poll"
     assert "proc_np1" in result["detail"]
+
+
+def test_direct_observer_delivery_suppresses_the_sender_completion_turn(tmp_path, monkeypatch):
+    import tools.terminal_tool as terminal_tool_module
+
+    observed = []
+
+    def spawn(command, **kwargs):
+        observed.append(kwargs)
+        return json.dumps({"output": "Background process started", "session_id": "proc_direct"})
+
+    monkeypatch.setattr(terminal_tool_module, "terminal_tool", spawn)
+    home = _managed_home(tmp_path, teammates=("researcher",))
+    agent = _FakeAgent(home, title="Bot Chat")
+    agent._bot_mode_reply_delivery = "direct"
+
+    result = json.loads(bot_mode_dm.message_agent_tool(
+        target="researcher",
+        message="hi",
+        agent=agent,
+    ))
+
+    assert result["status"] == "queued"
+    assert result["reply_delivery"] == "direct"
+    assert result["process_id"] == "proc_direct"
+    assert observed[0]["notify_on_complete"] is False
+
+
+def test_project_delivery_never_falls_through_without_its_exact_live_session(tmp_path):
+    home = _managed_home(tmp_path, teammates=("researcher",))
+    agent = _FakeAgent(home, title="Project 00000000-0000-0000-0000-000000000001")
+    agent._bot_mode_roster = ["researcher"]
+    agent._bot_mode_sessions = {"researcher": "stored-project-session"}
+
+    result = json.loads(bot_mode_dm.message_agent_tool(
+        target="researcher",
+        message="hi",
+        agent=agent,
+    ))
+
+    assert result["reason"] == "runtime_offline"
+    assert "nothing was sent" in result["error"]
 
 
 def test_live_owner_ack_carries_the_poll_return_path_when_session_cannot_receive_completions(tmp_path, monkeypatch):

@@ -36,10 +36,10 @@ async function authorizeProject(
   return { userId, projectSessionId };
 }
 
-function terminalDimension(value: unknown, fallback: number, maximum: number): number {
+function terminalDimension(value: unknown, defaultValue: number, maximum: number): number {
   return Number.isSafeInteger(value) && Number(value) >= 1
     ? Math.min(Number(value), maximum)
-    : fallback;
+    : defaultValue;
 }
 
 function terminalWebSocketUrl(query: URLSearchParams): string {
@@ -95,7 +95,10 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
     });
     const token = String(process.env.HERMES_DASHBOARD_SESSION_TOKEN || '').trim();
     if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('hermes_gateway_credential_missing');
-    const attachIdentity = createHash('sha256').update(JSON.stringify([
+    // Hermes requires a filesystem-safe channel and PTY reconnect key. This is
+    // transport state only; the actual persisted Hermes session remains
+    // `binding.sessionId`.
+    const terminalChannelKey = createHash('sha256').update(JSON.stringify([
       userId,
       projectSessionId,
       deckId,
@@ -106,9 +109,9 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
       token,
       profile: target.profile,
       project_session: binding.sessionId,
-      channel: attachIdentity,
+      channel: terminalChannelKey,
       cwd,
-      attach: attachIdentity,
+      attach: terminalChannelKey,
       bot_mode_roster: binding.botModeRoster.join(','),
       bot_mode_sessions: Object.entries(binding.botModeSessions)
         .map(([profile, sessionId]) => `${profile}=${sessionId}`).join(','),
@@ -117,7 +120,8 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
       ok: true,
       cardId,
       profile: target.profile,
-      attachIdentity,
+      sessionId: binding.sessionId,
+      terminalChannelKey,
       cols: terminalDimension(req.body?.cols, 80, 2_000),
       rows: terminalDimension(req.body?.rows, 24, 1_000),
       websocketUrl: terminalWebSocketUrl(query),

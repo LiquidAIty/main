@@ -3,10 +3,10 @@ import { Router, type Request, type Response } from 'express';
 import {
   ensureSavedCardProfile,
   materializeSavedCardProfile,
-  savedCardBotRoster,
   type HermesProfileState,
 } from '../hermes/profileMaterialization';
 import { hermesGateway, type HermesGatewayClient } from '../services/hermesGateway';
+import { readToolCatalog } from '../services/mcp/toolCatalogMcpClient';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import {
   objectRecord,
@@ -77,13 +77,14 @@ async function resolveAuthorizedCard(
   const existing = await ensureSavedCardProfile(
     request,
     card.card,
-    savedCardBotRoster(authority.deck, card.card),
   );
+  const toolCatalog = await readToolCatalog();
   const profile = await materializeSavedCardProfile(
     request,
     card.card,
-    savedCardBotRoster(authority.deck, card.card),
+    projectId,
     existing,
+    toolCatalog.tools,
   );
   return { authority, card, client, profile };
 }
@@ -251,6 +252,30 @@ router.post('/cards/:cardId/operations', async (req, res) => {
         profile: resolved.card.profile,
         name: requiredText(params.name, 'mcp_server_name_required'),
       }));
+    } else if (method === 'mcp.servers.oauth.start') {
+      result = objectRecord(await resolved.client.request(method, {
+        profile: resolved.card.profile,
+        name: requiredText(params.name, 'mcp_server_name_required'),
+      }));
+      if (
+        objectRecord(result).ok !== true
+        || !String(objectRecord(result).session_id || '').trim()
+        || !String(objectRecord(result).auth_url || '').trim()
+      ) throw new Error('hermes_mcp_oauth_start_failed');
+    } else if (method === 'mcp.servers.oauth.poll') {
+      result = objectRecord(await resolved.client.request(method, {
+        profile: resolved.card.profile,
+        name: requiredText(params.name, 'mcp_server_name_required'),
+        session_id: requiredText(params.session_id, 'mcp_oauth_session_required'),
+      }));
+      if (objectRecord(result).ok !== true) throw new Error('hermes_mcp_oauth_poll_failed');
+    } else if (method === 'mcp.servers.oauth.cancel') {
+      result = objectRecord(await resolved.client.request(method, {
+        profile: resolved.card.profile,
+        name: requiredText(params.name, 'mcp_server_name_required'),
+        session_id: requiredText(params.session_id, 'mcp_oauth_session_required'),
+      }));
+      if (objectRecord(result).ok !== true) throw new Error('hermes_mcp_oauth_cancel_failed');
     } else {
       throw new Error('hermes_profile_method_unsupported');
     }

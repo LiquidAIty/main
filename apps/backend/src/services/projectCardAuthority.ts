@@ -7,7 +7,6 @@ export type ProjectCardBinding = {
   profile: string;
   title: string;
   address?: string;
-  aliases: string[];
 };
 
 export type ProjectCardAuthority = {
@@ -29,7 +28,7 @@ export function exactStrings(value: unknown): string[] {
 }
 
 function enabledCard(card: DeckCard): boolean {
-  return card.enabled !== false && card.runtimeOptions?.enabled !== false;
+  return card.enabled !== false;
 }
 
 function projectCardBinding(card: DeckCard): ProjectCardBinding {
@@ -47,8 +46,6 @@ function projectCardBinding(card: DeckCard): ProjectCardBinding {
     profile,
     title,
     ...(address ? { address } : {}),
-    aliases: [...new Set([cardId, profile, ...(address ? [address] : [])]
-      .map((value) => value.toLowerCase()))],
   };
 }
 

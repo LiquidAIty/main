@@ -49,7 +49,7 @@ describe('projectStore saved Card membership', () => {
     };
     db.connect.mockResolvedValue(client);
 
-    await createProject('New Project', 'new-project', 'agent', 'owner-one');
+    await createProject('New Project', 'new-project', 'owner-one');
 
     expect(statements.some(({ sql }) => sql.includes('agent_card_revisions'))).toBe(true);
     expect(statements.some(({ sql }) => sql.includes('INSERT INTO ag_catalog.agent_card_revisions'))).toBe(false);

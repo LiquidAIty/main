@@ -10,14 +10,14 @@ export default defineConfig({
       name: 'worldview-runtime-test-modules',
       enforce: 'pre',
       resolveId(id) {
-        if (id === 'virtual:worldview-runtime-css') return '\0worldview-runtime-test-css';
-        if (id === 'virtual:worldview-runtime-mount') return '\0worldview-runtime-test-mount';
+        if (id === 'virtual:worldview-native-css') return '\0worldview-native-test-css';
+        if (id === 'virtual:worldview-native-mount') return '\0worldview-native-test-mount';
         return null;
       },
       load(id) {
-        if (id === '\0worldview-runtime-test-css') return 'export default "";';
-        if (id === '\0worldview-runtime-test-mount') {
-          return 'export const importWorldViewMount = async () => ({ mountWorldView: () => null });';
+        if (id === '\0worldview-native-test-css') return 'export default "";';
+        if (id === '\0worldview-native-test-mount') {
+          return 'export const importNativeWorldViewMount = async () => ({ mountWorldView: () => null });';
         }
         return null;
       },

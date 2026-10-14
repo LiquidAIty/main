@@ -150,7 +150,7 @@ def test_card_configuration_auto_flags_are_optional_strict_booleans():
     with pytest.raises(ValidationError):
         CardConfiguration(**configuration, autoModel=1)
 
-def test_legacy_enabled_byte_remains_readable_but_invalid_source_is_inert(monkeypatch):
+def test_disabled_invalid_script_remains_readable_and_inert(monkeypatch):
     loaded = _destination_fixture(monkeypatch)
     card = loaded["deck"]["nodes"][1]
     card["runtimeOptions"]["script"] = {
@@ -160,13 +160,13 @@ def test_legacy_enabled_byte_remains_readable_but_invalid_source_is_inert(monkey
 
     stable = saved_card_contract.stable_card_record(card)
     saved = stable["runtimeExtensions"]["script"]
-    assert "enabled" not in saved
+    assert saved["enabled"] is False
     assert saved["source"] == "not executable"
     assert saved["lastValidation"]["status"] == "invalid"
     assert "hermesSupport" not in saved
     assert stable["grants"]["tools"] == ["calculator"]
 
-def test_saved_card_preserves_legacy_team_data_without_runtime_validation() -> None:
+def test_saved_card_removes_retired_embedded_team_configuration() -> None:
     team = {
         "mode": "auto", "maxWorkers": 3, "retryLimit": 2,
         "workerModel": {
@@ -183,9 +183,9 @@ def test_saved_card_preserves_legacy_team_data_without_runtime_validation() -> N
         runtime={"kind": "hermes", "mode": "delegate", "profile": "research"},
         runtimeOptions={**_agent("x")["runtimeOptions"], "team": team},
     )
-    assert saved_card_contract.stable_card_record(hermes)["runtimeExtensions"]["team"] == team
+    assert "team" not in saved_card_contract.stable_card_record(hermes)["runtimeExtensions"]
     legacy = _agent("old-card", runtimeOptions={**_agent("x")["runtimeOptions"], "team": team})
-    assert saved_card_contract.stable_card_record(legacy)["runtimeExtensions"]["team"] == team
+    assert "team" not in saved_card_contract.stable_card_record(legacy)["runtimeExtensions"]
 
 def test_retired_kanban_card_mode_is_not_a_runtime_contract() -> None:
     with pytest.raises(

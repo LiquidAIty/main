@@ -100,11 +100,42 @@ def test_delivery_keeps_the_sender_and_refuses_a_different_one_under_the_same_id
 
     owner = dict(profile_home=str(tmp_path.resolve()), session_id="chat", lease_id="lease", live_session_id="live")
     author = {"id": "bot:coder", "name": "coder", "is_bot": True}
-    queued = mailbox.deliver_to_live_owner(tmp_path, owner, "hello", delivery_id="b" * 32, author=author)
+    queued = mailbox.deliver_to_live_owner(
+        tmp_path,
+        owner,
+        "hello",
+        delivery_id="b" * 32,
+        author=author,
+        parent_run_id="run-parent",
+    )
     assert queued["author"] == author
-    assert mailbox.deliver_to_live_owner(tmp_path, owner, "hello", delivery_id="b" * 32, author=author) == queued
+    assert queued["parent_run_id"] == "run-parent"
+    assert mailbox.deliver_to_live_owner(
+        tmp_path,
+        owner,
+        "hello",
+        delivery_id="b" * 32,
+        author=author,
+        parent_run_id="run-parent",
+    ) == queued
     with pytest.raises(ValueError):
-        mailbox.deliver_to_live_owner(tmp_path, owner, "hello", delivery_id="b" * 32, author={**author, "id": "bot:other"})
+        mailbox.deliver_to_live_owner(
+            tmp_path,
+            owner,
+            "hello",
+            delivery_id="b" * 32,
+            author={**author, "id": "bot:other"},
+            parent_run_id="run-parent",
+        )
+    with pytest.raises(ValueError):
+        mailbox.deliver_to_live_owner(
+            tmp_path,
+            owner,
+            "hello",
+            delivery_id="b" * 32,
+            author=author,
+            parent_run_id="run-other",
+        )
     assert "author" not in mailbox.deliver_to_live_owner(tmp_path, owner, "no sender", delivery_id="c" * 32)
 
 
@@ -222,5 +253,4 @@ def test_schema_damaged_ticket_does_not_wedge_bulk_scans(tmp_path, caplog):
     assert {path: path.read_text(encoding="utf-8") for path in damaged} == damaged
     skipped = [r.message for r in caplog.records if r.message.startswith("bot_live_delivery: skipping unreadable ticket")]
     assert len(skipped) == len(damaged), "each damaged ticket warns once per process, not per scan"
-
 

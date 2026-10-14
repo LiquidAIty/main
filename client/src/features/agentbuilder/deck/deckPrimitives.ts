@@ -8,8 +8,6 @@ import type {
   DeckEdgeType,
 } from '../../../types/agentgraph';
 
-export const DEFAULT_WORKSPACE_ROOT = 'C:\\Projects\\main';
-
 export function safeText(value: unknown): string {
   if (value == null) return '';
   if (typeof value === 'string') return value;
@@ -68,9 +66,6 @@ export const THINKGRAPH_CARD_TOOLS = [
   'engraphis_get_memory',
   'engraphis_remember',
   'engraphis_update_memory',
-  'engraphis_correct',
-  'engraphis_link',
-  'engraphis_ingest',
 ] as const;
 export const HERMES_CARD_TOOLS = [
   'canvas.inspect',
@@ -83,9 +78,14 @@ export const HERMES_CARD_TOOLS = [
   'graphiti.search_nodes',
   'graphiti.add_memory',
   'graphiti.add_triplet',
-  'write_mag_one_instructions',
-  'card.load_graph_references',
 ] as const;
+const RETIRED_CARD_TOOL_IDS = new Set([
+  'card.load_graph_references',
+  'engraphis_correct',
+  'engraphis_ingest',
+  'engraphis_link',
+  'write_mag_one_instructions',
+]);
 
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -104,21 +104,47 @@ export function normalizeRuntimeOptions(
   value: unknown,
 ): AgentCardRuntimeOptions | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return cloneDeckDocument(value as AgentCardRuntimeOptions);
+  const normalized = cloneDeckDocument(value as AgentCardRuntimeOptions);
+  const retiredOptions = normalized as AgentCardRuntimeOptions & {
+    openaiRuntime?: unknown;
+    team?: unknown;
+    writeMode?: unknown;
+  };
+  delete retiredOptions.openaiRuntime;
+  delete retiredOptions.team;
+  delete retiredOptions.writeMode;
+  if (normalized.script && typeof normalized.script === 'object') {
+    const script = normalized.script as typeof normalized.script & {
+      hermesSupport?: unknown;
+      nativeSupport?: unknown;
+      rollback?: unknown;
+    };
+    delete script.hermesSupport;
+    delete script.nativeSupport;
+    delete script.rollback;
+  }
+  const rawTools = Array.isArray(normalized.tools) ? normalized.tools : [];
+  if (!rawTools.some((toolId) => (
+    typeof toolId === 'string'
+    && (toolId.startsWith('hermes:tool:') || RETIRED_CARD_TOOL_IDS.has(toolId))
+  ))) return normalized;
+  const tools = rawTools.filter((toolId) => (
+    typeof toolId !== 'string'
+    || (!toolId.startsWith('hermes:tool:') && !RETIRED_CARD_TOOL_IDS.has(toolId))
+  ));
+  return { ...normalized, tools };
 }
 
 /** Orange flow authority belongs to Main or an explicitly enabled saved
  * non-Magnetic Hermes orchestrator Card. */
 export function hasMainBotAuthority(card: AgentCardInstance): boolean {
-  const record = card as AgentCardInstance & { enabled?: boolean };
-  const options = card.runtimeOptions as (AgentCardRuntimeOptions & { enabled?: boolean }) | null;
+  const options = card.runtimeOptions;
   return card.kind === 'agent'
     && card.runtime.kind === 'hermes'
     && card.runtime.mode !== 'magentic_one'
     && (card.runtime.mode === 'main' || options?.orchestrator === true)
     && Boolean(card.runtime.profile.trim())
-    && record.enabled !== false
-    && options?.enabled !== false;
+    && card.enabled !== false;
 }
 
 

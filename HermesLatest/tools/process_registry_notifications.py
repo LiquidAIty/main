@@ -35,6 +35,13 @@ class ProcessNotificationBatch:
     def display_text(self, registry) -> str:
         return process_completion_display_text([event for event, _text in self._live(registry)])
 
+    def process_ids(self, registry) -> list[str]:
+        return [
+            str(event.get("session_id") or "").strip()
+            for event, _text in self._live(registry)
+            if str(event.get("session_id") or "").strip()
+        ]
+
 
 def group_process_notifications(notifications):
     """Group consecutive completions only; watches and delegations are barriers."""

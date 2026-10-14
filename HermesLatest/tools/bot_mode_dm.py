@@ -238,6 +238,16 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     # Sender signature: the friendly name when the bot has one (#89720); the @handle stays the routing alias.
     content = f"Message from 🤖 {_display_name(me, roster_homes.get(me, Path(home)))} (@{_handle(me)}): " + body
     delivery = dict(task_id=task_id, agent=agent)
+    try:
+        from tui_gateway.saved_card_turn import current_card_turn_context
+
+        current_turn = current_card_turn_context()
+        parent_run_id = str((current_turn or {}).get("run_id") or "") or None
+        continue_card_run = (current_turn or {}).get("externally_managed") == "true"
+    except Exception:
+        parent_run_id = None
+        continue_card_run = False
+    notify_sender = getattr(agent, "_bot_mode_reply_delivery", "notification") != "direct"
     # Attribution for the recipient's memory hooks; the text prefix above stays the human-facing signature.
     author = {"id": f"bot:{me}", "name": _handle(me), "is_bot": True}
 
@@ -290,7 +300,10 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     )
     return _start_delivery([_hermes_cli(), "-p", resolved, *turn_args], content, f"@{_handle(resolved)}",
                            stdin_file=False, profile_home=roster_homes[resolved], author=author,
-                           stored_session_id=target_session_id or None, **delivery)
+                           stored_session_id=target_session_id or None,
+                           parent_run_id=parent_run_id,
+                           continue_card_run=continue_card_run,
+                           notify_sender=notify_sender, **delivery)
 
 
 def _try_relay_delivery(root: Path, raw_target: str, content: str, me: str, *,
@@ -483,6 +496,7 @@ def _admit_live_dm(
     dm_file: str,
     author: Optional[dict] = None,
     stored_session_id: Optional[str] = None,
+    parent_run_id: Optional[str] = None,
 ) -> dict | None:
     """Pin intent before admission; retries may inspect, never change transport."""
     from tools.bot_live_delivery import (
@@ -508,7 +522,8 @@ def _admit_live_dm(
             return None
         intent = dict(owner=owner, message=Path(dm_file).read_text(encoding="utf-8"),
                       delivery_id=_dm_delivery_id(dm_file),
-                      **({"author": author} if author else {}))
+                      **({"author": author} if author else {}),
+                      **({"parent_run_id": parent_run_id} if parent_run_id else {}))
         try:
             fd = os.open(intent_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
@@ -523,7 +538,8 @@ def _admit_live_dm(
     record = read_delivery_result(home, intent["delivery_id"])
     if record is None:
         record = deliver_to_live_owner(home, intent["owner"], intent["message"],
-                                       delivery_id=intent["delivery_id"], author=intent.get("author"))
+                                       delivery_id=intent["delivery_id"], author=intent.get("author"),
+                                       parent_run_id=intent.get("parent_run_id"))
     return record
 
 
@@ -546,6 +562,14 @@ def _wait_live_dm(home: str, delivery_id: str, *, dm_file: "str | os.PathLike | 
     return 0 if status in ("settled", "queued", "claimed") else 1
 
 
+def _project_session_offline(dm_file: "str | os.PathLike") -> dict[str, str]:
+    return {
+        "error": "The exact Project session is not live; nothing was sent.",
+        "reason": "runtime_offline",
+        "delivery_id": _dm_delivery_id(dm_file),
+    }
+
+
 def _local_delivery_home(argv: list[str]) -> Path | None:
     cli = (argv[0] if argv else "").rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
     if len(argv) < 3 or cli not in ("hermes", "hermes.exe") or argv[1] != "-p":
@@ -557,7 +581,8 @@ def _local_delivery_home(argv: list[str]) -> Path | None:
 
 def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
                   profile_home: Path | None = None, author: Optional[dict] = None,
-                  stored_session_id: Optional[str] = None) -> int:
+                  stored_session_id: Optional[str] = None,
+                  parent_run_id: Optional[str] = None) -> int:
     """Route to the live owner before attempting a CLI transport. Live deliveries
     retain their intent/payload and immutable receipt; only CLI/peer payloads are
     removed after consumption. The CLI turn window holds the profile lock, so two
@@ -575,7 +600,9 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
         home = profile_home or _local_delivery_home(argv)
         if home is not None or Path(dm_file + ".live.json").exists():
             try:
-                record = _admit_live_dm(home, dm_file, author, stored_session_id)
+                record = _admit_live_dm(
+                    home, dm_file, author, stored_session_id, parent_run_id,
+                )
             except Exception as exc:
                 print(json.dumps({"status": "ambiguous", "delivery_id": _dm_delivery_id(dm_file),
                     "error": f"Live admission outcome unknown: {exc}. Do not resend.",
@@ -583,6 +610,10 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
                 return 1
             if record is not None:
                 return _wait_live_dm(record["profile_home"], record["delivery_id"], dm_file=dm_file)
+            if stored_session_id:
+                print(json.dumps(_project_session_offline(dm_file)))
+                _unlink_dm_file(dm_file)
+                return 1
     try:
         from tools.bot_relay import delivery_env
 
@@ -600,7 +631,8 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
 
 def _delivery_command(argv: list[str], dm_file: str, *, stdin_file: bool,
                       profile_home: Path | None = None, author: Optional[dict] = None,
-                      stored_session_id: Optional[str] = None) -> str:
+                      stored_session_id: Optional[str] = None,
+                      parent_run_id: Optional[str] = None) -> str:
     """Build an argv-safe command for the cleanup-owning background runner:
     ``--run-delivery [--author <json>] <mode> <dm_file> [--profile-home <path>] <argv...>``."""
     runner_argv = [sys.executable, str(Path(__file__).resolve()), "--run-delivery",
@@ -609,6 +641,8 @@ def _delivery_command(argv: list[str], dm_file: str, *, stdin_file: bool,
         runner_argv.extend(["--profile-home", str(Path(profile_home).resolve())])
     if stored_session_id:
         runner_argv.extend(["--stored-session-id", stored_session_id])
+    if parent_run_id:
+        runner_argv.extend(["--parent-run-id", parent_run_id])
     runner_argv.extend(argv)
     if sys.platform == "win32":
         # The tracked local backend uses Git Bash on native Windows: forward slashes keep drive
@@ -623,12 +657,17 @@ def _delivery_command(argv: list[str], dm_file: str, *, stdin_file: bool,
 def _start_delivery(argv: list[str], content: str, label: str, *, stdin_file: bool,
                     task_id: Optional[str], agent: Any, profile_home: Path | None = None,
                     author: Optional[dict] = None,
-                    stored_session_id: Optional[str] = None) -> str:
+                    stored_session_id: Optional[str] = None,
+                    parent_run_id: Optional[str] = None,
+                    continue_card_run: bool = False,
+                    notify_sender: bool = True) -> str:
     """Create a DM file and transfer its cleanup ownership to the runner."""
     dm_file = _write_dm_file(content)
     if profile_home is not None:
         try:
-            record = _admit_live_dm(profile_home, dm_file, author, stored_session_id)
+            record = _admit_live_dm(
+                profile_home, dm_file, author, stored_session_id, parent_run_id,
+            )
         except Exception as exc:
             return json.dumps({"status": "ambiguous", "delivery_id": _dm_delivery_id(dm_file),
                 "error": f"Live delivery admission could not be confirmed: {exc}. Do not resend.",
@@ -637,8 +676,17 @@ def _start_delivery(argv: list[str], content: str, label: str, *, stdin_file: bo
             command = _delivery_command(
                 argv, dm_file, stdin_file=False, profile_home=profile_home,
                 author=author, stored_session_id=stored_session_id,
+                parent_run_id=parent_run_id,
             )
-            notification = json.loads(_spawn_delivery(command, label, task_id=task_id, agent=agent))
+            notification = json.loads(_spawn_delivery(
+                command,
+                label,
+                task_id=task_id,
+                agent=agent,
+                originating_run_id=parent_run_id,
+                continue_card_run=continue_card_run,
+                notify_sender=notify_sender,
+            ))
             owner_label = "Project session owner" if stored_session_id else "Bot Chat owner"
             result = dict(status=record["status"], delivery_id=record["delivery_id"], to=label,
                           detail=f"Durably queued for the live {owner_label}. Do NOT wait or resend; finish your turn.")
@@ -652,19 +700,36 @@ def _start_delivery(argv: list[str], content: str, label: str, *, stdin_file: bo
                     # the poll instruction here too, not 'finish your turn'.
                     result["detail"] = f"Durably queued for the live {owner_label}. Do NOT resend. {notification['detail']}"
             return json.dumps(result)
+        if stored_session_id:
+            result = _project_session_offline(dm_file)
+            _unlink_dm_file(dm_file)
+            return json.dumps(result)
     try:
         command = _delivery_command(
             argv, dm_file, stdin_file=stdin_file, profile_home=profile_home,
             author=author, stored_session_id=stored_session_id,
+            parent_run_id=parent_run_id,
         )
     except BaseException:
         _unlink_dm_file(dm_file)
         raise
-    return _spawn_delivery(command, label, dm_file=dm_file, task_id=task_id, agent=agent)
+    return _spawn_delivery(
+        command,
+        label,
+        dm_file=dm_file,
+        task_id=task_id,
+        agent=agent,
+        originating_run_id=parent_run_id,
+        continue_card_run=continue_card_run,
+        notify_sender=notify_sender,
+    )
 
 
 def _spawn_delivery(command: str, label: str, *, dm_file: Optional[str] = None, delivery_id: Optional[str] = None,
-                    task_id: Optional[str], agent: Any) -> str:
+                    task_id: Optional[str], agent: Any,
+                    originating_run_id: Optional[str] = None,
+                    continue_card_run: bool = False,
+                    notify_sender: bool = True) -> str:
     """Launch the cleanup-owning runner and transfer file ownership on ack. ``dm_file``
     is None for relay deliveries (the waiter watches a reply file; envelope artifacts
     are owned/swept by ``tools/bot_relay.py``), which pass the envelope id as ``delivery_id``
@@ -674,9 +739,11 @@ def _spawn_delivery(command: str, label: str, *, dm_file: Optional[str] = None, 
     try:
         from tools.terminal_tool import terminal_tool
 
-        raw = terminal_tool(command, background=True, notify_on_complete=True, task_id=task_id,
+        raw = terminal_tool(command, background=True, notify_on_complete=notify_sender, task_id=task_id,
                             workdir=str(Path(__file__).resolve().parent.parent), _host_local=True,
-                            _completion_output_chars=REPLY_COMPLETION_CHARS)
+                            _completion_output_chars=REPLY_COMPLETION_CHARS,
+                            _originating_run_id=str(originating_run_id or ""),
+                            _continue_card_run=continue_card_run)
         try:
             parsed = json.loads(raw)
         except (ValueError, TypeError):
@@ -694,7 +761,13 @@ def _spawn_delivery(command: str, label: str, *, dm_file: Optional[str] = None, 
             return _err(f"Delivery to {label} failed to start: no process id returned")
         # From here the background runner owns the file (removed after the consumer finishes).
         transferred = True
-        if parsed.get("notify_on_complete") is False:
+        if not notify_sender:
+            detail = (
+                f"Message queued for {label}; the caller is observing the exact recipient session directly. "
+                "Do not wait, poll, resend, or synthesize another reply."
+            )
+            reply_delivery = "direct"
+        elif parsed.get("notify_on_complete") is False:
             # terminal_tool refused the completion promise: this session (api_server, one-shot
             # runner) cannot receive an async completion, so the recipient's reply would never
             # be injected here (#101142). Say so and name the return path the surface supports.
@@ -707,17 +780,19 @@ def _spawn_delivery(command: str, label: str, *, dm_file: Optional[str] = None, 
             if _persist_reply_when_done(proc_id, agent):
                 detail += (" Its outcome is also saved into this session's transcript as a delivery row "
                            "when the process exits, so it survives even if the turn ends first.")
+            reply_delivery = "poll"
         else:
             detail = (f"Message queued for {label}: this acknowledges the hand-off to a "
                       "background delivery process, not a delivery receipt — do NOT wait or poll. "
                       "Finish your turn now; that process's completion notification carries the "
                       "delivery outcome — the reply (relay it then, attributed to that agent) or "
                       "the delivery failure (report it; the message was NOT delivered).")
+            reply_delivery = "notification"
         return json.dumps({
             "status": "queued",
             "delivery_id": delivery_id or (_dm_delivery_id(dm_file) if dm_file else ""),
             "to": label,
-            "reply_delivery": "poll" if parsed.get("notify_on_complete") is False else "notification",
+            "reply_delivery": reply_delivery,
             "detail": detail,
             "process_id": proc_id,
             "queued_at": int(time.time()),
@@ -814,11 +889,13 @@ def _delivery_main(args: list[str]) -> int:
     if len(rest) < 2 or rest[0] not in ("stdin", "query-file"):
         return 2
     try:
-        argv, profile_home, stored_session_id = rest[2:], None, None
+        argv, profile_home, stored_session_id, parent_run_id = rest[2:], None, None, None
         if len(argv) >= 2 and argv[0] == "--profile-home":
             profile_home, argv = Path(argv[1]), argv[2:]
         if len(argv) >= 2 and argv[0] == "--stored-session-id":
             stored_session_id, argv = argv[1], argv[2:]
+        if len(argv) >= 2 and argv[0] == "--parent-run-id":
+            parent_run_id, argv = argv[1], argv[2:]
         return _run_delivery(
             argv,
             rest[1],
@@ -826,6 +903,7 @@ def _delivery_main(args: list[str]) -> int:
             profile_home=profile_home,
             author=author,
             stored_session_id=stored_session_id,
+            parent_run_id=parent_run_id,
         )
     except Exception as exc:
         # Every refusal ships a typed reason on stdout so the completion notification carries it

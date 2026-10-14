@@ -10,7 +10,6 @@ import {
   DEFAULT_CARD_MODEL_KEY,
   DEFAULT_CARD_PROVIDER,
   MAIN_CHAT_MODEL_KEY,
-  DEFAULT_WORKSPACE_ROOT,
   HERMES_CARD_TOOLS,
   AGENT_BUILDER_CONTROLLER_TOOLS,
   AGENT_BUILDER_MODEL_KEY,
@@ -31,6 +30,15 @@ const DEFAULT_HERMES_SUBAGENT_MODEL = {
 };
 
 const TEAM_CARD_MODEL_KEY = 'gpt-5.6-terra';
+
+const MAIN_OPERATING_POLICY = `[OPERATING POLICY]
+Use the current Project's enabled outbound orange flow wires as the complete direct Bot roster. Blue magentic_option wires only select Magnetic workers and never create direct Bot authority.
+Answer directly when another Card is unnecessary. When a connected Card is needed, use Hermes message_agent. Never impersonate a recipient, switch profiles, write into another Card's terminal, or substitute another execution route.
+When the user explicitly addresses an eligible @Card, compose one bounded message and send it once with message_agent. The recipient provides the visible answer under its own identity; after the queued acknowledgement, return [SILENT] instead of adding or rewriting a Main answer. Queued or accepted delivery is not completed work.
+When you independently consult a connected Card, wait for its actual returned result and use that result in your answer. Never invent a result or hide a delivery failure.
+Wiring never starts work. Invoke Magnetic only for an approved mission through the existing run_mag_one TaskGraph workflow and its exact blue-connected saved workers. Do not replace Magnetic with delegate_task or another task system.
+Do not claim ThinkGraph capture occurred unless the runtime reports it. Use KnowGraph for sourced research and distinguish a returned finding from a confirmed saved Know.
+Builder is the same saved Builder shown in the lower terminal.`;
 
 const TEAM_CARD_TOOLS = [
   'canvas.inspect',
@@ -91,7 +99,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       memoryPolicy: [
         'magentic_option is direction-agnostic Magnetic worker membership.',
-        'flow is directed execution/sequence.',
+        'flow is directed Hermes Bot messaging authority and has no Magnetic scheduling meaning.',
         'Do not rewrite user canvas wiring.',
         'Active Skills: clarify_intent, route_by_graph_state, preserve_human_approval, explain_current_state, avoid_worker_job_leakage',
       ].join('\n'),
@@ -99,7 +107,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_main_chat',
-    content: buildPromptTemplate({
+    content: `${buildPromptTemplate({
       role: 'You are Main, the persistent user-facing front door and system orchestrator.',
       goal: [
         'Understand the user\'s intent, select deliberate context, answer directly, and review returned work.',
@@ -116,7 +124,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Output: a direct user-facing answer, or a concise reviewed result with the exact next approval or blocker.',
       ].join('\n'),
       memoryPolicy: 'Use the granted ThinkGraph capabilities only for useful project reasoning. Keep run-specific tasks, selected references, tool schemas, and orchestration transcripts out of stable memory.',
-    }),
+    })}\n\n${MAIN_OPERATING_POLICY}`,
   },
   {
     id: 'prompt_builder',
@@ -203,7 +211,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'When bounded research produces useful verified findings, persist each focused finding through graphiti.add_memory before answering so Graphiti performs its established episode, entity, relationship, provenance, and time handling.',
         'The authenticated runtime supplies the current project Graphiti scope. Creating the first sourced episode in a clean KnowGraph does not require a preexisting node, edge, target Card, or selected graph reference. Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake.',
         'Do not use CBM or become a coding worker. Do not initiate another saved Card, create recursive workers, or execute Magnetic.',
-        'Use card.load_graph_references and write_mag_one_instructions only to stage the existing bounded mission and context editors after authorized review; they do not create another input format or execute a Card.',
+        'Use only the bounded graph references supplied with the current IDF. Do not create another input format or execute another Card.',
       ].join('\n'),
       ioSchema: [
         'Input: one bounded research assignment plus deliberately selected context and graph references.',
@@ -309,8 +317,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_magentic',
     model: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
     provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1200,
     tools: [],
   },
   {
@@ -319,8 +325,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_main_chat',
     model: MAIN_CHAT_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1200,
     tools: [],
   },
   {
@@ -329,8 +333,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_assist',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1200,
     tools: [],
   },
   {
@@ -339,8 +341,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_team',
     model: TEAM_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
     tools: [...TEAM_CARD_TOOLS],
   },
   {
@@ -349,8 +349,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_thinkgraph',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
     tools: [...THINKGRAPH_CARD_TOOLS],
   },
   {
@@ -359,8 +357,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_knowgraph',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
     tools: [],
   },
   {
@@ -369,8 +365,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_worldsignals_agent',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
     tools: [],
   },
   {
@@ -379,8 +373,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_trading_workbench',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
     tools: [
       'get_market_snapshot',
       'get_historical_bars',
@@ -395,7 +387,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
 export const INITIAL_DECK: DeckDocument = {
   id: 'deck_builder',
   name: 'Agent Card Deck',
-  workspaceRoot: DEFAULT_WORKSPACE_ROOT,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
   version: 10,
   nodes: [
@@ -418,15 +409,13 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: MAIN_CHAT_MODEL_KEY,
         providerModelId: MAIN_CHAT_MODEL_KEY,
-        openaiRuntime: 'codex_app_server',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...MAIN_CHAT_CONTROLLER_TOOLS, 'hermes:tool:memory'],
+        tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
       },
       parentGraphId: null,
       title: 'Main',
       subtitle: 'Persistent conversation front door',
       position: { x: -24, y: -24 },
-      status: 'ready',
     },
     {
       id: BUILDER_CARD_ID,
@@ -443,9 +432,8 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: AGENT_BUILDER_MODEL_KEY,
         providerModelId: AGENT_BUILDER_MODEL_KEY,
-        openaiRuntime: 'codex_app_server',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...AGENT_BUILDER_CONTROLLER_TOOLS, 'hermes:tool:memory'],
+        tools: [...AGENT_BUILDER_CONTROLLER_TOOLS],
         skills: ['agent-builder-inspection'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       },
@@ -453,7 +441,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Builder',
       subtitle: 'Prompts, agents, apps, and supporting code',
       position: { x: 360, y: -80 },
-      status: 'ready',
     },
     {
       id: 'card_thinkgraph',
@@ -472,14 +459,12 @@ export const INITIAL_DECK: DeckDocument = {
         providerModelId: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
-        openaiRuntime: 'codex_app_server',
         reasoningEffort: 'low',
       },
       parentGraphId: null,
       title: 'ThinkGraph',
       subtitle: 'Project memory',
       position: { x: -260, y: 120 },
-      status: 'ready',
     },
     {
       id: 'card_magentic',
@@ -495,13 +480,11 @@ export const INITIAL_DECK: DeckDocument = {
         provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
-        maxTurns: 2,
       },
       parentGraphId: null,
       title: 'Magnetic',
       subtitle: 'Tasks',
       position: { x: 140, y: 120 },
-      status: 'ready',
     },
     {
       id: 'card_team',
@@ -517,9 +500,8 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: TEAM_CARD_MODEL_KEY,
         providerModelId: TEAM_CARD_MODEL_KEY,
-        openaiRuntime: 'codex_app_server',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...TEAM_CARD_TOOLS, 'hermes:tool:memory'],
+        tools: [...TEAM_CARD_TOOLS],
         skills: ['grounded-citations'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       },
@@ -527,7 +509,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Team',
       subtitle: 'Wildcard',
       position: { x: 600, y: 340 },
-      status: 'ready',
     },
     {
       id: 'card_knowgraph',
@@ -541,20 +522,18 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         subagentType: 'none',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        tools: [...HERMES_CARD_TOOLS, 'hermes:tool:memory'],
+        tools: [...HERMES_CARD_TOOLS],
         skills: ['grounded-citations'],
         toolsets: ['web'],
         modelKey: DEFAULT_CARD_MODEL_KEY,
         providerModelId: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
-        openaiRuntime: 'codex_app_server',
       },
       parentGraphId: null,
       title: 'KnowGraph',
       subtitle: 'Planning, memory, and KnowGraph research',
       position: { x: 260, y: 480 },
-      status: 'ready',
     },
     {
       id: 'card_trading_workbench',
@@ -574,7 +553,6 @@ export const INITIAL_DECK: DeckDocument = {
           'trading.get_state',
           'trading.accept_assignment',
           'trading.record_decision',
-          'hermes:tool:memory',
         ],
         skills: ['grounded-citations'],
         configuration: {
@@ -621,13 +599,11 @@ export const INITIAL_DECK: DeckDocument = {
         providerModelId: DEFAULT_CARD_MODEL_KEY,
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
-        openaiRuntime: 'codex_app_server',
       },
       parentGraphId: 'workbench_trading',
       title: 'Trading',
       subtitle: 'Hermes paper-trading decisions and deterministic Trade Jobs',
       position: { x: 520, y: 140 },
-      status: 'ready',
     },
     {
       id: 'card_worldsignals_agent',
@@ -660,12 +636,11 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'WorldSignals',
       subtitle: 'Live-world intelligence briefings',
       position: { x: 0, y: 260 },
-      status: 'ready',
     },
   ],
   // The two independent connection networks (explicit type + handle semantics;
   // color is presentation only):
-  //   flow             ORANGE  Main bot-team authority
+  //   flow             ORANGE  directed Hermes Bot messaging authority
   //   magentic_option  BLUE    Magnetic task-ledger worker availability
   edges: [
     { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },

@@ -233,6 +233,7 @@ def _write(path: Path, record: dict[str, Any]) -> None:
 def deliver_to_live_owner(
     profile_home: Path | str, owner: dict[str, Any], message: str,
     *, delivery_id: str | None = None, author: dict[str, Any] | None = None,
+    parent_run_id: str | None = None,
     notification_category: str = "result",
 ) -> dict[str, Any]:
     """Return durable admission immediately, without waiting for the owner.
@@ -249,12 +250,14 @@ def deliver_to_live_owner(
         existing = _read(path)
         if existing is not None:
             if (existing["owner"] != pinned or existing["message"] != message or existing.get("author") != author
+                    or existing.get("parent_run_id") != parent_run_id
                     or existing.get("notification_category", "result") != notification_category):
                 raise ValueError("delivery id already belongs to a different payload")
             return existing
         record = dict(delivery_id=key, id=key, owner=pinned, **pinned,
                       message=message, status="queued", created_at=time.time_ns(),
-                      sequence=_next_sequence(root), **({"author": dict(author)} if author else {}))
+                      sequence=_next_sequence(root), **({"author": dict(author)} if author else {}),
+                      **({"parent_run_id": parent_run_id} if parent_run_id else {}))
         if notification_category == "diagnostic":
             record["notification_category"] = notification_category
         _write(path, record)

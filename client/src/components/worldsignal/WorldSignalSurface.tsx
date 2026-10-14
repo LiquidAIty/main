@@ -152,7 +152,7 @@ export default function WorldSignalSurface({
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/worldsignal/health', { signal: controller.signal })
+    fetch('/api/worldsignals/health', { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`worldsignals_health_http_${response.status}`);
         setHealth((await response.json()) as WorldSignalsHealth);

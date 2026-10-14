@@ -1,8 +1,9 @@
-"""OAuth, internal-principal, and authenticated Main-context authority for MCP."""
+"""OAuth, internal-principal, and authenticated Project/profile context for MCP."""
 
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar, Token
 import json
 import os
 import time
@@ -40,13 +41,55 @@ OAUTH_ENFORCED = os.environ.get("MCP_OAUTH_ENFORCED", "false").strip().lower() i
     "1", "true", "yes", "on",
 }
 _MAIN_CONTEXT_TIMEOUT_SECONDS = 30.0
-MAIN_CONTEXT_FIELDS = frozenset(
-    {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
+PROJECT_CONTEXT_FIELDS = frozenset(
+    {"projectId", "deckId", "conversationId", "parentRunId", "callerCardId"}
 )
-_AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset({
-    "callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools",
-    "presentedTools",
-})
+PROJECT_CONTEXT_TOOLS_FIELD = "grantedTools"
+_REQUESTED_HERMES_PROFILE: ContextVar[str] = ContextVar(
+    "requested_hermes_profile", default="",
+)
+_REQUESTED_PROJECT_ID: ContextVar[str] = ContextVar(
+    "requested_project_id", default="",
+)
+_REQUESTED_RUN_ID: ContextVar[str] = ContextVar(
+    "requested_run_id", default="",
+)
+
+
+def set_requested_hermes_profile(profile: str) -> Token[str]:
+    return _REQUESTED_HERMES_PROFILE.set(str(profile or "").strip())
+
+
+def reset_requested_hermes_profile(token: Token[str]) -> None:
+    _REQUESTED_HERMES_PROFILE.reset(token)
+
+
+def requested_hermes_profile() -> str:
+    return _REQUESTED_HERMES_PROFILE.get()
+
+
+def set_requested_project_id(project_id: str) -> Token[str]:
+    return _REQUESTED_PROJECT_ID.set(str(project_id or "").strip())
+
+
+def reset_requested_project_id(token: Token[str]) -> None:
+    _REQUESTED_PROJECT_ID.reset(token)
+
+
+def requested_project_id() -> str:
+    return _REQUESTED_PROJECT_ID.get()
+
+
+def set_requested_run_id(run_id: str) -> Token[str]:
+    return _REQUESTED_RUN_ID.set(str(run_id or "").strip())
+
+
+def reset_requested_run_id(token: Token[str]) -> None:
+    _REQUESTED_RUN_ID.reset(token)
+
+
+def requested_run_id() -> str:
+    return _REQUESTED_RUN_ID.get()
 
 
 def oauth_trace_fields() -> dict[str, str]:
@@ -115,53 +158,6 @@ def oauth_config() -> OAuthConfig:
     return config
 
 
-def authenticated_main_context() -> dict[str, Any] | None:
-    access_token = get_access_token()
-    if access_token is None:
-        return None
-    expires_at = getattr(access_token, "expires_at", None)
-    if expires_at is not None and float(expires_at) <= time.time():
-        return None
-    claims = getattr(access_token, "claims", None)
-    internal = claims.get("internal") if isinstance(claims, dict) else None
-    if isinstance(internal, dict) and internal.get("kind") == "card-runtime":
-        context = {
-            "projectId": internal.get("projectId"),
-            "deckId": internal.get("deckId"),
-            "conversationId": internal.get("conversationId"),
-            "parentRunId": internal.get("parentRunId"),
-            "mainCardId": internal.get("callerCardId"),
-            "callerRuntimeKind": internal.get("callerRuntimeKind"),
-            "callerRuntimeMode": internal.get("callerRuntimeMode"),
-            "principalKind": internal.get("kind"),
-            "grantedTools": internal.get("grantedTools", []),
-            "presentedTools": internal.get("presentedTools", []),
-        }
-    else:
-        context = claims.get("main") if isinstance(claims, dict) else None
-    if not isinstance(context, dict) or not MAIN_CONTEXT_FIELDS.issubset(context):
-        return None
-    resolved: dict[str, Any] = {
-        field: str(context[field]) for field in MAIN_CONTEXT_FIELDS
-    }
-    for field in _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS:
-        value = context.get(field)
-        if field in {"grantedTools", "presentedTools"} and isinstance(value, list):
-            resolved[field] = sorted(
-                {str(item).strip() for item in value if str(item).strip()}
-            )
-        elif str(value or "").strip():
-            resolved[field] = str(value)
-    return resolved
-
-
-def internal_mcp_principal() -> dict[str, Any] | None:
-    access_token = get_access_token()
-    claims = getattr(access_token, "claims", None) if access_token is not None else None
-    principal = claims.get("internal") if isinstance(claims, dict) else None
-    return dict(principal) if isinstance(principal, dict) else None
-
-
 def validated_principal_tool_names(value: Any) -> frozenset[str] | None:
     """Validate one exact normalized tool-name set from a signed principal."""
     if not isinstance(value, list):
@@ -176,7 +172,40 @@ def validated_principal_tool_names(value: Any) -> frozenset[str] | None:
     return frozenset(value)
 
 
-def _resolve_external_main_context_sync(
+def _validated_project_context(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or not PROJECT_CONTEXT_FIELDS.issubset(value):
+        return None
+    granted_tools = validated_principal_tool_names(
+        value.get(PROJECT_CONTEXT_TOOLS_FIELD)
+    )
+    if granted_tools is None:
+        return None
+    return {
+        **{field: str(value[field]) for field in PROJECT_CONTEXT_FIELDS},
+        PROJECT_CONTEXT_TOOLS_FIELD: sorted(granted_tools),
+    }
+
+
+def authenticated_project_context() -> dict[str, Any] | None:
+    access_token = get_access_token()
+    if access_token is None:
+        return None
+    expires_at = getattr(access_token, "expires_at", None)
+    if expires_at is not None and float(expires_at) <= time.time():
+        return None
+    claims = getattr(access_token, "claims", None)
+    context = claims.get("project") if isinstance(claims, dict) else None
+    return _validated_project_context(context)
+
+
+def internal_mcp_principal() -> dict[str, Any] | None:
+    access_token = get_access_token()
+    claims = getattr(access_token, "claims", None) if access_token is not None else None
+    principal = claims.get("internal") if isinstance(claims, dict) else None
+    return dict(principal) if isinstance(principal, dict) else None
+
+
+def _resolve_external_project_context_sync(
     issuer: str,
     subject: str,
 ) -> dict[str, Any] | None:
@@ -185,8 +214,14 @@ def _resolve_external_main_context_sync(
         if INTERNAL_MCP_SECRET:
             headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
         request = Request(
-            f"{BACKEND}/api/main/context",
-            data=json.dumps({"issuer": issuer, "subject": subject}).encode("utf-8"),
+            f"{BACKEND}/api/mcp/context",
+            data=json.dumps({
+                "issuer": issuer,
+                "subject": subject,
+                "projectId": requested_project_id(),
+                "profile": requested_hermes_profile(),
+                "runId": requested_run_id(),
+            }).encode("utf-8"),
             headers=headers,
             method="POST",
         )
@@ -199,15 +234,11 @@ def _resolve_external_main_context_sync(
         if isinstance(payload, dict) and payload.get("ok") is True
         else None
     )
-    return (
-        context
-        if isinstance(context, dict) and MAIN_CONTEXT_FIELDS.issubset(context)
-        else None
-    )
+    return _validated_project_context(context)
 
 
 class Auth0TokenVerifier:
-    """Verify Auth0 JWTs and attach an authorized Main context when one exists."""
+    """Verify Auth0 JWTs and attach an authorized Project/profile context when one exists."""
 
     def __init__(self, config: OAuthConfig, jwk_client: Any | None = None):
         from jwt import PyJWKClient
@@ -218,7 +249,7 @@ class Auth0TokenVerifier:
         )
 
     def _principal_context(self, subject: str) -> dict[str, Any] | None:
-        return _resolve_external_main_context_sync(self.config.issuer_url, subject)
+        return _resolve_external_project_context_sync(self.config.issuer_url, subject)
 
     def _verify_sync(self, token: str) -> AccessToken | None:
         import jwt
@@ -238,7 +269,7 @@ class Auth0TokenVerifier:
                 )
                 principal = claims.get("principal")
                 if not isinstance(principal, dict) or principal.get("kind") not in {
-                    "catalog-reader", "materializer-read", "card-runtime",
+                    "catalog-reader", "materializer-read",
                 }:
                     return None
                 if principal.get("kind") == "materializer-read":
@@ -251,28 +282,6 @@ class Auth0TokenVerifier:
                     if validated_principal_tool_names(
                         principal.get("grantedTools")
                     ) is None:
-                        return None
-                elif principal.get("kind") != "catalog-reader":
-                    required = (
-                        "projectId", "deckId", "conversationId", "parentRunId",
-                        "callerCardId", "callerRuntimeKind", "callerRuntimeMode",
-                    )
-                    if any(
-                        not str(principal.get(field) or "").strip()
-                        for field in required
-                    ):
-                        return None
-                    grants = validated_principal_tool_names(
-                        principal.get("grantedTools")
-                    )
-                    presented = validated_principal_tool_names(
-                        principal.get("presentedTools")
-                    )
-                    if (
-                        grants is None
-                        or presented is None
-                        or not presented.issubset(grants)
-                    ):
                         return None
                 access_token = AccessToken(
                     token=token,
@@ -332,7 +341,7 @@ class Auth0TokenVerifier:
             object.__setattr__(access_token, "subject", subject)
             verified_claims = dict(claims)
             if context is not None:
-                verified_claims["main"] = context
+                verified_claims["project"] = context
             object.__setattr__(access_token, "claims", verified_claims)
             return access_token
         except Exception:

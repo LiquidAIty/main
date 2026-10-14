@@ -27,7 +27,6 @@ class OperationDefinition:
     namespace: str
     external_source_id: str = "main_mcp"
     output_schema: dict[str, Any] | None = None
-    required_caller_runtime: tuple[str, str] | None = None
     title: str | None = None
     annotations: dict[str, Any] | None = None
     grant_eligible: bool = True

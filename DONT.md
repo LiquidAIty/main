@@ -38,8 +38,10 @@ owns source boundaries. A historical report is evidence, never permission to act
    Do not add explanatory panels, evidence panels or branding to Card controls.
 9. Main/Builder's established pull-up behavior is intentional. Preserve their session and input
    ownership. Do not change mounts, polling, panel dimensions or collapse behavior as a side effect.
-10. Keep saved tools available without a Script. A Script uses the existing Hermes Python runner
-    and saved grants. Do not invent a tool or widen grants to make a proof succeed.
+10. Keep saved tools available without Hooks. Card Hooks use the preserved Hermes Python runner and
+    saved grants; they do not replace or re-authorize ordinary profile tools. Do not invent a tool or
+    widen grants to make a proof succeed. WorldView layer visibility is not tool authorization, and
+    Hermes profile memory is not a Tools-tab grant or LiquidAIty-selected toolset.
 11. LiquidAIty owns the product CBM publication and its one application frontend. Codex owns one separately
     registered official development frontend and must not depend on GPT Web, the plugin, or the running
     application. Both use the same upstream daemon/cache/runtime identity. Product clients use the published
@@ -59,7 +61,7 @@ owns source boundaries. A historical report is evidence, never permission to act
     [Amber Case's interview](https://www.designwhine.com/amber-case-interview-why-ai-has-it-backwards/).
 16. Prompt blocks are independently replaceable. Preserve untouched blocks, headings and whitespace;
     never collapse the prompt into Role or silently hide its other sections. Main is the sole headless
-    Card and has no CLI tab. Every saved non-Main Hermes Card retains its own native CLI. Builder's
+    Card and has no CLI tab. Every saved non-Main Hermes Card retains its own Hermes CLI. Builder's
     lower CLI remains bound to `builder`, mounted, and initially collapsed beneath Main chat.
 
 ## Graph meaning and authority
@@ -103,13 +105,13 @@ does not authorize a renderer replacement, and a rendering problem does not auth
 | A mocked PTY never emitted exit and remained stopping | Fix the fixture's lifecycle fidelity; preserve real session reuse and stop behavior. |
 | A catalog import started native discovery during unit tests | Guard non-subject CBM/Graphiti discovery; retain exact public/private schemas and authentication assertions. |
 | Pytest PYTHONPATH concealed a script-import failure | Test the existing executable bootstrap in isolation when imports change; do not add another bootstrap. |
-| A healthy PTY or Gateway was mistaken for an executed Card turn | Prove real input, native Gateway delivery, rendered output, and completion of the same saved Run. Do not restore an app plugin, callback bridge, or copied profile. |
+| A healthy PTY or Gateway was mistaken for an executed Card turn | Prove real input, Hermes Gateway delivery, rendered output, and completion of the same saved Run. Do not restore an app plugin, callback bridge, or copied profile. |
 | Duplicate skill IDs blocked native discovery | Compare exact identity/content through its owner. Do not weaken uniqueness or delete copies without scope authorization. |
 | Missing usage became zero during transport or numeric coercion | Preserve unknown versus measured zero and forward native usage through the existing finish owner. |
-| Shared or unmapped history was exposed to make a transcript readable | Prove native session/Run/conversation attribution; preserve rejection of foreign or unknown content. |
+| Shared or unmapped history was exposed to make a transcript readable | Prove Hermes session, saved Run, and Project-conversation attribution; preserve rejection of foreign or unknown content. |
 | A component or callback existed without a live caller | Trace callers and exercise the actual path. A fixture that supplies a nonexistent callback does not prove integration. |
 | Source tests passed while another revision was running | Compare loaded source identity before product claims. Build, health, saved execution and visual acceptance are separate. |
-| Selected tools were skipped or assumed available elsewhere | Compare effective saved selection with the actual provider tool surface and executor receipt. A schema or native connection claim is not availability proof. |
+| Selected tools were skipped or assumed available elsewhere | Compare effective saved selection with the actual provider tool surface and executor receipt. A schema or Hermes connection claim is not availability proof. |
 | Cleanup spread into profiles, databases, vendors or closed UI | Stop at the named boundary. Previous maintenance authorization is not a standing purge or restoration license. |
 | A restore changed appearance but was called accepted | Identify the user-accepted baseline first; mechanics and Git equality do not substitute for Jeremiah's visual acceptance. |
 | Decomposition, routing or knowledge meaning moved into deterministic code | Keep semantic work with models; code validates structure, scope and actual execution. No keyword planner or semantic sanitizer. |
@@ -135,7 +137,7 @@ incident; do not load the entire chronology as implementation instructions or re
 | Historical material | Lasting lesson |
 | --- | --- |
 | August purge and repeated-churn record | Remove an authorized superseded path completely; do not add parallel runtimes, wrappers, fake activity or duplicate authorities. |
-| September 4 native CLI and inspector corrections | Preserve native sessions, pull-up/collapse controls and distinct product surfaces; presentation is not execution proof. |
+| September 4 Hermes CLI and inspector corrections | Preserve Hermes sessions, pull-up/collapse controls and distinct product surfaces; presentation is not execution proof. |
 | September 8–9 graph migrations and rejected datasets | Old Constellation directions, exact historical dataset deletions and prior renderer experiments are superseded evidence, not current permission. |
 | September 10 Builder/Card removals and startup repairs | The two named historical Card removals were exceptions. No unrelated Card, Run, profile, credential or graph may be deleted under them. |
 | Old PLAN-loader, Team-policy and tool-suppression instructions | They describe removed approaches. Current source and current owner decisions govern; never revive them from a recovered document. |

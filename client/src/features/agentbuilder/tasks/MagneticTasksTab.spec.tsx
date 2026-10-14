@@ -37,7 +37,7 @@ import MagneticTasksTab, {
   buildMagneticTaskGraph,
   readMagneticRunStatus,
   taskStatusLabel,
-  type MagneticNativeTask,
+  type MagneticHermesTask,
 } from './MagneticTasksTab';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
@@ -86,27 +86,27 @@ describe('MagneticTasksTab', () => {
     expect(taskStatusLabel('archived')).toBe('Stopped');
   });
 
-  it('reads only exact native Hermes task statuses', () => {
+  it('reads only exact Hermes task statuses', () => {
     const result = readMagneticRunStatus({
       runId: 'run-1',
-      nativeRootId: 'root-1',
+      hermesRootId: 'root-1',
       state: 'running',
-      nativeStatus: 'ready',
-      nativeTasks: [
+      hermesStatus: 'ready',
+      hermesTasks: [
         {
           taskId: 'task-ready', title: 'Ready', assignee: 'signal', status: 'ready', dependencyIds: [],
-          latestAttempt: { runId: 'native-run-2', status: 'waiting', startedAt: null, endedAt: '2026-09-21T00:00:00Z' },
+          latestAttempt: { runId: 'hermes-run-2', status: 'waiting' },
         },
-        { taskId: 'task-fake', title: 'Fake', assignee: 'signal', status: 'not-native', dependencyIds: [] },
-        { taskId: 'task-fake-two', title: 'Fake', assignee: null, status: 'also-not-native', dependencyIds: [] },
+        { taskId: 'task-invalid', title: 'Invalid', assignee: 'signal', status: 'unsupported', dependencyIds: [] },
+        { taskId: 'task-invalid-two', title: 'Invalid', assignee: null, status: 'unknown', dependencyIds: [] },
       ],
     });
-    expect(result?.nativeStatus).toBe('ready');
-    expect(result?.nativeTasks.map((task) => task.taskId)).toEqual(['task-ready']);
-    expect(result?.nativeTasks[0]?.latestAttempt).toEqual({
-      runId: 'native-run-2', status: 'waiting', startedAt: null, endedAt: '2026-09-21T00:00:00Z',
+    expect(result?.hermesStatus).toBe('ready');
+    expect(result?.hermesTasks.map((task) => task.taskId)).toEqual(['task-ready']);
+    expect(result?.hermesTasks[0]?.latestAttempt).toEqual({
+      runId: 'hermes-run-2', status: 'waiting',
     });
-    expect(result?.nativeTasks[0]).toMatchObject({
+    expect(result?.hermesTasks[0]).toMatchObject({
       handoffSummary: null,
     });
   });
@@ -115,8 +115,8 @@ describe('MagneticTasksTab', () => {
     const task = (
       taskId: string,
       dependencyIds: string[],
-      status: MagneticNativeTask['status'] = 'ready',
-    ): MagneticNativeTask => ({
+      status: MagneticHermesTask['status'] = 'ready',
+    ): MagneticHermesTask => ({
       taskId, title: taskId, assignee: 'Magnetic', status, dependencyIds,
       latestAttempt: null, resultAvailable: false,
       handoffSummary: null,
@@ -155,10 +155,10 @@ describe('MagneticTasksTab', () => {
       ok: true,
       result: {
         runId: 'run-1',
-        nativeRootId: 'task-blocked',
+        hermesRootId: 'task-blocked',
         state: 'completed',
-        nativeStatus: 'done',
-        nativeTasks: [
+        hermesStatus: 'done',
+        hermesTasks: [
           {
             taskId: 'task-running', title: 'Collect evidence', assignee: 'liquidaity-signal', status: 'running',
             dependencyIds: [], latestAttempt: { runId: 'attempt-7', status: 'running', startedAt: null, endedAt: null },
@@ -251,7 +251,9 @@ describe('MagneticTasksTab', () => {
       cardTitlesByProfile={{ card_magentic: 'Magnetic' }}
     />);
     expect(screen.getByText('Loading…')).toBeTruthy();
-    await vi.advanceTimersByTimeAsync(8_000);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
     expect(screen.getByText('Unavailable').getAttribute('title')).toBe('timeout');
     view.unmount();
     vi.useRealTimers();

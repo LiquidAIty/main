@@ -80,9 +80,7 @@ def canvas_card_operation_definitions(
                 "openWorldHint": False,
             },
             server_injected_arguments=frozenset({"projectId", "deckId"}),
-            dispatcher_context_arguments=frozenset({
-                "projectId", "deckId", "_callerCardId",
-            }),
+            dispatcher_context_arguments=frozenset({"projectId", "deckId"}),
         ),
         OperationDefinition(
             canonical_id="card.create",
@@ -104,9 +102,7 @@ def canvas_card_operation_definitions(
                 "openWorldHint": False,
             },
             server_injected_arguments=frozenset({"projectId", "deckId"}),
-            dispatcher_context_arguments=frozenset({
-                "projectId", "deckId", "_callerCardId",
-            }),
+            dispatcher_context_arguments=frozenset({"projectId", "deckId"}),
         ),
         OperationDefinition(
             canonical_id="card.update_configuration",
@@ -129,7 +125,7 @@ def canvas_card_operation_definitions(
             },
             server_injected_arguments=frozenset({"projectId", "deckId"}),
             dispatcher_context_arguments=frozenset({
-                "projectId", "deckId", "_callerCardId", "_authenticatedUserEdit",
+                "projectId", "deckId", "_callerCardId",
             }),
         ),
         OperationDefinition(

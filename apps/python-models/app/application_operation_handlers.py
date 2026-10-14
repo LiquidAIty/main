@@ -28,25 +28,21 @@ async def agentgraph_inspect(**arguments: Any) -> dict[str, Any]:
 async def canvas_inspect_operation(**arguments: Any) -> Any:
     from app.saved_canvas_tools import canvas_inspect
 
-    caller_card_id = str(arguments.pop("_callerCardId", "") or "")
-    return await canvas_inspect(arguments, caller_card_id=caller_card_id)
+    return await canvas_inspect(arguments)
 
 
 async def card_create_operation(**arguments: Any) -> Any:
     from app.saved_card_create import card_create
 
-    caller_card_id = str(arguments.pop("_callerCardId", "") or "")
-    return await card_create(arguments, caller_card_id=caller_card_id)
+    return await card_create(arguments)
 
 
 async def card_update_configuration_operation(**arguments: Any) -> Any:
     from app.saved_card_update import card_update_configuration
 
     caller_card_id = str(arguments.pop("_callerCardId", "") or "")
-    authenticated_user_edit = arguments.pop("_authenticatedUserEdit", False) is True
     return await card_update_configuration(
         arguments,
-        authenticated_user_edit=authenticated_user_edit,
         caller_card_id=caller_card_id,
     )
 

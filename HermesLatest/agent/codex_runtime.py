@@ -445,14 +445,26 @@ def _close_codex_session(agent) -> None:
 
 
 def _dynamic_tools_configuration(agent) -> tuple[list[dict], dict[str, str]]:
-    from agent.dynamic_tools import dynamic_tools_configuration
+    from agent.card_script_tool import card_script_tool_definition, normalize_card_script
     from tools.bot_mode_dm import (
         MESSAGE_AGENT_TOOL_NAME,
         message_agent_authorized,
         message_agent_tool_schema,
     )
 
-    projected, canonical_names = dynamic_tools_configuration(agent)
+    projected: list[dict] = []
+    canonical_names: dict[str, str] = {}
+    script = normalize_card_script(getattr(agent, "_card_script", None))
+    if script is not None:
+        definition = card_script_tool_definition(script)
+        projected.append({
+            "type": "function",
+            "name": definition["name"],
+            "canonicalName": definition["canonical_name"],
+            "description": definition["description"],
+            "inputSchema": copy.deepcopy(definition["input_schema"]),
+        })
+        canonical_names[definition["name"]] = definition["canonical_name"]
     if not message_agent_authorized(agent):
         return projected, canonical_names
     if MESSAGE_AGENT_TOOL_NAME in canonical_names:
@@ -480,38 +492,36 @@ def _dynamic_tool_executor(
     canonical_names: dict[str, str],
     effective_task_id: str = "",
 ):
-    from agent.dynamic_tools import dynamic_tool_executor
+    from agent.card_script_tool import CARD_SCRIPT_TOOL_NAME
+    from agent.card_turn_tools import inline_card_script_executor
     from agent.inline_tool_executors import INLINE_TOOL_EXECUTORS, InlineToolContext
     from tools.bot_mode_dm import MESSAGE_AGENT_TOOL_NAME
 
-    application_names = {
-        name: canonical
-        for name, canonical in canonical_names.items()
-        if name != MESSAGE_AGENT_TOOL_NAME
-    }
-    application_executor = dynamic_tool_executor(agent, application_names)
-    if MESSAGE_AGENT_TOOL_NAME not in canonical_names:
-        return application_executor
+    if not canonical_names:
+        return None
 
     def execute(name: str, arguments: dict, call_id: str, interrupt_event) -> dict:
-        if name != MESSAGE_AGENT_TOOL_NAME:
-            if application_executor is None:
-                raise ValueError("dynamic_tool_not_selected")
-            return application_executor(name, arguments, call_id, interrupt_event)
+        if name not in canonical_names:
+            raise ValueError("dynamic_tool_not_selected")
         if interrupt_event.is_set():
             result = json.dumps({"error": "dynamic_tool_cancelled"})
             return {
                 "success": False,
                 "contentItems": [{"type": "inputText", "text": result}],
             }
-        result = INLINE_TOOL_EXECUTORS[MESSAGE_AGENT_TOOL_NAME](
-            agent,
-            arguments,
-            InlineToolContext(
-                effective_task_id=effective_task_id,
-                tool_call_id=call_id,
-            ),
+        context = InlineToolContext(
+            effective_task_id=effective_task_id,
+            tool_call_id=call_id,
         )
+        if name == MESSAGE_AGENT_TOOL_NAME:
+            result = INLINE_TOOL_EXECUTORS[MESSAGE_AGENT_TOOL_NAME](agent, arguments, context)
+        elif name == CARD_SCRIPT_TOOL_NAME:
+            script_executor = inline_card_script_executor(agent, name)
+            if script_executor is None:
+                raise ValueError("card_script_not_configured")
+            result = script_executor(agent, arguments, context)
+        else:
+            raise ValueError("dynamic_tool_not_selected")
         text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
         try:
             decoded = json.loads(text)

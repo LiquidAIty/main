@@ -241,7 +241,7 @@ def materialize_card_editor(
             or not provider_tool_name
             or not isinstance(publications, list)
             or not publications
-            or any(value not in {"card-runtime", "external-mcp"} for value in publications)
+            or any(value not in {"card-profile", "external-mcp"} for value in publications)
             or access not in {"read", "write"}
             or not isinstance(grant_eligible, bool)
             or not isinstance(available, bool)

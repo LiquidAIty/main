@@ -81,6 +81,11 @@ function stringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
+function visibleActivities(value: unknown): VisibleActivity[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value as VisibleActivity[];
+}
+
 function mapMessage(row: Record<string, any>): ConversationMessage {
   return {
     messageId: String(row.message_id),
@@ -100,9 +105,7 @@ function mapMessage(row: Record<string, any>): ConversationMessage {
     linkedPlanStepId: row.linked_plan_step_id == null ? null : String(row.linked_plan_step_id),
     linkedArtifactIds: stringArray(row.linked_artifact_ids),
     linkedEvidenceIds: stringArray(row.linked_evidence_ids),
-    visibleActivities: Array.isArray(row.visible_activities)
-      ? row.visible_activities as VisibleActivity[]
-      : undefined,
+    visibleActivities: visibleActivities(row.visible_activities),
     seq: Number(row.seq),
   };
 }
@@ -136,7 +139,7 @@ async function resolveProjectId(
 }
 
 function participantActivity(
-  kind: 'shared_chat_speaker' | 'shared_chat_target',
+  kind: 'conversation_speaker' | 'conversation_target',
   participant: ConversationParticipant,
 ): VisibleActivity {
   return {
@@ -162,7 +165,7 @@ export async function appendConversationTurn(input: {
   messages: ConversationMessageWrite[];
 }): Promise<ConversationMessage[]> {
   if (!input.conversationId.trim() || input.messages.length === 0) {
-    throw new Error('shared_conversation_turn_invalid');
+    throw new Error('conversation_turn_invalid');
   }
   return withTransaction(async (client) => {
     const canonicalProjectId = await resolveProjectId(client, input.projectId);
@@ -202,11 +205,11 @@ export async function appendConversationTurn(input: {
     const inserted: ConversationMessage[] = [];
     for (const [index, write] of writes.entries()) {
       if (write.messageId && !MESSAGE_ID_REGEX.test(write.messageId)) {
-        throw new Error('shared_conversation_message_id_invalid');
+        throw new Error('conversation_message_id_invalid');
       }
       const activities = [
-        participantActivity('shared_chat_speaker', write.speaker),
-        ...(write.target ? [participantActivity('shared_chat_target', write.target)] : []),
+        participantActivity('conversation_speaker', write.speaker),
+        ...(write.target ? [participantActivity('conversation_target', write.target)] : []),
       ];
       const result = await client.query(
         `INSERT INTO ${MESSAGES_TABLE} (
@@ -246,10 +249,10 @@ export async function appendConversationReplyOnce(input: {
 }): Promise<{ inserted: boolean; message: ConversationMessage }> {
   const providerMessageId = input.message.providerMessageId.trim();
   if (!input.conversationId.trim() || !providerMessageId || !input.message.content.trim()) {
-    throw new Error('shared_conversation_reply_invalid');
+    throw new Error('conversation_reply_invalid');
   }
   if (input.message.messageId && !MESSAGE_ID_REGEX.test(input.message.messageId)) {
-    throw new Error('shared_conversation_message_id_invalid');
+    throw new Error('conversation_message_id_invalid');
   }
   return withTransaction(async (client) => {
     const canonicalProjectId = await resolveProjectId(client, input.projectId);
@@ -286,9 +289,9 @@ export async function appendConversationReplyOnce(input: {
     );
     if (!sequence.rows.length) throw new Error('conversation_not_found');
     const activities = [
-      participantActivity('shared_chat_speaker', input.message.speaker),
+      participantActivity('conversation_speaker', input.message.speaker),
       ...(input.message.target
-        ? [participantActivity('shared_chat_target', input.message.target)]
+        ? [participantActivity('conversation_target', input.message.target)]
         : []),
     ];
     const result = await client.query(

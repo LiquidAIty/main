@@ -6,7 +6,6 @@ import asyncio
 import json
 import re
 import time
-from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -126,7 +125,6 @@ def _settle_terminal_result(
         "finalResult": result.get("finalResult") if state == "completed" else None,
         **_failure_fields(result, state),
         "effectiveProvider": result.get("configuredProvider"),
-        "providerApiMode": result.get("configuredProviderApiMode"),
         "providerThreadRef": result.get("hermesRootId"),
         "providerTurnRef": result.get("hermesRunId"),
         "hermesStatus": result.get("hermesStatus"),
@@ -172,7 +170,6 @@ def _execute_mag_one(
             "senderCardId": caller_card_id,
             "runId": run_id,
             "correlationId": run_id,
-            "acceptedAt": datetime.now(timezone.utc).isoformat(),
             "conversationId": conversation_id or "main",
             "assignment": input,
             "dataAnchors": data_anchors,
@@ -282,6 +279,5 @@ def mag_one_operation_definitions(
             dispatcher_context_arguments=frozenset({
                 "projectId", "deckId", "conversationId", "_callerCardId",
             }),
-            required_caller_runtime=("hermes", "main"),
         ),
     ]

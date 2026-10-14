@@ -279,11 +279,9 @@ function resolveCanvasConnectionEdgeType(
     return 'magentic_option';
   }
 
-  const targetOptions = targetNode.runtimeOptions as { enabled?: boolean } | null;
   const targetProfile = targetNode.runtime.kind === 'hermes' ? targetNode.runtime.profile.trim().toLowerCase() : '';
   if (!hasMainBotAuthority(sourceNode)
-    || (targetNode as AgentCardInstance & { enabled?: boolean }).enabled === false
-    || targetOptions?.enabled === false
+    || targetNode.enabled === false
     || targetNode.runtime.kind !== 'hermes'
     || targetNode.runtime.mode === 'magentic_one'
     || !targetProfile
@@ -549,14 +547,11 @@ export function isPlainConnectionAllowedForDocument(
       && target.runtime.mode === 'magentic_one';
     if (sourceIsMagnetic === targetIsMagnetic) return false;
     const worker = sourceIsMagnetic ? target : source;
-    const workerRecord = worker as AgentCardInstance & { enabled?: boolean };
-    const workerOptions = worker.runtimeOptions as { enabled?: boolean } | null;
     if (worker.kind !== 'agent'
       || worker.runtime.kind !== 'hermes'
       || worker.runtime.mode !== 'delegate'
       || !worker.runtime.profile.trim()
-      || workerRecord.enabled === false
-      || workerOptions?.enabled === false) return false;
+      || worker.enabled === false) return false;
     return {
       workerId: sourceIsMagnetic ? targetId : sourceId,
       masterId: sourceIsMagnetic ? sourceId : targetId,

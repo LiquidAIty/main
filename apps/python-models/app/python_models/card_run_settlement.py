@@ -36,12 +36,6 @@ def _validated_run_settlement_request(payload: dict[str, Any]) -> dict[str, Any]
     child_model = str(payload.get("model") or "").strip()
     if bool(child_provider) != bool(child_model):
         raise CardDomainError("run_child_model_configuration_incomplete")
-    fallback_occurred = payload.get("modelFallbackOccurred", False)
-    if not isinstance(fallback_occurred, bool):
-        raise CardDomainError("run_model_fallback_flag_invalid")
-    fallback_reason = str(payload.get("modelFallbackReason") or "").strip()
-    if fallback_occurred and not fallback_reason:
-        raise CardDomainError("run_model_fallback_reason_required")
     return {
         "runId": run_id,
         "state": state,
@@ -50,8 +44,6 @@ def _validated_run_settlement_request(payload: dict[str, Any]) -> dict[str, Any]
         "hermesStatus": hermes_status,
         "childProvider": child_provider,
         "childModel": child_model,
-        "fallbackOccurred": fallback_occurred,
-        "fallbackReason": fallback_reason,
     }
 
 
@@ -60,9 +52,6 @@ def _validated_run_settlement_authority(
     payload: dict[str, Any],
     request: dict[str, Any],
 ) -> None:
-    saved_openai_runtime = str(
-        authority_row.get("saved_openai_runtime") or ""
-    ).strip()
     provider_pair = (
         str(authority_row.get("provider") or "").strip(),
         str(authority_row.get("access_mode") or "").strip(),
@@ -77,16 +66,8 @@ def _validated_run_settlement_authority(
         if authority_row.get("runtime_kind") == "hermes"
         else ""
     )
-    expected_provider_api_mode = (
-        "codex_app_server"
-        if saved_openai_runtime == "codex_app_server"
-        else ""
-    )
     supplied_effective_provider = str(
         payload.get("effectiveProvider") or ""
-    ).strip()
-    supplied_provider_api_mode = str(
-        payload.get("providerApiMode") or ""
     ).strip()
     runtime_mode = str(authority_row.get("runtime_mode") or "").strip()
     supplied_session_ref = str(payload.get("hermesSessionRef") or "").strip()
@@ -131,12 +112,6 @@ def _validated_run_settlement_authority(
     ):
         raise CardDomainError("run_execution_provider_mismatch")
     if (
-        supplied_provider_api_mode
-        and expected_provider_api_mode
-        and supplied_provider_api_mode != expected_provider_api_mode
-    ):
-        raise CardDomainError("run_provider_api_mode_mismatch")
-    if (
         request["state"] == "completed"
         and authority_row.get("runtime_kind") == "hermes"
         and (
@@ -147,10 +122,6 @@ def _validated_run_settlement_authority(
                     not supplied_effective_provider
                     or not request["childProvider"]
                     or not request["childModel"]
-                    or (
-                        expected_provider_api_mode
-                        and not supplied_provider_api_mode
-                    )
                 )
             )
         )
@@ -169,10 +140,7 @@ def _apply_terminal_run_settlement(
           provider=COALESCE(%s, provider),
           model_key=COALESCE(%s, model_key),
           provider_model_id=COALESCE(%s, provider_model_id),
-          model_fallback_occurred=%s,
-          model_fallback_reason=%s,
           effective_provider=COALESCE(effective_provider, %s),
-          provider_api_mode=COALESCE(provider_api_mode, %s),
           hermes_session_ref=COALESCE(hermes_session_ref, %s),
           provider_thread_ref=COALESCE(%s, provider_thread_ref),
           provider_turn_ref=COALESCE(%s::text, provider_turn_ref),
@@ -195,8 +163,7 @@ def _apply_terminal_run_settlement(
         (
             request["state"], request["childProvider"] or None,
             request["childModel"] or None, request["childModel"] or None,
-            request["fallbackOccurred"], request["fallbackReason"] or None,
-            payload.get("effectiveProvider"), payload.get("providerApiMode"),
+            payload.get("effectiveProvider"),
             payload.get("hermesSessionRef"),
             payload.get("providerThreadRef"), payload.get("providerTurnRef"),
             payload.get("errorCode"), payload.get("errorSummary"),
@@ -215,9 +182,9 @@ def _apply_terminal_run_settlement(
         """
         SELECT run_id, project_id, deck_id, target_card_revision_id,
                runtime_kind, runtime_mode, provider, model_key, provider_model_id,
-               access_mode, correlation_id, saved_openai_runtime,
-               effective_provider, provider_api_mode,
-               execution_authority_sha256, hermes_session_ref, provider_thread_ref,
+               access_mode, correlation_id,
+               effective_provider,
+               hermes_session_ref, provider_thread_ref,
                provider_turn_ref, state, started_at, finished_at,
                error_code, error_summary, provider_input_tokens,
                provider_output_tokens, provider_cached_tokens,
@@ -226,7 +193,7 @@ def _apply_terminal_run_settlement(
                auto_tools_decision, auto_model_decision,
                hermes_phase, hermes_task_completed_count,
                hermes_task_total_count, hermes_active_worker_count,
-               final_result, model_fallback_occurred, model_fallback_reason
+               final_result
         FROM ag_catalog.agent_runs WHERE run_id=%s
         """,
         (request["runId"],),
@@ -246,8 +213,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
         cursor.execute(
             """
             SELECT run.runtime_kind, run.runtime_mode, run.provider, run.access_mode,
-                   run.saved_openai_runtime,
-                   effective_provider, provider_api_mode,
+                   effective_provider,
                    hermes_session_ref, provider_thread_ref, provider_turn_ref
             FROM ag_catalog.agent_runs AS run
             WHERE run.run_id=%s

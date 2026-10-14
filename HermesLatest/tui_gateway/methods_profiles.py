@@ -501,20 +501,16 @@ def _(rid, params: dict) -> dict:
         mcp_cfg = cfg.get("mcp_servers")
         mcp_out = _try(lambda: [
             {"name": str(srv_name), "enabled": _mcp_entry_enabled(entry),
-             "transport": str(entry.get("transport") or "http") if entry.get("url") else "stdio"}
+             "transport": str(entry.get("transport") or "http") if entry.get("url") else "stdio",
+             "tool_filter": _mcp_tool_filter(entry),
+             "context_headers": _mcp_context_headers(entry)}
             for srv_name in sorted(mcp_cfg.keys()) for entry in (mcp_cfg[srv_name],)
             if isinstance(entry, dict)
         ], []) if isinstance(mcp_cfg, dict) else []
         model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
-        roster_override = (
-            _canonical_bot_roster(profile_dir, params.get("bot_mode_roster") or [])
-            if "bot_mode_roster" in params
-            else None
-        )
-        capability_fingerprint = _lazy(
-            "tools.bot_mode_probe", "capability_fingerprint"
-        )(profile_dir, roster_override=roster_override)
         meta = _try(lambda: _lazy("hermes_cli.profiles", "read_profile_meta")(profile_dir), {})
+        ui_meta_fields = {}
+        _profile_ui_meta_fields(ui_meta_fields, profile_dir)
         return _ok(rid, {
             "name": name, "description": str(meta.get("description") or ""), "soul": soul,
             "model": {"provider": str(model_cfg.get("provider") or ""),
@@ -533,7 +529,11 @@ def _(rid, params: dict) -> dict:
                 and cfg["kanban"].get("task_mode") == "team"
                 else None
             ),
-            "capability_fingerprint": capability_fingerprint,
+            "bot_mode_roster": _lazy(
+                "tools.bot_mode_probe", "configured_bot_roster"
+            )(profile_dir),
+            "ui_meta_revisions": ui_meta_fields.get("ui_meta_revisions", {}),
+            "ui_meta": ui_meta_fields.get("ui_meta"),
         })
 
 
@@ -617,7 +617,9 @@ def _configure_model(profile_dir, params, applied):
 
 
 def _configure_card_execution(profile_dir, params, applied) -> None:
-    if "delegation" not in params and "task_mode" not in params:
+    if not any(key in params for key in (
+        "delegation", "task_mode", "bot_mode_roster",
+    )):
         return
     with _hermes_home_scope(profile_dir):
         from agent.skill_utils import parse_config_string_list
@@ -670,6 +672,18 @@ def _configure_card_execution(profile_dir, params, applied) -> None:
                 cfg["kanban"] = kanban
                 changed = True
             applied["task_mode"] = True
+        if "bot_mode_roster" in params:
+            requested_roster = params.get("bot_mode_roster")
+            if not isinstance(requested_roster, list):
+                raise ValueError("bot_mode_roster must be a profile-name list")
+            roster = _canonical_bot_roster(profile_dir, requested_roster)
+            bot_mode = cfg.get("bot_mode")
+            bot_mode = dict(bot_mode) if isinstance(bot_mode, dict) else {}
+            if bot_mode.get("roster") != roster:
+                bot_mode["roster"] = roster
+                cfg["bot_mode"] = bot_mode
+                changed = True
+            applied["bot_mode_roster"] = True
         if changed:
             save_config(cfg)
 
@@ -703,7 +717,22 @@ def _mcp_entry_enabled(entry: dict) -> bool:
     return mcp_server_enabled(entry) and not _parse_enabled_flag(entry.get("disabled", False), default=False)
 
 
-def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
+def _mcp_tool_filter(entry: dict) -> list[str] | None:
+    from hermes_cli.mcp_config import _tool_filters
+
+    include, _exclude = _tool_filters(entry)
+    return [str(name) for name in include] if include is not None else None
+
+
+def _mcp_context_headers(entry: dict) -> dict[str, str] | None:
+    headers = entry.get("headers") if isinstance(entry.get("headers"), dict) else {}
+    lowered = {str(key).lower(): str(value) for key, value in headers.items()}
+    project_id = lowered.get("x-liquidaity-project-id", "").strip()
+    profile = lowered.get("x-liquidaity-hermes-profile", "").strip()
+    return {"project_id": project_id, "profile": profile} if project_id and profile else None
+
+
+def _save_mcp_toggles(cfg, enabled, tool_filters, context_headers, launch_mcp, save_config) -> None:
     """Write the ``enabled`` flag every runtime resolver reads (``enabled_mcp_server_names``,
     coding_context, oneshot); the legacy ``disabled`` key is dropped so old configs migrate."""
     wanted = _clean_names(enabled)
@@ -715,6 +744,17 @@ def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
         if isinstance(entry, dict):
             entry["enabled"] = srv in wanted
             entry.pop("disabled", None)
+            if srv in tool_filters:
+                tools = entry.get("tools") if isinstance(entry.get("tools"), dict) else {}
+                tools["include"] = sorted(_clean_names(tool_filters[srv]))
+                tools.pop("exclude", None)
+                entry["tools"] = tools
+            if srv in context_headers:
+                context = context_headers[srv]
+                headers = entry.get("headers") if isinstance(entry.get("headers"), dict) else {}
+                headers["X-LiquidAIty-Project-Id"] = context["project_id"].strip()
+                headers["X-LiquidAIty-Hermes-Profile"] = context["profile"].strip()
+                entry["headers"] = headers
     if mcp_cfg:
         cfg["mcp_servers"] = mcp_cfg
     save_config(cfg)
@@ -750,6 +790,19 @@ def _configure_cfg_sections(profile_dir, params, applied) -> None:
     semantics; empty toolsets pins no toolsets). An undefined MCP server is copied from the LAUNCH
     catalog (unknown names skipped); credentials stay in .env/auth."""
     want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
+    tool_filters = params.get("mcp_tool_filters")
+    tool_filters = tool_filters if isinstance(tool_filters, dict) else {}
+    if any(not isinstance(names, list) for names in tool_filters.values()):
+        raise ValueError("mcp_tool_filters must map server names to tool-name lists")
+    context_headers = params.get("mcp_context_headers")
+    context_headers = context_headers if isinstance(context_headers, dict) else {}
+    if any(
+        not isinstance(value, dict)
+        or not str(value.get("project_id") or "").strip()
+        or not str(value.get("profile") or "").strip()
+        for value in context_headers.values()
+    ):
+        raise ValueError("mcp_context_headers must map server names to Project/profile values")
     launch_mcp = {}
     if want_mcp:  # launch catalog read BEFORE the home override flips config resolution
         load_launch = _lazy("hermes_cli.config", "load_config_readonly")
@@ -770,14 +823,16 @@ def _configure_cfg_sections(profile_dir, params, applied) -> None:
             applied["toolsets"] = _best_effort(lambda: _save_toolset_pin(cfg, params["enabled_toolsets"], save_config))
         if want_mcp:
             applied["mcp_servers"] = _best_effort(lambda: _save_mcp_toggles(
-                load_config() or {}, params["enabled_mcp_servers"], launch_mcp, save_config))
+                load_config() or {}, params["enabled_mcp_servers"], tool_filters, context_headers,
+                launch_mcp, save_config))
 
 
 @_profile_handler("profiles.configure", 5064)
 def _(rid, params: dict) -> dict:
     """Editor Save: ``name`` plus any of ``ui_meta`` (+ ``ui_meta_expected_revisions``), ``soul``,
     ``description``, ``model`` + ``provider`` (+ ``confirm_expensive_model``), ``disabled_skills``,
-    ``enabled_toolsets``, ``enabled_mcp_servers``; sections are independent, ``applied`` reports each."""
+    ``enabled_toolsets``, ``enabled_mcp_servers`` + exact MCP tool/context fields; sections are
+    independent, ``applied`` reports each."""
     _name, profile_dir, err = _resolve_profile(rid, params)
     if err is not None:
         return err
@@ -793,9 +848,13 @@ def _(rid, params: dict) -> dict:
         applied["description"] = _best_effort(lambda: write_meta(
             profile_dir, description=params["description"].strip(), description_auto=False))
     confirm_message = _configure_model(profile_dir, params, applied)
-    if any(isinstance(params.get(k), list) for k in (
-        "disabled_skills", "enabled_toolsets", "enabled_mcp_servers",
-    )):
+    if (
+        any(isinstance(params.get(k), list) for k in (
+            "disabled_skills", "enabled_toolsets", "enabled_mcp_servers",
+        ))
+        or isinstance(params.get("mcp_tool_filters"), dict)
+        or isinstance(params.get("mcp_context_headers"), dict)
+    ):
         _configure_cfg_sections(profile_dir, params, applied)
     _configure_card_execution(profile_dir, params, applied)
     # confirm_* is the shape config.set returns, so clients reuse one confirm handler.

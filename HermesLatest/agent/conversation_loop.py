@@ -628,21 +628,12 @@ def _profile_capability_prompt_stale(agent, stored_prompt: str) -> bool:
         except Exception:
             pass
         roster = getattr(agent, "_bot_mode_roster", None)
-        project_card_session = isinstance(getattr(agent, "_bot_mode_sessions", None), dict)
-        project_fingerprint = (
-            str(getattr(agent, "_profile_capability_fingerprint", "") or "").strip()
-            if project_card_session
-            else None
-        )
         if stored_prompt_capability_stale(
             stored_prompt,
             home,
             roster_override=roster,
-            expected_fingerprint=project_fingerprint,
         ):
             return True
-        if project_card_session:
-            return stored_profile_prompt_needs_upgrade(stored_prompt)
         if getattr(agent, "_follow_profile_config", False) is True:
             return stored_profile_prompt_needs_upgrade(stored_prompt)
         if not getattr(agent, "_bot_mode_protocol", True):

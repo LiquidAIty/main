@@ -73,6 +73,10 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '055_remove_bot_mode_card_tool_grant.sql', applied: true }),
       expect.objectContaining({ filename: '056_rename_project_code_folder.sql', applied: true }),
       expect.objectContaining({ filename: '057_card_run_selection_and_usage.sql', applied: true }),
+      expect.objectContaining({
+        filename: '058_apply_main_policy_and_remove_retired_card_controls.sql',
+        applied: true,
+      }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -363,7 +367,7 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
-  it('accepts an applied 053 ledger and schedules only the four forward corrections', async () => {
+  it('accepts an applied 053 ledger and schedules only the five forward corrections', async () => {
     const migrationsDirectory = resolve(__dirname, '../../migrations');
     const fresh = await applyBackendMigrations({
       client: fakeClient() as any,
@@ -384,8 +388,9 @@ describe('canonical backend migrations', () => {
       '055_remove_bot_mode_card_tool_grant.sql',
       '056_rename_project_code_folder.sql',
       '057_card_run_selection_and_usage.sql',
+      '058_apply_main_policy_and_remove_retired_card_controls.sql',
     ]);
-    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 4);
+    expect(upgraded.filter((entry) => !entry.applied)).toHaveLength(fresh.length - 5);
   });
 
   it('adds Card Run selection and usage fields without another metrics store', async () => {
@@ -399,6 +404,20 @@ describe('canonical backend migrations', () => {
     expect(source).toContain('ADD COLUMN provider_total_tokens BIGINT');
     expect(source).toContain('ADD COLUMN cost_status TEXT');
     expect(source).not.toContain('CREATE TABLE');
+  });
+
+  it('moves retired Card controls and conversation labels forward without rewriting history', async () => {
+    const source = await readFile(
+      migrationPath('058_apply_main_policy_and_remove_retired_card_controls.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain("- 'openaiRuntime' - 'team' - 'writeMode'");
+    expect(source).toContain("WHEN 'shared_chat_speaker'");
+    expect(source).toContain("WHEN 'shared_chat_target'");
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toMatch(/DELETE\s+FROM\s+ag_catalog\.conversation_messages/i);
   });
 
   it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {

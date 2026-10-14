@@ -574,9 +574,32 @@ def _notif_dispatch_completions(sid, session, notifications, registry, deferred)
         _notif_release_turn(session)
     try:
         if text is not None:
+            originating_run_values = [
+                str(event.get("originating_run_id") or "").strip()
+                for event, _event_text, _claim in claimed
+            ]
+            originating_run_ids = set(originating_run_values)
+            continue_card_run = bool(originating_run_values) and all(
+                event.get("continue_card_run") is True
+                for event, _event_text, _claim in claimed
+            )
+            new_child_run = bool(originating_run_values) and all(
+                event.get("continue_card_run") is not True
+                for event, _event_text, _claim in claimed
+            )
+            one_originating_run = (
+                len(originating_run_ids) == 1 and bool(originating_run_values[0])
+            )
             _notif_submit(f"__notif__{int(time.time() * 1000)}", sid, session, text,
                           "completion batch dispatch failed", display_kind=PROCESS_COMPLETE_DISPLAY_KIND,
-                          display_metadata={"display_text": batch.display_text(registry)})
+                          display_metadata={
+                              "display_text": batch.display_text(registry),
+                              "process_ids": batch.process_ids(registry),
+                          },
+                          **({"card_run_id": next(iter(originating_run_ids))}
+                             if one_originating_run and continue_card_run else {}),
+                          **({"originating_run_id": next(iter(originating_run_ids))}
+                             if one_originating_run and new_child_run else {}))
     except Exception:
         for event, _text, claim in claimed:
             release_event_delivery(event, claim)
@@ -647,6 +670,7 @@ def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
                                      image_paths=[], terminal_callback=terminal_receipt,
                                      turn_author=claimed.get("author") or None,
                                      submission_id=submission_id,
+                                     originating_run_id=claimed.get("parent_run_id") or None,
                                      **({"display_metadata": {"notification_category": "diagnostic"}}
                                         if claimed.get("notification_category") == "diagnostic" else {}))
     except Exception as exc:

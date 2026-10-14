@@ -111,7 +111,7 @@ def _project_entity_know_tool(payload: dict[str, Any]) -> None:
     payload["description"] = (
         "Queue one atomic two-sided Know with an exact Entity attachment. The supporting "
         "idea and counter idea are inseparable parts of one Know and each requires its "
-        "own citations. Graphiti keeps its native queued extraction, provenance, time, "
+        "own citations. Graphiti keeps its queued extraction, provenance, time, "
         "relationship, Community, and Saga behavior."
     )
 
@@ -393,11 +393,6 @@ def bind_operation_access(tool: Tool) -> Tool:
         "dispatcherOwner": definition.dispatcher_owner,
         "authenticatedProjection": False,
     })
-    if definition.required_caller_runtime is not None:
-        source.update({
-            "requiredCallerRuntimeKind": definition.required_caller_runtime[0],
-            "requiredCallerRuntimeMode": definition.required_caller_runtime[1],
-        })
     meta["liquidaitySource"] = source
     payload["_meta"] = meta
     return Tool.model_validate(payload)

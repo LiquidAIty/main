@@ -263,22 +263,11 @@ def _insert_run(
     idf = prepared["idf"]
     runtime = idf["stableSavedCardContext"]["runtime"]
     provider = idf["stableSavedCardContext"]["provider"]
-    runtime_options = idf["stableSavedCardContext"].get("runtimeOptions") or {}
     execution_kind = "hermes" if prepared.get("runtimeOwner") == "mag_one" else runtime["kind"]
     auto_tools_decision = prepared.get("autoToolsDecision")
     auto_model_decision = prepared.get("autoModelDecision")
     auto_tools_json = _decision_json(auto_tools_decision, "auto_tools_decision")
     auto_model_json = _decision_json(auto_model_decision, "auto_model_decision")
-    saved_openai_runtime: str | None = None
-    if (
-        runtime_options.get("openaiRuntime") == "codex_app_server"
-        or (
-            prepared.get("runtimeOwner") == "mag_one"
-            and provider.get("provider") == "openai"
-            and provider.get("accessMode") == "chatgpt-account"
-        )
-    ):
-        saved_openai_runtime = "codex_app_server"
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -286,10 +275,9 @@ def _insert_run(
               run_id, project_id, deck_id, target_card_revision_id,
               runtime_kind, runtime_mode,
               provider, model_key, provider_model_id, access_mode, correlation_id,
-              execution_authority_sha256,
-              saved_openai_runtime, auto_tools_decision, auto_model_decision,
+              auto_tools_decision, auto_model_decision,
               state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,'pending',NULL)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,'pending',NULL)
             ON CONFLICT DO NOTHING
             """,
             (
@@ -298,8 +286,6 @@ def _insert_run(
                 runtime["mode"], provider.get("provider"),
                 provider.get("modelKey"), provider.get("providerModelId"),
                 provider.get("accessMode"), correlation_id,
-                prepared.get("executionAuthorityFingerprint"),
-                saved_openai_runtime,
                 auto_tools_json,
                 auto_model_json,
             ),
@@ -310,7 +296,7 @@ def _insert_run(
             """
             SELECT run_id, correlation_id, project_id, deck_id,
                    target_card_revision_id, state,
-                   execution_authority_sha256,
+                   provider,
                    auto_tools_decision, auto_model_decision
             FROM ag_catalog.agent_runs
             WHERE run_id=%s OR correlation_id=%s
@@ -331,21 +317,18 @@ def _insert_run(
             or str(existing.get("target_card_revision_id")) != str(prepared["cardRevisionId"])
         ):
             raise CardDomainError("run_identity_conflict")
-        if (
-            existing.get("execution_authority_sha256")
-            and (
+        if existing.get("provider") and (
                 not _decision_matches(
                     existing.get("auto_tools_decision"), auto_tools_decision,
                 )
                 or not _decision_matches(
                     existing.get("auto_model_decision"), auto_model_decision,
                 )
-            )
-        ):
+            ):
             raise CardDomainError("run_selection_decision_conflict")
         if (
             existing.get("state") == "pending"
-            and not str(existing.get("execution_authority_sha256") or "")
+            and not str(existing.get("provider") or "")
         ):
             cursor.execute(
                 """
@@ -353,20 +336,18 @@ def _insert_run(
                   runtime_kind=%s, runtime_mode=%s,
                   provider=%s, model_key=%s, provider_model_id=%s,
                   access_mode=%s,
-                  execution_authority_sha256=%s, saved_openai_runtime=%s,
                   auto_tools_decision=%s::jsonb,
                   auto_model_decision=%s::jsonb,
                   state='pending'
                 WHERE run_id=%s AND state='pending'
-                  AND execution_authority_sha256 IS NULL
+                  AND provider IS NULL
                   AND provider_thread_ref IS NULL AND provider_turn_ref IS NULL
                 """,
                 (
                     execution_kind, runtime["mode"], provider.get("provider"),
                     provider.get("modelKey"), provider.get("providerModelId"),
                     provider.get("accessMode"),
-                    prepared.get("executionAuthorityFingerprint"),
-                    saved_openai_runtime, auto_tools_json, auto_model_json,
+                    auto_tools_json, auto_model_json,
                     run_id,
                 ),
             )
@@ -440,25 +421,14 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         if not magnetic_workers:
             raise CardDomainError("magnetic_taskgraph_no_connected_workers")
         magnetic_workers = agentgraph_topology.materialize_magnetic_worker_capabilities(
-            prepared["projectId"],
             magnetic_workers,
             cards,
         )
         for worker in magnetic_workers:
-            worker_card = cards.get(str(worker.get("cardId") or ""))
-            fingerprint = str(
-                (worker_card or {}).get("_cardRevisionSha256") or ""
-            ).strip()
-            if re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None:
-                raise CardDomainError(
-                    "magnetic_taskgraph_worker_revision_fingerprint_invalid:"
-                    f"{worker.get('cardId')}"
-                )
             magnetic_worker_authorities.append({
                 "cardId": str(worker["cardId"]),
                 "cardRevisionId": str(worker["cardRevisionId"]),
                 "profile": str(worker["profile"]).lower(),
-                "configurationFingerprint": fingerprint,
             })
     resolved_run_id, resolved_correlation_id, created = _insert_run(
         prepared,
@@ -512,7 +482,6 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         **prepared,
         "runId": resolved_run_id,
         "correlationId": resolved_correlation_id,
-        "rejoined": not created,
         "telemetryWritten": telemetry_written,
         "inputFile": input_files,
         "magneticTaskGraph": magnetic_taskgraph,

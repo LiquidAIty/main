@@ -37,10 +37,7 @@ def run_projection(row: dict[str, Any]) -> dict[str, Any]:
             else None
         ),
         "accessMode": str(row.get("access_mode") or "") or None,
-        "openaiRuntime": str(row.get("saved_openai_runtime") or "") or None,
         "effectiveProvider": str(row.get("effective_provider") or "") or None,
-        "providerApiMode": str(row.get("provider_api_mode") or "") or None,
-        "executionAuthorityFingerprint": str(row.get("execution_authority_sha256") or "") or None,
         "state": str(row.get("state") or ""),
         "hermesStatus": (
             persisted_hermes_status
@@ -63,10 +60,6 @@ def run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "costStatus": str(row.get("cost_status") or "") or None,
         "autoToolsDecision": row.get("auto_tools_decision"),
         "autoModelDecision": row.get("auto_model_decision"),
-        "modelFallbackOccurred": row.get("model_fallback_occurred") is True,
-        "modelFallbackReason": str(row.get("model_fallback_reason") or "") or None,
-        "acceptedAt": timestamp("created_at"),
-        "startedAt": timestamp("started_at"),
         "finishedAt": timestamp("finished_at"),
         "createdAt": timestamp("created_at"),
         "result": str(row.get("final_result") or "") or None,
@@ -115,7 +108,7 @@ def read_run_history(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def read_run(payload: dict[str, Any]) -> dict[str, Any]:
-    """Read one durable Run by its public rejoin identities."""
+    """Read one durable Run by its public selectors."""
 
     project_ref = required_text(payload.get("projectId"), "project_id")
     deck_id = required_text(payload.get("deckId"), "deck_id")
@@ -128,7 +121,7 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
     }
     selected = [(name, value) for name, value in selectors.items() if value]
     if len(selected) != 1:
-        raise CardDomainError("run_rejoin_selector_invalid")
+        raise CardDomainError("run_selector_invalid")
     selector, value = selected[0]
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:

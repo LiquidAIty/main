@@ -235,8 +235,15 @@ class ToolsetEntry(CapabilityEntry):
     tool_count: int = 0
 
 
+class McpContextHeaders(Result):
+    project_id: str
+    profile: str
+
+
 class McpServerEntry(CapabilityEntry):
     transport: str = "stdio"
+    tool_filter: list[str] | None = None
+    context_headers: McpContextHeaders | None = None
 
 
 class ProfileModelPin(Result):
@@ -266,11 +273,13 @@ class ProfilesDescribeResult(Result):
     mcp_servers: list[McpServerEntry] = Field(default_factory=list)
     delegation: ProfileDelegationSettings
     task_mode: Literal["team"] | None = None
-    capability_fingerprint: str
+    bot_mode_roster: list[str] | None = None
+    ui_meta_revisions: dict[str, int] = Field(default_factory=dict)
+    ui_meta: dict[str, JsonValue] | None = None
 
 
 class ProfilesDescribeParams(ProfileNameParams):
-    bot_mode_roster: list[str] | None = None
+    pass
 
 
 method("profiles.describe", params=ProfilesDescribeParams, result=ProfilesDescribeResult,
@@ -292,8 +301,11 @@ class ProfilesConfigureParams(ProfileParams):
     disabled_skills: list[str] | None = None
     enabled_toolsets: list[str] | None = None
     enabled_mcp_servers: list[str] | None = None
+    mcp_tool_filters: dict[str, list[str]] | None = None
+    mcp_context_headers: dict[str, McpContextHeaders] | None = None
     delegation: ProfileDelegationSettings | None = None
     task_mode: Literal["team"] | None = None
+    bot_mode_roster: list[str] | None = None
 
 
 class UiMetaConflict(Result):

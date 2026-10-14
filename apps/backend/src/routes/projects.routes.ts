@@ -16,9 +16,7 @@ router.get('/', async (req, res) => {
     if (!ownerUserId) {
       return res.status(401).json({ ok: false, error: 'project owner session required' });
     }
-    const rawType = req.query.project_type;
-    const projectType = rawType === 'assist' || rawType === 'agent' ? rawType : undefined;
-    const projects = await listOwnedProjects(ownerUserId, projectType);
+    const projects = await listOwnedProjects(ownerUserId);
     return res.json({ ok: true, projects });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to list projects' });
@@ -26,11 +24,10 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { name, code, project_type } = req.body || {};
+  const { name, code } = req.body || {};
   if (!name || typeof name !== 'string') {
     return res.status(400).json({ ok: false, error: 'name is required' });
   }
-  const projectType = project_type === 'assist' || project_type === 'agent' ? project_type : 'agent';
   try {
     const ownerUserId = authenticatedUserId(req);
     if (!ownerUserId) {
@@ -39,28 +36,25 @@ router.post('/', async (req, res) => {
     const project = await createProject(
       name,
       typeof code === 'string' ? code : null,
-      projectType,
       ownerUserId,
     );
-    if (projectType === 'agent') {
-      try {
-        const loaded = await getDeckDocument(project.id, 'deck_builder');
-        if (!loaded.deck || !loaded.meta.deckRevision) {
-          throw new Error('default_project_deck_missing');
-        }
-        await saveDeckDocument(
-          project.id,
-          'deck_builder',
-          {
-            ...loaded.deck,
-            edges: DEFAULT_PROJECT_EDGES.map((edge) => ({ ...edge })),
-          },
-          { expectedRevision: loaded.meta.deckRevision },
-        );
-      } catch (error) {
-        await discardFreshProject(project.id, ownerUserId).catch(() => undefined);
-        throw error;
+    try {
+      const loaded = await getDeckDocument(project.id, 'deck_builder');
+      if (!loaded.deck || !loaded.meta.deckRevision) {
+        throw new Error('default_project_deck_missing');
       }
+      await saveDeckDocument(
+        project.id,
+        'deck_builder',
+        {
+          ...loaded.deck,
+          edges: DEFAULT_PROJECT_EDGES.map((edge) => ({ ...edge })),
+        },
+        { expectedRevision: loaded.meta.deckRevision },
+      );
+    } catch (error) {
+      await discardFreshProject(project.id, ownerUserId).catch(() => undefined);
+      throw error;
     }
     return res.json({ ok: true, project });
   } catch (err: any) {

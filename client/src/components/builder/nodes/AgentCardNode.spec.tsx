@@ -60,7 +60,7 @@ describe('AgentCardNode shared Card geometry', () => {
       ...card,
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
-      runtimeOptions: { enabled: false } as any,
+      enabled: false,
     }} />);
     expect(screen.queryByLabelText('Main orchestrator connector')).toBeNull();
   });

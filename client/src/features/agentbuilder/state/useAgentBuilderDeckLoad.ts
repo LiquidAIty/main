@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
-import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
 import type {
   DeckDocument,
@@ -72,11 +71,6 @@ export default function useAgentBuilderDeckLoad({
 
     void (async () => {
       try {
-        // Backend readiness gate: during dev startup the backend compiles for
-        // ~60s after Vite is ready. Wait for /api/health/ before firing the
-        // real deck-load fetch so we don't spam ECONNREFUSED. If the wait
-        // times out, fall through and let the real fetch surface the error.
-        await waitForBackendReady({ signal: controller.signal });
         const endpoint = `${projectsApi}/${canvasProjectId}/decks/${builderDeckId}`;
         const payload = await guardedRequest({
           key: `v3-deck:${canvasProjectId}:${builderDeckId}`,

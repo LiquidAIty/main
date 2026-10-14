@@ -7,31 +7,11 @@ import pytest
 from app.python_models import (
     agentgraph_topology,
     card_invocation_preparation,
-    card_invocation_tools,
     card_run_preparation,
     saved_card_contract,
     saved_cards,
 )
 
-
-@pytest.fixture(autouse=True)
-def project_worldview_defaults_to_existing_availability(monkeypatch):
-    """Keep unrelated Card tests focused; dedicated tests override the mask."""
-
-    def resolve(project_id, candidate_capability_ids, **_kwargs):
-        candidates = list(dict.fromkeys(candidate_capability_ids))
-        return {
-            "schemaVersion": "project-worldview.v1",
-            "projectId": project_id,
-            "defaultEnabled": True,
-            "candidateCapabilities": candidates,
-            "enabledCapabilities": candidates,
-            "excludedCapabilities": [],
-            "overrides": [],
-        }
-
-    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", resolve)
-    monkeypatch.setattr(agentgraph_topology, "resolve_project_worldview", resolve)
 
 def _agent(card_id: str, **overrides):
     card = {
@@ -357,7 +337,7 @@ def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
     assert config["unavailableTools"] == ["graphiti.search_nodes"]
     assert json.dumps(card, sort_keys=True) == before
 
-def test_valid_script_compacts_only_its_literal_handle_and_ignores_legacy_enabled(
+def test_disabled_valid_script_remains_inert_with_auto_selected_tools(
     monkeypatch,
 ):
     loaded = _destination_fixture(monkeypatch)
@@ -399,8 +379,8 @@ output.emit({"result": {}})
 
     assert grants["enabledTools"] == ["calculator"]
     assert grants["presentedTools"] == []
-    assert grants["scriptPresentation"] == {"mode": "script"}
-    assert "enabled" not in saved
+    assert grants["scriptPresentation"] == {"mode": "selected-mcp"}
+    assert saved["enabled"] is False
     assert saved["lastValidation"]["status"] == "valid"
     assert "hermesSupport" not in saved
     assert saved["compiled"]["scriptToolIds"] == ["calculator"]
@@ -681,13 +661,13 @@ def test_one_enabled_saved_magnetic_card_resolves_without_a_control_wire(
         "deckId": "deck-one",
         "cardId": "mag-one",
     }
-    mag_one["runtimeOptions"]["enabled"] = False
+    mag_one["enabled"] = False
     with pytest.raises(
         saved_card_contract.CardDomainError,
         match="magnetic_taskgraph_card_identity_ambiguous",
     ):
         card_invocation_preparation.resolve_magnetic_taskgraph_card("project-one", "deck-one")
-    mag_one["runtimeOptions"].pop("enabled")
+    mag_one.pop("enabled")
     loaded["deck"]["nodes"].append(_agent(
         "other-mag",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "other-mag"},
@@ -844,39 +824,6 @@ def test_ordinary_materialization_never_loads_builder_dictionary(monkeypatch, ru
     payload = _destination_payload("hermes")
     payload.pop("senderCardId")
     invocation = card_invocation_preparation.materialize_invocation(payload)
-    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
-
-def test_project_worldview_filters_saved_tools_before_idf_materialization(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    loaded = _destination_fixture(monkeypatch)
-    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
-    card["runtimeOptions"]["tools"] = ["calculator", "current_datetime"]
-
-    def project_mask(project_id, candidates, **_kwargs):
-        assert project_id == loaded["projectId"]
-        assert candidates == ["calculator", "current_datetime"]
-        return {
-            "schemaVersion": "project-worldview.v1",
-            "projectId": project_id,
-            "defaultEnabled": True,
-            "candidateCapabilities": candidates,
-            "enabledCapabilities": ["calculator"],
-            "excludedCapabilities": ["current_datetime"],
-            "overrides": [{
-                "capabilityId": "current_datetime",
-                "enabled": False,
-                "controlledBy": "user",
-                "mainReason": None,
-                "updatedAt": "2026-09-27T00:00:00+00:00",
-            }],
-        }
-
-    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", project_mask)
-
-    invocation = card_invocation_preparation.materialize_invocation(_destination_payload("hermes"))
-
-    assert invocation["projectWorldview"]["excludedCapabilities"] == ["current_datetime"]
     assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
 
 def test_receiving_card_materializes_its_own_exact_call_data(

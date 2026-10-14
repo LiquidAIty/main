@@ -12,7 +12,7 @@ class ToolCatalogError(ValueError):
     """Secret-safe structural error in one authoritative live tool catalog."""
 
 
-_CATALOG_PUBLICATIONS = frozenset({"card-runtime", "external-mcp"})
+_CATALOG_PUBLICATIONS = frozenset({"card-profile", "external-mcp"})
 _CATALOG_ANNOTATIONS = frozenset({
     "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
 })
@@ -64,7 +64,7 @@ def operation_catalog_descriptor(definition: OperationDefinition) -> dict[str, A
 
     publications = []
     if definition.publishers & {"internal-plugin", "internal-runtime"}:
-        publications.append("card-runtime")
+        publications.append("card-profile")
     if "external-mcp" in definition.publishers:
         publications.append("external-mcp")
     if not publications:
@@ -105,11 +105,6 @@ def operation_catalog_descriptor(definition: OperationDefinition) -> dict[str, A
     }
     if definition.output_schema is not None:
         descriptor["outputSchema"] = deepcopy(definition.output_schema)
-    if definition.required_caller_runtime is not None:
-        descriptor.update({
-            "requiredCallerRuntimeKind": definition.required_caller_runtime[0],
-            "requiredCallerRuntimeMode": definition.required_caller_runtime[1],
-        })
     return descriptor
 
 
@@ -153,8 +148,6 @@ def provider_tool_catalog_descriptor(raw: Any) -> dict[str, Any] | None:
     dispatcher_owner = str(raw.get("dispatcherOwner") or "").strip()
     annotations = raw.get("annotations")
     output_schema = raw.get("outputSchema")
-    caller_kind = raw.get("requiredCallerRuntimeKind")
-    caller_mode = raw.get("requiredCallerRuntimeMode")
     if (
         not canonical_id
         or not provider_tool_name
@@ -176,7 +169,6 @@ def provider_tool_catalog_descriptor(raw: Any) -> dict[str, Any] | None:
         or not isinstance(annotations, dict)
         or not _CATALOG_ANNOTATIONS.issubset(annotations)
         or (output_schema is not None and not isinstance(output_schema, dict))
-        or bool(caller_kind) != bool(caller_mode)
     ):
         raise ToolCatalogError(
             f"tool_catalog_provider_definition_invalid:{canonical_id or source_id}"
@@ -186,7 +178,7 @@ def provider_tool_catalog_descriptor(raw: Any) -> dict[str, Any] | None:
         "provider": source_id,
         "providerToolName": provider_tool_name,
         "namespace": namespace,
-        "publications": ["card-runtime", "external-mcp"],
+        "publications": ["card-profile", "external-mcp"],
         "displayName": title,
         "description": description,
         "available": available,
@@ -201,11 +193,6 @@ def provider_tool_catalog_descriptor(raw: Any) -> dict[str, Any] | None:
     }
     if output_schema is not None:
         descriptor["outputSchema"] = deepcopy(output_schema)
-    if caller_kind is not None:
-        descriptor.update({
-            "requiredCallerRuntimeKind": caller_kind,
-            "requiredCallerRuntimeMode": caller_mode,
-        })
     return descriptor
 
 
@@ -291,8 +278,6 @@ def validate_live_tool_catalog(descriptors: Any) -> list[dict[str, Any]]:
         dispatcher_owner = str(raw.get("dispatcherOwner") or "").strip()
         annotations = raw.get("annotations")
         output_schema = raw.get("outputSchema")
-        caller_kind = raw.get("requiredCallerRuntimeKind")
-        caller_mode = raw.get("requiredCallerRuntimeMode")
         if (
             not canonical_id or not provider or not provider_tool_name
             or not namespace or not display_name or not isinstance(description, str)
@@ -333,14 +318,6 @@ def validate_live_tool_catalog(descriptors: Any) -> list[dict[str, Any]]:
             )
         if output_schema is not None and not isinstance(output_schema, dict):
             raise ToolCatalogError(f"tool_catalog_output_schema_invalid:{canonical_id}")
-        if bool(caller_kind) != bool(caller_mode) or (
-            caller_kind is not None
-            and (
-                caller_kind != "hermes"
-                or caller_mode not in {"main", "delegate", "magentic_one"}
-            )
-        ):
-            raise ToolCatalogError(f"tool_catalog_caller_scope_invalid:{canonical_id}")
         validated[canonical_id] = deepcopy(raw)
     return [validated[key] for key in sorted(validated)]
 

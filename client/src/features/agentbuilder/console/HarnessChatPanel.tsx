@@ -10,7 +10,7 @@ type HarnessChatPanelProps = {
   workSurfaceLabel?: string;
 };
 
-/** One shared multi-participant conversation over the active Card work surface. */
+/** Main's Project conversation over the active Card work surface. */
 export default function HarnessChatPanel({
   chat,
   terminal,
@@ -33,7 +33,7 @@ export default function HarnessChatPanel({
       return DEFAULT_SPLIT_HEIGHT;
     }
   })();
-  // Shared chat is the ambient surface and opens fully. A previously chosen
+  // The Project conversation is the ambient surface and opens fully. A previously chosen
   // split is remembered only for the user's next Builder interaction.
   const heightRef = useRef(0);
   const lastOpenHeightRef = useRef(
@@ -156,8 +156,8 @@ export default function HarnessChatPanel({
         data-testid="main-chat-agent-builder-divider"
         aria-expanded={fullCli || height > 0}
         aria-controls="agent-builder-region"
-        aria-label={`Resize shared chat and ${workSurfaceLabel} work surface`}
-        title={`Resize shared chat and ${workSurfaceLabel} work surface`}
+        aria-label={`Resize Main chat and ${workSurfaceLabel} work surface`}
+        title={`Resize Main chat and ${workSurfaceLabel} work surface`}
         onMouseDown={onDragStart}
         onClick={toggleTerminal}
         style={{

@@ -117,9 +117,6 @@ def _read_magnetic_taskgraph(payload: dict[str, Any]) -> dict[str, Any]:
             "hermesStatus": root.status,
             "hermesProfile": root.assignee,
             "configuredProvider": root.provider_override,
-            "configuredProviderApiMode": (
-                "codex_app_server" if root.provider_override == "openai-codex" else None
-            ),
             "configuredModel": root.model_override,
             "hermesRunId": latest_root_run.id if latest_root_run else None,
             "hermesTasks": hermes_tasks,

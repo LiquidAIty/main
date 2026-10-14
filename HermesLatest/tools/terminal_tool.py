@@ -1260,6 +1260,8 @@ def terminal_tool(
     _host_local: bool = False,
     _completion_output_chars: int = 0,
     heartbeat: int = 0,
+    _originating_run_id: str = "",
+    _continue_card_run: bool = False,
 ) -> str:
     """Execute *command* in the configured terminal environment; returns a JSON string.
 
@@ -1341,6 +1343,8 @@ def terminal_tool(
                 pty_disabled_reason=_PTY_DISABLED_REASON if pty_disabled else None,
                 completion_output_chars=_completion_output_chars,
                 heartbeat_seconds=heartbeat,
+                originating_run_id=_originating_run_id,
+                continue_card_run=_continue_card_run,
             )
             if plan.promoted_from_foreground_timeout is not None:
                 result = _with_promoted_note(result, plan.promoted_from_foreground_timeout)

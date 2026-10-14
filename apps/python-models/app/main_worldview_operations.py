@@ -145,7 +145,6 @@ def main_worldview_operation_definitions(
             },
             server_injected_arguments=frozenset({"projectId"}),
             dispatcher_context_arguments=frozenset({"projectId"}),
-            required_caller_runtime=("hermes", "main"),
         ),
         OperationDefinition(
             canonical_id="worldview.action",
@@ -191,6 +190,5 @@ def main_worldview_operation_definitions(
             dispatcher_context_arguments=frozenset({
                 "projectId", "deckId", "parentRunId", "_callerCardId",
             }),
-            required_caller_runtime=("hermes", "delegate"),
         ),
     ]

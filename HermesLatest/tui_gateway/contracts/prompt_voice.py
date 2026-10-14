@@ -25,22 +25,12 @@ class ClientSurface(WireEnum):
     voice_live = "voice-live"
 
 
-class DynamicToolDefinition(Params):
-    """One exact Card-selected Codex Dynamic Tool."""
-
-    type: str
-    name: str
-    canonical_name: str
-    description: str
-    input_schema: JsonValue
-
-
 class CardScriptDefinition(Params):
     """One validated saved Card Python recipe for this exact turn.
 
     ``enabled`` is deliberately absent: nonblank, valid saved source is the
-    activation condition. Tool aliases are the already-authorized per-turn
-    Dynamic Tool names, never a registry or discovery surface.
+    activation condition. Tool names identify the exact saved capabilities
+    already loaded by the receiving Card's profile.
     """
 
     version: int = Field(ge=1)
@@ -50,7 +40,7 @@ class CardScriptDefinition(Params):
     mode: Literal["tool_recipe"]
     input_schema: dict[str, JsonValue]
     output_schema: dict[str, JsonValue]
-    tool_aliases: dict[str, str]
+    tool_names: dict[str, str]
     tool_states: dict[str, int]
     timeout_seconds: int = Field(ge=1, le=60)
     max_tool_calls: int = Field(ge=1, le=32)
@@ -69,15 +59,12 @@ class PromptSubmitParams(SessionParams):
     queued: bool | None = None  # client queue drain — the busy path must hold it, never redirect/steer
     # Opaque caller identity for correlating an accepted or queued input with its later turn events.
     submission_id: str | None = Field(default=None, min_length=1, max_length=128)
-    dynamic_tools: list[DynamicToolDefinition] | None = None
+    card_run_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9:_-]{1,128}$")
+    mcp_tool_selection: dict[str, list[str]] | None = None
     card_script: CardScriptDefinition | None = None
-    tool_endpoint: str | None = None
-    tool_authorization: str | None = None
     bot_mode_roster: list[str] | None = None
     bot_mode_sessions: dict[str, str] | None = None
-    expected_profile_capability_fingerprint: str | None = Field(
-        default=None, pattern=r"^[0-9a-f]{12}$"
-    )
+    bot_mode_reply_delivery: Literal["notification", "direct"] | None = None
     surface: str | None = None  # a ClientSurface value; unknown values clear the surface
     voice_context: str | None = None  # recent spoken transcript, model input only (voice-live)
     # Desktop-generated large-paste preview (first ~1000 chars); TITLE input only, never the model turn.

@@ -88,7 +88,7 @@ def test_invalid_script_is_saved_but_remains_inert_with_exact_selected_tools() -
     assert "fallbackReason" not in presentation
 
 
-def test_valid_source_activates_compact_recipe_and_ignores_legacy_enabled_byte() -> None:
+def test_disabled_valid_source_remains_inert_until_activated() -> None:
     source = '''CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {"type": "object", "properties": {}},
@@ -103,12 +103,14 @@ output.emit({"result": {}})
         {"enabled": False, "source": source},
         selected_tools=["cbm.search_graph", "graphiti.get_status"],
     )
-    assert presentation["mode"] == "script"
-    assert presentation["presentedTools"] == ["graphiti.get_status"]
+    assert presentation["mode"] == "selected-mcp"
+    assert presentation["presentedTools"] == [
+        "cbm.search_graph", "graphiti.get_status",
+    ]
     assert "fallbackReason" not in presentation
     assert presentation["script"]["lastValidation"]["status"] == "valid"
     assert "hermesSupport" not in presentation["script"]
-    assert "enabled" not in presentation["script"]
+    assert presentation["script"]["enabled"] is False
 
 
 def test_valid_script_compiles_literal_contract_and_selected_tool_handles() -> None:
@@ -390,7 +392,7 @@ def test_builder_projects_live_catalog_option_and_marks_stale_selection():
         "namespace": "external",
         "provider": "example",
         "providerToolName": "search",
-        "publications": ["card-runtime", "external-mcp"],
+        "publications": ["card-profile", "external-mcp"],
         "displayName": "Search example",
         "description": "Read one current example result.",
         "available": True,
@@ -409,7 +411,7 @@ def test_builder_projects_live_catalog_option_and_marks_stale_selection():
     assert by_id["external.search"]["effective"] is False
     assert by_id["external.search"]["access"] == "read"
     assert by_id["external.search"]["publications"] == [
-        "card-runtime", "external-mcp",
+        "card-profile", "external-mcp",
     ]
     assert by_id["external.search"]["grantEligible"] is True
     assert by_id["removed.tool"]["availability"] == "unavailable"

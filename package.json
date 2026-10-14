@@ -6,7 +6,7 @@
     "build": "npm run build --workspaces --if-present",
     "dev:stop": "kill-port 4000 5173 8003 8001 8765 9119 4040 4174",
     "dev:fresh": "npm run dev:stop && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-services.ps1",
-    "dev:services": "concurrently --kill-others --success all --names hermes,backend,dependents --prefix-colors yellow,magenta,cyan \"npm run dev:hermes\" \"npm run dev:backend\" \"npm run dev:after-backend\"",
+    "dev:services": "set \"MCP_PUBLIC_RESOURCE_URL=%npm_package_config_mcp_public_resource_url%\" && set \"MCP_AUTH0_CLIENT_ID=%npm_package_config_mcp_auth0_client_id%\" && set \"MCP_AUTH0_REQUIRED_SCOPE=%npm_package_config_mcp_auth0_required_scope%\" && concurrently --kill-others --success all --names hermes,backend,dependents --prefix-colors yellow,magenta,cyan \"npm run dev:hermes\" \"npm run dev:backend\" \"npm run dev:after-backend\"",
     "dev:after-backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dependent-services.ps1",
     "dev:dependent-services": "concurrently --success all --names frontend,python-rails,knowgraph,mcp,tunnel,worldview,worldsignals --prefix-colors green,cyan,blue,white,gray,magenta,yellow \"npm run dev:frontend\" \"npm run dev:python-rails\" \"npm run dev:knowgraph\" \"npm run dev:mcp\" \"powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dependent-services.ps1 -WaitForMcpReadiness\" \"npm run dev:worldview\" \"npm run dev:worldsignals\"",
     "dev:frontend": "npm --workspace client run dev -- --strictPort",
@@ -14,7 +14,7 @@
     "dev:hermes": "node -e \"const fs=require('node:fs');const path=require('node:path');const {spawnSync}=require('node:child_process');const root=path.join(process.cwd(),'HermesLatest');const python=path.join(root,'.venv','Scripts','python.exe');const profileRoot=path.join(root,'.hermes');if(!fs.existsSync(python))throw new Error('Hermes Python executable is unavailable.');if(!fs.existsSync(path.join(profileRoot,'config.yaml')))throw new Error('Hermes default profile is unavailable.');if(!/^[a-f0-9]{64}$/i.test(String(process.env.HERMES_DASHBOARD_SESSION_TOKEN||'')))throw new Error('Hermes Gateway credential is unavailable.');const child=spawnSync(python,['-m','hermes_cli.main','-p','default','serve','--host','127.0.0.1','--port','9119','--skip-build'],{cwd:root,env:{...process.env,HERMES_HOME:profileRoot,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'},stdio:'inherit',windowsHide:true});if(child.error)throw child.error;process.exit(child.status??1);\"",
     "dev:python-rails": "apps\\python-models\\.venv\\Scripts\\python.exe -X utf8 -m uvicorn app.main:app --app-dir apps/python-models --host 127.0.0.1 --port 8003",
     "dev:knowgraph": "services\\knowgraph\\.venv\\Scripts\\python.exe -X utf8 -m uvicorn app:app --app-dir services/knowgraph --host 127.0.0.1 --port 8001",
-    "dev:mcp": "set \"MCP_TRANSPORT=streamable-http\" && set \"MCP_HTTP_PORT=8765\" && set \"MCP_PUBLIC_RESOURCE_URL=%npm_package_config_mcp_public_resource_url%\" && set \"MCP_AUTH0_ISSUER_URL=https://dev-7up6xippkmhecz1j.us.auth0.com/\" && set \"MCP_AUTH0_AUDIENCE=%npm_package_config_mcp_public_resource_url%\" && set \"MCP_AUTH0_CLIENT_ID=xBb72662qIvqibSf7SdCJZm8G4cL28ud\" && set \"MCP_AUTH0_REQUIRED_SCOPE=liquidaity.main\" && set \"MCP_OAUTH_ENFORCED=true\" && apps\\python-models\\.venv\\Scripts\\python.exe apps\\python-models\\app\\mcp_host.py",
+    "dev:mcp": "set \"MCP_TRANSPORT=streamable-http\" && set \"MCP_HTTP_PORT=8765\" && set \"MCP_PUBLIC_RESOURCE_URL=%npm_package_config_mcp_public_resource_url%\" && set \"MCP_AUTH0_ISSUER_URL=%npm_package_config_mcp_auth0_issuer_url%\" && set \"MCP_AUTH0_AUDIENCE=%npm_package_config_mcp_public_resource_url%\" && set \"MCP_AUTH0_CLIENT_ID=%npm_package_config_mcp_auth0_client_id%\" && set \"MCP_AUTH0_REQUIRED_SCOPE=%npm_package_config_mcp_auth0_required_scope%\" && set \"MCP_OAUTH_ENFORCED=true\" && apps\\python-models\\.venv\\Scripts\\python.exe apps\\python-models\\app\\mcp_host.py",
     "dev:tunnel": "ngrok http http://127.0.0.1:8765 --url https://exemption-unstable-wolverine.ngrok-free.dev",
     "dev:worldview": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-worldview.ps1",
     "dev:worldsignals": "docker compose -f agent-products/shadowbroker/docker-compose.yml up -d",
@@ -27,7 +27,10 @@
     "test": "vitest run"
   },
   "config": {
-    "mcp_public_resource_url": "https://exemption-unstable-wolverine.ngrok-free.dev/mcp"
+    "mcp_public_resource_url": "https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
+    "mcp_auth0_issuer_url": "https://dev-7up6xippkmhecz1j.us.auth0.com/",
+    "mcp_auth0_client_id": "xBb72662qIvqibSf7SdCJZm8G4cL28ud",
+    "mcp_auth0_required_scope": "liquidaity.main"
   },
   "private": true,
   "dependencies": {

@@ -91,7 +91,7 @@ def test_catalog_publishes_one_factual_flat_definition():
     assert calculator["provider"] == "python_runtime"
     assert calculator["namespace"] == "python"
     assert calculator["providerToolName"] == "calculator"
-    assert calculator["publications"] == ["card-runtime"]
+    assert calculator["publications"] == ["card-profile"]
     assert calculator["available"] is True
     assert calculator["inputSchema"]["type"] == "object"
     assert calculator["outputSchema"]
@@ -119,7 +119,7 @@ def test_live_catalog_preserves_title_security_and_effect_metadata():
     assert descriptor["description"] == definition.description
     assert descriptor["annotations"] == definition.annotations
     assert descriptor["provider"] == "main_mcp"
-    assert descriptor["publications"] == ["card-runtime", "external-mcp"]
+    assert descriptor["publications"] == ["card-profile", "external-mcp"]
 
 
 def test_authenticated_projection_may_remove_only_declared_server_owned_fields():
@@ -170,7 +170,7 @@ def test_canonical_operation_ids_and_publisher_views_are_unique_and_permitted():
         definition = by_id[item["canonicalId"]]
         expected_publications = []
         if definition.publishers & {"internal-plugin", "internal-runtime"}:
-            expected_publications.append("card-runtime")
+            expected_publications.append("card-profile")
         if "external-mcp" in definition.publishers:
             expected_publications.append("external-mcp")
         assert item["publications"] == expected_publications
@@ -195,7 +195,7 @@ def test_calculator_is_one_internal_operation_and_is_not_republished_by_mcp():
     ]
     assert len(calculator) == 1
     assert calculator[0]["provider"] == "python_runtime"
-    assert calculator[0]["publications"] == ["card-runtime"]
+    assert calculator[0]["publications"] == ["card-profile"]
 
 
 def test_forecast_market_bars_has_one_literal_trading_definition():

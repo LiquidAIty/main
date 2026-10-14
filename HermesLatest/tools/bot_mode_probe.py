@@ -149,7 +149,11 @@ def resolve_bot_roster(
     all_profiles = dict(_roster(_hermes_root(resolved)))
     configured = roster_override if roster_override is not None else configured_bot_roster(resolved)
     if configured is None:
-        return list(all_profiles.items())
+        return [
+            (name, directory)
+            for name, directory in all_profiles.items()
+            if not _is_project_scoped_bot(directory)
+        ]
     return [(name, all_profiles[name]) for name in configured if name in all_profiles]
 
 
@@ -180,8 +184,16 @@ def _is_bot_managed(profile_dir: Path) -> bool:
     return _bots_meta(_read_yaml_dict(profile_dir / "profile.yaml", "hermes-bots")) is not None
 
 
+def _is_project_scoped_bot(profile_dir: Path) -> bool:
+    bots = _bots_meta(_read_yaml_dict(profile_dir / "profile.yaml", "hermes-bots"))
+    return isinstance(bots, dict) and bots.get("project_scoped") is True
+
+
 def _any_managed(root: Path) -> bool:
-    return any(_is_bot_managed(d) for _n, d in _roster(root))
+    return any(
+        _is_bot_managed(directory) and not _is_project_scoped_bot(directory)
+        for _name, directory in _roster(root)
+    )
 
 
 def is_bot_mode_managed(home: str | os.PathLike | None = None) -> bool:
@@ -528,7 +540,6 @@ def stored_prompt_capability_stale(
     stored_prompt: str,
     home: str | os.PathLike | None = None,
     roster_override: list[str] | None = None,
-    expected_fingerprint: str | None = None,
 ) -> bool:
     """True when a stamped profile prompt no longer matches its capability surface.
 
@@ -541,7 +552,7 @@ def stored_prompt_capability_stale(
     m = re.search(_EPOCH_RE_TEXT, stored_prompt or "")
     if not m:
         return False
-    current = str(expected_fingerprint or "").strip() or _swallow(
+    current = _swallow(
         lambda: capability_fingerprint(home, roster_override), "unavailable",
     )
     return current != "unavailable" and m.group(1) != current

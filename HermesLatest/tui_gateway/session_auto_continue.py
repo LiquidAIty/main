@@ -135,11 +135,11 @@ def _ac_inflight_original(session: dict) -> str:
 
 def _enqueue_prompt(session: dict, text: Any, transport: Any, image_paths: list[str] | None = None,
                     turn_author: dict | None = None, submission_id: str | None = None,
-                    dynamic_tools: list[dict] | None = None, tool_endpoint: str | None = None,
-                    tool_authorization: str | None = None,
                     card_script: dict | None = None,
+                    mcp_tool_selection: dict[str, list[str]] | None = None,
                     bot_mode_roster: list[str] | None = None,
-                    expected_profile_capability_fingerprint: str | None = None) -> None:
+                    card_run_id: str | None = None,
+                    bot_mode_reply_delivery: str | None = None) -> None:
     """Queue a message for the next turn. Text-only arrivals share a slot and merge losslessly (like the
     consecutive-user merge in ``repair_message_sequence``); image-bearing and authored ones stay separate
     envelopes so attachment chronology and the sender survive. ``transport`` is pinned so the drained turn
@@ -155,21 +155,25 @@ def _enqueue_prompt(session: dict, text: Any, transport: Any, image_paths: list[
         return
     queued = {"text": text, "transport": transport, **({"image_paths": image_paths} if image_paths else {}),
               **({"submission_id": submission_id} if submission_id else {}),
-              **({"dynamic_tools": dynamic_tools} if dynamic_tools is not None else {}),
-              **({"tool_endpoint": tool_endpoint} if tool_endpoint else {}),
-              **({"tool_authorization": tool_authorization} if tool_authorization else {}),
               **({"card_script": card_script} if card_script is not None else {}),
+              **({"mcp_tool_selection": mcp_tool_selection} if mcp_tool_selection is not None else {}),
               **({"bot_mode_roster": list(bot_mode_roster)} if bot_mode_roster is not None else {}),
-              **({"expected_profile_capability_fingerprint": expected_profile_capability_fingerprint}
-                 if expected_profile_capability_fingerprint else {}),
+              **({"card_run_id": card_run_id} if card_run_id else {}),
+              **({"bot_mode_reply_delivery": bot_mode_reply_delivery}
+                 if bot_mode_reply_delivery else {}),
               **({"turn_author": turn_author} if turn_author else {})}
     existing = session.get("queued_prompt")
     if (existing and text_only and not turn_author and not submission_id
-            and dynamic_tools is None and card_script is None
+            and card_script is None and mcp_tool_selection is None
+            and not card_run_id
+            and not bot_mode_reply_delivery
             and not existing.get("submission_id")
             and isinstance(existing.get("text"), str)
             and not existing.get("image_paths") and not existing.get("turn_author")
-            and existing.get("dynamic_tools") is None and existing.get("card_script") is None
+            and existing.get("card_script") is None
+            and existing.get("mcp_tool_selection") is None
+            and not existing.get("card_run_id")
+            and not existing.get("bot_mode_reply_delivery")
             and not session.get("queued_prompts")):
         prev = existing["text"]
         existing["text"] = f"{prev}\n\n{text}" if prev and text else (prev or text)
@@ -264,11 +268,11 @@ def _ac_try_correction(rid, session: dict, agent: Any, method: str, plain_text: 
 
 def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any, queued: bool = False,
                         turn_author: dict | None = None, submission_id: str | None = None,
-                        dynamic_tools: list[dict] | None = None, tool_endpoint: str | None = None,
-                        tool_authorization: str | None = None,
                         card_script: dict | None = None,
+                        mcp_tool_selection: dict[str, list[str]] | None = None,
                         bot_mode_roster: list[str] | None = None,
-                        expected_profile_capability_fingerprint: str | None = None) -> dict | None:
+                        card_run_id: str | None = None,
+                        bot_mode_reply_delivery: str | None = None) -> dict | None:
     """Apply ``display.busy_input_mode`` to a mid-turn prompt instead of rejecting it (rejection made clients busy-retry
     and drop sends): ``interrupt`` (default) → redirect, falling back to hard interrupt + queue; ``queue`` → queue only;
     ``steer`` → inject after the current atomic action. ``queued=True`` (client queue drain) forces queue mode: a "run
@@ -302,11 +306,11 @@ def _handle_busy_submit(rid, sid: str, session: dict, text: Any, transport: Any,
         _enqueue_prompt(
             session, text, transport, image_paths=image_paths,
             turn_author=turn_author, submission_id=submission_id,
-            dynamic_tools=dynamic_tools, tool_endpoint=tool_endpoint,
-            tool_authorization=tool_authorization,
             card_script=card_script,
+            mcp_tool_selection=mcp_tool_selection,
             bot_mode_roster=bot_mode_roster,
-            expected_profile_capability_fingerprint=expected_profile_capability_fingerprint)
+            card_run_id=card_run_id,
+            bot_mode_reply_delivery=bot_mode_reply_delivery)
         session["last_active"] = time.time()
     # Attachments need their own model invocation: queue without cancelling so the user gets both results in order.
     # ``steer`` must NEVER escalate to a hard interrupt: it would kill the live turn AND drop ``AIAgent._pending_steer``
@@ -350,8 +354,9 @@ def _drain_queued_prompt(rid, sid: str, session: dict) -> bool:
     if queued.get("submission_id"):
         kwargs["submission_id"] = queued["submission_id"]
     for field in (
-        "dynamic_tools", "tool_endpoint", "tool_authorization", "card_script",
-        "bot_mode_roster", "expected_profile_capability_fingerprint",
+        "card_script", "mcp_tool_selection",
+        "bot_mode_roster", "card_run_id",
+        "bot_mode_reply_delivery",
     ):
         if queued.get(field) is not None:
             kwargs[field] = queued[field]

@@ -368,10 +368,9 @@ def _profile_capability_parts(agent: Any) -> List[str]:
             else None
         )
         follows_profile = getattr(agent, "_follow_profile_config", False) is True
-        project_card_session = isinstance(getattr(agent, "_bot_mode_sessions", None), dict)
         if _bot_section:
             parts.append(_bot_section)
-        if _bot_section or follows_profile or project_card_session:
+        if _bot_section or follows_profile:
             # Capability epoch lets the restore path rebuild once per profile change.
             parts.append(epoch_line(_home, _roster))
         if _bot_section:

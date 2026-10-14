@@ -9,29 +9,8 @@ from app.python_models import (
     agentgraph_query,
     agentgraph_run_observations,
     agentgraph_topology,
-    card_invocation_tools,
     saved_card_contract,
 )
-
-
-@pytest.fixture(autouse=True)
-def project_worldview_defaults_to_existing_availability(monkeypatch):
-    """Keep unrelated Card tests focused; dedicated tests override the mask."""
-
-    def resolve(project_id, candidate_capability_ids, **_kwargs):
-        candidates = list(dict.fromkeys(candidate_capability_ids))
-        return {
-            "schemaVersion": "project-worldview.v1",
-            "projectId": project_id,
-            "defaultEnabled": True,
-            "candidateCapabilities": candidates,
-            "enabledCapabilities": candidates,
-            "excludedCapabilities": [],
-            "overrides": [],
-        }
-
-    monkeypatch.setattr(card_invocation_tools, "resolve_project_worldview", resolve)
-    monkeypatch.setattr(agentgraph_topology, "resolve_project_worldview", resolve)
 
 def _agent(card_id: str, **overrides):
     card = {
@@ -276,7 +255,7 @@ def test_direct_orchestrator_targets_allow_saved_hermes_cards_including_magnetic
         ),
         "disabled-option": _agent(
             "disabled-option",
-            runtimeOptions={**_agent("x")["runtimeOptions"], "enabled": False},
+            enabled=False,
         ),
         "presentation-attached": _agent(
             "presentation-attached",
@@ -323,7 +302,7 @@ def test_disabled_missing_or_magnetic_flow_target_projection_is_exact() -> None:
     disabled = _agent(
         "child", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"}
     )
-    disabled["runtimeOptions"] = {**disabled["runtimeOptions"], "enabled": False}
+    disabled["enabled"] = False
     assert agentgraph_topology.direct_orchestrator_targets(
         "parent", {"parent": parent, "child": disabled}, edge
     ) == []
@@ -369,7 +348,7 @@ def test_enabled_callable_saved_cards_are_magnetic_taskgraph_workers() -> None:
         runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled"},
     )) is False
     assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
-        "disabled-option", runtimeOptions={"enabled": False},
+        "disabled-option", enabled=False,
         runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled-option"},
     )) is False
     assert agentgraph_topology._is_callable_magnetic_taskgraph_worker_card(_agent(
@@ -458,6 +437,8 @@ def test_age_run_preparation_records_identity_without_claiming_execution_or_tool
         prepared,
         {
             "acceptedAt": "2026-10-01T20:00:00.000Z",
+            "senderCardId": "card-parent",
+            "originatingRunId": "run-parent",
             "graphRecords": [{
                 "graphitiEpisodeId": "episode:stale-request",
                 "reason": "must not drive telemetry",
@@ -470,6 +451,10 @@ def test_age_run_preparation_records_identity_without_claiming_execution_or_tool
         input_file={"idfSha256": "a" * 64, "idfBytes": 321},
     ) is True
     assert any("EXECUTED_BY" in query for query, _params in statements)
+    assert any("ASSIGNED_TO" in query for query, _params in statements)
+    assert any("CHILD_RUN" in query for query, _params in statements)
+    child_params = next(params for query, params in statements if "CHILD_RUN" in query)
+    assert child_params == {"parentRunId": "run-parent", "runId": "run-one"}
     assert statements[0][1]["hermesProfile"] == "main"
     assert statements[0][1]["acceptedAt"] == "2026-10-01T20:00:00.000Z"
     assert statements[0][1]["preparationElapsedMs"] is not None

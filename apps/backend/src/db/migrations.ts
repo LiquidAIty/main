@@ -35,6 +35,7 @@ const REQUIRED_MIGRATIONS = [
   '055_remove_bot_mode_card_tool_grant.sql',
   '056_rename_project_code_folder.sql',
   '057_card_run_selection_and_usage.sql',
+  '058_apply_main_policy_and_remove_retired_card_controls.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

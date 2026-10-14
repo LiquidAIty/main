@@ -4,7 +4,8 @@ Core v0 is defined in `PLAN.md` and `ARCHITECTURE.md`. This file contains only w
 deferred until the static baseline and explicitly approved live proofs pass.
 
 These are candidates, not execution authorization. PLAN and the current PromptSpec govern order.
-Named-Card conversation/Bot Mode remains a separate feature; do not mix it into the current repair.
+Saved-Card conversation/Bot Mode is source-wired by the current repair; loaded behavior remains a
+separate proof tier. Do not treat a deferred item below as permission to add another runtime or route.
 
 ## Live proof sequence
 
@@ -36,6 +37,19 @@ The handoff mechanism is not implemented. A later bounded design may carry the r
 Entity references, source-backed claim, bounded interpretation, source URL/metadata, and why the evidence
 mattered. It must not carry whole chats, hidden reasoning, or every search result, and it must reuse an
 existing background/Bot/Card path rather than create a queue.
+
+## Optional automatic ThinkGraph capture — deferred
+
+The owner wants one saved per-Project ThinkGraph control labeled **Capture Main turns automatically**.
+When enabled, each successfully completed User/Main pair should enter the existing completed-pair
+preparation owner, run through the real saved ThinkGraph Card in its Project-scoped Hermes session, and
+settle through the existing Engraphis owner. When disabled, ThinkGraph changes only from data the user or
+an authorized Card explicitly selects and sends.
+
+This is not part of the current repair. A later implementation must decide the exact saved field/default,
+visible Card control, required orange authority, failure presentation, and existing-Project behavior. It
+must not restore the deleted TypeScript child-Card executor, candidate queue, approval/shadow graph, direct
+target runner, or another ThinkGraph writer.
 
 ## Project Knowledge Dashboard — deferred derived artifact
 

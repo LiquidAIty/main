@@ -14,7 +14,7 @@ function definition(index: number, access: 'read' | 'write' = 'read'): ToolCatal
     provider: 'cbm',
     providerToolName: `tool_${String(index).padStart(5, '0')}`,
     namespace: 'cbm',
-    publications: ['card-runtime', 'external-mcp'],
+    publications: ['card-profile', 'external-mcp'],
     displayName: `Tool ${index}`,
     description: `Read repository slice ${index}`,
     available: true,
@@ -89,7 +89,7 @@ describe('live tool catalog lookup', () => {
     const disabledRead = { ...definition(2, 'read'), available: false };
     const externalOnly = {
       ...definition(3, 'read'),
-      publications: ['external-mcp'] as Array<'card-runtime' | 'external-mcp'>,
+      publications: ['external-mcp'] as Array<'card-profile' | 'external-mcp'>,
     };
     const catalog = indexLiveToolCatalog([
       definition(1, 'read'),

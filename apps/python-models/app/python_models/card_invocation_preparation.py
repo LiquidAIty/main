@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from app.python_models import saved_cards
 from app.python_models.card_invocation_authority import (
     authorize_invocation_sender,
-    execution_authority_fingerprint,
     saved_invocation_configuration,
 )
 from app.python_models.card_invocation_tools import resolve_effective_card_tools
@@ -161,27 +160,13 @@ def _prepare_invocation(
         presented_tools,
         ordinary_tool_contracts,
         tool_definitions,
-        project_worldview,
     ) = (
         resolve_effective_card_tools(
-            payload, loaded=loaded, options=options, runtime=runtime,
+            payload, options=options, runtime=runtime,
             ceiling=ceiling, call_config=call_config,
             runtime_options=runtime_options,
         )
     )
-    # Hermes thread ownership binds only stable saved-Card/runtime identity.
-    # Live catalog schemas and availability can change after a plugin reconnect;
-    # those remain per-turn tool evidence and must not invalidate the Card's
-    # already-established Hermes thread. The saved revision hash already covers
-    # the Card's prompt, grants, tools, skills, and other saved configuration.
-    execution_authority_sha256 = execution_authority_fingerprint(
-        project_id=loaded["projectId"], deck_id=deck_id, card_id=card_id,
-        card_revision_id=card["_cardRevisionId"],
-        card_revision_sha256=card["_cardRevisionSha256"], runtime=runtime,
-        provider=call_config["provider"],
-        openai_runtime=runtime_options.get("openaiRuntime"),
-    )
-    runtime_options["executionAuthorityFingerprint"] = execution_authority_sha256
     return {
         "ok": True,
         "ephemeral": True,
@@ -192,7 +177,6 @@ def _prepare_invocation(
         "cardRevision": card["_cardRevision"],
         "cardRevisionSha256": card["_cardRevisionSha256"],
         "runtimeOwner": owner,
-        "executionAuthorityFingerprint": execution_authority_sha256,
         "_outputRequirements": str(card.get("outputContract") or ""),
         "_autoTools": auto_tools,
         "_autoModel": auto_model,
@@ -201,7 +185,6 @@ def _prepare_invocation(
         "_ordinaryToolContracts": ordinary_tool_contracts,
         "assignment": assignment,
         "cardIdentity": card_identity,
-        "projectWorldview": project_worldview,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
     }
@@ -338,16 +321,6 @@ def _resolve_invocation_components(
         except AutoModelSelectionError as error:
             error.auto_tools_decision = auto_tools_decision
             raise
-    fingerprint = execution_authority_fingerprint(
-        project_id=prepared["projectId"], deck_id=prepared["deckId"],
-        card_id=prepared["cardIdentity"]["cardId"],
-        card_revision_id=prepared["cardRevisionId"],
-        card_revision_sha256=prepared["cardRevisionSha256"],
-        runtime=call_config["runtime"], provider=call_config["provider"],
-        openai_runtime=call_config["runtimeOptions"].get("openaiRuntime"),
-    )
-    prepared["executionAuthorityFingerprint"] = fingerprint
-    call_config["runtimeOptions"]["executionAuthorityFingerprint"] = fingerprint
     return {
         "prepared": prepared,
         "outputRequirements": output_requirements,

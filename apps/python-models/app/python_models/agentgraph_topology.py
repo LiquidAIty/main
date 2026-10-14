@@ -6,11 +6,6 @@ import re
 from typing import Any
 
 from app.python_models import agentgraph_query
-from app.python_models.postgres import connect_postgres
-from app.python_models.project_worldview import (
-    ProjectWorldviewError,
-    resolve_project_worldview,
-)
 from app.python_models.saved_card_contract import (
     CardDomainError,
     card_is_enabled,
@@ -204,13 +199,12 @@ def _is_callable_magnetic_taskgraph_worker_card(card: dict[str, Any]) -> bool:
     )
 
 
-def _validate_single_master_topology(
+def _validate_magnetic_bus_topology(
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> None:
-    """Keep one controller per topology while orange and blue stay independent."""
+    """Keep one Magnetic bus per worker; orange Bot authority is per edge."""
 
-    flow_masters: dict[str, set[str]] = {}
     magnetic_masters: dict[str, set[str]] = {}
     for edge in edges:
         if edge.get("enabled") is False:
@@ -218,17 +212,7 @@ def _validate_single_master_topology(
         edge_type = edge.get("edgeType")
         source_id = str(edge.get("source") or "")
         target_id = str(edge.get("target") or "")
-        if edge_type == "flow":
-            source = cards.get(source_id)
-            target = cards.get(target_id)
-            if (
-                source is not None
-                and target is not None
-                and card_has_orchestrator_authority(source)
-                and not is_magnetic_taskgraph_runtime(card_runtime(target))
-            ):
-                flow_masters.setdefault(target_id, set()).add(source_id)
-        elif edge_type == "magentic_option":
+        if edge_type == "magentic_option":
             source = cards.get(source_id)
             target = cards.get(target_id)
             if source is None or target is None:
@@ -242,15 +226,14 @@ def _validate_single_master_topology(
             if not _is_callable_magnetic_taskgraph_worker_card(cards[worker_id]):
                 raise CardDomainError(f"card_master_conflict:{worker_id}")
             magnetic_masters.setdefault(worker_id, set()).add(master_id)
-    for topology_masters in (flow_masters, magnetic_masters):
-        for card_id, master_ids in topology_masters.items():
-            if len(master_ids) > 1:
-                raise CardDomainError(f"card_master_conflict:{card_id}")
+    for card_id, master_ids in magnetic_masters.items():
+        if len(master_ids) > 1:
+            raise CardDomainError(f"card_master_conflict:{card_id}")
 
 
 def validate_card_topology(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> None:
     cards = {card["id"]: card for card in nodes}
-    _validate_single_master_topology(cards, edges)
+    _validate_magnetic_bus_topology(cards, edges)
     addressable_ids = {
         endpoint
         for edge in edges
@@ -335,7 +318,9 @@ def connected_hermes_card_targets(
             if strict:
                 raise CardDomainError(f"magnetic_taskgraph_worker_runtime_invalid:{peer_id}")
             continue
-        if is_magnetic_taskgraph_runtime(runtime) and edge_type != "flow":
+        # Orange FLOW may address the saved Magnetic Card itself. Blue
+        # MAGENTIC_OPTION edges, by contrast, project only worker Cards.
+        if edge_type == "magentic_option" and is_magnetic_taskgraph_runtime(runtime):
             if strict:
                 raise CardDomainError(f"magnetic_taskgraph_worker_runtime_invalid:{peer_id}")
             continue
@@ -362,12 +347,11 @@ def connected_hermes_card_targets(
             **({
                 "teamTaskMode": True,
                 "provider": {
-                    "provider": options.get("provider") or target.get("provider"),
+                    "provider": options.get("provider"),
                     "accessMode": options.get("accessMode"),
                     "modelKey": options.get("modelKey"),
                     "providerModelId": (
                         options.get("providerModelId")
-                        or target.get("providerModelId")
                         or options.get("modelKey")
                     ),
                 },
@@ -375,7 +359,6 @@ def connected_hermes_card_targets(
                     "modelKey": options.get("modelKey"),
                     "providerModelId": (
                         options.get("providerModelId")
-                        or target.get("providerModelId")
                         or options.get("modelKey")
                     ),
                 },
@@ -385,19 +368,16 @@ def connected_hermes_card_targets(
 
 
 def materialize_magnetic_worker_capabilities(
-    project_id: str,
     workers: list[dict[str, Any]],
     cards: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Add compact saved/Project-eligible capability facts to exact workers.
+    """Add compact saved-tool facts to exact workers.
 
     This is assignment metadata only. It grants no tool, carries no schemas or
-    datasets, and does not replace the worker Card's normal Run-time
-    Project/Card/Run intersection.
+    datasets, and does not replace the worker Card's Hermes profile.
     """
 
     saved_by_card: dict[str, list[str]] = {}
-    candidates: list[str] = []
     for worker in workers:
         card_id = str(worker.get("cardId") or "")
         card = cards.get(card_id)
@@ -408,16 +388,6 @@ def materialize_magnetic_worker_capabilities(
         options = json_object(card.get("runtimeOptions"), "runtime_options")
         saved = string_list(options.get("tools"), "tools")
         saved_by_card[card_id] = saved
-        candidates.extend(saved)
-    try:
-        worldview = resolve_project_worldview(
-            project_id,
-            list(dict.fromkeys(candidates)),
-            connector=connect_postgres,
-        )
-    except ProjectWorldviewError as error:
-        raise CardDomainError(str(error)) from error
-    enabled = set(worldview["enabledCapabilities"])
     projected: list[dict[str, Any]] = []
     for worker in workers:
         card_id = str(worker["cardId"])
@@ -426,7 +396,6 @@ def materialize_magnetic_worker_capabilities(
             **worker,
             "capabilities": {
                 "savedToolIds": saved,
-                "projectEligibleToolIds": [tool for tool in saved if tool in enabled],
             },
         })
     return projected

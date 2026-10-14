@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { waitForBackendReady } from "./backendReadiness";
 import {
   guardedRequest,
   isAbortLikeError,
@@ -63,10 +62,6 @@ export function useBuilderProjects({
         seq,
       });
 
-      // Backend readiness gate: hold the projects-list fetch until the backend
-      // is listening so the dev startup window doesn't spam ECONNREFUSED.
-      await waitForBackendReady({ signal: controller.signal });
-
       const endpoint = projectsApi;
       const payload = await guardedRequest({
         key: "projects:list:all",
@@ -94,9 +89,7 @@ export function useBuilderProjects({
 
       const rawCards = Array.isArray(data?.projects) ? data.projects : [];
       const cards = rawCards.filter(
-        (card: any) =>
-          typeof card?.id === "string" &&
-          (card?.project_type === "assist" || card?.project_type === "agent"),
+        (card: any) => typeof card?.id === "string",
       );
       setProjects(cards);
 

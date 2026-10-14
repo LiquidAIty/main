@@ -221,7 +221,7 @@ def test_repository_has_one_application_owned_host_cbm_boundary():
             "src",
             "components",
             "knowledge",
-            "KnowledgeAuthorityGraphSurface.tsx",
+                "NativeAuthorityGraphSurface.tsx",
         ),
         encoding="utf-8",
     ).read()

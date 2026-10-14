@@ -58,7 +58,6 @@ class CardConfiguration(BaseModel):
     accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     modelKey: str = ""
     orchestrator: bool = False
-    openaiRuntime: Literal["codex_app_server"] | None = None
     tools: list[str] = Field(default_factory=list)
     subagentModel: CardSubagentModel | None = None
     autoTools: StrictBool | None = None

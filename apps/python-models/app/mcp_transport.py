@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlsplit
@@ -96,6 +97,38 @@ class _SafeRequestTraceMiddleware:
                 exception_class=exception_class,
                 completed=completed,
             )
+
+
+class _HermesProfileContextMiddleware:
+    """Bind one profile name from the profile-owned MCP connection to this request."""
+
+    _PROFILE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        raw = _safe_request_header(scope, b"x-liquidaity-hermes-profile").strip()
+        profile = raw if not raw or self._PROFILE.fullmatch(raw) else "__invalid__"
+        raw_project = _safe_request_header(scope, b"x-liquidaity-project-id").strip()
+        project_id = raw_project if not raw_project or re.fullmatch(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            raw_project,
+            re.IGNORECASE,
+        ) else "__invalid__"
+        raw_run = _safe_request_header(scope, b"x-liquidaity-run-id").strip()
+        run_id = raw_run if not raw_run or re.fullmatch(
+            r"^[A-Za-z0-9:_-]{1,128}$", raw_run,
+        ) else "__invalid__"
+        profile_token = mcp_auth.set_requested_hermes_profile(profile)
+        project_token = mcp_auth.set_requested_project_id(project_id)
+        run_token = mcp_auth.set_requested_run_id(run_id)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            mcp_auth.reset_requested_run_id(run_token)
+            mcp_auth.reset_requested_project_id(project_token)
+            mcp_auth.reset_requested_hermes_profile(profile_token)
 
 
 async def run_streamable_http(
@@ -289,9 +322,9 @@ async def run_streamable_http(
         ]
     else:
         routes = [*health_routes, Mount("/", app=endpoint)]
-    http_app = _SafeRequestTraceMiddleware(
+    http_app = _SafeRequestTraceMiddleware(_HermesProfileContextMiddleware(
         Starlette(routes=routes, lifespan=lifespan)
-    )
+    ))
     config = uvicorn.Config(
         http_app,
         host=HTTP_MCP_HOST,

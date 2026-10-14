@@ -143,7 +143,7 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
     expect(nextNode.runtimeOptions?.skills).toEqual([]);
     expect(nextNode.runtimeOptions?.toolsets).toEqual([]);
     expect(nextNode.runtimeOptions?.mcpConnectionIds).toEqual([]);
-    expect(nextNode.status).toBe('ready');
+    expect('status' in nextNode).toBe(false);
     expect(typeof nextNode.position.x).toBe('number');
     expect(typeof nextNode.position.y).toBe('number');
   });

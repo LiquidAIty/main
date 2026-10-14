@@ -75,7 +75,6 @@ export default function AgentBuilderProjectDrawer({
         body: JSON.stringify({
           name,
           code,
-          project_type: 'agent',
         }),
       });
       if (!response.ok) {
@@ -139,7 +138,7 @@ export default function AgentBuilderProjectDrawer({
           className="text-xs uppercase mb-2 flex items-center justify-between"
           style={{ color: colors.neutral }}
         >
-          <span>Chat Projects</span>
+          <span>Projects</span>
           <button
             onClick={() =>
               setShowCreateProjectForm((current) => !current)

@@ -8,7 +8,7 @@ import postcss from 'postcss';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
-const worldviewRoot = path.resolve(repoRoot, 'worldsignal/gods-eye-view-main');
+const worldviewRoot = path.resolve(repoRoot, 'agent-products/gods-eye-view');
 const worldviewStylePath = path.resolve(worldviewRoot, 'style.css');
 const vendorRequire = createRequire(path.resolve(worldviewRoot, 'package.json'));
 const cesiumPluginModule = vendorRequire('vite-plugin-cesium') as {

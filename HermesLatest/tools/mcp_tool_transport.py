@@ -507,9 +507,21 @@ class MCPServerTransportMixin:
         # verify/cert live on the inner transport: a custom transport= makes client-level TLS kwargs
         # inert — and suppresses httpx's own proxy auto-detection, hence the explicit mounts=.
         inner_transport = httpx.AsyncHTTPTransport(verify=ssl_verify, **_present(cert=client_cert))
+        request_hooks = []
+        if any(key.lower() == "x-liquidaity-hermes-profile" for key in headers):
+            async def _bind_saved_card_run(request):
+                from tui_gateway.saved_card_turn import current_card_turn_headers
+
+                for key, value in current_card_turn_headers().items():
+                    request.headers[key] = value
+
+            request_hooks.append(_bind_saved_card_run)
         client_kwargs: dict = {"follow_redirects": True, "timeout": httpx.Timeout(float(connect_timeout), read=300.0),
                                **({"headers": headers} if headers else {}),
-                               "event_hooks": {"response": [_make_http_rejection_recorder(self._http_rejection)]},
+                               "event_hooks": {
+                                   "request": request_hooks,
+                                   "response": [_make_http_rejection_recorder(self._http_rejection)],
+                               },
                                "transport": _make_mcp_body_cap_transport(httpx, inner_transport),
                                **_present(mounts=_mcp_proxy_mounts(httpx, url, ssl_verify, client_cert, self.name),
                                           auth=oauth_auth)}
@@ -539,6 +551,8 @@ class MCPServerTransportMixin:
         # Agent Plugins v1 strict_redirect_headers: configured headers MUST NOT follow a cross-origin
         # redirect — capture their names BEFORE client-generated headers are merged in.
         configured_header_names = {key.lower() for key in headers}
+        if "x-liquidaity-hermes-profile" in configured_header_names:
+            configured_header_names.add("x-liquidaity-run-id")
         headers = _apply_identity_header(self.name, config, headers)  # explicit same-name headers win
         # Seed MCP-Protocol-Version (user override wins) from the HANDSHAKE version, not the latest: a
         # 2026-07-28 header routes the handshake-era ``initialize()`` onto the envelope ladder, which rejects it.

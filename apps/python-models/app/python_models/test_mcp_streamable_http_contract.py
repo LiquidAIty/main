@@ -43,61 +43,46 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    context = {
+    main_context = {
         "projectId": "project-1",
         "deckId": "deck_builder",
-        "conversationId": "external-mcp:grant-1",
-        "parentRunId": "external-main:grant-1",
-        "mainCardId": "card_main_chat",
+        "conversationId": "project-1",
+        "parentRunId": "main-run-one",
+        "callerCardId": "card_main_chat",
+        "grantedTools": ["cbm.search_graph", "main.context"],
     }
-
-    internal_principals = {
-        "internal-card-one": {
-            "kind": "card-runtime",
+    project_contexts = {
+        "external-main-token": main_context,
+        "external-card-one": {
             "projectId": "project-1",
             "deckId": "deck_builder",
             "conversationId": "card-session-one",
             "parentRunId": "card-run-one",
             "callerCardId": "card-one",
-            "callerRuntimeKind": "hermes",
-            "callerRuntimeMode": "delegate",
             "grantedTools": ["cbm.search_graph"],
-            "presentedTools": ["cbm.search_graph"],
         },
-        "internal-card-two": {
-            "kind": "card-runtime",
+        "external-card-two": {
             "projectId": "project-1",
             "deckId": "deck_builder",
             "conversationId": "card-session-two",
             "parentRunId": "card-run-two",
             "callerCardId": "card-two",
-            "callerRuntimeKind": "hermes",
-            "callerRuntimeMode": "delegate",
             "grantedTools": ["cbm.search_graph"],
-            "presentedTools": ["cbm.search_graph"],
         },
     }
 
     class VerifiedToken:
         async def verify_token(self, token):
-            if token in internal_principals:
-                return AccessToken(
-                    token=token,
-                    client_id="liquidaity-internal-runtime",
-                    scopes=["liquidaity.main"],
-                    expires_at=4102444800,
-                    subject=f"card-runtime:{internal_principals[token]['callerCardId']}",
-                    claims={"internal": internal_principals[token]},
-                )
-            if token != "external-gpt-token":
+            project_context = project_contexts.get(token)
+            if project_context is None:
                 return None
             return AccessToken(
                 token=token,
                 client_id="chatgpt-client",
                 scopes=["liquidaity.main"],
                 expires_at=4102444800,
-                subject="auth0|test",
-                claims={"main": context},
+                subject=f"auth0|{project_context['callerCardId']}",
+                claims={"project": project_context},
             )
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
@@ -147,7 +132,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     raise RuntimeError("http_mcp_catalog_not_ready")
 
             async with httpx.AsyncClient(
-                headers={"Authorization": "Bearer external-gpt-token"},
+                headers={"Authorization": "Bearer external-main-token"},
                 timeout=2,
             ) as security_client:
                 invalid_host = await security_client.post(
@@ -232,51 +217,31 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     protocol_version,
                 )
 
-            # Close and recreate the optional external client around two distinct
-            # internal Card clients. All four requests remain stateless at the
-            # outer HTTP boundary and use the same host-owned CBM child.
+            # Close and recreate the Main client around two distinct saved-Card
+            # Project contexts. All four requests remain stateless at the outer
+            # HTTP boundary and use the same host-owned CBM child.
             first = await fresh_client(
-                "external-gpt-token", mode="auto", inspect_main=True,
+                "external-main-token", mode="auto", inspect_main=True,
             )
-            card_one = await fresh_client("internal-card-one")
-            card_two = await fresh_client("internal-card-two")
+            card_one = await fresh_client("external-card-one")
+            card_two = await fresh_client("external-card-two")
             second = await fresh_client(
-                "external-gpt-token", mode="legacy", inspect_main=True,
+                "external-main-token", mode="legacy", inspect_main=True,
             )
             first_catalog, first_context, first_identity, first_cbm_client, first_protocol = first
             second_catalog, second_context, second_identity, second_cbm_client, second_protocol = second
             assert first_catalog == second_catalog
-            assert "card.run_assistant_agent" not in first_catalog
-            assert "mag_one.describe_connected_agents" not in first_catalog
+            assert first_catalog == ["cbm.search_graph", "main.context"]
             assert card_one[0] == card_two[0]
-            assert set(card_one[0]) < set(first_catalog)
-            assert first_catalog
+            assert card_one[0] == ["cbm.search_graph"]
             assert len(first_catalog) == len(set(first_catalog))
-            assert {
-                "main.context",
-                "canvas.inspect",
-                "agentgraph.inspect",
-                "cbm.search_graph",
-                "graphiti.search_nodes",
-                "engraphis_recall_context",
-            }.issubset(first_catalog)
-            assert {
-                name for name in first_catalog if name.startswith("engraphis_")
-            } == {
-                "engraphis_recall_context",
-                    "engraphis_get_memory",
-                    "engraphis_remember",
-                    "engraphis_remember_entities",
-                    "engraphis_discover_actions",
-                "engraphis_execute_read",
-                "engraphis_execute_action",
-            }
-            assert "cbm.search_graph" in card_one[0]
-            assert not any(name.startswith("graphiti.") for name in card_one[0])
             assert not any(name.startswith("liquidaity.") for name in first_catalog)
             assert not any(name.startswith("liquidaity_liquidaity_") for name in first_catalog)
             assert not any(name.startswith("mcp__") for name in first_catalog)
-            assert first_context == second_context == context
+            assert first_context == second_context == {
+                key: value for key, value in main_context.items()
+                if key != "grantedTools"
+            }
             assert first_identity == second_identity
             assert card_one[2] == card_two[2]
             assert first_cbm_client == card_one[3] == card_two[3] == second_cbm_client
@@ -287,7 +252,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             base_identity = mcp_catalog_projection.catalog_identity(
                 list(mcp_catalog_runtime._CATALOG_TOOLS or ())
             )
-            assert len(first_catalog) == base_identity[0]
+            assert len(first_catalog) <= base_identity[0]
             assert readiness.json()["toolCount"] == base_identity[0]
             assert readiness.json()["uniqueToolCount"] == base_identity[0]
             assert readiness.json()["catalogHash"] == base_identity[1]
@@ -322,13 +287,14 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     verifier = mcp_auth.Auth0TokenVerifier(config, StaticJwkClient())
     monkeypatch.setattr(
         mcp_auth,
-        "_resolve_external_main_context_sync",
+        "_resolve_external_project_context_sync",
         lambda issuer, subject: {
             "projectId": "project-1",
             "deckId": "deck_builder",
-            "conversationId": "external-mcp:grant-1",
-            "parentRunId": "external-main:grant-1",
-            "mainCardId": "card_main_chat",
+            "conversationId": "project-1",
+            "parentRunId": "run-one",
+            "callerCardId": "card_main_chat",
+            "grantedTools": ["cbm.search_graph", "main.context"],
         } if issuer == config.issuer_url and subject == "auth0|jeremiah" else None,
     )
     now = int(time.time())
@@ -348,19 +314,19 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     verified = verifier._verify_sync(encoded(base))
     assert verified is not None
     assert verified.subject == "auth0|jeremiah"
-    assert verified.claims["main"]["projectId"] == "project-1"
-    assert verified.claims["main"]["mainCardId"] == "card_main_chat"
+    assert verified.claims["project"]["projectId"] == "project-1"
+    assert verified.claims["project"]["callerCardId"] == "card_main_chat"
     within_clock_skew = verifier._verify_sync(encoded({**base, "iat": now + 2}))
     assert within_clock_skew is not None
     monkeypatch.setattr(
         mcp_auth,
-        "_resolve_external_main_context_sync",
+        "_resolve_external_project_context_sync",
         lambda _issuer, _subject: None,
     )
     verified_without_project = verifier._verify_sync(encoded(base))
     assert verified_without_project is not None
     assert verified_without_project.subject == "auth0|jeremiah"
-    assert "main" not in verified_without_project.claims
+    assert "project" not in verified_without_project.claims
     invalid_claims = [
         {**base, "iss": "https://wrong.auth0.com/"},
         {**base, "aud": "https://wrong.example/mcp"},
