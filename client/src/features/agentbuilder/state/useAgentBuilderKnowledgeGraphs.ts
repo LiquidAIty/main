@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { GraphProjectionV1 } from '../../../components/knowledge/joinedKnowledgeGraphProjection';
-import type { CanonicalEntityHeader } from '../../../components/knowledge/canonicalEntityDirectory';
+import type {
+  GraphProjectionEdge,
+  GraphProjectionNode,
+  GraphProjectionV1,
+} from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 
 export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph';
@@ -27,27 +30,27 @@ export type ThinkGraphLifecycleError = {
   error: string;
 };
 
+type ExpandRequest = {
+  graph: KnowledgeGraphKind;
+  node: GraphProjectionNode;
+};
+
 export type KnowledgeGraphState = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses: Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>;
   refreshThinkGraph: () => Promise<void>;
   refreshKnowGraph: () => Promise<boolean>;
+  observeThinkGraphRevision: (event: ThinkGraphRevisionEvent) => void;
+  observeThinkGraphFailure: (event: ThinkGraphLifecycleError) => void;
   readProviderNeighborhood: (
     graph: KnowledgeGraphKind,
     providerId: string,
     signal?: AbortSignal,
   ) => Promise<GraphProjectionV1>;
-  readEntityContext: (
-    entity: CanonicalEntityHeader,
-    query: string,
-    limit?: number,
-    signal?: AbortSignal,
-  ) => Promise<Record<string, any>>;
+  expandNode: (request: ExpandRequest) => Promise<void>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
-  removeThinkGraphRelationship: (edgeId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
-  removeKnowGraphRelationship: (graphitiRelationshipId: string) => Promise<void>;
 };
 
 const KNOWGRAPH_STARTUP_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
@@ -110,19 +113,38 @@ export function knowGraphProjection(
       || typeof edge.type !== 'string' || !edge.type)) {
     throw new Error('invalid_knowgraph_projection');
   }
-  const entities = payload.nodes.filter((node: any) => node.type === 'Entity');
+  const subjects = payload.nodes.filter((node: any) => node.type !== 'Episodic');
   const episodes = payload.nodes.filter((node: any) => node.type === 'Episodic');
-  const entityIds = new Set(entities.map((node: any) => node.id));
-  const nodes = entities.map((node: any) => ({
+  const subjectIds = new Set(subjects.map((node: any) => node.id));
+  const episodeIds = new Set(episodes.map((node: any) => node.id));
+  const episodeIdsBySubject = new Map<string, Set<string>>();
+  for (const relationship of payload.relationships) {
+    if (relationship.type !== 'MENTIONS') continue;
+    const episodeId = episodeIds.has(relationship.from)
+      ? relationship.from
+      : episodeIds.has(relationship.to) ? relationship.to : null;
+    const subjectId = subjectIds.has(relationship.from)
+      ? relationship.from
+      : subjectIds.has(relationship.to) ? relationship.to : null;
+    if (!episodeId || !subjectId) continue;
+    const values = episodeIdsBySubject.get(subjectId) || new Set<string>();
+    values.add(episodeId);
+    episodeIdsBySubject.set(subjectId, values);
+  }
+  const nodes = subjects.map((node: any) => ({
     ...node,
     canonicalName: node.label,
+    entityKind: node.type,
     projectId,
+    ...(episodeIdsBySubject.has(node.id)
+      ? { provenanceEpisodeIds: [...episodeIdsBySubject.get(node.id)!] }
+      : {}),
   }));
   return applyKnowGraphJevPhysics({
     ...emptyProjection('knowgraph', projectId),
     nodes,
     edges: payload.relationships
-      .filter((edge: any) => entityIds.has(edge.from) && entityIds.has(edge.to))
+      .filter((edge: any) => subjectIds.has(edge.from) && subjectIds.has(edge.to))
       .map((edge: any) => ({
         ...edge,
         source: edge.from,
@@ -132,21 +154,47 @@ export function knowGraphProjection(
     counts: {
       nodes: nodes.length,
       edges: payload.relationships.filter((edge: any) => (
-        entityIds.has(edge.from) && entityIds.has(edge.to)
+        subjectIds.has(edge.from) && subjectIds.has(edge.to)
       )).length,
     },
     provenanceNodes: episodes,
   });
 }
 
+export function mergeGraphProjection(
+  current: GraphProjectionV1,
+  incoming: GraphProjectionV1,
+): GraphProjectionV1 {
+  const nodes = new Map(current.nodes.map((node) => [node.id, node]));
+  for (const node of incoming.nodes) nodes.set(node.id, { ...nodes.get(node.id), ...node });
+  const visibleNodeIds = new Set(nodes.keys());
+  const edges = new Map(current.edges.map((edge) => [edge.id, edge]));
+  for (const edge of incoming.edges) {
+    if (visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)) {
+      edges.set(edge.id, { ...edges.get(edge.id), ...edge });
+    }
+  }
+  const merged = {
+    ...current,
+    nodes: [...nodes.values()],
+    edges: [...edges.values()],
+    counts: { nodes: nodes.size, edges: edges.size },
+  };
+  return merged.authority === 'knowgraph'
+    ? applyKnowGraphJevPhysics(merged)
+    : merged;
+}
+
 export default function useAgentBuilderKnowledgeGraphs({
   projectId,
   deckId,
   conversationId,
+  selectedCardId = null,
 }: {
   projectId: string;
   deckId: string;
   conversationId: string;
+  selectedCardId?: string | null;
 }): KnowledgeGraphState {
   const [projections, setProjections] = useState(() => emptyGraphs(projectId));
   const [errors, setErrors] = useState<Partial<Record<KnowledgeGraphKind, string>>>({});
@@ -261,31 +309,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     setErrors((current) => ({ ...current, thinkgraph: event.error }));
   }, [conversationId, deckId, projectId]);
 
-  useEffect(() => {
-    if (!projectId) return undefined;
-    const query = new URLSearchParams({ projectId, deckId, conversationId });
-    const stream = new EventSource(
-      `/api/thinkgraph/revisions?${query.toString()}`,
-      { withCredentials: true },
-    );
-    stream.addEventListener('thinkgraph_revision', (event) => {
-      observeThinkGraphRevision(JSON.parse((event as MessageEvent).data));
-    });
-    stream.addEventListener('thinkgraph_error', (event) => {
-      observeThinkGraphFailure(JSON.parse((event as MessageEvent).data));
-    });
-    stream.onerror = (error) => {
-      console.warn('[THINKGRAPH_REVISION_STREAM]', error);
-    };
-    return () => stream.close();
-  }, [
-    conversationId,
-    deckId,
-    observeThinkGraphFailure,
-    observeThinkGraphRevision,
-    projectId,
-  ]);
-
   const readProviderNeighborhood = useCallback(async (
     graph: KnowledgeGraphKind,
     providerId: string,
@@ -313,32 +336,26 @@ export default function useAgentBuilderKnowledgeGraphs({
     return knowGraphProjection(payload, projectId);
   }, [projectId]);
 
-  const readEntityContext = useCallback(async (
-    entity: CanonicalEntityHeader,
-    query: string,
-    limit = 1,
-    signal?: AbortSignal,
-  ): Promise<Record<string, any>> => {
-    const currentQuery = query.trim();
-    if (!currentQuery) throw new Error('current_request_required');
-    const response = await fetch('/api/project-graph/entity-context', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, query: currentQuery, limit, entities: [entity] }),
-      ...(signal ? { signal } : {}),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !isRecord(payload)
-      || payload.schemaVersion !== 'project-entity-context.v1'
-      || payload.projectId !== projectId
-      || !Array.isArray(payload.entities)
-      || payload.entities.length !== 1
-      || !isRecord(payload.entities[0])) {
-      throw new Error('project_entity_context_unavailable');
+  const expandNode = useCallback(async ({ graph, node }: ExpandRequest) => {
+    if (selectedCardId) throw new Error('Deselect the Card to expand the overall graph.');
+    try {
+      const incoming = await readProviderNeighborhood(
+        graph,
+        graph === 'thinkgraph' ? String(node.canonicalId || node.id) : node.id,
+      );
+      setProjections((current) => ({
+        ...current,
+        [graph]: mergeGraphProjection(current[graph], incoming),
+      }));
+      setErrors((current) => ({ ...current, [graph]: undefined }));
+    } catch (error) {
+      setErrors((current) => ({
+        ...current,
+        [graph]: error instanceof Error ? error.message : String(error),
+      }));
+      throw error;
     }
-    return payload.entities[0];
-  }, [projectId]);
+  }, [readProviderNeighborhood, selectedCardId]);
 
   const removeThinkGraphEvidence = useCallback(async (memoryId: string) => {
     const response = await fetch('/api/thinkgraph/retire', {
@@ -350,40 +367,13 @@ export default function useAgentBuilderKnowledgeGraphs({
     await refreshThinkGraph();
   }, [projectId, refreshThinkGraph]);
 
-  const removeThinkGraphRelationship = useCallback(async (edgeId: string) => {
-    const response = await fetch('/api/thinkgraph/retire-relationship', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, edgeId }),
-    });
-    if (!response.ok) throw new Error('Could not remove this item.');
-    await refreshThinkGraph();
-  }, [projectId, refreshThinkGraph]);
-
-  const removeKnowGraphRelationship = useCallback(async (graphitiRelationshipId: string) => {
-    const response = await fetch('/api/knowgraph/delete-fact', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        graphiti_fact_uuid: graphitiRelationshipId,
-        kind: 'fact',
-      }),
-    });
-    if (!response.ok) throw new Error('Could not delete this Relationship.');
-    await refreshKnowGraph();
-  }, [projectId, refreshKnowGraph]);
-
   const removeKnowGraphEvidence = useCallback(async (episodeId: string) => {
-    const response = await fetch('/api/knowgraph/delete-episode', {
+    const response = await fetch('/api/knowgraph/delete-native', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        graphiti_episode_uuid: episodeId,
-      }),
+      body: JSON.stringify({ project_id: projectId, native_id: episodeId, kind: 'episode' }),
     });
-    if (!response.ok) throw new Error('Could not remove this item.');
+    if (!response.ok) throw new Error('Could not delete this Know.');
     await refreshKnowGraph();
   }, [projectId, refreshKnowGraph]);
 
@@ -393,11 +383,11 @@ export default function useAgentBuilderKnowledgeGraphs({
     statuses,
     refreshThinkGraph,
     refreshKnowGraph,
+    observeThinkGraphRevision,
+    observeThinkGraphFailure,
     readProviderNeighborhood,
-    readEntityContext,
+    expandNode,
     removeThinkGraphEvidence,
-    removeThinkGraphRelationship,
     removeKnowGraphEvidence,
-    removeKnowGraphRelationship,
   };
 }

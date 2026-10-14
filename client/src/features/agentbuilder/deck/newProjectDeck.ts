@@ -309,6 +309,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_magentic',
     model: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
     provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 1200,
     tools: [],
   },
   {
@@ -317,6 +319,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_main_chat',
     model: MAIN_CHAT_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 1200,
     tools: [],
   },
   {
@@ -325,6 +329,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_assist',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 1200,
     tools: [],
   },
   {
@@ -333,6 +339,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_team',
     model: TEAM_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 1400,
     tools: [...TEAM_CARD_TOOLS],
   },
   {
@@ -341,6 +349,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_thinkgraph',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 1400,
     tools: [...THINKGRAPH_CARD_TOOLS],
   },
   {
@@ -349,6 +359,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_knowgraph',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 1400,
     tools: [],
   },
   {
@@ -357,6 +369,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_worldsignals_agent',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 800,
     tools: [],
   },
   {
@@ -365,6 +379,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     promptTemplate: 'prompt_trading_workbench',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 800,
     tools: [
       'get_market_snapshot',
       'get_historical_bars',
@@ -479,6 +495,7 @@ export const INITIAL_DECK: DeckDocument = {
         provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
+        maxTurns: 2,
       },
       parentGraphId: null,
       title: 'Magnetic',

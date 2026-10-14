@@ -21,6 +21,8 @@ export function resolveEffectiveAgent(
     name: card.title,
     provider: card.runtimeOptions?.provider ?? overrides.provider,
     model: card.runtimeOptions?.modelKey ?? overrides.model,
+    temperature: card.runtimeOptions?.temperature ?? overrides.temperature,
+    maxTokens: card.runtimeOptions?.maxTokens ?? overrides.maxTokens,
     tools: selectedTools,
   };
 }

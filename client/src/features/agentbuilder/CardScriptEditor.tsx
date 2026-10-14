@@ -457,12 +457,12 @@ function changedSourceDraft(
       errors: [],
       toolHandles: [],
     },
-    hermesSupport: {
+    nativeSupport: {
       available: false,
       active: false,
       executor: null,
       reason: runtimeKind === 'hermes'
-        ? 'card_script_hermes_execution_unavailable'
+        ? 'card_script_native_bridge_unavailable'
         : 'card_script_runtime_unsupported',
     },
   };
@@ -918,7 +918,7 @@ export function CardScriptEditor({
   const validationStatus = String(validation.status || (script.source.trim() ? 'unvalidated' : 'blank'));
   const validationErrors = Array.isArray(validation.errors) ? validation.errors.map(String) : [];
   const diagnosticCount = validationErrors.length + (validationError ? 1 : 0);
-  const active = script.enabled && script.hermesSupport?.active === true;
+  const active = script.enabled && script.nativeSupport?.active === true;
   const ungrantedCount = Math.max(0, (header?.catalogToolCount || 0) - toolReferences.length);
 
   return (
@@ -926,7 +926,7 @@ export function CardScriptEditor({
       <header className="card-script-ide__header">
         <div className="card-script-ide__identity">
           <strong>Card Python Script</strong>
-
+          
         </div>
         <label className="card-script-ide__activation">
           <input
@@ -936,7 +936,7 @@ export function CardScriptEditor({
             onChange={(event) => onChange({
               ...script,
               enabled: event.target.checked,
-              hermesSupport: { ...(script.hermesSupport || {}), active: false },
+              nativeSupport: { ...(script.nativeSupport || {}), active: false },
             })}
             aria-label="Activate Card Script"
           />
@@ -948,7 +948,7 @@ export function CardScriptEditor({
         <div role="status" className="card-script-ide__notice">
           This Card is not Hermes-backed. Editing remains available; activation stays off and the Card remains MCP-driven.
         </div>
-      ) : script.hermesSupport?.available !== true ? (
+      ) : script.nativeSupport?.available !== true ? (
         <div role="status" className="card-script-ide__notice">
           Card Python Script runtime execution is not currently connected. Editing, validation, and saving remain available; Runs keep the Card&apos;s selected MCP tools.
         </div>
@@ -1057,7 +1057,7 @@ export function CardScriptEditor({
             compiledHash: script.compiledHash,
             paletteFingerprint: script.paletteFingerprint,
             compiled: script.compiled,
-            hermesSupport: script.hermesSupport,
+            nativeSupport: script.nativeSupport,
           }, null, 2)}</pre>
         </details>
       ) : null}

@@ -5,13 +5,14 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
+import { CardRuntimeDashboard } from './CardRuntimeDashboard';
 import {
-  applyHermesProfileOperation,
-  loadHermesProfile,
-  loadHermesLearningDetail,
-  testHermesMcp,
-  type HermesProfileView,
-} from '../features/agentbuilder/hermesProfileClient';
+  applyNativeHermesOperation,
+  loadNativeHermesCard,
+  loadNativeHermesLearningDetail,
+  testNativeHermesMcp,
+  type NativeHermesCardView,
+} from '../features/agentbuilder/nativeHermesCard';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
@@ -43,11 +44,11 @@ function blankCardScript(): SavedCardScript {
     lastValidation: {
       status: 'blank', executionTested: false, errors: [], toolHandles: [],
     },
-    hermesSupport: {
+    nativeSupport: {
       available: false,
       active: false,
       executor: null,
-      reason: 'card_script_hermes_execution_unavailable',
+      reason: 'card_script_native_bridge_unavailable',
     },
     rollback: {},
   };
@@ -115,6 +116,8 @@ export function parseCardEditorOptions(payload: unknown): {
 }
 export type ToolDescriptor = {
   name: string;
+  kind?: 'tool' | 'agent';
+  sourceIds?: string[];
   title?: string;
   description?: string;
 };
@@ -124,12 +127,12 @@ export type DisplayedToolRow = ToolDescriptor & {
 
 export type InputDictionaryToolReference = {
   canonicalId: string;
-  provider: string;
-  providerToolName: string;
-  namespace: string;
-  displayName: string;
-  description: string;
-  available: boolean;
+  kind?: 'tool' | 'agent';
+  sourceIds: string[];
+  namespace?: string;
+  displayName?: string;
+  shortDescription?: string;
+  availability: 'available' | 'disabled';
   access: 'read' | 'write';
 };
 
@@ -150,9 +153,11 @@ export function buildInputDictionarySelectedRows(
 ): DisplayedToolRow[] {
   const known = selectedReferences.map((reference) => ({
       name: reference.canonicalId,
+      kind: reference.kind,
+      sourceIds: reference.sourceIds,
       title: reference.displayName || reference.canonicalId,
-      description: reference.description,
-      availability: reference.available ? 'available' as const : 'disabled' as const,
+      description: reference.shortDescription,
+      availability: reference.availability,
     }));
   const knownNames = new Set(known.map((reference) => reference.name));
   return [
@@ -225,7 +230,10 @@ export type AgentManagerLocalConfig = {
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | '' | null;
   access_mode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '' | null;
   model_key?: string | null;
-  reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null;
+  reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
+  temperature?: number | null;
+  max_tokens?: number | null;
+  max_turns?: number | null;
   prompt_template?: string | null;
   tools?: unknown[];
   skills?: unknown[];
@@ -349,6 +357,17 @@ function serializePromptFields(fields: PromptFields & Record<string, string>, or
 function parseListText(value: string): string[] {
   const text = String(value || '').trim();
   if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+  } catch {
+    // fall back to newline/comma parsing
+  }
   return text
     .split(/[\r\n,]+/)
     .map((entry) => entry.replace(/^[-*]\s*/, '').trim())
@@ -360,7 +379,10 @@ export function buildActiveAgentManagerLocalConfig(input: {
   provider: NonNullable<AgentManagerLocalConfig['provider']>;
   accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '';
   modelKey: string;
-  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | '';
+  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
+  temperature: number | '';
+  maxTokens: number | '';
+  maxTurns: number | '';
   promptTemplate: string;
   toolsText: string;
   skillsText: string;
@@ -373,6 +395,9 @@ export function buildActiveAgentManagerLocalConfig(input: {
     access_mode: input.accessMode,
     model_key: input.modelKey || null,
     reasoning_effort: input.reasoningEffort || null,
+    temperature: typeof input.temperature === 'number' ? input.temperature : null,
+    max_tokens: typeof input.maxTokens === 'number' ? input.maxTokens : null,
+    max_turns: typeof input.maxTurns === 'number' ? input.maxTurns : null,
     prompt_template: input.promptTemplate,
     tools: parseListText(input.toolsText),
     skills: parseListText(input.skillsText),
@@ -383,11 +408,11 @@ export function buildActiveAgentManagerLocalConfig(input: {
 
 export function hasHermesModelDrift(
   savedCardModel: unknown,
-  loadedHermesModel: unknown,
+  nativeProfileModel: unknown,
 ): boolean {
   const saved = String(savedCardModel || '').trim();
-  const loaded = String(loadedHermesModel || '').trim();
-  return Boolean(saved && loaded && saved !== loaded);
+  const native = String(nativeProfileModel || '').trim();
+  return Boolean(saved && native && saved !== native);
 }
 
 export function AgentManager({
@@ -411,9 +436,9 @@ export function AgentManager({
   const cardSaveInFlightRef = useRef<Promise<boolean> | null>(null);
   const [draftRevision, setDraftRevision] = useState(0);
   const cardDraftRevisionRef = useRef(0);
-  const hermesLearningRevisionRef = useRef(0);
-  const hermesLearningDirtyRef = useRef(false);
-  const hermesProfileReadbackRef = useRef<HermesProfileView | null>(null);
+  const nativeDraftRevisionRef = useRef(0);
+  const nativeDraftDirtyRef = useRef(false);
+  const nativeReadbackRef = useRef<NativeHermesCardView | null>(null);
   const runtimeKind = localConfig?.runtime.kind;
   const runtimeMode = localConfig?.runtime.mode;
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
@@ -439,7 +464,7 @@ export function AgentManager({
   const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
   const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
   const [reasoningEffort, setReasoningEffort] = useState<
-    'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | ''
+    'low' | 'medium' | 'high' | 'xhigh' | ''
   >('');
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
   const [cardEditorFields, setCardEditorFields] = useState<InputDictionaryEditorField[]>([]);
@@ -460,6 +485,9 @@ export function AgentManager({
   const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true);
   const [toolDictionaryBusy, setToolDictionaryBusy] = useState(true);
   const [toolOptionsError, setToolOptionsError] = useState(false);
+  const [temperature, setTemperature] = useState<number | ''>('');
+  const [maxTokens, setMaxTokens] = useState<number | ''>('');
+  const [maxTurns, setMaxTurns] = useState<number | ''>('');
   const [promptText, setPromptText] = useState('');
   const [promptParts, setPromptParts] = useState<PromptFields & Record<string, string>>({
     role: '',
@@ -475,19 +503,19 @@ export function AgentManager({
   const [skillsText, setSkillsText] = useState('');
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
-  const [hermesProfileState, setHermesProfileState] = useState<HermesProfileView | null>(null);
-  const [hermesProfileStatus, setHermesProfileStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
-  const [hermesProfileError, setHermesProfileError] = useState<string | null>(null);
-  const [hermesLearningDetail, setHermesLearningDetail] = useState<{
+  const [nativeHermesState, setNativeHermesState] = useState<NativeHermesCardView | null>(null);
+  const [nativeHermesStatus, setNativeHermesStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [nativeHermesError, setNativeHermesError] = useState<string | null>(null);
+  const [nativeLearningDetail, setNativeLearningDetail] = useState<{
     kind: 'memory' | 'skill';
     id: string;
     label: string;
     content: string;
   } | null>(null);
-  const [hermesLearningDraft, setHermesLearningDraft] = useState('');
-  const [hermesLearningStatus, setHermesLearningStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
-  const [hermesLearningError, setHermesLearningError] = useState<string | null>(null);
-  const [hermesMcpChecks, setHermesMcpChecks] = useState<Record<string, {
+  const [nativeLearningDraft, setNativeLearningDraft] = useState('');
+  const [nativeLearningStatus, setNativeLearningStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [nativeLearningError, setNativeLearningError] = useState<string | null>(null);
+  const [nativeMcpChecks, setNativeMcpChecks] = useState<Record<string, {
     status: 'checking' | 'connected' | 'failed';
     toolCount: number;
     error: string | null;
@@ -546,7 +574,7 @@ export function AgentManager({
     );
     setModel({ key: localConfig.model_key || '',
       providerModelId: localConfig.runtime_options?.providerModelId });
-    setAutoSelect(localConfig.runtime_options?.autoModel === true);
+    setAutoSelect(localConfig.runtime_options?.autoSelect === true);
     setAutoTools(localConfig.runtime_options?.autoTools === true);
     setOrchestratorEnabled(
       localConfig.runtime.mode === 'main'
@@ -588,6 +616,9 @@ export function AgentManager({
       setScriptDraft(savedScript);
     }
     setReasoningEffort(localConfig.reasoning_effort || '');
+    setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
+    setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
+    setMaxTurns(typeof localConfig.max_turns === 'number' ? localConfig.max_turns : '');
     setPromptText(localConfig.prompt_template || '');
     const parsedPrompt = parsePromptTemplate(localConfig.prompt_template || '');
     const legacyOutputExpectations = typeof localConfig.output_contract === 'string'
@@ -626,14 +657,14 @@ export function AgentManager({
     );
   }, [isLocalConfigMode, localConfig]);
 
-  const acceptHermesProfileReadback = useCallback((state: HermesProfileView | null) => {
-    hermesProfileReadbackRef.current = state;
-    setHermesProfileState(state);
+  const acceptNativeReadback = useCallback((state: NativeHermesCardView | null) => {
+    nativeReadbackRef.current = state;
+    setNativeHermesState(state);
     if (!state) {
-      setHermesLearningDetail(null);
-      setHermesLearningDraft('');
-      setHermesLearningStatus('idle');
-      setHermesLearningError(null);
+      setNativeLearningDetail(null);
+      setNativeLearningDraft('');
+      setNativeLearningStatus('idle');
+      setNativeLearningError(null);
       return;
     }
   }, []);
@@ -646,35 +677,35 @@ export function AgentManager({
       || !deckId
       || !cardId
     ) {
-      acceptHermesProfileReadback(null);
-      setHermesProfileStatus('idle');
-      setHermesProfileError(null);
+      acceptNativeReadback(null);
+      setNativeHermesStatus('idle');
+      setNativeHermesError(null);
       return;
     }
     const controller = new AbortController();
-    acceptHermesProfileReadback(null);
-    setHermesProfileStatus('loading');
-    setHermesProfileError(null);
-    setHermesLearningDetail(null);
-    setHermesLearningDraft('');
-    setHermesLearningStatus('idle');
-    setHermesLearningError(null);
-    void loadHermesProfile({ projectId, deckId, cardId, signal: controller.signal })
+    acceptNativeReadback(null);
+    setNativeHermesStatus('loading');
+    setNativeHermesError(null);
+    setNativeLearningDetail(null);
+    setNativeLearningDraft('');
+    setNativeLearningStatus('idle');
+    setNativeLearningError(null);
+    void loadNativeHermesCard({ projectId, deckId, cardId, signal: controller.signal })
       .then((state) => {
         if (controller.signal.aborted) return;
-        acceptHermesProfileReadback(state);
-        setHermesProfileStatus('ready');
+        acceptNativeReadback(state);
+        setNativeHermesStatus('ready');
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
-        acceptHermesProfileReadback(null);
-        setHermesProfileStatus('failed');
-        setHermesProfileError(error instanceof Error ? error.message : 'Profile unavailable.');
+        acceptNativeReadback(null);
+        setNativeHermesStatus('failed');
+        setNativeHermesError(error instanceof Error ? error.message : 'Profile unavailable.');
       });
     return () => controller.abort();
-  // Hermes profile readback is identity-scoped and deliberately independent from
+  // Native readback is identity-scoped and deliberately independent from
   // unsaved Card drafts. Card save never mutates the bound profile.
-  }, [isLocalConfigMode, projectId, deckId, cardId, acceptHermesProfileReadback]);
+  }, [isLocalConfigMode, projectId, deckId, cardId, acceptNativeReadback]);
 
 
   const markDraftDirty = () => {
@@ -683,9 +714,9 @@ export function AgentManager({
     setDraftRevision((revision) => revision + 1);
   };
 
-  const markHermesLearningDirty = () => {
-    hermesLearningDirtyRef.current = true;
-    hermesLearningRevisionRef.current += 1;
+  const markNativeDraftDirty = () => {
+    nativeDraftDirtyRef.current = true;
+    nativeDraftRevisionRef.current += 1;
     setDraftRevision((revision) => revision + 1);
   };
 
@@ -734,6 +765,9 @@ export function AgentManager({
       accessMode,
       modelKey,
       reasoningEffort,
+      temperature,
+      maxTokens,
+      maxTurns,
       promptTemplate: serializedPrompt,
       toolsText,
       skillsText,
@@ -752,8 +786,8 @@ export function AgentManager({
       ...(providerModelId !== undefined ? { providerModelId } : {}),
       ...(
         runtimeKind === 'hermes'
-        && (autoSelect || localConfig.runtime_options?.autoModel !== undefined)
-          ? { autoModel: autoSelect }
+        && (autoSelect || localConfig.runtime_options?.autoSelect !== undefined)
+          ? { autoSelect }
           : {}
       ),
       ...(
@@ -814,6 +848,9 @@ export function AgentManager({
     subagentTypeTouched,
     scriptDraft,
     reasoningEffort,
+    temperature,
+    maxTokens,
+    maxTurns,
     promptParts,
     promptPartsTouched,
     promptText,
@@ -839,30 +876,30 @@ export function AgentManager({
     buildCurrentLocalPayload,
   ]);
 
-  const openHermesLearningNode = useCallback(async (nodeId: string) => {
+  const openNativeLearningNode = useCallback(async (nodeId: string) => {
     if (!projectId || !deckId || !cardId) return;
-    setHermesLearningStatus('loading');
-    setHermesLearningError(null);
+    setNativeLearningStatus('loading');
+    setNativeLearningError(null);
     try {
-      const detail = await loadHermesLearningDetail({ projectId, deckId, cardId, nodeId });
-      setHermesLearningDetail(detail);
-      setHermesLearningDraft(learningEditsRef.current.get(nodeId) ?? detail.content);
-      setHermesLearningStatus('ready');
+      const detail = await loadNativeHermesLearningDetail({ projectId, deckId, cardId, nodeId });
+      setNativeLearningDetail(detail);
+      setNativeLearningDraft(learningEditsRef.current.get(nodeId) ?? detail.content);
+      setNativeLearningStatus('ready');
     } catch (error) {
-      setHermesLearningStatus('failed');
-      setHermesLearningError(error instanceof Error ? error.message : 'Hermes learning node unavailable.');
+      setNativeLearningStatus('failed');
+      setNativeLearningError(error instanceof Error ? error.message : 'Hermes learning node unavailable.');
     }
   }, [projectId, deckId, cardId]);
 
-  const checkHermesMcpServer = useCallback(async (serverName: string) => {
+  const checkNativeMcpServer = useCallback(async (serverName: string) => {
     if (!projectId || !deckId || !cardId) return;
-    setHermesMcpChecks((current) => ({
+    setNativeMcpChecks((current) => ({
       ...current,
       [serverName]: { status: 'checking', toolCount: 0, error: null },
     }));
     try {
-      const result = await testHermesMcp({ projectId, deckId, cardId, serverName });
-      setHermesMcpChecks((current) => ({
+      const result = await testNativeHermesMcp({ projectId, deckId, cardId, serverName });
+      setNativeMcpChecks((current) => ({
         ...current,
         [serverName]: {
           status: result.ok ? 'connected' : 'failed',
@@ -871,7 +908,7 @@ export function AgentManager({
         },
       }));
     } catch (error) {
-      setHermesMcpChecks((current) => ({
+      setNativeMcpChecks((current) => ({
         ...current,
         [serverName]: {
           status: 'failed',
@@ -883,28 +920,28 @@ export function AgentManager({
   }, [projectId, deckId, cardId]);
 
   const saveCurrentDraft = useCallback(async (): Promise<void> => {
-      const learningRevision = hermesLearningRevisionRef.current;
-      const profileState = hermesProfileReadbackRef.current;
+      const nativeRevision = nativeDraftRevisionRef.current;
+      const nativeState = nativeReadbackRef.current;
       const learningEdits = [...learningEditsRef.current];
-      if (hermesLearningDirtyRef.current) {
-        if (!profileState || !projectId || !deckId || !cardId) throw new Error('Hermes profile unavailable.');
+      if (nativeDraftDirtyRef.current) {
+        if (!nativeState || !projectId || !deckId || !cardId) throw new Error('Hermes profile unavailable.');
       }
       await runSaveConfig();
-      if (hermesLearningDirtyRef.current) {
-        let latestReadback = profileState;
+      if (nativeDraftDirtyRef.current) {
+        let latestReadback = nativeState;
         for (const [id, content] of learningEdits) {
-          latestReadback = await applyHermesProfileOperation({ projectId, deckId, cardId,
+          latestReadback = await applyNativeHermesOperation({ projectId, deckId, cardId,
             change: { method: 'learning.edit', params: { id, content } } });
-          hermesProfileReadbackRef.current = latestReadback;
-          setHermesProfileState(latestReadback);
+          nativeReadbackRef.current = latestReadback;
+          setNativeHermesState(latestReadback);
           if (learningEditsRef.current.get(id) === content) learningEditsRef.current.delete(id);
         }
-        if (hermesLearningRevisionRef.current === learningRevision) {
-          hermesLearningDirtyRef.current = false;
-          if (latestReadback) acceptHermesProfileReadback(latestReadback);
+        if (nativeDraftRevisionRef.current === nativeRevision) {
+          nativeDraftDirtyRef.current = false;
+          if (latestReadback) acceptNativeReadback(latestReadback);
         }
       }
-  }, [runSaveConfig, projectId, deckId, cardId, acceptHermesProfileReadback]);
+  }, [runSaveConfig, projectId, deckId, cardId, acceptNativeReadback]);
 
   const saveLatestDraftRef = useRef(saveCurrentDraft);
   useLayoutEffect(() => {
@@ -915,12 +952,12 @@ export function AgentManager({
     // The canvas clears one selection and sets the other in the same click.
     // Both callers must await the same save, including any newer edits.
     if (cardSaveInFlightRef.current) return cardSaveInFlightRef.current;
-    if (!draftDirtyRef.current && !hermesLearningDirtyRef.current) return Promise.resolve(true);
+    if (!draftDirtyRef.current && !nativeDraftDirtyRef.current) return Promise.resolve(true);
     const save = Promise.resolve().then(async () => {
       setSaveCardStatus('saving');
       setSaveCardErrorMessage(null);
       try {
-        while (draftDirtyRef.current || hermesLearningDirtyRef.current) {
+        while (draftDirtyRef.current || nativeDraftDirtyRef.current) {
           await saveLatestDraftRef.current();
         }
         setSaveCardStatus('saved');
@@ -938,7 +975,7 @@ export function AgentManager({
   }, []);
 
   useEffect(() => {
-    if (!draftDirtyRef.current && !hermesLearningDirtyRef.current) return;
+    if (!draftDirtyRef.current && !nativeDraftDirtyRef.current) return;
     const timer = window.setTimeout(() => { void saveOnCardLeave(); }, 350);
     return () => window.clearTimeout(timer);
   }, [draftRevision, saveOnCardLeave]);
@@ -961,13 +998,16 @@ export function AgentManager({
   const jevModelChoiceContextField = editorField('jevModelChoiceContext');
   const jevAutoToolsContextField = editorField('jevAutoToolsContext');
   const reasoningEffortField = editorField('reasoningEffort');
+  const temperatureField = editorField('temperature');
+  const maxTokensField = editorField('maxTokens');
+  const maxTurnsField = editorField('maxTurns');
   const providerOptions = (providerField?.options || []).filter(
     (option) => (modelsByProvider[option.value] || []).length > 0,
   );
   const legacyTeam = (
     localConfig?.runtime_options as (AgentCardRuntimeOptions & { team?: { mode?: unknown } }) | null | undefined
   )?.team;
-  const preservesHermesAutoTeam = runtimeKind === 'hermes'
+  const preservesNativeAutoTeam = runtimeKind === 'hermes'
     && localConfig?.runtime_options?.subagentType === undefined
     && legacyTeam?.mode === 'auto';
   const accessModeOptions = accessModeField?.options || [];
@@ -991,7 +1031,10 @@ export function AgentManager({
     && subagentTypeField?.control === 'select'
     && accessModeField
     && modelKeyField
-    && reasoningEffortField,
+    && reasoningEffortField
+    && temperatureField
+    && maxTokensField
+    && maxTurnsField,
   );
   const savedToolNames = parseListText(toolsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
@@ -1363,28 +1406,28 @@ export function AgentManager({
             placeholder="One skill ID per line"
             rows={5}
           />
-          {runtimeKind !== 'hermes' ? null : hermesProfileStatus === 'failed' ? (
+          {runtimeKind !== 'hermes' ? null : nativeHermesStatus === 'failed' ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {hermesProfileError || 'Skills unavailable.'}
+              {nativeHermesError || 'Skills unavailable.'}
             </div>
-          ) : hermesProfileState ? (
+          ) : nativeHermesState ? (
             <>
               <details data-testid="effective-hermes-skills">
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
                   Loaded
                 </summary>
                 <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
-                  {hermesProfileState.profile.skills.map((skill) => (
+                  {nativeHermesState.native.skills.map((skill) => (
                     <div key={skill.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
                       {skill.name} · {skill.enabled ? 'enabled' : 'disabled'}
                     </div>
                   ))}
                 </div>
               </details>
-              {hermesProfileState.profile.learning.buckets.some((bucket) => bucket.nodes.length > 0) ? (
+              {nativeHermesState.native.learning.buckets.some((bucket) => bucket.nodes.length > 0) ? (
                 <section aria-label="Learning" style={{ display: 'grid', gap: 7 }}>
                   <div style={{ color: '#D5E4E8', fontSize: 11.5, fontWeight: 600 }}>Learning</div>
-                  {hermesProfileState.profile.learning.buckets.map((bucket) => (
+                  {nativeHermesState.native.learning.buckets.map((bucket) => (
                     bucket.nodes.length ? (
                       <div key={`${bucket.index}:${bucket.date}`} style={{ display: 'grid', gap: 5 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#80969F', fontSize: 10.5 }}>
@@ -1398,7 +1441,7 @@ export function AgentManager({
                               type="button"
                               aria-label={`Open ${node.fullLabel || node.label}`}
                               title={node.meta || node.fullLabel || node.label}
-                              onClick={() => void openHermesLearningNode(node.id)}
+                              onClick={() => void openNativeLearningNode(node.id)}
                               style={{
                                 minWidth: 0,
                                 padding: '4px 7px',
@@ -1419,20 +1462,20 @@ export function AgentManager({
                   ))}
                 </section>
               ) : null}
-              {hermesLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening…</div> : null}
-              {hermesLearningStatus === 'failed' ? (
-                <div role="alert" style={{ color: '#FFA2A2' }}>{hermesLearningError}</div>
+              {nativeLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening…</div> : null}
+              {nativeLearningStatus === 'failed' ? (
+                <div role="alert" style={{ color: '#FFA2A2' }}>{nativeLearningError}</div>
               ) : null}
-              {hermesLearningDetail ? (
+              {nativeLearningDetail ? (
                 <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
-                  <strong>{hermesLearningDetail.kind}: {hermesLearningDetail.label}</strong>
+                  <strong>{nativeLearningDetail.kind}: {nativeLearningDetail.label}</strong>
                   <textarea
                     aria-label="Learning"
-                    value={hermesLearningDraft}
+                    value={nativeLearningDraft}
                     onChange={(event) => {
-                      setHermesLearningDraft(event.target.value);
-                      learningEditsRef.current.set(hermesLearningDetail.id, event.target.value);
-                      markHermesLearningDirty();
+                      setNativeLearningDraft(event.target.value);
+                      learningEditsRef.current.set(nativeLearningDetail.id, event.target.value);
+                      markNativeDraftDirty();
                     }}
                     rows={10}
                     style={{ width: '100%', minWidth: 0, padding: 10, background: '#161A1B', color: '#D5E4E8', border: '1px solid #42565C', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
@@ -1454,9 +1497,9 @@ export function AgentManager({
           style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
         >
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Memory</div>
-          {runtimeKind === 'hermes' && hermesProfileStatus === 'failed' ? (
+          {runtimeKind === 'hermes' && nativeHermesStatus === 'failed' ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {hermesProfileError || 'Memory unavailable.'}
+              {nativeHermesError || 'Memory unavailable.'}
             </div>
           ) : null}
         </section>
@@ -1567,7 +1610,7 @@ export function AgentManager({
                 </div>
                 {runtimeKind === 'hermes'
                 && runtimeMode !== 'magentic_one'
-                && !preservesHermesAutoTeam
+                && !preservesNativeAutoTeam
                 && subagentTypeField?.control === 'select' ? (
                   <div>
                     <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
@@ -1605,7 +1648,7 @@ export function AgentManager({
                 ) : null}
               </>
 
-            <div>
+            {runtimeKind !== 'hermes' ? <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                 Reasoning effort
               </label>
@@ -1614,7 +1657,9 @@ export function AgentManager({
                 disabled={!runtimeDictionaryReady}
                 value={reasoningEffort}
                 onChange={(event) => {
-                  setReasoningEffort(event.target.value as typeof reasoningEffort);
+                  setReasoningEffort(
+                    event.target.value as 'low' | 'medium' | 'high' | 'xhigh' | '',
+                  );
                   markDraftDirty();
                 }}
                 style={{
@@ -1634,7 +1679,7 @@ export function AgentManager({
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
-            </div>
+            </div> : null}
           </div>
           {runtimeKind === 'hermes' ? (
             <details style={{ padding: 9, border: '1px solid #3A4A4F', borderRadius: 7,
@@ -1692,12 +1737,74 @@ export function AgentManager({
                   </div>
                 ) : null}
                 <div style={{ color: '#71878D', fontSize: 10 }}>
-                  Graph Focus, Think/Know relationship classification, and fulfillment scoring keep their purpose-specific graph inputs;
+                  Graph Focus, Think/Know relationship classification, and fulfillment scoring keep their purpose-specific native inputs;
                   they are not silently reconfigured by these Card-level choices.
                 </div>
               </div>
             </details>
           ) : null}
+          {runtimeKind !== 'hermes' ? <>
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+              Advanced runtime
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Temperature
+              </label>
+              <input
+                aria-label="Temperature"
+                disabled={!runtimeDictionaryReady}
+                type="number"
+                min={temperatureField?.minimum}
+                max={temperatureField?.maximum}
+                step={temperatureField?.step}
+                value={temperature}
+                onChange={(event) => {
+                  setTemperature(event.target.value === '' ? '' : event.target.valueAsNumber);
+                  markDraftDirty();
+                }}
+              />
+              </div>
+              <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Max tokens
+              </label>
+              <input
+                aria-label="Max tokens"
+                disabled={!runtimeDictionaryReady}
+                type="number"
+                min={maxTokensField?.minimum}
+                max={maxTokensField?.maximum}
+                step={maxTokensField?.step}
+                value={maxTokens}
+                onChange={(event) => {
+                  setMaxTokens(event.target.value === '' ? '' : event.target.valueAsNumber);
+                  markDraftDirty();
+                }}
+              />
+              </div>
+              <div>
+              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                Max turns
+              </label>
+              <input
+                aria-label="Max turns"
+                disabled={!runtimeDictionaryReady}
+                type="number"
+                min={maxTurnsField?.minimum}
+                max={maxTurnsField?.maximum}
+                step={maxTurnsField?.step}
+                value={maxTurns}
+                onChange={(event) => {
+                  setMaxTurns(event.target.value === '' ? '' : event.target.valueAsNumber);
+                  markDraftDirty();
+                }}
+              />
+              </div>
+            </div>
+          </> : null}
+
         </div>
       );
     }
@@ -1838,16 +1945,16 @@ export function AgentManager({
                   <input
                     type="checkbox"
                     checked={savedToolNames.includes(tool.canonicalId)}
-                    disabled={!tool.available}
+                    disabled={tool.availability !== 'available'}
                     onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
                     aria-label={`Include ${tool.displayName || tool.canonicalId}`}
                   />
                   <span>
-                    <span title={tool.description} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
+                    <span title={tool.shortDescription} style={{ display: 'block', color: '#D5E4E8', fontSize: 11 }}>
                       {tool.displayName || tool.canonicalId}
                     </span>
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
-                      {!tool.available ? ' · Unavailable in current catalog' : ''}
+                      {tool.availability !== 'available' ? ' · Unavailable in current catalog' : ''}
                     </span>
                   </span>
                 </label>
@@ -1924,7 +2031,7 @@ export function AgentManager({
               />
             </label>
           </section>
-          {runtimeKind === 'hermes' && hermesProfileState ? (
+          {runtimeKind === 'hermes' && nativeHermesState ? (
             <section
               data-testid="effective-hermes-runtime"
               style={{
@@ -1940,14 +2047,14 @@ export function AgentManager({
                 Effective runtime / diagnostics
               </div>
               <div style={{ color: '#91A9B8', fontSize: 11 }}>
-                Profile {hermesProfileState.binding.profile} · saved Card authority materializes at Run start. Effective Hermes profile values are read-only here.
+                Profile {nativeHermesState.binding.profile} · saved Card authority materializes at Run start. Effective Hermes profile values are read-only here.
               </div>
               <details>
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Effective Hermes toolsets · {hermesProfileState.profile.toolsets.filter((toolset) => toolset.enabled).length} enabled
+                  Effective Hermes toolsets · {nativeHermesState.native.toolsets.filter((toolset) => toolset.enabled).length} enabled
                 </summary>
                 <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
-                  {hermesProfileState.profile.toolsets.map((toolset) => (
+                  {nativeHermesState.native.toolsets.map((toolset) => (
                     <div key={toolset.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
                       {toolset.label || toolset.name} · {toolset.enabled ? 'enabled' : 'disabled'}
                       {typeof toolset.tool_count === 'number' ? ` · ${toolset.tool_count} tools` : ''}
@@ -1955,8 +2062,8 @@ export function AgentManager({
                   ))}
                 </div>
               </details>
-              {hermesProfileState.profile.mcpServers.length ? hermesProfileState.profile.mcpServers.map((server) => {
-                const checked = hermesMcpChecks[server.name];
+              {nativeHermesState.native.mcpServers.length ? nativeHermesState.native.mcpServers.map((server) => {
+                const checked = nativeMcpChecks[server.name];
                 return (
                   <div
                     key={server.name}
@@ -1974,7 +2081,7 @@ export function AgentManager({
                       </div>
                       <button
                         type="button"
-                        onClick={() => void checkHermesMcpServer(server.name)}
+                        onClick={() => void checkNativeMcpServer(server.name)}
                         disabled={!server.enabled || checked?.status === 'checking'}
                       >
                         {checked?.status === 'checking' ? 'Checking…' : 'Check connection'}
@@ -2016,10 +2123,13 @@ export function AgentManager({
     : activeTab === 'Runtime'
       ? (
           <div data-testid="agent-manager-runtime-surface" style={{ display: 'grid', gap: 16 }}>
+            {projectId && deckId && cardId ? (
+              <CardRuntimeDashboard projectId={projectId} deckId={deckId} cardId={cardId} />
+            ) : null}
             <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>
             {runtimeKind === 'hermes'
             && runtimeMode !== 'magentic_one'
-            && (subagentType !== 'none' || preservesHermesAutoTeam) ? (
+            && (subagentType !== 'none' || preservesNativeAutoTeam) ? (
               <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
                 Subagent model
                 <select

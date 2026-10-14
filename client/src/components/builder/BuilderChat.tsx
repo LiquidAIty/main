@@ -386,6 +386,7 @@ export default function BuilderChat({
   colors,
   busy = false,
   connecting = false,
+  queuedCount = 0,
   historyLoading = false,
   error = null,
   voiceError = null,
@@ -405,11 +406,13 @@ export default function BuilderChat({
   onSend: (t: string, runInput?: MainChatRunInput) => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
-  /** At least one real Main request is still open. */
+  /** The real SSE turn is still open; the composer remains available and submissions queue. */
   busy?: boolean;
-  /** A Main request is opening. */
+  /** The send request is opening; additional submissions queue behind it. */
   connecting?: boolean;
-  /** Saved Project conversation history is rejoining; prevent a send that could be overwritten by readback. */
+  /** Inputs waiting to use the same canonical Main session after its active turn. */
+  queuedCount?: number;
+  /** Native conversation history is rejoining; prevent a send that could be overwritten by readback. */
   historyLoading?: boolean;
   /** Visible transport/configuration failure; never represented as assistant speech. */
   error?: string | null;
@@ -875,6 +878,15 @@ export default function BuilderChat({
                 animation: "builder-chat-active-pulse 1.1s ease-in-out infinite",
               }}
             />
+          ) : null}
+          {queuedCount > 0 ? (
+            <span
+              data-testid="builder-chat-queued-count"
+              role="status"
+              style={{ color: colors.neutral, fontSize: 11, whiteSpace: "nowrap" }}
+            >
+              {queuedCount} queued
+            </span>
           ) : null}
           {busy && onStop ? (
             <button type="button" data-testid="builder-chat-stop" onClick={onStop}>

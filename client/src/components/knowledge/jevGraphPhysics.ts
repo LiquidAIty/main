@@ -2,7 +2,7 @@ import type {
   GraphProjectionEdge,
   GraphProjectionNode,
   GraphProjectionV1,
-} from './joinedKnowledgeGraphProjection';
+} from './NativeAuthorityGraphSurface';
 
 export const JEV_GRAPH_PHYSICS_PROFILES = [
   'balanced',
@@ -74,6 +74,11 @@ const TRANSFER_CURVES: Record<JevGraphPhysicsProfile, TransferCurve> = {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function boundedProbability(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? clamp(numeric, 0, 1) : null;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -216,7 +221,7 @@ function applyToRecords(
 }
 
 /**
- * Returns a display projection. The provider graph projection and persisted Jev
+ * Returns a display projection. The native graph projection and persisted Jev
  * metadata are never mutated, and changing profiles performs no I/O.
  */
 export function applyJevGraphPhysics(

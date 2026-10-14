@@ -63,7 +63,7 @@ export const GRAPH_THEME = {
     solarSoft: withAlpha(SOLARPUNK_PALETTE.sun, 0.14),
     solarGlow: withAlpha(SOLARPUNK_PALETTE.sun, 0.16),
     hover: '#F5F7FA',
-    magnetic: '#2B8C8A',
+    magentic: '#2B8C8A',
     graph: 'rgba(167, 176, 186, 0.78)',
     workflow: SOLARPUNK_PALETTE.sun,
     workflowGlow: withAlpha(SOLARPUNK_PALETTE.sun, 0.12),
@@ -121,7 +121,7 @@ export const GRAPH_THEME = {
   card: {
     glassBackground:
       'radial-gradient(circle at 14% 20%, rgba(55,173,170,0.06), transparent 38%), radial-gradient(circle at 86% 14%, rgba(242,166,74,0.04), transparent 40%), linear-gradient(180deg, rgba(17,22,29,0.84), rgba(11,14,18,0.9))',
-    glassMagneticBackground:
+    glassMagenticBackground:
       'radial-gradient(circle at 18% 20%, rgba(55,173,170,0.12), transparent 38%), radial-gradient(circle at 80% 16%, rgba(43,140,138,0.14), transparent 36%), radial-gradient(circle at 50% 92%, rgba(242,166,74,0.07), transparent 42%), linear-gradient(180deg, rgba(15,27,30,0.9), rgba(11,20,24,0.92))',
     glassGraphBackground:
       'radial-gradient(circle at 82% 18%, rgba(55,173,170,0.08), transparent 36%), linear-gradient(180deg, rgba(24,30,37,0.82), rgba(17,22,29,0.88))',
@@ -335,6 +335,23 @@ export function graphDrawerSectionStyle(
     border: '1px solid rgba(126, 232, 226, 0.13)',
     background: 'linear-gradient(145deg, rgba(29, 43, 52, 0.46), rgba(12, 19, 25, 0.24))',
     boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.07), 0 8px 22px rgba(0,0,0,0.10)',
+    ...overrides,
+  };
+}
+
+export function graphDrawerInputStyle(
+  overrides?: CSSProperties,
+): CSSProperties {
+  return {
+    width: '100%',
+    padding: '5px 7px',
+    borderRadius: 6,
+    border: '1px solid rgba(126, 232, 226, 0.16)',
+    background: 'linear-gradient(180deg, rgba(29,43,52,0.42), rgba(12,19,25,0.28))',
+    color: GRAPH_THEME.drawer.inputText,
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.055)',
+    fontSize: 11,
+    lineHeight: 1.4,
     ...overrides,
   };
 }

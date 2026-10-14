@@ -67,6 +67,8 @@ export function buildQuickAddAssistCard(
       subagentType: 'none',
       provider: template?.provider || undefined,
       modelKey: template?.model || undefined,
+      temperature: template?.temperature ?? undefined,
+      maxTokens: template?.maxTokens ?? undefined,
       tools: template?.tools ?? [],
       skills: [],
       toolsets: [],

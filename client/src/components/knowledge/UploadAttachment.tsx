@@ -31,7 +31,7 @@ async function readJsonSafely(res: Response): Promise<any | null> {
   }
 }
 
-async function postKnowgraphIngest(file: File, projectId: string): Promise<{ response: Response; payload: any | null }> {
+async function postKnowgraphIngest(file: File, projectId: string): Promise<{ response: Response; payload: any | null; documentId: string }> {
   const formData = new FormData();
   const documentId = buildDocumentId(file);
   formData.append("file", file);
@@ -44,7 +44,7 @@ async function postKnowgraphIngest(file: File, projectId: string): Promise<{ res
     credentials: "include",
   });
   const payload = await readJsonSafely(response);
-  return { response, payload };
+  return { response, payload, documentId };
 }
 
 function formatUploadError(endpoint: string, status: number, body: string): string {
@@ -139,11 +139,11 @@ export default function UploadAttachment({
 
     setUploading(true);
     try {
-      let { response, payload } = await postKnowgraphIngest(file, knowledgeProjectId);
+      let { response, payload, documentId } = await postKnowgraphIngest(file, knowledgeProjectId);
 
       if (response.status === 401) {
         await ensureAnonymousSession();
-        ({ response, payload } = await postKnowgraphIngest(file, knowledgeProjectId));
+        ({ response, payload, documentId } = await postKnowgraphIngest(file, knowledgeProjectId));
       }
 
       if (!response.ok) {
@@ -161,6 +161,17 @@ export default function UploadAttachment({
       setToastType("ok");
       const sectionCount = Number(payload?.section_count || 0);
       setToast(sectionCount > 1 ? `Knowledge imported (${sectionCount} sections)` : "Knowledge imported");
+      window.dispatchEvent(new CustomEvent("knowgraph:refresh", {
+        detail: {
+          projectId: knowledgeProjectId,
+          documentId,
+          episodeIds: Array.isArray(payload?.episode_ids)
+            ? payload.episode_ids.map((id: unknown) => String(id))
+            : payload?.episode_id
+              ? [String(payload.episode_id)]
+              : [],
+        },
+      }));
       onUploaded?.();
     } catch (error: any) {
       setToastType("error");

@@ -797,19 +797,6 @@
     const radius = size * 0.45 * (0.55 + Math.min(1.6, normalized * 1.9));
     return Math.max(0.8, Math.min(size * 1.1, radius));
   }
-  /* An embedding may supply one normalized, transient visual-size weight. This is deliberately
-     independent from gravity_mass: knowledge volume controls only painted Entity radius while
-     relationship evidence continues to control movement and centrality. */
-  function explicitVisualSizeWeight(node) {
-    const value = Number(node && node.visual_size_weight);
-    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
-  }
-  function linearVisualNodeRadius(base, weight) {
-    const size = Number.isFinite(+base) && +base > 0 ? +base : 3;
-    const minimum = Math.max(0.8, size * 0.35);
-    const maximum = Math.max(minimum, size * 1.1);
-    return minimum + (maximum - minimum) * weight;
-  }
   function finitePositive(value, fallback, ceiling) {
     const number = Number(value);
     if (!Number.isFinite(number) || number <= 0) return fallback;
@@ -9695,12 +9682,9 @@
       const sizeMetric = n => state.sizeBy === 'betweenness' ? (n.betweenness || 0) : ((n.degree || 0) / Math.max(1, maxDeg));
       data.nodes.forEach(n => {
         const base = (state.settings.size || 5);
-        const explicitSize = explicitVisualSizeWeight(n);
-        n.radius = explicitSize !== null
-          ? linearVisualNodeRadius(base, explicitSize)
-          : galaxyMode
-            ? evidenceNodeRadius(n, base)
-            : graphNodeRadius(n, base, sizeMetric(n));
+        n.radius = galaxyMode
+          ? evidenceNodeRadius(n, base)
+          : graphNodeRadius(n, base, sizeMetric(n));
         n.color = nodeColor(n);
         n.stroke = contrastOn(n.color);
       });
@@ -11259,8 +11243,7 @@
     _internals: {
       esc, hexRgb, alpha, contrastOn, communities, betweenness, findBridges, maxOf,
       createNodeClickArbiter,
-      graphNodeRadius, explicitVisualSizeWeight, linearVisualNodeRadius,
-      evidenceNodeRadius, sanitizeEvidenceMetrics, fallbackGravityMass,
+      graphNodeRadius, evidenceNodeRadius, sanitizeEvidenceMetrics, fallbackGravityMass,
       radiusFromGravityMass, galaxyGravityConstant, galaxyGravityMaximum: GALAXY_GRAVITY_MAXIMUM,
       galaxyGravityStrengthMultiplier,
       galaxyBlackHoleGravityConstant, galaxyBlackHoleGravitySetting,

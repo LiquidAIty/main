@@ -77,6 +77,10 @@ export default function useAgentBuilderCardEditor({
           : '',
       model_key: runtimeOptions.modelKey ?? effectiveAgent?.model ?? null,
       reasoning_effort: runtimeOptions.reasoningEffort ?? null,
+      temperature:
+        runtimeOptions.temperature ?? effectiveAgent?.temperature ?? null,
+      max_tokens: runtimeOptions.maxTokens ?? effectiveAgent?.maxTokens ?? null,
+      max_turns: runtimeOptions.maxTurns ?? null,
       prompt_template: selectedCard.prompt || '',
       tools: Array.isArray(runtimeOptions.tools)
         ? runtimeOptions.tools
@@ -116,10 +120,20 @@ export default function useAgentBuilderCardEditor({
           nextConfig.reasoning_effort === 'low' ||
           nextConfig.reasoning_effort === 'medium' ||
           nextConfig.reasoning_effort === 'high' ||
-          nextConfig.reasoning_effort === 'xhigh' ||
-          nextConfig.reasoning_effort === 'max' ||
-          nextConfig.reasoning_effort === 'ultra'
+          nextConfig.reasoning_effort === 'xhigh'
             ? nextConfig.reasoning_effort
+            : null;
+        const nextTemperature =
+          typeof nextConfig.temperature === 'number'
+            ? nextConfig.temperature
+            : null;
+        const nextMaxTokens =
+          typeof nextConfig.max_tokens === 'number'
+            ? nextConfig.max_tokens
+            : null;
+        const nextMaxTurns =
+          typeof nextConfig.max_turns === 'number'
+            ? nextConfig.max_turns
             : null;
         const nextTools = normalizeStringList(nextConfig.tools);
         const nextRuntimeOptions = normalizeRuntimeOptions({
@@ -128,6 +142,9 @@ export default function useAgentBuilderCardEditor({
           accessMode: nextAccessMode,
           modelKey: nextModel,
           reasoningEffort: nextReasoningEffort,
+          temperature: nextTemperature,
+          maxTokens: nextMaxTokens,
+          maxTurns: nextMaxTurns,
           tools: nextTools,
           skills: normalizeStringList(nextConfig.skills),
           toolsets: normalizeStringList(nextConfig.toolsets),

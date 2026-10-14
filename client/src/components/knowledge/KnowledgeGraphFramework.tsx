@@ -1,87 +1,29 @@
-import { Component, Suspense, lazy, type ReactNode } from 'react';
+import { Suspense, lazy } from 'react';
 
 import { GraphPaperBackground } from '../graph/GraphCanvasChrome';
-import { GRAPH_THEME, graphDrawerSectionStyle } from '../graph/graphVisualTokens';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
-import type { CanonicalEntityFocusRequest } from './canonicalEntityLinks';
-import type { CanonicalEntityHeader } from './canonicalEntityDirectory';
-import type { GraphProjectionV1 } from './joinedKnowledgeGraphProjection';
-import type { ReadProviderFocusNeighborhood } from './knowledgeGraphFocusPresentation';
+import type { CanonicalSubjectFocusRequest } from '../builder/canonicalSubjectLinks';
 
-const JoinedKnowledgeGraphSurface = lazy(async () => {
-  const mod = await import('./KnowledgeAuthorityGraphSurface');
-  return { default: mod.JoinedKnowledgeGraphSurface };
+const NativeJoinedGraphSurface = lazy(async () => {
+  const mod = await import('./NativeAuthorityGraphSurface');
+  return { default: mod.NativeJoinedGraphSurface };
 });
 
 type Props = {
   minHeight?: number;
   surfaceRole?: 'large' | 'companion';
-  projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
+  projections: Record<KnowledgeGraphKind, import('./NativeAuthorityGraphSurface').GraphProjectionV1>;
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses?: Partial<Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>>;
-  onReadFocusNeighborhood?: ReadProviderFocusNeighborhood;
-  relevanceQuery?: string;
-  onReadEntityContext?: (
-    entity: CanonicalEntityHeader,
-    query: string,
-    limit?: number,
-    signal?: AbortSignal,
-  ) => Promise<Record<string, any>>;
+  onReadFocusNeighborhood?: import('./NativeAuthorityGraphSurface').ReadNativeFocusNeighborhood;
+  onExpandNode: (
+    authority: KnowledgeGraphKind,
+    node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
+  ) => Promise<void>;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
-  onRemoveThinkGraphRelationship?: (edgeId: string) => Promise<void>;
-  onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
-  onRemoveKnowGraphRelationship?: (graphitiRelationshipId: string) => Promise<void>;
-  entityFocusRequest?: CanonicalEntityFocusRequest | null;
+  onRemoveKnowGraphEvidence?: (nativeFactId: string) => Promise<void>;
+  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
 };
-
-class KnowledgeGraphErrorBoundary extends Component<
-  { children: ReactNode },
-  { error: Error | null }
-> {
-  state: { error: Error | null } = { error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div
-        data-testid="knowledge-surface-error"
-        style={{
-          height: '100%',
-          width: '100%',
-          padding: 16,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: GRAPH_THEME.background.knowledgeSurface,
-        }}
-      >
-        <div
-          style={graphDrawerSectionStyle({
-            width: 'min(560px, 100%)',
-            padding: 16,
-            color: GRAPH_THEME.drawer.inputMuted,
-            lineHeight: 1.5,
-          })}
-        >
-          <div
-            style={{
-              color: GRAPH_THEME.drawer.inputText,
-              fontWeight: 700,
-              marginBottom: 6,
-            }}
-          >
-            Knowledge graph unavailable
-          </div>
-          <div>{this.state.error.message || 'The Knowledge graph failed to load.'}</div>
-        </div>
-      </div>
-    );
-  }
-}
 
 export default function KnowledgeGraphFramework({
   minHeight = 280,
@@ -90,36 +32,32 @@ export default function KnowledgeGraphFramework({
   errors,
   statuses,
   onReadFocusNeighborhood,
-  relevanceQuery,
-  onReadEntityContext,
+  onExpandNode,
   onRemoveThinkGraphEvidence,
-  onRemoveThinkGraphRelationship,
   onRemoveKnowGraphEvidence,
-  onRemoveKnowGraphRelationship,
-  entityFocusRequest,
+  subjectFocusRequest,
 }: Props) {
   return (
-    <KnowledgeGraphErrorBoundary>
-      <div
-        data-testid={`${surfaceRole}-surface-knowledge`}
-        data-graph-framework="active"
-        style={{ position: 'relative', width: '100%', height: '100%', minHeight, overflow: 'hidden' }}
-      >
-        <GraphPaperBackground />
-        <Suspense
-          fallback={
-            <div
-              aria-busy="true"
-              style={{
-                width: '100%',
-                height: '100%',
-                minHeight,
-                position: 'relative',
-              }}
+    <div
+      data-testid={`${surfaceRole}-surface-knowledge`}
+      data-graph-framework="active"
+      style={{ position: 'relative', width: '100%', height: '100%', minHeight, overflow: 'hidden' }}
+    >
+      <GraphPaperBackground />
+      <Suspense
+        fallback={
+          <div
+            aria-busy="true"
+            style={{
+              width: '100%',
+              height: '100%',
+              minHeight,
+              position: 'relative',
+            }}
           />
-          }
-        >
-          <JoinedKnowledgeGraphSurface
+        }
+      >
+        <NativeJoinedGraphSurface
             projections={{
               thinkgraph: projections.thinkgraph,
               knowgraph: projections.knowgraph,
@@ -134,17 +72,13 @@ export default function KnowledgeGraphFramework({
               ...(errors.thinkgraph ? { thinkgraph: errors.thinkgraph } : {}),
               ...(errors.knowgraph ? { knowgraph: errors.knowgraph } : {}),
             }}
-            onReadProviderFocusNeighborhood={onReadFocusNeighborhood}
-            relevanceQuery={relevanceQuery}
-            onReadEntityContext={onReadEntityContext}
+            onReadNativeFocusNeighborhood={onReadFocusNeighborhood}
+            onExpand={onExpandNode}
             onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
-            onRemoveThinkGraphRelationship={onRemoveThinkGraphRelationship}
             onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
-            onRemoveKnowGraphRelationship={onRemoveKnowGraphRelationship}
-            entityFocusRequest={entityFocusRequest}
-            />
-        </Suspense>
-      </div>
-    </KnowledgeGraphErrorBoundary>
+            subjectFocusRequest={subjectFocusRequest}
+          />
+      </Suspense>
+    </div>
   );
 }
