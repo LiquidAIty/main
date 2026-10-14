@@ -18,7 +18,7 @@ export function cardInspectorTabs({
   if (!card) return [];
   return [
     ...CARD_CONFIGURATION_TABS,
-    ...(card.runtime.kind === 'hermes' && card.runtime.mode !== 'main' ? ['CLI'] : []),
+    ...(card.runtime.kind === 'hermes' && card.runtime.mode === 'delegate' ? ['CLI'] : []),
     ...(isTaskLedgerCard(card) ? ['Tasks'] : []),
     ...readCardSubsystemAttachments(card.runtimeOptions)
       .filter((attachment) => attachment.cardTab.enabled)

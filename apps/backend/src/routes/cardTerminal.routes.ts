@@ -67,7 +67,8 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
   try {
     const authority = await sharedChatAuthority(projectId, deckId);
     const matches = authority.cards.filter((item) => item.card.id === cardId);
-    if (matches.length !== 1 || matches[0].card.runtime.kind !== 'hermes') {
+    if (matches.length !== 1 || matches[0].card.runtime.kind !== 'hermes'
+      || matches[0].card.runtime.mode === 'magentic_one') {
       return res.status(409).json({ ok: false, error: 'terminal_card_unavailable' });
     }
     const target = matches[0];

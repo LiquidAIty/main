@@ -66,9 +66,7 @@ async function withSessionBindingLock<T>(key: string, operation: () => Promise<T
 
 type PreparedRun = {
   runId: string;
-  cardId: string;
   request: Record<string, unknown>;
-  prepared: Record<string, any>;
 };
 
 type DynamicToolDefinition = {
@@ -325,9 +323,6 @@ async function prepareRun(args: {
   dataAnchors: unknown[];
   images: unknown[];
   runId?: string;
-  originatingRunId?: string;
-  senderCardId?: string;
-  onAccepted?(runId: string): void;
 }): Promise<PreparedRun> {
   const runId = args.runId || `req_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const toolCatalog = await readToolCatalog();
@@ -345,8 +340,6 @@ async function prepareRun(args: {
     discoveredToolCatalogState: toolCatalog.state,
     unavailableToolCatalogFamilies: toolCatalog.unavailableFamilies,
     discoveredToolFailures: toolCatalog.toolFailures,
-    ...(args.originatingRunId ? { originatingRunId: args.originatingRunId } : {}),
-    ...(args.senderCardId ? { senderCardId: args.senderCardId } : {}),
   };
   const prepared = record(await requestPythonRailsJson(
     '/domain/runs/begin',
@@ -356,7 +349,6 @@ async function prepareRun(args: {
       body: JSON.stringify({ ...payload, assignment: args.message }),
     },
   ));
-  args.onAccepted?.(runId);
   const transport = record(prepared.hermesTransport);
   const request = record(transport.request);
   if (
@@ -367,7 +359,7 @@ async function prepareRun(args: {
   ) {
     throw new Error('saved_card_preparation_identity_mismatch');
   }
-  return { runId, cardId: args.target.card.id, request, prepared };
+  return { runId, request };
 }
 
 async function attachImages(
@@ -408,59 +400,20 @@ async function submitTurn(args: {
   toolEndpoint: string;
   toolAuthorization: string;
   onEvent(event: HermesGatewayEvent): void;
-  signal?: AbortSignal;
-  interrupt?(): Promise<void>;
-  onSubmissionIssued?(): void;
 }): Promise<{ text: string; event: HermesGatewayEvent; toolCalls: number }> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    let interruptionStarted = false;
     let toolCalls = 0;
-    let submitStatus = '';
     let ownTurnStarted = false;
-    let submitRequested = false;
-    let submitSettled = false;
-    let pendingInterruptError: Error | null = null;
     let timer: ReturnType<typeof setTimeout>;
     let detach: () => void = () => undefined;
-    const onAbort = () => fail(new Error('hermes_turn_cancelled'), true);
     const finish = (error?: Error, value?: { text: string; event: HermesGatewayEvent }) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       detach();
-      args.signal?.removeEventListener('abort', onAbort);
       if (error) reject(error);
       else resolve({ ...value!, toolCalls });
-    };
-    const beginInterrupt = (error: Error) => {
-      if (settled) return;
-      if (!args.interrupt) {
-        finish(error);
-        return;
-      }
-      if (interruptionStarted) return;
-      interruptionStarted = true;
-      void args.interrupt().then(
-        () => finish(error),
-        (interruptError) => finish(new Error(
-          `hermes_target_interrupt_failed:${interruptError instanceof Error
-            ? interruptError.message
-          : String(interruptError)}`,
-        )),
-      );
-    };
-    const fail = (error: Error, interrupt: boolean) => {
-      if (settled) return;
-      if (!interrupt || !args.interrupt) {
-        finish(error);
-        return;
-      }
-      if (submitRequested && !submitSettled) {
-        pendingInterruptError ||= error;
-        return;
-      }
-      beginInterrupt(error);
     };
     detach = args.client.onEvent((event) => {
       if (event.session_id !== args.binding.sessionId) return;
@@ -474,26 +427,20 @@ async function submitTurn(args: {
       args.onEvent(event);
       if (event.type === 'tool.start') toolCalls += 1;
       if (event.type === 'error') {
-        fail(new Error(String(event.payload?.message || 'hermes_turn_failed')), false);
+        finish(new Error(String(event.payload?.message || 'hermes_turn_failed')));
         return;
       }
       if (event.type !== 'message.complete') return;
       const status = String(event.payload?.status || 'complete');
       const text = String(event.payload?.text || '');
       if (['error', 'failed'].includes(status)) {
-        fail(new Error(String(event.payload?.error || text || 'hermes_turn_failed')), false);
+        finish(new Error(String(event.payload?.error || text || 'hermes_turn_failed')));
         return;
       }
       finish(undefined, { text, event });
     });
-    timer = setTimeout(() => fail(new Error('hermes_turn_timeout'), true), 30 * 60_000);
+    timer = setTimeout(() => finish(new Error('hermes_turn_timeout')), 30 * 60_000);
     timer.unref?.();
-    args.signal?.addEventListener('abort', onAbort, { once: true });
-    if (args.signal?.aborted) {
-      onAbort();
-      return;
-    }
-    submitRequested = true;
     void args.client.request<Record<string, unknown>>('prompt.submit', {
       session_id: args.binding.sessionId,
       profile: args.profile,
@@ -508,23 +455,12 @@ async function submitTurn(args: {
         tool_authorization: args.toolAuthorization,
       } : {}),
     }).then((submitted) => {
-      submitSettled = true;
-      args.onSubmissionIssued?.();
-      if (pendingInterruptError) {
-        beginInterrupt(pendingInterruptError);
-        return;
-      }
-      submitStatus = String(submitted.status || 'streaming');
+      const submitStatus = String(submitted.status || 'streaming');
       if (!['streaming', 'queued'].includes(submitStatus)) {
-        fail(new Error(`hermes_submit_status_unsupported:${submitStatus || 'missing'}`), true);
+        finish(new Error(`hermes_submit_status_unsupported:${submitStatus || 'missing'}`));
       }
     }).catch((error) => {
-      submitSettled = true;
-      args.onSubmissionIssued?.();
-      beginInterrupt(
-        pendingInterruptError
-        || (error instanceof Error ? error : new Error(String(error))),
-      );
+      finish(error instanceof Error ? error : new Error(String(error)));
     });
   });
 }
@@ -727,21 +663,22 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         }
       },
     });
-    if (!result.text.trim()) throw new Error('hermes_empty_response');
     await finishRun({ run, binding, result });
-    await appendSharedConversationReplyOnce({
-      projectId,
-      conversationId,
-      message: {
-        messageId: clientReplyMessageId,
-        role: 'assistant',
-        content: result.text,
-        speaker: participant(target),
-        target: USER_PARTICIPANT,
-        providerContinuationRef: binding.storedSessionId,
-        providerMessageId: `run:${run.runId}`,
-      },
-    });
+    if (result.text.trim()) {
+      await appendSharedConversationReplyOnce({
+        projectId,
+        conversationId,
+        message: {
+          messageId: clientReplyMessageId,
+          role: 'assistant',
+          content: result.text,
+          speaker: participant(target),
+          target: USER_PARTICIPANT,
+          providerContinuationRef: binding.storedSessionId,
+          providerMessageId: `run:${run.runId}`,
+        },
+      });
+    }
     writeSse(res, 'done', { ...identity, fullText: result.text });
   } catch (error) {
     if (binding) await finishRun({ run, binding, error }).catch(() => undefined);

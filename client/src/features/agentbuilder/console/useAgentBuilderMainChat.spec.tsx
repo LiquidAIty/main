@@ -24,9 +24,7 @@ vi.mock('./mainSessionClient', async () => {
   };
 });
 
-import useAgentBuilderMainChat, {
-  parseStagedCardReviewLoaded,
-} from './useAgentBuilderMainChat';
+import useAgentBuilderMainChat from './useAgentBuilderMainChat';
 import { SessionStreamError } from './mainSessionClient';
 
 function messageText(messages: Array<{ role: string; text: string }>) {
@@ -60,9 +58,6 @@ describe('Main chat live observation callbacks', () => {
   });
 
   it('keeps duplicate technical events under the server-issued Run and out of chat', async () => {
-    const onUserTurnStarted = vi.fn();
-    const onNativeTurnEvent = vi.fn();
-    const onTurnFinished = vi.fn();
     const event = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'main-card', cardName: 'Main',
       runId: 'server-run', parentRunId: null, nativeChildId: null, id: 'server-run:tool:1',
       category: 'execution.tool', kind: 'tool_error', toolName: 'lookup', status: 'failed', sequence: 1,
@@ -73,14 +68,9 @@ describe('Main chat live observation callbacks', () => {
       onEvent({ kind: 'text', text: 'Actual reply' });
       return { finalText: 'Actual reply' };
     });
-    const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-      onUserTurnStarted, onNativeTurnEvent, onTurnFinished }));
+    const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main' }));
     await act(async () => { await result.current.requestMainText('Question'); });
     expect(result.current.technicalEvents).toEqual([event]);
-    expect(onUserTurnStarted).toHaveBeenCalledOnce();
-    expect(onUserTurnStarted).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
-    expect(onNativeTurnEvent.mock.calls.every(([turn]) => turn.runId === 'server-run')).toBe(true);
-    expect(onTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
     expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Question' }, { role: 'assistant', text: 'Actual reply' },
     ]);
@@ -180,57 +170,6 @@ describe('Main chat live observation callbacks', () => {
     }]);
     expect(result.current.technicalError).toBe('addressed_card_turn_failed');
   });
-  it('accepts optional editor review with no selected graph data and no IDF', () => {
-    expect(parseStagedCardReviewLoaded({
-      ok: true,
-      ready: true,
-      persisted: false,
-      started: false,
-      targetCardId: 'card_test_delegate',
-      targetCardTitle: 'Delegate',
-      sourceCardId: 'card_hermes_steward',
-      mission: 'Review this mission.',
-      dataAnchors: [],
-      reviewContext: {
-        resolvedNativeReads: [],
-        resolvedGraphProjection: {
-          schemaVersion: 'native-card-context.v1',
-          authority: '',
-          projectId: 'project-1',
-          nodes: [],
-          edges: [],
-          counts: { nodes: 0, edges: 0 },
-        },
-      },
-    })).toMatchObject({
-      targetCardId: 'card_test_delegate',
-      dataAnchors: [],
-      reviewContext: { resolvedNativeReads: [] },
-    });
-  });
-
-  it('stages exact unresolved references from a delegated native tool start', () => {
-    expect(parseStagedCardReviewLoaded({
-      kind: 'tool_start',
-      toolName: 'mcp__main_runtime_one__write_mag_one_instructions',
-      argsJson: JSON.stringify({
-        targetCardId: 'card_agent_builder',
-        mission: 'Exact unsent mission.',
-        dataAnchors: [{
-          authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
-          priority: 1, boundedExpansion: 0, resultLimit: 1,
-        }],
-      }),
-    })).toEqual({
-      targetCardId: 'card_agent_builder',
-      mission: 'Exact unsent mission.',
-      dataAnchors: [{
-        authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
-        priority: 1, boundedExpansion: 0, resultLimit: 1, required: true,
-      }],
-    });
-  });
-
   it('keeps rejoin visible until native history replaces the empty transcript', async () => {
     let resolveHistory!: (history: {
       mainCardId: string;
@@ -307,12 +246,7 @@ describe('Main chat live observation callbacks', () => {
   });
 
   it('uses the native Run identity, forwards native reasoning separately, and settles after completion', async () => {
-    const order: string[] = [];
-    const onUserTurnStarted = vi.fn(() => order.push('user'));
-    const onNativeTurnEvent = vi.fn((turn) => order.push(String(turn.event.kind)));
-    const onTurnFinished = vi.fn((turn) => order.push(turn.status));
     mocks.streamSession.mockImplementation(async (args) => {
-      order.push('stream');
       expect(args.dataAnchors).toEqual([{
         authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',
         reason: 'Current production definition', priority: 0,
@@ -333,28 +267,12 @@ describe('Main chat live observation callbacks', () => {
         reason: 'Current production definition', order: 0,
         boundedExpansion: 1, resultLimit: 12, required: true,
       }],
-      onUserTurnStarted,
-      onNativeTurnEvent,
-      onTurnFinished,
     }));
 
     await act(async () => {
       await result.current.requestMainText('Fix the build.');
     });
 
-    expect(order).toEqual([
-      'stream', 'user', 'reasoning', 'tool_result', 'native_attention', 'text', 'completed',
-    ]);
-    expect(onUserTurnStarted).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: 'project-1',
-      conversationId: 'main',
-      text: 'Fix the build.',
-      runId: 'native-run',
-    }));
-    expect(onNativeTurnEvent).toHaveBeenCalledWith(expect.objectContaining({
-      runId: 'native-run', event: { kind: 'reasoning', runId: 'native-run', text: 'private provider reasoning' },
-    }));
-    expect(onTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
     expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Fix the build.' },
       { role: 'assistant', text: 'Visible answer.' },
@@ -386,122 +304,6 @@ describe('Main chat live observation callbacks', () => {
       { role: 'user', text: '  Normal human message.  ' },
       { role: 'assistant', text: 'Native answer.' },
     ]);
-  });
-
-  it('loads one staged Delegate mission and exact model-bound graph projection', async () => {
-    const onCardReviewStaged = vi.fn();
-    const onCardGraphReferenceLoaded = vi.fn();
-    mocks.streamSession.mockImplementation(async (args) => {
-      args.onEvent({
-        kind: 'tool_result',
-        toolName: 'delegate_task',
-        isError: false,
-        output: {
-          result: {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                ok: true,
-                ready: true,
-                targetCardId: 'card_test_delegate',
-                targetCardTitle: 'Delegate',
-                sourceCardId: 'card_hermes_steward',
-                mission: '  exact mission\nwith formatting  ',
-                dataAnchors: [{
-                  authority: 'CodeGraph', nativeId: 'symbol:one', reason: 'Current owner',
-                  priority: 0, boundedExpansion: 0, resultLimit: 4, required: true,
-                }],
-                reviewContext: {
-                  cardRevisionId: 'revision-delegate',
-                  cardRevision: 1,
-                  cardRevisionSha256: 'sha-delegate',
-                  runtimeOwner: 'hermes',
-                  cardIdentity: { cardId: 'card_test_delegate', title: 'Delegate' },
-                  resolvedNativeReads: [{ authority: 'CodeGraph', nativeId: 'symbol:one' }],
-                  resolvedGraphProjection: {
-                    schemaVersion: 'native-card-context.v1', authority: 'codegraph',
-                    projectId: 'project-1',
-                    nodes: [{ id: 'symbol:one', label: 'Current owner', authority: 'CodeGraph', mentionCount: 1 }],
-                    edges: [], counts: { nodes: 1, edges: 0 },
-                  },
-                },
-                persisted: false,
-                started: false,
-              }),
-            }],
-          },
-        },
-      });
-      args.onEvent({
-        kind: 'tool_result',
-        toolName: 'card.load_graph_references',
-        isError: false,
-        output: {
-          ok: true,
-          targetCardId: 'card_mag_one',
-          sourceCardId: 'card_hermes_steward',
-          sourceRunId: 'run-helper',
-          reference: {
-            authority: 'KnowGraph', nativeId: 'episode:one', reason: 'Useful sourced fact',
-            order: 0, boundedExpansion: 1, resultLimit: 8, required: true,
-          },
-          resolvedReferences: [{ authority: 'KnowGraph', nativeId: 'episode:one', provenance: 'Graphiti' }],
-          resolvedContextMarkdown: '# KnowGraph\nActual current graph data',
-          graphProjection: {
-            schemaVersion: 'native-card-context.v1',
-            authority: 'knowgraph',
-            projectId: 'project-1',
-            nodes: [{
-              id: 'episode:one', label: 'Sourced episode', authority: 'KnowGraph', mentionCount: 1,
-            }],
-            edges: [],
-            counts: { nodes: 1, edges: 0 },
-          },
-          resolved: true,
-          ready: true,
-          persisted: false,
-          started: false,
-        },
-      });
-      args.onEvent({ kind: 'text', text: 'Card ready.' });
-      return { finalText: 'Card ready.' };
-    });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
-      canvasProjectId: 'project-1',
-      deckId: 'deck_builder',
-      conversationId: 'main',
-      onCardReviewStaged,
-      onCardGraphReferenceLoaded,
-    }));
-
-    await act(async () => {
-      await result.current.requestMainText('Prepare the mission.');
-    });
-
-    expect(onCardReviewStaged).toHaveBeenCalledOnce();
-    expect(onCardReviewStaged).toHaveBeenCalledWith(expect.objectContaining({
-      targetCardId: 'card_test_delegate',
-      sourceCardId: 'card_hermes_steward',
-      mission: '  exact mission\nwith formatting  ',
-      dataAnchors: [expect.objectContaining({ nativeId: 'symbol:one', required: true })],
-      reviewContext: expect.objectContaining({
-        resolvedGraphProjection: expect.objectContaining({
-          nodes: [expect.objectContaining({ id: 'symbol:one' })],
-        }),
-      }),
-    }));
-    expect(onCardGraphReferenceLoaded).toHaveBeenCalledWith(expect.objectContaining({
-      targetCardId: 'card_mag_one',
-      sourceCardId: 'card_hermes_steward',
-      sourceRunId: 'run-helper',
-      ready: true,
-      resolvedContextMarkdown: '# KnowGraph\nActual current graph data',
-      graphProjection: expect.objectContaining({
-        projectId: 'project-1',
-        nodes: [expect.objectContaining({ id: 'episode:one' })],
-      }),
-      reference: expect.objectContaining({ authority: 'KnowGraph', nativeId: 'episode:one' }),
-    }));
   });
 
   it('keys transcript state by conversation and never shows A while B loads', async () => {
@@ -557,8 +359,6 @@ describe('Main chat live observation callbacks', () => {
   });
 
   it('keeps native failures outside the transcript', async () => {
-    const onUserTurnStarted = vi.fn();
-    const onTurnFinished = vi.fn();
     mocks.streamSession.mockRejectedValue(new SessionStreamError({
       code: 'harness_turn_failed',
       message: 'provider failed',
@@ -568,7 +368,6 @@ describe('Main chat live observation callbacks', () => {
       canvasProjectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-failure',
-      onUserTurnStarted, onTurnFinished,
     }));
 
     await act(async () => {
@@ -580,21 +379,17 @@ describe('Main chat live observation callbacks', () => {
     ]);
     expect(result.current.messages[0]).toMatchObject({ status: 'error', target: { label: 'Main' } });
     expect(result.current.nativeSessionActive).toBe(false);
-    expect(onUserTurnStarted).not.toHaveBeenCalled();
-    expect(onTurnFinished).not.toHaveBeenCalled();
   });
 
   it('rejects a different Run in the same stream instead of merging its activity', async () => {
-    const onNativeTurnEvent = vi.fn();
     mocks.streamSession.mockImplementation(async ({ onEvent }) => {
       onEvent({ kind: 'session', runId: 'native-run' });
       onEvent({ kind: 'tool_result', runId: 'another-run', output: 'another Run output' });
       return { finalText: 'must not complete' };
     });
     const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1',
-      deckId: 'deck_builder', conversationId: 'main', onNativeTurnEvent }));
+      deckId: 'deck_builder', conversationId: 'main' }));
     await act(async () => { await expect(result.current.requestMainText('Question')).rejects.toThrow('Run identity changed'); });
-    expect(onNativeTurnEvent).toHaveBeenCalledTimes(1);
     expect(result.current.technicalError).toBe('main_run_identity_mismatch');
     expect(messageText(result.current.messages)).toEqual([{ role: 'user', text: 'Question' }]);
     expect(result.current.messages[0]).toMatchObject({ status: 'error' });

@@ -167,7 +167,7 @@ export default function AgentCardInspectorPanel({
   if (
     tab === 'CLI'
     && selectedCard.runtime.kind === 'hermes'
-    && selectedCard.runtime.mode !== 'main'
+    && selectedCard.runtime.mode === 'delegate'
   ) {
     content = (
       <div style={{ height: 'min(62vh, 620px)', minHeight: 360 }}>
