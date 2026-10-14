@@ -501,7 +501,7 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
     if created:
         telemetry_written = agentgraph_run_observations.observe_run_preparation_complete(
             prepared,
-            effective_payload,
+            payload,
             run_id=resolved_run_id,
             correlation_id=resolved_correlation_id,
             input_file=input_files,

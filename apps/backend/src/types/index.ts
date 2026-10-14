@@ -47,6 +47,7 @@ export type SavedCardConfiguration = {
   configuration?: Record<string, unknown> | null;
   subsystems?: CardSubsystemAttachment[] | null;
   script?: {
+    enabled?: boolean;
     source: string;
     version: number;
     author?: Record<string, string>;
@@ -77,6 +78,10 @@ export type SavedCardConfiguration = {
   modelKey?: string | null;
   providerModelId?: string | null;
   openaiRuntime?: 'codex_app_server' | null;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  maxTurns?: number | null;
   /** Saved desired model for bounded Hermes delegated children and
    * background skill review. Hermes profile/readback remains effective truth. */
   subagentModel?: {
@@ -92,6 +97,8 @@ export type SavedCardConfiguration = {
   toolsets?: string[] | null;
   /** References to globally configured MCP connections; never credentials. */
   mcpConnectionIds?: string[] | null;
+  /** Card-assigned native Hermes tool names. */
+  nativeTools?: string[] | null;
 };
 
 export type DeckNodeKind = 'agent';
@@ -145,6 +152,8 @@ export type DeckEdge = {
 export type DeckDocument = {
   id: string;
   name: string;
+  /** Historical native Bot Mode workspace projection; new saves use projectCodeFolder. */
+  workspaceRoot?: string | null;
   projectCodeFolder?: string | null;
   promptTemplates: PromptTemplate[];
   nodes: DeckCard[];

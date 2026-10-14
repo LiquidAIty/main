@@ -17,6 +17,8 @@ import tradingRoutes from './trading.routes';
 import worldviewRoutes, { worldviewInternalRoutes } from './worldview.routes';
 import jevGraphFocusRoutes from './jevGraphFocus.routes';
 import externalMainContextRoutes from './externalMainContext.routes';
+import mainSessionRoutes from './mainSession.routes';
+import cardTerminalRoutes from './cardTerminal.routes';
 
 const router = Router();
 
@@ -28,6 +30,8 @@ router.use('/health', health);
 // bridge before browser auth so it cannot be converted into a local-user session.
 router.use('/worldview', worldviewInternalRoutes);
 router.use('/cards', authMiddleware, cardOptionsRoutes, cardRunReadRoutes, cardScriptRoutes);
+router.use('/main/session', authMiddleware, mainSessionRoutes);
+router.use('/card-terminals', authMiddleware, cardTerminalRoutes);
 router.use('/main', externalMainContextRoutes);
 router.use('/idd', authMiddleware, builderIddRoutes);
 router.use('/graph', authMiddleware, jevGraphFocusRoutes);

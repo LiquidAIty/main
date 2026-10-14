@@ -58,8 +58,9 @@ owns source boundaries. A historical report is evidence, never permission to act
     useful controls, not bury them or replace them with explanations. The owner's design reference is
     [Amber Case's interview](https://www.designwhine.com/amber-case-interview-why-ai-has-it-backwards/).
 16. Prompt blocks are independently replaceable. Preserve untouched blocks, headings and whitespace;
-    never collapse the prompt into Role or silently hide its other sections. Main and Builder open
-    on Prompt without a CLI tab; their existing chat and pull-up CLI remain the input surfaces.
+    never collapse the prompt into Role or silently hide its other sections. Main is the sole headless
+    Card and has no CLI tab. Every saved non-Main Hermes Card retains its own native CLI. Builder's
+    lower CLI remains bound to `builder`, mounted, and initially collapsed beneath Main chat.
 
 ## Graph meaning and authority
 

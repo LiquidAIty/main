@@ -148,9 +148,17 @@ backend connects through HermesLatest's shipped JSON-RPC client. It does not lau
 process, own a session registry, kill Hermes when a client disconnects, supervise retries, or open a
 second Bot/terminal execution path.
 
-There is currently no LiquidAIty TypeScript chat, terminal, profile-session, or Card-to-Card
-Card-to-Card execution adapter. Those rejected paths were removed without replacement. Hermes Python
-remains the execution owner, but no new LiquidAIty Bot Mode integration is claimed by this cleanup.
+The restored Main doorway is `apps/backend/src/routes/mainSession.routes.ts`, mounted with browser
+authentication at `/api/main/session`. It persists user messages before Python Run preparation and
+transports native Hermes events and completions. Unaddressed chat uses the saved Main profile and its
+exact `Bot Chat` session. An explicit `@Card` selects that saved Card's own profile/session; Main does
+not execute or reply for that addressed turn. Model-directed delegation remains Hermes native Bot Mode.
+
+Main is the sole headless Card. `cardTerminal.routes.ts` and `hermesCardSession.ts` attach every saved
+non-Main Hermes Card to its own native CLI. Builder's lower terminal stays bound to `builder`, mounted,
+and initially collapsed. Profile materialization reads saved Card authority; TypeScript remains
+transport and pixels. `AgentTerminalManager` and the retired specialist execution paths remain absent.
+Source presence does not establish successful product execution; use the current acceptance evidence.
 
 Fresh Card profiles are created with credential mirroring disabled. Current Hermes provider
 authentication remains scoped to the Hermes installation/profile mechanisms; LiquidAIty has not yet

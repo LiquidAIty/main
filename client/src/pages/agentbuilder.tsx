@@ -7,12 +7,17 @@ import {
   type ReactElement,
 } from 'react';
 
+import BuilderChat from '../components/builder/BuilderChat';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import AgentCanvas from '../features/agentbuilder/canvas/AgentCanvas';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import AgentBuilderCompanionSurfaces from '../features/agentbuilder/core/AgentBuilderCompanionSurfaces';
+import CardTerminalPanel from '../features/agentbuilder/console/CardTerminalPanel';
+import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
+import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
+import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
 } from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -184,16 +189,35 @@ export default function AgentBuilder(): ReactElement {
   }, []);
   const inspectorBridges = useAgentBuilderInspectorBridges();
   const {
+    mainCardId,
+    builderCard,
     cardTitlesByProfile,
     worldSignalsCardId,
     worldViewCard,
     tradingCard,
   } = useMemo(() => deriveAgentBuilderWorkspaceIdentity(deck), [deck]);
-  const [conversationId] = useState(() => (
-    new URLSearchParams(window.location.search).get('conversationId')?.trim() || 'main'
-  ));
+  const [conversationId] = useState(() => selectedConversationId(window.location.search));
+  const [mainDraft, setMainDraft] = useState('');
   const knowledgeGraphs = useAgentBuilderKnowledgeGraphs({
     projectId: activeProject,
+    deckId: DEFAULT_PROJECT_DECK_ID,
+    conversationId,
+  });
+  const {
+    handleNativeSend,
+    messages,
+    addressableAgents,
+    nativeSessionActive,
+    nativeSessionConnecting,
+    sessionHistoryLoading,
+    startVoice,
+    stopMainTurn,
+    stopVoice,
+    technicalError,
+    voiceError,
+    voicePhase,
+  } = useAgentBuilderMainChat({
+    canvasProjectId: canvasProjectId || '',
     deckId: DEFAULT_PROJECT_DECK_ID,
     conversationId,
   });
@@ -416,6 +440,61 @@ export default function AgentBuilder(): ReactElement {
     />
   );
 
+  const chatSurface = (
+    <div data-testid="large-surface-chat" style={{ height: '100%', minHeight: 0 }}>
+      <HarnessChatPanel
+        storageKey={`liquidaity.main.agent-builder.split.v1:${activeProject}`}
+        chat={(
+          <div style={{ height: '100%', minHeight: 0 }}>
+            <BuilderChat
+              messages={messages}
+              mainCardId={mainCardId || undefined}
+              addressableAgents={addressableAgents}
+              onSend={handleNativeSend}
+              draft={mainDraft}
+              onDraftChange={setMainDraft}
+              knowledgeProjectId={activeProject}
+              colors={AGENT_BUILDER_COLORS}
+              busy={nativeSessionActive}
+              connecting={nativeSessionConnecting}
+              historyLoading={sessionHistoryLoading}
+              error={technicalError}
+              voiceError={voiceError}
+              voicePhase={voicePhase}
+              onVoiceStart={startVoice}
+              onVoiceStop={() => { void stopVoice(); }}
+              onStop={() => {
+                void stopMainTurn().catch((error: unknown) => {
+                  setDeckStatusMessage(
+                    error instanceof Error ? error.message : 'Main run stop failed.',
+                  );
+                });
+              }}
+            />
+          </div>
+        )}
+        terminal={builderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
+          <div
+            data-testid="under-chat-card-work-surface"
+            data-card-id={builderCard.id}
+            style={{ height: '100%', minHeight: 0 }}
+          >
+            <CardTerminalPanel
+              key={`${canvasProjectId}:${builderCard.id}:${builderCard.runtime.profile}`}
+              identity={{
+                projectId: canvasProjectId,
+                deckId: DEFAULT_PROJECT_DECK_ID,
+                cardId: builderCard.id,
+                conversationId,
+              }}
+            />
+          </div>
+        ) : null}
+        workSurfaceLabel={builderCard?.title || 'Builder'}
+      />
+    </div>
+  );
+
   const {
     showCanvasWorkspace,
     showKnowledgeWorkspace,
@@ -502,6 +581,7 @@ export default function AgentBuilder(): ReactElement {
         onOpen: () => setInspectorDrawerOpen(true),
         panelProps: {
           canvasProjectId,
+          conversationId,
           deck,
           selectedCard,
           selectedCardConfig,
@@ -558,7 +638,7 @@ export default function AgentBuilder(): ReactElement {
           surfaceName="chat"
           chatPanelWidth={chatPanelWidth}
           chatMinWidth={chatMinWidth}
-          chat={null}
+          chat={chatSurface}
           splitterActive={splitterActive}
           onSplitterPointerEnter={onSplitterPointerEnter}
           onSplitterPointerLeave={onSplitterPointerLeave}

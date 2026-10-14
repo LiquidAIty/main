@@ -1,7 +1,14 @@
+import { BUILDER_CARD_ID } from '../deck/newProjectDeck';
 import { isWorldSignalsAgentCard, isWorldViewCard } from '../rail/railVisibility';
 import type { DeckDocument } from '../../../types/agentgraph';
 
 export function deriveAgentBuilderWorkspaceIdentity(deck: DeckDocument) {
+  const mainCardId = deck.nodes.find((card) => (
+    card.runtime.kind === 'hermes' && card.runtime.mode === 'main'
+  ))?.id || null;
+  const builderCard = deck.nodes.find((card) => (
+    card.runtime.kind === 'hermes' && card.id === BUILDER_CARD_ID
+  )) || null;
   const titles = new Map<string, string>();
   const ambiguousProfiles = new Set<string>();
   for (const card of deck.nodes) {
@@ -20,6 +27,8 @@ export function deriveAgentBuilderWorkspaceIdentity(deck: DeckDocument) {
     (card) => card.id === 'card_trading_workbench',
   ) || null;
   return {
+    mainCardId,
+    builderCard,
     cardTitlesByProfile: Object.fromEntries(titles),
     worldSignalsCardId,
     worldViewCard,

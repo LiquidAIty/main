@@ -13,6 +13,7 @@ import {
 
 import CardSubsystemTab from '../subsystems/CardSubsystemTab';
 import MagneticTasksTab from '../tasks/MagneticTasksTab';
+import CardTerminalPanel from '../console/CardTerminalPanel';
 import { BUILDER_CARD_ID, DEFAULT_PROJECT_DECK_ID } from '../deck/newProjectDeck';
 import { readCardSubsystemAttachments } from '../deck/cardSubsystems';
 import { safeText } from '../deck/deckPrimitives';
@@ -79,6 +80,7 @@ class CardEditorErrorBoundary extends Component<
 
 type AgentCardInspectorPanelProps = {
   canvasProjectId: string;
+  conversationId: string;
   deck: DeckDocument;
   selectedCard: DeckCard | null;
   selectedCardConfig: CardEditorConfiguration | null;
@@ -95,6 +97,7 @@ type AgentCardInspectorPanelProps = {
 
 export default function AgentCardInspectorPanel({
   canvasProjectId,
+  conversationId,
   deck,
   selectedCard,
   selectedCardConfig,
@@ -161,7 +164,25 @@ export default function AgentCardInspectorPanel({
   if (!selectedCard || !selectedCardConfig) return null;
 
   let content: ReactNode = null;
-  if (tab === 'Tasks' && isTaskLedgerCard(selectedCard)) {
+  if (
+    tab === 'CLI'
+    && selectedCard.runtime.kind === 'hermes'
+    && selectedCard.runtime.mode !== 'main'
+  ) {
+    content = (
+      <div style={{ height: 'min(62vh, 620px)', minHeight: 360 }}>
+        <CardTerminalPanel
+          key={`${canvasProjectId}:${selectedCard.id}:${selectedCard.runtime.profile}:${conversationId}`}
+          identity={{
+            projectId: canvasProjectId,
+            deckId: DEFAULT_PROJECT_DECK_ID,
+            cardId: selectedCard.id,
+            conversationId,
+          }}
+        />
+      </div>
+    );
+  } else if (tab === 'Tasks' && isTaskLedgerCard(selectedCard)) {
     content = (
       <MagneticTasksTab
         projectId={canvasProjectId}
