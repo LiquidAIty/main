@@ -131,6 +131,7 @@ class SessionCreateParams(ProfileParams):
     room_plumbing: bool = False
     follow_profile_config: bool = False
     bot_mode_roster: list[str] | None = None
+    bot_mode_sessions: dict[str, str] | None = None
 
 
 class SessionCreateResult(Result):
@@ -180,6 +181,7 @@ class SessionResumeParams(SessionParams):
     eager_build: bool = False
     close_on_disconnect: bool = False
     bot_mode_roster: list[str] | None = None
+    bot_mode_sessions: dict[str, str] | None = None
 
 
 class SessionResumeResult(LiveSessionSnapshot):
@@ -194,6 +196,10 @@ class SessionActivateParams(SessionParams):
     cols: int | None = None  # sent by the desktop; the handler keeps the session's current width
     omit_messages: bool = False
     bot_mode_roster: list[str] | None = None
+    bot_mode_sessions: dict[str, str] | None = None
+    expected_profile_capability_fingerprint: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{12}$"
+    )
 
 
 class SessionActivateResult(LiveSessionSnapshot):

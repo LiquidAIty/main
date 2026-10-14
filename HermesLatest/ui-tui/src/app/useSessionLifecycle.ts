@@ -5,7 +5,12 @@ import { evictInkCaches } from '@hermes/ink'
 import type { InflightTurn, SessionResumeResult, Usage } from '@hermes/shared/gateway-events'
 import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react'
 
-import { STARTUP_WORKSPACE_CWD } from '../config/env.js'
+import {
+  STARTUP_BOT_MODE_ROSTER,
+  STARTUP_BOT_MODE_SESSIONS,
+  STARTUP_PROFILE,
+  STARTUP_WORKSPACE_CWD
+} from '../config/env.js'
 import { buildSetupRequiredSections, SETUP_REQUIRED_TITLE } from '../content/setup.js'
 import { introMsg, toTranscriptMessages } from '../domain/messages.js'
 import { ZERO } from '../domain/usage.js'
@@ -360,7 +365,10 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
       patchOverlayState({ sessions: false })
       patchUiState({ status: 'resuming…' })
 
-      return rpc<SetupStatusResponse>('setup.status', {}).then(setup => {
+      return rpc<SetupStatusResponse>(
+        'setup.status',
+        STARTUP_PROFILE ? { profile: STARTUP_PROFILE } : {}
+      ).then(setup => {
         if (setup?.provider_configured === false) {
           panel(SETUP_REQUIRED_TITLE, buildSetupRequiredSections())
           patchUiState({ status: 'setup required' })
@@ -371,7 +379,17 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
         const previousSid = getUiState().sid
 
         return gw
-          .request<SessionResumeResult>('session.resume', { cols: colsRef.current, session_id: id })
+          .request<SessionResumeResult>('session.resume', {
+            cols: colsRef.current,
+            session_id: id,
+            ...(STARTUP_PROFILE ? { profile: STARTUP_PROFILE } : {}),
+            ...(STARTUP_BOT_MODE_ROSTER !== null
+              ? {
+                  bot_mode_roster: STARTUP_BOT_MODE_ROSTER,
+                  bot_mode_sessions: STARTUP_BOT_MODE_SESSIONS ?? {}
+                }
+              : {})
+          })
           .then(raw => {
             const r = asRpcResult<SessionResumeResult>(raw)
 

@@ -1,32 +1,4 @@
-/**
- * Frontend client for Main's headless Hermes Bot Mode conversation. The
- * browser consumes backend SSE while the saved Main Card and Hermes Gateway
- * remain the session, model-turn, tool, and completion owners.
- *
- * `streamSession` forwards backend-projected native events to `onEvent` and
- * resolves with the native completion text. Stable event IDs are delivered
- * once per connection; semantic classification remains server-owned.
- */
-import type {
-  MainProjectionEvent,
-  RuntimeEvent,
-} from '../../../../../apps/backend/src/contracts/runtimeEvents';
-
-export type NativeSessionEvent = {
-  terminalEvent?: RuntimeEvent;
-  projection?: MainProjectionEvent;
-  kind: 'session' | 'text' | 'reasoning' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
-  [key: string]: unknown;
-};
-
-export type MainGatewayEvent = {
-  type: string;
-  session_id?: string;
-  seq?: number;
-  payload?: Record<string, unknown>;
-};
-
-export type SharedChatParticipant = {
+export type MainConversationParticipant = {
   kind: 'user' | 'card';
   label: string;
   cardId?: string;
@@ -43,26 +15,52 @@ export type AddressableAgent = {
   aliases: string[];
 };
 
-export type SharedChatMessage = {
+export type DirectChatTarget = AddressableAgent;
+
+export type MainConversationMessage = {
   role: 'assistant' | 'user';
   text: string;
-  speaker: SharedChatParticipant;
-  target?: SharedChatParticipant;
+  speaker: MainConversationParticipant;
+  target?: MainConversationParticipant;
 };
 
-export type MainRunImage = {
-  name: string;
-  mediaType: string;
-  dataUrl: string;
-  kind: 'user-upload';
+export type HermesSessionEvent = {
+  kind: string;
+  projectId?: string;
+  deckId?: string;
+  cardId?: string;
+  runId?: string;
+  participant?: unknown;
+  configuration?: unknown;
+  text?: unknown;
+  event?: unknown;
+  fullText?: unknown;
+  code?: unknown;
+  message?: unknown;
+  correlationId?: unknown;
+  route?: unknown;
+  status?: unknown;
+  [key: string]: unknown;
 };
 
-const BASE = '/api/main/session';
+export type MainRunImage = Record<string, unknown>;
 
-export function selectedConversationId(search: string): string {
-  const selected = new URLSearchParams(search).get('conversationId')?.trim();
-  return selected || 'main';
-}
+export type GraphRecordIdentity =
+  | { engraphisMemoryId: string }
+  | { engraphisEntityId: string }
+  | { engraphisRelationshipId: string }
+  | { graphitiEpisodeId: string }
+  | { graphitiEntityId: string }
+  | { graphitiRelationshipId: string }
+  | { cbmQualifiedName: string };
+
+export type DataAnchor = GraphRecordIdentity & {
+  reason: string;
+  priority: number;
+  boundedExpansion: number;
+  resultLimit: number;
+  required: boolean;
+};
 
 type SessionStreamFailure = {
   code: string;
@@ -88,110 +86,109 @@ export class SessionStreamError extends Error {
   }
 }
 
+const BASE = '/api/main/session';
+
+function clientMessageId(): string {
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw new Error('main_message_identity_unavailable');
+  }
+  return `msg_${globalThis.crypto.randomUUID()}`;
+}
+
+function parseSseFrames(
+  buffer: string,
+  receive: (kind: string, data: Record<string, unknown>) => void,
+): string {
+  let boundary = buffer.indexOf('\n\n');
+  while (boundary >= 0) {
+    const frame = buffer.slice(0, boundary);
+    buffer = buffer.slice(boundary + 2);
+    const kind = /^event: (.*)$/m.exec(frame)?.[1];
+    const raw = /^data: ([\s\S]*)$/m.exec(frame)?.[1];
+    if (kind) {
+      let data: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(raw || '{}');
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) data = parsed;
+      } catch {
+        data = {};
+      }
+      receive(kind, data);
+    }
+    boundary = buffer.indexOf('\n\n');
+  }
+  return buffer;
+}
+
 export async function streamSession(args: {
   projectId: string;
   deckId?: string;
-  conversationId: string;
   message: string;
   images?: MainRunImage[];
-  dataAnchors?: Array<{
-    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
-    nativeId: string;
-    reason: string;
-    priority: number;
-    boundedExpansion: number;
-    resultLimit: number;
-    required: boolean;
-  }>;
-  onEvent: (event: NativeSessionEvent) => void;
+  dataAnchors?: DataAnchor[];
+  onEvent: (event: HermesSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
-  const clientMessageId = `msg_${globalThis.crypto.randomUUID()}`;
-  const clientReplyMessageId = `msg_${globalThis.crypto.randomUUID()}`;
-  const res = await fetch(`${BASE}/chat`, {
+  const response = await fetch(`${BASE}/chat`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       projectId: args.projectId,
       deckId: args.deckId,
-      conversationId: args.conversationId,
       message: args.message,
-      clientMessageId,
-      clientReplyMessageId,
+      clientMessageId: clientMessageId(),
+      clientReplyMessageId: clientMessageId(),
       dataAnchors: args.dataAnchors || [],
-      images: args.images || [],
+      ...(args.images?.length ? { images: args.images } : {}),
     }),
     signal: args.signal,
   });
-  if (!res.ok || !res.body) {
-    const payload = await res.json().catch(() => null) as {
-      error?: unknown;
-      correlationId?: unknown;
-    } | null;
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
     throw new SessionStreamError({
       code: typeof payload?.error === 'string' ? payload.error : 'session_chat_failed',
-      message: `Main Bot Mode request failed with status ${res.status}.`,
+      message: `Main request failed with status ${response.status}.`,
       correlationId: typeof payload?.correlationId === 'string'
-        ? payload.correlationId
-        : undefined,
+        ? payload.correlationId : undefined,
       route: `${BASE}/chat`,
-      status: res.status,
+      status: response.status,
     });
   }
-  const reader = res.body.getReader();
+  const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let finalText = '';
   let streamFailure: SessionStreamError | null = null;
   let sawEnd = false;
-  const deliveredEvents = new Set<string>();
+  const receive = (kind: string, data: Record<string, unknown>) => {
+    if (kind === 'done') finalText = String(data.fullText ?? finalText);
+    if (kind === 'end') sawEnd = true;
+    if (kind === 'error') {
+      streamFailure = new SessionStreamError({
+        code: typeof data.code === 'string' && data.code ? data.code : 'session_stream_failed',
+        message: typeof data.message === 'string' && data.message
+          ? data.message : 'The Main stream reported a failure.',
+        correlationId: typeof data.correlationId === 'string' ? data.correlationId : undefined,
+        route: typeof data.route === 'string' ? data.route : undefined,
+        status: typeof data.status === 'number' ? data.status : undefined,
+      });
+    }
+    args.onEvent({ ...data, kind });
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buffer.indexOf('\n\n')) >= 0) {
-      const frame = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      const evMatch = /^event: (.*)$/m.exec(frame);
-      const dataMatch = /^data: ([\s\S]*)$/m.exec(frame);
-      const kind = evMatch?.[1];
-      if (!kind) continue;
-      let data: Record<string, unknown> = {};
-      try {
-        data = JSON.parse(dataMatch?.[1] || '{}');
-      } catch {
-        /* keep empty */
-      }
-      if (kind === 'done') finalText = String((data as { fullText?: string }).fullText ?? finalText);
-      if (kind === 'error') {
-        streamFailure = new SessionStreamError({
-          code: typeof data.code === 'string' && data.code ? data.code : 'session_stream_failed',
-          message: typeof data.message === 'string' && data.message
-            ? data.message
-            : 'The chat stream reported a failure.',
-          correlationId: typeof data.correlationId === 'string' ? data.correlationId : undefined,
-          route: typeof data.route === 'string' ? data.route : undefined,
-          status: typeof data.status === 'number' ? data.status : undefined,
-        });
-      }
-      if (kind === 'end') sawEnd = true;
-      const eventId = (data.projection as MainProjectionEvent | undefined)?.id
-        || (data.terminalEvent as RuntimeEvent | undefined)?.id;
-      if (eventId) {
-        const identity = `${String(data.projectId || '')}:${String(data.deckId || '')}:${String(data.runId || '')}:${eventId}`;
-        if (deliveredEvents.has(identity)) continue;
-        deliveredEvents.add(identity);
-      }
-      args.onEvent({ ...data, kind });
-    }
+    buffer = parseSseFrames(buffer, receive);
   }
+  buffer += decoder.decode();
+  parseSseFrames(buffer, receive);
   if (streamFailure) throw streamFailure;
   if (!sawEnd) {
     throw new SessionStreamError({
       code: 'session_stream_incomplete',
-      message: 'The chat stream ended before reporting completion.',
+      message: 'The Main stream ended before its end event.',
       route: `${BASE}/chat`,
     });
   }
@@ -201,180 +198,231 @@ export async function streamSession(args: {
 export async function stopSession(args: {
   projectId: string;
   deckId?: string;
-  conversationId: string;
   expectedRunId: string;
 }): Promise<{ runId: string; state: string }> {
-  const res = await fetch(`${BASE}/stop`, {
+  const response = await fetch(`${BASE}/stop`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(args),
   });
-  const payload = await res.json().catch(() => null) as {
-    ok?: boolean;
-    runId?: unknown;
-    state?: unknown;
-    error?: unknown;
-  } | null;
-  if (!res.ok || payload?.ok !== true) {
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || payload?.ok !== true) {
     throw new SessionStreamError({
       code: typeof payload?.error === 'string' ? payload.error : 'main_run_stop_failed',
-      message: `Main run stop failed with status ${res.status}.`,
+      message: `Main run stop failed with status ${response.status}.`,
       route: `${BASE}/stop`,
-      status: res.status,
+      status: response.status,
     });
   }
   return { runId: String(payload.runId || ''), state: String(payload.state || 'stopping') };
 }
 
-/**
- * Reload the saved Main Card's native Hermes session history. A fresh native
- * conversation resolves to an empty array; transport and malformed-response
- * failures remain visible to the caller.
- */
+function participant(value: unknown): MainConversationParticipant | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (!['user', 'card'].includes(String(item.kind)) || typeof item.label !== 'string' || !item.label) {
+    return null;
+  }
+  return {
+    kind: item.kind as 'user' | 'card',
+    label: item.label,
+    ...(typeof item.cardId === 'string' && item.cardId ? { cardId: item.cardId } : {}),
+    ...(typeof item.profile === 'string' && item.profile ? { profile: item.profile } : {}),
+    ...(typeof item.address === 'string' && item.address ? { address: item.address } : {}),
+  };
+}
+
 export async function loadSessionHistory(args: {
   projectId: string;
   deckId?: string;
-  conversationId: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{
   mainCardId: string;
   addressableAgents: AddressableAgent[];
-  messages: SharedChatMessage[];
-  terminalEvents: RuntimeEvent[];
+  messages: MainConversationMessage[];
 }> {
-  const params = new URLSearchParams({
-    projectId: args.projectId,
-    conversationId: args.conversationId,
-  });
+  const params = new URLSearchParams({ projectId: args.projectId });
   if (args.deckId) params.set('deckId', args.deckId);
-  const requestController = new AbortController();
+  const controller = new AbortController();
   let timedOut = false;
-  const abortFromCaller = () => requestController.abort();
-  if (args.signal?.aborted) abortFromCaller();
-  else args.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  const callerAbort = () => controller.abort();
+  if (args.signal?.aborted) callerAbort();
+  else args.signal?.addEventListener('abort', callerAbort, { once: true });
   const timeout = globalThis.setTimeout(() => {
     timedOut = true;
-    requestController.abort();
+    controller.abort();
   }, args.timeoutMs ?? 15_000);
-  let res: Response;
+  let response: Response;
   try {
-    res = await fetch(`${BASE}/history?${params.toString()}`, {
-      method: 'GET',
+    response = await fetch(`${BASE}/history?${params.toString()}`, {
       credentials: 'include',
-      signal: requestController.signal,
+      signal: controller.signal,
     });
   } catch (error) {
     if (timedOut) {
       throw new SessionStreamError({
         code: 'conversation_history_timeout',
-        message: 'Conversation history read timed out.',
+        message: 'Main history read timed out.',
         route: `${BASE}/history`,
       });
     }
     throw error;
   } finally {
     globalThis.clearTimeout(timeout);
-    args.signal?.removeEventListener('abort', abortFromCaller);
+    args.signal?.removeEventListener('abort', callerAbort);
   }
-  const payload = (await res.json().catch(() => null)) as {
-    error?: unknown;
-    mainCardId?: unknown;
-    addressableAgents?: unknown[];
-    messages?: {
-      role?: unknown;
-      text?: unknown;
-      speaker?: unknown;
-      target?: unknown;
-    }[];
-    terminalEvents?: RuntimeEvent[];
-  } | null;
-  if (!res.ok) {
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !payload || !Array.isArray(payload.messages)) {
     throw new SessionStreamError({
-      code: typeof payload?.error === 'string' ? payload.error : 'conversation_history_read_failed',
-      message: `Conversation history read failed with status ${res.status}.`,
+      code: typeof payload?.error === 'string'
+        ? payload.error : 'conversation_history_read_failed',
+      message: `Main history read failed with status ${response.status}.`,
       route: `${BASE}/history`,
-      status: res.status,
+      status: response.status,
     });
   }
-  if (!payload || !Array.isArray(payload.messages)) {
-    throw new SessionStreamError({
-      code: 'conversation_history_response_invalid',
-      message: 'Conversation history response did not contain a messages array.',
-      route: `${BASE}/history`,
-      status: res.status,
-    });
-  }
-  const participant = (value: unknown): SharedChatParticipant | null => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const item = value as Record<string, unknown>;
-    if (!['user', 'card'].includes(String(item.kind)) || typeof item.label !== 'string' || !item.label) {
-      return null;
+  const messages = payload.messages.flatMap((value): MainConversationMessage[] => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const message = value as Record<string, unknown>;
+    if (!['assistant', 'user'].includes(String(message.role)) || typeof message.text !== 'string') {
+      return [];
     }
-    return {
-      kind: item.kind as 'user' | 'card',
-      label: item.label,
-      ...(typeof item.cardId === 'string' && item.cardId ? { cardId: item.cardId } : {}),
-      ...(typeof item.profile === 'string' && item.profile ? { profile: item.profile } : {}),
-      ...(typeof item.address === 'string' && item.address ? { address: item.address } : {}),
-    };
-  };
-  const messages = payload.messages
-    .filter((message) => message.role === 'assistant' || message.role === 'user')
-    .map((m): SharedChatMessage | null => {
-      const speaker = participant(m.speaker);
-      if (!speaker) return null;
-      const target = participant(m.target);
-      return {
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        text: typeof m.text === 'string' ? m.text : '',
-        speaker,
-        ...(target ? { target } : {}),
-      };
-    })
-    .filter((message): message is SharedChatMessage => message !== null && message.text.length > 0);
-  const terminalEvents = Array.isArray(payload.terminalEvents)
-    ? payload.terminalEvents.filter((event) => (
-        event && typeof event.id === 'string'
-        && typeof event.category === 'string'
-        && event.category.startsWith('execution.')
-      ))
-    : [];
-  const mainCardId = typeof payload.mainCardId === 'string' ? payload.mainCardId.trim() : '';
+    const speaker = participant(message.speaker);
+    const target = participant(message.target);
+    if (!speaker || !message.text) return [];
+    return [{
+      role: message.role as 'assistant' | 'user',
+      text: message.text,
+      speaker,
+      ...(target ? { target } : {}),
+    }];
+  });
   const addressableAgents = Array.isArray(payload.addressableAgents)
     ? payload.addressableAgents.flatMap((value): AddressableAgent[] => {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-      const agent = value as Record<string, unknown>;
-      const aliases = Array.isArray(agent.aliases)
-        ? agent.aliases.filter((alias): alias is string => typeof alias === 'string' && alias.length > 0)
-        : [];
-      if (
-        typeof agent.cardId !== 'string' || !agent.cardId
-        || typeof agent.profile !== 'string' || !agent.profile
-        || typeof agent.title !== 'string' || !agent.title
-        || typeof agent.address !== 'string' || !agent.address
-        || aliases.length === 0
-      ) return [];
-      return [{
-        cardId: agent.cardId,
-        cardRevisionId: typeof agent.cardRevisionId === 'string' ? agent.cardRevisionId : '',
-        profile: agent.profile,
-        title: agent.title,
-        address: agent.address,
-        aliases,
-      }];
-    })
-    : [];
-  // Reading persisted chat must not create or require a live Hermes session.
-  // Main's saved Card identity is always required.
-  if (!mainCardId) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+        const item = value as Record<string, unknown>;
+        if (
+          typeof item.cardId !== 'string' || !item.cardId
+          || typeof item.cardRevisionId !== 'string' || !item.cardRevisionId
+          || typeof item.profile !== 'string' || !item.profile
+          || typeof item.title !== 'string' || !item.title
+          || typeof item.address !== 'string' || !item.address
+          || !Array.isArray(item.aliases)
+        ) return [];
+        return [{
+          cardId: item.cardId,
+          cardRevisionId: item.cardRevisionId,
+          profile: item.profile,
+          title: item.title,
+          address: item.address,
+          aliases: item.aliases.map(String),
+        }];
+      }) : [];
+  return {
+    mainCardId: typeof payload.mainCardId === 'string' ? payload.mainCardId : '',
+    addressableAgents,
+    messages,
+  };
+}
+
+export type HermesVoiceStreamEvent = {
+  kind: 'ready' | 'status' | 'transcript' | 'error';
+  projectId?: string;
+  deckId?: string;
+  cardId?: string;
+  state?: Record<string, unknown>;
+  event?: { payload?: Record<string, unknown> };
+  error?: string;
+};
+
+export async function streamVoiceCapture(args: {
+  projectId: string;
+  deckId: string;
+  tts?: boolean;
+  signal?: AbortSignal;
+  onEvent: (event: HermesVoiceStreamEvent) => void;
+}): Promise<void> {
+  const route = `${BASE}/voice/start`;
+  const response = await fetch(route, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      tts: args.tts !== false,
+    }),
+    signal: args.signal,
+  });
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
     throw new SessionStreamError({
-      code: 'conversation_history_main_identity_missing',
-      message: 'Conversation history did not include the saved Main Card identity.',
-      route: `${BASE}/history`,
-      status: res.status,
+      code: typeof payload?.error === 'string' ? payload.error : 'main_voice_start_failed',
+      message: `Voice start failed with status ${response.status}.`,
+      route,
+      status: response.status,
     });
   }
-  return { mainCardId, addressableAgents, messages, terminalEvents };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let failure: SessionStreamError | null = null;
+  const receive = (kind: string, data: Record<string, unknown>) => {
+    if (!['ready', 'status', 'transcript', 'error'].includes(kind)) return;
+    const event = { ...data, kind } as HermesVoiceStreamEvent;
+    if (
+      (event.projectId && event.projectId !== args.projectId)
+      || (event.deckId && event.deckId !== args.deckId)
+    ) {
+      throw new SessionStreamError({
+        code: 'main_voice_event_identity_mismatch',
+        message: 'Voice transport returned an event for another Project.',
+        route,
+      });
+    }
+    args.onEvent(event);
+    if (kind === 'error') {
+      failure = new SessionStreamError({
+        code: event.error || 'main_voice_stream_failed',
+        message: event.error || 'Voice transport reported a failure.',
+        route,
+      });
+    }
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = parseSseFrames(buffer, receive);
+  }
+  if (failure) throw failure;
+}
+
+export async function stopVoiceCapture(args: {
+  projectId: string;
+  deckId: string;
+  cancel?: boolean;
+}): Promise<void> {
+  const route = `${BASE}/voice/stop`;
+  const response = await fetch(route, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      cancel: args.cancel === true,
+    }),
+  });
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || payload?.ok !== true) {
+    throw new SessionStreamError({
+      code: typeof payload?.error === 'string' ? payload.error : 'main_voice_stop_failed',
+      message: `Voice stop failed with status ${response.status}.`,
+      route,
+      status: response.status,
+    });
+  }
 }

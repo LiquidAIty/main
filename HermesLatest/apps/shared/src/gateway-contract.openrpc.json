@@ -25717,6 +25717,21 @@
             "default": null,
             "title": "Bot Mode Roster"
           },
+          "bot_mode_sessions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Sessions"
+          },
           "expected_profile_capability_fingerprint": {
             "anyOf": [
               {
@@ -27770,6 +27785,34 @@
             ],
             "default": null,
             "title": "Bot Mode Roster"
+          },
+          "bot_mode_sessions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Sessions"
+          },
+          "expected_profile_capability_fingerprint": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Profile Capability Fingerprint"
           }
         },
         "required": [
@@ -29220,6 +29263,21 @@
             ],
             "default": null,
             "title": "Bot Mode Roster"
+          },
+          "bot_mode_sessions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Sessions"
           }
         },
         "title": "SessionCreateParams",
@@ -30630,6 +30688,21 @@
             ],
             "default": null,
             "title": "Bot Mode Roster"
+          },
+          "bot_mode_sessions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Sessions"
           }
         },
         "required": [

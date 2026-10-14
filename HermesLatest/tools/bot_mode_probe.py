@@ -343,10 +343,16 @@ def _build_section(home: Path, roster_override: list[str] | None = None) -> str:
         return ""
     roster_block = "\n".join(roster_lines) or "- (no teammates yet)"
 
+    scope_line = (
+        "This session runs Bot Mode: the supplied roster is the exact set of agent teammates "
+        "available in this session."
+        if configured is not None
+        else "This install runs Bot Mode: each Hermes profile is an agent teammate with "
+        'one canonical "Bot Chat" conversation.'
+    )
     return (
         f"{_PROTOCOL_HEADING}\n"
-        "This install runs Bot Mode: each Hermes profile is an agent teammate with "
-        'one canonical "Bot Chat" conversation, and you have the `message_agent` '
+        f"{scope_line} You have the `message_agent` "
         "tool to DM any of them. It is FIRE-AND-FORGET: it delivers your message "
         "with your attribution prefixed automatically and returns an acknowledgement "
         "immediately — it never returns the reply. Send it, finish your turn, and "
@@ -362,10 +368,11 @@ def _build_section(home: Path, roster_override: list[str] | None = None) -> str:
         "ONE clearly relevant teammate; don't fan out to several unless the user "
         "explicitly asked.\n"
         f'When YOU receive a "Message from 🤖 <name> (@<handle>):" message, a '
-        "teammate agent is talking to you (not the user): address them, reply "
-        "concisely via message_agent to their handle, and if it is a pure FYI "
-        "with nothing to add, staying silent is fine — never ping-pong "
-        "acknowledgements.\n"
+        "teammate agent is talking to you (not the user): answer the current turn "
+        "directly and concisely, because its existing delivery carries this completion "
+        "back to the sender. Do not call message_agent merely to return that answer; "
+        "use message_agent only for a distinct new outbound handoff. If it is a pure FYI "
+        "with nothing to add, staying silent is fine — never ping-pong acknowledgements.\n"
         f"You are `@{_handle(me)}`. Your teammates (live roster; roles from their "
         "profiles):\n"
         f"{roster_block}"
@@ -521,6 +528,7 @@ def stored_prompt_capability_stale(
     stored_prompt: str,
     home: str | os.PathLike | None = None,
     roster_override: list[str] | None = None,
+    expected_fingerprint: str | None = None,
 ) -> bool:
     """True when a stamped profile prompt no longer matches its capability surface.
 
@@ -533,9 +541,8 @@ def stored_prompt_capability_stale(
     m = re.search(_EPOCH_RE_TEXT, stored_prompt or "")
     if not m:
         return False
-    current = _swallow(
-        lambda: capability_fingerprint(home, roster_override),
-        "unavailable",
+    current = str(expected_fingerprint or "").strip() or _swallow(
+        lambda: capability_fingerprint(home, roster_override), "unavailable",
     )
     return current != "unavailable" and m.group(1) != current
 

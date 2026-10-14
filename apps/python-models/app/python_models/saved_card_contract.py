@@ -26,7 +26,7 @@ GRANT_FIELDS = {
 KNOWN_RUNTIME_OPTION_FIELDS = {
     "tools", "skills", "toolsets", "mcpConnectionIds",
     "provider", "modelKey", "providerModelId", "accessMode", "enabled",
-    "reasoningEffort", "temperature", "maxTokens", "maxTurns",
+    "reasoningEffort",
 }
 
 SUBAGENT_MODEL_FIELDS = {
@@ -43,6 +43,7 @@ SAVED_PROVIDER_ACCESS_PAIRS = {
     ("openrouter", "openrouter-api"),
     ("local_openai_compatible", "openai-api"),
 }
+
 
 KNOWN_CARD_FIELDS = {
     "id", "kind", "templateId", "title", "subtitle", "role", "status",
@@ -266,9 +267,6 @@ def stable_card_record(card: dict[str, Any]) -> dict[str, Any]:
         "providerModelId": options.get("providerModelId") or card.get("providerModelId"),
         "accessMode": access_mode,
         "reasoningEffort": options.get("reasoningEffort"),
-        "temperature": options.get("temperature"),
-        "maxTokens": options.get("maxTokens"),
-        "maxTurns": options.get("maxTurns"),
         "enabled": card.get("enabled", options.get("enabled", True)) is not False,
         "enabledLocation": (
             "card" if "enabled" in card

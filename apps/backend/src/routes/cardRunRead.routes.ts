@@ -12,36 +12,6 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function elapsedMilliseconds(run: Record<string, any>): number | null {
-  const start = Date.parse(String(run.startedAt || ''));
-  const end = Date.parse(String(run.finishedAt || ''));
-  if (!Number.isFinite(start)) return null;
-  return Math.max(0, (Number.isFinite(end) ? end : Date.now()) - start);
-}
-function runMetricsProjection(run: Record<string, any> | undefined) {
-  if (!run) return null;
-  const costUsd = finiteNumber(run.costUsd);
-  const providerCostStatus = String(run.costStatus || '').trim();
-  const costStatus = ['actual', 'estimated', 'included'].includes(providerCostStatus)
-    ? providerCostStatus
-    : 'unavailable';
-  return {
-    state: String(run.state || ''),
-    startedAt: typeof run.startedAt === 'string' ? run.startedAt : null,
-    model: typeof run.model === 'string' ? run.model : null,
-    elapsedMs: elapsedMilliseconds(run),
-    inputTokens: finiteNumber(run.inputTokens),
-    outputTokens: finiteNumber(run.outputTokens),
-    cachedTokens: finiteNumber(run.cachedTokens),
-    reasoningTokens: finiteNumber(run.reasoningTokens),
-    totalTokens: finiteNumber(run.providerTotalTokens),
-    costUsd,
-    costStatus,
-    toolCallCount: finiteNumber(run.toolCallCount),
-    autoToolsDecision: objectRecord(run.autoToolsDecision),
-    autoModelDecision: objectRecord(run.autoModelDecision),
-  };
-}
 function magneticTaskMetrics(value: Record<string, any>): {
   tasksCompleted: number | null;
   tasksTotal: number | null;
@@ -61,6 +31,7 @@ function magneticTaskMetrics(value: Record<string, any>): {
     )).length,
   };
 }
+
 export async function authorizeCardProject(req: Request, projectId: string): Promise<boolean> {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
   if (!userId) return false;
@@ -76,31 +47,23 @@ cardRunReadRoutes.post('/runs/read', async (req, res) => {
   if (!projectId || !deckId || !cardId) {
     return res.status(400).json({ ok: false, error: 'card_run_identity_incomplete' });
   }
-  if (!['history', 'status'].includes(action)) {
-    return res.status(400).json({ ok: false, error: 'card_run_read_action_required' });
+  if (action !== 'status') {
+    return res.status(400).json({ ok: false, error: 'card_run_status_action_required' });
   }
-  if (action === 'status' && req.body?.inspectOnly !== true) {
+  if (req.body?.inspectOnly !== true) {
     return res.status(400).json({ ok: false, error: 'card_run_status_must_be_inspect_only' });
   }
   try {
     if (!(await authorizeCardProject(req, projectId))) {
       return res.status(403).json({ ok: false, error: 'card_run_project_access_denied' });
     }
-    const rawLimit = action === 'history' ? Number(req.body?.limit || 1) : 1;
-    const limit = Number.isSafeInteger(rawLimit) ? Math.max(1, Math.min(20, rawLimit)) : 1;
     const history = objectRecord(await requestPythonRailsJson('/domain/runs/history', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, deckId, cardId, limit }),
+      body: JSON.stringify({ projectId, deckId, cardId, limit: 1 }),
     }));
     const runs = Array.isArray(history.runs) ? history.runs.map(objectRecord) : [];
     const latest = runs[0];
-    if (action === 'history') {
-      return res.json({
-        ok: true,
-        result: { cardId, latest: runMetricsProjection(latest) },
-      });
-    }
     if (!latest) return res.json({ ok: true, result: null });
     const hermesRootId = String(latest.hermesRootId || '').trim();
     if (String(latest.runtimeMode || '') === 'magentic_one' && hermesRootId) {

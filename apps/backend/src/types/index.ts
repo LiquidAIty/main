@@ -38,6 +38,8 @@ export type CardSubsystemAttachment = {
 export type SavedCardConfiguration = {
   autoTools?: boolean;
   autoModel?: boolean;
+  /** Saved outbound orange Card-to-Card authority for an ordinary Hermes Card. */
+  orchestrator?: boolean;
   /** Legacy-compatible Card availability persisted inside runtime options. */
   enabled?: boolean;
   /** Temporary Hermes children for one Card turn. */
@@ -71,6 +73,8 @@ export type SavedCardConfiguration = {
       compiledHash?: string;
     };
     lastValidation?: Record<string, unknown>;
+    hermesSupport?: Record<string, unknown>;
+    rollback?: Record<string, unknown>;
   } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
@@ -78,10 +82,7 @@ export type SavedCardConfiguration = {
   modelKey?: string | null;
   providerModelId?: string | null;
   openaiRuntime?: 'codex_app_server' | null;
-  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
-  temperature?: number | null;
-  maxTokens?: number | null;
-  maxTurns?: number | null;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null;
   /** Saved desired model for bounded Hermes delegated children and
    * background skill review. Hermes profile/readback remains effective truth. */
   subagentModel?: {
@@ -97,8 +98,6 @@ export type SavedCardConfiguration = {
   toolsets?: string[] | null;
   /** References to globally configured MCP connections; never credentials. */
   mcpConnectionIds?: string[] | null;
-  /** Card-assigned native Hermes tool names. */
-  nativeTools?: string[] | null;
 };
 
 export type DeckNodeKind = 'agent';
@@ -152,7 +151,7 @@ export type DeckEdge = {
 export type DeckDocument = {
   id: string;
   name: string;
-  /** Historical native Bot Mode workspace projection; new saves use projectCodeFolder. */
+  /** Historical Hermes Bot Mode workspace projection; new saves use projectCodeFolder. */
   workspaceRoot?: string | null;
   projectCodeFolder?: string | null;
   promptTemplates: PromptTemplate[];

@@ -2462,6 +2462,7 @@ export interface PromptSubmitParams {
   tool_endpoint?: string | null
   tool_authorization?: string | null
   bot_mode_roster?: string[] | null
+  bot_mode_sessions?: Record<string, string> | null
   expected_profile_capability_fingerprint?: string | null
   surface?: string | null
   voice_context?: string | null
@@ -2821,6 +2822,7 @@ export interface SessionCreateParams {
   room_plumbing?: boolean
   follow_profile_config?: boolean
   bot_mode_roster?: string[] | null
+  bot_mode_sessions?: Record<string, string> | null
 }
 /** One create-time transcript row (``session_history._coerce_seed_history``); ``text`` is the legacy alias of ``content``; only ``display_kind: "hidden"`` is accepted from the wire. Clients forward stored rows verbatim (``_row_id``, ``timestamp``, …) and the coercer drops what it does not use, so the row stays open. */
 export interface SeedMessage {
@@ -2892,6 +2894,7 @@ export interface SessionResumeParams {
   eager_build?: boolean
   close_on_disconnect?: boolean
   bot_mode_roster?: string[] | null
+  bot_mode_sessions?: Record<string, string> | null
 }
 export interface SessionResumeResult {
   session_id: string
@@ -2963,6 +2966,8 @@ export interface SessionActivateParams {
   cols?: number | null
   omit_messages?: boolean
   bot_mode_roster?: string[] | null
+  bot_mode_sessions?: Record<string, string> | null
+  expected_profile_capability_fingerprint?: string | null
 }
 export interface SessionActivateResult {
   session_id: string

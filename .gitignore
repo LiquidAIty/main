@@ -12,6 +12,7 @@
 /Hermes/venv/
 
 # Local proof/model artifacts
+/.tmp/
 tmp_*.json
 tmp_*.log
 handoff/

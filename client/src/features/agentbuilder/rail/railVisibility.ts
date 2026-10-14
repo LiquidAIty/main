@@ -1,7 +1,9 @@
 // Rail/topology derivation: which product surfaces are visible for the
-// current deck through bus connectivity and the active workspace.
+// current deck (bus connectivity, graph streams, workbench activation).
+// Extracted verbatim from pages/agentbuilder.tsx (decomposition pass
+// 2026-07-08). Behavior unchanged.
 import type {
-  DeckCard,
+  AgentCardInstance,
   DeckDocument,
   DeckEdge,
 } from '../../../types/agentgraph';
@@ -10,32 +12,32 @@ import {
 } from '../deck/deckPrimitives';
 import { readCardSubsystemAttachments } from '../deck/cardSubsystems';
 
-function isTradingAgentCard(card: DeckCard | null | undefined): boolean {
+function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
   return card?.id === 'card_trading_workbench';
 }
 
 export function isWorldSignalsAgentCard(
-  card: DeckCard | null | undefined,
+  card: AgentCardInstance | null | undefined,
 ): boolean {
   return card?.id === 'card_worldsignals_agent';
 }
 
 export function isWorldViewCard(
-  card: DeckCard | null | undefined,
+  card: AgentCardInstance | null | undefined,
 ): boolean {
   return readCardSubsystemAttachments(card?.runtimeOptions)
     .some((attachment) => attachment.id === 'gods-eye');
 }
 
-export type AgentBuilderRailVisibility = {
+type ProgressiveRailVisibility = {
   showKnowledge: boolean;
-  showWorldSignals: boolean;
-  showWorldView: boolean;
+  showWorldsignal: boolean;
+  showWorldview: boolean;
   showTrading: boolean;
 };
 
 function buildBusConnectedCardIds(
-  nodes: readonly DeckCard[],
+  nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
 ): Set<string> {
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -73,12 +75,29 @@ function buildBusConnectedCardIds(
   return connected;
 }
 
+export function hasDirectedCardConnection(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+  sourcePredicate: (card: AgentCardInstance) => boolean,
+  targetPredicate: (card: AgentCardInstance) => boolean,
+): boolean {
+  const sourceIds = new Set(nodes.filter(sourcePredicate).map((node) => node.id));
+  const targetIds = new Set(nodes.filter(targetPredicate).map((node) => node.id));
+  if (sourceIds.size === 0 || targetIds.size === 0) return false;
+  return edges.some(
+    (edge) =>
+      normalizeDeckEdgeType(edge.edgeType) === 'flow' &&
+      sourceIds.has(edge.source) &&
+      targetIds.has(edge.target),
+  );
+}
+
 /** A card's surface is reachable when the card is bus-connected — bus
  * connectivity is the only activation signal (PLAN.md §4). */
 function isBusConnectedCard(
-  nodes: readonly DeckCard[],
+  nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
-  predicate: (card: DeckCard) => boolean,
+  predicate: (card: AgentCardInstance) => boolean,
 ): boolean {
   const busConnected = buildBusConnectedCardIds(nodes, edges);
   return nodes.some((node) => busConnected.has(node.id) && predicate(node));
@@ -90,14 +109,14 @@ export function deriveVisibleRailItems({
 }: {
   deck: Pick<DeckDocument, 'nodes' | 'edges'>;
   workspaceView: string;
-}): AgentBuilderRailVisibility {
+}): ProgressiveRailVisibility {
   return {
     // Project graphs are an owner-visible workbench, not a card-topology capability.
     showKnowledge: true,
-    showWorldSignals:
-      workspaceView === 'worldsignals' ||
+    showWorldsignal:
+      workspaceView === 'worldsignal' ||
       isBusConnectedCard(deck.nodes, deck.edges, isWorldSignalsAgentCard),
-    showWorldView:
+    showWorldview:
       workspaceView === 'worldview' ||
       isBusConnectedCard(deck.nodes, deck.edges, isWorldViewCard),
     showTrading:
@@ -105,3 +124,8 @@ export function deriveVisibleRailItems({
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
   };
 }
+
+// The old "activation proposal" system (a deterministic keyword classifier
+// over user text) was dead plumbing: its detector had zero callers, its state
+// was only ever reset to null, and deriveVisibleRailItems ignored it. Removed
+// whole — banned pattern (regex intent-routing) with zero live function.

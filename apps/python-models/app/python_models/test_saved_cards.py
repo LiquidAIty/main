@@ -277,7 +277,7 @@ def test_project_code_folder_is_one_portable_managed_folder_name() -> None:
             saved_cards._validated_project_code_folder(invalid)
 
 
-def test_revision_insert_and_readback_preserve_optional_execution_settings() -> None:
+def test_revision_insert_preserves_reasoning_setting() -> None:
     calls: list[tuple[str, object]] = []
 
     class Cursor:
@@ -285,10 +285,7 @@ def test_revision_insert_and_readback_preserve_optional_execution_settings() -> 
             calls.append((str(query), params))
 
     card = _agent("configured-card")
-    card["runtimeOptions"].update({
-        "reasoningEffort": "low", "temperature": 0.25,
-        "maxTokens": 1200, "maxTurns": 6,
-    })
+    card["runtimeOptions"].update({"reasoningEffort": "low"})
     saved_cards._insert_revision(
         Cursor(), "project-one", "deck-one", card, 3,
     )
@@ -297,7 +294,7 @@ def test_revision_insert_and_readback_preserve_optional_execution_settings() -> 
         params for query, params in calls
         if "INSERT INTO ag_catalog.agent_card_revisions" in query
     )
-    assert insert_params[22:26] == ("low", 0.25, 1200, 6)
+    assert insert_params[22] == "low"
 
 
 

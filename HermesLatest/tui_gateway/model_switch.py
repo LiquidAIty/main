@@ -389,7 +389,7 @@ def _sync_profile_capabilities(
     session: dict,
     expected_fingerprint: str | None = None,
 ) -> None:
-    """Refresh a profile-following session when its capability surface changes.
+    """Refresh a profile-following session or an explicitly fenced Project Card session.
 
     Bot Chats and explicit ``follow_profile_config`` sessions keep one stored conversation while
     profile-owned prompt, skills, toolsets, MCP and transport policy remain editable. Fingerprint
@@ -400,6 +400,7 @@ def _sync_profile_capabilities(
     if agent is None:
         return
     follows_profile = session.get("follow_profile_config") is True
+    project_card_session = isinstance(session.get("bot_mode_sessions"), dict)
     is_bot_chat = False
     try:
         title = str(getattr(agent, "_session_title_hint", "") or "").strip()
@@ -407,8 +408,12 @@ def _sync_profile_capabilities(
             db, key = getattr(agent, "_session_db", None), session.get("session_key") or ""
             title = str((db.get_session_title(key) if (db and key) else None) or "").strip()
         is_bot_chat = title == "Bot Chat"
-        if not is_bot_chat and not follows_profile:
+        if not is_bot_chat and not follows_profile and not project_card_session:
             return
+        seen = session.get("profile_capabilities_seen")
+        if project_card_session:
+            if expected_fingerprint is None or seen == expected_fingerprint:
+                return
         from tools.bot_mode_probe import capability_fingerprint
         roster = session.get("bot_mode_roster")
         roster_override = list(roster) if isinstance(roster, list) else None
@@ -422,7 +427,6 @@ def _sync_profile_capabilities(
             return
         if expected_fingerprint and current != expected_fingerprint:
             raise RuntimeError("profile_capability_fingerprint_mismatch")
-        seen = session.get("profile_capabilities_seen")
         if seen is None and not (follows_profile and not is_bot_chat):
             session["profile_capabilities_seen"] = current
             return

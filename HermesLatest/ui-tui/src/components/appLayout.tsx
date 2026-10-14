@@ -11,7 +11,7 @@ import { $isBlocked, $overlayState, patchOverlayState } from '../app/overlayStor
 import { $petBox } from '../app/petFlashStore.js'
 import { $uiState } from '../app/uiStore.js'
 import { usePet } from '../app/usePet.js'
-import { INLINE_MODE, SHOW_FPS, TERMUX_TUI_MODE } from '../config/env.js'
+import { INLINE_MODE, PROJECT_SESSION_MODE, SHOW_FPS, TERMUX_TUI_MODE } from '../config/env.js'
 import { PLACEHOLDER } from '../content/placeholders.js'
 import { prevRenderedMsg } from '../domain/blockLayout.js'
 import {
@@ -512,7 +512,7 @@ const StatusRulePane = memo(function StatusRulePane({
         modelReasoningEffort={ui.info?.reasoning_effort}
         modelReasoningEffortWire={ui.info?.reasoning_effort_wire}
         notice={ui.notice}
-        onSessionCountClick={() => patchOverlayState({ sessions: true })}
+        onSessionCountClick={PROJECT_SESSION_MODE ? undefined : () => patchOverlayState({ sessions: true })}
         sessionStartedAt={status.sessionStartedAt}
         sessionTitle={status.sessionTitle}
         status={ui.status}

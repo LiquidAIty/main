@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 
+import BuilderDrawer from '../../../components/builder/BuilderDrawer';
 import { safeText } from '../deck/deckPrimitives';
-import type { AgentProjectSummary } from '../state/useAgentBuilderProject';
+
+type ProjectSummary = {
+  id: string;
+  name?: string | null;
+  code?: string | null;
+};
 
 type DrawerColors = {
   bg: string;
@@ -18,7 +24,7 @@ type AgentBuilderProjectDrawerProps = {
   activeProject: string;
   colors: DrawerColors;
   open: boolean;
-  projects: AgentProjectSummary[];
+  projects: ProjectSummary[];
   projectsApi: string;
   projectsError: unknown;
   onClose: () => void;
@@ -99,7 +105,7 @@ export default function AgentBuilderProjectDrawer({
     }
   };
 
-  const handleDeleteProject = async (project: AgentProjectSummary) => {
+  const handleDeleteProject = async (project: ProjectSummary) => {
     if (
       !confirm(
         `Delete project "${safeText(project.name || project.id)}"? This cannot be undone.`,
@@ -126,34 +132,7 @@ export default function AgentBuilderProjectDrawer({
   };
 
   return (
-    <div
-      className="fixed inset-0"
-      style={{ background: 'rgb(4, 8, 12)', zIndex: 1200 }}
-      onClick={onClose}
-    >
-      <div
-        className="absolute top-0 left-0 h-full"
-        style={{
-          width: 300,
-          background: colors.panel,
-          borderRight: `1px solid ${colors.border}`,
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div
-          className="flex items-center justify-between px-4"
-          style={{ height: 52, borderBottom: `1px solid ${colors.border}` }}
-        >
-          <div style={{ color: colors.text, fontWeight: 600 }}>Projects</div>
-          <button
-            onClick={onClose}
-            className="px-2 py-1 rounded"
-            style={{ border: `1px solid ${colors.border}`, color: colors.neutral }}
-          >
-            ✕
-          </button>
-        </div>
-        <div className="p-4 text-sm" style={{ color: colors.text }}>
+    <BuilderDrawer title="Projects" onClose={onClose} colors={colors}>
       <div data-testid="navigation-drawer" className="space-y-3">
         <div
           data-testid="drawer-projects-section"
@@ -329,8 +308,6 @@ export default function AgentBuilderProjectDrawer({
           </button>
         </div>
       </div>
-        </div>
-      </div>
-    </div>
+    </BuilderDrawer>
   );
 }

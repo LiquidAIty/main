@@ -1037,9 +1037,12 @@ def _attach_built_agent(current: dict, agent) -> None:
         agent._session_title_hint = _title_hint
     if isinstance(current.get("bot_mode_roster"), list):
         agent._bot_mode_roster = list(current["bot_mode_roster"])
+        if isinstance(current.get("bot_mode_sessions"), dict):
+            agent._bot_mode_sessions = dict(current["bot_mode_sessions"])
     follows_profile = current.get("follow_profile_config") is True
     agent._follow_profile_config = follows_profile
-    if follows_profile:
+    project_card_session = isinstance(current.get("bot_mode_sessions"), dict)
+    if follows_profile or project_card_session:
         fingerprint = str(
             getattr(agent, "_profile_capability_fingerprint", "") or ""
         )
@@ -2007,8 +2010,8 @@ def _tool_progress_enabled(sid: str) -> bool:
 
 
 def _tool_lifecycle_required_for_ui(name: str) -> bool:
-    """Interactive UI, not optional chrome: Desktop renders clarify / connection cards from the tool-call part."""
-    return name in ("clarify", "manage_connections", "setup_mcp")
+    """Interactive UI, not optional chrome: clients consume these tool identities and outcomes."""
+    return name in ("clarify", "manage_connections", "setup_mcp", "message_agent")
 
 
 def _restart_slash_worker(sid: str, session: dict):
@@ -2541,6 +2544,8 @@ def _make_agent(
         **_agent_cbs(sid))
     if session is not None and isinstance(session.get("bot_mode_roster"), list):
         agent._bot_mode_roster = list(session["bot_mode_roster"])
+        if isinstance(session.get("bot_mode_sessions"), dict):
+            agent._bot_mode_sessions = dict(session["bot_mode_sessions"])
     if context_cwd_is_launch_artifact is None:
         context_cwd_is_launch_artifact = _context_cwd_is_launch_artifact(session)
     agent._context_cwd_is_launch_artifact = bool(context_cwd_is_launch_artifact)
@@ -2585,7 +2590,8 @@ def _hydrate_session_cwd(sid: str, key: str, session_db, profile_home: str | Non
 def _init_session(
     sid: str, key: str, agent, history: list, cols: int = 80, cwd: str | None = None,
     session_db=None, source: str | None = None, profile_home: str | None = None,
-    explicit_cwd: bool = False, bot_mode_roster: list[str] | None = None):
+    explicit_cwd: bool = False, bot_mode_roster: list[str] | None = None,
+    bot_mode_sessions: dict[str, str] | None = None):
     now = time.time()
     with _sessions_lock:
         _sessions[sid] = {
@@ -2598,6 +2604,7 @@ def _init_session(
             # Profile-scoped HERMES_HOME (None = launch); SessionBranch copies the parent's (same state.db).
             "profile_home": profile_home,
             "bot_mode_roster": list(bot_mode_roster) if bot_mode_roster is not None else None,
+            "bot_mode_sessions": dict(bot_mode_sessions) if bot_mode_sessions is not None else None,
             # In-session /model switch, honored on rebuild (/new, resume) — never leaks to siblings via env vars.
             "model_override": None,
             # Async events go to the transport that created the session (stdio for Ink, WS for the dashboard).
@@ -2607,6 +2614,8 @@ def _init_session(
         _session_todo_state(_sessions[sid])
     if bot_mode_roster is not None:
         agent._bot_mode_roster = list(bot_mode_roster)
+        if bot_mode_sessions is not None:
+            agent._bot_mode_sessions = dict(bot_mode_sessions)
     _hydrate_session_cwd(sid, key, session_db, profile_home)
     _register_session_cwd(_sessions[sid])
     _wire_session_agent(sid, key, agent)  # no eager slash-worker pre-warm (see _start_agent_build)

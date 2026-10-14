@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 from psycopg.rows import dict_row
@@ -54,7 +55,7 @@ def accept_run_request(payload: dict[str, Any]) -> dict[str, Any]:
     card_id = required_text(payload.get("cardId"), "card_id")
     run_id = required_text(payload.get("runId"), "run_id")
     correlation_id = required_text(payload.get("correlationId"), "correlation_id")
-    accepted_at_value = accepted_at(payload.get("acceptedAt"))
+    accepted_at_value = utc_now()
     preparation_started_at = utc_now()
     loaded = saved_cards.load_deck(project_ref, deck_id)
     card = next(
@@ -110,6 +111,9 @@ def accept_run_request(payload: dict[str, Any]) -> dict[str, Any]:
         or str(existing.get("target_card_revision_id")) != revision_id
     ):
         raise CardDomainError("run_identity_conflict")
+    persisted_created_at = existing.get("created_at")
+    if isinstance(persisted_created_at, datetime):
+        accepted_at_value = persisted_created_at
     observed = agentgraph_run_observations.observe_run_acceptance(
         project_id=project_id,
         deck_id=deck_id,
@@ -374,9 +378,7 @@ def _insert_run(
 def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Accept one outer request, then prepare its existing Run identity."""
 
-    accepted: dict[str, Any] | None = None
-    if str(payload.get("acceptedAt") or "").strip():
-        accepted = accept_run_request(payload)
+    accepted = accept_run_request(payload)
     try:
         return _begin_accepted_run(payload)
     except Exception as error:

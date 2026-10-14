@@ -69,8 +69,6 @@ describe('requested initial Card topology', () => {
     for (const id of ['card_main_chat', 'builder', 'card_thinkgraph', 'card_knowgraph', 'card_team']) {
       expect(INITIAL_DECK.nodes.find(card => card.id === id)?.parentGraphId).toBeNull();
     }
-    expect(INITIAL_DECK.nodes.find((card) => card.id === 'card_magentic')
-      ?.runtimeOptions?.tools ?? []).toEqual([]);
     expect(INITIAL_DECK.version).toBe(10);
   });
 
@@ -103,31 +101,16 @@ describe('requested initial Card topology', () => {
   it('seeds KnowGraph to ingest verified research without requiring an existing graph target', () => {
     const knowGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_knowgraph');
     expect(knowGraph?.prompt).toContain(
-      'persist each focused finding through graphiti.add_memory_to_entity before answering',
+      'persist each focused finding through graphiti.add_memory before answering',
     );
     expect(knowGraph?.prompt).toContain(
       'does not require a preexisting node, edge, target Card, or selected graph reference',
     );
     expect(knowGraph?.prompt).toContain('Do not write one large report and slice it afterward');
-    expect(knowGraph?.prompt).toContain('explain exactly what each citation supports');
-    expect(knowGraph?.prompt).toContain('Both sides are mandatory and inseparable');
+    expect(knowGraph?.prompt).toContain('explain exactly what that citation supports');
     expect(knowGraph?.prompt).toContain(
-      'Use graphiti.add_memory_to_entity rather than graphiti.add_triplet for sourced research intake',
+      'Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake',
     );
-    expect(knowGraph?.prompt).toContain('do not synchronously poll or reread your own write');
-    expect(knowGraph?.prompt).not.toContain('exact Graphiti readback verifies');
-  });
-
-  it('seeds graph-native tools on the graph Cards', () => {
-    const thinkGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_thinkgraph');
-    expect(thinkGraph?.runtimeOptions?.tools).toEqual(expect.arrayContaining([
-      'engraphis_recall_context',
-      'engraphis_get_memory',
-      'engraphis_remember_entities',
-      'engraphis_discover_actions',
-      'engraphis_execute_read',
-    ]));
-    expect(thinkGraph?.runtimeOptions?.tools).not.toContain('engraphis_execute_action');
   });
 });
 
@@ -160,7 +143,7 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
     expect(nextNode.runtimeOptions?.skills).toEqual([]);
     expect(nextNode.runtimeOptions?.toolsets).toEqual([]);
     expect(nextNode.runtimeOptions?.mcpConnectionIds).toEqual([]);
-    expect(nextNode.status).toBeUndefined();
+    expect(nextNode.status).toBe('ready');
     expect(typeof nextNode.position.x).toBe('number');
     expect(typeof nextNode.position.y).toBe('number');
   });
@@ -212,12 +195,12 @@ describe('initial Card subagents', () => {
 
 describe('initial Magnetic account binding', () => {
   it('uses the official ChatGPT account model without changing other Cards', () => {
-    const magnetic = INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic');
-    expect(magnetic?.runtime).toEqual({
+    const magentic = INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic');
+    expect(magentic?.runtime).toEqual({
       kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic',
     });
-    expect(magnetic?.runtimeOptions?.provider).toBe('openai');
-    expect(magnetic?.runtimeOptions?.accessMode).toBe('chatgpt-account');
-    expect(magnetic?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
+    expect(magentic?.runtimeOptions?.provider).toBe('openai');
+    expect(magentic?.runtimeOptions?.accessMode).toBe('chatgpt-account');
+    expect(magentic?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
   });
 });

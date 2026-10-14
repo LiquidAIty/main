@@ -19,6 +19,7 @@ import jevGraphFocusRoutes from './jevGraphFocus.routes';
 import externalMainContextRoutes from './externalMainContext.routes';
 import mainSessionRoutes from './mainSession.routes';
 import cardTerminalRoutes from './cardTerminal.routes';
+import hermesProfileRoutes from './hermesProfile.routes';
 
 const router = Router();
 
@@ -32,6 +33,7 @@ router.use('/worldview', worldviewInternalRoutes);
 router.use('/cards', authMiddleware, cardOptionsRoutes, cardRunReadRoutes, cardScriptRoutes);
 router.use('/main/session', authMiddleware, mainSessionRoutes);
 router.use('/card-terminals', authMiddleware, cardTerminalRoutes);
+router.use('/hermes-profile', authMiddleware, hermesProfileRoutes);
 router.use('/main', externalMainContextRoutes);
 router.use('/idd', authMiddleware, builderIddRoutes);
 router.use('/graph', authMiddleware, jevGraphFocusRoutes);

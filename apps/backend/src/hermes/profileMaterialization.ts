@@ -1,5 +1,5 @@
 import type { DeckCard, DeckDocument } from '../types';
-import { exactStrings, objectRecord } from '../services/savedCardAuthority';
+import { exactStrings, objectRecord } from '../services/projectCardAuthority';
 
 type HermesRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
@@ -25,6 +25,13 @@ export type HermesProfileState = {
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
 const TEAM_CARD_IDS = new Set(['card_team']);
+
+function gatewayErrorCode(error: unknown): number | null {
+  const value = error && typeof error === 'object'
+    ? (error as { code?: unknown }).code
+    : null;
+  return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
 
 function cardEnabled(card: DeckCard): boolean {
   return card.enabled !== false && card.runtimeOptions?.enabled !== false;
@@ -99,19 +106,22 @@ function delegationSettings(options: Record<string, any>, current: HermesProfile
 
 export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[] {
   const options = objectRecord(card.runtimeOptions);
-  const orchestrator = card.runtime.mode === 'main' || options.orchestrator === true;
-  if (!orchestrator) return [];
-  const profiles = new Map(deck.nodes.flatMap((node) => (
-    cardEnabled(node)
-    && node.runtime.kind === 'hermes'
-    && PROFILE_PATTERN.test(node.runtime.profile)
-      ? [[node.id, node.runtime.profile] as const]
+  if (card.runtime.mode !== 'main' && options.orchestrator !== true) return [];
+  // Orange flow is Bot Mode authority. Blue magentic_option wiring belongs
+  // only to Magnetic worker selection and never broadens this roster.
+  const cards = new Map(deck.nodes.flatMap((candidate) => (
+    cardEnabled(candidate)
+    && candidate.runtime.kind === 'hermes'
+    && PROFILE_PATTERN.test(candidate.runtime.profile)
+      ? [[candidate.id, candidate] as const]
       : []
   )));
   return [...new Set(deck.edges.flatMap((edge) => {
     if (edge.enabled === false || edge.edgeType !== 'flow' || edge.source !== card.id) return [];
-    const profile = profiles.get(edge.target);
-    return profile ? [profile] : [];
+    const target = cards.get(edge.target);
+    return target && target.id !== card.id && target.runtime.mode !== 'magentic_one'
+      ? [target.runtime.profile]
+      : [];
   }))];
 }
 
@@ -183,6 +193,44 @@ function assertMaterialized(
   if (Object.keys(pending).length !== 1) {
     throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
   }
+}
+
+export async function ensureSavedCardProfile(
+  request: HermesRequest,
+  card: DeckCard,
+  botModeRoster?: string[],
+): Promise<HermesProfileState> {
+  const describeParams: Record<string, unknown> = { name: card.runtime.profile };
+  if (botModeRoster !== undefined) describeParams.bot_mode_roster = botModeRoster;
+  const describe = async (): Promise<HermesProfileState> => {
+    const profile = objectRecord(await request('profiles.describe', describeParams));
+    if (String(profile.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()) {
+      throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
+    }
+    return profile as HermesProfileState;
+  };
+  try {
+    return await describe();
+  } catch (error) {
+    if (gatewayErrorCode(error) !== 4064) throw error;
+  }
+  try {
+    const created = objectRecord(await request('profiles.create', {
+      name: card.runtime.profile,
+      description: String(card.title || ''),
+      soul: String(card.prompt || ''),
+      mirror_credentials: false,
+    }));
+    if (
+      created.ok !== true
+      || String(created.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()
+    ) {
+      throw new Error(`hermes_profile_creation_failed:${card.runtime.profile}`);
+    }
+  } catch (error) {
+    if (gatewayErrorCode(error) !== 4062) throw error;
+  }
+  return describe();
 }
 
 export async function materializeSavedCardProfile(

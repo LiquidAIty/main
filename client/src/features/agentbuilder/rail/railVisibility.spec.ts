@@ -47,14 +47,14 @@ function deck(connected: boolean): Pick<DeckDocument, 'nodes' | 'edges'> {
 describe('WorldView rail visibility', () => {
   it('derives the product surface from the saved subsystem attachment, not a Card id', () => {
     expect(isWorldViewCard(worldView as any)).toBe(true);
-    expect(deriveVisibleRailItems({ deck: deck(true), workspaceView: 'canvas' }).showWorldView)
+    expect(deriveVisibleRailItems({ deck: deck(true), workspaceView: 'canvas' }).showWorldview)
       .toBe(true);
   });
 
   it('keeps an unattached WorldView Card out of the rail until its workspace is active', () => {
-    expect(deriveVisibleRailItems({ deck: deck(false), workspaceView: 'canvas' }).showWorldView)
+    expect(deriveVisibleRailItems({ deck: deck(false), workspaceView: 'canvas' }).showWorldview)
       .toBe(false);
-    expect(deriveVisibleRailItems({ deck: deck(false), workspaceView: 'worldview' }).showWorldView)
+    expect(deriveVisibleRailItems({ deck: deck(false), workspaceView: 'worldview' }).showWorldview)
       .toBe(true);
   });
 });

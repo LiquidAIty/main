@@ -9,12 +9,13 @@ const DEFAULT_CHAT_WIDTH = 420;
 // product font stack. Keep the full CodeGraph control visible in integer CSS
 // pixels, then let Main overlap the graph underplane beyond that boundary.
 export const KNOWLEDGE_TAB_STRIP_SAFE_WIDTH = 401;
+export const CANVAS_INSPECTOR_WIDTH = 344;
 
 export const COMPANION_MIN_WIDTHS = Object.freeze({
   canvas: 520,
   knowledge: 520,
   trading: 520,
-  worldsignals: 360,
+  worldsignal: 360,
   worldview: 720,
 });
 
@@ -77,6 +78,22 @@ export function resolveHybridWorkspaceGeometry({
   };
 }
 
+export function shouldCloseCanvasInspector({
+  workspaceView,
+  inspectorOpen,
+  companionVisibleWidth,
+  inspectorWidth = CANVAS_INSPECTOR_WIDTH,
+}: {
+  workspaceView: string;
+  inspectorOpen: boolean;
+  companionVisibleWidth: number;
+  inspectorWidth?: number;
+}): boolean {
+  return workspaceView === 'canvas'
+    && inspectorOpen
+    && companionVisibleWidth <= Math.max(0, inspectorWidth) + COMPANION_MIN_WIDTHS.canvas;
+}
+
 type UseAgentBuilderWorkspaceLayoutArgs<T extends string> = {
   workspaceView: T;
 };
@@ -113,7 +130,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
   workspaceView,
 }: UseAgentBuilderWorkspaceLayoutArgs<T>) {
   const [standardChatPanelWidth, setStandardChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
-  const [worldViewChatPanelWidth, setWorldViewChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
+  const [worldviewChatPanelWidth, setWorldviewChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [splitterActive, setSplitterActive] = useState(false);
   const [splitterDragging, setSplitterDragging] = useState(false);
@@ -121,7 +138,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
   const resizeSessionRef = useRef<ResizeSession | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const chatPanelWidth = workspaceView === 'worldview'
-    ? worldViewChatPanelWidth
+    ? worldviewChatPanelWidth
     : standardChatPanelWidth;
   const companionMinWidth = companionMinimumWidth(workspaceView);
 
@@ -135,7 +152,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
 
   const setWidthForKind = useCallback((kind: 'standard' | 'worldview', width: number) => {
     if (kind === 'worldview') {
-      setWorldViewChatPanelWidth(width);
+      setWorldviewChatPanelWidth(width);
     } else {
       setStandardChatPanelWidth(width);
     }
@@ -218,7 +235,7 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
       const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
       setWorkspaceWidth(shellWidth);
       if (workspaceView === 'worldview') {
-        setWorldViewChatPanelWidth((current) => clampChatWidth(current));
+        setWorldviewChatPanelWidth((current) => clampChatWidth(current));
       } else {
         setStandardChatPanelWidth((current) => clampChatWidth(current));
       }

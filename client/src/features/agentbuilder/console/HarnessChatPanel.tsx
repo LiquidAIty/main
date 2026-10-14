@@ -10,12 +10,12 @@ type HarnessChatPanelProps = {
   workSurfaceLabel?: string;
 };
 
-/** Main's canonical Hermes Bot Chat over Builder's saved Card CLI. */
+/** Main's Project conversation over Builder's Project Card terminal. */
 export default function HarnessChatPanel({
   chat,
   terminal,
-  storageKey = 'liquidaity.main.surface.split.v1',
-  workSurfaceLabel = 'Card',
+  storageKey = 'builder.surface.split.v1',
+  workSurfaceLabel = 'Builder',
 }: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
@@ -33,8 +33,8 @@ export default function HarnessChatPanel({
       return DEFAULT_SPLIT_HEIGHT;
     }
   })();
-  // Main Bot Chat is the front door and opens fully. The saved split height is
-  // retained only for the user's next deliberate terminal interaction.
+  // Main chat is the ambient surface and opens fully. A previously chosen
+  // split is remembered only for the user's next Builder interaction.
   const heightRef = useRef(0);
   const lastOpenHeightRef = useRef(
     preferredSplitHeight > HANDLE_HEIGHT ? preferredSplitHeight : DEFAULT_SPLIT_HEIGHT,
@@ -108,7 +108,7 @@ export default function HarnessChatPanel({
       removeDragListeners();
       setDragging(false);
       window.requestAnimationFrame(() => {
-        window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
+        window.dispatchEvent(new Event('builder:terminal-layout-settled'));
       });
     };
     listenersRef.current = { move, up };
@@ -131,7 +131,7 @@ export default function HarnessChatPanel({
       setHeight(Math.max(0, total - HANDLE_HEIGHT));
     }
     window.requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
+      window.dispatchEvent(new Event('builder:terminal-layout-settled'));
     });
   }, [clampHeight, manualFullCli, setHeight]);
 
@@ -142,7 +142,6 @@ export default function HarnessChatPanel({
     <div
       ref={containerRef}
       data-testid="main-work-surface"
-      data-main-runtime="hermes-bot-mode"
       data-terminal-mode={terminalMode}
       style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >

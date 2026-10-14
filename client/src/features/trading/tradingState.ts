@@ -204,7 +204,7 @@ export type TradingEngineReadiness = {
     scheduler: string;
     diagnostics: string | null;
   };
-  subsystemAgents?: {
+  nativeAgents?: {
     enabled: boolean;
     authority: string;
     diagnostics: string | null;
@@ -216,6 +216,50 @@ export type EquityPoint = {
   valueUsd: number;
   drawdownUsd: number;
   drawdownPercent: number;
+};
+
+export type TradingLifecycleProof = {
+  lifecycleRunId: string;
+  cardId: string;
+  mode: 'local_backtest';
+  status: 'running' | 'completed' | 'failed';
+  paperOnly: boolean;
+  liveOrders: boolean;
+  modelProviderCalls: boolean;
+  symbol: string;
+  dataProvenance: {
+    kind?: string;
+    source?: string;
+    barCount?: number;
+    start?: string;
+    end?: string;
+    actor?: string;
+  };
+  bars?: MarketBar[];
+  portfolio?: {
+    initialValueUsd: number;
+    portfolioValueUsd: number | null;
+    cashUsd: number | null;
+    profitLossUsd: number | null;
+    maxDrawdownUsd: number;
+    maxDrawdownPercent: number;
+    equityCurve: EquityPoint[];
+  };
+  positions?: PaperPosition[];
+  orders?: Array<{
+    orderId: string;
+    symbol: string;
+    side: string | null;
+    quantity: number | null;
+    filledQuantity: number | null;
+    type: string | null;
+    status: string | null;
+  }>;
+  events: TradeEvent[];
+  artifacts: TradeArtifact[];
+  errorCode?: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 
 export type TradingState = {
@@ -256,6 +300,7 @@ export type TradingState = {
     cancel: { available: boolean; reason: string | null };
   };
   engine: TradingEngineReadiness;
+  lifecycleProof: TradingLifecycleProof | null;
   observedAt: string;
 };
 
@@ -383,7 +428,7 @@ function reconcileJob(job: TradeJob): TradeJob {
   };
 }
 
-/** Reconcile initial and streamed full snapshots by stable record IDs. Older events
+/** Reconcile initial and streamed full snapshots by native IDs. Older events
  * cannot replace a newer observation. */
 export function reconcileTradingState(
   current: TradingState | null,

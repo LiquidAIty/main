@@ -450,7 +450,7 @@ async def pty_ws(ws: WebSocket) -> None:
         await ws.close(code=1011)
         return
 
-    raw_resume = ws.query_params.get("resume") or None
+    raw_resume = ws.query_params.get("project_session") or ws.query_params.get("resume") or None
     resume = raw_resume
     profile = ws.query_params.get("profile") or None
     channel = _channel_or_close_code(ws)
@@ -476,6 +476,12 @@ async def pty_ws(ws: WebSocket) -> None:
                 await ws.send_json({"type": "resume", "id": resume})
 
     resolve_kwargs = {"resume": resume, "sidecar_url": sidecar_url, "profile": profile}
+    if "bot_mode_roster" in ws.query_params and "bot_mode_sessions" in ws.query_params:
+        resolve_kwargs.update(
+            bot_mode_scope=True,
+            bot_mode_roster=str(ws.query_params.get("bot_mode_roster") or ""),
+            bot_mode_sessions=str(ws.query_params.get("bot_mode_sessions") or ""),
+        )
     if active_session_file is not None:
         resolve_kwargs["active_session_file"] = str(active_session_file)
     # A picked workspace only applies to a FRESH chat; a resumed session keeps its own cwd.

@@ -18,25 +18,25 @@ const cesiumPlugin = typeof cesiumPluginModule === 'function'
   ? cesiumPluginModule
   : cesiumPluginModule.default!;
 
-const WORLDVIEW_CSS_ID = 'virtual:worldview-runtime-css';
+const WORLDVIEW_CSS_ID = 'virtual:worldview-native-css';
 const WORLDVIEW_CSS_RESOLVED_ID = `\0${WORLDVIEW_CSS_ID}`;
-const WORLDVIEW_MOUNT_ID = 'virtual:worldview-runtime-mount';
+const WORLDVIEW_MOUNT_ID = 'virtual:worldview-native-mount';
 const WORLDVIEW_MOUNT_RESOLVED_ID = `\0${WORLDVIEW_MOUNT_ID}`;
-const WORLDVIEW_BUNDLED_MOUNT_ID = 'virtual:worldview-runtime-mount-bundled';
+const WORLDVIEW_BUNDLED_MOUNT_ID = 'virtual:worldview-native-mount-bundled';
 const WORLDVIEW_PUBLIC_MOUNT_URL = 'http://127.0.0.1:4174/src/app/mount.js';
-const WORLDVIEW_SELECTOR = '#worldview-gods-eye-root';
+const WORLDVIEW_SELECTOR = '#worldview-native-root';
 
-export function worldviewRuntimeMountModuleSource(command: 'serve' | 'build'): string {
+export function worldviewNativeMountModuleSource(command: 'serve' | 'build'): string {
   const target = command === 'serve'
     ? WORLDVIEW_PUBLIC_MOUNT_URL
     : WORLDVIEW_BUNDLED_MOUNT_ID;
   const ignore = command === 'serve' ? '/* @vite-ignore */ ' : '';
-  return `export const importWorldViewMount = () => import(${ignore}${JSON.stringify(target)});`;
+  return `export const importNativeWorldViewMount = () => import(${ignore}${JSON.stringify(target)});`;
 }
 
-function worldviewRuntimeMountPlugin(command: 'serve' | 'build'): Plugin {
+function worldviewNativeMountPlugin(command: 'serve' | 'build'): Plugin {
   return {
-    name: 'worldview-runtime-mount-module',
+    name: 'worldview-native-mount-module',
     resolveId(id) {
       if (id === WORLDVIEW_MOUNT_ID) return WORLDVIEW_MOUNT_RESOLVED_ID;
       if (id === WORLDVIEW_BUNDLED_MOUNT_ID) {
@@ -46,7 +46,7 @@ function worldviewRuntimeMountPlugin(command: 'serve' | 'build'): Plugin {
     },
     load(id) {
       return id === WORLDVIEW_MOUNT_RESOLVED_ID
-        ? worldviewRuntimeMountModuleSource(command)
+        ? worldviewNativeMountModuleSource(command)
         : null;
     },
   };
@@ -100,18 +100,18 @@ function isInsideKeyframes(rule: { parent?: any }): boolean {
   return false;
 }
 
-function worldviewRuntimeCssPlugin(): Plugin {
+function worldviewNativeCssPlugin(): Plugin {
   return {
-    name: 'worldview-runtime-scoped-css',
+    name: 'worldview-native-scoped-css',
     resolveId(id) {
       return id === WORLDVIEW_CSS_ID ? WORLDVIEW_CSS_RESOLVED_ID : null;
     },
     async load(id) {
       if (id !== WORLDVIEW_CSS_RESOLVED_ID) return null;
       const source = fs.readFileSync(worldviewStylePath, 'utf8')
-        .replace(/url\(\s*(['"]?)\/(?!\/)/g, 'url($1/worldview-gods-eye/');
+        .replace(/url\(\s*(['"]?)\/(?!\/)/g, 'url($1/worldview-native/');
       const result = await postcss([{
-        postcssPlugin: 'worldview-runtime-root-scope',
+        postcssPlugin: 'worldview-native-root-scope',
         Rule(rule) {
           if (isInsideKeyframes(rule)) return;
           rule.selector = splitSelectors(rule.selector)
@@ -123,7 +123,7 @@ function worldviewRuntimeCssPlugin(): Plugin {
             && /\((?:min|max)-(?:width|height)\s*:/.test(atRule.params)
             && !/prefers-|pointer|hover|resolution|orientation/.test(atRule.params)) {
             atRule.name = 'container';
-            atRule.params = `worldview-gods-eye ${atRule.params}`;
+            atRule.params = `worldview-native ${atRule.params}`;
           }
         },
         Declaration(decl) {
@@ -147,7 +147,7 @@ ${WORLDVIEW_SELECTOR} {
   overflow: hidden;
   contain: layout paint style;
   isolation: isolate;
-  container: worldview-gods-eye / size;
+  container: worldview-native / size;
   transform: translateZ(0);
   color-scheme: dark;
   font-family: 'JetBrains Mono', monospace;
@@ -174,8 +174,8 @@ export default defineConfig(({ mode, command }) => {
     envDir: path.resolve(__dirname, '..'),
     plugins: [
       react(),
-      worldviewRuntimeCssPlugin(),
-      worldviewRuntimeMountPlugin(command),
+      worldviewNativeCssPlugin(),
+      worldviewNativeMountPlugin(command),
       cesiumPlugin({
         rebuildCesium: true,
         cesiumBuildRootPath: path.resolve(worldviewRoot, 'node_modules/cesium/Build'),
@@ -207,7 +207,7 @@ export default defineConfig(({ mode, command }) => {
         'react-dom',
       ],
       alias: [
-        { find: '@/lib/time', replacement: path.resolve(__dirname, '../HermesLatest/apps/desktop/src/lib/time.ts') },
+        { find: '@/lib/time', replacement: path.resolve(__dirname, '../Hermes/apps/desktop/src/lib/time.ts') },
       ],
     },
     server: {
@@ -222,14 +222,14 @@ export default defineConfig(({ mode, command }) => {
           rewrite: (p) => p.replace(/^\/cesium-ion/, ''),
         },
         // Direct-mounted WorldView still uses the controlled fork's Vite
-        // provider middleware for its data APIs and static models. It
+        // provider middleware for its native data APIs and static models. It
         // renders in this React document; this prefix is transport, not an
         // iframe/runtime page boundary.
-        '/worldview-gods-eye': {
+        '/worldview-native': {
           target: 'http://127.0.0.1:4174',
           changeOrigin: true,
           secure: false,
-          rewrite: (p) => p.replace(/^\/worldview-gods-eye/, ''),
+          rewrite: (p) => p.replace(/^\/worldview-native/, ''),
         },
         // WorldSignals (vendored app, own FastAPI backend on :8000). Its client
         // calls `${API_BASE}/api/...`; the embed mount sets API_BASE to this
@@ -260,11 +260,11 @@ export default defineConfig(({ mode, command }) => {
           secure: true,
           rewrite: (p) => p.replace(/^\/cesium-ion/, ''),
         },
-        '/worldview-gods-eye': {
+        '/worldview-native': {
           target: 'http://127.0.0.1:4174',
           changeOrigin: true,
           secure: false,
-          rewrite: (p) => p.replace(/^\/worldview-gods-eye/, ''),
+          rewrite: (p) => p.replace(/^\/worldview-native/, ''),
         },
         '/worldsignals-api': {
           target: 'http://127.0.0.1:8000',

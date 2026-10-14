@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import type { BuilderCanvasFocusRequest } from '../../../components/builder/BuilderCanvas';
 import type { DeckDocument } from '../../../types/agentgraph';
 
 type UseAgentBuilderSelectionArgs = {
@@ -12,6 +13,8 @@ export default function useAgentBuilderSelection({
   const [inspectorDrawerOpen, setInspectorDrawerOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
+    useState<BuilderCanvasFocusRequest | null>(null);
   const [tab, setTab] = useState<string>('Canvas');
   const [openDrawer, setOpenDrawer] = useState<null | 'navigation'>(null);
 
@@ -34,6 +37,8 @@ export default function useAgentBuilderSelection({
     setSelectedCardId,
     selectedEdgeId,
     setSelectedEdgeId,
+    builderCanvasFocusRequest,
+    setBuilderCanvasFocusRequest,
     tab,
     setTab,
     openDrawer,

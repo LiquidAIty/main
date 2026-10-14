@@ -39,8 +39,8 @@ class CardScript(BaseModel):
     """Optional data in the existing saved Card runtime-extension field."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    # Read old saved bytes, but never persist or consult the retired switch.
-    enabled: bool = Field(default=False, exclude=True)
+    # The visible Card editor owns whether a valid saved Script is active.
+    enabled: bool = False
     source: str = Field(default="", max_length=SCRIPT_MAX_BYTES)
     version: int = Field(default=1, ge=1)
     author: dict[str, str] = Field(default_factory=dict)
@@ -464,9 +464,8 @@ def saved_script(
 ) -> dict[str, Any]:
     """Normalize and structurally validate one saved Card Python recipe.
 
-    The legacy ``enabled`` byte remains readable, but it is not retained or
-    consulted. Blank or invalid source is inert; valid source is the
-    complete activation condition for the Hermes child-process owner.
+    Blank or invalid source is inert. A valid Script is presented only when
+    the saved Card's visible activation control is enabled.
     """
 
     try:
@@ -533,7 +532,7 @@ def script_presentation(
         selected_tools=selected_tools,
         default_agent_tools=default_agent_tools,
     )
-    if script["lastValidation"]["status"] == "valid":
+    if script["enabled"] and script["lastValidation"]["status"] == "valid":
         return {
             "mode": "script",
             # A Script takes over only its literal handles. Other exact

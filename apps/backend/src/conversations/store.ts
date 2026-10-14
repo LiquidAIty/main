@@ -1,7 +1,7 @@
 // Runtime histories remain owned by their exact saved Card sessions.
-// This store persists only the shared-chat projection of user-authored turns and
-// completed provider replies so the UI can retain truthful cross-Card speaker
-// identity. Python remains the sole owner of saved Card Runs and their IDFs.
+// This store persists Main's application conversation: user-authored turns and
+// completed provider replies with truthful Card speaker identity. Python remains
+// the sole owner of saved Card Runs and their IDFs.
 import { randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { pool } from '../db/pool';
@@ -26,7 +26,7 @@ export type VisibleActivity = {
   address?: string;
 };
 
-export type SharedChatParticipant = {
+export type ConversationParticipant = {
   kind: 'user' | 'card';
   label: string;
   cardId?: string;
@@ -34,12 +34,12 @@ export type SharedChatParticipant = {
   address?: string;
 };
 
-export type SharedChatMessageWrite = {
+export type ConversationMessageWrite = {
   messageId?: string;
   role: 'user' | 'assistant';
   content: string;
-  speaker: SharedChatParticipant;
-  target?: SharedChatParticipant;
+  speaker: ConversationParticipant;
+  target?: ConversationParticipant;
   providerContinuationRef?: string | null;
   providerMessageId?: string | null;
 };
@@ -62,15 +62,6 @@ export type ConversationMessage = {
   linkedEvidenceIds?: string[];
   visibleActivities?: VisibleActivity[];
   seq: number;
-};
-
-export type ProjectConversation = {
-  conversationId: string;
-  projectId: string;
-  title?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  archivedAt?: string | null;
 };
 
 function projectLookup(projectId: string, parameterIndex = 1): { clause: string; value: string } {
@@ -116,17 +107,6 @@ function mapMessage(row: Record<string, any>): ConversationMessage {
   };
 }
 
-function mapConversation(row: Record<string, any>): ProjectConversation {
-  return {
-    projectId: String(row.project_id),
-    conversationId: String(row.conversation_id),
-    title: row.title == null ? null : String(row.title),
-    createdAt: iso(row.created_at),
-    updatedAt: iso(row.updated_at),
-    archivedAt: row.archived_at == null ? null : iso(row.archived_at),
-  };
-}
-
 async function withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
@@ -157,7 +137,7 @@ async function resolveProjectId(
 
 function participantActivity(
   kind: 'shared_chat_speaker' | 'shared_chat_target',
-  participant: SharedChatParticipant,
+  participant: ConversationParticipant,
 ): VisibleActivity {
   return {
     kind,
@@ -170,16 +150,16 @@ function participantActivity(
 }
 
 /**
- * Append one completed shared-chat turn. If this is the first projected turn,
+ * Append one completed Main-conversation turn. If this is the first projected turn,
  * the caller may supply the already-read Main history as a one-time seed.
  * The transaction locks the existing conversation row so speaker ordering and
  * sequence identities remain exact under concurrent requests.
  */
-export async function appendSharedConversationTurn(input: {
+export async function appendConversationTurn(input: {
   projectId: string;
   conversationId: string;
-  seedMessages?: SharedChatMessageWrite[];
-  messages: SharedChatMessageWrite[];
+  seedMessages?: ConversationMessageWrite[];
+  messages: ConversationMessageWrite[];
 }): Promise<ConversationMessage[]> {
   if (!input.conversationId.trim() || input.messages.length === 0) {
     throw new Error('shared_conversation_turn_invalid');
@@ -259,10 +239,10 @@ export async function appendSharedConversationTurn(input: {
  * The existing conversation-row lock is the serialization owner, so concurrent
  * completion observers cannot allocate duplicate sequence numbers or messages.
  */
-export async function appendSharedConversationReplyOnce(input: {
+export async function appendConversationReplyOnce(input: {
   projectId: string;
   conversationId: string;
-  message: SharedChatMessageWrite & { role: 'assistant'; providerMessageId: string };
+  message: ConversationMessageWrite & { role: 'assistant'; providerMessageId: string };
 }): Promise<{ inserted: boolean; message: ConversationMessage }> {
   const providerMessageId = input.message.providerMessageId.trim();
   if (!input.conversationId.trim() || !providerMessageId || !input.message.content.trim()) {
@@ -332,19 +312,6 @@ export async function appendSharedConversationReplyOnce(input: {
     );
     return { inserted: true, message: mapMessage(result.rows[0]) };
   });
-}
-
-export async function listConversations(projectId: string): Promise<ProjectConversation[]> {
-  const lookup = projectLookup(projectId);
-  const result = await pool.query(
-    `SELECT conversation.*
-     FROM ${CONVERSATIONS_TABLE} AS conversation
-     JOIN ${PROJECTS_TABLE} AS project ON project.id = conversation.project_id
-     WHERE project.${lookup.clause}
-     ORDER BY conversation.updated_at DESC`,
-    [lookup.value],
-  );
-  return result.rows.map(mapConversation);
 }
 
 export async function getConversationMessages(

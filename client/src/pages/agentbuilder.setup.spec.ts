@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import type { CardRuntime, DeckCard, DeckDocument } from '../types/agentgraph';
+import type { AgentCardInstance, CardRuntime, DeckDocument } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
 import {
@@ -17,8 +17,8 @@ import {
 function createCard(
   id: string,
   runtime: CardRuntime,
-  overrides: Partial<DeckCard> = {},
-): DeckCard {
+  overrides: Partial<AgentCardInstance> = {},
+): AgentCardInstance {
   return {
     id,
     kind: 'agent',
@@ -32,7 +32,7 @@ function createCard(
   };
 }
 
-function createDeck(nodes: DeckCard[]): DeckDocument {
+function createDeck(nodes: AgentCardInstance[]): DeckDocument {
   return {
     id: 'deck_setup',
     name: 'Deck Setup',
@@ -94,18 +94,13 @@ describe('agentbuilder authoring flow', () => {
       modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
       skills: ['agent-builder-inspection'],
       toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
-      tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'canvas.upsert_wire',
-        'cbm.search_graph', 'cbm.search_code', 'cbm.trace_path', 'cbm.get_code_snippet',
-        'cbm.check_index_coverage', 'engraphis_recall_context', 'engraphis_get_memory',
-        'engraphis_discover_actions', 'engraphis_execute_read', 'engraphis_execute_action',
-        'graphiti.search_memory_facts', 'graphiti.search_nodes', 'graphiti.get_episodes',
-        'graphiti.get_episode_entities', 'graphiti.get_entity_edge',
-        'graphiti.build_communities', 'graphiti.delete_episode',
-        'graphiti.delete_entity_edge', 'graphiti.clear_graph'],
+      tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'cbm.search_graph',
+        'cbm.trace_path', 'cbm.get_code_snippet', 'cbm.check_index_coverage', 'cbm.detect_changes',
+        'cbm.search_code', 'cbm.query_graph'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');
     expect(INITIAL_DECK.nodes
-      .filter((node) => !['builder', 'card_main_chat'].includes(node.id))
+      .filter((node) => node.id !== 'builder')
       .every((node) => (node.runtimeOptions?.tools || [])
         .every((tool) => !tool.startsWith('cbm.')))).toBe(true);
     expect(INITIAL_AGENT_TEMPLATES.every((template) => (template.tools || [])
@@ -200,7 +195,7 @@ describe('agentbuilder authoring flow', () => {
       (node) => node.id === 'card_magentic',
     );
     if (!orchestratorNode) {
-      throw new Error('missing_magnetic');
+      throw new Error('missing_magentic');
     }
 
     const truncatedSystemDeck: DeckDocument = {
@@ -212,7 +207,7 @@ describe('agentbuilder authoring flow', () => {
         {
           ...JSON.parse(JSON.stringify(orchestratorNode)),
           id: 'card_magentic',
-          title: 'Magnetic',
+          title: 'Magentic-One',
         },
       ],
       edges: [],
@@ -342,7 +337,7 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('preserves saved cards and prompts instead of applying hidden tombstones', () => {
-    const retiredCodeCard: DeckCard = {
+    const retiredCodeCard: AgentCardInstance = {
       id: 'card_code_workbench',
       kind: 'agent',
       templateId: 'template_code_workbench',

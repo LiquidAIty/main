@@ -29,12 +29,14 @@ def _bot_mode_delivery_text(response: Any, *, successful: bool) -> Any:
 
 
 def _is_bot_mode_session(session: dict) -> bool:
-    """Whether this completion belongs to the canonical Bot Chat surface.
+    """Whether this completion belongs to a roster-scoped or canonical Bot surface.
 
     Same resolution as the system-prompt gate: the agent's title hint first (the DB
     title lands after turn 1 and ``pending_title`` is cleared once it does), then the
     live title from the session store.
     """
+    if isinstance(session.get("bot_mode_roster"), list):
+        return True
     from tools.bot_mode_probe import BOT_CHAT_TITLE
     hint = str(getattr(session.get("agent"), "_session_title_hint", "") or "").strip()
     if hint:  # any explicit hint decides; only an empty one costs a session-store read

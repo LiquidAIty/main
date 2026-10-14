@@ -38,20 +38,19 @@ export type CardSubsystemAttachment = {
   configurationSchema?: string | null;
 };
 
-export type SavedCardConfiguration = {
-  autoTools?: boolean;
-  autoModel?: boolean;
+export type AgentCardRuntimeOptions = {
   /** Saved outbound orange Card-to-Card delegation authority. Main has this
    * authority by its runtime role; another non-Magnetic Card must opt in. */
   orchestrator?: boolean;
-  /** Temporary Hermes children for one Card turn. This is unrelated to
+  /** Temporary Hermes child agents for one Card turn. This is unrelated to
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
-   * Python/Hermes capability. The receiving Card's IDF carries this exact value. */
+   * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;
   subsystems?: CardSubsystemAttachment[] | null;
   script?: {
+    enabled: boolean;
     source: string;
     version: number;
     author?: Record<string, string>;
@@ -75,21 +74,36 @@ export type SavedCardConfiguration = {
       compiledHash?: string;
     };
     lastValidation?: Record<string, unknown>;
+    hermesSupport?: Record<string, unknown>;
+    rollback?: Record<string, unknown>;
   } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   providerModelId?: string | null;
+  /** Let one Run-scoped Jev Choice select among eligible configured models.
+   * The saved model remains the durable default and is never overwritten. */
+  autoModel?: boolean;
+  /** Let one Run-scoped Jev request narrow this Card's own authorized tools.
+   * It never grants tools or changes the saved selection. */
+  autoTools?: boolean;
+  /** Optional extra evidence for Card-scoped Jev decisions. Required request
+   * and saved-Card inputs remain present for every mode. */
+  jevContext?: {
+    autoTools?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
+    modelChoice?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
+  } | null;
   openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded Hermes delegated children and
-   * background skill review. Hermes profile/readback remains effective truth. */
+   * background skill review. Hermes profile readback remains effective truth. */
   subagentModel?: {
     provider: string;
     accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
     modelKey: string;
     providerModelId: string;
   } | null;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null;
   tools?: string[] | null;
   /** Saved skill identities. Runtime homes materialize/cache them separately. */
   skills?: string[] | null;
@@ -101,7 +115,7 @@ export type SavedCardConfiguration = {
 
 export type DeckNodeKind = 'agent';
 
-export type CardTemplate = {
+export type AgentTemplate = {
   id: string;
   name: string;
   promptTemplate?: string | null;
@@ -110,7 +124,7 @@ export type CardTemplate = {
   tools: string[];
 };
 
-export type DeckCard = {
+export type AgentCardInstance = {
   id: string;
   /** Current server-owned immutable revision identity returned with a loaded deck. */
   _cardRevisionId?: string;
@@ -121,17 +135,16 @@ export type DeckCard = {
   /** Stable LiquidAIty Card-to-Card capability description. */
   role?: string | null;
   prompt?: string | null;
-  /** Application-owned result validation and presentation contract. */
+  /** LiquidAIty-owned result validation/presentation contract. */
   outputContract?: unknown;
   runtime: CardRuntime;
-  runtimeOptions?: SavedCardConfiguration | null;
+  runtimeOptions?: AgentCardRuntimeOptions | null;
   parentGraphId?: string | null;
   tools?: string[];
   title: string;
   subtitle?: string;
   position: { x: number; y: number };
-  overrides?: Partial<CardTemplate>;
-  /** Legacy persisted display value. Run state comes from the Run ledger; new Cards omit this field. */
+  overrides?: Partial<AgentTemplate>;
   status?: 'idle' | 'ready' | 'running' | 'error';
 };
 
@@ -148,9 +161,9 @@ export type DeckEdge = {
 export type DeckDocument = {
   id: string;
   name: string;
-  projectCodeFolder?: string | null;
+  workspaceRoot?: string | null;
   promptTemplates: PromptTemplate[];
-  nodes: DeckCard[];
+  nodes: AgentCardInstance[];
   edges: DeckEdge[];
   version: number;
 };

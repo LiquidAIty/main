@@ -7,6 +7,7 @@ import useAgentBuilderWorkspaceLayout, {
   KNOWLEDGE_TAB_STRIP_SAFE_WIDTH,
   companionMinimumWidth,
   resolveHybridWorkspaceGeometry,
+  shouldCloseCanvasInspector,
   workspaceCollisionWidth,
 } from './useAgentBuilderWorkspaceLayout';
 
@@ -106,18 +107,30 @@ describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
     });
   });
 
+  it('closes the open Canvas inspector before the chat reaches the overlap threshold', () => {
+    expect(shouldCloseCanvasInspector({
+      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 865,
+    })).toBe(false);
+    expect(shouldCloseCanvasInspector({
+      workspaceView: 'canvas', inspectorOpen: true, companionVisibleWidth: 864,
+    })).toBe(true);
+    expect(shouldCloseCanvasInspector({
+      workspaceView: 'worldview', inspectorOpen: true, companionVisibleWidth: 0,
+    })).toBe(false);
+  });
+
   it('uses source-backed surface-specific minimums', () => {
     expect(companionMinimumWidth('canvas')).toBe(520);
     expect(companionMinimumWidth('knowledge')).toBe(520);
     expect(companionMinimumWidth('trading')).toBe(520);
-    expect(companionMinimumWidth('worldsignals')).toBe(360);
+    expect(companionMinimumWidth('worldsignal')).toBe(360);
     expect(companionMinimumWidth('worldview')).toBe(720);
   });
 
   it('applies the tab-strip threshold only to the knowledge graph workspace', () => {
     expect(workspaceCollisionWidth('knowledge', 520)).toBe(401);
     expect(workspaceCollisionWidth('canvas', 520)).toBe(520);
-    expect(workspaceCollisionWidth('worldsignals', 360)).toBe(360);
+    expect(workspaceCollisionWidth('worldsignal', 360)).toBe(360);
     expect(workspaceCollisionWidth('worldview', 720)).toBe(720);
   });
 

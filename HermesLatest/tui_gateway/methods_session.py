@@ -341,12 +341,43 @@ def _session_bot_roster(params: dict, profile_home) -> list[str] | None:
     return _canonical_bot_roster(profile_dir, params.get("bot_mode_roster") or [])
 
 
-def _apply_session_bot_roster(session: dict, roster: list[str] | None) -> None:
+def _session_bot_sessions(params: dict, roster: list[str] | None) -> dict[str, str] | None:
+    """Exact Project-session destination per roster profile, or ``None`` when omitted."""
+    if "bot_mode_sessions" not in params:
+        return None
+    raw = params.get("bot_mode_sessions")
+    if not isinstance(raw, dict) or roster is None:
+        raise ValueError("bot_mode_sessions requires the session bot_mode_roster")
+    result: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError("bot_mode_sessions entries must map profiles to session ids")
+        profile, session_id = key.strip(), value.strip()
+        if profile != key or session_id != value or not session_id or len(session_id) > 256:
+            raise ValueError("bot_mode_sessions entries must map profiles to session ids")
+        canonical = next((name for name in roster if name.lower() == profile.lower()), "")
+        if not canonical or canonical in result:
+            raise ValueError("bot_mode_sessions must match the session bot_mode_roster")
+        result[canonical] = session_id
+    if set(result) != set(roster) or len(set(result.values())) != len(result):
+        raise ValueError("bot_mode_sessions must exactly match the session bot_mode_roster")
+    return result
+
+
+def _apply_session_bot_roster(
+    session: dict,
+    roster: list[str] | None,
+    sessions: dict[str, str] | None = None,
+) -> None:
     if roster is None:
         return
     session["bot_mode_roster"] = list(roster)
+    if sessions is not None:
+        session["bot_mode_sessions"] = dict(sessions)
     if (agent := session.get("agent")) is not None:
         agent._bot_mode_roster = list(roster)
+        if isinstance(session.get("bot_mode_sessions"), dict):
+            agent._bot_mode_sessions = dict(session["bot_mode_sessions"])
 
 
 def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> dict:
@@ -356,6 +387,7 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
     profile_home = _profile_home(profile := (params.get("profile") or "").strip() or None)
     try:
         bot_mode_roster = _session_bot_roster(params, profile_home)
+        bot_mode_sessions = _session_bot_sessions(params, bot_mode_roster)
     except ValueError as exc:
         return _err(rid, -32602, str(exc))
     # Reject an incoherent model×provider pair BEFORE any state exists: minting it only defers the
@@ -409,6 +441,7 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
             "follow_profile_config": _flag(params, "follow_profile_config"),
             "profile_home": str(profile_home) if profile_home is not None else None,
             "bot_mode_roster": bot_mode_roster,
+            "bot_mode_sessions": bot_mode_sessions,
             "running": False, "session_key": key, "show_reasoning": _load_show_reasoning(), "source": source,
             "slash_worker": None, "tool_progress_mode": _load_tool_progress_mode(), "tool_started_at": {},
             "transport": current_transport() or _stdio_transport,
@@ -576,8 +609,9 @@ class _Resume:
         self.bot_mode_roster_error = None
         try:
             self.bot_mode_roster = _session_bot_roster(params, self.profile_home)
+            self.bot_mode_sessions = _session_bot_sessions(params, self.bot_mode_roster)
         except ValueError as exc:
-            self.bot_mode_roster, self.bot_mode_roster_error = None, str(exc)
+            self.bot_mode_roster, self.bot_mode_sessions, self.bot_mode_roster_error = None, None, str(exc)
         self.lazy, self.defer_history = _flag(params, "lazy"), _flag(params, "defer_history")
         # Desktop hydrates over REST; suppress the duplicate WS copy only when asked.
         self.omit_messages, self.eager_build = _flag(params, "omit_messages"), _flag(params, "eager_build")
@@ -603,6 +637,9 @@ class _Resume:
             close_on_disconnect=_flag(self.params, "close_on_disconnect"),
             profile_home=self.profile_home, explicit_cwd=bool(self.profile_resume_cwd),
             bot_mode_roster=self.bot_mode_roster, **extra)
+        record["bot_mode_sessions"] = (
+            dict(self.bot_mode_sessions) if self.bot_mode_sessions is not None else None
+        )
         if follows_profile:
             record.update(
                 follow_profile_config=True,
@@ -670,7 +707,7 @@ def _resume_live_unpersisted(ctx: _Resume, live_sid: str, live: dict) -> dict:
         else:
             _cancel_ws_orphan_reap(live_sid)
     messages = ctx.messages(live.get("history") or [])  # count the wire, as every other resume path does
-    _apply_session_bot_roster(live, ctx.bot_mode_roster)
+    _apply_session_bot_roster(live, ctx.bot_mode_roster, ctx.bot_mode_sessions)
     # The chat's own pick, not the profile default: a warm reattach that reported `_resolve_model()` flipped the
     # Desktop picker on every reload while the session was still live, and back once it had been dropped.
     model, provider = _live_session_identity(live)
@@ -781,7 +818,7 @@ def _resume_reuse_live_locked(ctx: _Resume, sid: str, session: dict) -> dict:
     if (refusal := _reattach_refusal(ctx.rid, sid, session)) is not None:
         return refusal
     _cancel_ws_orphan_reap(sid)  # unconditionally: the fast path must never race the reap Timer
-    _apply_session_bot_roster(session, ctx.bot_mode_roster)
+    _apply_session_bot_roster(session, ctx.bot_mode_roster, ctx.bot_mode_sessions)
     payload = _live_session_payload(sid, session, cols=ctx.cols, touch=True, omit_messages=ctx.omit_messages,
                                     transport=current_transport() or _stdio_transport)
     payload["resumed"] = ctx.target
@@ -908,7 +945,8 @@ def _resume_eager(ctx: _Resume) -> dict:
             with _profile_build_scope(ctx.profile_home):
                 _init_session(sid, ctx.target, agent, history, cols=ctx.cols, cwd=ctx.profile_resume_cwd,
                               session_db=ctx.db, source=source, explicit_cwd=bool(ctx.profile_resume_cwd),
-                              bot_mode_roster=ctx.bot_mode_roster)
+                              bot_mode_roster=ctx.bot_mode_roster,
+                              bot_mode_sessions=ctx.bot_mode_sessions)
                 # Ownership TRANSFER: the agent holds the handle for life (AIAgent.close() releases it). The
                 # owns_db drop is UNCONDITIONAL — the session is registered against the handle, so the finally
                 # must not close it even if the transfer was refused (a leak beats "closed database" every
@@ -1053,12 +1091,34 @@ def _(rid, params: dict, session: dict) -> dict:
     """Attach the frontend to a live TUI session without closing the previously focused one."""
     sid = str(params.get("session_id") or "")
     try:
+        roster = _session_bot_roster(params, session.get("profile_home"))
+        bot_sessions = _session_bot_sessions(params, roster)
         _apply_session_bot_roster(
             session,
-            _session_bot_roster(params, session.get("profile_home")),
+            roster,
+            bot_sessions,
         )
     except ValueError as exc:
         return _err(rid, -32602, str(exc))
+    if bot_sessions is not None:
+        if (limit_message := _ensure_active_session_slot(sid, session)) is not None:
+            reason = getattr(limit_message, "reason", None)
+            return _err(rid, 4090, str(limit_message), {"reason": reason} if reason else None)
+    expected_fingerprint = str(
+        params.get("expected_profile_capability_fingerprint") or ""
+    ).strip() or None
+    if expected_fingerprint:
+        if session.get("agent") is None:
+            _start_agent_build(sid, session)
+            ready = session.get("agent_ready")
+            if ready is None or not ready.wait(timeout=30.0):
+                return _err(rid, 5032, "agent is still starting")
+            if session.get("agent") is None:
+                return _err(rid, 5032, str(session.get("agent_error") or "agent initialization failed"))
+        try:
+            _sync_profile_capabilities(sid, session, expected_fingerprint)
+        except RuntimeError as exc:
+            return _err(rid, 5064, str(exc))
     # Only the rebind is atomic with grace expiry; the payload (a DB history read unless
     # ``omit_messages``) must not hold the process-wide resume lock.
     with _session_resume_lock:

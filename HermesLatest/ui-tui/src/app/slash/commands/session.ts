@@ -1,6 +1,7 @@
 import { compactNumber } from '@hermes/shared/format'
 
 import { usageBarsText } from '../../../components/overlayPrimitives.js'
+import { PROJECT_SESSION_MODE } from '../../../config/env.js'
 import { introMsg, toTranscriptMessages } from '../../../domain/messages.js'
 import { sessionScopedModelArg, TUI_SESSION_MODEL_FLAG } from '../../../domain/slash.js'
 import type {
@@ -185,6 +186,9 @@ export const sessionCommands: SlashCommand[] = [
     help: 'browse, switch, or resume sessions',
     name: 'sessions',
     run: (arg, ctx) => {
+      if (PROJECT_SESSION_MODE) {
+        return ctx.transcript.sys('This Card terminal follows its Project session.')
+      }
       const trimmed = arg.trim()
 
       // A new *live* session keeps the current one running in the background

@@ -74,6 +74,7 @@ class PromptSubmitParams(SessionParams):
     tool_endpoint: str | None = None
     tool_authorization: str | None = None
     bot_mode_roster: list[str] | None = None
+    bot_mode_sessions: dict[str, str] | None = None
     expected_profile_capability_fingerprint: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{12}$"
     )

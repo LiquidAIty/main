@@ -47,6 +47,10 @@ export function getLastFrontendCrash(): FrontendCrashRecord | null {
   return lastCrashRecord;
 }
 
+export function clearFrontendCrash(): void {
+  lastCrashRecord = null;
+}
+
 export function reportFrontendCrash(
   partial: Omit<
     FrontendCrashRecord,

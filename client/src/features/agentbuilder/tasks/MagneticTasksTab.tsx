@@ -33,11 +33,9 @@ export const HERMES_TASK_STATUSES = [
 
 export type HermesTaskStatus = (typeof HERMES_TASK_STATUSES)[number];
 
-type HermesAttempt = {
+type HermesTaskAttempt = {
   runId: string | number;
   status: string;
-  startedAt: string | number | null;
-  endedAt: string | number | null;
 };
 
 export type MagneticHermesTask = {
@@ -46,7 +44,7 @@ export type MagneticHermesTask = {
   assignee: string | null;
   status: HermesTaskStatus;
   dependencyIds: string[];
-  latestAttempt: HermesAttempt | null;
+  latestAttempt: HermesTaskAttempt | null;
   resultAvailable: boolean;
   handoffSummary: string | null;
 };
@@ -80,7 +78,7 @@ function exactBoundedText(value: unknown, limit: number): string | null {
   return value;
 }
 
-function hermesStatus(value: unknown): HermesTaskStatus | null {
+function hermesTaskStatus(value: unknown): HermesTaskStatus | null {
   const candidate = text(value).toLowerCase();
   return VALID_TASK_STATUSES.has(candidate) ? candidate as HermesTaskStatus : null;
 }
@@ -112,7 +110,7 @@ export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null 
       if (!entry || typeof entry !== 'object') return [];
       const task = entry as Record<string, unknown>;
       const taskId = text(task.taskId);
-      const status = hermesStatus(task.status);
+      const status = hermesTaskStatus(task.status);
       if (!taskId || !status) return [];
       const rawAttempt = task.latestAttempt;
       const attempt = rawAttempt && typeof rawAttempt === 'object'
@@ -139,12 +137,6 @@ export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null 
           ? {
             runId: attemptRunId,
             status: text(attempt.status),
-            startedAt: typeof attempt.startedAt === 'string' || typeof attempt.startedAt === 'number'
-              ? attempt.startedAt
-              : null,
-            endedAt: typeof attempt.endedAt === 'string' || typeof attempt.endedAt === 'number'
-              ? attempt.endedAt
-              : null,
           }
           : null,
         resultAvailable: task.resultAvailable === true,
@@ -156,7 +148,7 @@ export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null 
     runId,
     hermesRootId: text(source.hermesRootId) || null,
     state: text(source.state),
-    hermesStatus: hermesStatus(source.hermesStatus),
+    hermesStatus: hermesTaskStatus(source.hermesStatus),
     hermesTasks: tasks,
   };
 }

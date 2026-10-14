@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
-import type { CardEditorConfiguration } from '../cardConfigurationEditor';
-import { readSavedCardEditorValues } from '../inspector/savedCardEditorValues';
+import type { AgentManagerLocalConfig } from '../../../components/AgentManager';
+import { resolveEffectiveAgent } from '../../../components/builder/deckRuntime';
 import type {
   DeckDocument,
 } from '../../../types/agentgraph';
@@ -44,24 +44,25 @@ export default function useAgentBuilderCardEditor({
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
-  const savedCardEditorValues = useMemo(
+  const effectiveAgent = useMemo(
     () =>
       selectedCard
-        ? readSavedCardEditorValues(selectedCard)
+        ? resolveEffectiveAgent(selectedCard)
         : null,
     [selectedCard],
   );
-  const selectedCardConfig = useMemo<CardEditorConfiguration | null>(() => {
+  const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
     if (!selectedCard) return null;
     const runtimeOptions = selectedCard.runtimeOptions || {};
     const resolvedProvider =
-      runtimeOptions.provider ?? savedCardEditorValues?.provider ?? null;
+      runtimeOptions.provider ?? effectiveAgent?.provider ?? null;
     return {
       runtime: selectedCard.runtime,
       runtime_options: runtimeOptions,
       parent_graph_id: selectedCard.parentGraphId ?? null,
       role: selectedCard.role ?? null,
       output_contract: selectedCard.outputContract ?? null,
+      workspace_root: deck.workspaceRoot ?? null,
       provider:
         resolvedProvider === 'openai' ||
         resolvedProvider === 'openrouter' ||
@@ -74,21 +75,22 @@ export default function useAgentBuilderCardEditor({
         || runtimeOptions.accessMode === 'openrouter-api'
           ? runtimeOptions.accessMode
           : '',
-      model_key: runtimeOptions.modelKey ?? savedCardEditorValues?.model ?? null,
+      model_key: runtimeOptions.modelKey ?? effectiveAgent?.model ?? null,
+      reasoning_effort: runtimeOptions.reasoningEffort ?? null,
       prompt_template: selectedCard.prompt || '',
       tools: Array.isArray(runtimeOptions.tools)
         ? runtimeOptions.tools
         : Array.isArray(selectedCard.tools)
           ? selectedCard.tools
-          : savedCardEditorValues?.tools || [],
+          : effectiveAgent?.tools || [],
       skills: normalizeStringList(runtimeOptions.skills),
       toolsets: normalizeStringList(runtimeOptions.toolsets),
       mcp_connection_ids: normalizeStringList(runtimeOptions.mcpConnectionIds),
     };
-  }, [savedCardEditorValues, selectedCard]);
+  }, [deck.workspaceRoot, effectiveAgent, selectedCard]);
 
   const handleSaveSelectedCardConfig = useCallback(
-    async (nextConfig: CardEditorConfiguration) => {
+    async (nextConfig: AgentManagerLocalConfig) => {
       if (!selectedCard) throw new Error("No Card is selected.");
 
       const update = (currentDeck: DeckDocument): DeckDocument => {
@@ -110,12 +112,22 @@ export default function useAgentBuilderCardEditor({
           || nextConfig.access_mode === 'openrouter-api'
             ? nextConfig.access_mode
             : null;
+        const nextReasoningEffort =
+          nextConfig.reasoning_effort === 'low' ||
+          nextConfig.reasoning_effort === 'medium' ||
+          nextConfig.reasoning_effort === 'high' ||
+          nextConfig.reasoning_effort === 'xhigh' ||
+          nextConfig.reasoning_effort === 'max' ||
+          nextConfig.reasoning_effort === 'ultra'
+            ? nextConfig.reasoning_effort
+            : null;
         const nextTools = normalizeStringList(nextConfig.tools);
         const nextRuntimeOptions = normalizeRuntimeOptions({
           ...(nextConfig.runtime_options || {}),
           provider: nextProvider,
           accessMode: nextAccessMode,
           modelKey: nextModel,
+          reasoningEffort: nextReasoningEffort,
           tools: nextTools,
           skills: normalizeStringList(nextConfig.skills),
           toolsets: normalizeStringList(nextConfig.toolsets),
@@ -202,6 +214,7 @@ export default function useAgentBuilderCardEditor({
   );
 
   return {
+    effectiveAgent,
     handleRenameSelectedCard,
     handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,

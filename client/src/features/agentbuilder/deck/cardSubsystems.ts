@@ -1,9 +1,9 @@
-import type { CardSubsystemAttachment, SavedCardConfiguration } from '../../../types/agentgraph';
+import type { AgentCardRuntimeOptions, CardSubsystemAttachment } from '../../../types/agentgraph';
 
 const CAPABILITIES = new Set(['state', 'events', 'commands', 'artifacts', 'readiness']);
 
 export function readCardSubsystemAttachments(
-  runtimeOptions: SavedCardConfiguration | null | undefined,
+  runtimeOptions: AgentCardRuntimeOptions | null | undefined,
 ): CardSubsystemAttachment[] {
   const raw = runtimeOptions?.subsystems;
   if (!Array.isArray(raw)) return [];

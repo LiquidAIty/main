@@ -625,8 +625,15 @@ def _(rid, params: dict) -> dict:
             if "bot_mode_roster" in params
             else None
         )
+        bot_mode_sessions = (
+            _session_bot_sessions(params, bot_mode_roster)
+            if "bot_mode_sessions" in params
+            else None
+        )
     except ValueError as exc:
         return _err(rid, -32602, str(exc))
+    if bot_mode_roster is not None:
+        _apply_session_bot_roster(session, bot_mode_roster, bot_mode_sessions)
     if expected_profile_capability_fingerprint and (
         len(expected_profile_capability_fingerprint) != 12
         or any(character not in "0123456789abcdef"

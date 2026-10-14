@@ -26,11 +26,43 @@ const parseToggle = (v?: string): boolean | null => {
 export const TERMUX_TUI_MODE = isTermuxTuiMode()
 
 export const STARTUP_RESUME_ID = (process.env.HERMES_TUI_RESUME ?? '').trim()
+export const STARTUP_PROFILE = (process.env.HERMES_TUI_PROFILE ?? '').trim()
 export const STARTUP_QUERY = (process.env.HERMES_TUI_QUERY ?? '').trim()
 export const STARTUP_IMAGE = (process.env.HERMES_TUI_IMAGE ?? '').trim()
 // Workspace the dashboard user picked for a fresh chat (`/api/pty?cwd=`). Sent as the explicit
 // `cwd` of session.create: the in-memory gateway's own cwd is the dashboard's launch dir.
 export const STARTUP_WORKSPACE_CWD = (process.env.HERMES_TUI_CWD ?? '').trim()
+
+export const STARTUP_BOT_MODE_SCOPE = truthy(process.env.HERMES_TUI_BOT_MODE_SCOPE)
+
+const botProfilePattern = /^[a-z0-9][a-z0-9_-]{0,63}$/
+
+const botRoster = (process.env.HERMES_TUI_BOT_MODE_ROSTER ?? '')
+  .split(',')
+  .map(value => value.trim())
+  .filter((value, index, values) => botProfilePattern.test(value) && values.indexOf(value) === index)
+
+const botSessions = Object.fromEntries(
+  (process.env.HERMES_TUI_BOT_MODE_SESSIONS ?? '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+    .flatMap(value => {
+      const separator = value.indexOf('=')
+      const profile = separator > 0 ? value.slice(0, separator) : ''
+      const sessionId = separator > 0 ? value.slice(separator + 1) : ''
+
+      return botProfilePattern.test(profile) && sessionId && !sessionId.includes(',')
+        ? [[profile, sessionId] as const]
+        : []
+    })
+)
+
+export const STARTUP_BOT_MODE_ROSTER = STARTUP_BOT_MODE_SCOPE ? botRoster : null
+export const STARTUP_BOT_MODE_SESSIONS = STARTUP_BOT_MODE_SCOPE ? botSessions : null
+export const PROJECT_SESSION_MODE = Boolean(
+  STARTUP_PROFILE && STARTUP_RESUME_ID && STARTUP_BOT_MODE_SCOPE
+)
 
 // Mouse tracking mode resolution at startup. Per-mode selection (off|wheel|
 // buttons|all) lives in display.mouse_tracking in config.yaml — these env

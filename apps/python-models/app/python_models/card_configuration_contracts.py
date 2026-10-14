@@ -63,3 +63,4 @@ class CardConfiguration(BaseModel):
     subagentModel: CardSubagentModel | None = None
     autoTools: StrictBool | None = None
     autoModel: StrictBool | None = None
+    reasoningEffort: Literal["low", "medium", "high", "xhigh", "max", "ultra"] | None = None

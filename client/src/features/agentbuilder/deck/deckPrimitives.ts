@@ -1,10 +1,14 @@
-// Shared saved-Card and Project-deck normalization primitives.
+// Shared card/deck normalization primitives for the Agent Builder feature.
+// Extracted verbatim from pages/agentbuilder.tsx (decomposition pass
+// 2026-07-08). Persisted ids/bindings and behavior are unchanged.
 import type {
-  DeckCard,
-  SavedCardConfiguration,
+  AgentCardInstance,
+  AgentCardRuntimeOptions,
   CardRuntime,
   DeckEdgeType,
 } from '../../../types/agentgraph';
+
+export const DEFAULT_WORKSPACE_ROOT = 'C:\\Projects\\main';
 
 export function safeText(value: unknown): string {
   if (value == null) return '';
@@ -28,62 +32,59 @@ export function cleanOptionalText(value: unknown): string | null {
 // Cards use the ordinary provider/model selector. This is only the valid seed
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
-export const DEFAULT_CARD_PROVIDER: NonNullable<SavedCardConfiguration['provider']> = 'openai';
-export const MAIN_CARD_MODEL_KEY = 'gpt-5.6-sol';
-export const BUILDER_CARD_MODEL_KEY = 'gpt-5.6-sol';
-export const MAGNETIC_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
-export const MAGNETIC_DEFAULT_PROVIDER: NonNullable<SavedCardConfiguration['provider']> = 'openai';
+export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
+export const MAIN_CHAT_MODEL_KEY = 'gpt-5.6-sol';
+export const AGENT_BUILDER_MODEL_KEY = 'gpt-5.6-sol';
+export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
+export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 // Builder's non-administrative CodeGraph corridor. Indexing, trace ingestion,
 // ADR mutation, and project deletion stay outside ordinary Card grants.
 export const CODEBASE_MEMORY_TOOLS = [
   'cbm.search_graph',
-  'cbm.search_code',
   'cbm.trace_path',
   'cbm.get_code_snippet',
   'cbm.check_index_coverage',
+  'cbm.detect_changes',
 ] as const;
 // Builder seed selections. Runtime availability and saved grants remain authoritative.
-export const BUILDER_CARD_TOOLS = [
+export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   'canvas.inspect',
   'card.create',
   'card.update_configuration',
-  'canvas.upsert_wire',
   ...CODEBASE_MEMORY_TOOLS,
+  'cbm.search_code',
+  'cbm.query_graph',
+] as const;
+export const MAIN_CHAT_CONTROLLER_TOOLS = [
+  'canvas.inspect',
   'engraphis_recall_context',
   'engraphis_get_memory',
-  'engraphis_discover_actions',
-  'engraphis_execute_read',
-  'engraphis_execute_action',
-  'graphiti.search_memory_facts',
-  'graphiti.search_nodes',
-  'graphiti.get_episodes',
-  'graphiti.get_episode_entities',
-  'graphiti.get_entity_edge',
-  'graphiti.build_communities',
-  'graphiti.delete_episode',
-  'graphiti.delete_entity_edge',
-  'graphiti.clear_graph',
-] as const;
-export const MAIN_CARD_TOOLS = [
-  'canvas.inspect',
+  'engraphis_remember',
   'run_mag_one',
   'worldview.set_capability',
 ] as const;
 export const THINKGRAPH_CARD_TOOLS = [
   'engraphis_recall_context',
   'engraphis_get_memory',
-  'engraphis_remember_entities',
-  'engraphis_discover_actions',
-  'engraphis_execute_read',
+  'engraphis_remember',
+  'engraphis_update_memory',
+  'engraphis_correct',
+  'engraphis_link',
+  'engraphis_ingest',
 ] as const;
-export const KNOWGRAPH_CARD_TOOLS = [
+export const HERMES_CARD_TOOLS = [
+  'canvas.inspect',
   'engraphis_get_memory',
+  'graphiti.get_entity_edge',
+  'graphiti.get_episode_entities',
+  'graphiti.get_episodes',
+  'graphiti.get_status',
   'graphiti.search_memory_facts',
   'graphiti.search_nodes',
-  'graphiti.get_episodes',
-  'graphiti.get_episode_entities',
-  'graphiti.add_memory_to_entity',
-  'graphiti.summarize_saga',
+  'graphiti.add_memory',
+  'graphiti.add_triplet',
+  'write_mag_one_instructions',
+  'card.load_graph_references',
 ] as const;
 
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {
@@ -101,16 +102,16 @@ export function normalizeCardRuntime(value: unknown): CardRuntime | null {
 
 export function normalizeRuntimeOptions(
   value: unknown,
-): SavedCardConfiguration | null {
+): AgentCardRuntimeOptions | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return cloneDeckDocument(value as SavedCardConfiguration);
+  return cloneDeckDocument(value as AgentCardRuntimeOptions);
 }
 
 /** Orange flow authority belongs to Main or an explicitly enabled saved
  * non-Magnetic Hermes orchestrator Card. */
-export function hasMainBotAuthority(card: DeckCard): boolean {
-  const record = card as DeckCard & { enabled?: boolean };
-  const options = card.runtimeOptions as (SavedCardConfiguration & { enabled?: boolean }) | null;
+export function hasMainBotAuthority(card: AgentCardInstance): boolean {
+  const record = card as AgentCardInstance & { enabled?: boolean };
+  const options = card.runtimeOptions as (AgentCardRuntimeOptions & { enabled?: boolean }) | null;
   return card.kind === 'agent'
     && card.runtime.kind === 'hermes'
     && card.runtime.mode !== 'magentic_one'
@@ -122,7 +123,7 @@ export function hasMainBotAuthority(card: DeckCard): boolean {
 
 
 /** Recognise ONLY the two real edge types — mirrors the backend contract
- * (decks/deckDomainClient.ts). Anything else is 'invalid': visible on the canvas but
+ * (decks/store.ts). Anything else is 'invalid': visible on the canvas but
  * authorising nothing. The old default returned 'flow' (invocation authority)
  * for typos and corrupt data, which is how Main→Hermes delegation silently
  * died twice (C-1). */

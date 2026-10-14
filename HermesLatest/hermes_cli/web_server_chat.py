@@ -303,16 +303,18 @@ def _ws_auth_ok(ws: "WebSocket") -> bool:
 def _resolve_chat_argv(
     resume: Optional[str] = None, sidecar_url: Optional[str] = None, profile: Optional[str] = None,
     active_session_file: Optional[str] = None,
-    workspace_cwd: Optional[str] = None) -> tuple[list[str], Optional[str], Optional[dict]]:
+    workspace_cwd: Optional[str] = None, bot_mode_scope: bool = False,
+    bot_mode_roster: str = "", bot_mode_sessions: str = "") -> tuple[list[str], Optional[str], Optional[dict]]:
     """Resolve the argv + cwd + env for the chat PTY (what ``hermes --tui`` runs).
 
     Tests monkeypatch this with a tiny fake command.  Env contract: resume goes
     through ``HERMES_TUI_RESUME`` (``ui-tui`` does not parse argv), resolved to
     the newest descendant; ``HERMES_TUI_GATEWAY_URL`` attaches to this process's
-    in-memory gateway but is SKIPPED for profile-scoped chats (that gateway runs
-    under the dashboard's own profile, so a scoped chat spawns its own);
+    in-memory gateway; ``HERMES_TUI_PROFILE`` scopes a profile session's resume
+    on that shared gateway;
     ``profile`` scopes the ENTIRE chat by pointing ``HERMES_HOME`` at the profile
-    dir, the same propagation ``hermes -p <name>`` performs. ``workspace_cwd``
+    dir and stamps the profile on session resume, the same propagation
+    ``hermes -p <name>`` performs. ``workspace_cwd``
     (an already-validated host directory, ``chat_workspaces.resolve_chat_cwd``)
     is the workspace the user picked for a FRESH chat: it becomes ``HERMES_CWD``
     (where a self-spawned gateway starts) and ``HERMES_TUI_CWD`` (what the TUI
@@ -336,6 +338,7 @@ def _resolve_chat_argv(
     env = build_subprocess_env(scrub_secrets=False, inherit_profile_home=True)
     if profile_dir is not None:
         env["HERMES_HOME"] = str(profile_dir)
+        env["HERMES_TUI_PROFILE"] = requested
     try:
         from hermes_cli.config import (
             apply_terminal_config_to_env, read_raw_config, terminal_config_owned_env_vars)
@@ -366,6 +369,11 @@ def _resolve_chat_argv(
     env.setdefault("COLORTERM", "truecolor")
     env["HERMES_TUI_DASHBOARD"] = "1"
 
+    if bot_mode_scope:
+        env["HERMES_TUI_BOT_MODE_SCOPE"] = "1"
+        env["HERMES_TUI_BOT_MODE_ROSTER"] = bot_mode_roster
+        env["HERMES_TUI_BOT_MODE_SESSIONS"] = bot_mode_sessions
+
     if resume:
         _resume_db = _open_session_db_for_profile(
             requested if profile_dir is not None else None, read_only=True)
@@ -383,9 +391,10 @@ def _resolve_chat_argv(
     if active_session_file:
         env["HERMES_TUI_ACTIVE_SESSION_FILE"] = active_session_file
 
-    # Without the attach URL, gatewayClient spawns its own `tui_gateway.entry`,
-    # which inherits the profile HERMES_HOME set above.
-    if profile_dir is None and (gateway_ws_url := _build_gateway_ws_url()):
+    # A Project Card terminal attaches to the dashboard gateway that already owns
+    # its stored session. Other profile-scoped chats retain their established
+    # per-profile gateway because a fresh chat has no Project resume identity.
+    if (profile_dir is None or bot_mode_scope) and (gateway_ws_url := _build_gateway_ws_url()):
         env["HERMES_TUI_GATEWAY_URL"] = gateway_ws_url
 
     return list(argv), str(cwd) if cwd else None, env
@@ -445,7 +454,8 @@ def _build_sidecar_url(channel: str) -> Optional[str]:
 async def _resolve_chat_argv_async(
     resume: Optional[str] = None, sidecar_url: Optional[str] = None, profile: Optional[str] = None,
     active_session_file: Optional[str] = None,
-    workspace_cwd: Optional[str] = None) -> tuple[list[str], Optional[str], Optional[dict]]:
+    workspace_cwd: Optional[str] = None, bot_mode_scope: bool = False,
+    bot_mode_roster: str = "", bot_mode_sessions: str = "") -> tuple[list[str], Optional[str], Optional[dict]]:
     """Resolve chat argv off the event loop (it may run ``npm run build``); the
     async lock keeps one-build-at-a-time without parking worker threads."""
     from hermes_cli.web_server import _get_chat_argv_lock, app
@@ -454,6 +464,12 @@ async def _resolve_chat_argv_async(
         kwargs["active_session_file"] = active_session_file
     if workspace_cwd is not None:
         kwargs["workspace_cwd"] = workspace_cwd
+    if bot_mode_scope:
+        kwargs.update(
+            bot_mode_scope=True,
+            bot_mode_roster=bot_mode_roster,
+            bot_mode_sessions=bot_mode_sessions,
+        )
 
     async with _get_chat_argv_lock(app):
         return await asyncio.to_thread(_resolve_chat_argv, **kwargs)

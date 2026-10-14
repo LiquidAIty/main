@@ -5,10 +5,10 @@ import type { DeckDocument } from '../../../types/agentgraph';
 type CardRunActivity = {
   cardId: string;
   state: string;
-  activeWorkers: number | null;
+  activeWorkers: number;
 };
 
-const ACTIVE_RUN_STATE = 'running';
+const ACTIVE_RUN_STATES = new Set(['pending', 'running']);
 const ACTIVE_REFRESH_MS = 2_000;
 const QUIET_REFRESH_MS = 10_000;
 const MAX_CONSECUTIVE_ERROR_RETRIES = 1;
@@ -69,15 +69,11 @@ export default function useCardActiveAgentCounts({
         if (disposed) return;
         const nextCounts: Record<string, number> = {};
         for (const status of statuses) {
-          if (!status || String(status.state || '') !== ACTIVE_RUN_STATE) continue;
-          const knownChildWorkers = Number.isSafeInteger(status.activeWorkers)
-            && status.activeWorkers !== null
-            && status.activeWorkers >= 0
+          if (!status || !ACTIVE_RUN_STATES.has(String(status.state || ''))) continue;
+          const childWorkers = Number.isSafeInteger(status.activeWorkers) && status.activeWorkers > 0
             ? status.activeWorkers
-            : null;
-          nextCounts[status.cardId] = knownChildWorkers === null
-            ? 1
-            : 1 + knownChildWorkers;
+            : 0;
+          nextCounts[status.cardId] = 1 + childWorkers;
         }
         setActiveAgentCounts((current) => (
           Object.keys(current).length === Object.keys(nextCounts).length

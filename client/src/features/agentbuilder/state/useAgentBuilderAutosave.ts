@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
-import { safeJson } from '../api/requestGuards';
+import { safeJson } from '../../../components/builder/requestGuards';
 import type { DeckDocument } from '../../../types/agentgraph';
 
 type IntegrityResult = {
@@ -23,7 +23,7 @@ type UseAgentBuilderAutosaveArgs = {
   deckLoadError: string | null;
   stateLoaded: boolean;
   transientCardIds?: ReadonlySet<string>;
-  deckSaveAbortRef: MutableRefObject<AbortController | null>;
+  layoutAutosaveAbortRef: MutableRefObject<AbortController | null>;
   lastPersistedBoardFingerprintRef: MutableRefObject<string | null>;
   lastPersistedBoardSnapshotRef: MutableRefObject<unknown>;
   lastDeckPersistReasonRef: MutableRefObject<string | null>;
@@ -70,7 +70,7 @@ export default function useAgentBuilderAutosave({
   deckLoadError,
   stateLoaded,
   transientCardIds = EMPTY_TRANSIENT_CARD_IDS,
-  deckSaveAbortRef,
+  layoutAutosaveAbortRef,
   lastPersistedBoardFingerprintRef,
   lastPersistedBoardSnapshotRef,
   lastDeckPersistReasonRef,
@@ -101,12 +101,12 @@ export default function useAgentBuilderAutosave({
       // cannot be made safe by aborting the older browser request: the server
       // may already have committed it. Keep one write in flight. Its returned
       // revision rerenders this hook and schedules the latest unsaved board.
-      if (deckSaveAbortRef.current) return;
+      if (layoutAutosaveAbortRef.current) return;
       const reason = lastDeckPersistReasonRef.current || 'board-autosave';
       const integrity = evaluateBoardIntegrityForSave(persistableDeck, reason);
       if (!integrity.ok) {
         setDeckStatusMessage(integrity.message ?? null);
-        console.warn('[builder][deck-save]', {
+        console.warn('[builder][deck-save-proof]', {
           projectId: canvasProjectId,
           deckId: builderDeckId,
           reason,
@@ -122,7 +122,7 @@ export default function useAgentBuilderAutosave({
       }
       const revisionBefore = deckRevision;
       const controller = new AbortController();
-      deckSaveAbortRef.current = controller;
+      layoutAutosaveAbortRef.current = controller;
       void (async () => {
         try {
           const response = await fetch(
@@ -158,7 +158,7 @@ export default function useAgentBuilderAutosave({
                 'Could not save the current board.',
               ),
             );
-            console.warn('[builder][deck-save]', {
+            console.warn('[builder][deck-save-proof]', {
               projectId: canvasProjectId,
               deckId: builderDeckId,
               reason,
@@ -185,7 +185,7 @@ export default function useAgentBuilderAutosave({
           }
           lastPersistedBoardFingerprintRef.current = boardFingerprint;
           lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(persistableDeck);
-          console.info('[builder][deck-save]', {
+          console.info('[builder][deck-save-proof]', {
             projectId: canvasProjectId,
             deckId: builderDeckId,
             reason,
@@ -207,7 +207,7 @@ export default function useAgentBuilderAutosave({
               'Could not save the current board.',
             ),
           );
-          console.warn('[builder][deck-save]', {
+          console.warn('[builder][deck-save-proof]', {
             projectId: canvasProjectId,
             deckId: builderDeckId,
             reason,
@@ -222,8 +222,8 @@ export default function useAgentBuilderAutosave({
             console.warn('[builder] layout autosave exception', error);
           }
         } finally {
-          if (deckSaveAbortRef.current === controller) {
-            deckSaveAbortRef.current = null;
+          if (layoutAutosaveAbortRef.current === controller) {
+            layoutAutosaveAbortRef.current = null;
           }
         }
       })();
@@ -245,7 +245,7 @@ export default function useAgentBuilderAutosave({
     lastDeckPersistReasonRef,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
-    deckSaveAbortRef,
+    layoutAutosaveAbortRef,
     projectsApi,
     setDeckRevision,
     setDeckStatusMessage,

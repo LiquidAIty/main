@@ -71,7 +71,7 @@ def message_agent_tool_schema() -> dict:
                 "Send a message to ANOTHER agent (teammate) on this install, or to an "
                 "agent on a registered peer gateway. This is FIRE-AND-FORGET and "
                 "asynchronous, like texting: it validates the target against the live "
-                "roster, delivers your message into that agent's own Bot Chat with your "
+                "roster, delivers your message into that agent's roster-bound session with your "
                 "attribution automatically prefixed, and returns immediately with a "
                 "dispatch acknowledgement — status queued plus a delivery_id (the hand-off to a background "
                 "delivery process, not a delivery receipt). It does NOT return their reply and you must "
@@ -217,6 +217,8 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     restricted = roster_override is not None or configured_bot_roster(home) is not None
     roster_homes = dict(resolve_bot_roster(home, roster_override))
     roster = list(roster_homes)
+    session_targets_override = getattr(agent, "_bot_mode_sessions", None)
+    session_targets = dict(session_targets_override or {})
     peers = [] if restricted else _peers(root)
     teammates = [_handle(n) for n in roster if n != me]
 
@@ -278,8 +280,17 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         return _roster_err(f"No teammate named '{raw_target}' on this install, on a connected "
                            "machine, or on a registered peer. Pick a name from the roster "
                            "(roles are listed in your system prompt).")
-    return _start_delivery([_hermes_cli(), "-p", resolved, *BOT_CHAT_TURN_ARGS], content, f"@{_handle(resolved)}",
-                           stdin_file=False, profile_home=roster_homes[resolved], author=author, **delivery)
+    target_session_id = str(session_targets.get(resolved) or "").strip()
+    if isinstance(session_targets_override, dict) and not target_session_id:
+        return _err(f"Project session for @{_handle(resolved)} is unavailable; nothing was sent.")
+    turn_args = (
+        ("chat", "--resume", target_session_id, "-Q")
+        if target_session_id
+        else BOT_CHAT_TURN_ARGS
+    )
+    return _start_delivery([_hermes_cli(), "-p", resolved, *turn_args], content, f"@{_handle(resolved)}",
+                           stdin_file=False, profile_home=roster_homes[resolved], author=author,
+                           stored_session_id=target_session_id or None, **delivery)
 
 
 def _try_relay_delivery(root: Path, raw_target: str, content: str, me: str, *,
@@ -467,9 +478,19 @@ def _dm_delivery_id(dm_file: "str | os.PathLike") -> str:
     return hashlib.sha256(str(Path(dm_file).resolve()).encode()).hexdigest()
 
 
-def _admit_live_dm(profile_home: Path | None, dm_file: str, author: Optional[dict] = None) -> dict | None:
+def _admit_live_dm(
+    profile_home: Path | None,
+    dm_file: str,
+    author: Optional[dict] = None,
+    stored_session_id: Optional[str] = None,
+) -> dict | None:
     """Pin intent before admission; retries may inspect, never change transport."""
-    from tools.bot_live_delivery import deliver_to_live_owner, find_canonical_live_owner, read_delivery_result
+    from tools.bot_live_delivery import (
+        deliver_to_live_owner,
+        find_canonical_live_owner,
+        find_live_session_owner,
+        read_delivery_result,
+    )
     from utils import fsync_directory
 
     intent: dict[str, Any]
@@ -478,7 +499,11 @@ def _admit_live_dm(profile_home: Path | None, dm_file: str, author: Optional[dic
         intent = json.loads(intent_path.read_text(encoding="utf-8"))
     else:
         assert profile_home is not None
-        owner = find_canonical_live_owner(profile_home)
+        owner = (
+            find_live_session_owner(profile_home, stored_session_id)
+            if stored_session_id
+            else find_canonical_live_owner(profile_home)
+        )
         if owner is None:
             return None
         intent = dict(owner=owner, message=Path(dm_file).read_text(encoding="utf-8"),
@@ -531,7 +556,8 @@ def _local_delivery_home(argv: list[str]) -> Path | None:
 
 
 def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
-                  profile_home: Path | None = None, author: Optional[dict] = None) -> int:
+                  profile_home: Path | None = None, author: Optional[dict] = None,
+                  stored_session_id: Optional[str] = None) -> int:
     """Route to the live owner before attempting a CLI transport. Live deliveries
     retain their intent/payload and immutable receipt; only CLI/peer payloads are
     removed after consumption. The CLI turn window holds the profile lock, so two
@@ -549,7 +575,7 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
         home = profile_home or _local_delivery_home(argv)
         if home is not None or Path(dm_file + ".live.json").exists():
             try:
-                record = _admit_live_dm(home, dm_file, author)
+                record = _admit_live_dm(home, dm_file, author, stored_session_id)
             except Exception as exc:
                 print(json.dumps({"status": "ambiguous", "delivery_id": _dm_delivery_id(dm_file),
                     "error": f"Live admission outcome unknown: {exc}. Do not resend.",
@@ -573,13 +599,16 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
 
 
 def _delivery_command(argv: list[str], dm_file: str, *, stdin_file: bool,
-                      profile_home: Path | None = None, author: Optional[dict] = None) -> str:
+                      profile_home: Path | None = None, author: Optional[dict] = None,
+                      stored_session_id: Optional[str] = None) -> str:
     """Build an argv-safe command for the cleanup-owning background runner:
     ``--run-delivery [--author <json>] <mode> <dm_file> [--profile-home <path>] <argv...>``."""
     runner_argv = [sys.executable, str(Path(__file__).resolve()), "--run-delivery",
                    "stdin" if stdin_file else "query-file", dm_file]
     if profile_home is not None:
         runner_argv.extend(["--profile-home", str(Path(profile_home).resolve())])
+    if stored_session_id:
+        runner_argv.extend(["--stored-session-id", stored_session_id])
     runner_argv.extend(argv)
     if sys.platform == "win32":
         # The tracked local backend uses Git Bash on native Windows: forward slashes keep drive
@@ -593,21 +622,26 @@ def _delivery_command(argv: list[str], dm_file: str, *, stdin_file: bool,
 
 def _start_delivery(argv: list[str], content: str, label: str, *, stdin_file: bool,
                     task_id: Optional[str], agent: Any, profile_home: Path | None = None,
-                    author: Optional[dict] = None) -> str:
+                    author: Optional[dict] = None,
+                    stored_session_id: Optional[str] = None) -> str:
     """Create a DM file and transfer its cleanup ownership to the runner."""
     dm_file = _write_dm_file(content)
     if profile_home is not None:
         try:
-            record = _admit_live_dm(profile_home, dm_file, author)
+            record = _admit_live_dm(profile_home, dm_file, author, stored_session_id)
         except Exception as exc:
             return json.dumps({"status": "ambiguous", "delivery_id": _dm_delivery_id(dm_file),
                 "error": f"Live delivery admission could not be confirmed: {exc}. Do not resend.",
                 "evidence_file": dm_file})
         if record is not None:
-            command = _delivery_command(argv, dm_file, stdin_file=False, profile_home=profile_home, author=author)
+            command = _delivery_command(
+                argv, dm_file, stdin_file=False, profile_home=profile_home,
+                author=author, stored_session_id=stored_session_id,
+            )
             notification = json.loads(_spawn_delivery(command, label, task_id=task_id, agent=agent))
+            owner_label = "Project session owner" if stored_session_id else "Bot Chat owner"
             result = dict(status=record["status"], delivery_id=record["delivery_id"], to=label,
-                          detail="Durably queued for the live Bot Chat owner. Do NOT wait or resend; finish your turn.")
+                          detail=f"Durably queued for the live {owner_label}. Do NOT wait or resend; finish your turn.")
             if notification.get("error"):
                 result["notification_error"] = notification["error"]
             elif notification.get("process_id"):
@@ -616,10 +650,13 @@ def _start_delivery(argv: list[str], content: str, label: str, *, stdin_file: bo
                 if result["reply_delivery"] == "poll":
                     # Same runner, same stdout-borne reply (#101142): a non-push sender must get
                     # the poll instruction here too, not 'finish your turn'.
-                    result["detail"] = f"Durably queued for the live Bot Chat owner. Do NOT resend. {notification['detail']}"
+                    result["detail"] = f"Durably queued for the live {owner_label}. Do NOT resend. {notification['detail']}"
             return json.dumps(result)
     try:
-        command = _delivery_command(argv, dm_file, stdin_file=stdin_file, profile_home=profile_home, author=author)
+        command = _delivery_command(
+            argv, dm_file, stdin_file=stdin_file, profile_home=profile_home,
+            author=author, stored_session_id=stored_session_id,
+        )
     except BaseException:
         _unlink_dm_file(dm_file)
         raise
@@ -777,10 +814,19 @@ def _delivery_main(args: list[str]) -> int:
     if len(rest) < 2 or rest[0] not in ("stdin", "query-file"):
         return 2
     try:
-        argv, profile_home = rest[2:], None
+        argv, profile_home, stored_session_id = rest[2:], None, None
         if len(argv) >= 2 and argv[0] == "--profile-home":
             profile_home, argv = Path(argv[1]), argv[2:]
-        return _run_delivery(argv, rest[1], stdin_file=rest[0] == "stdin", profile_home=profile_home, author=author)
+        if len(argv) >= 2 and argv[0] == "--stored-session-id":
+            stored_session_id, argv = argv[1], argv[2:]
+        return _run_delivery(
+            argv,
+            rest[1],
+            stdin_file=rest[0] == "stdin",
+            profile_home=profile_home,
+            author=author,
+            stored_session_id=stored_session_id,
+        )
     except Exception as exc:
         # Every refusal ships a typed reason on stdout so the completion notification carries it
         # back to the sender (#93091): 'target_busy' from the queue's bounded wait, otherwise the

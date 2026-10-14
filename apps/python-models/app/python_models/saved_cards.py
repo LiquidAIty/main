@@ -209,11 +209,11 @@ def _insert_revision(
           template_id, kind, title, subtitle, role, status, parent_graph_id,
           base_prompt, base_prompt_sha256, stable_output_contract,
           runtime_kind, runtime_mode, runtime_profile, provider, model_key, provider_model_id,
-          access_mode, reasoning_effort, temperature, max_tokens, max_turns,
+          access_mode, reasoning_effort,
           enabled, enabled_location, runtime_extension_config, revision_sha256
         ) VALUES (
           %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-          %s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s
+          %s,%s,%s,%s,%s,%s::jsonb,%s
         )
         """,
         (
@@ -224,8 +224,7 @@ def _insert_revision(
             stable["runtime"]["mode"], stable["runtime"].get("profile"),
             stable["provider"], stable["modelKey"],
             stable["providerModelId"], stable["accessMode"],
-            stable["reasoningEffort"], stable["temperature"],
-            stable["maxTokens"], stable["maxTurns"],
+            stable["reasoningEffort"],
             stable["enabled"], stable["enabledLocation"],
             canonical_json(stable["runtimeExtensions"]), revision_sha,
         ),
@@ -301,8 +300,6 @@ def load_saved_deck_with_cursor(
             ("provider", "provider"), ("modelKey", "model_key"),
             ("providerModelId", "provider_model_id"), ("accessMode", "access_mode"),
             ("reasoningEffort", "reasoning_effort"),
-            ("temperature", "temperature"), ("maxTokens", "max_tokens"),
-            ("maxTurns", "max_turns"),
         ):
             if row.get(column) is not None:
                 options[key] = row[column]

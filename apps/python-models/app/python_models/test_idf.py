@@ -68,7 +68,7 @@ def _idf(
             "instructions": "Use the saved Card contract.",
             "outputContract": "Return one bounded result.",
             "runtime": {"kind": "hermes", "mode": "delegate", "profile": "helper"},
-            "runtimeOptions": {"reasoningEffort": "high", "maxTokens": 1200},
+            "runtimeOptions": {"reasoningEffort": "high"},
             "provider": {
                 "provider": "openai",
                 "providerModelId": "gpt-5.6",

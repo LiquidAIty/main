@@ -1,21 +1,26 @@
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 
-import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import { BUILDER_CARD_ID } from '../decks/deckDomainClient';
-import { getOwnedProjectByReference } from '../services/projectStore';
+import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import { hermesGateway } from '../services/hermesGateway';
-import { sharedChatAuthority } from '../services/savedCardAuthority';
-import { materializeSavedCardProfile } from '../hermes/profileMaterialization';
-import { ensureSavedCardProfile } from '../hermes/savedCardProfileProvisioning';
+import { getOwnedProjectByReference } from '../services/projectStore';
+import { projectCardAuthority } from '../services/projectCardAuthority';
 import {
   resolveBuilderProjectCodeDirectory,
   resolveProductChatWorkingDirectory,
 } from '../services/workingDirectories';
+import { cardProjectSession } from './mainSession.routes';
 
 const cardTerminalRoutes = Router();
 
-async function authorizeProject(req: Request, res: Response, projectId: string): Promise<string | null> {
+type ProjectAuthorization = { userId: string; projectSessionId: string };
+
+async function authorizeProject(
+  req: Request,
+  res: Response,
+  projectId: string,
+): Promise<ProjectAuthorization | null> {
   const userId = String((req as Request & { userId?: string }).userId || '').trim();
   if (!userId) {
     res.status(401).json({ ok: false, error: 'terminal_owner_authentication_required' });
@@ -26,7 +31,9 @@ async function authorizeProject(req: Request, res: Response, projectId: string):
     res.status(403).json({ ok: false, error: 'terminal_project_access_denied' });
     return null;
   }
-  return userId;
+  const projectSessionId = String(project.id || '').trim();
+  if (!projectSessionId) throw new Error('terminal_project_identity_missing');
+  return { userId, projectSessionId };
 }
 
 function terminalDimension(value: unknown, fallback: number, maximum: number): number {
@@ -35,7 +42,7 @@ function terminalDimension(value: unknown, fallback: number, maximum: number): n
     : fallback;
 }
 
-function hermesTerminalWebSocketUrl(query: URLSearchParams): string {
+function terminalWebSocketUrl(query: URLSearchParams): string {
   const gateway = new URL(
     String(process.env.HERMES_GATEWAY_URL || 'ws://127.0.0.1:9119/api/ws').trim(),
   );
@@ -52,61 +59,68 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
   const projectId = String(req.params.projectId || '').trim();
   const deckId = String(req.params.deckId || DEFAULT_PROJECT_DECK_ID).trim();
   const cardId = String(req.params.cardId || '').trim();
-  const conversationId = String(req.body?.conversationId || '').trim();
-  if (!projectId || !deckId || !cardId || !conversationId) {
+  if (!projectId || !deckId || !cardId) {
     return res.status(400).json({ ok: false, error: 'terminal_identity_incomplete' });
   }
-  let userId: string | null;
+  let authorization: ProjectAuthorization | null;
   try {
-    userId = await authorizeProject(req, res, projectId);
+    authorization = await authorizeProject(req, res, projectId);
   } catch {
     return res.status(503).json({ ok: false, error: 'terminal_project_authority_unavailable' });
   }
-  if (!userId) return undefined;
+  if (!authorization) return undefined;
+  const { userId, projectSessionId } = authorization;
 
   try {
-    const authority = await sharedChatAuthority(projectId, deckId);
+    const authority = await projectCardAuthority(projectId, deckId);
     const matches = authority.cards.filter((item) => item.card.id === cardId);
-    if (matches.length !== 1 || matches[0].card.runtime.kind !== 'hermes'
-      || matches[0].card.runtime.mode === 'magentic_one') {
-      return res.status(409).json({ ok: false, error: 'terminal_card_unavailable' });
-    }
+    if (
+      matches.length !== 1
+      || matches[0].card.runtime.kind !== 'hermes'
+      || matches[0].card.runtime.mode === 'magentic_one'
+    ) return res.status(409).json({ ok: false, error: 'terminal_card_unavailable' });
     const target = matches[0];
     if (target.card.runtime.mode === 'main') {
       return res.status(409).json({ ok: false, error: 'terminal_main_headless' });
     }
-    const client = await hermesGateway();
-    const request = <T>(method: string, params: Record<string, unknown> = {}) => client.request<T>(method, params);
-    const profile = await ensureSavedCardProfile(request, target.card, []);
-    await materializeSavedCardProfile(request, target.card, [], profile);
     const cwd = cardId === BUILDER_CARD_ID
-      ? resolveBuilderProjectCodeDirectory(projectId, authority.deck.projectCodeFolder)
-      : resolveProductChatWorkingDirectory(`${userId}:${projectId}:${cardId}:${conversationId}`);
+      ? resolveBuilderProjectCodeDirectory(projectSessionId, authority.deck.projectCodeFolder)
+      : resolveProductChatWorkingDirectory(`${userId}:${projectSessionId}:${cardId}`);
+    const client = await hermesGateway();
+    const binding = await cardProjectSession(client, authority, target, {
+      cwd,
+      projectId,
+      projectSessionId,
+      userId,
+    });
     const token = String(process.env.HERMES_DASHBOARD_SESSION_TOKEN || '').trim();
     if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('hermes_gateway_credential_missing');
-    const attach = createHash('sha256').update(JSON.stringify([
+    const attachIdentity = createHash('sha256').update(JSON.stringify([
       userId,
-      projectId,
+      projectSessionId,
       deckId,
       cardId,
-      conversationId,
       target.profile,
     ])).digest('hex');
     const query = new URLSearchParams({
       token,
       profile: target.profile,
-      channel: attach,
+      project_session: binding.sessionId,
+      channel: attachIdentity,
       cwd,
-      attach,
+      attach: attachIdentity,
+      bot_mode_roster: binding.botModeRoster.join(','),
+      bot_mode_sessions: Object.entries(binding.botModeSessions)
+        .map(([profile, sessionId]) => `${profile}=${sessionId}`).join(','),
     });
     return res.json({
       ok: true,
       cardId,
       profile: target.profile,
-      attachIdentity: attach,
+      attachIdentity,
       cols: terminalDimension(req.body?.cols, 80, 2_000),
       rows: terminalDimension(req.body?.rows, 24, 1_000),
-      websocketUrl: hermesTerminalWebSocketUrl(query),
+      websocketUrl: terminalWebSocketUrl(query),
     });
   } catch (error) {
     return res.status(503).json({

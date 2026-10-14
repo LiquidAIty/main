@@ -29,17 +29,23 @@ _OWNER_KEYS = ("profile_home", "session_id", "lease_id", "live_session_id")
 _TERMINAL = frozenset({"settled", "failed", "cancelled", "ambiguous"})
 
 
-def find_canonical_owner(profile_home: Path | str) -> dict[str, Any] | None:
-    """Return the exact Bot Chat tip's lease, including unsupported CLI owners."""
+def find_session_owner(
+    profile_home: Path | str,
+    stored_session_id: str,
+) -> dict[str, Any] | None:
+    """Return one exact stored session tip's lease, including unsupported CLI owners."""
     from hermes_cli.active_sessions import active_session_registry_snapshot
     from hermes_state import SessionDB
 
     home = Path(profile_home).resolve()
+    requested = str(stored_session_id or "").strip()
+    if not requested:
+        return None
     if not (home / "state.db").is_file():
         return None
     db = SessionDB(db_path=home / "state.db", read_only=True)
     try:
-        row = db.get_session_by_title("Bot Chat")
+        row = db.get_session(requested)
         session_id = db.get_compression_tip(row["id"]) if row else None
     finally:
         db.close()
@@ -51,11 +57,41 @@ def find_canonical_owner(profile_home: Path | str) -> dict[str, Any] | None:
     return None
 
 
-def find_canonical_live_owner(profile_home: Path | str) -> dict[str, Any] | None:
-    """Only advertised consumers may receive owner-pinned mailbox deliveries."""
-    entry = find_canonical_owner(profile_home)
+def find_canonical_owner(profile_home: Path | str) -> dict[str, Any] | None:
+    """Return the exact Bot Chat tip's lease, including unsupported CLI owners."""
+    from hermes_state import SessionDB
+
+    home = Path(profile_home).resolve()
+    if not (home / "state.db").is_file():
+        return None
+    db = SessionDB(db_path=home / "state.db", read_only=True)
+    try:
+        row = db.get_session_by_title("Bot Chat")
+    finally:
+        db.close()
+    return find_session_owner(home, row["id"]) if row else None
+
+
+def find_live_session_owner(
+    profile_home: Path | str,
+    stored_session_id: str,
+) -> dict[str, Any] | None:
+    """Only an advertised consumer for the exact Project session may receive its delivery."""
+    entry = find_session_owner(profile_home, stored_session_id)
     meta = (entry or {}).get("metadata") or {}
     if entry and meta.get("bot_live_delivery_consumer") is True and meta.get("live_session_id"):
+        return {key: entry[key] for key in ("profile_home", "session_id", "lease_id")} | {
+            "live_session_id": meta["live_session_id"]}
+    return None
+
+
+def find_canonical_live_owner(profile_home: Path | str) -> dict[str, Any] | None:
+    """Only an advertised canonical Bot Chat consumer may receive its delivery."""
+    entry = find_canonical_owner(profile_home)
+    if entry is None:
+        return None
+    meta = entry.get("metadata") or {}
+    if meta.get("bot_live_delivery_consumer") is True and meta.get("live_session_id"):
         return {key: entry[key] for key in ("profile_home", "session_id", "lease_id")} | {
             "live_session_id": meta["live_session_id"]}
     return None

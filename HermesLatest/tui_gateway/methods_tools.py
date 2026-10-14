@@ -1158,6 +1158,12 @@ def _configure_session_tools(rid, params: dict, sid: str, session) -> dict:
         return _err(rid, 4017, f"unknown tools action: {action}")
     if not targets:
         return _err(rid, 4018, "names required")
+    if session is not None and isinstance(session.get("bot_mode_sessions"), dict):
+        return _err(
+            rid,
+            4125,
+            "Project Card tools are owned by the saved Card revision; edit and save that Card.",
+        )
     hc, tc = _tools_mod("hermes_cli.config"), _tools_mod("hermes_cli.tools_config")
     cfg = hc.load_config()
     valid_toolsets = {ts_key for ts_key, _, _ in tc.CONFIGURABLE_TOOLSETS} | tc._get_plugin_toolset_keys()

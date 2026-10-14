@@ -1,6 +1,6 @@
 import { forceRedraw, type MouseTrackingMode } from '@hermes/ink'
 
-import { DASHBOARD_TUI_MODE, NO_CONFIRM_DESTRUCTIVE } from '../../../config/env.js'
+import { DASHBOARD_TUI_MODE, NO_CONFIRM_DESTRUCTIVE, PROJECT_SESSION_MODE } from '../../../config/env.js'
 import { dailyFortune, randomFortune } from '../../../content/fortunes.js'
 import { HOTKEYS } from '../../../content/hotkeys.js'
 import { isSectionName, nextDetailsMode, parseDetailsMode, SECTION_NAMES } from '../../../domain/details.js'
@@ -187,6 +187,9 @@ export const coreCommands: SlashCommand[] = [
     help: 'start a new session',
     name: 'clear',
     run: (arg, ctx, cmd) => {
+      if (PROJECT_SESSION_MODE) {
+        return ctx.transcript.sys('This Card terminal follows its Project session.')
+      }
       if (ctx.session.guardBusySessionSwitch('switch sessions')) {
         return
       }

@@ -11,8 +11,8 @@ import { BuilderRailMoonOrb } from './BuilderRailMoonOrb';
 
 const baseVisibility = {
   showKnowledge: true,
-  showWorldSignals: false,
-  showWorldView: false,
+  showWorldsignal: false,
+  showWorldview: false,
   showTrading: false,
 };
 
@@ -20,8 +20,8 @@ const baseProps = {
   colors: { panel: '#000', border: '#111', primary: '#0af', text: '#ccc' },
   workspaceView: 'canvas',
   moonOrb: null,
-  onShowWorldSignalsWorkspace: () => undefined,
-  onShowWorldViewWorkspace: () => undefined,
+  onShowWorldsignalWorkspace: () => undefined,
+  onShowWorldviewWorkspace: () => undefined,
   onShowCanvasWorkspace: () => undefined,
   onOpenAddAgent: () => undefined,
   onShowKnowledgeWorkspace: () => undefined,
@@ -101,7 +101,7 @@ describe('AgentBuilderRail product destinations', () => {
       <AgentBuilderRail
         {...baseProps}
         moonOrb={<span data-testid="existing-moon-orb" />}
-        visibleRailItems={{ ...baseVisibility, showWorldSignals: true, showWorldView: true }}
+        visibleRailItems={{ ...baseVisibility, showWorldsignal: true, showWorldview: true }}
       />,
     );
     const world = host.querySelector('[data-testid="rail-world-button"]') as HTMLButtonElement;
@@ -119,7 +119,7 @@ describe('AgentBuilderRail product destinations', () => {
       <AgentBuilderRail
         {...baseProps}
         moonOrb={<BuilderRailMoonOrb phase01={0.5} />}
-        visibleRailItems={{ ...baseVisibility, showWorldView: true }}
+        visibleRailItems={{ ...baseVisibility, showWorldview: true }}
       />,
     );
     const worldview = host.querySelector(
@@ -186,8 +186,8 @@ describe('AgentBuilderRail product destinations', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showWorldView: true }}
-        onShowWorldViewWorkspace={onOpen}
+        visibleRailItems={{ ...baseVisibility, showWorldview: true }}
+        onShowWorldviewWorkspace={onOpen}
       />,
     );
     const button = host.querySelector('[data-testid="rail-worldview-button"]') as HTMLButtonElement;

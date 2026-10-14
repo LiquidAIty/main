@@ -601,7 +601,7 @@ def _notif_handle_ready(sid, session, events, emitted, registry, fmt, deferred, 
 
 def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
     """Run one durable envelope only after local FIFO/continuations yield the idle boundary."""
-    from tools.bot_live_delivery import claim_pending_delivery, complete_delivery, find_canonical_live_owner, has_mailbox
+    from tools.bot_live_delivery import claim_pending_delivery, complete_delivery, find_live_session_owner, has_mailbox
 
     home = _session_home(session)
     # Most profiles never receive a delivery: without a mailbox there is nothing to claim, and the owner
@@ -616,7 +616,7 @@ def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
         lease = session.get("active_session_lease")
         if lease is None or getattr(lease, "released", False):
             return False
-        owner = find_canonical_live_owner(home)
+        owner = find_live_session_owner(home, str(session.get("session_key") or ""))
         if (not owner or owner.get("lease_id") != lease.lease_id
                 or owner.get("live_session_id") != sid
                 or owner.get("session_id") != session.get("session_key")):
@@ -642,9 +642,11 @@ def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
                           error=error, reason=reason)
 
     try:
-        started = _run_prompt_submit(f"__bot_dm__{delivery_id}", sid, session, claimed["message"],
+        submission_id = f"__bot_dm__{delivery_id}"
+        started = _run_prompt_submit(submission_id, sid, session, claimed["message"],
                                      image_paths=[], terminal_callback=terminal_receipt,
                                      turn_author=claimed.get("author") or None,
+                                     submission_id=submission_id,
                                      **({"display_metadata": {"notification_category": "diagnostic"}}
                                         if claimed.get("notification_category") == "diagnostic" else {}))
     except Exception as exc:

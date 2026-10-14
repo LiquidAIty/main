@@ -2,7 +2,7 @@ import { forceRedraw, useInput } from '@hermes/ink'
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
-import { DASHBOARD_TUI_MODE } from '../config/env.js'
+import { DASHBOARD_TUI_MODE, PROJECT_SESSION_MODE } from '../config/env.js'
 import { DOUBLE_ESC_MS, TYPING_IDLE_MS } from '../config/timing.js'
 import { applyCompletion } from '../domain/slash.js'
 import type { ConfigSetResponse, VoiceRecordResponse } from '../gatewayTypes.js'
@@ -660,6 +660,9 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
     }
 
     if (isCtrl(key, ch, 'x')) {
+      if (PROJECT_SESSION_MODE) {
+        return
+      }
       return patchOverlayState({ sessions: true })
     }
 
