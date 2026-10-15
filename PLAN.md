@@ -42,19 +42,18 @@ profile, or historical screenshot cannot establish one Project's current configu
   IDF.
 - `project_graph.list_entities` returns the complete exact directory. The read-only
   `project_graph.read_entity_context` requires exact directory references plus a current query. It uses
-  exact native Entity reads followed by Jev relevance and defaults to one Relevant plus one distinct
-  Recent Think and Know; the detailed inspector may request 1–12 results without changing agent defaults.
+  exact provider Entity reads followed by Jev relevance and defaults to one Relevant plus one distinct
+  Recent Think and Know.
 - The joined graph may visually pair exact same-name provider members without becoming another graph.
 - Only Entities render as graph nodes. Thinks and Knows are attached properties; Graphiti episodes,
   citations, and supporting IDs remain evidence/provenance and never become visible Project nodes.
-- The Entity inspector defaults to KnowGraph when both authorities exist. It opens on Relevant and one
-  small arrow replaces that view with Recent. A compact Search field and transient Results count rerun
-  exact Entity context; the default remains one result.
+- The Entity inspector defaults to KnowGraph when both authorities exist and shows at most two current
+  provider-projected attached Thinks or Knows. Search/Results and a Relevant/Recent switch are not current UI.
 - Main, Builder, ThinkGraph, and KnowGraph receive the current Entity/Relationship map and a non-persisting
   default packet containing one most Relevant and one distinct most Recent record from each authority.
-  Engraphis and Graphiti produce native candidates; Jev alone ranks them. Relevant is presented first and
+  Engraphis and Graphiti produce provider candidates; Jev alone ranks them. Relevant is presented first and
   outweighs recency, preventing the last exchange from becoming a repeating context loop.
-- The **Think** and **Know** color-key labels select isolated native layouts and an empty-canvas click
+- The **Think** and **Know** color-key labels select isolated provider layouts and an empty-canvas click
   returns the fixed combined view. Graph settings remain in the detailed inspector.
 - Entity radius scales linearly from least to most attached Think-and-Know words. Jev relationship
   probability remains movement/centrality input and is not replaced by word count.
@@ -63,14 +62,14 @@ profile, or historical screenshot cannot establish one Project's current configu
 
 The completed-pair Python preparation and settlement rails remain intact, but there is currently no
 LiquidAIty TypeScript agent-execution caller. Automatic User/Main-pair intake is therefore not current
-product behavior. A later native-Hermes integration requires a separate approved implementation.
+product behavior. A later Hermes saved-Card integration requires a separate approved implementation.
 
 ### KnowGraph
 
 KnowGraph has Hermes Web plus its saved Graphiti read/write corridor. A deliberately supplied Think is
-framing, not evidence. Useful sourced findings enter Graphiti through native queued
+framing, not evidence. Useful sourced findings enter Graphiti through Graphiti's queued
 `add_memory_to_entity`, which binds the episode to one exact Entity through `ABOUT`, leaves extracted
-`MENTIONS` independent, updates native communities by default, and may associate the continuing research
+`MENTIONS` independent, updates Graphiti communities by default, and may associate the continuing research
 thread with one Saga. One Know is one atomic `know.v1` episode with a cited supporting idea and a cited
 counter idea; both compact bodies and both citation sets are mandatory, while each side may place depth
 behind **More**. Python rails validates and encodes that structure before the unchanged Graphiti queue.
@@ -94,7 +93,7 @@ current Team integration.
 - Only saved Card `card_team` receives Hermes `task_mode: team`.
 - Magnetic uses saved blue topology as its worker ceiling; its same root remains both orchestrator and
   final result task.
-- Hermes owns native task rows, dependencies, attempts, dispatch, retries, workers, and synthesis.
+- Hermes owns task rows, dependencies, attempts, dispatch, retries, workers, and synthesis.
 - LiquidAIty owns one outer product Run and does not copy the Hermes task ledger.
 
 ## Current gaps before live acceptance
@@ -109,41 +108,52 @@ These are source/documentation gaps, not permission to repair them during this d
 4. Quick-Web evidence handoff to durable KnowGraph correlation is not implemented.
 5. Existing saved Projects remain governed by their persisted Card revisions; the new source-default
    prompts, grants, and KnowGraph model do not silently overwrite saved authority.
-6. Loaded Main, direct orange delivery, consultation, Builder/other Card terminals, profile OAuth tools,
-   Card Script execution/failure recovery, ThinkGraph, KnowGraph, Team, Magnetic, external MCP, and visual acceptance remain separate
-   proof tiers.
+6. The 2026-10-14 loaded pass proved ordinary Main, Main consultation, direct Builder/ThinkGraph/KnowGraph/
+   WorldView/Trader delivery, refresh retention, and the Builder terminal. The 2026-10-15 cleanup passed a
+   fresh loaded health/source check and graph-inspector visual regression, but did not repeat model turns.
+   Interactive profile OAuth, enabled Card Script execution/failure recovery, Team, Magnetic, graph writes,
+   external clients, and final owner visual acceptance remain separate.
 
-## Source-ready checkpoint — reached 2026-10-14
+## Loaded core checkpoint — reached 2026-10-14
 
 Current source has one connected path from the restored UI through saved Card authority, one Project
 session per Card, one IDF/Run lifecycle, Hermes profile tools, orange Bot delivery, blue Magnetic
-authority, and each non-Main Card terminal. The old shared-chat/runtime, direct target executor,
+authority, and each non-Main Card terminal. The old combined-conversation runtime, direct target executor,
 per-turn application tool callback, transport selector, fake status/limit controls, Card-runtime MCP
 principal, and their stale tests are absent from the live application path.
 
-The frozen source checkpoint has the following deterministic evidence:
+The same loaded pass recorded the real Main/Bot/Builder terminal cases in `turn.md`. It did not prove
+OAuth-backed tool execution, an enabled Card Script, Team, Magnetic, graph writes, external clients, or
+complete owner visual acceptance.
 
-- all application Python tests: 393 passed; one upstream Graphiti Pydantic deprecation warning;
-- all repository TypeScript tests: 403 passed, one skipped;
+## Cleaned source checkpoint — reached 2026-10-15
+
+The reduction/route/graph/tooling cleanup passed:
+
+- all first-party Python tests: 420 passed; one upstream Graphiti Pydantic deprecation warning;
+- all repository TypeScript tests: 389 passed, one intentionally skipped; the focused Magnetic suite then
+  passed without its former React act warnings;
 - client/backend source and spec TypeScript checks: passed;
-- backend and client production builds: passed; the client retains existing browser-externalization and
-  large-chunk warnings for God’s Eye assets;
-- changed Hermes Card-turn/Bot/Gateway tests: 113 passed, three skipped after deselecting three exact
-  Windows/POSIX-only upstream assertions; the unfiltered run had no other failures;
-- generated Gateway contract hashes remain the frozen values recorded in
-  `HermesLatest/LIQUIDAITY_PATCHES.md`;
-- the regenerated `HermesLatest/LIQUIDAITY_OVERLAY.patch` reverse-apply check passes against this source.
+- backend and client production builds: passed; the client retains browser-externalization and large God’s Eye
+  bundle warnings;
+- authenticated streamable-HTTP MCP proof invoked granted `calculator` and denied it to ungranted peers;
+- production dependency audit: zero vulnerabilities after non-breaking updates; 14 dev-only advisories remain
+  behind separate breaking Nx 23/Vitest 5 migrations;
+- `git diff --check`: passed; canonical Markdown links: passed.
+
+The canonical launcher then loaded backend, Python rails, KnowGraph, MCP, Hermes, WorldView, WorldSignals,
+and the client. Health/readiness returned HTTP 200; MCP froze 55 unique tools with `sourceCurrent=true`,
+startup ID `333ca4c32261466aa05f0b248de6d74f`, and catalog hash
+`984322f92548fd5e3a0d5f467999b37673edd099a6ceae9cb506f2c8c5dfd6b47`. Preview loaded the restored Project
+with an enabled Main composer, Card canvas, Entity-only graph, and Rocket Lab Know inspector showing separate
+cited For/Against evidence and no console warnings. No new model turn, graph write, Team/Magnetic mission,
+trade, credential change, or saved Card mutation was performed.
 
 ## Next acceptance boundary
 
-The next ordered tier is a coordinated loaded-stack health and exact-source-identity check, followed by
-one real saved Main turn, one direct orange Card turn, one consultation, one non-Main terminal turn,
-profile OAuth tool readback, and Card Script success/failure recovery. Team, Magnetic, graph writes,
-external-client acceptance, and Jeremiah's visual acceptance remain separate and must not be inferred
-from the source checkpoint.
-
-This checkpoint does not prove that services load, OAuth completes, a provider answers, the UI renders
-correctly, saved Projects migrate as intended, or Jeremiah accepts the result.
+Profile OAuth tool readback and Card Script success/failure recovery require their real external or saved
+prerequisites. A new model turn, Team, Magnetic, graph writes, external-client acceptance, and Jeremiah's final
+visual acceptance remain separate and must not be inferred from health, deterministic, or inspector proof.
 
 ## Next graph boundary — deferred
 

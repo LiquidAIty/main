@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
+from graphiti_core.errors import NodeNotFoundError
 
 import graphiti_runtime
 import ingest as knowgraph_ingest
@@ -25,34 +25,9 @@ UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class GraphitiFactDeleteRequest(BaseModel):
-    project_id: str
-    graphiti_fact_uuid: str
-    kind: str = "fact"
-
-
 class GraphitiEpisodeDeleteRequest(BaseModel):
     project_id: str
     graphiti_episode_uuid: str
-
-
-async def _delete_graphiti_fact(
-    payload: GraphitiFactDeleteRequest,
-) -> dict[str, str]:
-    from graphiti_core.edges import EntityEdge
-
-    if payload.kind != "fact":
-        raise ValueError("knowgraph_delete_kind_invalid")
-    expected_group = graphiti_project_group_id(payload.project_id)
-    driver, _database = graphiti_runtime.create_graphiti_driver()
-    try:
-        record = await EntityEdge.get_by_uuid(driver, payload.graphiti_fact_uuid)
-        if record.group_id != expected_group:
-            raise LookupError("knowgraph_graphiti_fact_not_found")
-        await record.delete(driver)
-        return {"kind": payload.kind, "graphiti_fact_uuid": payload.graphiti_fact_uuid}
-    finally:
-        await driver.close()
 
 
 async def _delete_graphiti_episode(
@@ -74,29 +49,12 @@ async def _delete_graphiti_episode(
         await graphiti.driver.close()
 
 
-@app.post("/delete_fact")
-async def delete_fact(payload: GraphitiFactDeleteRequest) -> JSONResponse:
-    try:
-        result = await _delete_graphiti_fact(payload)
-        return JSONResponse(status_code=200, content={"ok": True, **result})
-    except (LookupError, EdgeNotFoundError, NodeNotFoundError):
-        return JSONResponse(
-            status_code=404,
-            content={"ok": False, "error": {"message": "KnowGraph item not found."}},
-        )
-    except (RuntimeError, ValueError, KeyError) as exc:
-        return JSONResponse(
-            status_code=409,
-            content={"ok": False, "error": {"message": str(exc)}},
-        )
-
-
 @app.post("/delete_episode")
 async def delete_episode(payload: GraphitiEpisodeDeleteRequest) -> JSONResponse:
     try:
         result = await _delete_graphiti_episode(payload)
         return JSONResponse(status_code=200, content={"ok": True, **result})
-    except (LookupError, EdgeNotFoundError, NodeNotFoundError):
+    except (LookupError, NodeNotFoundError):
         return JSONResponse(
             status_code=404,
             content={"ok": False, "error": {"message": "KnowGraph item not found."}},

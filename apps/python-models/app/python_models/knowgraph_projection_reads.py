@@ -7,6 +7,7 @@ from typing import Any
 from app.python_models.knowgraph_graphiti_read_support import (
     graphiti_episode_ids,
     graphiti_project_scope_ids,
+    is_visible_knowgraph_entity_name,
     knowgraph_driver,
     neo4j_rows,
     persisted_knowgraph_jev,
@@ -20,21 +21,13 @@ from app.python_models.knowgraph_know_contract import (
 _KNOWS_PER_ENTITY_LIMIT = 2
 
 
-def _node_type(labels: list[str]) -> str:
-    for label in ("Entity", "Episodic", "Community", "Saga"):
-        if label in labels:
-            return label
-    return labels[0] if labels else "NeoEntity"
-
-
 def _knowgraph_node_label(
     identifier: str,
     properties: dict[str, Any],
 ) -> str:
     for candidate in (
         properties.get("name"), properties.get("title"), properties.get("label"),
-        properties.get("id"), properties.get("document_id"),
-        properties.get("chunk_id"),
+        properties.get("id"),
     ):
         text = str(candidate or "").strip()
         if text:
@@ -51,14 +44,18 @@ def _upsert_projection_node(
     node_id = str(identifier or "").strip()
     if not node_id or node_id in nodes:
         return
-    safe_labels = [str(label) for label in labels] if isinstance(labels, list) else []
+    if "Entity" not in (labels if isinstance(labels, list) else []):
+        return
     safe_properties = without_graphiti_embedding_vectors(
         properties if isinstance(properties, dict) else {}
     )
+    label = _knowgraph_node_label(node_id, safe_properties)
+    if not is_visible_knowgraph_entity_name(label):
+        return
     nodes[node_id] = {
         "id": node_id,
-        "label": _knowgraph_node_label(node_id, safe_properties),
-        "type": _node_type(safe_labels),
+        "label": label,
+        "type": "Entity",
         "source": "knowgraph",
         "properties": {
             **safe_properties,
@@ -117,7 +114,6 @@ def _attach_entity_knows(
         ) + know_word_count(know)
         if count >= _KNOWS_PER_ENTITY_LIMIT:
             continue
-        content = str(properties.get("content") or "")
         evidence = entity_properties.setdefault("evidence", [])
         evidence.append({
             "id": episode_id,
@@ -126,9 +122,6 @@ def _attach_entity_knows(
             "title": str(properties.get("name") or "Know"),
             "idea": know["idea"],
             "counterIdea": know["counterIdea"],
-            "body": content,
-            "content": content,
-            "properties": properties,
             "validFrom": properties.get("valid_at"),
             "ingestedAt": properties.get("created_at"),
         })
@@ -191,24 +184,20 @@ def _projection_relationship(
     _upsert_projection_node(
         nodes, target_id, row.get("to_labels"), row.get("to_props")
     )
+    if source_id not in nodes or target_id not in nodes:
+        return None
     relationship_type = str(row.get("rel_type") or "RELATED_TO")
     relationship_properties = without_graphiti_embedding_vectors(
         row.get("rel_props") if isinstance(row.get("rel_props"), dict) else {}
-    )
-    source_properties = without_graphiti_embedding_vectors(
-        row.get("from_props") if isinstance(row.get("from_props"), dict) else {}
-    )
-    target_properties = without_graphiti_embedding_vectors(
-        row.get("to_props") if isinstance(row.get("to_props"), dict) else {}
     )
     properties = _relationship_properties(
         relationship_id,
         relationship_type,
         relationship_properties,
         source_id=source_id,
-        source_name=_knowgraph_node_label(source_id, source_properties),
+        source_name=str(nodes[source_id]["label"]),
         target_id=target_id,
-        target_name=_knowgraph_node_label(target_id, target_properties),
+        target_name=str(nodes[target_id]["label"]),
     )
     return {
         "id": relationship_id,

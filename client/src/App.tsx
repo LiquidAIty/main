@@ -10,18 +10,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/agentbuilder" replace />} />
         <Route path="/agentbuilder" element={<AgentBuilder />} />
-        <Route path="/agentpage" element={<Navigate to="/agentbuilder" replace />} />
         <Route path="/tradingui" element={<TradingUI />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
-        <Route path="/lab/agent" element={<Navigate to="/agentbuilder" replace />} />
-        <Route path="/agent-manager" element={<Navigate to="/agentbuilder" replace />} />
-        <Route path="/boss-agent" element={<Navigate to="/agentbuilder" replace />} />
-        <Route path="/chat" element={<Navigate to="/agentbuilder" replace />} />
-        <Route path="/agent-chat" element={<Navigate to="/agentbuilder" replace />} />
-        <Route path="/agentic" element={<Navigate to="/agentbuilder" replace />} />
-        <Route path="/admin" element={<Navigate to="/agentbuilder" replace />} />
-        <Route path="/agentknowledge" element={<Navigate to="/agentbuilder" replace />} />
       </Routes>
     </BrowserRouter>
   );

@@ -6,7 +6,7 @@
 @graph codegraph
 
 Use for selecting repository structure and source evidence for a coding task. Recovered from
-`2ddadeeb^` and refreshed September 9, 2026. The existing native CBM indexer owns CodeGraph.
+`2ddadeeb^` and refreshed September 9, 2026. The existing CBM indexer owns CodeGraph.
 When a PromptSpec is active, load `promptspec-receiver` first and defer repository process control to it.
 The Primary alone uses the installed CBM CLI for bounded directional mapping, then hands exact anchors to
 read-only direct-source scouts. See [codebasedmemory.md](codebasedmemory.md) for CLI discovery, coverage
@@ -15,7 +15,7 @@ limits, and inverse deletion/rename checks; do not duplicate that procedure.
 LiquidAIty product clients are a separate boundary and use only their saved granted application-published
 `cbm.*` operations. Repository CLI policy does not remove, add, or authorize product tools.
 
-Return actual project identity, qualified symbols, paths, native references, and relevant callers.
+Return actual project identity, qualified symbols, paths, CBM references, and relevant callers.
 Read current complete source before changing behavior. Report missing coverage and use the
 documented source fallback; a missing graph result is not evidence that a function does not exist.
 

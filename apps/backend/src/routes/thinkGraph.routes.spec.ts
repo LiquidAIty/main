@@ -74,27 +74,4 @@ describe('ThinkGraph Engraphis read transport', () => {
     }
   });
 
-  it('retires one exact ThinkGraph relationship through Python rails', async () => {
-    mocks.requestPythonRailsJson.mockResolvedValue({ ok: true, edgeId: 'edge-1' });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/retire-relationship`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectId: 'project-1', edgeId: 'edge-1' }),
-      });
-      expect(response.status).toBe(200);
-      expect(mocks.requestPythonRailsJson).toHaveBeenCalledWith('/thinkgraph/operation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          operation: 'retire_relationship',
-          arguments: { edgeId: 'edge-1' },
-        }),
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
 });

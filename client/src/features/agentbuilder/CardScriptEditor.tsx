@@ -110,7 +110,7 @@ from hermes_tools import SCRIPT, input, output, tools
 
 # region Typed Result
 # Hermes chooses whether to call this optimized tool. The function cannot
-# rewrite the Card prompt, context, memory, lifecycle, or native Team.
+# rewrite the Card prompt, context, memory, lifecycle, or Hermes Team.
 output.emit({"result": {"query": input.query}})
 # endregion
 `;
@@ -119,16 +119,16 @@ const SCRIPT_EXAMPLES = [
   {
     id: 'thinkgraph-context',
     label: 'ThinkGraph context',
-    description: 'Read bounded Engraphis context plus one exact native memory.',
+    description: 'Read bounded Engraphis context plus one exact provider memory.',
     source: `CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {
         "type": "object",
         "properties": {
             "query": {"type": "string"},
-            "nativeId": {"type": "string"},
+            "memoryId": {"type": "string"},
         },
-        "required": ["query", "nativeId"],
+        "required": ["query", "memoryId"],
         "additionalProperties": False,
     },
     "output": {
@@ -153,7 +153,7 @@ bounded_context = tools.call(
     "engraphis_recall_context", query=input.query, token_budget=600, k=6
 )
 exact_memory = tools.call(
-    "engraphis_get_memory", memory_id=input.nativeId
+    "engraphis_get_memory", memory_id=input.memoryId
 )
 result = {"context": bounded_context, "exactMemory": exact_memory}
 output.emit({"result": result})
@@ -162,7 +162,7 @@ output.emit({"result": result})
   {
     id: 'knowgraph-evidence',
     label: 'KnowGraph evidence',
-    description: 'Read bounded native entities, facts, and episode provenance.',
+    description: 'Read bounded provider entities, facts, and episode provenance.',
     source: `CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {

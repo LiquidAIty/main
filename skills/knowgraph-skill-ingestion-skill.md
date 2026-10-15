@@ -14,9 +14,9 @@ obsolete commands only after checking the current owner. Validate referenced pat
 and examples. Record unsupported behavior as unproven rather than inventing an implementation.
 
 Repository coding procedures live in `skills/*.md`. A saved Hermes Card's skill selection and
-native profile own its runtime skill availability. Do not assume adding a repo document grants
+Hermes profile own its runtime skill availability. Do not assume adding a repo document grants
 it to every Card or that a displayed skill was loaded into a Run. Inspect the current selected
-profile and native discovery when runtime availability matters.
+profile and Hermes discovery when runtime availability matters.
 
 Publish or change a profile only within the user's authorized task, using its existing supported
 configuration path. Verify discovery and the exact changed selection independently from useful

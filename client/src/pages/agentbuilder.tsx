@@ -3,17 +3,17 @@ import React, {
   lazy,
   useCallback,
   useEffect,
-  useMemo, 
+  useMemo,
   useRef,
   useState,
 } from 'react';
 
-import BuilderChat from '../components/builder/BuilderChat';
+import MainProjectChat from '../components/main/MainProjectChat';
 import {
-  createCanonicalSubjectMatcher,
-  type CanonicalSubjectFocusRequest,
-  type CanonicalSubjectFocusTarget,
-} from '../components/builder/canonicalSubjectLinks';
+  createCanonicalEntityMatcher,
+  type CanonicalEntityFocusRequest,
+  type CanonicalEntityFocusTarget,
+} from '../components/builder/canonicalEntityLinks';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import WorldSignalSurface, {
   type WorldSignalsInspectorBridge,
@@ -32,7 +32,7 @@ import useAgentBuilderWorkspaceLayout, {
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
-import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
+import MainBuilderSplitPanel from '../features/agentbuilder/console/MainBuilderSplitPanel';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave, {
   projectDeckForPersistence,
@@ -105,12 +105,12 @@ type SavedCardChoice = {
   runtimeProfile: string;
 };
 
-const loadAgentManager = () => import('../components/AgentManager');
-const AgentManager = lazy(async () => {
-  const mod = await loadAgentManager();
-  return { default: mod.AgentManager };
+const loadCardEditor = () => import('../components/CardEditor');
+const CardEditor = lazy(async () => {
+  const mod = await loadCardEditor();
+  return { default: mod.CardEditor };
 });
-void loadAgentManager();
+void loadCardEditor();
 
 // Agent Builder page: left workspace rail, Main Chat, canvas, and one six-tab Card inspector.
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
@@ -211,10 +211,6 @@ const BUILDER_PROJECT_TABS = ['Plan'] as const;
 const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 
-function isMagneticCard(card: AgentCardInstance | null | undefined): boolean {
-  return card?.id === 'card_magentic';
-}
-
 function hasTaskLedger(card: AgentCardInstance | null | undefined): boolean {
   return card?.id === 'card_magentic' || card?.id === 'card_team';
 }
@@ -232,7 +228,7 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
   return card.id;
 }
 // The launch surface renders one mixed human graph. ThinkGraph and KnowGraph
-// remain separate native authorities; CodeGraph remains agent-facing through CBM.
+// remain separate provider authorities; CodeGraph remains agent-facing through CBM.
 const PROJECTS_API = '/api/projects';
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -439,28 +435,27 @@ export default function AgentBuilder(): React.ReactElement {
     projectId: activeProject,
     deckId: BUILDER_DECK_ID,
     conversationId,
-    selectedCardId,
   });
-  const canonicalSubjectMatcher = useMemo(
-    () => createCanonicalSubjectMatcher({
+  const canonicalEntityMatcher = useMemo(
+    () => createCanonicalEntityMatcher({
       thinkgraph: knowledgeGraphs.projections.thinkgraph,
       knowgraph: knowledgeGraphs.projections.knowgraph,
     }),
     [knowledgeGraphs.projections.knowgraph, knowledgeGraphs.projections.thinkgraph],
   );
-  const subjectFocusRequestIdentityRef = useRef(0);
-  const [subjectFocusRequest, setSubjectFocusRequest] =
-    useState<CanonicalSubjectFocusRequest | null>(null);
+  const entityFocusRequestIdentityRef = useRef(0);
+  const [entityFocusRequest, setEntityFocusRequest] =
+    useState<CanonicalEntityFocusRequest | null>(null);
   useEffect(() => {
-    if (workspaceView !== 'knowledge') setSubjectFocusRequest(null);
+    if (workspaceView !== 'knowledge') setEntityFocusRequest(null);
   }, [activeProject, workspaceView]);
-  const handleCanonicalSubjectFocus = useCallback((target: CanonicalSubjectFocusTarget) => {
+  const handleCanonicalEntityFocus = useCallback((target: CanonicalEntityFocusTarget) => {
     if (!activeProject || target.projectId !== activeProject) return;
-    subjectFocusRequestIdentityRef.current += 1;
+    entityFocusRequestIdentityRef.current += 1;
     setWorkspaceView('knowledge');
-    setSubjectFocusRequest({
+    setEntityFocusRequest({
       ...target,
-      requestId: subjectFocusRequestIdentityRef.current,
+      requestId: entityFocusRequestIdentityRef.current,
     });
   }, [activeProject]);
   const prepareRunImages = useCallback(async (addressedCardId: string | null) => {
@@ -1128,7 +1123,7 @@ export default function AgentBuilder(): React.ReactElement {
                     </div>
                   }
                 >
-                  <AgentManager
+                  <CardEditor
                     key="deck-card-editor"
                     cardId={selectedCard.id}
                     projectId={canvasProjectId}
@@ -1266,7 +1261,7 @@ export default function AgentBuilder(): React.ReactElement {
     // to the separately saved Builder Card and its own Hermes session.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
-        <BuilderChat
+        <MainProjectChat
           messages={messages}
           mainCardId={mainCardId || undefined}
           directChatTargets={addressableAgents}
@@ -1284,8 +1279,8 @@ export default function AgentBuilder(): React.ReactElement {
             });
           }}
           knowledgeProjectId={projectId}
-          subjectMatcher={canonicalSubjectMatcher}
-          onSubjectFocus={handleCanonicalSubjectFocus}
+          entityMatcher={canonicalEntityMatcher}
+          onEntityFocus={handleCanonicalEntityFocus}
           colors={C}
           busy={sessionActive}
           connecting={sessionConnecting}
@@ -1331,7 +1326,7 @@ export default function AgentBuilder(): React.ReactElement {
         {compact ? (
           <div style={{ height: '100%' }}>{chat}</div>
         ) : (
-          <HarnessChatPanel
+          <MainBuilderSplitPanel
             storageKey={`liquidaity.main.agent-builder.split.v1:${projectId}`}
             chat={chat}
             terminal={cardWorkSurface()}
@@ -1415,11 +1410,7 @@ export default function AgentBuilder(): React.ReactElement {
             errors={knowledgeGraphs.errors}
             statuses={knowledgeGraphs.statuses}
             onReadFocusNeighborhood={knowledgeGraphs.readProviderNeighborhood}
-            onExpandNode={(graph, node) => knowledgeGraphs.expandNode({
-              graph,
-              node,
-            })}
-            subjectFocusRequest={subjectFocusRequest}
+            entityFocusRequest={entityFocusRequest}
           />
         </KnowledgeSurfaceErrorBoundary>
       </div>
@@ -1577,7 +1568,9 @@ export default function AgentBuilder(): React.ReactElement {
           ? 'Open WorldSignals Inspector'
           : inspectorDrawerRole === 'worldview'
             ? 'Open WorldView controls'
-            : 'Open Trading Inspector'}
+            : inspectorDrawerRole === 'agent'
+              ? 'Open Card editor'
+              : 'Open Trading Inspector'}
         movable={inspectorDrawerRole !== 'trading'}
         defaultWidth={inspectorDrawerDefaultWidth}
         resetWidthOnOpen={false}

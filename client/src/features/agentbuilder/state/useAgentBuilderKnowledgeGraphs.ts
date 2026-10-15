@@ -1,59 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type {
-  GraphProjectionEdge,
-  GraphProjectionNode,
-  GraphProjectionV1,
-} from '../../../components/knowledge/NativeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
+import type { KnowledgeGraphKind } from '../../../types/agentgraph';
 
-export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph';
-
-export type ThinkGraphRevisionEvent = {
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  originatingRunId: string;
-  stage: 'settled';
-  revision: string;
-  changedNodeIds: string[];
-  changedEdgeIds: string[];
-  affectedNodeIds: string[];
-};
-
-export type ThinkGraphLifecycleError = {
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  originatingRunId: string;
-  stage: 'prepare' | 'thinkgraph_card' | 'settle';
-  error: string;
-};
-
-type ExpandRequest = {
-  graph: KnowledgeGraphKind;
-  node: GraphProjectionNode;
-};
-
-export type KnowledgeGraphState = {
+type KnowledgeGraphState = {
   projections: Record<KnowledgeGraphKind, GraphProjectionV1>;
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses: Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>;
-  refreshThinkGraph: () => Promise<void>;
-  refreshKnowGraph: () => Promise<boolean>;
-  observeThinkGraphRevision: (event: ThinkGraphRevisionEvent) => void;
-  observeThinkGraphFailure: (event: ThinkGraphLifecycleError) => void;
   readProviderNeighborhood: (
     graph: KnowledgeGraphKind,
     providerId: string,
     signal?: AbortSignal,
   ) => Promise<GraphProjectionV1>;
-  expandNode: (request: ExpandRequest) => Promise<void>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
 };
 
 const KNOWGRAPH_STARTUP_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
+
+function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      window.clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, delayMs);
+    signal.addEventListener('abort', finish, { once: true });
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -80,26 +57,7 @@ function emptyGraphs(projectId: string): Record<KnowledgeGraphKind, GraphProject
   };
 }
 
-export function applyKnowGraphJevPhysics(value: GraphProjectionV1): GraphProjectionV1 {
-  return applyJevGraphPhysics(value, 'balanced');
-}
-
-export function withSettlementHeat(
-  projection: GraphProjectionV1,
-  changedNodeIds: readonly string[],
-): GraphProjectionV1 {
-  const changed = new Set(changedNodeIds.filter(Boolean));
-  return {
-    ...projection,
-    nodes: projection.nodes.map((node) => {
-      const active = changed.has(node.id) || changed.has(String(node.canonicalId || ''));
-      const { turn_heat_active: _previousActive, turn_heat: _previousHeat, ...rest } = node;
-      return active ? { ...rest, turn_heat_active: true, turn_heat: 1 } : rest;
-    }),
-  };
-}
-
-export function knowGraphProjection(
+function knowGraphProjection(
   payload: Record<string, any>,
   projectId: string,
 ): GraphProjectionV1 {
@@ -113,38 +71,23 @@ export function knowGraphProjection(
       || typeof edge.type !== 'string' || !edge.type)) {
     throw new Error('invalid_knowgraph_projection');
   }
-  const subjects = payload.nodes.filter((node: any) => node.type !== 'Episodic');
-  const episodes = payload.nodes.filter((node: any) => node.type === 'Episodic');
-  const subjectIds = new Set(subjects.map((node: any) => node.id));
-  const episodeIds = new Set(episodes.map((node: any) => node.id));
-  const episodeIdsBySubject = new Map<string, Set<string>>();
-  for (const relationship of payload.relationships) {
-    if (relationship.type !== 'MENTIONS') continue;
-    const episodeId = episodeIds.has(relationship.from)
-      ? relationship.from
-      : episodeIds.has(relationship.to) ? relationship.to : null;
-    const subjectId = subjectIds.has(relationship.from)
-      ? relationship.from
-      : subjectIds.has(relationship.to) ? relationship.to : null;
-    if (!episodeId || !subjectId) continue;
-    const values = episodeIdsBySubject.get(subjectId) || new Set<string>();
-    values.add(episodeId);
-    episodeIdsBySubject.set(subjectId, values);
+  if (payload.nodes.some((node: any) => node.type !== 'Entity')) {
+    throw new Error('invalid_knowgraph_projection');
   }
-  const nodes = subjects.map((node: any) => ({
+  const entityIds = new Set(payload.nodes.map((node: any) => node.id));
+  if (payload.relationships.some((edge: any) => (
+    !entityIds.has(edge.from) || !entityIds.has(edge.to)
+  ))) throw new Error('invalid_knowgraph_projection');
+  const nodes = payload.nodes.map((node: any) => ({
     ...node,
     canonicalName: node.label,
     entityKind: node.type,
     projectId,
-    ...(episodeIdsBySubject.has(node.id)
-      ? { provenanceEpisodeIds: [...episodeIdsBySubject.get(node.id)!] }
-      : {}),
   }));
-  return applyKnowGraphJevPhysics({
+  return applyJevGraphPhysics({
     ...emptyProjection('knowgraph', projectId),
     nodes,
     edges: payload.relationships
-      .filter((edge: any) => subjectIds.has(edge.from) && subjectIds.has(edge.to))
       .map((edge: any) => ({
         ...edge,
         source: edge.from,
@@ -153,48 +96,19 @@ export function knowGraphProjection(
       })),
     counts: {
       nodes: nodes.length,
-      edges: payload.relationships.filter((edge: any) => (
-        subjectIds.has(edge.from) && subjectIds.has(edge.to)
-      )).length,
+      edges: payload.relationships.length,
     },
-    provenanceNodes: episodes,
-  });
-}
-
-export function mergeGraphProjection(
-  current: GraphProjectionV1,
-  incoming: GraphProjectionV1,
-): GraphProjectionV1 {
-  const nodes = new Map(current.nodes.map((node) => [node.id, node]));
-  for (const node of incoming.nodes) nodes.set(node.id, { ...nodes.get(node.id), ...node });
-  const visibleNodeIds = new Set(nodes.keys());
-  const edges = new Map(current.edges.map((edge) => [edge.id, edge]));
-  for (const edge of incoming.edges) {
-    if (visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)) {
-      edges.set(edge.id, { ...edges.get(edge.id), ...edge });
-    }
-  }
-  const merged = {
-    ...current,
-    nodes: [...nodes.values()],
-    edges: [...edges.values()],
-    counts: { nodes: nodes.size, edges: edges.size },
-  };
-  return merged.authority === 'knowgraph'
-    ? applyKnowGraphJevPhysics(merged)
-    : merged;
+  }, 'balanced');
 }
 
 export default function useAgentBuilderKnowledgeGraphs({
   projectId,
   deckId,
   conversationId,
-  selectedCardId = null,
 }: {
   projectId: string;
   deckId: string;
   conversationId: string;
-  selectedCardId?: string | null;
 }): KnowledgeGraphState {
   const [projections, setProjections] = useState(() => emptyGraphs(projectId));
   const [errors, setErrors] = useState<Partial<Record<KnowledgeGraphKind, string>>>({});
@@ -204,10 +118,14 @@ export default function useAgentBuilderKnowledgeGraphs({
   });
   const thinkRequestRef = useRef(0);
   const knowRequestRef = useRef(0);
-  const seenThinkRevisionsRef = useRef(new Set<string>());
+  const thinkAbortRef = useRef<AbortController | null>(null);
+  const knowAbortRef = useRef<AbortController | null>(null);
 
-  const refreshThinkGraph = useCallback(async (changedNodeIds: readonly string[] = []) => {
+  const refreshThinkGraph = useCallback(async () => {
     const requestId = ++thinkRequestRef.current;
+    thinkAbortRef.current?.abort();
+    const controller = new AbortController();
+    thinkAbortRef.current = controller;
     if (!projectId.trim()) {
       setStatuses((current) => ({ ...current, thinkgraph: 'ready' }));
       return;
@@ -215,7 +133,9 @@ export default function useAgentBuilderKnowledgeGraphs({
     setStatuses((current) => ({ ...current, thinkgraph: 'loading' }));
     try {
       const query = new URLSearchParams({ projectId });
-      const response = await fetch(`/api/thinkgraph/projection?${query}`);
+      const response = await fetch(`/api/thinkgraph/projection?${query}`, {
+        signal: controller.signal,
+      });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !isRecord(payload)
         || payload.schemaVersion !== 'thinkgraph.engraphis.v1'
@@ -228,12 +148,12 @@ export default function useAgentBuilderKnowledgeGraphs({
       if (requestId !== thinkRequestRef.current) return;
       setProjections((current) => ({
         ...current,
-        thinkgraph: withSettlementHeat(payload as GraphProjectionV1, changedNodeIds),
+        thinkgraph: payload as GraphProjectionV1,
       }));
       setErrors((current) => ({ ...current, thinkgraph: undefined }));
       setStatuses((current) => ({ ...current, thinkgraph: 'ready' }));
     } catch (error) {
-      if (requestId !== thinkRequestRef.current) return;
+      if (controller.signal.aborted || requestId !== thinkRequestRef.current) return;
       setErrors((current) => ({
         ...current,
         thinkgraph: error instanceof Error ? error.message : String(error),
@@ -244,6 +164,9 @@ export default function useAgentBuilderKnowledgeGraphs({
 
   const refreshKnowGraph = useCallback(async (): Promise<boolean> => {
     const requestId = ++knowRequestRef.current;
+    knowAbortRef.current?.abort();
+    const controller = new AbortController();
+    knowAbortRef.current = controller;
     if (!projectId.trim()) {
       setStatuses((current) => ({ ...current, knowgraph: 'ready' }));
       return true;
@@ -251,9 +174,12 @@ export default function useAgentBuilderKnowledgeGraphs({
     setStatuses((current) => ({ ...current, knowgraph: 'loading' }));
     let lastFailure: unknown = null;
     for (let attempt = 0; attempt <= KNOWGRAPH_STARTUP_RETRY_DELAYS_MS.length; attempt += 1) {
+      if (requestId !== knowRequestRef.current) return false;
       try {
         const query = new URLSearchParams({ projectId, limit: '200' });
-        const response = await fetch(`/api/knowgraph/graph?${query}`);
+        const response = await fetch(`/api/knowgraph/graph?${query}`, {
+          signal: controller.signal,
+        });
         const payload = await response.json().catch(() => null);
         if (!response.ok || !isRecord(payload)) throw new Error('Knowledge could not be loaded.');
         if (requestId !== knowRequestRef.current) return false;
@@ -266,12 +192,9 @@ export default function useAgentBuilderKnowledgeGraphs({
         return true;
       } catch (error) {
         lastFailure = error;
-        if (requestId !== knowRequestRef.current) return false;
+        if (controller.signal.aborted || requestId !== knowRequestRef.current) return false;
         if (attempt >= KNOWGRAPH_STARTUP_RETRY_DELAYS_MS.length) break;
-        await new Promise<void>((resolve) => window.setTimeout(
-          resolve,
-          KNOWGRAPH_STARTUP_RETRY_DELAYS_MS[attempt],
-        ));
+        await waitForRetry(KNOWGRAPH_STARTUP_RETRY_DELAYS_MS[attempt], controller.signal);
       }
     }
     setErrors((current) => ({
@@ -283,7 +206,6 @@ export default function useAgentBuilderKnowledgeGraphs({
   }, [projectId]);
 
   useEffect(() => {
-    seenThinkRevisionsRef.current.clear();
     setErrors({});
     setProjections(emptyGraphs(projectId));
     setStatuses({ thinkgraph: 'loading', knowgraph: 'loading' });
@@ -292,22 +214,10 @@ export default function useAgentBuilderKnowledgeGraphs({
     return () => {
       thinkRequestRef.current += 1;
       knowRequestRef.current += 1;
+      thinkAbortRef.current?.abort();
+      knowAbortRef.current?.abort();
     };
   }, [conversationId, deckId, projectId, refreshKnowGraph, refreshThinkGraph]);
-
-  const observeThinkGraphRevision = useCallback((event: ThinkGraphRevisionEvent) => {
-    if (event.projectId !== projectId || event.deckId !== deckId
-      || event.conversationId !== conversationId || event.stage !== 'settled'
-      || !event.revision || seenThinkRevisionsRef.current.has(event.revision)) return;
-    seenThinkRevisionsRef.current.add(event.revision);
-    void refreshThinkGraph(event.changedNodeIds);
-  }, [conversationId, deckId, projectId, refreshThinkGraph]);
-
-  const observeThinkGraphFailure = useCallback((event: ThinkGraphLifecycleError) => {
-    if (event.projectId !== projectId || event.deckId !== deckId
-      || event.conversationId !== conversationId) return;
-    setErrors((current) => ({ ...current, thinkgraph: event.error }));
-  }, [conversationId, deckId, projectId]);
 
   const readProviderNeighborhood = useCallback(async (
     graph: KnowledgeGraphKind,
@@ -316,7 +226,7 @@ export default function useAgentBuilderKnowledgeGraphs({
   ): Promise<GraphProjectionV1> => {
     const query = graph === 'thinkgraph'
       ? new URLSearchParams({ projectId, canonicalId: providerId })
-      : new URLSearchParams({ projectId, nodeId: providerId, limit: '50', depth: '1' });
+      : new URLSearchParams({ projectId, nodeId: providerId, limit: '50' });
     const response = await fetch(
       graph === 'thinkgraph'
         ? `/api/thinkgraph/neighborhood?${query}`
@@ -336,27 +246,6 @@ export default function useAgentBuilderKnowledgeGraphs({
     return knowGraphProjection(payload, projectId);
   }, [projectId]);
 
-  const expandNode = useCallback(async ({ graph, node }: ExpandRequest) => {
-    if (selectedCardId) throw new Error('Deselect the Card to expand the overall graph.');
-    try {
-      const incoming = await readProviderNeighborhood(
-        graph,
-        graph === 'thinkgraph' ? String(node.canonicalId || node.id) : node.id,
-      );
-      setProjections((current) => ({
-        ...current,
-        [graph]: mergeGraphProjection(current[graph], incoming),
-      }));
-      setErrors((current) => ({ ...current, [graph]: undefined }));
-    } catch (error) {
-      setErrors((current) => ({
-        ...current,
-        [graph]: error instanceof Error ? error.message : String(error),
-      }));
-      throw error;
-    }
-  }, [readProviderNeighborhood, selectedCardId]);
-
   const removeThinkGraphEvidence = useCallback(async (memoryId: string) => {
     const response = await fetch('/api/thinkgraph/retire', {
       method: 'POST',
@@ -368,10 +257,13 @@ export default function useAgentBuilderKnowledgeGraphs({
   }, [projectId, refreshThinkGraph]);
 
   const removeKnowGraphEvidence = useCallback(async (episodeId: string) => {
-    const response = await fetch('/api/knowgraph/delete-native', {
+    const response = await fetch('/api/knowgraph/delete-episode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, native_id: episodeId, kind: 'episode' }),
+      body: JSON.stringify({
+        project_id: projectId,
+        graphiti_episode_uuid: episodeId,
+      }),
     });
     if (!response.ok) throw new Error('Could not delete this Know.');
     await refreshKnowGraph();
@@ -381,12 +273,7 @@ export default function useAgentBuilderKnowledgeGraphs({
     projections,
     errors,
     statuses,
-    refreshThinkGraph,
-    refreshKnowGraph,
-    observeThinkGraphRevision,
-    observeThinkGraphFailure,
     readProviderNeighborhood,
-    expandNode,
     removeThinkGraphEvidence,
     removeKnowGraphEvidence,
   };

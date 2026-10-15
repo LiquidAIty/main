@@ -10,18 +10,13 @@
     "outDir": "./dist",
     "rootDir": ".",
     "baseUrl": ".",
-    "paths": {
-      "@/*": ["*"]
-    },
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true,
-    "typeRoots": ["./node_modules/@types", "./types"]
+    "typeRoots": ["./node_modules/@types"]
   },
   "include": [
-    "apps/**/*.ts",
-    "types/**/*.ts",
-    "scripts/**/*.ts"
+    "apps/**/*.ts"
   ],
   "exclude": [
     "node_modules",

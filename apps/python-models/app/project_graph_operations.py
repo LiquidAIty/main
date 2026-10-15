@@ -281,7 +281,7 @@ def project_graph_operation_definitions(
         title="List Project Entities",
         description=(
             "Read the complete current Project Entity identity directory. Exact canonical "
-            "name bytes combine native Engraphis and Graphiti identities for presentation "
+            "name bytes combine provider Engraphis and Graphiti identities for presentation "
             "only; each graph remains a separate authority and writer. Returns no Think or "
             "Know bodies and performs no semantic search or graph write."
         ),
@@ -348,7 +348,7 @@ def project_graph_operation_definitions(
         title="Read Project Entity Context",
         description=(
             "Read bounded Relevant and distinct Recent exact Thinks and Knows for exact "
-            "current Project Entity directory references. The owning graphs produce native "
+            "current Project Entity directory references. The owning graphs produce provider "
             "candidates and Jev rates them against the supplied current request/context. "
             "Performs no fuzzy Entity lookup, Entity creation, or graph write."
         ),

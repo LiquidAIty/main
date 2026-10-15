@@ -185,7 +185,7 @@ def test_canonical_operation_ids_and_publisher_views_are_unique_and_permitted():
         }
 
 
-def test_calculator_is_one_internal_operation_and_is_not_republished_by_mcp():
+def test_calculator_keeps_one_internal_card_profile_definition():
     definition = operation_definition("calculator")
     assert definition is not None
     assert definition.publishers == frozenset({"internal-plugin"})

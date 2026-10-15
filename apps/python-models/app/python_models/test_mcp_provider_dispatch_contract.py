@@ -19,13 +19,55 @@ ensure_env_loaded()
 
 from app import (
     mcp_auth,
+    mcp_catalog_projection,
     mcp_catalog_runtime,
     mcp_cbm_provider,
     mcp_graphiti_provider,
     mcp_provider_operations,
 )
 from app.python_models.test_mcp_contract_support import clear_live_provider_operations
+from app.python_models.tool_catalog import code_owned_tool_projection
 from mcp.types import Tool
+
+
+def test_saved_card_tools_share_one_authenticated_mcp_projection(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    tools = asyncio.run(mcp_catalog_projection.application_tools())
+    names = {tool.name for tool in tools}
+    expected = {
+        descriptor["canonicalId"]
+        for descriptor in code_owned_tool_projection()
+        if set(descriptor["publications"]) & {"card-profile", "external-mcp"}
+    }
+    assert names == expected
+    assert {
+        "calculator",
+        "get_market_snapshot",
+        "worldsignals.capabilities",
+        "worldsignals.package",
+    }.issubset(names)
+    assert all(
+        tool.output_schema is None or tool.output_schema.get("type") == "object"
+        for tool in tools
+    )
+    assert next(tool for tool in tools if tool.name == "calculator").output_schema is None
+    authenticated = mcp_catalog_projection.bind_authenticated_catalog([
+        mcp_provider_operations.bind_operation_access(tool) for tool in tools
+    ])
+    assert {tool.name for tool in authenticated} == expected
+
+    principal = {
+        "kind": "materializer-read",
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "callerCardId": "trading",
+        "grantedTools": ["get_market_snapshot"],
+    }
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: principal)
+    visible = mcp_catalog_projection.catalog_for_request(tools)
+    assert [tool.name for tool in visible] == ["get_market_snapshot"]
 
 
 def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():

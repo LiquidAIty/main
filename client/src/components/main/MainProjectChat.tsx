@@ -20,15 +20,14 @@ import UploadAttachment from "../knowledge/UploadAttachment";
 import {
   prepareChatBubbleText,
   tightChatBubbleTextWidth,
-} from "./pretextBubbleLayout";
+} from "../builder/pretextBubbleLayout";
 import type {
-  CanonicalSubjectFocusTarget,
-  CanonicalSubjectMatcher,
-} from "./canonicalSubjectLinks";
+  CanonicalEntityFocusTarget,
+  CanonicalEntityMatcher,
+} from "../builder/canonicalEntityLinks";
 
-type BuilderChatColors = {
+type MainProjectChatColors = {
   primary: string;
-  bg: string;
   panel: string;
   border: string;
   text: string;
@@ -48,12 +47,7 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
-/** Render ordinary Card output without a research-specific response protocol. */
-export function chatDisplayText(value: unknown): string {
-  return safeText(value);
-}
-
-type BuilderChatMessage = {
+type MainProjectChatMessage = {
   role: "assistant" | "user";
   text: string;
   speaker: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
@@ -61,7 +55,7 @@ type BuilderChatMessage = {
   status?: "pending" | "complete" | "error";
 };
 
-function shouldRenderMessage(message: BuilderChatMessage): boolean {
+function shouldRenderMessage(message: MainProjectChatMessage): boolean {
   return message.role !== "assistant" || Boolean(safeText(message.text).trim());
 }
 
@@ -70,7 +64,7 @@ const COMPOSER_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gi
 const MAX_COMPOSER_IMAGE_BYTES = 10 * 1024 * 1024;
 const MESSAGE_LANE_MAX_WIDTH = 760;
 
-export const CANONICAL_SUBJECT_LINK_STYLE = Object.freeze({
+const CANONICAL_ENTITY_LINK_STYLE = Object.freeze({
   display: "inline",
   margin: 0,
   padding: 0,
@@ -116,25 +110,25 @@ function readComposerImage(file: File): Promise<ComposerImage> {
   });
 }
 
-export function followLatestOutput(atBottom: boolean): "auto" | false {
+function followLatestOutput(atBottom: boolean): "auto" | false {
   return atBottom ? "auto" : false;
 }
 
 function linkedChatText(
   text: string,
-  role: BuilderChatMessage["role"],
-  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
-  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  role: MainProjectChatMessage["role"],
+  entityMatcher: CanonicalEntityMatcher | null | undefined,
+  onEntityFocus: ((target: CanonicalEntityFocusTarget) => void) | undefined,
   keyPrefix: string,
 ): ReactNode[] {
-  const segments = subjectMatcher?.segmentMessage(role, text) || [{ text }];
-  return segments.map((segment, index) => segment.target && onSubjectFocus ? (
+  const segments = entityMatcher?.segmentMessage(role, text) || [{ text }];
+  return segments.map((segment, index) => segment.target && onEntityFocus ? (
     <button
-      key={`${keyPrefix}:subject:${index}`}
+      key={`${keyPrefix}:entity:${index}`}
       type="button"
       aria-label={`Open ${segment.text} in graph`}
-      onClick={() => onSubjectFocus(segment.target!)}
-      style={CANONICAL_SUBJECT_LINK_STYLE}
+      onClick={() => onEntityFocus(segment.target!)}
+      style={CANONICAL_ENTITY_LINK_STYLE}
     >
       {segment.text}
     </button>
@@ -152,9 +146,9 @@ function safeMarkdownUrl(value: string): string | null {
 
 function inlineChatMarkdown(
   text: string,
-  role: BuilderChatMessage["role"],
-  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
-  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  role: MainProjectChatMessage["role"],
+  entityMatcher: CanonicalEntityMatcher | null | undefined,
+  onEntityFocus: ((target: CanonicalEntityFocusTarget) => void) | undefined,
   keyPrefix: string,
 ): ReactNode[] {
   const output: ReactNode[] = [];
@@ -163,7 +157,7 @@ function inlineChatMarkdown(
   const pushText = (value: string) => {
     if (!value) return;
     output.push(...linkedChatText(
-      value, role, subjectMatcher, onSubjectFocus, `${keyPrefix}:${token++}`,
+      value, role, entityMatcher, onEntityFocus, `${keyPrefix}:${token++}`,
     ));
   };
   while (cursor < text.length) {
@@ -179,7 +173,7 @@ function inlineChatMarkdown(
         const current = token++;
         output.push(<strong key={`${keyPrefix}:strong:${current}`}>
           {inlineChatMarkdown(
-            text.slice(cursor + 2, close), role, subjectMatcher, onSubjectFocus,
+            text.slice(cursor + 2, close), role, entityMatcher, onEntityFocus,
             `${keyPrefix}:strong:${current}`,
           )}
         </strong>);
@@ -194,7 +188,7 @@ function inlineChatMarkdown(
         const current = token++;
         output.push(<em key={`${keyPrefix}:em:${current}`}>
           {inlineChatMarkdown(
-            text.slice(cursor + 1, close), role, subjectMatcher, onSubjectFocus,
+            text.slice(cursor + 1, close), role, entityMatcher, onEntityFocus,
             `${keyPrefix}:em:${current}`,
           )}
         </em>);
@@ -221,8 +215,8 @@ function inlineChatMarkdown(
           output.push(<a key={`${keyPrefix}:link:${token++}`} href={url}
             target="_blank" rel="noreferrer">
             {inlineChatMarkdown(
-              text.slice(cursor + 1, labelEnd), role, subjectMatcher,
-              onSubjectFocus, `${keyPrefix}:link-label`,
+              text.slice(cursor + 1, labelEnd), role, entityMatcher,
+              onEntityFocus, `${keyPrefix}:link-label`,
             )}
           </a>);
           cursor = urlEnd + 1;
@@ -245,9 +239,9 @@ function inlineChatMarkdown(
 
 function renderChatMarkdown(
   text: string,
-  role: BuilderChatMessage["role"],
-  subjectMatcher: CanonicalSubjectMatcher | null | undefined,
-  onSubjectFocus: ((target: CanonicalSubjectFocusTarget) => void) | undefined,
+  role: MainProjectChatMessage["role"],
+  entityMatcher: CanonicalEntityMatcher | null | undefined,
+  onEntityFocus: ((target: CanonicalEntityFocusTarget) => void) | undefined,
 ): ReactNode[] {
   const lines = text.split('\n');
   return lines.flatMap((rawLine, index) => {
@@ -255,7 +249,7 @@ function renderChatMarkdown(
     const bullet = /^\s*[-*]\s+(.+)$/.exec(rawLine);
     const content = heading?.[2] ?? bullet?.[1] ?? rawLine;
     const inline = inlineChatMarkdown(
-      content, role, subjectMatcher, onSubjectFocus, `line:${index}`,
+      content, role, entityMatcher, onEntityFocus, `line:${index}`,
     );
     const line = heading
       ? <strong key={`line:${index}:heading`}>{inline}</strong>
@@ -266,22 +260,22 @@ function renderChatMarkdown(
   });
 }
 
-function BuilderChatMessageBubble({
+function MainProjectChatMessageBubble({
   colors,
   laneWidth,
   mainCardId,
   message,
-  subjectMatcher,
-  onSubjectFocus,
+  entityMatcher,
+  onEntityFocus,
 }: {
-  colors: BuilderChatColors;
+  colors: MainProjectChatColors;
   laneWidth: number | null;
   mainCardId?: string;
-  message: BuilderChatMessage;
-  subjectMatcher?: CanonicalSubjectMatcher | null;
-  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
+  message: MainProjectChatMessage;
+  entityMatcher?: CanonicalEntityMatcher | null;
+  onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
 }) {
-  const text = chatDisplayText(message.text);
+  const text = safeText(message.text);
   const isUser = message.role !== "assistant";
   const horizontalPadding = isUser ? 30 : 32;
   const maximumBubbleWidth = laneWidth == null
@@ -320,7 +314,7 @@ function BuilderChatMessageBubble({
       }}
     >
       <div
-        data-testid="builder-chat-message-frame"
+        data-testid="main-chat-message-frame"
         style={{
           maxWidth: isUser ? "min(82%, 560px)" : "min(92%, 640px)",
           width: measuredBubbleWidth == null ? "fit-content" : measuredBubbleWidth,
@@ -328,7 +322,7 @@ function BuilderChatMessageBubble({
       >
         {showSpeaker ? (
           <div
-            data-testid="builder-chat-speaker"
+            data-testid="main-chat-speaker"
             style={{
               color: message.status === "error" ? "#FF9B9B" : colors.neutral,
               fontSize: 10.5,
@@ -370,14 +364,14 @@ function BuilderChatMessageBubble({
         >
           {isUser
             ? text
-            : renderChatMarkdown(text, message.role, subjectMatcher, onSubjectFocus)}
+            : renderChatMarkdown(text, message.role, entityMatcher, onEntityFocus)}
         </div>
       </div>
     </div>
   );
 }
 
-export default function BuilderChat({
+export default function MainProjectChat({
   messages,
   mainCardId,
   directChatTargets = [],
@@ -395,16 +389,16 @@ export default function BuilderChat({
   onStop,
   draft,
   onDraftChange,
-  subjectMatcher,
-  onSubjectFocus,
+  entityMatcher,
+  onEntityFocus,
 }: {
-  messages: BuilderChatMessage[];
+  messages: MainProjectChatMessage[];
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
   mainCardId?: string;
   directChatTargets?: DirectChatTarget[];
   onSend: (t: string, runInput?: MainChatRunInput) => void;
   knowledgeProjectId: string;
-  colors: BuilderChatColors;
+  colors: MainProjectChatColors;
   /** A real Hermes turn is active; the composer remains available. */
   busy?: boolean;
   /** The send request is opening. */
@@ -420,8 +414,8 @@ export default function BuilderChat({
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
-  subjectMatcher?: CanonicalSubjectMatcher | null;
-  onSubjectFocus?: (target: CanonicalSubjectFocusTarget) => void;
+  entityMatcher?: CanonicalEntityMatcher | null;
+  onEntityFocus?: (target: CanonicalEntityFocusTarget) => void;
 }) {
   const [localDraft, setLocalDraft] = useState("");
   const [selectedAddressIndex, setSelectedAddressIndex] = useState(0);
@@ -546,9 +540,9 @@ export default function BuilderChat({
     return () => observer.disconnect();
   }, []);
 
-  const renderMessage = useCallback((index: number, message: BuilderChatMessage) => (
+  const renderMessage = useCallback((index: number, message: MainProjectChatMessage) => (
     <div
-      data-testid="builder-chat-message-row"
+      data-testid="main-chat-message-row"
       style={{
         boxSizing: "border-box",
         width: "100%",
@@ -559,22 +553,22 @@ export default function BuilderChat({
         }px`,
       }}
     >
-      <BuilderChatMessageBubble
+      <MainProjectChatMessageBubble
         colors={colors}
         laneWidth={messageLaneWidth}
         mainCardId={mainCardId}
         message={message}
-        subjectMatcher={subjectMatcher}
-        onSubjectFocus={onSubjectFocus}
+        entityMatcher={entityMatcher}
+        onEntityFocus={onEntityFocus}
       />
     </div>
   ), [
     colors,
     mainCardId,
     messageLaneWidth,
-    onSubjectFocus,
+    onEntityFocus,
     renderableMessages.length,
-    subjectMatcher,
+    entityMatcher,
   ]);
 
   const returnToLatest = useCallback(() => {
@@ -594,26 +588,26 @@ export default function BuilderChat({
     setValue("");
   };
   return (
-    <div data-testid="builder-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>
+    <div data-testid="main-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>
       <style>
         {`
-          .builder-chat-scroll {
+          .main-chat-scroll {
             scrollbar-width: thin;
             scrollbar-color: #4E4E4E transparent;
           }
-          .builder-chat-scroll::-webkit-scrollbar { width: 7px; }
-          .builder-chat-scroll::-webkit-scrollbar-track { background: transparent; }
-          .builder-chat-scroll::-webkit-scrollbar-thumb {
+          .main-chat-scroll::-webkit-scrollbar { width: 7px; }
+          .main-chat-scroll::-webkit-scrollbar-track { background: transparent; }
+          .main-chat-scroll::-webkit-scrollbar-thumb {
             background: #4E4E4E;
             border-radius: 999px;
             border: 1px solid rgba(0, 0, 0, 0.25);
           }
-          .builder-chat-scroll::-webkit-scrollbar-thumb:hover {
+          .main-chat-scroll::-webkit-scrollbar-thumb:hover {
             background: #616161;
           }
-          .builder-chat-composer { scrollbar-width: none; }
-          .builder-chat-composer::-webkit-scrollbar { display: none; }
-          @keyframes builder-chat-active-pulse {
+          .main-chat-composer { scrollbar-width: none; }
+          .main-chat-composer::-webkit-scrollbar { display: none; }
+          @keyframes main-chat-active-pulse {
             0%, 100% { opacity: 0.3; transform: scale(0.82); }
             50% { opacity: 1; transform: scale(1); }
           }
@@ -621,7 +615,7 @@ export default function BuilderChat({
       </style>
       <div
         ref={messageViewportRef}
-        data-testid="builder-chat-message-viewport"
+        data-testid="main-chat-message-viewport"
         className="flex-1"
         style={{
           position: "relative",
@@ -632,8 +626,8 @@ export default function BuilderChat({
         <Virtuoso
           ref={virtuosoRef}
           data={renderableMessages}
-          data-testid="builder-chat-message-list"
-          className="builder-chat-scroll"
+          data-testid="main-chat-message-list"
+          className="main-chat-scroll"
           style={{ height: "100%", width: "100%" }}
           alignToBottom
           initialTopMostItemIndex={{
@@ -648,7 +642,7 @@ export default function BuilderChat({
         {!isAtBottom && renderableMessages.length > 0 ? (
           <button
             type="button"
-            data-testid="builder-chat-return-to-latest"
+            data-testid="main-chat-return-to-latest"
             aria-label="Return to latest"
             title="Return to latest"
             onClick={returnToLatest}
@@ -689,7 +683,7 @@ export default function BuilderChat({
       <div className="px-4 pb-4">
         {imageError || error || voiceError ? (
           <div
-            data-testid="builder-chat-error"
+            data-testid="main-chat-error"
             role="status"
             style={{
               color: "#FF9B9B",
@@ -703,7 +697,7 @@ export default function BuilderChat({
           </div>
         ) : null}
         {images.length ? (
-          <div data-testid="builder-chat-images" className="builder-chat-composer"
+          <div data-testid="main-chat-images" className="main-chat-composer"
             style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "5px 5px 8px", maxHeight: 144, overflowY: "auto" }}>
             {images.map((image, index) => (
               <div key={`${image.name}:${index}`} style={{ position: "relative", width: 64, height: 64 }}>
@@ -732,7 +726,6 @@ export default function BuilderChat({
           <UploadAttachment
             knowledgeProjectId={knowledgeProjectId}
             disabled={!knowledgeProjectId}
-            appearance="chat-inline"
           />
           <input ref={imageInputRef} type="file" multiple accept={COMPOSER_IMAGE_TYPES.join(",")}
             aria-label="Image files" style={{ display: "none" }}
@@ -754,7 +747,7 @@ export default function BuilderChat({
           <textarea
             ref={inputRef}
             rows={1}
-            data-testid="builder-chat-input"
+            data-testid="main-chat-input"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onPaste={(event) => {
@@ -791,7 +784,7 @@ export default function BuilderChat({
               }
             }}
             aria-label="Message"
-            className="builder-chat-composer flex-1"
+            className="main-chat-composer flex-1"
             style={{
               boxSizing: "border-box",
               minWidth: 0,
@@ -812,7 +805,7 @@ export default function BuilderChat({
           />
           {addressSuggestions.length > 0 ? (
             <div
-              data-testid="builder-chat-address-suggestions"
+              data-testid="main-chat-address-suggestions"
               role="listbox"
               aria-label="Available agents"
               style={{
@@ -834,7 +827,7 @@ export default function BuilderChat({
                   type="button"
                   role="option"
                   aria-selected={index === boundedAddressIndex}
-                  data-testid={`builder-chat-address-${agent.address}`}
+                  data-testid={`main-chat-address-${agent.address}`}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     completeAddress(index);
@@ -863,26 +856,26 @@ export default function BuilderChat({
           ) : null}
           {busy || connecting ? (
             <span
-              data-testid="builder-chat-active-indicator"
+              data-testid="main-chat-active-indicator"
               aria-hidden="true"
               style={{
                 width: 8,
                 height: 8,
                 borderRadius: "50%",
                 background: colors.primary,
-                animation: "builder-chat-active-pulse 1.1s ease-in-out infinite",
+                animation: "main-chat-active-pulse 1.1s ease-in-out infinite",
               }}
             />
           ) : null}
           {busy && onStop ? (
-            <button type="button" data-testid="builder-chat-stop" onClick={onStop}>
+            <button type="button" data-testid="main-chat-stop" onClick={onStop}>
               Stop
             </button>
           ) : null}
           {onVoiceStart && onVoiceStop ? (
             <button
               type="button"
-              data-testid="builder-chat-voice"
+              data-testid="main-chat-voice"
               aria-label={voicePhase === "idle" || voicePhase === "error"
                 ? "Start voice"
                 : voicePhase === "listening"

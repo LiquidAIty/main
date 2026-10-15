@@ -28,10 +28,7 @@
     "paths": {}
   },
   "include": [
-    "apps/backend/src/**/*",
-    "apps/backend/config/**/*.json",
-    "libs/**/*",
-    "types/**/*"
+    "apps/backend/src/**/*"
   ],
   "exclude": ["node_modules", "tmp"]
 }

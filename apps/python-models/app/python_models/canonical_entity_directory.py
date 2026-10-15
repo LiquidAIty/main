@@ -67,7 +67,7 @@ def assemble_canonical_entity_directory(
     *,
     read_duration_ms: float = 0.0,
 ) -> dict[str, Any]:
-    """Validate and exactly merge the complete native Entity directories."""
+    """Validate and assemble the complete cross-authority Entity directory."""
 
     project_id = str(project_id or "").strip()
     if not project_id:
@@ -136,7 +136,7 @@ def assemble_canonical_entity_directory(
 
 
 def build_canonical_entity_directory(project_id: str) -> dict[str, Any]:
-    """Read every current Entity identity from both native authorities."""
+    """Read every current Entity identity from Engraphis and Graphiti."""
 
     from app.python_models.engraphis import read_entity_directory
 
@@ -149,22 +149,3 @@ def build_canonical_entity_directory(project_id: str) -> dict[str, Any]:
         know_source,
         read_duration_ms=(time.perf_counter() - started) * 1000,
     )
-
-
-def render_canonical_entity_directory(directory: dict[str, Any]) -> str:
-    return "\n".join((
-        "### Complete Cross-Graph Entity Directory",
-        "This is the complete write-time Entity identity directory. It contains identity choice context, not Think or Know bodies or cross-authority agreement.",
-        canonical_json(directory),
-    ))
-
-
-def append_canonical_entity_directory(
-    graph_context: str,
-    directory: dict[str, Any],
-) -> str:
-    rendered = render_canonical_entity_directory(directory)
-    combined = "\n\n".join(value for value in (graph_context.strip(), rendered) if value)
-    if len(combined.encode("utf-8")) > GRAPH_CONTEXT_BYTE_LIMIT:
-        raise DataAnchorError("data_anchor_seed_limit_exceeded")
-    return combined

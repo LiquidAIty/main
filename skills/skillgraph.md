@@ -6,7 +6,7 @@
 
 Recovered from `2ddadeeb^` and refreshed September 9, 2026. Use when maintaining proven operating
 knowledge or assessing the owner's code-wiki idea. The source of repository procedures is
-`skills/*.md`; native Hermes skills and memory retain their separate per-profile ownership.
+`skills/*.md`; Hermes skills and memory retain their separate per-profile ownership.
 
 A useful skill contains a specific purpose, scope, proven procedure, evidence needed to trust
 the result, and known traps. It is not a task history, generated report, model autobiography,

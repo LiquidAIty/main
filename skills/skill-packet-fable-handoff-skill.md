@@ -16,7 +16,7 @@ and final review. This skill only defines the context passed to an already-autho
 
 Identify the actual recipient, selected repository, project and conversation. Saved Card `builder`
 owns app implementation and Card construction. Use
-saved topology and the recipient's native path, not a title guess.
+saved topology and the recipient's Hermes path, not a title guess.
 
 Supply the assigned task's Key Objective and Definition of Done, preservation set, selected
 source/graph references, relevant procedure, proof commands and stop conditions. The active
@@ -25,7 +25,7 @@ history into the handoff. The receiving Card materializes its IDF.
 
 Require an evidence-backed completion report to Primary and compare its claims with the assigned task.
 An accepted child is not a completed child. Agent 3's repo-root `turn.md` is the final report for a
-PromptSpec run. Preserve native asynchronous completion where supported; do not create a second
+PromptSpec run. Preserve Hermes asynchronous completion where supported; do not create a second
 scheduler, retry a running job, or make Main wait for unrelated work.
 
 Prior user authorization persists; do not demand another generic Go. No automatic writes of

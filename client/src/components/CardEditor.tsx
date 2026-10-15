@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type {
   AgentCardRuntimeOptions,
@@ -46,25 +46,14 @@ function subagentAccessMode(provider: string): SavedSubagentModel['accessMode'] 
     : provider === 'openai' ? 'chatgpt-account'
     : 'openai-api';
 }
-export type InputDictionaryEditorOption = { value: string; label: string; when?: Record<string, string> };
-export type InputDictionaryEditorField = {
+type InputDictionaryEditorField = {
   name: string;
   label: string;
-  path: string;
   control: 'select' | 'catalog-select' | 'catalog-multiselect' | 'number' | 'integer' | 'text' | 'checkbox';
-  allowUnset?: boolean;
-  catalog?: string;
-  filteredBy?: string;
-  minimum?: number;
-  maximum?: number;
-  step?: number;
-  blockedRuntimeBindings?: string[];
-  blockedRuntimeTypes?: string[];
-  help?: string;
-  options?: InputDictionaryEditorOption[];
+  options?: Array<{ value: string; label: string }>;
 };
 
-export function parseCardEditorOptions(payload: unknown): {
+function parseCardEditorOptions(payload: unknown): {
   fields: InputDictionaryEditorField[];
   modelsByProvider: Record<string, ModelOption[]>;
 } {
@@ -101,29 +90,21 @@ export function parseCardEditorOptions(payload: unknown): {
   }
   return { fields, modelsByProvider };
 }
-export type ToolDescriptor = {
+type DisplayedToolRow = {
   name: string;
-  kind?: 'tool' | 'agent';
-  sourceIds?: string[];
   title?: string;
   description?: string;
-};
-export type DisplayedToolRow = ToolDescriptor & {
   availability: 'available' | 'disabled' | 'stale';
 };
 
-export type InputDictionaryToolReference = {
+type InputDictionaryToolReference = {
   canonicalId: string;
-  kind?: 'tool' | 'agent';
-  sourceIds: string[];
-  namespace?: string;
   displayName?: string;
   shortDescription?: string;
   availability: 'available' | 'disabled';
-  access: 'read' | 'write';
 };
 
-export type InputDictionaryToolPage = {
+type InputDictionaryToolPage = {
   references: InputDictionaryToolReference[];
   selectedKnownReferences: InputDictionaryToolReference[];
   unresolvedSelectedIds: string[];
@@ -134,14 +115,12 @@ export type InputDictionaryToolPage = {
   hasMore: boolean;
 };
 
-export function buildInputDictionarySelectedRows(
+function buildInputDictionarySelectedRows(
   selectedReferences: InputDictionaryToolReference[],
   unresolvedSelectedIds: string[],
 ): DisplayedToolRow[] {
   const known = selectedReferences.map((reference) => ({
       name: reference.canonicalId,
-      kind: reference.kind,
-      sourceIds: reference.sourceIds,
       title: reference.displayName || reference.canonicalId,
       description: reference.shortDescription,
       availability: reference.availability,
@@ -155,50 +134,15 @@ export function buildInputDictionarySelectedRows(
   ];
 }
 
-export function buildDisplayedToolRows(
-  toolCatalog: ToolDescriptor[],
-  savedToolNames: string[],
-): DisplayedToolRow[] {
-  const catalogByName = new Map<string, ToolDescriptor>();
-  for (const tool of toolCatalog) {
-    if (catalogByName.has(tool.name)) throw new Error(`duplicate_idd_tool:${tool.name}`);
-    catalogByName.set(tool.name, tool);
-  }
-  const savedNames = Array.from(new Set(savedToolNames));
-  const savedNameSet = new Set(savedNames);
-  const rows: DisplayedToolRow[] = savedNames.map((name) => {
-    const registered = catalogByName.get(name);
-    return registered
-      ? { ...registered, availability: 'available' }
-      : { name, availability: 'stale' };
-  });
-
-  for (const tool of toolCatalog) {
-    if (savedNameSet.has(tool.name)) continue;
-    rows.push({ ...tool, availability: 'available' });
-    savedNameSet.add(tool.name);
-  }
-
-  return rows;
-}
-
-export function toggleSavedToolAssignment(
-  savedToolNames: string[],
-  name: string,
-  checked: boolean,
-): string[] {
-  if (checked) return savedToolNames.includes(name) ? savedToolNames : [...savedToolNames, name];
-  return savedToolNames.filter((savedName) => savedName !== name);
-}
-interface AgentManagerProps {
+interface CardEditorProps {
   cardId?: string;
   projectId?: string;
   deckId?: string;
   activeTab: string;
   cardName?: string;
   onChangeCardName?: (value: string) => void;
-  localConfig?: AgentManagerLocalConfig | null;
-  onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
+  localConfig?: CardEditorConfig | null;
+  onSaveLocalConfig?: (config: CardEditorConfig) => void | Promise<void>;
   registerCardLeave?: (save: (() => Promise<boolean>) | null) => void;
   orangeConnections?: Array<{
     cardId: string;
@@ -207,7 +151,7 @@ interface AgentManagerProps {
   }>;
 }
 
-export type AgentManagerLocalConfig = {
+export type CardEditorConfig = {
   runtime: CardRuntime;
   runtime_options?: AgentCardRuntimeOptions | null;
   parent_graph_id?: string | null;
@@ -224,7 +168,6 @@ export type AgentManagerLocalConfig = {
   mcp_connection_ids?: unknown[];
 };
 
-type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 type RuntimeMetrics = { runtimeMs: number | null; totalTokens: number | null };
 
 function formatRuntime(value: number | null): string {
@@ -361,42 +304,7 @@ function parseListText(value: string): string[] {
     .filter(Boolean);
 }
 
-export function buildActiveAgentManagerLocalConfig(input: {
-  runtime: CardRuntime;
-  provider: NonNullable<AgentManagerLocalConfig['provider']>;
-  accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '';
-  modelKey: string;
-  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | '';
-  promptTemplate: string;
-  toolsText: string;
-  skillsText: string;
-  toolsetsText: string;
-  mcpConnectionIdsText: string;
-}): AgentManagerLocalConfig {
-  return {
-    runtime: input.runtime,
-    provider: input.provider,
-    access_mode: input.accessMode,
-    model_key: input.modelKey || null,
-    reasoning_effort: input.reasoningEffort || null,
-    prompt_template: input.promptTemplate,
-    tools: parseListText(input.toolsText),
-    skills: parseListText(input.skillsText),
-    toolsets: parseListText(input.toolsetsText),
-    mcp_connection_ids: parseListText(input.mcpConnectionIdsText),
-  };
-}
-
-export function hasHermesModelDrift(
-  savedCardModel: unknown,
-  boundHermesProfileModel: unknown,
-): boolean {
-  const saved = String(savedCardModel || '').trim();
-  const profileModel = String(boundHermesProfileModel || '').trim();
-  return Boolean(saved && profileModel && saved !== profileModel);
-}
-
-export function AgentManager({
+export function CardEditor({
   cardId = '',
   projectId = '',
   deckId = '',
@@ -407,15 +315,14 @@ export function AgentManager({
   onSaveLocalConfig,
   registerCardLeave,
   orangeConnections = [],
-}: AgentManagerProps) {
+}: CardEditorProps) {
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const outboundOrangeConnections = orangeConnections.filter(
     (connection) => connection.direction === 'outgoing',
   );
-  const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
   const [runtimeMetrics, setRuntimeMetrics] = useState<RuntimeMetrics | null>(null);
-  const [runtimeMetricsStatus, setRuntimeMetricsStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+  const [runtimeMetricsLoading, setRuntimeMetricsLoading] = useState(false);
   const cardSaveInFlightRef = useRef<Promise<boolean> | null>(null);
   const [draftRevision, setDraftRevision] = useState(0);
   const cardDraftRevisionRef = useRef(0);
@@ -425,7 +332,7 @@ export function AgentManager({
   const runtimeKind = localConfig?.runtime.kind;
   const runtimeMode = localConfig?.runtime.mode;
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
-  const [provider, setProvider] = useState<NonNullable<AgentManagerLocalConfig['provider']>>('');
+  const [provider, setProvider] = useState<NonNullable<CardEditorConfig['provider']>>('');
   const [accessMode, setAccessMode] = useState<
     'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
   >('');
@@ -507,12 +414,12 @@ export function AgentManager({
   useEffect(() => {
     if (activeTab !== 'Runtime' || !projectId || !deckId || !cardId) {
       setRuntimeMetrics(null);
-      setRuntimeMetricsStatus('idle');
+      setRuntimeMetricsLoading(false);
       return;
     }
     const controller = new AbortController();
     setRuntimeMetrics(null);
-    setRuntimeMetricsStatus('loading');
+    setRuntimeMetricsLoading(true);
     void fetch('/api/cards/runs/read', {
       method: 'POST',
       credentials: 'include',
@@ -536,11 +443,11 @@ export function AgentManager({
         runtimeMs: typeof result.runtimeMs === 'number' ? result.runtimeMs : null,
         totalTokens: typeof result.totalTokens === 'number' ? result.totalTokens : null,
       } : null);
-      setRuntimeMetricsStatus('ready');
+      setRuntimeMetricsLoading(false);
     }).catch(() => {
       if (controller.signal.aborted) return;
       setRuntimeMetrics(null);
-      setRuntimeMetricsStatus('failed');
+      setRuntimeMetricsLoading(false);
     });
     return () => controller.abort();
   }, [activeTab, cardId, deckId, projectId]);
@@ -754,7 +661,7 @@ export function AgentManager({
     markDraftDirty();
   };
 
-  const buildCurrentLocalPayload = useCallback((): AgentManagerLocalConfig => {
+  const buildCurrentLocalPayload = useCallback((): CardEditorConfig => {
     if (!localConfig) throw new Error('card_config_missing');
     const originalPrompt = parsePromptTemplate(promptText);
     const migrateLegacyOutput = Boolean(
@@ -770,18 +677,18 @@ export function AgentManager({
         : promptPartsTouched,
     );
     assertUniqueCanonicalPromptSections(serializedPrompt);
-    const editedConfig = buildActiveAgentManagerLocalConfig({
+    const editedConfig: CardEditorConfig = {
       runtime: localConfig.runtime,
       provider,
-      accessMode,
-      modelKey,
-      reasoningEffort,
-      promptTemplate: serializedPrompt,
-      toolsText,
-      skillsText,
-      toolsetsText,
-      mcpConnectionIdsText,
-    });
+      access_mode: accessMode,
+      model_key: modelKey || null,
+      reasoning_effort: reasoningEffort || null,
+      prompt_template: serializedPrompt,
+      tools: parseListText(toolsText),
+      skills: parseListText(skillsText),
+      toolsets: parseListText(toolsetsText),
+      mcp_connection_ids: parseListText(mcpConnectionIdsText),
+    };
     const runtimeOptions: AgentCardRuntimeOptions = {
       ...(localConfig.runtime_options || {}),
       ...(
@@ -833,7 +740,6 @@ export function AgentManager({
     localConfig,
     runtimeKind,
     runtimeMode,
-    cardId,
     provider,
     accessMode,
     modelKey,
@@ -1006,16 +912,13 @@ export function AgentManager({
     if (cardSaveInFlightRef.current) return cardSaveInFlightRef.current;
     if (!draftDirtyRef.current && !hermesLearningDirtyRef.current) return Promise.resolve(true);
     const save = Promise.resolve().then(async () => {
-      setSaveCardStatus('saving');
       setSaveCardErrorMessage(null);
       try {
         while (draftDirtyRef.current || hermesLearningDirtyRef.current) {
           await saveLatestDraftRef.current();
         }
-        setSaveCardStatus('saved');
         return true;
       } catch (error) {
-        setSaveCardStatus('failed');
         setSaveCardErrorMessage(error instanceof Error ? error.message : 'Could not save Card.');
         return false;
       } finally {
@@ -1074,7 +977,10 @@ export function AgentManager({
     && !showSelectedToolsOnly,
   );
   const toggleTool = (name: string, checked: boolean) => {
-    setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
+    const next = checked
+      ? savedToolNames.includes(name) ? savedToolNames : [...savedToolNames, name]
+      : savedToolNames.filter((savedName) => savedName !== name);
+    setToolsText(next.join('\n'));
     markDraftDirty();
   };
 
@@ -1217,32 +1123,29 @@ export function AgentManager({
 
           {onChangeCardName ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {onChangeCardName ? (
-                <div>
-                  <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    Name
-                  </label>
-                  <input
-                    type="text"
-                    value={cardNameDraft}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      setCardNameDraft(nextValue);
-                      onChangeCardName(nextValue);
-                    }}
-                    placeholder="Enter agent name"
-                    style={{
-                      width: '100%',
-                      padding: 8,
-                      background: '#2B2B2B',
-                      color: '#FFF',
-                      border: '1px solid #3A3A3A',
-                      borderRadius: 8,
-                    }}
-                  />
-                </div>
-              ) : null}
-
+              <div>
+                <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                  Name
+                </label>
+                <input
+                  type="text"
+                  value={cardNameDraft}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    setCardNameDraft(nextValue);
+                    onChangeCardName(nextValue);
+                  }}
+                  placeholder="Enter agent name"
+                  style={{
+                    width: '100%',
+                    padding: 8,
+                    background: '#2B2B2B',
+                    color: '#FFF',
+                    border: '1px solid #3A3A3A',
+                    borderRadius: 8,
+                  }}
+                />
+              </div>
             </div>
           ) : null}
           <div>
@@ -1545,7 +1448,6 @@ export function AgentManager({
             </div>
           ) : null}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <>
                 <div>
                   <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                     Provider
@@ -1674,7 +1576,6 @@ export function AgentManager({
                     </select>
                   </div>
                 ) : null}
-              </>
 
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
@@ -2046,12 +1947,12 @@ export function AgentManager({
               }}
             >
               <span>
-                Runtime: {runtimeMetricsStatus === 'loading'
+                Runtime: {runtimeMetricsLoading
                   ? 'loading…'
                   : formatRuntime(runtimeMetrics?.runtimeMs ?? null)}
               </span>
               <span>
-                Tokens: {runtimeMetricsStatus === 'loading'
+                Tokens: {runtimeMetricsLoading
                   ? 'loading…'
                   : formatTokens(runtimeMetrics?.totalTokens ?? null)}
               </span>
@@ -2134,7 +2035,7 @@ export function AgentManager({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, colorScheme: 'dark' }}>
       {sectionBody}
-      {saveCardStatus === 'failed' && saveCardErrorMessage ? (
+      {saveCardErrorMessage ? (
         <span role="alert" data-testid="agent-manager-save-error" style={{ color: '#FFA2A2', fontSize: 11.5 }}>
           {saveCardErrorMessage}
         </span>

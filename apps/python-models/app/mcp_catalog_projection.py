@@ -27,11 +27,11 @@ def catalog_identity(tools: list[Tool]) -> tuple[int, str]:
 
 
 async def application_tools() -> list[Tool]:
-    """Build the code-owned external MCP Tools without changing lifecycle state."""
+    """Expose every saved-Card tool through the authenticated MCP transport."""
     descriptors = [
         descriptor
         for descriptor in await asyncio.to_thread(code_owned_tool_projection)
-        if "external-mcp" in descriptor["publications"]
+        if set(descriptor["publications"]) & {"card-profile", "external-mcp"}
     ]
     tools = [
         mcp_provider_operations.bind_repo_tool_source(
@@ -40,7 +40,12 @@ async def application_tools() -> list[Tool]:
                 title=descriptor.get("displayName"),
                 description=descriptor["description"],
                 inputSchema=copy.deepcopy(descriptor["inputSchema"]),
-                outputSchema=copy.deepcopy(descriptor.get("outputSchema")),
+                outputSchema=(
+                    copy.deepcopy(descriptor["outputSchema"])
+                    if isinstance(descriptor.get("outputSchema"), dict)
+                    and descriptor["outputSchema"].get("type") == "object"
+                    else None
+                ),
                 annotations=copy.deepcopy(descriptor.get("annotations")),
             ),
             source_id=descriptor["provider"],

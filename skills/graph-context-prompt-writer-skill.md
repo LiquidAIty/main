@@ -18,7 +18,7 @@ those tasks; it does not create another specification or approval workflow.
    statements as tentative; assistant proposals do not become accepted user decisions.
 2. Select only relevant evidence: ThinkGraph intent, KnowGraph sourced findings, CodeGraph
    source structure, or a needed procedure. The task does not automatically need all four.
-3. Carry native IDs, necessary bounded content, provenance, uncertainty and retrieval capability.
+3. Carry provider IDs, necessary bounded content, provenance, uncertainty and retrieval capability.
    Preserve the distinction between task data and stable receiving-Card instructions.
 4. For coding, include the task's Key Objective, Definition of Done, affected scope, source anchors,
    proof and stop conditions in its PromptSpec task handoff. Existing authorization governs execution;

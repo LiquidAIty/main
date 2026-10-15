@@ -10,7 +10,7 @@ beforeAll(async () => {
 
 afterEach(() => vi.useRealTimers());
 
-describe('ThinkGraph Jev semantic physics', () => {
+describe('Engraphis graph renderer contracts', () => {
   it('resolves node single and double clicks before either callback mutates the canvas', () => {
     vi.useFakeTimers();
     const single = vi.fn();
@@ -60,13 +60,6 @@ describe('ThinkGraph Jev semantic physics', () => {
     expect(internals.semanticRelationshipSpring({}, 0.5)).toBe(0.5);
   });
 
-  it('renders current-turn heat without turning it into permanent semantic mass', () => {
-    const internals = (window as any).EngraphisGraph._internals;
-    expect(internals.turnHeatIntensity({ turn_heat_active: false, turn_heat: 99 })).toBe(0);
-    expect(internals.turnHeatIntensity({ turn_heat_active: true, turn_heat: 0 })).toBe(0.35);
-    expect(internals.turnHeatIntensity({ turn_heat_active: true, turn_heat: 3 })).toBe(0.75);
-  });
-
   it.each([
     ['THINK_MATERIAL', 'think', 'rgb(110,95,174)', 'rgb(99,199,154)', false],
     ['KNOW_MATERIAL', 'know', 'rgb(242,166,74)', 'rgb(242,209,107)', false],
@@ -100,15 +93,13 @@ describe('ThinkGraph Jev semantic physics', () => {
     });
   });
 
-  it('keeps authority color, secondary material accent, and recent activity distinct', () => {
+  it('keeps authority color and secondary material accent distinct', () => {
     const internals = (window as any).EngraphisGraph._internals;
     const base = {
       material_kind: 'solarpunk',
       material_blue: '#4FA2AD',
       material_orange: '#F2A64A',
       material_surface: '#0B0E12',
-      turn_heat_active: true,
-      turn_heat: 3,
     };
     const think = internals.solarpunkMaterialRecipe({
       ...base, material_role: 'THINK_MATERIAL', material_think_active: true,
@@ -156,14 +147,6 @@ describe('ThinkGraph Jev semantic physics', () => {
       material_think_active: true,
       material_know_active: true,
     }, {}, '#ffffff');
-    const heated = internals.solarpunkMaterialRecipe({
-      ...base,
-      material_think_active: true,
-      material_know_active: true,
-      turn_heat_active: true,
-      turn_heat: 3,
-    }, {}, '#ffffff');
-
     expect(resting).toMatchObject({
       modality: 'paired',
       surfaceModel: 'split-bicolor-gloss',
@@ -181,10 +164,7 @@ describe('ThinkGraph Jev semantic physics', () => {
     };
     internals.paintMaterialDirect(context, 0, 0, 10, resting, 'signature');
     expect(splitFills).toEqual(['rgb(110,95,174)', 'rgb(242,166,74)']);
-    expect(heated.modality).toBe('paired');
     expect(activated.activeExposure).toBeGreaterThan(resting.activeExposure);
-    expect(heated.activeExposure).toBeGreaterThan(activated.activeExposure);
-    expect(heated.activeKey).not.toBe(activated.activeKey);
     expect(internals.solarpunkMaterialRecipe({
       ...base,
       material_kind: 'ordinary',

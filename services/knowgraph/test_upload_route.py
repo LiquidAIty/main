@@ -11,10 +11,7 @@ import hashlib
 import io
 import httpx
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-
-from graphiti_core.errors import EdgeNotFoundError
 
 SERVICE_DIR = Path(__file__).resolve().parent
 if str(SERVICE_DIR) not in sys.path:
@@ -146,56 +143,6 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
             )
             self.assertEqual(list(directory.glob(".upload-*.pdf")), [])
 
-    def test_delete_fact_routes_one_project_scoped_fact_to_graphiti(self) -> None:
-        delete_fact = AsyncMock(
-            return_value={"kind": "fact", "graphiti_fact_uuid": "fact-1"}
-        )
-        with (
-            patch.object(app, "_delete_graphiti_fact", delete_fact),
-        ):
-            response = asyncio.run(_request(
-                "POST",
-                "/delete_fact",
-                json={
-                    "project_id": "project-1",
-                    "graphiti_fact_uuid": "fact-1",
-                    "kind": "fact",
-                },
-            ))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {
-            "ok": True,
-            "kind": "fact",
-            "graphiti_fact_uuid": "fact-1",
-        })
-        delete_fact.assert_awaited_once()
-        payload = delete_fact.await_args.args[0]
-        self.assertEqual(payload.project_id, "project-1")
-        self.assertEqual(payload.graphiti_fact_uuid, "fact-1")
-        self.assertEqual(payload.kind, "fact")
-
-    def test_delete_fact_returns_not_found_for_unknown_fact(self) -> None:
-        delete_fact = AsyncMock(side_effect=EdgeNotFoundError("missing-fact"))
-        with (
-            patch.object(app, "_delete_graphiti_fact", delete_fact),
-        ):
-            response = asyncio.run(_request(
-                "POST",
-                "/delete_fact",
-                json={
-                    "project_id": "project-1",
-                    "graphiti_fact_uuid": "missing-fact",
-                    "kind": "fact",
-                },
-            ))
-
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json(), {
-            "ok": False,
-            "error": {"message": "KnowGraph item not found."},
-        })
-
     def test_delete_episode_routes_one_project_scoped_know_to_graphiti(self) -> None:
         delete_episode = AsyncMock(
             return_value={"graphiti_episode_uuid": "episode-1"}
@@ -218,61 +165,6 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         payload = delete_episode.await_args.args[0]
         self.assertEqual(payload.project_id, "project-1")
         self.assertEqual(payload.graphiti_episode_uuid, "episode-1")
-
-    def test_delete_fact_removes_only_a_fact_in_the_requested_project(self) -> None:
-        edge = SimpleNamespace(
-            group_id="liquidaity-project-1",
-            delete=AsyncMock(),
-        )
-        driver = SimpleNamespace(close=AsyncMock())
-        with (
-            patch.object(
-                graphiti_runtime,
-                "create_graphiti_driver",
-                return_value=(driver, "neo4j"),
-            ),
-            patch(
-                "graphiti_core.edges.EntityEdge.get_by_uuid",
-                new=AsyncMock(return_value=edge),
-            ),
-        ):
-            result = asyncio.run(app._delete_graphiti_fact(app.GraphitiFactDeleteRequest(
-                project_id="project-1",
-                graphiti_fact_uuid="fact-1",
-                kind="fact",
-            )))
-
-        self.assertEqual(result, {"kind": "fact", "graphiti_fact_uuid": "fact-1"})
-        edge.delete.assert_awaited_once_with(driver)
-        driver.close.assert_awaited_once()
-
-    def test_delete_fact_rejects_cross_project_fact_without_deleting(self) -> None:
-        edge = SimpleNamespace(
-            group_id="liquidaity-other-project",
-            delete=AsyncMock(),
-        )
-        driver = SimpleNamespace(close=AsyncMock())
-        with (
-            patch.object(
-                graphiti_runtime,
-                "create_graphiti_driver",
-                return_value=(driver, "neo4j"),
-            ),
-            patch(
-                "graphiti_core.edges.EntityEdge.get_by_uuid",
-                new=AsyncMock(return_value=edge),
-            ),
-        ):
-            with self.assertRaisesRegex(LookupError, "knowgraph_graphiti_fact_not_found"):
-                asyncio.run(app._delete_graphiti_fact(app.GraphitiFactDeleteRequest(
-                    project_id="project-1",
-                    graphiti_fact_uuid="fact-1",
-                    kind="fact",
-                )))
-
-        edge.delete.assert_not_awaited()
-        driver.close.assert_awaited_once()
-
 
 if __name__ == "__main__":
     unittest.main()

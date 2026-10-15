@@ -1,4 +1,4 @@
-"""Pure construction helpers for bounded native graph records in an IDF."""
+"""Pure construction helpers for bounded provider graph records in an IDF."""
 
 from __future__ import annotations
 

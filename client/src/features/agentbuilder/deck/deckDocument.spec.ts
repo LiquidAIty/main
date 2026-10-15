@@ -7,8 +7,9 @@ import { INITIAL_AGENT_TEMPLATES, INITIAL_DECK } from './newProjectDeck';
 describe('requested initial Card topology', () => {
   it('keeps unique profiles, system names, orange peers, and Magnetic worker availability', () => {
     const main = INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')!;
-    expect(main.runtimeOptions?.tools).toContain('canvas.inspect');
-    expect(main.runtimeOptions?.tools).toContain('worldview.set_capability');
+    expect(main.runtimeOptions?.tools).toEqual([
+      'canvas.inspect', 'run_mag_one', 'worldview.set_capability',
+    ]);
     expect(main.runtime).toMatchObject({ kind: 'hermes', mode: 'main' });
     expect(INITIAL_DECK.nodes.every(card => !('orchestrator' in (card.runtimeOptions || {}))))
       .toBe(true);
@@ -94,23 +95,25 @@ describe('requested initial Card topology', () => {
     ]);
     expect(team?.prompt).toContain('general-purpose wildcard and capacity fallback');
     expect(team?.prompt).toContain('runtime-owned automatic parallel worker, review, and synthesis');
-    expect(team?.prompt).toContain('Optional Agent candidate:');
-    expect(team?.prompt).toContain('repeatable missing specialty');
+    expect(team?.prompt).toContain('Report a repeated capability gap as ordinary evidence');
   });
 
-  it('seeds KnowGraph to ingest verified research without requiring an existing graph target', () => {
+  it('seeds KnowGraph for one Entity-attached two-sided sourced Know', () => {
     const knowGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_knowgraph');
     expect(knowGraph?.prompt).toContain(
-      'persist each focused finding through graphiti.add_memory before answering',
+      'persist one two-sided cited know.v1 episode through graphiti.add_memory_to_entity',
     );
     expect(knowGraph?.prompt).toContain(
-      'does not require a preexisting node, edge, target Card, or selected graph reference',
+      'Attach it to the exact current Entity',
     );
     expect(knowGraph?.prompt).toContain('Do not write one large report and slice it afterward');
     expect(knowGraph?.prompt).toContain('explain exactly what that citation supports');
-    expect(knowGraph?.prompt).toContain(
-      'Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake',
-    );
+    expect(knowGraph?.prompt).toContain('Keep citation URLs inside the Know');
+    expect(knowGraph?.runtimeOptions?.tools).toContain('graphiti.add_memory_to_entity');
+    expect(knowGraph?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
+      'graphiti.add_memory', 'graphiti.add_triplet',
+    ]));
+    expect(knowGraph?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
   });
 });
 

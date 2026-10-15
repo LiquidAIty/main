@@ -8,10 +8,10 @@
 Use when changing a visible graph, inspector, execution state, or testing a claimed result.
 Recovered from `2ddadeeb^` and refreshed September 9, 2026.
 
-- Trace each displayed object or state to its current owner and actual native ID or event.
+- Trace each displayed object or state to its current owner and actual provider ID or event.
 - Show readable entities and useful relationships; inspect the selected node's information.
   A node inspector is not an Agent Card and the graph-settings pull-tab remains settings.
-- Use the accepted native Engraphis renderer and public controls. Appearance cannot prove
+- Use the accepted Engraphis renderer and public controls. Appearance cannot prove
   extraction quality, and empty or poorly attributed records are not fixed by decoration.
 - Preserve errors, source attribution, uncertainty, selection, and real navigation controls.
   Claims of running, completion, access, or a write require matching observable evidence.

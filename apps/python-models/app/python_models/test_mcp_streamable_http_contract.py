@@ -49,7 +49,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
         "conversationId": "project-1",
         "parentRunId": "main-run-one",
         "callerCardId": "card_main_chat",
-        "grantedTools": ["cbm.search_graph", "main.context"],
+        "grantedTools": ["calculator", "cbm.search_graph", "main.context"],
     }
     project_contexts = {
         "external-main-token": main_context,
@@ -195,9 +195,19 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                         cbm_payload = json.loads(cbm_result.content[0].text)
                         visible_context = None
                         if inspect_main:
+                            calculator_result = await session.call_tool(
+                                "calculator", {"expression": "2 + 3 * 4"}
+                            )
+                            assert calculator_result.is_error is not True
+                            assert json.loads(calculator_result.content[0].text) == "14.0"
                             result = await session.call_tool("main.context", {})
                             visible_context = json.loads(result.content[0].text)["context"]
                             invalid = await session.call_tool("not_a_real_tool", {})
+                        else:
+                            calculator_denied = await session.call_tool(
+                                "calculator", {"expression": "2 + 3 * 4"}
+                            )
+                            assert calculator_denied.is_error is True
                         protocol_version = session.protocol_version
                 assert response_session_ids
                 assert all(value is None for value in response_session_ids)
@@ -231,7 +241,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             first_catalog, first_context, first_identity, first_cbm_client, first_protocol = first
             second_catalog, second_context, second_identity, second_cbm_client, second_protocol = second
             assert first_catalog == second_catalog
-            assert first_catalog == ["cbm.search_graph", "main.context"]
+            assert first_catalog == ["calculator", "cbm.search_graph", "main.context"]
             assert card_one[0] == card_two[0]
             assert card_one[0] == ["cbm.search_graph"]
             assert len(first_catalog) == len(set(first_catalog))

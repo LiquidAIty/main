@@ -12,7 +12,7 @@ Load the PromptSpec Receiver first when a PromptSpec is active. The PromptSpec a
 freeze and final review. This skill supplies only repository-specific test design.
 
 A stand-in is a diagnostic instrument, not acceptance proof for agent behavior. When the active
-PromptSpec requires real live agent acceptance, exercise the actual saved Card, native runtime,
+PromptSpec requires real live agent acceptance, exercise the actual saved Card, Hermes runtime,
 tools and observable product path. Never replace that proof with a mock, scaffold, unit-test
 substitute or a Codex role-play.
 
@@ -21,7 +21,7 @@ substitute or a Codex role-play.
 | Role | What the actor does | What the evidence can establish |
 | --- | --- | --- |
 | User proxy | Plays the intended user and sends ordinary questions to the real saved Main Card | Actual product behavior when the real path is exercised |
-| Card stand-in | Performs a selected Card's actual job with its verified instructions, tools and context | Reasoning and tool usability; native integration only where actually exercised |
+| Card stand-in | Performs a selected Card's actual job with its verified instructions, tools and context | Reasoning and tool usability; Hermes integration only where actually exercised |
 | Replay analyst | Reads retained input, output and receipts | Existing evidence and defects, without a fresh execution or causal speed claim |
 
 When playing Gene, **you are the user proxy**. Gene is not a product Agent, a Main prompt, a saved
@@ -75,14 +75,14 @@ a fabricated trade or saved journal cannot.
 
 ## Bind a Card stand-in to current authority
 
-Before dispatch, read the current saved Card, native profile and effective request. Match its actual
+Before dispatch, read the current saved Card, Hermes profile and effective request. Match its actual
 provider, parent model, effort, instructions, skills, history, Script, selected tools, references and
-permitted effects. The saved native child model applies only when that role is exercised. Never
+permitted effects. The saved Hermes child model applies only when that role is exercised. Never
 change a Card, grant all tools or use the supervisor's defaults to fit the host.
 
 Compare callable tool interfaces, argument/result schemas and errors. A similar name or quoted
 schema is not an available equivalent tool. A Codex web tool is not automatically Hermes search.
-Use actual authenticated application tools and native IDs; do not build a proxy, second MCP host,
+Use actual authenticated application tools and provider IDs; do not build a proxy, second MCP host,
 tool alias or second IDF to manufacture parity.
 
 Missing essential parity blocks an exact comparison. Only Jeremiah's explicit exception permits
@@ -92,9 +92,9 @@ calls; a prompt-only allowed-tool list is not an enforced grant boundary.
 
 When subagents are separately authorized, enumerate the real participating roles first. One role
 gets one fresh-context stand-in, including real planners, workers and synthesizers. An unused Card,
-transport process or independent evaluator is not another role. Use the actual native topology,
+transport process or independent evaluator is not another role. Use the actual saved topology,
 not an arbitrary two-actor limit or invented private task ledgers. Report unsupported nesting
-or concurrency. Dependency-ordered waves preserve roles but do not prove native parallel latency.
+or concurrency. Dependency-ordered waves preserve roles but do not prove Hermes parallel latency.
 
 Provide only the receiving role's stable instructions, ordinary task and permitted upstream
 material. Do not fork the whole engineering conversation or share evaluator expectations. A
@@ -109,9 +109,9 @@ real Card after an identified repair.
 
 1. Name the question, expected assertions, permitted effects, deadline and token/call budget.
    Prefer retained/read-only material. Graph-write comparisons need an explicitly authorized
-   isolated native target; never reset a user's graph for parity.
+   isolated provider target; never reset a user's graph for parity.
 2. Record commit, project, conversation, Card and Run IDs, actual profile/model/effort, selected
-   skills, Script version, effective tools/schemas, history and native context IDs. Unknown is
+   skills, Script version, effective tools/schemas, history and provider context IDs. Unknown is
    unknown, not an inferred default.
 3. Inspect the retained canonical `in.idf` and actual provider projection when available.
    Metadata retained in a Run is not necessarily model-visible prompt text. Do not reconstruct
@@ -122,7 +122,7 @@ real Card after an identified repair.
 5. Start a monotonic stopwatch at submission; record UTC for correlation. Reuse actual
    Run/tool/provider receipts rather than another instrumentation service.
 6. Establish the existing cancellation doorway before execution. Observe the same Run until its
-   declared deadline; a timed-out status read is not native cancellation or permission to retry.
+   declared deadline; a timed-out status read is not Hermes cancellation or permission to retry.
 
 ## Measure and evaluate
 
@@ -131,8 +131,8 @@ real Card after an identified repair.
 | Time | Submission, acceptance, first useful text, useful answer complete and delegated results; separate queue/startup where observable |
 | Input | UTF-8 bytes by IDF section versus actual provider request; tokenizer named for estimates |
 | Context | Stable instructions, tool schemas, skill index versus opened contents, selected data, memory, history and tool results |
-| Usage/cost | Native request IDs and input/cached/output/reasoning usage; aggregate once; missing cost is unknown, not zero or free |
-| Tools | Requested and actual interface, arguments, duration, output size, error/repeat and native result IDs |
+| Usage/cost | Provider request IDs and input/cached/output/reasoning usage; aggregate once; missing cost is unknown, not zero or free |
+| Tools | Requested and actual interface, arguments, duration, output size, error/repeat and provider result IDs |
 | Handoffs | Sender, recipient, source IDs, payload, permitted context, dependency and actual completion/failure |
 | Parity | Every model, tool, context, runtime, starting-state and concurrency difference |
 
@@ -145,7 +145,7 @@ counts. Repeated cached prefixes, retained descriptors and repeated research act
 observations. Size or a tool receipt cannot prove that the model understood or used a fact.
 
 Check the answer against the ordinary request and actual sources. For graphs, separately inspect
-native persistence, entity/relationship fidelity, provenance, independent later recall, context
+provider persistence, entity/relationship fidelity, provenance, independent later recall, context
 materialization and final-answer usefulness. A queued Graphiti episode, extraction fallback or
 Engraphis enrichment warning is not successful structured extraction. Ingestion may call an
 extractor model without a saved Card Run; count actual provider requests, not only Card Runs.
@@ -160,12 +160,12 @@ For a non-PromptSpec diagnostic, keep the report in the coding conversation:
 Case / role / commit / Card and Run identities:
 Ordinary input and frozen expectations:
 Actual model/tools/context and parity differences:
-Useful result with native references:
+Useful result with provider references:
 Timings / request bytes / provider usage / exposed cost:
 Handoff evidence and missing information:
 Assertions: pass | fail | inconclusive, with evidence:
 Observed defects versus hypotheses:
-Useful-product verdict / native-integration verdict:
+Useful-product verdict / provider-integration verdict:
 Authorized writes and remaining child work:
 One next distinguishing test or bounded repair:
 ```

@@ -509,7 +509,7 @@ def read_entity_thinks(
     *,
     limit: int = 2,
 ) -> list[dict[str, Any]]:
-    """Read current/recent Thinks for one exact native Engraphis Entity ID."""
+    """Read current/recent Thinks for one exact Engraphis Entity ID."""
 
     service = get_service()
     project = project_id(project)
@@ -537,7 +537,7 @@ def read_entity_think_candidates(
     *,
     limit: int = 6,
 ) -> list[dict[str, Any]]:
-    """Read a bounded exact candidate pool for native-recall/Jev relevance."""
+    """Read a bounded exact candidate pool for Engraphis recall/Jev relevance."""
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 24:
         raise ValueError("thinkgraph_entity_candidate_limit_invalid")

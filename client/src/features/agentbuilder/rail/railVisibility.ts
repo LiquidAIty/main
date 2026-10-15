@@ -1,7 +1,5 @@
 // Rail/topology derivation: which product surfaces are visible for the
 // current deck (bus connectivity, graph streams, workbench activation).
-// Extracted verbatim from pages/agentbuilder.tsx (decomposition pass
-// 2026-07-08). Behavior unchanged.
 import type {
   AgentCardInstance,
   DeckDocument,
@@ -75,23 +73,6 @@ function buildBusConnectedCardIds(
   return connected;
 }
 
-export function hasDirectedCardConnection(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-  sourcePredicate: (card: AgentCardInstance) => boolean,
-  targetPredicate: (card: AgentCardInstance) => boolean,
-): boolean {
-  const sourceIds = new Set(nodes.filter(sourcePredicate).map((node) => node.id));
-  const targetIds = new Set(nodes.filter(targetPredicate).map((node) => node.id));
-  if (sourceIds.size === 0 || targetIds.size === 0) return false;
-  return edges.some(
-    (edge) =>
-      normalizeDeckEdgeType(edge.edgeType) === 'flow' &&
-      sourceIds.has(edge.source) &&
-      targetIds.has(edge.target),
-  );
-}
-
 /** A card's surface is reachable when the card is bus-connected — bus
  * connectivity is the only activation signal (PLAN.md §4). */
 function isBusConnectedCard(
@@ -124,8 +105,3 @@ export function deriveVisibleRailItems({
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
   };
 }
-
-// The old "activation proposal" system (a deterministic keyword classifier
-// over user text) was dead plumbing: its detector had zero callers, its state
-// was only ever reset to null, and deriveVisibleRailItems ignored it. Removed
-// whole — banned pattern (regex intent-routing) with zero live function.

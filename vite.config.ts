@@ -50,7 +50,6 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@/lib/time": path.resolve(process.cwd(), "HermesLatest/apps/desktop/src/lib/time.ts"),
       // npm hoists these packages to the root node_modules (the old
       // client/node_modules copies no longer exist), so every alias must point
       // at the hoisted copy — a stale client path fails vitest collection for
@@ -58,7 +57,6 @@ export default defineConfig({
       // Verified against disk 2026-07-08; the dead "allotment" alias (no copy
       // anywhere, no importer) was removed.
       "react-router-dom": path.resolve(process.cwd(), "node_modules/react-router-dom"),
-      "d3": path.resolve(process.cwd(), "node_modules/d3"),
     },
   },
   server: {

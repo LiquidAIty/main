@@ -27,6 +27,9 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
     assert dictionary["types"]["RuntimeObject"]["source"] == (
         "app.python_models.card_configuration_contracts.HermesRuntime"
     )
+    relationships = {item["name"]: item for item in dictionary["relationships"]}
+    assert relationships["FLOW"]["direction"] == "source-to-target"
+    assert relationships["MAGENTIC_OPTION"]["direction"] == "either-endpoint"
     assert dictionary["cardEditor"]["tabs"] == ["Prompt", "Runtime", "Memory", "Skills", "Tools"]
     assert set(dictionary["templates"]) == {
         "template_assist",
@@ -36,6 +39,18 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
         "template_worldsignals_agent",
         "template_trading_workbench",
     }
+
+
+def test_every_idd_boundary_source_resolves_to_current_code() -> None:
+    from importlib import import_module
+
+    dictionary = load_input_data_dictionary()
+    for definition in dictionary["types"].values():
+        source = definition.get("source")
+        if not source:
+            continue
+        module_name, attribute = source.rsplit(".", 1)
+        assert hasattr(import_module(module_name), attribute), source
 
 
 def test_markdown_and_sql_are_data_not_a_second_island_language() -> None:

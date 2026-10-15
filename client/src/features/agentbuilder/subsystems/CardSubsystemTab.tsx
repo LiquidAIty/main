@@ -14,7 +14,6 @@ type SubsystemReadiness = {
   version?: string | null;
   adapter?: Record<string, unknown>;
   lifecycle?: Record<string, unknown>;
-  nativeAgents?: Record<string, unknown>;
   diagnostics?: string | null;
 };
 
@@ -51,7 +50,7 @@ export default function CardSubsystemTab({ attachment, readinessEndpoint }: {
           fontSize: 9, padding: '4px 7px' }}>{readiness?.status || 'not read'}</span>
       </div>
       <p style={{ color: MUTED, fontSize: 10.5, lineHeight: 1.5, margin: '10px 0 0' }}>
-        This tab exposes the subsystem’s native capabilities and integration state. Hermes prompt,
+        This tab exposes the subsystem’s declared capabilities and integration state. Hermes prompt,
         tools, skills, memory, Team, Script, and graph context stay in their standard Card tabs;
         live work stays in the Agent UI.
       </p>
@@ -71,12 +70,11 @@ export default function CardSubsystemTab({ attachment, readinessEndpoint }: {
       </div>
     </section>
     <section style={{ background: FIELD, border: `1px solid ${EDGE}`, borderRadius: 10, padding: 11 }}>
-      <strong style={{ color: INK, fontSize: 10.5 }}>Native lifecycle and agents</strong>
+      <strong style={{ color: INK, fontSize: 10.5 }}>Lifecycle</strong>
       <pre style={{ color: error ? '#ff786e' : MUTED, fontSize: 9, lineHeight: 1.45,
         margin: '8px 0 0', overflow: 'auto', whiteSpace: 'pre-wrap' }}>
         {error || JSON.stringify({ version: readiness?.version || null,
           lifecycle: readiness?.lifecycle || null,
-          nativeAgents: readiness?.nativeAgents || null,
           diagnostics: readiness?.diagnostics || null }, null, 2)}
       </pre>
     </section>

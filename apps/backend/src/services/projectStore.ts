@@ -245,32 +245,6 @@ export async function getOwnedProjectByReference(
   };
 }
 
-export async function getInternalProjectById(projectId: string): Promise<OwnedProject | null> {
-  const id = String(projectId || '').trim();
-  if (!UUID_REGEX.test(id)) return null;
-  const { rows } = await pool.query(
-    `SELECT id, name, code, status, owner_user_id
-     FROM ${PROJECTS_TABLE}
-     WHERE id = $1
-       AND EXISTS (
-         SELECT 1 FROM ag_catalog.agent_decks AS deck
-         WHERE deck.project_id=${PROJECTS_TABLE}.id
-           AND deck.deck_id='${DEFAULT_PROJECT_DECK_ID}'
-       )
-     LIMIT 1`,
-    [id],
-  );
-  if (!rows.length) return null;
-  const row = rows[0];
-  return {
-    id: row.id,
-    name: row.name,
-    code: row.code ?? null,
-    status: row.status ?? null,
-    ownerUserId: String(row.owner_user_id || ''),
-  };
-}
-
 export async function listSavedCardsForProject(
   projectId: string,
   deckId: string,

@@ -5,11 +5,11 @@
 *.pem
 
 
-# Repo-local Hermes runtime data. Source lives visibly in /Hermes, while
+# Repo-local Hermes runtime data. Source lives visibly in /HermesLatest, while
 # profiles, credentials, sessions, databases, caches, backups, and the rebuilt
 # virtual environment stay local and must never be committed.
-/Hermes/.hermes/
-/Hermes/venv/
+/HermesLatest/.hermes/
+/HermesLatest/.venv/
 
 # Local proof/model artifacts
 /.tmp/
@@ -17,6 +17,8 @@ tmp_*.json
 tmp_*.log
 handoff/
 /runtime/run-inputs/
+/db/*.dump
+/db/full_backup.sql
 /runtime/codex-models/
 /runtime/trading/
 /db/constellation/*.sqlite*

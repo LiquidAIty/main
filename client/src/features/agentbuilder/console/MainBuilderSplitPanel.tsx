@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 const HANDLE_HEIGHT = 12;
 const DEFAULT_SPLIT_HEIGHT = 320;
 
-type HarnessChatPanelProps = {
+type MainBuilderSplitPanelProps = {
   chat: ReactNode;
   terminal: ReactNode;
   storageKey?: string;
@@ -11,12 +11,12 @@ type HarnessChatPanelProps = {
 };
 
 /** Main's Project conversation over the active Card work surface. */
-export default function HarnessChatPanel({
+export default function MainBuilderSplitPanel({
   chat,
   terminal,
   storageKey = 'builder.surface.split.v1',
   workSurfaceLabel = 'Builder',
-}: HarnessChatPanelProps) {
+}: MainBuilderSplitPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
   const listenersRef = useRef<{

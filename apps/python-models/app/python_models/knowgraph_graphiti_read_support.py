@@ -6,6 +6,7 @@ import json
 import math
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.python_models.data_anchor_contract import DataAnchorError
 from app.python_models.jev_validation import (
@@ -13,6 +14,24 @@ from app.python_models.jev_validation import (
     validate_rounded_probability_distribution,
 )
 _GRAPHITI_GROUP_PREFIX = "liquidaity-"
+
+
+def is_visible_knowgraph_entity_name(value: Any) -> bool:
+    """Keep citation URLs out of the Project Entity projection.
+
+    Graphiti may extract a cited URL as an Entity. The URL remains stored in
+    Graphiti and in its owning Know citations, but it is provenance rather than
+    a user-facing Project Entity node.
+    """
+
+    text = str(value or "").strip()
+    if not text:
+        return False
+    parsed = urlsplit(text)
+    return not (
+        parsed.scheme.lower() in {"http", "https"}
+        and bool(parsed.netloc)
+    )
 
 
 def neo4j_rows(result: Any) -> list[dict[str, Any]]:
@@ -165,5 +184,4 @@ def persisted_knowgraph_jev(
         "vocabulary_version": str(properties.get("jev_ontology_version") or ""),
         "vocabulary_hash": str(properties.get("jev_ontology_hash") or ""),
     }
-
 

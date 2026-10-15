@@ -3,8 +3,8 @@
   // a stricter bar than the app), and NO project reference — the old
   // `references: [tsconfig.app.json]` made tsc demand built dist/*.d.ts files
   // (TS6305) that nothing ever builds. Specs typecheck against app SOURCE.
-  // NOTE: vitest (esbuild) is the test gate; this command is a supplementary
-  // typecheck and currently reports real @types/react 19 vs react 18 skew.
+  // Vitest (esbuild) is the test gate; this command is a supplementary
+  // source-level spec typecheck.
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./out-tsc/vitest",

@@ -2,27 +2,23 @@ import { Suspense, lazy } from 'react';
 
 import { GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
-import type { CanonicalSubjectFocusRequest } from '../builder/canonicalSubjectLinks';
+import type { CanonicalEntityFocusRequest } from '../builder/canonicalEntityLinks';
 
-const NativeJoinedGraphSurface = lazy(async () => {
-  const mod = await import('./NativeAuthorityGraphSurface');
-  return { default: mod.NativeJoinedGraphSurface };
+const JoinedKnowledgeGraphSurface = lazy(async () => {
+  const mod = await import('./KnowledgeAuthorityGraphSurface');
+  return { default: mod.JoinedKnowledgeGraphSurface };
 });
 
 type Props = {
   minHeight?: number;
   surfaceRole?: 'large' | 'companion';
-  projections: Record<KnowledgeGraphKind, import('./NativeAuthorityGraphSurface').GraphProjectionV1>;
+  projections: Record<KnowledgeGraphKind, import('./KnowledgeAuthorityGraphSurface').GraphProjectionV1>;
   errors: Partial<Record<KnowledgeGraphKind, string>>;
   statuses?: Partial<Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>>;
-  onReadFocusNeighborhood?: import('./NativeAuthorityGraphSurface').ReadNativeFocusNeighborhood;
-  onExpandNode: (
-    authority: KnowledgeGraphKind,
-    node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
-  ) => Promise<void>;
+  onReadFocusNeighborhood?: import('./KnowledgeAuthorityGraphSurface').ReadProviderFocusNeighborhood;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
-  onRemoveKnowGraphEvidence?: (nativeFactId: string) => Promise<void>;
-  subjectFocusRequest?: CanonicalSubjectFocusRequest | null;
+  onRemoveKnowGraphEvidence?: (episodeId: string) => Promise<void>;
+  entityFocusRequest?: CanonicalEntityFocusRequest | null;
 };
 
 export default function KnowledgeGraphFramework({
@@ -32,10 +28,9 @@ export default function KnowledgeGraphFramework({
   errors,
   statuses,
   onReadFocusNeighborhood,
-  onExpandNode,
   onRemoveThinkGraphEvidence,
   onRemoveKnowGraphEvidence,
-  subjectFocusRequest,
+  entityFocusRequest,
 }: Props) {
   return (
     <div
@@ -57,7 +52,7 @@ export default function KnowledgeGraphFramework({
           />
         }
       >
-        <NativeJoinedGraphSurface
+        <JoinedKnowledgeGraphSurface
             projections={{
               thinkgraph: projections.thinkgraph,
               knowgraph: projections.knowgraph,
@@ -72,11 +67,10 @@ export default function KnowledgeGraphFramework({
               ...(errors.thinkgraph ? { thinkgraph: errors.thinkgraph } : {}),
               ...(errors.knowgraph ? { knowgraph: errors.knowgraph } : {}),
             }}
-            onReadNativeFocusNeighborhood={onReadFocusNeighborhood}
-            onExpand={onExpandNode}
+            onReadProviderFocusNeighborhood={onReadFocusNeighborhood}
             onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
             onRemoveKnowGraphEvidence={onRemoveKnowGraphEvidence}
-            subjectFocusRequest={subjectFocusRequest}
+            entityFocusRequest={entityFocusRequest}
           />
       </Suspense>
     </div>

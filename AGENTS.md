@@ -52,7 +52,7 @@ or silently change their write policy.
 ### CURRENT
 
 - Main, Builder and the graph helpers are saved Cards on the repo-owned Hermes adapter, with
-  separate profiles, sessions, prompts, models, native subagent selections and grants.
+  separate profiles, sessions, prompts, models, Hermes subagent selections and grants.
 - Builder is Card `builder`, display `Builder`, profile `builder`. Main reaches it through a
   direct saved flow; the Agent Builder application's lower terminal presents that same Card.
   It builds prompts, Cards, agent apps, UI pages and supporting code using explicit tools.
@@ -60,7 +60,7 @@ or silently change their write policy.
 - Bun is outside the supported graph.
 - The existing Mag One Card and blue topology remain LiquidAIty product authority; current source executes
   that bus through the repository-owned Hermes task/dependency runtime with no legacy executor fallback.
-- Engraphis owns ThinkGraph, Graphiti owns KnowGraph, native CBM owns CodeGraph and AGE owns
+- Engraphis owns ThinkGraph, Graphiti owns KnowGraph, CBM owns CodeGraph and AGE owns
   Card topology/Run observations. Preserve the accepted graph surfaces and data.
 - Static tests, loaded application execution and external plugin acceptance are separate proofs.
   Current acceptance evidence and remaining work belong in PLAN.md and ARCHITECTURE.md.
@@ -68,11 +68,11 @@ or silently change their write policy.
 ### APPROVED TARGET
 
 - Repo-owned Hermes Main, Builder, and graph helpers complete live proof without another runtime or fallback.
-- Main approves exact IDF handoff to the saved Mag One Card; Hermes performs its native headless
+- Main approves exact IDF handoff to the saved Mag One Card; Hermes performs its headless
   task/dependency execution and final synthesis through the exact blue-connected Card roster.
-- Real native graph reads, Context Selections, handoffs, consumption, traversal, and writes drive the
+- Real provider graph reads, Context Selections, handoffs, consumption, traversal, and writes drive the
   two visual canvases.
-- Native child Runs, tools, references, artifacts, failures, and completion become truthful AGE
+- Hermes child Runs, tools, references, artifacts, failures, and completion become truthful AGE
   observations without making AGE a runtime controller.
 
 Do not document TARGET behavior as CURRENT. Do not preserve an abandoned runtime as a hidden fallback.
@@ -221,8 +221,9 @@ edit.
 
 Inside a vendor, prohibit broad cleanup, mass rename/format/type/dependency changes, speculative dead-
 code deletion, prompt rewrites, unrelated test rewrites, and upstream documentation or terminology
-changes. Use path-scoped searches in the unified core CBM project first, then direct-read and test the
-exact upstream contract. Record every meaningful local divergence in the single vendored divergence register in
+changes. Controlled vendor roots are currently excluded by `.cbmignore`; do not claim CBM coverage for
+them or change index scope without a separately authorized reindex. Direct-read and test the exact vendor
+contract, and use CBM only for the indexed LiquidAIty adapter side. Record every meaningful local divergence in the single vendored divergence register in
 `ARCHITECTURE.md`, including upstream URL, version or commit when known, local files/symbols, reason,
 proof, sync cost, and whether the change can later be removed.
 
@@ -387,11 +388,11 @@ presentation never creates a second Card type or orchestration authority. Card v
 orange edge, grant reverse authority, or make a Card a member of Magnetic's independent blue roster. The
 server's new-Project seed currently creates Main → Builder only; additional saved edges remain Project-owned
 persisted configuration.
-Each Hermes Card also owns one saved desired native subagent model. Run start materializes that
-selection into the bound native profile and reads it back before inference; actual child provider/model
+Each Hermes Card also owns one saved desired Hermes subagent model. Run start materializes that
+selection into the bound Hermes profile and reads it back before inference; actual child provider/model
 and any runtime-reported deviation or failure belong in the Run receipt. LiquidAIty supplies no provider
 or model fallback. The selector never rewrites the parent model, another Card,
-Mag One worker selection or the ThinkGraph engine. External-memory selection remains native
+Mag One worker selection or the ThinkGraph engine. External-memory selection remains Hermes
 profile configuration. LiquidAIty exposes Honcho setup/status only for Main and never projects a
 general Card memory-provider field or reconfigures memory at Run start.
 
@@ -433,15 +434,15 @@ The headless Mag One adapter submits one bounded root mission to Hermes' existin
 task/dependency runtime. The saved Mag One profile decomposes the mission, assigns work only to the
 projected worker identities, links required worker tasks back to the same root, dependency-blocks that
 root while needed work is unfinished, and later completes the same root with final synthesis. It never
-creates a separate synthesis sink. Hermes' native assignment scope
+creates a separate synthesis sink. Hermes' assignment scope
 rejects root assignments outside the exact blue roster and keeps manually created worker descendants
 self-scoped, without changing unrestricted ordinary tasks.
 
-Hermes owns native tasks, dependencies, attempts, dispatch, retries, worker processes, and final synthesis.
+Hermes owns tasks, dependencies, attempts, dispatch, retries, worker processes, and final synthesis.
 LiquidAIty stores no copy of those rows and creates no second scheduler, task store, worker identity,
 terminal, transcript, activity feed, or board UI. TypeScript owns transport and structured Run observation,
 not decomposition or scheduling. The outer Run remains one product invocation/lineage record and the one
-canonical `in.idf` remains mission and selected-context transport; neither duplicates the native task ledger.
+canonical `in.idf` remains mission and selected-context transport; neither duplicates the Hermes task ledger.
 
 ---
 
@@ -450,7 +451,7 @@ canonical `in.idf` remains mission and selected-context transport; neither dupli
 ```text
 ThinkGraph = Engraphis project reasoning and operational knowledge
 KnowGraph  = Neo4j/Graphiti sourced knowledge and provenance
-CodeGraph  = native CBM repository structure
+CodeGraph  = CBM repository structure
 AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and execution telemetry,
              implemented on Apache AGE/PostgreSQL
 ```
@@ -459,22 +460,22 @@ One authority and one writer per graph.
 
 Main is not the owner of ThinkGraph writes. The completed-pair Python preparation and settlement rails remain,
 but the TypeScript child-Card executor and revision relay were removed without replacement. No automatic
-User/Main-pair intake is current until a separately approved native-Hermes caller exists. No candidate graph,
+User/Main-pair intake is current until a separately approved Hermes saved-Card caller exists. No candidate graph,
 approval state, shadow graph, raw conversation Memory, regex-first skeleton, broad cleanup path, or direct
 target runner may substitute for that missing seam. KnowGraph retains sourced research through its existing
 research agent and queued Graphiti intake. Its dedicated Entity write records one exact structural `ABOUT` edge while
 leaving extracted `MENTIONS` independent. Only Entities render as Project graph nodes; Thinks, Knows,
-Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Native Engraphis
-and Graphiti reads produce bounded candidates, Jev ranks them against the current request, and the ordinary
-Entity inspector defaults to Relevant with a small switch to distinct Recent. Search and its 1–12 Results
-count are transient inspector reads and never expand Main/Builder's default. Operating instructions belong in saved Cards; dynamic input carries
+Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Engraphis
+and Graphiti reads produce bounded candidates, and Jev ranks them against the current request for automatic
+agent grounding. The ordinary Entity inspector instead shows at most two provider-projected attached records;
+it has no current Search/Results or Relevant/Recent control. Operating instructions belong in saved Cards; dynamic input carries
 the actual task and selected data. Do not submit system-design guidance as test chatter.
 
-- Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
-- Transient context selection may reference native authorities for bounded IDF hydration; it is not another graph
+- Pass pointers, provider IDs, bounded Context Selections, and provenance—not copied subgraphs.
+- Transient context selection may reference provider authorities for bounded IDF hydration; it is not another graph
   and does not absorb or archive their data.
 - AgentGraph/AGE owns accepted Card relationship edits and may observe stable run/reference/artifact IDs. It never
-  stores raw IDFs, authorizes a runtime, chooses a card, or owns native runtime lifecycle.
+  stores raw IDFs, authorizes a runtime, chooses a card, or owns Hermes runtime lifecycle.
 - The UI never writes graph meaning directly.
 - TypeScript never performs semantic graph merges.
 - Files/skills describe how-to; graphs store what-is. Do not copy Hermes profile learning/skill
@@ -487,14 +488,14 @@ the actual task and selected data. Do not submit system-design guidance as test 
 Visual activation may come only from real observable events:
 
 ```text
-query returned native IDs
-context included native IDs
+query returned provider IDs
+context included provider IDs
 selection created
 selection sent/delivered/opened
-native node/edge read
-native traversal completed
-native node/edge proposed or written
-native run completed or failed
+provider node/edge read
+provider traversal completed
+provider node/edge proposed or written
+Hermes run completed or failed
 ```
 
 Do not visualize hidden chain-of-thought. Do not infer access from answer prose. Do not create fake
@@ -510,7 +511,7 @@ There is exactly one runtime-input meaning and implementation:
 ```text
 saved Card stable fields
 + current transient dynamic input
-+ deliberately selected rich data, native references, and images
++ deliberately selected rich data, provider references, and images
 + effective granted tools
 = one exact Input Data File
 ```
@@ -520,14 +521,14 @@ A saved Card becomes runnable only when its dynamic input is filled and the Card
 it writes and reloads exactly one canonical UTF-8 file for the Card/root Run:
 
 ```text
-in.idf = actual bounded native graph data, references, and provenance
+in.idf = actual bounded provider graph data, references, and provenance
        + stable receiving-Card context read from PostgreSQL
        + selected tools, schemas, and effective saved grants
        + current dynamic mission, context, and images
 ```
 
 The existing Run artifact catalog retains its path, byte size, and hash. Hermes receives only a
-mechanical native request projected from those exact reloaded bytes; no adapter may reconstruct, wrap,
+mechanical Hermes request projected from those exact reloaded bytes; no adapter may reconstruct, wrap,
 validate, hash, or reinterpret a competing payload. TypeScript transports the file reference and renders
 selected-Run inspection; it is never a materializer. AGE data, receipts, approval state, and runtime lineage
 remain outside the file. There is no saved-input library, revision copy, envelope, manifest, receipt, or
@@ -539,16 +540,16 @@ artifacts and never become a prerequisite, retained input authority, or competin
 Cards remain one product concept. Their explicit Hermes runtime mode/profile binding is saved Card
 configuration, not a separate Card type or a second runtime payload. A sending user or agent supplies
 only dynamic input and selected references; Python validates or rereads that exact bounded selection, and
-the receiving Card owns materialization. Persistent orchestrator-to-Card work uses Hermes native
+the receiving Card owns materialization. Persistent orchestrator-to-Card work uses Hermes
 `message_agent` only for that orchestrator's exact outbound orange target roster. The application-owned Card
-plugin mechanically maps a unique saved visible one-word Card title to the already-authorized stable native
+plugin mechanically maps a unique saved visible one-word Card title to the already-authorized stable Hermes
 profile; it never discovers, authorizes, or delivers another target. There is no generic public tool that runs
 an arbitrary Card as an assistant. Optional review uses the existing Card Invocation and Knowledge
 editors, then submits the existing Card Run path once; staged review state is not a retained input or Run.
 Mag One workers
 receive their dynamic task through the saved-worker Card doorway, so each independently invoked saved worker
-Card gets its own root IDF. A Mag One Card is one root boundary: Hermes owns native task decomposition,
-worker prompts, handoffs, and child context. Never infer per-worker IDFs from native child IDs.
+Card gets its own root IDF. A Mag One Card is one root boundary: Hermes owns task decomposition,
+worker prompts, handoffs, and child context. Never infer per-worker IDFs from Hermes child IDs.
 
 IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` definition source
 for composable objects, typed fields, choices, defaults, templates, relationships and effect metadata.
@@ -560,21 +561,22 @@ This is the approved target; the complete consumer parity remains unproven until
 IDD is not runtime authority, an authenticator, a checksum gate or a second IDF materializer.
 Full builder context belongs only to the Agent Builder Card in explicit Agent Builder work directed by
 Main after user approval. Ordinary Runs receive selected values/references, never the
-whole palette. Ordinary prompt prose stays Markdown. Every Card has the same Python Hooks editor below
-its Tools selection in the Agent Builder workspace. IDD supplies current tool contracts for hook
-authoring, while the Card's effective Tools-tab grants remain the execution ceiling. The user or the
-authenticated Builder profile may validate, save and activate the next Hooks version; a running Card
-receives one immutable saved version/hash and cannot rewrite it. Valid Hermes hooks execute through the
-preserved Hermes child-process Python runner and native tool dispatcher at their declared hook points;
-they do not replace, suppress or re-authorize the Card's ordinary profile MCP tools. Blank or invalid
-hooks are inert and keep the exact selected profile-tool presentation. Preserve the existing editor,
-compiler and executor until their loaded application path can be tested. Never widen to IDD or the
-complete catalog, add another executor, or activate hook execution for a non-Hermes Card.
+whole palette. Ordinary prompt prose stays Markdown. Every Card has the same Python Script editor below
+its Tools selection in the Agent Builder workspace. IDD supplies current selected-tool contracts for
+authoring one `tool_recipe`, while the Card's effective Tools-tab grants remain the execution ceiling. The
+user or authenticated Builder profile may validate, save, and enable the next Script version; a running Card
+receives one immutable saved version/hash and cannot rewrite it. A valid enabled Script executes as one Hermes
+`card_python` tool through the preserved child-process Python runner and exact tool dispatcher. It does not
+replace, suppress, or re-authorize the Card's ordinary profile MCP tools. Blank, invalid, or disabled Script
+source is inert and keeps the exact selected profile-tool presentation. Preserve the existing editor,
+compiler, and executor until their loaded application path can be tested. Generalized hook points are future
+work; do not describe or implement them as current Script behavior. Never widen to IDD or the complete
+catalog, add another executor, or activate Script execution for a non-Hermes Card.
 
 Authority is:
 
 ```text
-native availability
+provider availability
 ∩ saved Card/Hermes selection
 ∩ current Run authorization (including user approval where applicable)
 ```
@@ -596,7 +598,7 @@ A saved card is the sole permanent authority for:
 identity
 prompt
 provider/model/profile
-bounded native subagent model
+bounded Hermes subagent model
 runtime type and binding
 enabled state
 tool and capability grants
@@ -606,11 +608,11 @@ saved topology
 Callers provide task input and stable references, not alternate card definitions. Missing cards,
 models, grants, runtimes, or authorities fail honestly. No model/provider/tool fallback.
 
-The underlying Project graphs remain durable in their native owners. A caller selects bounded
+The underlying Project graphs remain durable in their provider owners. A caller selects bounded
 references/context for one invocation; that selection and the materialized IDF remain Run-scoped.
 PostgreSQL persists stable Card state, Run status, and explicit artifact metadata. AGE owns saved Card
 relationships and may observe execution identities. Neither replaces saved-card configuration or
-native runtime truth.
+Hermes runtime truth.
 
 ---
 
@@ -703,7 +705,7 @@ Run Task unavailable: approved task-node execution is not wired yet.
 ```
 
 Do not execute from fallback assistant text, `finalResponseText`, raw chat, fake task objects, or
-reconstructed native task-ledger state. Do not mark completion without proof.
+reconstructed Hermes task-ledger state. Do not mark completion without proof.
 
 ---
 

@@ -55,8 +55,8 @@ shell, not transparent black.
 ## Where It Is Applied
 
 `client/src/components/graph/RightGlassDrawer.tsx` is the shared shell. Its direct callers are the
-Agent Builder inspector and `JoinedKnowledgeGraphProjectionSurface`; verify that exact caller set in
-current source before changing the shared material.
+Agent Builder page and `KnowledgeAuthorityGraphSurface.tsx`; verify that exact caller set in current
+source before changing the shared material.
 Keep the material in `graphVisualTokens.ts` and the shell in `RightGlassDrawer.tsx`; do not
 create feature-specific drawer copies.
 

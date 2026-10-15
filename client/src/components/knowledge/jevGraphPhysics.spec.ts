@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { GraphProjectionV1 } from './NativeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from './KnowledgeAuthorityGraphSurface';
 import {
   applyJevGraphPhysics,
   DURABLE_NODE_RADIUS_MAX,
@@ -36,17 +36,17 @@ function projection(): GraphProjectionV1 {
       },
     },
     {
-      id: 'ordinary', source: 'a', target: 'c', predicate: 'NATIVE_RELATION',
+      id: 'ordinary', source: 'a', target: 'c', predicate: 'PROVIDER_RELATION',
       relationship_strength: 0.42, label_confidence: 0.43, strength: 0.44,
       spring_strength: 0.045, rest_length: 31, visual_width: 1.7,
-      properties: { relationship_strength: 0.42, native_field: 'preserved' },
+      properties: { relationship_strength: 0.42, provider_field: 'preserved' },
     },
     {
       id: 'malformed', source: 'c', target: 'a', predicate: 'SUPPORTS',
       relationship_strength: 0.52, label_confidence: 0.53, strength: 0.54,
       spring_strength: 0.055, rest_length: 29, visual_width: 1.9,
       properties: {
-        native_field: 'preserved',
+        provider_field: 'preserved',
         jev: {
           status: 'success', winner: 'SUPPORTS',
           distribution: { SUPPORTS: '0.7', ASSOCIATED_WITH: 0.3 },

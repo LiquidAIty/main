@@ -14,7 +14,7 @@ When a PromptSpec is active, load the PromptSpec Receiver first. The PromptSpec 
 authorization, required live-agent acceptance, evidence assembly, freeze and final review. This
 skill supplies repository-specific test selection and execution cautions only. A mock, scaffold,
 unit test or stand-in can support deterministic diagnosis, but cannot replace a required real
-saved-Card/native-runtime proof.
+saved-Card/Hermes-runtime proof.
 
 1. Name the behavior, affected preservation invariants, and what result could disprove success.
 2. Inspect the existing test and current runtime owner. Run the smallest useful baseline.
@@ -59,10 +59,10 @@ HTTP 200, compile success, a mock, or an external stand-in is not proof that the
 works. Conversely, do not launch a live model to test a reversible CSS or schema change when
 the relevant deterministic and visual checks suffice. Report proof tiers separately.
 
-For MCP catalog tests, replace native discovery with fail-on-call guards unless discovery is the
+For MCP catalog tests, replace provider discovery with fail-on-call guards unless discovery is the
 explicit test subject. The application host owns the sole CBM frontend; importing a catalog test
 must not acquire that lifecycle. Control inherited allowlists explicitly. Assert the canonical
-private tool is present before testing public projection exclusion, preserve native descriptors
+private tool is present before testing public projection exclusion, preserve provider descriptors
 and OAuth metadata, and validate supported and invalid runtime inputs against actual schemas.
 These boundaries repaired the September 10 failures without changing publication or authentication.
 

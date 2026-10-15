@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { pool } from '../db/pool';
 import { getDeckDocument, saveDeckDocument } from '../decks/deckDomainClient';
-import { DEFAULT_PROJECT_EDGES } from '../decks/defaultProjectDeck';
+import {
+  DEFAULT_PROJECT_DECK_ID,
+  DEFAULT_PROJECT_EDGES,
+} from '../decks/defaultProjectDeck';
 import {
   createProject,
   discardFreshProject,
@@ -39,13 +42,13 @@ router.post('/', async (req, res) => {
       ownerUserId,
     );
     try {
-      const loaded = await getDeckDocument(project.id, 'deck_builder');
+      const loaded = await getDeckDocument(project.id, DEFAULT_PROJECT_DECK_ID);
       if (!loaded.deck || !loaded.meta.deckRevision) {
         throw new Error('default_project_deck_missing');
       }
       await saveDeckDocument(
         project.id,
-        'deck_builder',
+        DEFAULT_PROJECT_DECK_ID,
         {
           ...loaded.deck,
           edges: DEFAULT_PROJECT_EDGES.map((edge) => ({ ...edge })),

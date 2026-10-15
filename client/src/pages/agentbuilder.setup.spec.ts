@@ -207,7 +207,7 @@ describe('agentbuilder authoring flow', () => {
         {
           ...JSON.parse(JSON.stringify(orchestratorNode)),
           id: 'card_magentic',
-          title: 'Magentic-One',
+          title: 'Magnetic',
         },
       ],
       edges: [],

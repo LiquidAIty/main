@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, screen, waitFor } from '@testing-library/dom';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -206,7 +206,6 @@ describe('MagneticTasksTab', () => {
     expect(screen.getByText('Status · blocked')).toBeTruthy();
     expect(screen.getByText('Profile · card_magentic')).toBeTruthy();
     expect(screen.getByText('Depends · Collect evidence')).toBeTruthy();
-    expect(details.textContent?.toLowerCase()).not.toContain('native');
     act(() => fireEvent.click(screen.getByTestId('flow-node-task-running')));
     expect(screen.getByText('Handoff · Worker grounded the handoff in the saved Card result.')).toBeTruthy();
     expect(screen.queryByText(/worker session|tool|call|receipt/i)).toBeNull();

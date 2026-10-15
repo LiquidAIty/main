@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
 import {
   loadSessionHistory,
   type AddressableAgent,
@@ -16,7 +16,7 @@ import {
   streamVoiceCapture,
 } from './mainSessionClient';
 
-export type AgentBuilderChatMessage = MainConversationMessage & {
+export type MainProjectChatMessage = MainConversationMessage & {
   status?: 'pending' | 'complete' | 'error';
   requestKey?: string;
 };
@@ -101,7 +101,7 @@ function requestedParticipant(
     : { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
 }
 
-function requestUserMessageIndex(messages: AgentBuilderChatMessage[], requestKey: string): number {
+function requestUserMessageIndex(messages: MainProjectChatMessage[], requestKey: string): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index].role === 'user' && messages[index].requestKey === requestKey) return index;
   }
@@ -122,7 +122,7 @@ export default function useAgentBuilderMainChat({
   });
   const [transcript, setTranscript] = useState<{
     key: string;
-    messages: AgentBuilderChatMessage[];
+    messages: MainProjectChatMessage[];
   }>({ key: projectKey, messages: [] });
   const [historyState, setHistoryState] = useState<{ key: string; loading: boolean }>({
     key: projectKey,
@@ -382,6 +382,18 @@ export default function useAgentBuilderMainChat({
       }));
       return finalText;
     } catch (error) {
+      if (controller.signal.aborted) {
+        finishText('');
+        setTranscript((current) => current.key !== projectKey ? current : ({
+          key: projectKey,
+          messages: current.messages.map((message) => (
+            message.role === 'user' && message.requestKey === requestKey
+              ? { ...message, status: 'complete' as const }
+              : message
+          )),
+        }));
+        return '';
+      }
       setTranscript((current) => {
         if (current.key !== projectKey) return current;
         const copy = [...current.messages];
@@ -482,18 +494,13 @@ export default function useAgentBuilderMainChat({
     ));
     const expectedRunId = activeEntry?.[1].runId || null;
     if (!activeEntry || !expectedRunId) throw new Error('expected_run_id_required');
-    try {
-      await stopSession({ projectId: canvasProjectId, deckId, expectedRunId });
-    } catch (error) {
-      if (!(error instanceof SessionStreamError) || error.code !== 'no_active_turn') throw error;
-    } finally {
-      activeEntry[0].abort();
-      activeStreamsRef.current.delete(activeEntry[0]);
-      setTurnState({
-        key: projectKey,
-        phase: activeStreamsRef.current.size ? 'active' : 'idle',
-      });
-    }
+    await stopSession({ projectId: canvasProjectId, deckId, expectedRunId });
+    activeEntry[0].abort();
+    activeStreamsRef.current.delete(activeEntry[0]);
+    setTurnState({
+      key: projectKey,
+      phase: activeStreamsRef.current.size ? 'active' : 'idle',
+    });
   }, [canvasProjectId, deckId, projectKey, sessionPending]);
 
   return {

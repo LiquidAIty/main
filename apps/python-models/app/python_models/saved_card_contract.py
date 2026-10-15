@@ -123,7 +123,7 @@ def string_list(value: Any, field: str) -> list[str]:
 def canonical_card_tools_and_toolsets(options: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Return the one canonical split between MCP tools and Hermes toolsets.
 
-    Old saved revisions placed fake ``hermes:tool:*`` markers and two removed
+    Old saved revisions placed retired ``hermes:tool:*`` markers and removed
     staging operations in ``tools``. Reads discard that residue in memory and
     the next save removes it from persisted grants.
     """

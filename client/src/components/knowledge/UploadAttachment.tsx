@@ -1,10 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 type UploadAttachmentProps = {
   knowledgeProjectId: string;
   disabled?: boolean;
-  onUploaded?: () => void;
-  appearance?: "default" | "chat-inline";
 };
 
 function buildDocumentId(file: File): string {
@@ -31,7 +29,10 @@ async function readJsonSafely(res: Response): Promise<any | null> {
   }
 }
 
-async function postKnowgraphIngest(file: File, projectId: string): Promise<{ response: Response; payload: any | null; documentId: string }> {
+async function postKnowgraphIngest(file: File, projectId: string): Promise<{
+  response: Response;
+  payload: any | null;
+}> {
   const formData = new FormData();
   const documentId = buildDocumentId(file);
   formData.append("file", file);
@@ -44,7 +45,7 @@ async function postKnowgraphIngest(file: File, projectId: string): Promise<{ res
     credentials: "include",
   });
   const payload = await readJsonSafely(response);
-  return { response, payload, documentId };
+  return { response, payload };
 }
 
 function formatUploadError(endpoint: string, status: number, body: string): string {
@@ -58,6 +59,9 @@ function formatUploadError(endpoint: string, status: number, body: string): stri
 function normalizeIngestErrorMessage(payload: any, status: number): string {
   if (status === 413) {
     return "Upload too large: the server rejected the PDF request body before KnowGraph ingest could start.";
+  }
+  if (status === 401) {
+    return "Your Project session is not authorized to import knowledge. Sign in again before retrying.";
   }
   const raw = String(
     payload?.error?.message ||
@@ -80,22 +84,9 @@ function normalizeIngestErrorMessage(payload: any, status: number): string {
   return raw;
 }
 
-async function ensureAnonymousSession(): Promise<void> {
-  const response = await fetch("/api/auth/start", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to start session (${response.status})`);
-  }
-}
-
 export default function UploadAttachment({
   knowledgeProjectId,
   disabled = false,
-  onUploaded,
-  appearance = "default",
 }: UploadAttachmentProps) {
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -119,7 +110,7 @@ export default function UploadAttachment({
     }
   };
 
-  const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -139,19 +130,12 @@ export default function UploadAttachment({
 
     setUploading(true);
     try {
-      let { response, payload, documentId } = await postKnowgraphIngest(file, knowledgeProjectId);
-
-      if (response.status === 401) {
-        await ensureAnonymousSession();
-        ({ response, payload, documentId } = await postKnowgraphIngest(file, knowledgeProjectId));
-      }
+      const { response, payload } = await postKnowgraphIngest(
+        file,
+        knowledgeProjectId,
+      );
 
       if (!response.ok) {
-        if (response.status === 401 && import.meta.env.DEV) {
-          setToastType("error");
-          setToast("Unauthorized: missing auth header/cookie");
-          return;
-        }
         const message = normalizeIngestErrorMessage(payload, response.status);
         setToastType("error");
         setToast(message);
@@ -161,18 +145,6 @@ export default function UploadAttachment({
       setToastType("ok");
       const sectionCount = Number(payload?.section_count || 0);
       setToast(sectionCount > 1 ? `Knowledge imported (${sectionCount} sections)` : "Knowledge imported");
-      window.dispatchEvent(new CustomEvent("knowgraph:refresh", {
-        detail: {
-          projectId: knowledgeProjectId,
-          documentId,
-          episodeIds: Array.isArray(payload?.episode_ids)
-            ? payload.episode_ids.map((id: unknown) => String(id))
-            : payload?.episode_id
-              ? [String(payload.episode_id)]
-              : [],
-        },
-      }));
-      onUploaded?.();
     } catch (error: any) {
       setToastType("error");
       setToast(formatUploadError("/api/knowgraph/ingest", 0, error?.message || "Failed to fetch"));
@@ -192,63 +164,34 @@ export default function UploadAttachment({
         title={uploading ? "Attaching knowledge PDF" : "Attach knowledge PDF"}
         data-no-surface-promote="true"
         style={{
-          width: appearance === "chat-inline" ? 36 : 42,
-          height: appearance === "chat-inline" ? 36 : 42,
+          width: 36,
+          height: 36,
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          border:
-            appearance === "chat-inline" ? "1px solid rgba(255,255,255,0.05)" : "1px solid #3A3A3A",
-          borderRadius: appearance === "chat-inline" ? 10 : 12,
-          background:
-            appearance === "chat-inline"
-              ? uploading
-                ? "rgba(79,162,173,0.16)"
-                : "rgba(255,255,255,0.02)"
-              : uploading
-                ? "rgba(79,162,173,0.18)"
-                : "#202020",
-          color: appearance === "chat-inline" ? "rgba(224,222,213,0.9)" : "#FFFFFF",
-          boxShadow:
-            appearance === "chat-inline"
-              ? "none"
-              : uploading
-                ? "0 0 0 1px rgba(79,162,173,0.22) inset"
-                : "none",
+          border: "1px solid rgba(255,255,255,0.05)",
+          borderRadius: 10,
+          background: uploading ? "rgba(79,162,173,0.16)" : "rgba(255,255,255,0.02)",
+          color: "rgba(224,222,213,0.9)",
+          boxShadow: "none",
           opacity: disabled || uploading ? 0.65 : 1,
           transition: "background 120ms ease, border-color 120ms ease",
         }}
       >
-        {appearance === "chat-inline" ? (
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M12 5v14" />
-            <path d="M5 12h14" />
-          </svg>
-        ) : (
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.9"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.5 3.5 0 1 1 4.95 4.95l-9.19 9.2a1.5 1.5 0 0 1-2.12-2.13l8.49-8.48" />
-          </svg>
-        )}
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 5v14" />
+          <path d="M5 12h14" />
+        </svg>
       </button>
       <input
         ref={inputRef}

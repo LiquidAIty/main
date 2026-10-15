@@ -1,4 +1,4 @@
-"""Native graph retrieval followed by bounded Jev context relevance."""
+"""Provider graph retrieval followed by bounded Jev context relevance."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def _think_record(memory: Any, entity_id: str, think: dict[str, Any]) -> dict[st
     }
 
 
-def _native_think_records(
+def _provider_think_records(
     project: str,
     query: str,
     result_limit: int = 1,
@@ -78,6 +78,13 @@ def _native_think_records(
             jev_assisted=False,
         )
         rows = result.get("memories") if isinstance(result, dict) else None
+        metadata = {
+            "retrieval": "engraphis_provider",
+            "semanticSupport": bool(result.get("semantic_support"))
+            if isinstance(result, dict) else False,
+            "degradedMode": bool(result.get("degraded_mode"))
+            if isinstance(result, dict) else False,
+        }
         memory_ids = [
             str(row.get("id") or "").strip()
             for row in rows if isinstance(row, dict)
@@ -87,13 +94,7 @@ def _native_think_records(
             "SELECT id FROM workspaces WHERE name=?", (project,),
         ).fetchone()
         if workspace is None or not memory_ids:
-            return recent, [], {
-                "retrieval": "engraphis_native",
-                "semanticSupport": bool(result.get("semantic_support"))
-                if isinstance(result, dict) else False,
-                "degradedMode": bool(result.get("degraded_mode"))
-                if isinstance(result, dict) else False,
-            }
+            return recent, [], metadata
         workspace_id = str(workspace["id"])
         exact_entities = exact_think_entity_ids(
             service.store,
@@ -110,11 +111,7 @@ def _native_think_records(
             candidates.append(_think_record(memory, entity_id, think))
             if len(candidates) == candidate_limit:
                 break
-    return recent, candidates, {
-        "retrieval": "engraphis_native",
-        "semanticSupport": bool(result.get("semantic_support")),
-        "degradedMode": bool(result.get("degraded_mode")),
-    }
+    return recent, candidates, metadata
 
 
 def _tool_payload(result: Any) -> dict[str, Any]:
@@ -122,7 +119,7 @@ def _tool_payload(result: Any) -> dict[str, Any]:
         return result.get("result") if isinstance(result.get("result"), dict) else result
     if isinstance(result, CallToolResult):
         if result.is_error:
-            raise RuntimeError("knowgraph_native_retrieval_unavailable")
+            raise RuntimeError("knowgraph_provider_retrieval_unavailable")
         structured = result.structured_content
         if isinstance(structured, dict):
             payload = structured.get("result")
@@ -136,7 +133,7 @@ def _tool_payload(result: Any) -> dict[str, Any]:
             value = json.loads(text)
             if isinstance(value, dict):
                 return value.get("result") if isinstance(value.get("result"), dict) else value
-    raise RuntimeError("knowgraph_native_retrieval_invalid")
+    raise RuntimeError("knowgraph_provider_retrieval_invalid")
 
 
 async def _search_graphiti_entities(project: str, query: str) -> list[str]:
@@ -148,14 +145,14 @@ async def _search_graphiti_entities(project: str, query: str) -> list[str]:
     payload = _tool_payload(result)
     nodes = payload.get("nodes")
     if not isinstance(nodes, list):
-        raise RuntimeError("knowgraph_native_retrieval_invalid")
+        raise RuntimeError("knowgraph_provider_retrieval_invalid")
     return list(dict.fromkeys(
         str(node.get("uuid") or "").strip()
         for node in nodes if isinstance(node, dict) and str(node.get("uuid") or "").strip()
     ))
 
 
-def _native_know_records(
+def _provider_know_records(
     project: str,
     query: str,
     result_limit: int = 1,
@@ -165,6 +162,10 @@ def _native_know_records(
     recent = read_recent_knowgraph_knows(project, limit=result_limit)
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
+    metadata = {
+        "retrieval": "graphiti_provider_entity_search",
+        "matchedEntityCount": len(entity_ids),
+    }
     for entity_id in entity_ids:
         for record in read_knowgraph_entity_know_candidates(
             project, entity_id, limit=3,
@@ -175,14 +176,8 @@ def _native_know_records(
             seen.add(episode_id)
             candidates.append(record)
             if len(candidates) == candidate_limit:
-                return recent, candidates, {
-                    "retrieval": "graphiti_native_entity_search",
-                    "matchedEntityCount": len(entity_ids),
-                }
-    return recent, candidates, {
-        "retrieval": "graphiti_native_entity_search",
-        "matchedEntityCount": len(entity_ids),
-    }
+                return recent, candidates, metadata
+    return recent, candidates, metadata
 
 
 def _record_id(authority: str, record: dict[str, Any]) -> str:
@@ -278,7 +273,7 @@ def _jev_relevance(
     body = {
         "model": card_run_jev.JEV_MODEL,
         "state": {
-            "description": "Native graph-retrieval candidates for the current Project request.",
+            "description": "Provider graph-retrieval candidates for the current Project request.",
             "current_user_request": _bounded_text(query, _QUERY_LIMIT),
             "bounded_context": _bounded_text(context, _CONTEXT_LIMIT),
             "candidates": state_candidates,
@@ -354,8 +349,8 @@ def build_project_graph_grounding(
     query: str,
     *,
     context: str = "",
-    think_retriever: Retriever = _native_think_records,
-    know_retriever: Retriever = _native_know_records,
+    think_retriever: Retriever = _provider_think_records,
+    know_retriever: Retriever = _provider_know_records,
     relevance_rater: Rater = _jev_relevance,
     result_limit: int = 1,
 ) -> dict[str, Any]:
@@ -370,7 +365,7 @@ def build_project_graph_grounding(
         raise ValueError("project_graph_relevance_limit_invalid")
     recent: dict[str, list[dict[str, Any]]] = {}
     candidates: dict[str, list[dict[str, Any]]] = {}
-    native: dict[str, dict[str, Any]] = {}
+    provider: dict[str, dict[str, Any]] = {}
     failures: dict[str, str] = {}
     for authority, retriever in (
         ("thinkgraph", think_retriever),
@@ -388,12 +383,12 @@ def build_project_graph_grounding(
                 record for record in authority_candidates
                 if _record_id(authority, record) not in recent_ids
             ][:_candidate_limit(result_limit)]
-            native[authority] = metadata
+            provider[authority] = metadata
         except Exception:
             recent[authority] = []
             candidates[authority] = []
-            native[authority] = {"retrieval": f"{authority}_native"}
-            failures[authority] = f"{authority}_native_retrieval_unavailable"
+            provider[authority] = {"retrieval": f"{authority}_provider"}
+            failures[authority] = f"{authority}_provider_retrieval_unavailable"
     rated = relevance_rater(query, context, candidates, result_limit)
     authorities: dict[str, Any] = {}
     for authority in ("thinkgraph", "knowgraph"):
@@ -417,7 +412,7 @@ def build_project_graph_grounding(
                if relevance.get("confidence") is not None else {}),
             **({"errorCode": relevance["errorCode"]}
                if relevance.get("errorCode") else {}),
-            "native": native[authority],
+            "provider": provider[authority],
         }
     packet = {
         "schemaVersion": "project-graph.grounding.v1",

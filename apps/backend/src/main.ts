@@ -6,6 +6,7 @@ import routes from "./routes";
 import { requestJsonBodyLimit } from "./services/requestPayloadLimits";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closeToolCatalogMcpClient } from "./services/mcp/toolCatalogMcpClient";
+import { closeHermesGateway } from "./services/hermesGateway";
 import { listenAfterRequiredMigrations } from "./db/migrations";
 
 const app = express();
@@ -142,6 +143,7 @@ function installShutdownHooks() {
 
   const shutdown = async () => {
     try {
+      closeHermesGateway();
       if (backendServer) await closeServer(backendServer);
       await closeToolCatalogMcpClient();
     } catch {

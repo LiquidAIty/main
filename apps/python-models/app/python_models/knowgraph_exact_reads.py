@@ -17,6 +17,7 @@ from app.python_models.graph_reference_contracts import graph_record_fields
 from app.python_models.knowgraph_graphiti_read_support import (
     graphiti_episode_ids,
     graphiti_project_scope_ids,
+    is_visible_knowgraph_entity_name,
     knowgraph_driver,
     neo4j_rows,
     persisted_knowgraph_jev,
@@ -110,7 +111,7 @@ def read_knowgraph_entity_know_candidates(
     *,
     limit: int = 6,
 ) -> list[dict[str, Any]]:
-    """Read a bounded exact candidate pool for native-search/Jev relevance."""
+    """Read a bounded exact candidate pool for Graphiti search/Jev relevance."""
 
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 24:
         raise DataAnchorError("knowgraph_entity_candidate_limit_invalid")
@@ -218,18 +219,24 @@ def read_knowgraph_entity_directory(project_id: str) -> dict[str, Any]:
         raw_count = raw_count.toNumber()
     if isinstance(raw_count, bool) or not isinstance(raw_count, (int, float)):
         raise DataAnchorError("entity_directory_knowgraph_count_invalid")
-    entities: list[dict[str, str]] = []
+    raw_entities: list[dict[str, str]] = []
     for row in rows:
-        entities.append({
+        raw_entities.append({
             "graphitiEntityId": str(row.get("entityId") or "").strip(),
             "canonicalName": str(row.get("canonicalName") or ""),
         })
-    count = int(raw_count)
+    provider_count = int(raw_count)
+    provider_complete = provider_count == len(raw_entities)
+    entities = [
+        entity for entity in raw_entities
+        if is_visible_knowgraph_entity_name(entity["canonicalName"])
+    ]
+    count = len(entities)
     revision = hashlib.sha256(
         canonical_json(entities).encode("utf-8")
     ).hexdigest()
     return {
-        "complete": count == len(entities),
+        "complete": provider_complete,
         "count": count,
         "revision": revision,
         "entities": entities,

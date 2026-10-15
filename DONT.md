@@ -38,8 +38,8 @@ owns source boundaries. A historical report is evidence, never permission to act
    Do not add explanatory panels, evidence panels or branding to Card controls.
 9. Main/Builder's established pull-up behavior is intentional. Preserve their session and input
    ownership. Do not change mounts, polling, panel dimensions or collapse behavior as a side effect.
-10. Keep saved tools available without Hooks. Card Hooks use the preserved Hermes Python runner and
-    saved grants; they do not replace or re-authorize ordinary profile tools. Do not invent a tool or
+10. Keep saved tools available without Card Script. The current `tool_recipe` Card Script uses the
+    preserved Hermes child Python runner and saved grants; it does not replace or re-authorize ordinary profile tools. Do not invent a tool or
     widen grants to make a proof succeed. WorldView layer visibility is not tool authorization, and
     Hermes profile memory is not a Tools-tab grant or LiquidAIty-selected toolset.
 11. LiquidAIty owns the product CBM publication and its one application frontend. Codex owns one separately
@@ -66,7 +66,7 @@ owns source boundaries. A historical report is evidence, never permission to act
 
 ## Graph meaning and authority
 
-Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; native CBM owns CodeGraph; AGE owns
+Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; CBM owns CodeGraph; AGE owns
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
 Main is not the owner of ThinkGraph writes. The completed-pair Python preparation and settlement rails remain,
@@ -81,13 +81,13 @@ store or project a one-sided cited statement as a Know, split its two sides into
 same Know to multiple Entities. Only Entities are visible Project graph nodes; episodes and citations remain
 attached evidence/provenance.
 
-Current grounding is one most Relevant plus one distinct most Recent record from each authority by default.
-Native owners produce candidates and Jev ranks them; TypeScript must not rank prose, substitute recency for
-failed relevance, or persist a relevance decision as graph truth. Inspector Search/Results is transient and
-must not widen Main/Builder's default packet.
+Current agent grounding is one most Relevant plus one distinct most Recent record from each authority by
+default. Provider owners produce candidates and Jev ranks them; TypeScript must not rank prose, substitute
+recency for failed relevance, or persist a relevance decision as graph truth. The current inspector shows
+at most two provider-projected attached records; it has no Search/Results or Relevant/Recent control.
 
 Keep entity identity, attributed claims, uncertainty, meaningful relationships and provenance distinct.
-A stored note, queued episode, native ID or attractive graph is not proof of useful knowledge.
+A stored note, queued episode, provider ID or attractive graph is not proof of useful knowledge.
 Keep long evidence in inspectable details; do not manufacture short labels with keyword rules.
 Do not populate product graphs with coding instructions, test expectations or invented persona facts.
 A person's attribution belongs with source evidence; a test persona is not automatically a graph node.
@@ -103,11 +103,11 @@ does not authorize a renderer replacement, and a rendering problem does not auth
 | PLAN headings leaked roadmap and audit prose into Builder input | Keep PLAN out of runtime input. Verify identical IDF bytes when PLAN changes or is absent; do not restore the removed loader. |
 | Public Card fixtures contained revisions missing from real reads | Compare actual saved revision readback with the transport fixture before testing an edit. |
 | A mocked PTY never emitted exit and remained stopping | Fix the fixture's lifecycle fidelity; preserve real session reuse and stop behavior. |
-| A catalog import started native discovery during unit tests | Guard non-subject CBM/Graphiti discovery; retain exact public/private schemas and authentication assertions. |
+| A catalog import started provider discovery during unit tests | Guard non-subject CBM/Graphiti discovery; retain exact public/private schemas and authentication assertions. |
 | Pytest PYTHONPATH concealed a script-import failure | Test the existing executable bootstrap in isolation when imports change; do not add another bootstrap. |
 | A healthy PTY or Gateway was mistaken for an executed Card turn | Prove real input, Hermes Gateway delivery, rendered output, and completion of the same saved Run. Do not restore an app plugin, callback bridge, or copied profile. |
-| Duplicate skill IDs blocked native discovery | Compare exact identity/content through its owner. Do not weaken uniqueness or delete copies without scope authorization. |
-| Missing usage became zero during transport or numeric coercion | Preserve unknown versus measured zero and forward native usage through the existing finish owner. |
+| Duplicate skill IDs blocked Hermes skill discovery | Compare exact identity/content through its owner. Do not weaken uniqueness or delete copies without scope authorization. |
+| Missing usage became zero during transport or numeric coercion | Preserve unknown versus measured zero and forward provider usage through the existing finish owner. |
 | Shared or unmapped history was exposed to make a transcript readable | Prove Hermes session, saved Run, and Project-conversation attribution; preserve rejection of foreign or unknown content. |
 | A component or callback existed without a live caller | Trace callers and exercise the actual path. A fixture that supplies a nonexistent callback does not prove integration. |
 | Source tests passed while another revision was running | Compare loaded source identity before product claims. Build, health, saved execution and visual acceptance are separate. |

@@ -261,7 +261,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           kind: 'agent',
           templateId: 'template_magentic',
           runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
-          title: 'Magentic-One',
+          title: 'Magnetic',
           position: { x: 140, y: 120 },
         },
         {
@@ -316,7 +316,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           kind: 'agent',
           templateId: 'template_magentic',
           runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
-          title: 'Magentic-One',
+          title: 'Magnetic',
           position: { x: 140, y: 120 },
         },
         {
@@ -352,7 +352,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           kind: 'agent',
           templateId: 'template_magentic',
           runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
-          title: 'Magentic-One',
+          title: 'Magnetic',
           position: { x: 140, y: 120 },
         },
       ],

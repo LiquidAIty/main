@@ -379,7 +379,7 @@ def bind_operation_access(tool: Tool) -> Tool:
     meta["liquidaityAccess"] = access
     source = dict(meta.get("liquidaitySource") or {})
     canonical_input_schema = copy.deepcopy(definition.parameters_schema)
-    if definition.external_source_id == "main_mcp":
+    if definition.publishers != frozenset({"external-mcp"}):
         canonical_input_schema.setdefault("additionalProperties", False)
     source.update({
         "namespace": definition.namespace,

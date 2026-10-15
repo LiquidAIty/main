@@ -6,7 +6,6 @@ import pytest
 
 
 from app.python_models.canonical_entity_directory import (
-    append_canonical_entity_directory,
     assemble_canonical_entity_directory,
 )
 from app.python_models.data_anchor import (
@@ -20,6 +19,7 @@ from app.python_models.data_anchor_contract import (
 )
 from app.python_models.codegraph_reference_reads import read_codegraph_exact
 from app.python_models.knowgraph_exact_reads import (
+    read_knowgraph_entity_directory,
     read_knowgraph_entity_knows,
     read_knowgraph_episodes_exact,
     read_knowgraph_exact,
@@ -398,6 +398,91 @@ def test_knowgraph_projection_preserves_only_entity_nodes_and_relationship_evide
     assert driver.closed is True
 
 
+def test_knowgraph_projection_keeps_citation_urls_inside_knows_not_graph_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url_id = "citation-url"
+    url = "https://example.test/rocket-lab-source"
+    node_rows = [*_projection_node_rows(), {
+        "node_id": url_id,
+        "node_labels": ["Entity"],
+        "community_id": None,
+        "node_props": {"name": url},
+    }]
+    relationship_rows = [*_projection_relationship_rows(), {
+        "rel_id": "citation-support-edge",
+        "rel_type": "RELATES_TO",
+        "rel_props": {
+            "name": "SUPPORTS",
+            "fact": "The cited document supports Alpha.",
+            "episodes": ["know-3"],
+        },
+        "from_id": url_id,
+        "from_labels": ["Entity"],
+        "from_props": {"name": url},
+        "to_id": "entity-a",
+        "to_labels": ["Entity"],
+        "to_props": {"name": "Alpha"},
+    }]
+    driver = _FakeNeo4jDriver([
+        node_rows,
+        _attached_know_rows(),
+        relationship_rows,
+    ])
+    monkeypatch.setattr(
+        knowgraph_projection_reads,
+        "knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+
+    projection = read_knowgraph_projection("project-1", 200)
+
+    assert {node["id"] for node in projection["nodes"]} == {
+        "entity-a", "entity-b",
+    }
+    assert {relationship["id"] for relationship in projection["relationships"]} == {
+        "fact-1",
+    }
+    attached = next(
+        node for node in projection["nodes"] if node["id"] == "entity-a"
+    )["properties"]["evidence"]
+    assert attached[0]["idea"]["citations"][0]["url"] == (
+        "https://example.test/for-3"
+    )
+    assert attached[0]["counterIdea"]["citations"][0]["url"] == (
+        "https://example.test/against-3"
+    )
+
+
+def test_knowgraph_entity_directory_excludes_citation_url_entities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _FakeNeo4jDriver([[
+        {"count": 3},
+    ], [
+        {"entityId": "entity-a", "canonicalName": "Alpha"},
+        {"entityId": "entity-b", "canonicalName": "Beta"},
+        {
+            "entityId": "citation-url",
+            "canonicalName": "https://example.test/source",
+        },
+    ]])
+    monkeypatch.setattr(
+        knowgraph_exact_reads,
+        "knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+
+    directory = read_knowgraph_entity_directory("project-1")
+
+    assert directory["complete"] is True
+    assert directory["count"] == 2
+    assert directory["entities"] == [
+        {"graphitiEntityId": "entity-a", "canonicalName": "Alpha"},
+        {"graphitiEntityId": "entity-b", "canonicalName": "Beta"},
+    ]
+
+
 def test_knowgraph_neighborhood_preserves_one_hop_direction_with_entity_nodes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -448,10 +533,35 @@ def test_knowgraph_projection_attaches_only_two_exact_about_knows_to_owner(
     assert [item["graphitiEpisodeId"] for item in evidence] == ["know-3", "know-2"]
     assert all(item["graphitiEntityId"] == "entity-a" for item in evidence)
     assert nodes["entity-a"]["properties"]["attachedWordCount"] == 24
+    assert all("body" not in item and "content" not in item and "properties" not in item
+               for item in evidence)
     assert "evidence" not in nodes["entity-b"]["properties"]
     assert all("ABOUT" in query for query, _params in driver.calls if "episode:Episodic" in query
                and "entity:Entity" in query)
     assert all("MENTIONS" not in query for query, _params in driver.calls)
+
+
+def test_knowgraph_projection_refuses_non_entity_provider_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _FakeNeo4jDriver([[
+        {
+            "node_id": "episode-one",
+            "node_labels": ["Episodic"],
+            "node_props": {"name": "Not a visible Entity"},
+            "community_id": None,
+        },
+    ]])
+    monkeypatch.setattr(
+        knowgraph_projection_reads,
+        "knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+
+    projection = read_knowgraph_projection("project-1", 200)
+
+    assert projection == {"nodes": [], "relationships": []}
+    assert driver.closed is True
 
 
 def test_exact_entity_know_read_returns_one_literal_two_sided_know_and_ids(
@@ -529,13 +639,7 @@ def test_complete_entity_directory_keeps_all_37_plus_11_identities_without_trunc
     assert directory["estimatedTokens"] == (directory["bytes"] + 3) // 4
     assert directory["bytes"] < GRAPH_CONTEXT_BYTE_LIMIT
     assert directory["readDurationMs"] == 12.346
-    model_context = append_canonical_entity_directory("", directory)
-    assert "Complete Cross-Graph Entity Directory" in model_context
-    assert "Entity ThinkGraph 036" in model_context
-    assert "Entity KnowGraph 010" in model_context
-
-
-def test_entity_directory_exact_name_merge_preserves_native_ids_and_authority() -> None:
+def test_entity_directory_exact_name_merge_preserves_provider_ids_and_authority() -> None:
     directory = assemble_canonical_entity_directory(
         "project-1",
         {"complete": True, "count": 2, "revision": "think-r1", "entities": [
@@ -655,16 +759,6 @@ def test_entity_directory_preserves_writer_canonical_name_bytes() -> None:
     assert [item["canonicalName"] for item in directory["entities"]] == [
         "  Writer-preserved Entity  ", "Writer-preserved Entity",
     ]
-
-
-def test_entity_directory_rejects_combined_context_over_existing_limit() -> None:
-    directory = assemble_canonical_entity_directory(
-        "project-1",
-        {"complete": True, "count": 0, "revision": "think-empty", "entities": []},
-        {"complete": True, "count": 0, "revision": "know-empty", "entities": []},
-    )
-    with pytest.raises(DataAnchorError, match="data_anchor_seed_limit_exceeded"):
-        append_canonical_entity_directory("x" * GRAPH_CONTEXT_BYTE_LIMIT, directory)
 
 
 def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance(

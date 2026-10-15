@@ -206,9 +206,6 @@ export default defineConfig(({ mode, command }) => {
         'react',
         'react-dom',
       ],
-      alias: [
-        { find: '@/lib/time', replacement: path.resolve(__dirname, '../Hermes/apps/desktop/src/lib/time.ts') },
-      ],
     },
     server: {
       host: '::',

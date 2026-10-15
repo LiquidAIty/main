@@ -227,46 +227,6 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
   }
 });
 
-router.post('/delete-fact', async (req, res) => {
-  try {
-    const userId = String((req as any).userId || '').trim();
-    if (!userId) {
-      return res.status(401).json({
-        ok: false,
-        error: { message: 'Authentication required for KnowGraph deletion.' },
-      });
-    }
-    const requestedProjectId = String(req.body?.project_id || '').trim();
-    const graphitiFactUuid = String(req.body?.graphiti_fact_uuid || '').trim();
-    const kind = req.body?.kind === 'fact' ? 'fact' : '';
-    if (!requestedProjectId || !graphitiFactUuid || !kind) {
-      return res.status(400).json({
-        ok: false,
-        error: { message: 'project_id, graphiti_fact_uuid, and kind are required.' },
-      });
-    }
-    const projectId = (await getOwnedProjectByReference(requestedProjectId, userId))?.id ?? null;
-    if (!projectId) {
-      return res.status(404).json({
-        ok: false,
-        error: { message: 'KnowGraph project not found for the authenticated user.' },
-      });
-    }
-    const response = await fetch(`${knowgraphBaseUrl()}/delete_fact`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, graphiti_fact_uuid: graphitiFactUuid, kind }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    return res.status(response.status).json(await readResponseDataSafe(response));
-  } catch (error: any) {
-    return res.status(502).json({
-      ok: false,
-      error: { message: error?.message || 'KnowGraph deletion proxy failed' },
-    });
-  }
-});
-
 router.post('/delete-episode', async (req, res) => {
   try {
     const userId = String((req as any).userId || '').trim();

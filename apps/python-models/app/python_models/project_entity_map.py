@@ -240,7 +240,7 @@ def append_project_entity_map(graph_context: str, entity_map: dict[str, Any]) ->
         "### Current Project Entity Map",
         (
             "Use this complete identity-and-relationship map before proposing an Entity. "
-            "It intentionally contains no Think or Know bodies. Native IDs remain "
+            "It intentionally contains no Think or Know bodies. Provider IDs remain "
             "authority-specific; shared names do not merge graph ownership."
         ),
         canonical_json(entity_map),

@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
-import type { AgentManagerLocalConfig } from '../../../components/AgentManager';
+import type { CardEditorConfig } from '../../../components/CardEditor';
 import type {
   DeckDocument,
 } from '../../../types/agentgraph';
@@ -43,7 +43,7 @@ export default function useAgentBuilderCardEditor({
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
-  const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
+  const selectedCardConfig = useMemo<CardEditorConfig | null>(() => {
     if (!selectedCard) return null;
     const runtimeOptions = selectedCard.runtimeOptions || {};
     const resolvedProvider = runtimeOptions.provider ?? null;
@@ -78,7 +78,7 @@ export default function useAgentBuilderCardEditor({
   }, [selectedCard]);
 
   const handleSaveSelectedCardConfig = useCallback(
-    async (nextConfig: AgentManagerLocalConfig) => {
+    async (nextConfig: CardEditorConfig) => {
       if (!selectedCard) throw new Error("No Card is selected.");
 
       const update = (currentDeck: DeckDocument): DeckDocument => {

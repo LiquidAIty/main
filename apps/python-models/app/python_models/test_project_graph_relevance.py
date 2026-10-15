@@ -32,12 +32,12 @@ def test_grounding_keeps_one_most_relevant_and_one_distinct_recent_per_authority
     def think_retriever(_project: str, _query: str, _limit: int):
         return [_think("recent-think")], [
             _think("recent-think"), _think("think-a"), _think("think-b"), _think("think-c"),
-        ], {"retrieval": "engraphis_native"}
+        ], {"retrieval": "engraphis_provider"}
 
     def know_retriever(_project: str, _query: str, _limit: int):
         return [_know("recent-know")], [
             _know("recent-know"), _know("know-a"), _know("know-b"), _know("know-c"),
-        ], {"retrieval": "graphiti_native_entity_search"}
+        ], {"retrieval": "graphiti_provider_entity_search"}
 
     def rate(_query: str, _context: str, candidates: dict, limit: int):
         assert limit == 1
@@ -83,6 +83,12 @@ def test_grounding_keeps_one_most_relevant_and_one_distinct_recent_per_authority
         item["graphitiEpisodeId"]
         for item in packet["authorities"]["knowgraph"]["relevant"]
     ] == ["know-c"]
+    assert packet["authorities"]["thinkgraph"]["provider"] == {
+        "retrieval": "engraphis_provider",
+    }
+    assert packet["authorities"]["knowgraph"]["provider"] == {
+        "retrieval": "graphiti_provider_entity_search",
+    }
     assert packet["revision"]
 
     context = relevance.append_project_graph_grounding("base", packet)
@@ -90,7 +96,7 @@ def test_grounding_keeps_one_most_relevant_and_one_distinct_recent_per_authority
     assert relevance.append_project_graph_grounding(context, packet) == context
 
 
-def test_jev_rates_native_candidates_by_current_context_without_recency_reward(
+def test_jev_rates_provider_candidates_by_current_context_without_recency_reward(
     monkeypatch,
 ) -> None:
     captured: dict = {}
@@ -136,7 +142,7 @@ def test_jev_rates_native_candidates_by_current_context_without_recency_reward(
     assert result["knowgraph"]["records"][0]["graphitiEpisodeId"] == "b"
 
 
-def test_graphiti_native_entity_search_hydrates_only_exact_about_knows(monkeypatch) -> None:
+def test_graphiti_provider_entity_search_hydrates_only_exact_about_knows(monkeypatch) -> None:
     async def search(name: str, arguments: dict):
         assert name == "search_nodes"
         assert arguments["max_nodes"] == 8
@@ -156,24 +162,24 @@ def test_graphiti_native_entity_search_hydrates_only_exact_about_knows(monkeypat
         ],
     )
 
-    recent, candidates, metadata = relevance._native_know_records(
+    recent, candidates, metadata = relevance._provider_know_records(
         "project-one", "current request",
     )
 
     assert recent[0]["graphitiEpisodeId"] == "recent"
     assert [item["graphitiEntityId"] for item in candidates] == ["entity-a", "entity-b"]
     assert metadata == {
-        "retrieval": "graphiti_native_entity_search",
+        "retrieval": "graphiti_provider_entity_search",
         "matchedEntityCount": 2,
     }
 
 
-def test_native_failure_is_honest_and_does_not_substitute_recent_as_relevant() -> None:
+def test_provider_failure_is_honest_and_does_not_substitute_recent_as_relevant() -> None:
     def failed(_project: str, _query: str, _limit: int):
         raise RuntimeError("provider down")
 
     def healthy(_project: str, _query: str, _limit: int):
-        return [_know("recent")], [_know("candidate")], {"retrieval": "native"}
+        return [_know("recent")], [_know("candidate")], {"retrieval": "provider"}
 
     def rate(_query: str, _context: str, _candidates: dict, _limit: int):
         return {
@@ -192,4 +198,4 @@ def test_native_failure_is_honest_and_does_not_substitute_recent_as_relevant() -
     assert think["recent"] == []
     assert think["relevant"] == []
     assert think["relevanceStatus"] == "unavailable"
-    assert think["errorCode"] == "thinkgraph_native_retrieval_unavailable"
+    assert think["errorCode"] == "thinkgraph_provider_retrieval_unavailable"

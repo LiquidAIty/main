@@ -91,8 +91,8 @@ describe('CardScriptEditor Monaco contract', () => {
       path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
       'utf8',
     );
-    const managerSource = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
+    const cardEditorSource = readFileSync(
+      path.resolve(process.cwd(), 'client/src/components/CardEditor.tsx'),
       'utf8',
     );
 
@@ -114,10 +114,10 @@ describe('CardScriptEditor Monaco contract', () => {
     expect(builderPage).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
     expect(builderPage).toContain('key="deck-card-editor"');
     expect(builderPage).not.toContain('key={`deck-card:${selectedCard.id}:${tab}`}');
-    expect(managerSource).toContain('scriptDraftCacheRef');
-    expect(managerSource).toContain('preserveUnsavedScript');
-    expect(managerSource).toContain('version: changed ? Number(saved?.version || 0) + 1');
-    expect(managerSource).toContain('script: scriptDraft');
+    expect(cardEditorSource).toContain('scriptDraftCacheRef');
+    expect(cardEditorSource).toContain('preserveUnsavedScript');
+    expect(cardEditorSource).toContain('version: changed ? Number(saved?.version || 0) + 1');
+    expect(cardEditorSource).toContain('script: scriptDraft');
     expect(source).toContain("fetch('/api/cards/script/validate'");
     expect(source).toContain('body: JSON.stringify({ runtimeKind, selectedTools, script })');
     expect(source).toContain('Enable for an eligible saved Run');

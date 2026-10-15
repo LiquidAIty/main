@@ -9,7 +9,7 @@ Historical filename retained during September 9, 2026 recovery from `2ddadeeb^`.
 procedural context without loading every skill. No Neo4j skill index is required or implied.
 
 Start with the actual task and recipient's job. Search the existing repository skill names and
-descriptions, or use that Hermes profile's granted native skill discovery. Read the few relevant
+descriptions, or use that Hermes profile's granted skill discovery. Read the few relevant
 procedures and follow specific references only when needed. Do not infer a universal numeric
 skill limit from one successful task.
 

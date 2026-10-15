@@ -19,16 +19,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "module": "esnext",
-    "moduleResolution": "bundler",
-    "baseUrl": ".",
-    "paths": {
-      "@/types/hermes": [
-        "../Hermes/apps/desktop/src/types/hermes.ts"
-      ],
-      "@/lib/time": [
-        "../Hermes/apps/desktop/src/lib/time.ts"
-      ]
-    }
+    "moduleResolution": "bundler"
   },
   "exclude": [
     "out-tsc",
@@ -50,16 +41,6 @@
     "src/**/*.js",
     "src/**/*.jsx",
     "src/**/*.ts",
-    "src/**/*.tsx",
-    "../Hermes/apps/desktop/src/app/starmap/color.ts",
-    "../Hermes/apps/desktop/src/app/starmap/constants.ts",
-    "../Hermes/apps/desktop/src/app/starmap/geometry.ts",
-    "../Hermes/apps/desktop/src/app/starmap/render.ts",
-    "../Hermes/apps/desktop/src/app/starmap/simulation.ts",
-    "../Hermes/apps/desktop/src/app/starmap/text.ts",
-    "../Hermes/apps/desktop/src/app/starmap/time-axis.ts",
-    "../Hermes/apps/desktop/src/app/starmap/types.ts",
-    "../Hermes/apps/desktop/src/types/hermes.ts",
-    "../Hermes/apps/desktop/src/lib/time.ts"
+    "src/**/*.tsx"
   ]
 }

@@ -10,8 +10,8 @@ in Neo4j using a now-retired importer and replaced its whole projection after ed
 the current runtime and this recovered file does not authorize rebuilding or running it.
 
 The reusable intent remains: help agents retrieve relevant, proven procedures, retain source
-identity, and avoid stale copies. Current owners are repo skill files and native Hermes profile
-skill/memory files. The Hermes SkillGraph/Learning Journey view projects native profile state;
+identity, and avoid stale copies. Current owners are repo skill files and Hermes profile
+skill/memory files. The Hermes SkillGraph/Learning Journey view projects profile state;
 it is not the removed repository Neo4j importer or a new knowledge store.
 
 For current publishing and retrieval, use [knowgraph-skill-ingestion-skill.md](knowgraph-skill-ingestion-skill.md)

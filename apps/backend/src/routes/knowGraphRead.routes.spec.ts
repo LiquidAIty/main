@@ -91,7 +91,7 @@ describe('KnowGraph read route project authority and transport', () => {
     const authenticated = await createApiServer('user-1');
     try {
       const response = await fetch(
-        `${authenticated.baseUrl}/expand?project_id=project-code&node_id=node-1`,
+        `${authenticated.baseUrl}/expand?projectId=project-code&nodeId=node-1`,
       );
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({
@@ -132,7 +132,7 @@ describe('KnowGraph read route project authority and transport', () => {
     const { server, baseUrl } = await createApiServer('user-1');
     try {
       const response = await fetch(
-        `${baseUrl}/expand?project_id=project-code&node_id=node-1&limit=0&depth=8`,
+        `${baseUrl}/expand?projectId=project-code&nodeId=node-1&limit=0`,
       );
 
       expect(response.status).toBe(200);
@@ -142,6 +142,32 @@ describe('KnowGraph read route project authority and transport', () => {
         'node-1',
         1,
       );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('reports Python rails read failures as upstream dependency failures', async () => {
+    mocks.getOwnedProjectByReference
+      .mockResolvedValueOnce({ id: 'project-uuid' })
+      .mockResolvedValueOnce({ id: 'project-uuid' });
+    mocks.fetchKnowGraphProjection.mockRejectedValueOnce(new Error('projection unavailable'));
+    mocks.fetchKnowGraphNeighborhood.mockRejectedValueOnce(new Error('neighborhood unavailable'));
+    const { server, baseUrl } = await createApiServer('user-1');
+    try {
+      const graph = await fetch(`${baseUrl}/graph?projectId=project-code`);
+      const expand = await fetch(`${baseUrl}/expand?projectId=project-code&nodeId=node-1`);
+
+      expect(graph.status).toBe(502);
+      expect(await graph.json()).toEqual({
+        ok: false,
+        error: { message: 'projection unavailable' },
+      });
+      expect(expand.status).toBe(502);
+      expect(await expand.json()).toEqual({
+        ok: false,
+        error: { message: 'neighborhood unavailable' },
+      });
     } finally {
       await closeServer(server);
     }

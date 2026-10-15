@@ -1,52 +1,52 @@
 import type {
-  CanonicalSubjectDirectory,
   GraphProjectionNode,
   GraphProjectionV1,
   JoinedGraphPresentation,
-} from '../knowledge/NativeAuthorityGraphSurface';
+} from '../knowledge/KnowledgeAuthorityGraphSurface';
+import {
+  isCanonicalEntityDirectory,
+  readCanonicalEntityProviderPointers,
+  type CanonicalEntityDirectory,
+  type CanonicalEntityProviderAuthority,
+} from '../knowledge/canonicalEntityDirectory';
 
-export type CanonicalSubjectAuthority = 'thinkgraph' | 'knowgraph';
-
-export type CanonicalSubjectFocusMember = {
-  authority: CanonicalSubjectAuthority;
-  nativeId: string;
-  entityKind: string;
+export type CanonicalEntityFocusMember = {
+  authority: CanonicalEntityProviderAuthority;
+  entityId: string;
 };
 
-export type CanonicalSubjectFocusTarget = {
+export type CanonicalEntityFocusTarget = {
   projectId: string;
   directorySha256: string;
   canonicalName: string;
-  view: CanonicalSubjectAuthority | 'all';
-  members: CanonicalSubjectFocusMember[];
+  view: CanonicalEntityProviderAuthority | 'all';
+  members: CanonicalEntityFocusMember[];
 };
 
-export type CanonicalSubjectFocusRequest = CanonicalSubjectFocusTarget & {
+export type CanonicalEntityFocusRequest = CanonicalEntityFocusTarget & {
   requestId: number;
 };
 
-export type CanonicalSubjectTextSegment = {
+export type CanonicalEntityTextSegment = {
   text: string;
-  target?: CanonicalSubjectFocusTarget;
+  target?: CanonicalEntityFocusTarget;
 };
 
-export type CanonicalSubjectMatcher = {
+export type CanonicalEntityMatcher = {
   revisionKey: string;
   segmentMessage: (
     role: 'assistant' | 'user',
     text: string,
-  ) => CanonicalSubjectTextSegment[];
+  ) => CanonicalEntityTextSegment[];
 };
-
-export type CanonicalSubjectFocusSurface = 'joined';
 
 type TrieNode = {
   children: Map<string, TrieNode>;
   terminal?: boolean;
-  target?: CanonicalSubjectFocusTarget;
+  target?: CanonicalEntityFocusTarget;
 };
 
-type SubjectRecord = CanonicalSubjectFocusMember & {
+type EntityRecord = CanonicalEntityFocusMember & {
   canonicalName: string;
   node: GraphProjectionNode;
 };
@@ -89,7 +89,7 @@ function protectedCharacters(text: string): Uint8Array {
       : text.startsWith('~~~', index) ? '~~~' : null);
     if (fence) {
       let close = text.indexOf(fence, index + fence.length);
-      while (close >= 0 && !atLineStart(close)) close = text.indexOf(fence, close + 1);
+      while (close >= 0 && !atLineStart(close)) close = text.indexOf(fence, close + fence.length);
       const end = close < 0 ? text.length : close + fence.length;
       protect(index, end);
       index = end;
@@ -142,93 +142,61 @@ function protectedCharacters(text: string): Uint8Array {
 }
 
 function validDirectory(
-  projections: Record<CanonicalSubjectAuthority, GraphProjectionV1>,
-): CanonicalSubjectDirectory | null {
-  const directory = projections.thinkgraph.canonicalSubjectDirectory;
-  if (!directory
-    || directory.schemaVersion !== 'cross-graph-subject-directory.v1'
-    || directory.complete !== true
-    || !directory.projectId
+  projections: Record<CanonicalEntityProviderAuthority, GraphProjectionV1>,
+): CanonicalEntityDirectory | null {
+  const directory = projections.thinkgraph.canonicalEntityDirectory;
+  if (!isCanonicalEntityDirectory(directory)
     || projections.thinkgraph.projectId !== directory.projectId
-    || projections.knowgraph.projectId !== directory.projectId
-    || typeof directory.revisions?.ThinkGraph !== 'string'
-    || !directory.revisions.ThinkGraph
-    || typeof directory.revisions?.KnowGraph !== 'string'
-    || !directory.revisions.KnowGraph
-    || typeof directory.sha256 !== 'string'
-    || !/^[0-9a-f]{64}$/.test(directory.sha256)
-    || !Array.isArray(directory.subjects)
-    || directory.counts?.total !== directory.subjects.length) return null;
+    || projections.knowgraph.projectId !== directory.projectId) return null;
   return directory;
 }
 
-function exactSubjectRecords(
-  projections: Record<CanonicalSubjectAuthority, GraphProjectionV1>,
-  directory: CanonicalSubjectDirectory,
-): SubjectRecord[] | null {
-  const nodesByAuthority: Record<CanonicalSubjectAuthority, Map<string, GraphProjectionNode>> = {
+function exactEntityRecords(
+  projections: Record<CanonicalEntityProviderAuthority, GraphProjectionV1>,
+  directory: CanonicalEntityDirectory,
+): EntityRecord[] | null {
+  const nodesByAuthority: Record<CanonicalEntityProviderAuthority, Map<string, GraphProjectionNode>> = {
     thinkgraph: new Map(projections.thinkgraph.nodes.map(node => [node.id, node])),
     knowgraph: new Map(projections.knowgraph.nodes.map(node => [node.id, node])),
   };
-  const seenIds: Record<CanonicalSubjectAuthority, Set<string>> = {
-    thinkgraph: new Set(), knowgraph: new Set(),
-  };
-  const seenNames: Record<CanonicalSubjectAuthority, Set<string>> = {
-    thinkgraph: new Set(), knowgraph: new Set(),
-  };
-  const counts = { thinkgraph: 0, knowgraph: 0 };
-  const records: SubjectRecord[] = [];
-  for (const subject of directory.subjects) {
-    const authority: CanonicalSubjectAuthority | null = subject?.authority === 'ThinkGraph'
-      ? 'thinkgraph' : subject?.authority === 'KnowGraph' ? 'knowgraph' : null;
-    if (!authority
-      || typeof subject.nativeId !== 'string' || !subject.nativeId
-      || typeof subject.canonicalName !== 'string' || !subject.canonicalName
-      || typeof subject.entityKind !== 'string' || !subject.entityKind
-      || seenIds[authority].has(subject.nativeId)
-      || seenNames[authority].has(subject.canonicalName)) return null;
-    seenIds[authority].add(subject.nativeId);
-    seenNames[authority].add(subject.canonicalName);
-    counts[authority] += 1;
-    const node = nodesByAuthority[authority].get(subject.nativeId);
-    if (!node
-      || node.canonicalName !== subject.canonicalName
-      || node.label !== subject.canonicalName
-      || node.entityKind !== subject.entityKind
-      || node.projectId !== directory.projectId
-      || node.episodeId !== undefined
-      || node.memoryType !== undefined) continue;
-    records.push({
-      authority,
-      nativeId: subject.nativeId,
-      canonicalName: subject.canonicalName,
-      entityKind: subject.entityKind,
-      node,
-    });
+  const records: EntityRecord[] = [];
+  for (const entity of directory.entities) {
+    const pointers = readCanonicalEntityProviderPointers(entity);
+    if (!pointers) return null;
+    for (const pointer of pointers) {
+      const node = nodesByAuthority[pointer.authority].get(pointer.entityId);
+      if (!node
+        || node.canonicalName !== entity.canonicalName
+        || node.label !== entity.canonicalName
+        || node.projectId !== directory.projectId) continue;
+      records.push({
+        authority: pointer.authority,
+        entityId: pointer.entityId,
+        canonicalName: entity.canonicalName,
+        node,
+      });
+    }
   }
-  if (counts.thinkgraph !== directory.counts.ThinkGraph
-    || counts.knowgraph !== directory.counts.KnowGraph
-    || counts.thinkgraph + counts.knowgraph !== directory.counts.total) return null;
   return records;
 }
 
 function buildTargets(
-  records: SubjectRecord[],
-  directory: CanonicalSubjectDirectory,
-): CanonicalSubjectFocusTarget[] {
-  const directoryNames = new Map<string, number>();
-  for (const subject of directory.subjects) {
-    directoryNames.set(subject.canonicalName, (directoryNames.get(subject.canonicalName) || 0) + 1);
-  }
-  const recordsByName = new Map<string, SubjectRecord[]>();
+  records: EntityRecord[],
+  directory: CanonicalEntityDirectory,
+): CanonicalEntityFocusTarget[] {
+  const recordsByName = new Map<string, EntityRecord[]>();
   for (const record of records) {
     const named = recordsByName.get(record.canonicalName) || [];
     named.push(record);
     recordsByName.set(record.canonicalName, named);
   }
-  const targets: CanonicalSubjectFocusTarget[] = [];
-  for (const [canonicalName, named] of recordsByName) {
-    if (named.length !== directoryNames.get(canonicalName)) continue;
+  const targets: CanonicalEntityFocusTarget[] = [];
+  for (const entity of directory.entities) {
+    const pointers = readCanonicalEntityProviderPointers(entity);
+    if (!pointers) continue;
+    const canonicalName = entity.canonicalName;
+    const named = recordsByName.get(canonicalName) || [];
+    if (named.length !== pointers.length) continue;
     const authorities = new Set(named.map(record => record.authority));
     if (named.length > 2 || named.length !== authorities.size) continue;
     targets.push({
@@ -236,22 +204,20 @@ function buildTargets(
       directorySha256: directory.sha256,
       canonicalName,
       view: named.length === 2 ? 'all' : named[0].authority,
-      members: named.map(({ authority, nativeId, entityKind }) => ({
-        authority, nativeId, entityKind,
-      })),
+      members: named.map(({ authority, entityId }) => ({ authority, entityId })),
     });
   }
   return targets;
 }
 
 function buildTrie(
-  targets: CanonicalSubjectFocusTarget[],
-  directory: CanonicalSubjectDirectory,
+  targets: CanonicalEntityFocusTarget[],
+  directory: CanonicalEntityDirectory,
 ): TrieNode {
   const root: TrieNode = { children: new Map() };
   const targetsByName = new Map(targets.map(target => [target.canonicalName, target]));
   for (const canonicalName of new Set(
-    directory.subjects.map(subject => subject.canonicalName),
+    directory.entities.map(entity => entity.canonicalName),
   )) {
     let node = root;
     for (let index = 0; index < canonicalName.length; index += 1) {
@@ -269,7 +235,7 @@ function buildTrie(
 function segmentText(
   trie: TrieNode,
   text: string,
-): CanonicalSubjectTextSegment[] {
+): CanonicalEntityTextSegment[] {
   const mask = protectedCharacters(text);
   const protectedPrefix = new Uint32Array(text.length + 1);
   for (let index = 0; index < text.length; index += 1) {
@@ -278,7 +244,7 @@ function segmentText(
   const candidates: Array<{
     start: number;
     end: number;
-    target?: CanonicalSubjectFocusTarget;
+    target?: CanonicalEntityFocusTarget;
   }> = [];
   for (let start = 0; start < text.length; start += 1) {
     if (mask[start]) continue;
@@ -306,7 +272,7 @@ function segmentText(
   }
   selected.sort((left, right) => left.start - right.start);
   if (!selected.length) return [{ text }];
-  const segments: CanonicalSubjectTextSegment[] = [];
+  const segments: CanonicalEntityTextSegment[] = [];
   let cursor = 0;
   for (const match of selected) {
     if (match.start > cursor) segments.push({ text: text.slice(cursor, match.start) });
@@ -320,20 +286,20 @@ function segmentText(
   return segments;
 }
 
-export function createCanonicalSubjectMatcher(
-  projections: Record<CanonicalSubjectAuthority, GraphProjectionV1>,
-): CanonicalSubjectMatcher | null {
+export function createCanonicalEntityMatcher(
+  projections: Record<CanonicalEntityProviderAuthority, GraphProjectionV1>,
+): CanonicalEntityMatcher | null {
   const directory = validDirectory(projections);
   if (!directory) return null;
-  const records = exactSubjectRecords(projections, directory);
+  const records = exactEntityRecords(projections, directory);
   if (!records) return null;
   const targets = buildTargets(records, directory);
   const trie = buildTrie(targets, directory);
   return {
     revisionKey: [
       directory.projectId,
-      directory.revisions.ThinkGraph,
-      directory.revisions.KnowGraph,
+      directory.revisions.engraphis,
+      directory.revisions.graphiti,
       directory.sha256,
     ].join(':'),
     segmentMessage: (role, text) => role === 'assistant' && targets.length
@@ -344,46 +310,42 @@ export function createCanonicalSubjectMatcher(
 
 function exactFocusNode(
   projection: GraphProjectionV1,
-  directory: CanonicalSubjectDirectory,
-  request: CanonicalSubjectFocusRequest,
-  member: CanonicalSubjectFocusMember,
+  directory: CanonicalEntityDirectory,
+  request: CanonicalEntityFocusRequest,
+  member: CanonicalEntityFocusMember,
 ): GraphProjectionNode | null {
-  const authorityName = member.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph';
-  const headers = directory.subjects.filter(subject => (
-    subject.authority === authorityName
-    && subject.nativeId === member.nativeId
-    && subject.canonicalName === request.canonicalName
-    && subject.entityKind === member.entityKind
-  ));
+  const headers = directory.entities.filter(entity => {
+    const pointers = readCanonicalEntityProviderPointers(entity);
+    return entity.canonicalName === request.canonicalName
+      && pointers?.some(pointer => (
+        pointer.authority === member.authority
+        && pointer.entityId === member.entityId
+      ));
+  });
   if (headers.length !== 1) return null;
-  const nodes = projection.nodes.filter(node => node.id === member.nativeId);
+  const nodes = projection.nodes.filter(node => node.id === member.entityId);
   if (nodes.length !== 1) return null;
   const node = nodes[0];
   return node.canonicalName === request.canonicalName
     && node.label === request.canonicalName
-    && node.entityKind === member.entityKind
     && node.projectId === request.projectId
-    && node.episodeId === undefined
-    && node.memoryType === undefined
     ? node
     : null;
 }
 
-/** Resolve hidden click metadata against the graph's current native presentation. */
-export function resolveCanonicalSubjectFocusVisualId({
-  authority,
+/** Resolve hidden click metadata against the graph's current provider presentation. */
+export function resolveCanonicalEntityFocusVisualId({
   projection,
   joinedPresentation,
   directory,
   request,
 }: {
-  authority: CanonicalSubjectFocusSurface;
   projection: GraphProjectionV1;
   joinedPresentation?: JoinedGraphPresentation;
-  directory?: CanonicalSubjectDirectory | null;
-  request: CanonicalSubjectFocusRequest;
+  directory?: CanonicalEntityDirectory | null;
+  request: CanonicalEntityFocusRequest;
 }): string | null {
-  if (!directory
+  if (!isCanonicalEntityDirectory(directory)
     || request.projectId !== directory.projectId
     || request.directorySha256 !== directory.sha256
     || projection.projectId !== request.projectId
@@ -392,16 +354,16 @@ export function resolveCanonicalSubjectFocusVisualId({
   if (request.members.length === 1 && joinedPresentation) {
     const member = request.members[0];
     if (request.view !== member.authority) return null;
-    const nativeProjection = joinedPresentation.nativeProjections[member.authority];
-    if (!exactFocusNode(nativeProjection, directory, request, member)) return null;
-    const visualId = joinedPresentation.visualNodeIdByNativeMember.get(
-      `${member.authority}:${member.nativeId}`,
+    const providerProjection = joinedPresentation.providerProjections[member.authority];
+    if (!exactFocusNode(providerProjection, directory, request, member)) return null;
+    const visualId = joinedPresentation.visualNodeIdByProviderMember.get(
+      `${member.authority}:${member.entityId}`,
     );
     if (!visualId) return null;
     const variants = joinedPresentation.nodeVariants.get(visualId) || [];
     return variants.length === 1
       && variants[0].authority === member.authority
-      && variants[0].node.id === member.nativeId
+      && variants[0].node.id === member.entityId
       && projection.nodes.some(node => node.id === visualId)
       ? visualId
       : null;
@@ -413,16 +375,16 @@ export function resolveCanonicalSubjectFocusVisualId({
   const authorities = new Set(request.members.map(member => member.authority));
   if (authorities.size !== 2) return null;
   const visualIds = request.members.map(member => {
-    const nativeProjection = joinedPresentation.nativeProjections[member.authority];
-    if (!exactFocusNode(nativeProjection, directory, request, member)) return null;
-    return joinedPresentation.visualNodeIdByNativeMember.get(
-      `${member.authority}:${member.nativeId}`,
+    const providerProjection = joinedPresentation.providerProjections[member.authority];
+    if (!exactFocusNode(providerProjection, directory, request, member)) return null;
+    return joinedPresentation.visualNodeIdByProviderMember.get(
+      `${member.authority}:${member.entityId}`,
     ) || null;
   });
   if (!visualIds[0] || visualIds[0] !== visualIds[1]) return null;
   const variants = joinedPresentation.nodeVariants.get(visualIds[0]) || [];
   if (variants.length !== 2 || request.members.some(member => !variants.some(variant => (
-    variant.authority === member.authority && variant.node.id === member.nativeId
+    variant.authority === member.authority && variant.node.id === member.entityId
   )))) return null;
   return projection.nodes.some(node => node.id === visualIds[0]) ? visualIds[0] : null;
 }

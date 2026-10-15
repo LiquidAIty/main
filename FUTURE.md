@@ -4,28 +4,40 @@ Core v0 is defined in `PLAN.md` and `ARCHITECTURE.md`. This file contains only w
 deferred until the static baseline and explicitly approved live proofs pass.
 
 These are candidates, not execution authorization. PLAN and the current PromptSpec govern order.
-Saved-Card conversation/Bot Mode is source-wired by the current repair; loaded behavior remains a
-separate proof tier. Do not treat a deferred item below as permission to add another runtime or route.
+Core Main/Bot/Builder-terminal behavior passed a bounded loaded run on 2026-10-14. Later source cleanup
+still requires its own reload, and the unproven tiers below remain separate. Do not treat a deferred item
+as permission to add another runtime or route.
 
 ## Live proof sequence
 
-1. Main Hermes returns one bounded response through the saved account/model.
-2. Main delegates one read-only CodeGraph task to the saved Builder Card through its existing flow.
-3. The child Run records actual tool use, exact native references, parent/correlation identity, cost,
-   duration, success/failure, and AGE lineage.
-4. One ordinary Hermes Card completes a bounded native Team task with its actual native configuration,
-   Card Run/native-root correlation and durable rejoin. Do not restore the removed Card Team-policy overlay.
-5. Main approves one transient Mag One Card input and hands it to the saved Mag One Card through the official MCP boundary; Hermes performs the headless native task/dependency execution.
+1. Reload the cleaned source and repeat exact source-identity/health plus a bounded Main/direct-Card/graph
+   UI regression; do not reuse the older loaded checkpoint as proof of newer bytes.
+2. After interactive OAuth consent exists, invoke one actually granted saved-Card MCP tool and read back
+   its real result without bypassing authorization.
+3. When an enabled saved Script version exists, prove its success and failure restoration through one real
+   Card Run; do not insert bad source merely to manufacture a case.
+4. One ordinary Hermes Card completes a bounded Team task with its actual saved configuration, Card Run/
+   Hermes-root correlation and durable rejoin. Do not restore the removed Card Team-policy overlay.
+5. Main approves one transient Mag One Card input and hands it to the saved Mag One Card through the official
+   MCP boundary; Hermes performs the headless task/dependency execution.
 
 These calls require explicit approval. Structural tests must not be presented as live proof.
 
+## Development toolchain major upgrades — deferred maintenance
+
+The production npm dependency audit is clean after the non-breaking 2026-10-15 updates. The remaining
+14 advisories are confined to development dependencies and require breaking Nx 21 → 23 and Vitest 3 → 5
+migrations. Upgrade each toolchain deliberately with its configuration migration, complete TypeScript suite,
+and both production builds; do not use `npm audit fix --force` as a recovery shortcut.
+
 ## Project graph time exploration — unaccepted refinement
 
-Native candidate retrieval, Jev ranking, and the Relevant/Recent Entity inspector are current and therefore
-not future work. A later optional time interaction may expose requested chronological exploration without
-changing the default one-result Relevant view. The owner suggested an almost-hidden column-sort-style tab;
-its exact gesture, time field, direction, result bound, paid entitlement, and reset behavior are not decided.
-Do not implement a second timeline, transcript, index, or TypeScript semantic sorter to approximate it.
+Provider candidate retrieval, Jev ranking, and automatic one-Relevant/one-distinct-Recent agent grounding are
+current. The UI inspector currently shows at most two provider-projected attached records; it has no
+Relevant/Recent switch, Search field, or Results selector. A later optional search/time interaction may expose
+requested chronological exploration without changing automatic agent grounding. Its exact gesture, time field,
+direction, result bound, entitlement, and reset behavior are not decided. Do not implement a second timeline,
+transcript, index, or TypeScript semantic sorter to approximate it.
 
 ## Quick Web evidence handoff — deferred
 
@@ -71,10 +83,10 @@ implementation is authorized by this document.
 
 ## Reveal and graph attention
 
-- Tune progressive reveal pacing so fast native reads remain understandable without slowing agents.
+- Tune progressive reveal pacing so fast provider reads remain understandable without slowing agents.
 - Add optional stacked 3D layers for ThinkGraph, KnowGraph, CodeGraph, and AgentGraph while preserving
-  separate native authorities.
-- Illuminate transient call consumption only when a runtime receipt proves the referenced native objects
+  separate provider authorities.
+- Illuminate transient call consumption only when a runtime receipt proves the referenced provider objects
   were delivered or opened.
 - Add inspector detail for graph reads/writes, traversals, selections, handoffs, and artifacts without
   exposing hidden chain-of-thought.
@@ -84,25 +96,26 @@ implementation is authorized by this document.
 
 - Measure recall quality and profile isolation across longer real Main, Builder, and
   KnowGraph sessions without copying data between profiles.
-- Test Honcho cloud or self-hosted recall/write only after its intended native setup flow supplies the
+- Test Honcho cloud or self-hosted recall/write only after its intended setup flow supplies the
   owning profile's real OAuth/API-key or base-URL configuration.
-- Compare the already-installed native external-memory providers only through their native profile
+- Compare the already-installed external-memory providers only through their Hermes profile
   selections; do not add a Card-level provider field, SQLite store, or parallel provider registry.
 - Keep memory separation intentional; do not create one automatic cross-agent memory dump.
 
 ## Voice
 
-- The unowned voice client and UI were removed with the rejected TypeScript runtime.
-- Any future voice surface must use Hermes' existing voice contracts and requires separate approval.
-- Keep voice outside the current launch acceptance run unless the owner explicitly brings it back into
-  scope. Its inactive state must remain visible and must not affect text chat.
+- Main's voice control and backend route use Hermes' existing voice contracts; they remain unaccepted in the
+  current loaded proof. Any expansion requires separate approval.
+- Keep voice outside the next bounded cleanup regression unless the owner explicitly brings it into scope.
+  Its inactive state must not affect text chat.
 
 ## Hermes delegation options
 
 - Keep Leaf available through Hermes' existing internal contract; expose no Leaf UI until its Card-level
   purpose and honest configuration fields are proven.
 - Keep recursive/orchestrator delegation internal and reserve product space without shipping a selector.
-- Add Stop only through one real Card/Run-scoped Hermes cancellation contract, never as saved Team policy.
+- Main Stop now uses one exact Run-scoped Hermes cancellation contract. Any future Stop expansion must reuse
+  that ownership pattern rather than become saved Team policy.
 
 ## AgentGraph swarm telemetry
 
@@ -173,7 +186,7 @@ model registry, fallback model, wider tool authority, or a selector lifecycle co
 
 No consolidation of graph Cards or change of graph write authority is approved by this proposal.
 
-Keep one ordinary visible `card_knowgraph` KnowGraph Card mapped one-to-one to its fresh native
+Keep one ordinary visible `card_knowgraph` KnowGraph Card mapped one-to-one to its fresh Hermes
 `knowgraph` profile. Do not revive the retired Steward/Stuart identity or carry its abandoned Team
 delegation and PDF-ingest coupling forward.
 Do not add capability profiles, prompt overlays, temporary personas, or a second selectable profile store
@@ -219,7 +232,7 @@ Engraphis work. A separate owner decision would be required to reconsider any su
 ### WorldView space-infrastructure research views — design, not shipped capability
 
 The September 29 space-infrastructure PromptSpec proposes testable research views, not a pro-SpaceX
-conclusion or permission to integrate more providers. One native God’s Eye WorldView remains the spatial
+conclusion or permission to integrate more providers. One controlled God’s Eye WorldView remains the spatial
 surface. WorldSignals may later supply bounded history/dependency queries; WorldMonitor remains later
 macro context. Saved Cards retain agent authority and KnowGraph retains sourced-knowledge authority.
 
@@ -230,7 +243,7 @@ returns to Normal without overriding an explicit selection/tracking target or sa
 Future context-strength control may continuously deemphasize the background; no such control, new glyph
 style, relationship paths or isolate action is implemented by the current label pass.
 
-**Evidence contract:** each future focused item references its native entity/layer ID and source identity,
+**Evidence contract:** each future focused item references its provider entity/layer ID and source identity,
 not a copied graph or a name-derived ownership claim. Each relation carries its source URL/reference,
 provider, observed/fetched times, validity/freshness and source-supported status. Derived relations also
 expose method, input references and time window; missing evidence remains unknown. The current exact-NORAD
@@ -262,7 +275,7 @@ Starlink points and SGP4 positions, not verified ownership, dependence, spectrum
 `rocketLaunches.js` supplies the existing Launch Library 2 thirty-day mission/pad/provider/payload view,
 not complete launch history or alternative-provider capacity. Bundled OSM datacenters contain 4,351
 features and source-tagged geometry/name/operator/capacity metadata where present; their extraction date
-and query were not recorded. Native local layers also include USACE dams, not a complete power-grid dataset.
+and query were not recorded. Bundled local layers also include USACE dams, not a complete power-grid dataset.
 The distribution currently omits TeleGeography’s cable dataset from `localLayers.js`; it is not an active
 network evidence source here. Future cable/fiber/IX, gateways, ground stations, cloud capacity, grid and
 orbital-risk inputs require separately approved providers/research and applicable data rights.

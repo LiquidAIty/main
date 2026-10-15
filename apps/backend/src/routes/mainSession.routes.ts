@@ -85,7 +85,20 @@ type TurnResult = {
   mainCompletion?: { text: string; event: HermesGatewayEvent };
 };
 
+type ActiveTurnInterruptTarget = {
+  sessionId: string;
+  submissionId: string;
+  stopRequested: boolean;
+};
+
 const sessionBindingTails = new Map<string, Promise<void>>();
+const activeTurnInterruptTargets = new Map<string, ActiveTurnInterruptTarget>();
+
+function activeTurnKey(
+  runId: string, projectId: string, deckId: string, userId: string,
+): string {
+  return JSON.stringify([runId, projectId, deckId, userId]);
+}
 
 async function withSessionBindingLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const previous = sessionBindingTails.get(key) || Promise.resolve();
@@ -186,10 +199,38 @@ function explicitlyAddressedCard(
   return matches[0] || null;
 }
 
-function messageAgentTargetMatchesCard(value: unknown, card: ProjectCardBinding): boolean {
+export function messageAgentTargetMatchesCard(value: unknown, card: ProjectCardBinding): boolean {
   const target = String(value || '').trim().replace(/^@/, '').toLowerCase();
-  if (!target || !card.address) return false;
-  return target === card.address.toLowerCase();
+  return Boolean(target) && (
+    target === card.profile.toLowerCase()
+    || target === String(card.address || '').trim().replace(/^@/, '').toLowerCase()
+  );
+}
+
+export function directRecipientSubmissionId(value: unknown): string {
+  const result = record(value);
+  const deliveryId = String(result.delivery_id || '').trim();
+  const processId = String(result.process_id || '').trim();
+  if (
+    String(result.status || '').trim() !== 'queued'
+    || !deliveryId
+    || !processId
+    || String(result.reply_delivery || '').trim() !== 'direct'
+    || Boolean(result.notification_error)
+  ) throw new Error('hermes_addressed_delivery_correlation_missing');
+  return `__bot_dm__${deliveryId}`;
+}
+
+export function hermesCompletionError(payloadValue: unknown): Error | null {
+  const payload = record(payloadValue);
+  const status = String(payload.status || 'complete').trim().toLowerCase();
+  if (['interrupted', 'cancelled'].includes(status)) {
+    return new Error('hermes_turn_cancelled');
+  }
+  if (['error', 'failed'].includes(status)) {
+    return new Error(String(payload.error || payload.text || 'hermes_turn_failed'));
+  }
+  return null;
 }
 
 function botMentionInput(message: string, target: ProjectCardBinding | null): string {
@@ -197,11 +238,11 @@ function botMentionInput(message: string, target: ProjectCardBinding | null): st
   if (!target.address) throw new Error(`main_address_unavailable:${target.card.id}`);
   return `${message}\n\n[@mention resolved from the current Project's saved Bot Mode roster: `
     + `@${target.address} = saved Card "${target.title}", `
-    + `Hermes message_agent target "${target.address}". Compose the message for that Card and send it `
+    + `Hermes profile and message_agent target "${target.profile}". Compose the message for that Card and send it `
     + `with message_agent; do not forward the user's text verbatim. This is an explicitly addressed `
-    + `turn: after the queued dispatch acknowledgement, finish with Hermes's exact [SILENT] marker, `
-    + `never a blank response or a second Main answer. The recipient session presents `
-    + `its own answer directly, so this delivery does not schedule a second Main synthesis turn. `
+    + `turn: Main must not answer or describe delivery state. Finish with Hermes's exact [SILENT] `
+    + `marker, never a blank response or a second Main answer. The recipient session presents its `
+    + `actual completed answer directly; internal delivery state is not user-facing completion. `
     + `A real delivery failure remains visible.]`;
 }
 
@@ -300,18 +341,6 @@ function cardTurnContext(
     card_id: card.card.id,
     profile: card.profile,
   };
-}
-
-function projectAgentCards(authority: ProjectCardAuthority): ProjectCardBinding[] {
-  const indexed = cardsByProfile(authority);
-  for (const card of indexed.values()) {
-    for (const targetProfile of savedCardBotRoster(authority.deck, card.card)) {
-      if (!indexed.has(targetProfile.toLowerCase())) {
-        throw new Error(`hermes_bot_roster_card_missing:${targetProfile}`);
-      }
-    }
-  }
-  return [...indexed.values()].filter((card) => card.card.runtime.mode !== 'magentic_one');
 }
 
 function activeProjectCards(
@@ -482,11 +511,19 @@ async function projectSessionCatalog(
   authority: ProjectCardAuthority,
   selected: ProjectCardBinding = authority.main,
   scope: SessionScope = {},
-): Promise<{
-  sessions: Record<string, CardSessionBinding>;
-}> {
-  const projectCards = [...cardsByProfile(authority).values()];
-  const requiredCards = projectAgentCards(authority);
+  directRecipient: ProjectCardBinding | null = null,
+): Promise<Record<string, CardSessionBinding>> {
+  const directRoster = directRecipient ? savedCardBotRoster(authority.deck, selected.card) : [];
+  if (
+    directRecipient
+    && !directRoster.some((profile) => profile.toLowerCase() === directRecipient.profile.toLowerCase())
+  ) throw new Error(`hermes_recipient_not_authorized:${directRecipient.profile}`);
+  const requiredCards = directRecipient
+    ? [...new Map(
+      [selected, ...activeProjectCards(authority, directRecipient)]
+        .map((card) => [card.profile.toLowerCase(), card]),
+    ).values()]
+    : activeProjectCards(authority, selected);
   const projectSessionId = String(scope.projectSessionId || scope.projectId || '').trim();
   if (!projectSessionId) throw new Error('hermes_project_session_identity_missing');
   if (!requiredCards.some((card) => card.card.id === selected.card.id)) {
@@ -495,11 +532,11 @@ async function projectSessionCatalog(
   const request = <T>(method: string, params: Record<string, unknown> = {}) => client.request<T>(method, params);
   const toolCatalog = await readToolCatalog();
   const provisioned = new Map<string, HermesProfileState>();
-  for (const card of projectCards) {
+  for (const card of requiredCards) {
     provisioned.set(card.profile.toLowerCase(), await ensureSavedCardProfile(request, card.card));
   }
   const profiles = new Map<string, HermesProfileState>();
-  for (const card of projectCards) {
+  for (const card of requiredCards) {
     const profile = card.profile.toLowerCase();
     profiles.set(profile, await materializeSavedCardProfile(
       request,
@@ -512,10 +549,13 @@ async function projectSessionCatalog(
   const sessions: Record<string, ProjectCardSession> = {};
   for (const card of requiredCards) {
     const profile = card.profile.toLowerCase();
+    const roster = directRecipient && card.card.id === selected.card.id
+      ? [directRecipient.profile]
+      : savedCardBotRoster(authority.deck, card.card);
     sessions[profile] = await ensureProjectCardSession({
       client,
       card,
-      roster: savedCardBotRoster(authority.deck, card.card),
+      roster,
       cwd: sessionCwd(authority, card, selected, scope),
       projectSessionId,
       turnContext: cardTurnContext(authority, card, scope),
@@ -532,7 +572,7 @@ async function projectSessionCatalog(
     );
   }
   const liveSessions: Record<string, CardSessionBinding> = {};
-  for (const card of activeProjectCards(authority, selected)) {
+  for (const card of requiredCards) {
     const profile = card.profile.toLowerCase();
     liveSessions[profile] = await resumeProjectCardSession({
       client,
@@ -542,7 +582,7 @@ async function projectSessionCatalog(
       turnContext: cardTurnContext(authority, card, scope),
     });
   }
-  return { sessions: liveSessions };
+  return liveSessions;
 }
 
 export async function cardProjectSession(
@@ -551,7 +591,7 @@ export async function cardProjectSession(
   selected: ProjectCardBinding,
   scope: SessionScope,
 ): Promise<ProjectCardSession> {
-  const { sessions } = await projectSessionCatalog(client, authority, selected, scope);
+  const sessions = await projectSessionCatalog(client, authority, selected, scope);
   const selectedSession = sessions[selected.profile.toLowerCase()];
   if (!selectedSession) throw new Error(`hermes_session_binding_missing:${selected.profile}`);
   return selectedSession;
@@ -562,8 +602,11 @@ export async function cardSession(
   authority: ProjectCardAuthority,
   selected: ProjectCardBinding = authority.main,
   scope: SessionScope = {},
+  directRecipient: ProjectCardBinding | null = null,
 ): Promise<SessionBinding> {
-  const { sessions } = await projectSessionCatalog(client, authority, selected, scope);
+  const sessions = await projectSessionCatalog(
+    client, authority, selected, scope, directRecipient,
+  );
   const selectedProfile = selected.profile.toLowerCase();
   const selectedBinding = sessions[selectedProfile];
   if (!selectedBinding) throw new Error(`hermes_session_binding_missing:${selected.profile}`);
@@ -651,7 +694,7 @@ function writeSse(res: Response, eventName: string, payload: Record<string, unkn
   return true;
 }
 
-async function submitTurn(args: {
+async function executeHermesTurn(args: {
   client: HermesGatewayClient;
   binding: SessionBinding;
   main: ProjectCardBinding;
@@ -660,6 +703,7 @@ async function submitTurn(args: {
   submissionId: string;
   mcpToolSelection: Record<string, string[]> | null;
   cardScript: Record<string, unknown> | null;
+  onInterruptTarget(target: { sessionId: string; submissionId: string }): void;
   onEvent(event: HermesGatewayEvent, speaker: ProjectCardBinding): void;
 }): Promise<TurnResult> {
   const recipientBinding = args.directRecipient
@@ -674,7 +718,6 @@ async function submitTurn(args: {
     let ownTurnStarted = false;
     let ownTurnCompleted = false;
     let messageAgentStarted = false;
-    let messageAgentConfirmed = false;
     let consultationError: Error | null = null;
     let expectedConsultationProcessId: string | null = null;
     let addressedToolId: string | null = null;
@@ -715,11 +758,10 @@ async function submitTurn(args: {
         return;
       }
       if (event.type !== 'message.complete') return;
-      const status = String(event.payload?.status || 'complete');
       const text = String(event.payload?.text || '');
-      if (['error', 'failed'].includes(status)) {
-        recipientError = new Error(String(event.payload?.error || text || 'hermes_recipient_turn_failed'));
-      } else recipientCompletion = { text, event };
+      const completionError = hermesCompletionError(event.payload);
+      if (completionError) recipientError = completionError;
+      else recipientCompletion = { text, event };
       finishRecipientIfReady();
     };
     const flushExpectedRecipientEvents = () => {
@@ -793,31 +835,37 @@ async function submitTurn(args: {
           const deliveryId = String(result.delivery_id || '').trim();
           const processId = String(result.process_id || '').trim();
           if (
-            String(result.status || '') !== 'queued'
+            String(result.status || '').trim() !== 'queued'
             || !deliveryId
             || !processId
-            || String(result.reply_delivery || 'notification') !== 'notification'
-            || result.notification_error
-          ) consultationError = new Error('hermes_consultation_delivery_not_confirmed');
+            || String(result.reply_delivery || '').trim() !== 'notification'
+            || Boolean(result.notification_error)
+          ) consultationError = new Error('hermes_consultation_delivery_correlation_missing');
           else if (expectedConsultationProcessId && expectedConsultationProcessId !== processId) {
             consultationError = new Error('hermes_consultation_delivery_duplicate');
           } else {
             expectedConsultationProcessId = processId;
-            messageAgentConfirmed = true;
           }
         } else if (String(event.payload?.tool_id || '').trim() === addressedToolId) {
-          const deliveryId = String(result.delivery_id || '').trim();
-          const processId = String(result.process_id || '').trim();
-          if (
-            String(result.status || '') !== 'queued'
-            || !deliveryId
-            || !processId
-            || String(result.reply_delivery || '') !== 'direct'
-            || result.notification_error
-          ) {
-            recipientError = new Error('hermes_addressed_delivery_not_queued');
-          } else {
-            expectedRecipientSubmissionId = `__bot_dm__${deliveryId}`;
+          let recipientSubmissionId: string | null = null;
+          try {
+            recipientSubmissionId = directRecipientSubmissionId(result);
+          } catch (error) {
+            recipientError = error instanceof Error
+              ? error
+              : new Error('hermes_addressed_delivery_correlation_missing');
+          }
+          if (recipientSubmissionId && (
+            expectedRecipientSubmissionId
+            && expectedRecipientSubmissionId !== recipientSubmissionId
+          )) {
+            recipientError = new Error('hermes_addressed_delivery_duplicate');
+          } else if (recipientSubmissionId) {
+            expectedRecipientSubmissionId = recipientSubmissionId;
+            args.onInterruptTarget({
+              sessionId: recipientBinding!.liveHandle,
+              submissionId: recipientSubmissionId,
+            });
             flushExpectedRecipientEvents();
           }
         }
@@ -827,10 +875,10 @@ async function submitTurn(args: {
         return;
       }
       if (event.type !== 'message.complete') return;
-      const status = String(event.payload?.status || 'complete');
       const text = String(event.payload?.text || '');
-      if (['error', 'failed'].includes(status)) {
-        finish(new Error(String(event.payload?.error || text || 'hermes_turn_failed')));
+      const completionError = hermesCompletionError(event.payload);
+      if (completionError) {
+        finish(completionError);
         return;
       }
       if (ownSubmissionEvent) {
@@ -842,19 +890,19 @@ async function submitTurn(args: {
             return;
           }
           if (!expectedRecipientSubmissionId && !recipientError) {
-            recipientError = new Error('hermes_addressed_delivery_unconfirmed');
+            recipientError = new Error('hermes_addressed_delivery_correlation_missing');
           }
           finishRecipientIfReady();
           return;
         }
-        if (!args.directRecipient && messageAgentStarted) {
+        if (messageAgentStarted) {
           ownTurnCompleted = true;
           if (consultationError) {
             finish(consultationError);
             return;
           }
-          if (!messageAgentConfirmed) {
-            finish(new Error('hermes_consultation_delivery_unconfirmed'));
+          if (!expectedConsultationProcessId) {
+            finish(new Error('hermes_consultation_delivery_correlation_missing'));
             return;
           }
           return;
@@ -863,7 +911,6 @@ async function submitTurn(args: {
         return;
       }
       if (!ownTurnCompleted) return;
-      if (args.directRecipient) return;
       if (
         !expectedConsultationProcessId
         || notificationProcessIds.length !== 1
@@ -885,7 +932,6 @@ async function submitTurn(args: {
       session_id: args.binding.liveHandle,
       profile: args.main.profile,
       text: args.text,
-      queued: true,
       submission_id: args.submissionId,
       card_run_id: args.submissionId,
       ...(args.mcpToolSelection ? { mcp_tool_selection: args.mcpToolSelection } : {}),
@@ -899,7 +945,7 @@ async function submitTurn(args: {
       bot_mode_reply_delivery: args.directRecipient ? 'direct' : 'notification',
     }).then((submitted) => {
       const status = String(submitted.status || 'streaming');
-      if (!['streaming', 'queued'].includes(status)) {
+      if (status !== 'streaming') {
         finish(new Error(`hermes_submit_status_unsupported:${status || 'missing'}`));
       }
     }).catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
@@ -908,20 +954,23 @@ async function submitTurn(args: {
 
 async function finishRun(args: {
   run: PreparedCardRun;
-  binding: CardSessionBinding;
+  binding: CardSessionBinding | null;
   result?: TurnResult;
   error?: unknown;
+  cancelled?: boolean;
 }): Promise<void> {
-  const provider = record(args.binding.info);
+  const provider = record(args.binding?.info);
   const requestedProvider = record(args.run.request.provider);
   const usage = args.result ? hermesUsageFields(args.result.event.payload?.usage) : {};
   await finishCardRun({
       runId: args.run.runId,
-      state: args.error ? 'failed' : 'completed',
+      state: args.cancelled ? 'cancelled' : args.error ? 'failed' : 'completed',
       finalResult: args.result?.text,
-      errorCode: args.error ? 'hermes_turn_failed' : undefined,
-      errorSummary: args.error instanceof Error ? args.error.message : args.error ? String(args.error) : undefined,
-      hermesSessionRef: args.binding.sessionId,
+      errorCode: args.cancelled ? 'hermes_turn_cancelled' : args.error ? 'hermes_turn_failed' : undefined,
+      errorSummary: args.cancelled
+        ? 'hermes_turn_cancelled'
+        : args.error instanceof Error ? args.error.message : args.error ? String(args.error) : undefined,
+      hermesSessionRef: args.binding?.sessionId,
       providerTurnRef: args.result
         ? String(args.result.event.payload?.submission_id || args.run.runId)
         : undefined,
@@ -1023,6 +1072,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     userMessageId: clientMessageId,
     assistantMessageId: clientReplyMessageId,
   };
+  const interruptTargetKey = activeTurnKey(run.runId, projectId, deckId, userId);
   writeSse(res, 'run', { ...identity, state: 'preparing' });
 
   let binding: SessionBinding | null = null;
@@ -1033,7 +1083,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       projectId,
       projectSessionId,
       userId,
-    });
+    }, addressedTarget);
     await ensureSavedCardTurnModel({ client, binding, profile: main.profile, runRequest: run.request });
     await attachImages(client, binding, main.profile, run.request.images);
     const runtimeMode = String(record(run.request.runtime).mode || '').trim();
@@ -1048,6 +1098,11 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     if (scriptPresentation.mode === 'script' && !Object.keys(cardScript || {}).length) {
       throw new Error('card_script_runtime_contract_missing');
     }
+    activeTurnInterruptTargets.set(interruptTargetKey, {
+      sessionId: binding.liveHandle,
+      submissionId: run.runId,
+      stopRequested: false,
+    });
     writeSse(res, 'session', {
       ...identity,
       sessionId: binding.sessionId,
@@ -1057,7 +1112,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       },
     });
     let started: Promise<void> | null = null;
-    const result = await submitTurn({
+    const result = await executeHermesTurn({
       client,
       binding,
       main,
@@ -1068,6 +1123,11 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         ? { liquidaity: exactStrings(run.request.presentedTools) }
         : null,
       cardScript,
+      onInterruptTarget: (target) => {
+        const active = activeTurnInterruptTargets.get(interruptTargetKey);
+        if (!active) return;
+        activeTurnInterruptTargets.set(interruptTargetKey, { ...active, ...target });
+      },
       onEvent: (event, speaker) => {
         const eventIdentity = { ...identity, participant: participant(speaker) };
         if (event.type === 'prompt.submission.started' && event.session_id === binding!.liveHandle) {
@@ -1093,6 +1153,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     const mainRunResult = result.mainCompletion
       ? {
         ...result.mainCompletion,
+        text: result.text,
         toolCalls: result.toolCalls,
         speaker: main,
       }
@@ -1129,16 +1190,23 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       fullText: result.text,
     });
   } catch (error) {
-    if (binding && !runSettled) await finishRun({ run, binding, error }).catch(() => undefined);
-    writeSse(res, 'error', {
-      ...identity,
-      code: error instanceof Error ? error.message : 'hermes_turn_failed',
-      message: error instanceof Error ? error.message : 'The Hermes turn failed.',
-      correlationId: run.runId,
-      route: '/api/main/session/chat',
-      status: 502,
-    });
+    const cancelled = error instanceof Error && error.message === 'hermes_turn_cancelled'
+      || activeTurnInterruptTargets.get(interruptTargetKey)?.stopRequested === true;
+    if (!runSettled) await finishRun({ run, binding, error, cancelled }).catch(() => undefined);
+    if (cancelled) {
+      writeSse(res, 'done', { ...identity, fullText: '', state: 'cancelled' });
+    } else {
+      writeSse(res, 'error', {
+        ...identity,
+        code: error instanceof Error ? error.message : 'hermes_turn_failed',
+        message: error instanceof Error ? error.message : 'The Hermes turn failed.',
+        correlationId: run.runId,
+        route: '/api/main/session/chat',
+        status: 502,
+      });
+    }
   } finally {
+    activeTurnInterruptTargets.delete(interruptTargetKey);
     writeSse(res, 'end', identity);
     res.end();
   }
@@ -1312,33 +1380,29 @@ mainSessionRoutes.post('/stop', async (req, res) => {
   }
   const authorization = await authorizeProject(req, res, projectId);
   if (!authorization) return undefined;
+  const interruptTargetKey = activeTurnKey(
+    expectedRunId, projectId, deckId, authorization.userId,
+  );
   try {
-    const authority = await projectCardAuthority(projectId, deckId);
-    const main = authority.main;
+    const target = activeTurnInterruptTargets.get(interruptTargetKey);
+    if (!target) return res.status(409).json({ ok: false, error: 'no_active_turn' });
     const client = await hermesGateway();
-    const storedRows = sessionRows(await client.request('session.list', {
-      profile: main.profile,
-      title: projectSessionTitle(authorization.projectSessionId),
-      include_hidden: true,
-      limit: 200,
-    }));
-    if (storedRows.length !== 1) return res.status(409).json({ ok: false, error: 'no_active_turn' });
-    const sessionId = String(storedRows[0].resolved_id || storedRows[0].id || '').trim();
-    const active = record(await client.request('session.active_list', { profile: main.profile })).sessions;
-    const sessions = Array.isArray(active) ? active.map(record) : [];
-    const matches = sessions.filter((item) => String(item.session_key || '').trim() === sessionId);
-    if (matches.length !== 1) return res.status(409).json({ ok: false, error: 'no_active_turn' });
-    const liveHandle = String(matches[0].id || '').trim();
-    if (!liveHandle) return res.status(409).json({ ok: false, error: 'no_active_turn' });
+    activeTurnInterruptTargets.set(interruptTargetKey, { ...target, stopRequested: true });
     const interrupted = record(await client.request('session.interrupt', {
-      session_id: liveHandle,
-      expected_submission_id: expectedRunId,
+      session_id: target.sessionId,
+      expected_submission_id: target.submissionId,
     }));
     if (interrupted.status !== 'interrupted') {
+      const active = activeTurnInterruptTargets.get(interruptTargetKey);
+      if (active) activeTurnInterruptTargets.set(interruptTargetKey, { ...active, stopRequested: false });
       return res.status(409).json({ ok: false, error: 'no_active_turn' });
     }
     return res.json({ ok: true, runId: expectedRunId, state: 'stopping' });
   } catch (error) {
+    const active = activeTurnInterruptTargets.get(interruptTargetKey);
+    if (active) {
+      activeTurnInterruptTargets.set(interruptTargetKey, { ...active, stopRequested: false });
+    }
     return res.status(503).json({
       ok: false,
       error: error instanceof Error ? error.message : 'main_run_stop_failed',

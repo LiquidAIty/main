@@ -66,8 +66,8 @@ and inverse deletion/rename mechanics.
 | Tool contracts and execution | `application_operation_catalog.py`, `main_worldview_operations.py`, `mag_one_operation.py`, `agent_canvas_card_operations.py`, and `backend_operation_transport.py` under `apps/python-models/app/`; `operation_definition.py`, literal contributor modules, `tool_registry.py`, and `tool_catalog.py` under `apps/python-models/app/python_models/` | One ordered application-operation catalog, literal application handler/schema owners, generic loopback transport mechanics, one authored operation shape, exact Python/provider handlers, live lookup, and deterministic model-facing projection |
 | Official MCP host | `apps/python-models/app/{mcp_host,mcp_auth,mcp_catalog_runtime,mcp_catalog_projection,mcp_provider_operations,mcp_observability,mcp_request_dispatch,mcp_transport}.py` | One SDK transport/dispatch host with literal owners for authentication, process-wide frozen catalog lifecycle, stateless SDK/provider projection, provider publication/calls, request dispatch, transport, and diagnostics; external clients and Hermes profile MCP connections consume the same canonical definitions |
 | CodeGraph | Official Codebase Memory MCP through the application host | Repository structure and source relationships; CBM is the sole graph writer |
-| ThinkGraph | Engraphis through `engraphis.py` and the responsibility-specific `engraphis_operations.py`, `thinkgraph_projection.py`, `thinkgraph_completed_pair_extraction.py`, `thinkgraph_completed_pair_preparation.py`, `thinkgraph_completed_pair_settlement.py`, `thinkgraph_relationship_vocabulary.py`, `thinkgraph_relationship_classification.py`, and `thinkgraph_relationship_settlement.py` modules in `apps/python-models/app/python_models/` | Project reasoning, canonical entities, the exact saved-Card structured extraction contract, completed-pair identity/dedup/non-writing preparation, append-only native episodic Think settlement, project relationship vocabulary/promotion, Jev source-pair classification/provenance, accepted-decision graph settlement, structured-extractor incidence, and the sole persistent ThinkGraph store |
-| KnowGraph | Controlled `GraphitiLatest/` fork plus `services/knowgraph` and the Python provider adapter | Sourced Entity Knows, citations, exact structural `ABOUT` attachment, native Relationships, Communities, Sagas, provenance, queued ingestion, exact reads, and native single-record removal |
+| ThinkGraph | Engraphis through `engraphis.py` and the responsibility-specific `engraphis_operations.py`, `thinkgraph_projection.py`, `thinkgraph_completed_pair_extraction.py`, `thinkgraph_completed_pair_preparation.py`, `thinkgraph_completed_pair_settlement.py`, `thinkgraph_relationship_vocabulary.py`, `thinkgraph_relationship_classification.py`, and `thinkgraph_relationship_settlement.py` modules in `apps/python-models/app/python_models/` | Project reasoning, canonical entities, the exact saved-Card structured extraction contract, completed-pair identity/dedup/non-writing preparation, append-only Engraphis episodic Think settlement, project relationship vocabulary/promotion, Jev source-pair classification/provenance, accepted-decision graph settlement, structured-extractor incidence, and the sole persistent ThinkGraph store |
+| KnowGraph | Controlled `GraphitiLatest/` fork plus `services/knowgraph` and the Python provider adapter | Sourced Entity Knows, citations, exact structural `ABOUT` attachment, Graphiti Relationships, Communities, Sagas, provenance, queued ingestion, exact reads, and exact episode removal |
 | AgentGraph | AGE/PostgreSQL through `agentgraph_topology.py` and `agentgraph_run_observations.py` | Saved Card relationships/authorization and truthful Run/reference/artifact observations remain separate writers over one AGE authority |
 
 ## Authority chain
@@ -108,18 +108,18 @@ approval state, provider lineage, AGE observations, and runtime status remain ou
 The Project-owned `projectCodeFolder` selects a portable folder name under that Project's managed
 Builder storage. Source resolves it beneath the managed Project directory and supplies it as the
 saved Builder Card's Hermes session workspace. HermesLatest's standard terminal/file behavior and PTY
-remain the owners; LiquidAIty applies no Docker policy. Loaded Builder product proof is not established.
+remain the owners; LiquidAIty applies no Docker policy. The 2026-10-14 loaded pass proved the existing
+Builder terminal identity and one harmless no-tool response; newer source still requires reload.
 
 Each independently invoked saved Card owns its own root Run and IDF. Hermes temporary children remain
 inside their owning Hermes Card. A Hermes Team is one root boundary: Hermes owns decomposition,
 worker prompts, retries, synthesis, and child context, so LiquidAIty does not manufacture per-worker
 IDFs from Hermes child IDs.
 
-The Card Python editor/compiler/executor is preserved. The owner's approved purpose for that surface is
-a Hooks IDE, but the restored current UI still presents the existing Script/tool-recipe states; this pass
-does not claim those states satisfy the later general hook-point contract. The current valid Script path
-uses Hermes' existing child Python runner and exact tools already loaded by the profile, with no application
-callback executor; blank or invalid source is inert. No synthetic hook result is accepted.
+The Card Python editor/compiler/executor is preserved. Current behavior is one saved Script in
+`tool_recipe` mode, not generalized Hooks. The valid enabled Script path uses Hermes' existing child Python
+runner and exact tools already loaded by the profile, with no application callback executor; blank, invalid,
+or disabled source is inert. General hook points remain future work. No synthetic Script result is accepted.
 
 ## Application routes
 
@@ -154,9 +154,9 @@ second Bot/terminal execution path.
 The restored Main doorway is `apps/backend/src/routes/mainSession.routes.ts`, mounted with browser
 authentication at `/api/main/session`. It persists user messages before Python Run preparation and
 transports Hermes events and completions. Unaddressed chat uses the saved Main profile and its
-exact Project-scoped Hermes session. The adapter materializes every enabled non-Magnetic Hermes Card's
-saved profile and one hidden Project-scoped session, then gives each orchestrator only its exact outbound
-orange roster and target-session map. An explicit `@Card` still enters Main first and must use Hermes
+exact Project-scoped Hermes session. The adapter materializes only Main's reachable orange closure, or Main
+plus the resolved recipient and that recipient's reachable orange closure for an explicit direct turn. Each
+orchestrator receives only its exact outbound orange roster and target-session map. An explicit `@Card` still enters Main first and must use Hermes
 `message_agent`; the application observes the exact recipient session and suppresses only the redundant
 later Main synthesis notification. An unaddressed model-directed consultation keeps Hermes' completion
 notification and continues the same still-open Main Run. Main does not execute or impersonate the target.
@@ -249,13 +249,13 @@ IDs, data, and provenance together in `in.idf`; that transport is not another gr
 ownership. The completed-pair Python preparation and settlement rails remain, but this cleanup leaves
 them without a TypeScript agent-execution caller and does not claim the automatic lifecycle is current.
 
-Engraphis owns Entity identity, memory/entity incidence, bi-temporal fields, native evidence, graph scene
+Engraphis owns Entity identity, memory/entity incidence, bi-temporal fields, provider evidence, graph scene
 projection, and its existing force/galaxy vocabulary. One portable ThinkGraph unit is a **Think**: one
-Entity-specific native append-only `EPISODIC` Memory whose semantic authority is
+Entity-specific append-only Engraphis `EPISODIC` Memory whose semantic authority is
 `structured_extraction.think`. Its compact `summary` is the card face and its optional unbounded technical
-`detail` is the same Think's **More** disclosure. Native code owns entry time and saved-Card/run provenance.
+`detail` is the same Think's **More** disclosure. Engraphis owns entry time and saved-Card/run provenance.
 An Entity's Thinks are resolved only through direct `memory_entities` incidence with
-`source_kind="structured_extractor"` plus a validated Think payload, newest-first by native Engraphis time.
+`source_kind="structured_extractor"` plus a validated Think payload, newest-first by Engraphis time.
 The Card chooses proposed Entity names, endpoints, direction, and free-form Relationships. Jev
 independently chooses the canonical edge winner, full distribution, and relationship strength. The
 all-classifications-before-mutation transaction prevents unclassified endpoint persistence; Jev does not
@@ -268,8 +268,8 @@ model edge writer, or whole-graph reclassification loop. This lifecycle does not
 
 Model-facing graph context includes exact provider Data Anchors plus one automatically supplied,
 identity-and-Relationship-only canonical Entity map. Python implements `project_graph.list_entities` and
-`project_graph.read_entity_context`. Main, Builder, ThinkGraph, and KnowGraph preparation use native
-Engraphis recall and native Graphiti Entity search/exact `ABOUT` hydration to produce bounded candidates,
+`project_graph.read_entity_context`. Main, Builder, ThinkGraph, and KnowGraph preparation use Engraphis
+recall and Graphiti Entity search/exact `ABOUT` hydration to produce bounded candidates,
 then ask Jev for one non-persisting relevance distribution per authority. Deterministic code selects the
 highest-probability record and excludes the Recent record from those candidates. The default packet is:
 
@@ -282,15 +282,14 @@ current user request
 
 Thinks are selected for the strongest faithful optimistic steelman of the user's current idea. Every valid
 Know already contains its cited supporting idea and cited counter idea. Equal Think/Know counts therefore
-make the prepared content intentionally two-thirds supportive and one-third challenging. Missing native
+make the prepared content intentionally two-thirds supportive and one-third challenging. Missing provider
 records shrink the packet honestly; Jev never creates graph content, truth, authority, or write permission.
 Jev failure leaves relevance unavailable and never relabels recency as relevance.
 
-The exact Entity inspector performs the same native-read/Jev pattern inside that Entity. It defaults to one
-Relevant record; one small arrow swaps the same space to the distinct Recent record. `Search` supplies the
-current Entity query and transient `Results` may request 1–12 records for the detailed inspector only.
-Main/Builder's automatic packet remains at the one-result default. KnowGraph is the landing authority when
-an Entity has both Think and Know data; ThinkGraph remains the left tab and KnowGraph the right tab.
+The exact Entity inspector does not perform that relevance-read flow. It shows at most two current
+provider-projected attached Thinks or Knows, with KnowGraph as the landing authority when an Entity has both;
+ThinkGraph remains the left tab and KnowGraph the right tab. Search/Results and a Relevant/Recent switch are
+not current UI. Main/Builder's automatic grounding remains a separate one-result-per-category contract.
 
 One Know is one atomic `know.v1` Graphiti episode:
 
@@ -301,23 +300,23 @@ idea.body + optional idea.detail + one or more idea.citations
 ```
 
 Python rails projects `graphiti.add_memory_to_entity` as that strict model-facing schema, canonicalizes the
-single JSON episode and exact URL list, then invokes Graphiti's unchanged native queued operation. A missing
+single JSON episode and exact URL list, then invokes Graphiti's queued operation. A missing
 side or side without a citation fails validation; a one-sided cited episode is not projected as a Know.
-Only Entities render as Project graph nodes. Thinks, Knows, Graphiti episodes, citations, native references,
+Only Entities render as Project graph nodes. Thinks, Knows, Graphiti episodes, citations, provider references,
 and supporting episode IDs remain attached properties/evidence/provenance. Each visible body is compact and
 each side's optional depth remains inside the same record behind **More**.
 
 The combined view uses one fixed presentation. The ordinary color-key labels **Think** and **Know** select
-authority-only projections; clicking renderer background returns to combined. Know defaults to native
+authority-only projections; clicking renderer background returns to combined. Know defaults to Graphiti
 Graphiti Community grouping and Think defaults to the existing Engraphis Galaxy layout, while the detailed
-graph settings inspector retains the native layout choices. Entity radius linearly normalizes the complete
+graph settings inspector retains the provider renderer's layout choices. Entity radius linearly normalizes the complete
 attached Think-and-Know word count from least to most. That transient visual metric never changes Jev edge
 probability, gravity mass, retrieval, or stored graph meaning.
 
 KnowGraph may use selected Thinks only as research framing. Sourced Knows remain Graphiti evidence.
 Its dedicated queued `add_memory_to_entity` path writes one structural `ABOUT` edge to an exact Entity in
-the same native episode transaction, leaves extraction-owned `MENTIONS` independent, updates Graphiti
-communities by default, and accepts native Saga continuity. The public generic `add_memory` behavior remains
+the same Graphiti episode transaction, leaves extraction-owned `MENTIONS` independent, updates Graphiti
+communities by default, and accepts Graphiti Saga continuity. The public generic `add_memory` behavior remains
 unchanged. Quick-Web evidence handoff and a requested-time sorting interaction remain unimplemented and must
 not be described as current.
 
@@ -372,7 +371,7 @@ when their wording is old.
 ## Startup and loaded proof
 
 Canonical development startup is `npm run dev:fresh`. It resolves the current official CBM command from PATH,
-validates its native MCP server identity, and starts the supported local service graph. No cleanup task
+validates its bundled MCP server identity, and starts the supported local service graph. No cleanup task
 may launch an extra CBM frontend, restart the daemon, or partially replace the supervisor.
 
 Evidence tiers remain separate:
@@ -431,16 +430,16 @@ The controlled upstream globe import has this bounded local divergence:
 | `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/app/directBridge.js::setLayerVisibility,executeAction`; `src/data/manager.js::isExplicitLayerIntentOrigin`; `src/voice/gevActions.js::set_layer_visibility` | Carry an internal `restore` origin through the existing God’s Eye layer manager and a distinct `worldview_card` origin through its existing action runner. This preserves the one God’s Eye Data Layers control, source lifecycle, provider readback, and standalone voice behavior; it does not create a second layer switch or runtime. | Focused `directBridge.test.mjs` and `gevActions.test.mjs` pass. Fork cost is three origin handoffs at existing interfaces. Roll back these hunks with the Project-origin integration if that seam is retired; no saved source or scene data is rewritten. |
 | `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/app/mount.js::attachInspectorControls,selectInspectorTab`; `src/ui.js::StyleManager` panel-layout guards; `client/src/features/worldview/{WorldViewSurface.tsx,worldviewInspector.css}` | In the supervised presentation only, move the original God’s Eye control elements (not copies or replacement switches) into tabs inside LiquidAIty's existing right-edge Inspector. The vendor's standalone layout, control handlers, layer manager, presets, cameras, scenes, context, cockpit behavior, and globe remain owned by their existing code. The mounted control bridge is needed because the existing action API cannot relocate already-bound DOM controls without cloning them. Teardown restores each element to its original anchor before the viewer is destroyed. | Focused React bridge/Inspector tests and vendor panel/Cockpit/Context tests pass; client typecheck and production build pass. Loaded visual/control acceptance remains for owner inspection in Preview. Fork cost is one reversible mount-time DOM placement seam and two panel-layout guards. Roll back those hunks with the Inspector adapter; no Project, Card, graph, source, or scene data is migrated. |
 
-| `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/satellites.js::setParams,setLabelFocus,getLabelFocus,_syncFocusOverlay,getDetectableObjects`; `src/data/detection.js::_drawOverlay`; `src/data/layerState.js` satellite option; `src/ui.js` Labels control; `src/voice/gevActions.js::focus_satellites`; `src/app/directBridge.js` satellite params/action projection | Focus-only satellite names by default, with explicit All restored through the existing layer-state coordinator. A transient exact-NORAD set of at most 50 renderable objects uses the existing overlay host and action runner; replacement/clear removes only its names, and tracked/selected readouts retain ownership. The public layer-param and action interfaces are the integration seams; ambient label gating and ISS suppression require this small native fork change. Satellite points/brackets, catalogs, TLE/SGP4 positions, orbit paths, native selection/tracking, Space Missions, providers, Earth and camera behavior are preserved. Backend/Python transport retains saved Card/Run authentication and the Project source OFF guard; there is no new renderer, agent or research store. | Focused native label lifecycle, saved-mode roundtrip, DENSE/detection, action/bridge and backend/Python contract tests cover immediate suppression, replacement/clear, disabled-source refusal and atomic invalid-focus preservation. Client/vendor builds and loaded control/action proof are separate from owner visual acceptance. Fork cost is one additive enum, one bounded transient label source and gates at existing label/action seams. Roll back only these label-policy hunks and their transport/schema counterparts together; no saved data migration or reset is required. |
+| `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/satellites.js::setParams,setLabelFocus,getLabelFocus,_syncFocusOverlay,getDetectableObjects`; `src/data/detection.js::_drawOverlay`; `src/data/layerState.js` satellite option; `src/ui.js` Labels control; `src/voice/gevActions.js::focus_satellites`; `src/app/directBridge.js` satellite params/action projection | Focus-only satellite names by default, with explicit All restored through the existing layer-state coordinator. A transient exact-NORAD set of at most 50 renderable objects uses the existing overlay host and action runner; replacement/clear removes only its names, and tracked/selected readouts retain ownership. The public layer-param and action interfaces are the integration seams; ambient label gating and ISS suppression require this small God’s Eye fork change. Satellite points/brackets, catalogs, TLE/SGP4 positions, orbit paths, God’s Eye selection/tracking, Space Missions, providers, Earth and camera behavior are preserved. Backend/Python transport retains saved Card/Run authentication and the Project source OFF guard; there is no new renderer, agent or research store. | Focused God’s Eye label lifecycle, saved-mode roundtrip, DENSE/detection, action/bridge and backend/Python contract tests cover immediate suppression, replacement/clear, disabled-source refusal and atomic invalid-focus preservation. Client/vendor builds and loaded control/action proof are separate from owner visual acceptance. Fork cost is one additive enum, one bounded transient label source and gates at existing label/action seams. Roll back only these label-policy hunks and their transport/schema counterparts together; no saved data migration or reset is required. |
 
-| `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/satellites.js::_handleSatelliteClick,_installClickHandler`; `src/data/satellitesClickSelection.test.mjs` | When the current tracked marker is the top Cesium pick, use native `drillPick` to inspect the first distinct hit instead of ignoring a different satellite underneath it. Ordinary frontmost picking, sibling-layer ownership, current-only no-op, empty-click clear, tracking, labels, catalogs, orbital propagation and rendering stay on their existing paths. No public adapter can resolve this native click-handler early return. | The production callback regression covers ordinary and occluded A-to-B switching plus current-only, sibling and empty-click behavior. A mounted WorldView second click changed tracking from NORAD 45358 to 28474 and showed the new native readout. Fork cost is one conditional deeper pick and a test seam; remove these hunks when upstream supplies equivalent click resolution. No saved data or runtime configuration is migrated. |
-| `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/traffic.js::disable,destroy`; `src/data/trafficTiming.test.mjs` | Make traffic teardown idempotent when serialized React/native remount cleanup reaches an already-removed point collection. The existing application lifecycle and DataLayerManager remain the owners; the guard creates no second teardown path, viewer, layer state, or fallback. | A loaded WorldView remount reproduced the null point-collection write through the real DataLayerManager teardown. The focused native test destroys traffic twice after initialization and requires no error while retaining the traffic timing invariants. Fork cost is one null guard plus the regression assertion. Roll back both together when upstream teardown becomes idempotent; no saved Project, camera, layer, graph, or source state is migrated. |
+| `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/satellites.js::_handleSatelliteClick,_installClickHandler`; `src/data/satellitesClickSelection.test.mjs` | When the current tracked marker is the top Cesium pick, use Cesium `drillPick` to inspect the first distinct hit instead of ignoring a different satellite underneath it. Ordinary frontmost picking, sibling-layer ownership, current-only no-op, empty-click clear, tracking, labels, catalogs, orbital propagation and rendering stay on their existing paths. No public adapter can resolve this God’s Eye click-handler early return. | The production callback regression covers ordinary and occluded A-to-B switching plus current-only, sibling and empty-click behavior. A mounted WorldView second click changed tracking from NORAD 45358 to 28474 and showed the new God’s Eye readout. Fork cost is one conditional deeper pick and a test seam; remove these hunks when upstream supplies equivalent click resolution. No saved data or runtime configuration is migrated. |
+| `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `agent-products/gods-eye-view/src/data/traffic.js::disable,destroy`; `src/data/trafficTiming.test.mjs` | Make traffic teardown idempotent when serialized React/God’s Eye remount cleanup reaches an already-removed point collection. The existing application lifecycle and DataLayerManager remain the owners; the guard creates no second teardown path, viewer, layer state, or fallback. | A loaded WorldView remount reproduced the null point-collection write through the real DataLayerManager teardown. The focused God’s Eye test destroys traffic twice after initialization and requires no error while retaining the traffic timing invariants. Fork cost is one null guard plus the regression assertion. Roll back both together when upstream teardown becomes idempotent; no saved Project, camera, layer, graph, or source state is migrated. |
 
 The vendored Graphiti fork has this bounded additive divergence:
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
-| `getzep/graphiti` core `0.30.2` / MCP `1.1.0` at `86f1c941bea7bf53fa45fe4e08c03244b4990eee` | `GraphitiLatest/graphiti_core/{edges.py,graphiti.py}`; `graphiti_core/models/edges/edge_db_queries.py`; `driver/kuzu_driver.py`; `utils/{bulk_utils.py,maintenance/node_operations.py}`; `mcp_server/src/{graphiti_mcp_server.py,models/response_types.py,services/queue_service.py}`; exact attachment tests; `apps/python-models/requirements.txt` | Add one structural `ABOUT` edge and one queued `add_memory_to_entity` tool for a caller-declared exact Entity UUID/name. A missing exact Entity may be created in the same native episode transaction; semantic extraction cannot deduplicate it onto a different Entity. `ABOUT` never substitutes for extraction-owned `MENTIONS`. The dedicated tool preserves native episode extraction, facts, provenance, temporal fields, community refresh (on by default), Saga continuity, queue ordering, and native episode removal. Existing `add_memory`, `add_triplet`, search, community, Saga, and deletion behavior remains available and unchanged. LiquidAIty imports the controlled fork directly instead of maintaining a Graphiti replacement. | Core exact-attachment/atomicity tests and MCP queue/signature/parity tests cover the additive path and ordinary no-attachment behavior. Fork cost is one edge type, optional exact-attachment arguments, and one additive MCP tool suitable for an upstream PR. Rollback removes those additions and returns the Python requirement to upstream Graphiti; existing Entity, episode, fact, Community, and Saga data require no rewrite, while records that rely on `ABOUT` would lose only that new attachment view. |
+| `getzep/graphiti` core `0.30.2` / MCP `1.1.0` at `86f1c941bea7bf53fa45fe4e08c03244b4990eee` | `GraphitiLatest/graphiti_core/{edges.py,graphiti.py}`; `graphiti_core/models/edges/edge_db_queries.py`; `driver/kuzu_driver.py`; `utils/{bulk_utils.py,maintenance/node_operations.py}`; `mcp_server/src/{graphiti_mcp_server.py,models/response_types.py,services/queue_service.py}`; exact attachment tests; `apps/python-models/requirements.txt` | Add one structural `ABOUT` edge and one queued `add_memory_to_entity` tool for a caller-declared exact Entity UUID/name. A missing exact Entity may be created in the same Graphiti episode transaction; semantic extraction cannot deduplicate it onto a different Entity. `ABOUT` never substitutes for extraction-owned `MENTIONS`. The dedicated tool preserves Graphiti episode extraction, facts, provenance, temporal fields, community refresh (on by default), Saga continuity, queue ordering, and episode removal. Existing `add_memory`, `add_triplet`, search, community, Saga, and deletion behavior remains available and unchanged. LiquidAIty imports the controlled fork directly instead of maintaining a Graphiti replacement. | Core exact-attachment/atomicity tests and MCP queue/signature/parity tests cover the additive path and ordinary no-attachment behavior. Fork cost is one edge type, optional exact-attachment arguments, and one additive MCP tool suitable for an upstream PR. Rollback removes those additions and returns the Python requirement to upstream Graphiti; existing Entity, episode, fact, Community, and Saga data require no rewrite, while records that rely on `ABOUT` would lose only that new attachment view. |
 
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 
@@ -450,18 +449,18 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::resolve_capability`; `apps/python-models/app/python_models/engraphis_operations.py::_invoke_tool` | Promote the existing capability-ID/schema-digest resolver to a public function so the authenticated Project adapter can inspect the exact discovered Smart action schema and inject `workspace` only when that action declares it. The resolver body, TTL/HMAC validation, availability gate, LRU refresh, action selection and execution remain unchanged. | Required proof is the focused Engraphis Smart discovery/execute suite plus the application operation/catalog contract. Fork cost is one identifier/API promotion suitable for an upstream PR. Remove the application dependency when upstream exposes an equivalent public capability-inspection API; never copy or reimplement its capability index. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::smart_tool_catalog`; `EngraphisLatest/engraphis/backends/extractor.py::StructuredLLMExtractor.extraction_contract`; `apps/python-models/app/python_models/engraphis_operations.py`; `apps/python-models/app/python_models/thinkgraph_completed_pair_extraction.py` | Expose two read-only integration contracts that Engraphis already owns: the exact registered Smart MCP Tool models for synchronous host composition, and the exact structured-extraction prompt/schema for a saved Card that performs the model call. The application no longer reads MCPServer's private `_tool_manager` or extractor-private prompt/schema helpers, and it does not copy either contract. | Focused Smart MCP and extractor tests require each public result to equal the actually served/generated contract; application ThinkGraph and operation tests cover the consumers. Fork cost is two additive public methods suitable for upstream submission. Retire either method when upstream exposes an equivalent supported API. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/core/engine.py::remember_entities`; `engraphis/service.py::remember_entities`; `engraphis/mcp_server.py::engraphis_remember_entities`; generated MCP contracts, bundled integrations, docs, and tests | Add one exact Entity-memory batch operation. Each Fact has exactly one caller-declared Entity incidence; an existing explicit ID/name mismatch fails, new exact Entities and their memories/incidences settle atomically, and automatic text-derived incidence is disabled for this path. Existing generic remember, extraction, graph, and Smart discovery behavior is unchanged. | Engine rollback and incidence tests, Smart/classic inventory and dispatch tests, generated-contract checks, bundled integration tests, and application settlement tests cover the path. Fork cost is one additive service/Smart/Classic operation suitable for an upstream PR. Rollback removes that operation and returns ThinkGraph to no exact Entity attachment; existing Engraphis data needs no migration. |
-| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: existing semantic physics/material/click helpers plus `explicitVisualSizeWeight`, `linearVisualNodeRadius`, and their render call site | Preserve Jev relationship width/spring/distance and gravity/centrality while accepting one optional transient normalized size weight. Entity radius then scales linearly from least to most attached Think-and-Know words without rewriting `gravity_mass`, relationship probability, storage, or retrieval. Existing styles—including the work-in-progress Solarpunk material—presets, palettes, graph scene, inspectors, Galaxy Focus physics, controls, and layout engine remain unchanged. | `ThinkGraphSemanticPhysics.spec.ts` exercises real renderer relationship physics and exact linear sizing; focused projection/surface tests prove all-history word aggregation, combined sums, isolated views, and Relevant/Recent inspector swapping. Fork cost is two pure radius helpers plus one render branch. Rollback removes the optional field handling and restores native degree/mass sizing without changing graph data. |
+| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: existing semantic physics/material/click helpers plus `explicitVisualSizeWeight`, `linearVisualNodeRadius`, and their render call site | Preserve Jev relationship width/spring/distance and gravity/centrality while accepting one optional transient normalized size weight. Entity radius then scales linearly from least to most attached Think-and-Know words without rewriting `gravity_mass`, relationship probability, storage, or retrieval. Existing styles—including the work-in-progress Solarpunk material—presets, palettes, graph scene, inspectors, Galaxy Focus physics, controls, and layout engine remain unchanged. | `EngraphisRenderer.spec.ts` exercises real renderer relationship physics and exact linear sizing; focused projection/surface tests prove all-history word aggregation, combined sums, isolated views, and the attached-record inspector. Fork cost is two pure radius helpers plus one render branch. Rollback removes the optional field handling and restores provider degree/mass sizing without changing graph data. |
 
 ## Current proof limits
 
 - Source, focused tests, typechecks, a loaded service, a real saved-Card turn, an external MCP call,
   and owner visual acceptance remain separate proof tiers.
-- The MCP v2, Engraphis Smart surface, Graphiti, Card-grant, Project-session, and receiving-Card
-  changes require one coordinated loaded-stack acceptance. The 2026-10-14 source checkpoint passed the
-  application Python suite, repository TypeScript suite, all TypeScript checks, both production builds,
-  and the affected Hermes tests apart from three enumerated Windows/POSIX-only upstream assertions.
-  This recovery has not yet started that loaded stack; source, build, and generated-contract checks are
-  not loaded-product or external-client acceptance.
+- The 2026-10-14 loaded pass completed ordinary Main, consultation, five direct Card targets, refresh
+  retention, and the Builder terminal. The 2026-10-15 cleanup then passed 420 first-party Python tests,
+  389 TypeScript tests with one intentional skip, all TypeScript checks, both production builds, a zero-
+  vulnerability production npm audit, loaded health/source-current readback, and the Entity/Know inspector
+  visual regression. It did not repeat a model turn. External OAuth, enabled Script, Team, Magnetic,
+  graph-write, external-client, and final owner visual acceptance remain separate.
 - Team and Magnetic preparation must resolve through HermesLatest. Team execution and an actual Mag One
   mission remain separate user-authorized acceptance; this repair does not launch a Magnetic mission.
 - Actual child provider/model, Bot delivery, graph attention, external-provider calls, terminal attachment,

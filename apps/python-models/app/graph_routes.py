@@ -153,28 +153,6 @@ async def graph_jev_focus(payload: dict[str, Any]):
         }
 
 
-@graph_read_router.post("/graph/entity-context")
-async def graph_entity_context(payload: dict[str, Any]):
-    """Read exact Recent/Relevant Think and Know context for current Entity refs."""
-
-    from app.project_graph_operations import read_entity_context
-    import asyncio
-
-    try:
-        return await asyncio.to_thread(
-            read_entity_context,
-            projectId=str(payload.get("projectId") or ""),
-            entities=payload.get("entities"),
-            query=str(payload.get("query") or ""),
-            context=str(payload.get("context") or ""),
-            limit=payload.get("limit", 1),
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except RuntimeError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-
-
 @graph_settlement_router.post("/thinkgraph/operation")
 async def thinkgraph_operation(payload: dict[str, Any]):
     from app.python_models.engraphis_operations import invoke_tool, private_operation

@@ -6,7 +6,6 @@
 import type {
   DeckDocument,
   DeckEdge,
-  DeckEdgeType,
 } from '../../types/agentgraph';
 import { normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 

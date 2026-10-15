@@ -1,6 +1,4 @@
-// Shared card/deck normalization primitives for the Agent Builder feature.
-// Extracted verbatim from pages/agentbuilder.tsx (decomposition pass
-// 2026-07-08). Persisted ids/bindings and behavior are unchanged.
+// Shared Card/deck normalization primitives for the Agent Builder workspace.
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
@@ -33,6 +31,7 @@ export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 export const MAIN_CHAT_MODEL_KEY = 'gpt-5.6-sol';
 export const AGENT_BUILDER_MODEL_KEY = 'gpt-5.6-sol';
+export const KNOWGRAPH_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 // Builder's non-administrative CodeGraph corridor. Indexing, trace ingestion,
@@ -55,9 +54,6 @@ export const AGENT_BUILDER_CONTROLLER_TOOLS = [
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'canvas.inspect',
-  'engraphis_recall_context',
-  'engraphis_get_memory',
-  'engraphis_remember',
   'run_mag_one',
   'worldview.set_capability',
 ] as const;
@@ -67,7 +63,7 @@ export const THINKGRAPH_CARD_TOOLS = [
   'engraphis_remember',
   'engraphis_update_memory',
 ] as const;
-export const HERMES_CARD_TOOLS = [
+export const KNOWGRAPH_CARD_TOOLS = [
   'canvas.inspect',
   'engraphis_get_memory',
   'graphiti.get_entity_edge',
@@ -76,17 +72,8 @@ export const HERMES_CARD_TOOLS = [
   'graphiti.get_status',
   'graphiti.search_memory_facts',
   'graphiti.search_nodes',
-  'graphiti.add_memory',
-  'graphiti.add_triplet',
+  'graphiti.add_memory_to_entity',
 ] as const;
-const RETIRED_CARD_TOOL_IDS = new Set([
-  'card.load_graph_references',
-  'engraphis_correct',
-  'engraphis_ingest',
-  'engraphis_link',
-  'write_mag_one_instructions',
-]);
-
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
@@ -104,35 +91,7 @@ export function normalizeRuntimeOptions(
   value: unknown,
 ): AgentCardRuntimeOptions | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const normalized = cloneDeckDocument(value as AgentCardRuntimeOptions);
-  const retiredOptions = normalized as AgentCardRuntimeOptions & {
-    openaiRuntime?: unknown;
-    team?: unknown;
-    writeMode?: unknown;
-  };
-  delete retiredOptions.openaiRuntime;
-  delete retiredOptions.team;
-  delete retiredOptions.writeMode;
-  if (normalized.script && typeof normalized.script === 'object') {
-    const script = normalized.script as typeof normalized.script & {
-      hermesSupport?: unknown;
-      nativeSupport?: unknown;
-      rollback?: unknown;
-    };
-    delete script.hermesSupport;
-    delete script.nativeSupport;
-    delete script.rollback;
-  }
-  const rawTools = Array.isArray(normalized.tools) ? normalized.tools : [];
-  if (!rawTools.some((toolId) => (
-    typeof toolId === 'string'
-    && (toolId.startsWith('hermes:tool:') || RETIRED_CARD_TOOL_IDS.has(toolId))
-  ))) return normalized;
-  const tools = rawTools.filter((toolId) => (
-    typeof toolId !== 'string'
-    || (!toolId.startsWith('hermes:tool:') && !RETIRED_CARD_TOOL_IDS.has(toolId))
-  ));
-  return { ...normalized, tools };
+  return cloneDeckDocument(value as AgentCardRuntimeOptions);
 }
 
 /** Orange flow authority belongs to Main or an explicitly enabled saved
@@ -146,8 +105,6 @@ export function hasMainBotAuthority(card: AgentCardInstance): boolean {
     && Boolean(card.runtime.profile.trim())
     && card.enabled !== false;
 }
-
-
 /** Recognise ONLY the two real edge types — mirrors the backend contract
  * (decks/store.ts). Anything else is 'invalid': visible on the canvas but
  * authorising nothing. The old default returned 'flow' (invocation authority)
@@ -159,8 +116,6 @@ export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   if (type === 'flow') return 'flow';
   return 'invalid';
 }
-
-
 export const uid = () => Math.random().toString(36).slice(2, 8);
 
 export function cloneDeckDocument<T>(value: T): T {

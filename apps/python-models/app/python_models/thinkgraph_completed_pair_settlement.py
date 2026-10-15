@@ -1,4 +1,4 @@
-"""Native Engraphis settlement for one completed User/Main pair."""
+"""Engraphis settlement for one completed User/Main pair."""
 
 from __future__ import annotations
 

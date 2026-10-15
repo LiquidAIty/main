@@ -5,7 +5,7 @@
 
 relationships = [
   { name = "FLOW", canvasValue = "flow", authority = "AGE", direction = "source-to-target" },
-  { name = "MAGENTIC_OPTION", canvasValue = "magentic_option", authority = "AGE", direction = "source-to-target" },
+  { name = "MAGENTIC_OPTION", canvasValue = "magentic_option", authority = "AGE", direction = "either-endpoint" },
 ]
 
 [dictionary]
@@ -61,10 +61,10 @@ kind = "boundary"
 source = "app.python_models.graph_reference_contracts.GraphReference"
 [types.AgentObject]
 kind = "boundary"
-source = "app.python_models.idf.StableSavedCardContext"
+source = "app.python_models.idf_contract.StableSavedCardContext"
 [types.ContextObject]
 kind = "boundary"
-source = "app.python_models.idf.ActualGraphData"
+source = "app.python_models.idf_contract.ActualGraphData"
 [types.RuntimeObject]
 kind = "boundary"
 source = "app.python_models.card_configuration_contracts.HermesRuntime"
