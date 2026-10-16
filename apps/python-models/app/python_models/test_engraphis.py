@@ -1,4 +1,11 @@
 """Engraphis mechanics in a disposable store; never product acceptance data."""
+
+# Entity: ThinkGraph
+# Relationship: Exercises Project scoping, Smart operations, retirement, deletion isolation, and bounded Entity projection against a disposable real Engraphis store without claiming loaded-product acceptance.
+#
+# Entity: Jev Decisions
+# Relationship: Verifies graph-focus request validation, exact probability handling, ranking, and typed unavailable or timeout outcomes through a controlled provider transport.
+
 import asyncio
 import time
 import pytest

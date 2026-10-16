@@ -1,3 +1,8 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Graph Presentation verifies that the shared Solarpunk palette preserves its semantic sea and sun roles across graph accents, edges, and workflows.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { GRAPH_THEME, SOLARPUNK_PALETTE } from './graphVisualTokens';
 

@@ -1,3 +1,11 @@
+/**
+ * Entity: Application Startup
+ * Relationship: Executes the real backend environment loader in isolated processes and verifies module-relative path resolution, process precedence, and explicit missing-required configuration failure.
+ *
+ * Entity: Credentials
+ * Relationship: Verifies file-backed secret resolution and proves configuration failures identify configuration keys without echoing secret values.
+ */
+
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -26,20 +34,58 @@ for (const variable of [
 function makeWorkspace(): string {
   const workspace = mkdtempSync(path.join(tmpdir(), 'liquidaity-env-'));
   const probe = [
-    `await import(${JSON.stringify(envModuleUrl)});`,
-    'const variable = process.env.CONFIG_PROBE_VARIABLE;',
-    'if (variable) {',
-    "  console.log(process.env[variable] === process.env.CONFIG_EXPECTED_VALUE ? 'CONFIG_MATCH' : 'CONFIG_MISMATCH');",
+    `const imported = await import(${JSON.stringify(envModuleUrl)});`,
+    'const config = imported.default ?? imported;',
+    'const moduleDirectory = process.env.CONFIG_TEST_MODULE_DIRECTORY;',
+    'if (moduleDirectory) {',
+    '  const resolved = config.backendEnvPathFromModuleDirectory(moduleDirectory);',
+    "  console.log(resolved === process.env.CONFIG_EXPECTED_PATH ? 'CONFIG_MATCH' : 'CONFIG_MISMATCH');",
+    '} else {',
+    "  const targetEnv = JSON.parse(process.env.CONFIG_TEST_TARGET_ENV || '{}');",
+    '  config.loadBackendEnvironment(targetEnv, process.env.CONFIG_TEST_ENV_PATH);',
+    '  const variable = process.env.CONFIG_PROBE_VARIABLE;',
+    '  if (variable) {',
+    "    console.log(targetEnv[variable] === process.env.CONFIG_EXPECTED_VALUE ? 'CONFIG_MATCH' : 'CONFIG_MISMATCH');",
+    '  }',
     '}',
   ].join('\n');
   writeFileSync(path.join(workspace, 'probe.mts'), probe, 'utf8');
   return workspace;
 }
 
-function runConfig(workspace: string, env: NodeJS.ProcessEnv = {}) {
+function runConfig(
+  workspace: string,
+  env: NodeJS.ProcessEnv = {},
+  envPath = path.join(workspace, 'apps/backend/.env'),
+) {
   return spawnSync(process.execPath, [tsxCli, path.join(workspace, 'probe.mts')], {
     cwd: workspace,
-    env: { ...inheritedEnv, ...env },
+    env: {
+      ...inheritedEnv,
+      DATABASE_URL: 'postgresql://module-import.invalid/app',
+      CONFIG_TEST_TARGET_ENV: JSON.stringify(env),
+      CONFIG_TEST_ENV_PATH: envPath,
+      CONFIG_PROBE_VARIABLE: env.CONFIG_PROBE_VARIABLE,
+      CONFIG_EXPECTED_VALUE: env.CONFIG_EXPECTED_VALUE,
+    },
+    encoding: 'utf8',
+  });
+}
+
+function runPathResolution(
+  workspace: string,
+  moduleDirectory: string,
+  expectedPath: string,
+  cwd: string,
+) {
+  return spawnSync(process.execPath, [tsxCli, path.join(workspace, 'probe.mts')], {
+    cwd,
+    env: {
+      ...inheritedEnv,
+      DATABASE_URL: 'postgresql://module-import.invalid/app',
+      CONFIG_TEST_MODULE_DIRECTORY: moduleDirectory,
+      CONFIG_EXPECTED_PATH: expectedPath,
+    },
     encoding: 'utf8',
   });
 }
@@ -85,6 +131,40 @@ describe('backend runtime configuration boundary', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe('CONFIG_MATCH');
+  });
+
+  it('resolves the same backend env from source and built layouts regardless of launcher cwd', () => {
+    const root = workspace();
+    const backendRoot = path.join(root, 'apps/backend');
+    const expectedPath = path.join(backendRoot, '.env');
+    const sourceModuleDirectory = path.join(backendRoot, 'src/config');
+    const builtModuleDirectory = path.join(backendRoot, 'dist/src/config');
+    mkdirSync(builtModuleDirectory, { recursive: true });
+
+    for (const cwd of [root, backendRoot]) {
+      for (const moduleDirectory of [sourceModuleDirectory, builtModuleDirectory]) {
+        const result = runPathResolution(root, moduleDirectory, expectedPath, cwd);
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe('');
+        expect(result.stdout.trim()).toBe('CONFIG_MATCH');
+      }
+    }
+  });
+
+  it('does not fall back to a repository-root env file', () => {
+    const cwd = workspace();
+    writeFileSync(
+      path.join(cwd, '.env'),
+      'DATABASE_URL=postgresql://root-fallback.invalid/app\n',
+      'utf8',
+    );
+
+    const result = runConfig(cwd);
+    const output = `${result.stdout}\n${result.stderr}`;
+
+    expect(result.status).not.toBe(0);
+    expect(output).toContain('missing_required_config: DATABASE_URL');
+    expect(output).not.toContain('root-fallback.invalid');
   });
 
   it('keeps process environment authoritative over dotenv', () => {

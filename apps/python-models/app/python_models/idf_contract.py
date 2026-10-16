@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal
+from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -17,10 +20,17 @@ from app.python_models.graph_reference_contracts import (
 
 IDF_FILENAME = "in.idf"
 _FORBIDDEN_SECRET_KEYS = frozenset({
-    "apikey", "api_key", "authorization", "bearer", "bearertoken",
-    "access_token", "refreshtoken", "refresh_token", "clientsecret",
-    "client_secret", "oauthstate", "oauth_state",
+    "apikey", "apikeyid", "authorization", "bearer", "bearertoken",
+    "accesstoken", "refreshtoken", "clientsecret", "oauthstate",
+    "password", "passphrase", "privatekey", "signingkey", "token",
+    "cookie", "setcookie", "xapikey",
 })
+_FORBIDDEN_SECRET_KEY_MARKERS = frozenset({
+    "apikey", "authorization", "bearertoken", "accesstoken",
+    "refreshtoken", "clientsecret", "oauthstate", "password",
+    "passphrase", "privatekey", "signingkey", "setcookie", "xapikey",
+})
+_URL_CANDIDATE = re.compile(r"(?:https?|wss?)://[^\s\"'<>]+", re.IGNORECASE)
 _SELECTED_GRAPH_RECORD_FIELDS = frozenset({
     "engraphisMemoryId", "engraphisEntityId", "engraphisRelationshipId",
     "graphitiEpisodeId", "graphitiEntityId", "graphitiRelationshipId",
@@ -173,16 +183,54 @@ def canonical_line(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _normalized_secret_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+
+def _secret_key_forbidden(value: Any) -> bool:
+    normalized = _normalized_secret_key(value)
+    return (
+        normalized in _FORBIDDEN_SECRET_KEYS
+        or any(marker in normalized for marker in _FORBIDDEN_SECRET_KEY_MARKERS)
+        or normalized.endswith(("secret", "token", "cookie"))
+    )
+
+
+def _assert_url_secret_free(value: str) -> None:
+    try:
+        parsed = urlsplit(value)
+    except ValueError as error:
+        raise InputMaterializationError("input_file_url_invalid") from error
+    if parsed.scheme.lower() not in {"http", "https", "ws", "wss"}:
+        return
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise InputMaterializationError("input_file_url_invalid") from error
+    del port
+    if parsed.username is not None or parsed.password is not None:
+        raise InputMaterializationError("input_file_secret_url_forbidden")
+    if any(_secret_key_forbidden(key) for key, _value in parse_qsl(
+        parsed.query,
+        keep_blank_values=True,
+    )):
+        raise InputMaterializationError("input_file_secret_url_forbidden")
+
+
 def assert_secret_free(value: Any) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
-            normalized = str(key).replace("-", "_").lower()
-            if normalized in _FORBIDDEN_SECRET_KEYS:
+            if _secret_key_forbidden(key):
                 raise InputMaterializationError("input_file_secret_field_forbidden")
             assert_secret_free(item)
     elif isinstance(value, list):
         for item in value:
             assert_secret_free(item)
+    elif isinstance(value, float) and not math.isfinite(value):
+        raise InputMaterializationError("input_file_number_nonfinite")
+    elif isinstance(value, str) and "://" in value:
+        for match in _URL_CANDIDATE.finditer(value):
+            _assert_url_secret_free(match.group(0).rstrip(".,;:)]}"))
 
 
 def record_counts(records: list[GraphDataRecord]) -> dict[str, int]:
@@ -206,6 +254,8 @@ def record_counts(records: list[GraphDataRecord]) -> dict[str, int]:
 def load_idf_bytes(idf_bytes: bytes) -> MaterializedIdf:
     try:
         value = json.loads(idf_bytes.decode("utf-8"))
+        if not isinstance(value, dict):
+            raise InputMaterializationError("input_file_invalid")
         # Older unrelated Runs serialized empty construction fields. Preserve their
         # exact bytes/hash on inspection without retaining an operation runtime.
         dynamic = dict(value.get("dynamicContext") or {})
@@ -215,6 +265,8 @@ def load_idf_bytes(idf_bytes: bytes) -> MaterializedIdf:
         if any(item is not None for item in retired.values()):
             raise InputMaterializationError("input_retired_operation_forbidden")
         idf = Idf.model_validate({**value, "dynamicContext": dynamic})
+    except InputMaterializationError:
+        raise
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise InputMaterializationError("input_file_invalid") from error
     canonical = idf.model_dump(mode="json")

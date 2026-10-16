@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: Agent Builder owns workspace tab, drawer, Card, edge, and canvas-focus selection while clearing selections removed from the current deck.
+ */
+
 import { useEffect, useState } from 'react';
 
 import type { BuilderCanvasFocusRequest } from '../../../components/builder/BuilderCanvas';

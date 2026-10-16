@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import math
 import operator
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -22,19 +23,42 @@ _SAFE_UNARY_OPS: dict[type[ast.AST], Callable[[Any], Any]] = {
     ast.UAdd: operator.pos,
     ast.USub: operator.neg,
 }
+_MAX_EXPRESSION_LENGTH = 512
+_MAX_EXPRESSION_NODES = 128
+_MAX_EXPRESSION_DEPTH = 16
+_MAX_ABS_EXPONENT = 1000
 
 
-def _eval_arithmetic(node: ast.AST) -> float:
+def _finite_result(value: Any) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("calculator_result_nonfinite")
+    return number
+
+
+def _eval_arithmetic(node: ast.AST, depth: int = 0) -> float:
+    if depth > _MAX_EXPRESSION_DEPTH:
+        raise ValueError("calculator_expression_too_deep")
     if isinstance(node, ast.Expression):
-        return _eval_arithmetic(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return float(node.value)
+        return _eval_arithmetic(node.body, depth + 1)
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+    ):
+        return _finite_result(node.value)
     if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_BIN_OPS:
-        return _SAFE_BIN_OPS[type(node.op)](
-            _eval_arithmetic(node.left), _eval_arithmetic(node.right)
-        )
+        left = _eval_arithmetic(node.left, depth + 1)
+        right = _eval_arithmetic(node.right, depth + 1)
+        if isinstance(node.op, ast.Pow) and abs(right) > _MAX_ABS_EXPONENT:
+            raise ValueError("calculator_exponent_too_large")
+        return _finite_result(_SAFE_BIN_OPS[type(node.op)](left, right))
     if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_UNARY_OPS:
-        return _SAFE_UNARY_OPS[type(node.op)](_eval_arithmetic(node.operand))
+        return _finite_result(
+            _SAFE_UNARY_OPS[type(node.op)](
+                _eval_arithmetic(node.operand, depth + 1)
+            )
+        )
     raise ValueError(f"calculator_unsupported_expression: {ast.dump(node)}")
 
 
@@ -47,7 +71,20 @@ def tool_current_datetime() -> str:
 def tool_calculator(expression: str) -> str:
     """Evaluate a basic arithmetic expression."""
 
-    return str(_eval_arithmetic(ast.parse(expression, mode="eval")))
+    if not isinstance(expression, str) or not expression.strip():
+        raise ValueError("calculator_expression_required")
+    if len(expression) > _MAX_EXPRESSION_LENGTH:
+        raise ValueError("calculator_expression_too_long")
+    try:
+        parsed = ast.parse(expression, mode="eval")
+    except (SyntaxError, ValueError, RecursionError) as error:
+        raise ValueError("calculator_expression_invalid") from error
+    if sum(1 for _node in ast.walk(parsed)) > _MAX_EXPRESSION_NODES:
+        raise ValueError("calculator_expression_too_complex")
+    try:
+        return str(_eval_arithmetic(parsed))
+    except (OverflowError, RecursionError, ZeroDivisionError) as error:
+        raise ValueError("calculator_expression_invalid") from error
 
 
 def _annotations(
@@ -88,7 +125,10 @@ def general_tool_operation_definitions() -> list[OperationDefinition]:
             description="Evaluate a basic arithmetic expression and return the numeric result.",
             parameters_schema={
                 "type": "object",
-                "properties": {"expression": {"type": "string"}},
+                "properties": {"expression": {
+                    "type": "string", "minLength": 1,
+                    "maxLength": _MAX_EXPRESSION_LENGTH,
+                }},
                 "required": ["expression"],
                 "additionalProperties": False,
             },

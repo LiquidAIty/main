@@ -3,11 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentCardRuntimeOptions } from '../../types/agentgraph';
 import './CardScriptEditor.css';
 
-type MonacoApi = typeof import('monaco-editor/esm/vs/editor/editor.api');
-type MonacoEditor = import('monaco-editor/esm/vs/editor/editor.api').editor.IStandaloneCodeEditor;
-type MonacoModel = import('monaco-editor/esm/vs/editor/editor.api').editor.ITextModel;
-type MonacoViewState = import('monaco-editor/esm/vs/editor/editor.api').editor.ICodeEditorViewState;
-type MonacoDisposable = import('monaco-editor/esm/vs/editor/editor.api').IDisposable;
+type MonacoApi = typeof import('monaco-editor/editor/editor.api');
+type MonacoEditor = import('monaco-editor/editor/editor.api').editor.IStandaloneCodeEditor;
+type MonacoModel = import('monaco-editor/editor/editor.api').editor.ITextModel;
+type MonacoViewState = import('monaco-editor/editor/editor.api').editor.ICodeEditorViewState;
+type MonacoDisposable = import('monaco-editor/editor/editor.api').IDisposable;
 type MonacoWorkerHost = typeof globalThis & {
   MonacoEnvironment?: { getWorker(_moduleId: string, _label: string): Worker };
 };
@@ -204,12 +204,12 @@ output.emit({"result": result})
 
 async function loadMonaco(): Promise<MonacoApi> {
   if (!monacoLoadPromise) {
-    monacoLoadPromise = import('monaco-editor/esm/vs/editor/editor.worker?worker').then(async (workerModule) => {
+    monacoLoadPromise = import('monaco-editor/editor/editor.worker?worker').then(async (workerModule) => {
       const workerHost = globalThis as MonacoWorkerHost;
       workerHost.MonacoEnvironment ||= { getWorker: () => new workerModule.default() };
       const [monaco] = await Promise.all([
-        import('monaco-editor/esm/vs/editor/editor.api'),
-        import('monaco-editor/esm/vs/basic-languages/python/python.contribution.js'),
+        import('monaco-editor/editor/editor.api'),
+        import('monaco-editor/languages/definitions/python/register.js'),
       ]);
       monaco.editor.defineTheme(THEME_NAME, {
         base: 'vs-dark',
@@ -267,17 +267,17 @@ async function loadMonaco(): Promise<MonacoApi> {
 async function loadMonacoFeatures(): Promise<void> {
   if (!monacoFeatureLoadPromise) {
     monacoFeatureLoadPromise = Promise.all([
-      import('monaco-editor/esm/vs/editor/contrib/find/browser/findController.js'),
-      import('monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js'),
-      import('monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching.js'),
-      import('monaco-editor/esm/vs/editor/contrib/multicursor/browser/multicursor.js'),
-      import('monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController.js'),
-      import('monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution.js'),
-      import('monaco-editor/esm/vs/editor/contrib/parameterHints/browser/parameterHints.js'),
-      import('monaco-editor/esm/vs/editor/contrib/gotoSymbol/browser/goToCommands.js'),
-      import('monaco-editor/esm/vs/editor/contrib/quickAccess/browser/commandsQuickAccess.js'),
-      import('monaco-editor/esm/vs/editor/contrib/quickAccess/browser/gotoLineQuickAccess.js'),
-      import('monaco-editor/esm/vs/editor/contrib/quickAccess/browser/gotoSymbolQuickAccess.js'),
+      import('monaco-editor/editor/contrib/find/browser/findController.js'),
+      import('monaco-editor/editor/contrib/folding/browser/folding.js'),
+      import('monaco-editor/editor/contrib/bracketMatching/browser/bracketMatching.js'),
+      import('monaco-editor/editor/contrib/multicursor/browser/multicursor.js'),
+      import('monaco-editor/editor/contrib/suggest/browser/suggestController.js'),
+      import('monaco-editor/editor/contrib/hover/browser/hoverContribution.js'),
+      import('monaco-editor/editor/contrib/parameterHints/browser/parameterHints.js'),
+      import('monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js'),
+      import('monaco-editor/editor/contrib/quickAccess/browser/commandsQuickAccess.js'),
+      import('monaco-editor/editor/contrib/quickAccess/browser/gotoLineQuickAccess.js'),
+      import('monaco-editor/editor/contrib/quickAccess/browser/gotoSymbolQuickAccess.js'),
     ]).then(() => undefined).catch((error) => {
       monacoFeatureLoadPromise = null;
       throw error;
@@ -286,7 +286,7 @@ async function loadMonacoFeatures(): Promise<void> {
   return monacoFeatureLoadPromise;
 }
 
-function editorOptions(): import('monaco-editor/esm/vs/editor/editor.api').editor.IStandaloneEditorConstructionOptions {
+function editorOptions(): import('monaco-editor/editor/editor.api').editor.IStandaloneEditorConstructionOptions {
   return {
     language: 'python',
     theme: THEME_NAME,
@@ -421,7 +421,7 @@ function markerForError(
   monaco: MonacoApi,
   model: MonacoModel,
   message: string,
-): import('monaco-editor/esm/vs/editor/editor.api').editor.IMarkerData {
+): import('monaco-editor/editor/editor.api').editor.IMarkerData {
   const position = /:(\d+):(\d+)(?::|$)/.exec(message);
   const line = Math.min(model.getLineCount(), Math.max(1, Number(position?.[1] || 1)));
   const column = Math.min(model.getLineMaxColumn(line), Math.max(1, Number(position?.[2] || 1)));
@@ -749,7 +749,7 @@ export function CardScriptEditor({
       disposables.push(monaco.languages.registerDocumentSymbolProvider('python', {
         provideDocumentSymbols(currentModel) {
           if (currentModel.uri.toString() !== sourceModel.uri.toString()) return [];
-          const symbols: import('monaco-editor/esm/vs/editor/editor.api').languages.DocumentSymbol[] = [];
+          const symbols: import('monaco-editor/editor/editor.api').languages.DocumentSymbol[] = [];
           for (let lineNumber = 1; lineNumber <= currentModel.getLineCount(); lineNumber += 1) {
             const line = currentModel.getLineContent(lineNumber).trim();
             const label = SCRIPT_SECTIONS.find((section) => line === `# region ${section}`);

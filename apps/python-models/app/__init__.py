@@ -1,3 +1,6 @@
+# Entity: Python Rails
+# Relationship: Establishes the Python application as a regular package so its modules win deterministic import resolution over the separate KnowGraph app module.
+
 # Python rails application package.
 #
 # This file makes ``app`` a REGULAR package (not an implicit namespace package). It is the durable

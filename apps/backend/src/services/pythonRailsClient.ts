@@ -10,9 +10,23 @@ function pythonRailsBaseUrl(): string {
   return configured;
 }
 
-function isRetryablePythonRailsError(error: any): boolean {
+const PYTHON_RAILS_TRANSPORT_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+function isPythonRailsTransportError(error: any, timedOut: boolean): boolean {
+  if (timedOut || error?.name === 'AbortError' || error?.name === 'TimeoutError') return true;
   const code = String(error?.cause?.code || error?.code || '').trim();
-  return code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
+  return PYTHON_RAILS_TRANSPORT_CODES.has(code);
 }
 
 export class PythonRailsHttpError extends Error {
@@ -29,6 +43,24 @@ export class PythonRailsHttpError extends Error {
   }
 }
 
+export class PythonRailsResponseError extends Error {
+  readonly code = 'PYTHON_RAILS_RESPONSE_INVALID';
+
+  constructor(cause: unknown) {
+    super('python_rails_response_invalid_json', { cause });
+    this.name = 'PythonRailsResponseError';
+  }
+}
+
+export class PythonRailsUnavailableError extends Error {
+  readonly code = 'PYTHON_RAILS_UNAVAILABLE';
+
+  constructor(readonly baseUrl: string, cause: unknown) {
+    super(`PYTHON_RAILS_UNAVAILABLE: baseUrl=${baseUrl}`, { cause });
+    this.name = 'PythonRailsUnavailableError';
+  }
+}
+
 /** Transport-only request to the long-lived Python rails service. */
 export async function requestPythonRailsJson(
   endpointPath: string,
@@ -40,7 +72,11 @@ export async function requestPythonRailsJson(
   const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
     ? requestedTimeout
     : 120_000;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
     const baseUrl = pythonRailsBaseUrl();
     try {
@@ -52,7 +88,7 @@ export async function requestPythonRailsJson(
           data = JSON.parse(text);
         } catch (error) {
           if (response.ok) {
-            throw new Error('python_rails_response_invalid_json', { cause: error });
+            throw new PythonRailsResponseError(error);
           }
         }
       }
@@ -64,13 +100,13 @@ export async function requestPythonRailsJson(
       }
       return data;
     } catch (error: any) {
-      if (!isRetryablePythonRailsError(error)) throw error;
+      if (!isPythonRailsTransportError(error, timedOut)) throw error;
       console.error('[PYTHON_RAILS]', {
         runtime: 'failed_missing_python_rails',
         baseUrl,
         error: String(error?.message || error || 'unknown'),
       });
-      throw new Error(`PYTHON_RAILS_UNAVAILABLE: baseUrl=${baseUrl}`, { cause: error });
+      throw new PythonRailsUnavailableError(baseUrl, error);
     }
   } finally {
     clearTimeout(timeout);

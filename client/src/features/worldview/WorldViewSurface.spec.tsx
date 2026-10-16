@@ -556,11 +556,11 @@ describe('WorldView direct source presentation', () => {
         mainReason: null,
         updatedAt: '2026-09-27T00:00:00.000Z',
       }, {
-        capabilityId: 'Earthquakes',
+        capabilityId: 'earthquakes.archive',
         enabled: false,
         controlledBy: 'main',
         lastOrigin: 'main',
-        mainReason: 'Label-shaped ID must not match.',
+        mainReason: 'Another exact capability ID must not match.',
         updatedAt: '2026-09-27T00:00:00.000Z',
       }] : [{
         capabilityId: 'earthquakes',

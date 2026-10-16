@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { prisma } from '../services/database';
 
 const SALT_ROUNDS = 10;
+const ABSENT_USER_PASSWORD_HASH = '$2b$10$aQHG61.KkNsZA/pbj4jqoergQ1tb78Ogu4oVibCa9gLoPlHPHzDoy';
 
 export interface User {
   id: string;
@@ -13,7 +14,7 @@ export interface User {
 
 export async function createUser(email: string, password: string, name?: string): Promise<User> {
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
-  
+
   const user = await prisma.user.create({
     data: {
       email,
@@ -75,14 +76,20 @@ export async function verifyPassword(email: string, password: string): Promise<U
     where: { email },
   });
 
-  if (!user) {
+  const isValid = await bcrypt.compare(
+    password,
+    user?.password || ABSENT_USER_PASSWORD_HASH,
+  );
+
+  if (!user || !isValid) {
     return null;
   }
 
-  const isValid = await bcrypt.compare(password, user.password);
-  
-  if (!isValid) {
-    return null;
+  if (bcrypt.getRounds(user.password) < SALT_ROUNDS) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: await bcrypt.hash(password, SALT_ROUNDS) },
+    });
   }
 
   return {

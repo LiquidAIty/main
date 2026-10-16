@@ -163,6 +163,14 @@ export async function discardFreshProject(projectId: string, ownerUserId: string
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const ownedProject = await client.query(
+      `SELECT id
+       FROM ${PROJECTS_TABLE}
+       WHERE id=$1 AND owner_user_id=$2
+       FOR UPDATE`,
+      [projectId, ownerUserId],
+    );
+    if (!ownedProject.rows.length) throw new Error('project_not_found');
     await client.query(
       `DELETE FROM ag_catalog.deck_card_memberships WHERE project_id=$1`,
       [projectId],
@@ -250,7 +258,6 @@ export async function listSavedCardsForProject(
   deckId: string,
   ownerUserId: string,
 ): Promise<SavedCardChoice[]> {
-  const systemIds = DEFAULT_PROJECT_CARDS.map((card) => card.cardId);
   const { rows } = await pool.query(
     `WITH candidates AS (
        SELECT source_card.card_id, source_card.current_revision_id,
@@ -267,7 +274,6 @@ export async function listSavedCardsForProject(
        JOIN ag_catalog.projects AS source_project
          ON source_project.id=source_card.project_id
        WHERE source_project.owner_user_id=$3
-          OR source_card.card_id=ANY($4::text[])
      )
      SELECT candidate.card_id, candidate.current_revision_id::text,
             candidate.title, candidate.subtitle, candidate.runtime_profile
@@ -289,7 +295,7 @@ export async function listSavedCardsForProject(
            )
        )
      ORDER BY candidate.title, candidate.card_id`,
-    [projectId, deckId, ownerUserId, systemIds],
+    [projectId, deckId, ownerUserId],
   );
   return rows.map((row) => ({
     cardId: String(row.card_id),
@@ -315,12 +321,19 @@ export async function attachSavedCardToProject(
   try {
     await client.query('BEGIN');
     const requestedRevision = await client.query(
-      `SELECT runtime_profile
-       FROM ag_catalog.agent_card_revisions
-       WHERE revision_id=$1 AND card_id=$2
-         AND runtime_kind='hermes'
-         AND NULLIF(BTRIM(runtime_profile), '') IS NOT NULL`,
-      [input.cardRevisionId, input.cardId],
+      `SELECT revision.runtime_profile
+       FROM ag_catalog.agent_card_revisions AS revision
+       JOIN ag_catalog.agent_cards AS source_card
+         ON source_card.current_revision_id=revision.revision_id
+        AND source_card.card_id=revision.card_id
+       JOIN ag_catalog.projects AS source_project
+         ON source_project.id=source_card.project_id
+       WHERE revision.revision_id=$1 AND revision.card_id=$2
+         AND source_project.owner_user_id=$3
+         AND revision.runtime_kind='hermes'
+         AND NULLIF(BTRIM(revision.runtime_profile), '') IS NOT NULL
+       LIMIT 1`,
+      [input.cardRevisionId, input.cardId, ownerUserId],
     );
     if (!requestedRevision.rows.length) throw new Error('saved_card_not_available');
     const runtimeProfile = String(requestedRevision.rows[0].runtime_profile);
@@ -329,7 +342,6 @@ export async function attachSavedCardToProject(
     // Card Save and membership creation share this profile lock. The current
     // binding is re-read after the lock so an attachment cannot reintroduce a
     // revision that a concurrent Save has already superseded.
-    const systemIds = DEFAULT_PROJECT_CARDS.map((card) => card.cardId);
     const candidates = await client.query(
       `SELECT source_card.card_id, source_card.current_revision_id,
               revision.runtime_profile
@@ -338,14 +350,13 @@ export async function attachSavedCardToProject(
          ON revision.revision_id=source_card.current_revision_id
        JOIN ag_catalog.projects AS source_project
          ON source_project.id=source_card.project_id
-       WHERE (source_project.owner_user_id=$1
-              OR source_card.card_id=ANY($2::text[]))
-         AND revision.runtime_profile=$3
+       WHERE source_project.owner_user_id=$1
+         AND revision.runtime_profile=$2
        ORDER BY revision.created_at DESC,
                 revision.revision_number DESC,
                 revision.revision_id DESC
        FOR SHARE OF source_card`,
-      [ownerUserId, systemIds, runtimeProfile],
+      [ownerUserId, runtimeProfile],
     );
     const canonical = candidates.rows[0];
     if (!canonical

@@ -1,12 +1,3 @@
-// @graph entity: ToolCatalogMcpClient
-// @graph role: backend-client-to-canonical-mcp-catalog
-//
-// The backend client for the one supervised Python MCP host. It reads the
-// authenticated canonical tool catalog and never executes a Card or tool.
-// One lazy authenticated HTTP connection
-// (official @modelcontextprotocol/sdk client); a dead transport is honestly
-// re-created on the NEXT call — a failed call itself is never retried.
-
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
@@ -18,6 +9,8 @@ let clientPromise: Promise<Client> | null = null;
 
 const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 500;
 const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm', 'graphiti']);
+const MAX_CATALOG_PAGES = 100;
+const MAX_CATALOG_TOOLS = 10_000;
 
 async function connect(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
@@ -133,7 +126,7 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
         || dispatcherContextArguments.some((field) => typeof field !== 'string' || !field)
         || !serverInjectedArguments.every((field) => dispatcherContextArguments.includes(field))
         || !dispatcherOwner
-        || typeof authenticatedProjection !== 'boolean'
+        || authenticatedProjection !== true
       ) {
         throw new Error(`tool_catalog_source_metadata_invalid: ${tool.name}`);
       }
@@ -180,20 +173,38 @@ export async function listToolCatalog(
   failures?: Record<string, string>,
 ): Promise<ToolCatalogDescriptor[]> {
   const client = await getClient();
-  const result = await client.listTools();
   const tools: ToolCatalogDescriptor[] = [];
-  for (const raw of result.tools || []) {
-    try {
-      tools.push(parseToolCatalogDescriptor(raw));
-    } catch (error) {
-      if (!failures) throw error;
-      const name = String(raw?.name || '').trim() || `catalog-entry-${tools.length}`;
-      failures[name] = error instanceof Error
-        ? error.message
-        : `tool_catalog_contract_invalid:${name}`;
+  const seenNames = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_CATALOG_PAGES; page += 1) {
+    const result = await client.listTools(cursor ? { cursor } : undefined);
+    for (const raw of result.tools || []) {
+      const rawName = String(raw?.name || '').trim();
+      if (rawName && seenNames.has(rawName)) {
+        throw new Error(`tool_catalog_duplicate_name:${rawName}`);
+      }
+      if (rawName) seenNames.add(rawName);
+      try {
+        tools.push(parseToolCatalogDescriptor(raw));
+      } catch (error) {
+        if (!failures) throw error;
+        const name = rawName || `catalog-entry-${tools.length}`;
+        failures[name] = error instanceof Error
+          ? error.message
+          : `tool_catalog_contract_invalid:${name}`;
+      }
+      if (tools.length > MAX_CATALOG_TOOLS) {
+        throw new Error('tool_catalog_tool_limit_exceeded');
+      }
     }
+    const nextCursor = String(result.nextCursor || '').trim();
+    if (!nextCursor) return tools.sort((left, right) => left.name.localeCompare(right.name));
+    if (seenCursors.has(nextCursor)) throw new Error('tool_catalog_cursor_cycle');
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
   }
-  return tools.sort((left, right) => left.name.localeCompare(right.name));
+  throw new Error('tool_catalog_page_limit_exceeded');
 }
 
 async function readToolCatalogReadiness(): Promise<{

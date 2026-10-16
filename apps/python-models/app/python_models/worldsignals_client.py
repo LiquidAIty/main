@@ -6,11 +6,13 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from app.python_models.signal_contracts import (
     SignalPackage,
@@ -21,6 +23,73 @@ from app.python_models.signal_contracts import (
 
 class WorldSignalsError(RuntimeError):
     pass
+
+
+_MAX_REQUEST_BYTES = 256 * 1024
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_MAX_SSE_BYTES = 1024 * 1024
+_COMMAND_ID = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+_URL_OPENER = build_opener(_RejectRedirects())
+
+
+def _canonical_command(value: Any) -> str:
+    if not isinstance(value, str):
+        raise WorldSignalsError("worldsignals_command_invalid")
+    command = value.strip().lower()
+    if _COMMAND_ID.fullmatch(command) is None:
+        raise WorldSignalsError("worldsignals_command_invalid")
+    return command
+
+
+def _credential_key(value: Any) -> bool:
+    normalized = "".join(character for character in str(value).lower() if character.isalnum())
+    return any(marker in normalized for marker in (
+        "apikey", "accesstoken", "refreshtoken", "authorization",
+        "password", "clientsecret", "privatekey",
+    )) or normalized.endswith(("secret", "token"))
+
+
+def _assert_secret_free_arguments(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _credential_key(key):
+                raise WorldSignalsError("worldsignals_argument_secret_forbidden")
+            _assert_secret_free_arguments(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_secret_free_arguments(item)
+
+
+def _validated_base_url(value: str, secret: str) -> str:
+    raw = str(value or "").strip()
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as error:
+        raise WorldSignalsError("worldsignals_backend_url_invalid") from error
+    loopback = parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+    if (
+        parsed.scheme not in {"http", "https"}
+        or (parsed.scheme == "http" and not loopback)
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or port is None
+    ):
+        raise WorldSignalsError("worldsignals_backend_url_invalid")
+    if not loopback and len(secret) < 32:
+        raise WorldSignalsError("worldsignals_hmac_secret_required")
+    return raw.rstrip("/")
 
 
 # Capability boundary — enforced here, at the one chokepoint both the MCP host
@@ -57,19 +126,24 @@ def _extended_profile_enabled() -> bool:
     return str(os.environ.get("WORLDSIGNALS_EXTENDED_PROFILE", "")).strip().lower() in {"1", "true", "yes"}
 
 
-def _guard_command(command: str) -> None:
+def _guard_command(command: str) -> str:
+    command = _canonical_command(command)
     if command in WORLDSIGNALS_RESTRICTED_COMMANDS and not _extended_profile_enabled():
         raise WorldSignalsError(
             f"worldsignals_command_requires_extended_profile: '{command}' is a recon/SIGINT/"
             "mesh command outside the default mainstream WorldSignals profile. Enable it "
             "deliberately via WORLDSIGNALS_EXTENDED_PROFILE=1; it is not part of the automatic grant."
         )
+    return command
 
 
 class WorldSignalsClient:
     def __init__(self, base_url: str | None = None, secret: str | None = None) -> None:
-        self.base_url = (base_url or os.environ.get("WORLDSIGNALS_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
         self.secret = secret if secret is not None else self._configured_secret()
+        self.base_url = _validated_base_url(
+            base_url or os.environ.get("WORLDSIGNALS_BACKEND_URL") or "http://127.0.0.1:8000",
+            self.secret,
+        )
 
     @staticmethod
     def _configured_secret() -> str:
@@ -96,7 +170,15 @@ class WorldSignalsClient:
         return headers
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        body = b"" if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        _assert_secret_free_arguments(payload)
+        try:
+            body = b"" if payload is None else json.dumps(
+                payload, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise WorldSignalsError("worldsignals_request_invalid") from error
+        if len(body) > _MAX_REQUEST_BYTES:
+            raise WorldSignalsError("worldsignals_request_too_large")
         request = Request(
             f"{self.base_url}{path}",
             data=body if method.upper() != "GET" else None,
@@ -104,8 +186,11 @@ class WorldSignalsClient:
             method=method.upper(),
         )
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 — configured WorldSignals endpoint
-                decoded = json.loads(response.read().decode("utf-8"))
+            with _URL_OPENER.open(request, timeout=30) as response:
+                raw = response.read(_MAX_RESPONSE_BYTES + 1)
+                if len(raw) > _MAX_RESPONSE_BYTES:
+                    raise WorldSignalsError("worldsignals_response_too_large")
+                decoded = json.loads(raw.decode("utf-8"))
                 if not isinstance(decoded, dict):
                     raise WorldSignalsError("worldsignals_invalid_response")
                 return decoded
@@ -114,6 +199,8 @@ class WorldSignalsClient:
             raise WorldSignalsError(f"worldsignals_http_{err.code}: {detail}") from err
         except (URLError, TimeoutError) as err:
             raise WorldSignalsError(f"worldsignals_unreachable: {err}") from err
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as err:
+            raise WorldSignalsError("worldsignals_invalid_response") from err
 
     def capabilities(self) -> dict[str, Any]:
         return self.request("GET", "/api/ai/capabilities")
@@ -123,14 +210,15 @@ class WorldSignalsClient:
 
     def command_operation_classes(self, commands: list[str]) -> list[str]:
         """Resolve command read/write classes from the live canonical manifest."""
-        entries = self.tools().get("tools")
+        _version, entries = _validated_tool_manifest(self.tools())
         by_name = {
             str(entry.get("name") or ""): str(entry.get("type") or "").lower()
             for entry in entries or []
             if isinstance(entry, dict)
         }
         classes: list[str] = []
-        for command in commands:
+        for raw_command in commands:
+            command = _canonical_command(raw_command)
             operation_class = by_name.get(command)
             if operation_class not in {"read", "write"}:
                 raise WorldSignalsError(
@@ -140,13 +228,19 @@ class WorldSignalsClient:
         return classes
 
     def command(self, command: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        _guard_command(command)
+        command = _guard_command(command)
         return self.request("POST", "/api/ai/channel/command", {"cmd": command, "args": arguments or {}})
 
     def batch(self, commands: list[dict[str, Any]]) -> dict[str, Any]:
+        normalized: list[dict[str, Any]] = []
         for entry in commands:
-            _guard_command(str((entry or {}).get("cmd", "")))
-        return self.request("POST", "/api/ai/channel/batch", {"commands": commands})
+            if not isinstance(entry, dict):
+                raise WorldSignalsError("worldsignals_batch_invalid")
+            normalized.append({
+                **entry,
+                "cmd": _guard_command(entry.get("cmd")),
+            })
+        return self.request("POST", "/api/ai/channel/batch", {"commands": normalized})
 
     def poll(self) -> dict[str, Any]:
         return self.request("POST", "/api/ai/channel/poll", {})
@@ -156,11 +250,28 @@ class WorldSignalsClient:
         request = Request(f"{self.base_url}{path}", headers=self._headers("GET", path, b""), method="GET")
         events: list[dict[str, Any]] = []
         try:
-            with urlopen(request, timeout=max(1, min(timeout_seconds, 30))) as response:  # noqa: S310
+            deadline = time.monotonic() + max(1, min(timeout_seconds, 30))
+            total_bytes = 0
+            with _URL_OPENER.open(request, timeout=max(1, min(timeout_seconds, 30))) as response:
                 event_type = "message"
                 data: list[str] = []
                 while len(events) < max(1, min(max_events, 20)):
-                    line = response.readline().decode("utf-8", errors="replace").rstrip("\r\n")
+                    if time.monotonic() >= deadline:
+                        raise WorldSignalsError("worldsignals_sse_deadline")
+                    raw_line = response.readline()
+                    if not raw_line:
+                        if data:
+                            raw = "\n".join(data)
+                            try:
+                                payload = json.loads(raw)
+                            except json.JSONDecodeError:
+                                payload = raw
+                            events.append({"type": event_type, "data": payload})
+                        break
+                    total_bytes += len(raw_line)
+                    if total_bytes > _MAX_SSE_BYTES:
+                        raise WorldSignalsError("worldsignals_sse_too_large")
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
                     if line.startswith("event:"):
                         event_type = line[6:].strip()
                     elif line.startswith("data:"):
@@ -186,6 +297,47 @@ class WorldSignalsClient:
 _CAPABILITY_DECISION_KEYS = ("ok", "version", "routing")
 _TOOLS_DECISION_KEYS = ("ok", "version", "access_tier")
 _TOOL_DESCRIPTION_MAX = 240
+
+
+def _validated_tool_manifest(value: Any) -> tuple[str, list[dict[str, Any]]]:
+    if not isinstance(value, dict) or value.get("ok") is not True:
+        raise WorldSignalsError("worldsignals_manifest_invalid")
+    version = str(value.get("version") or "").strip()
+    entries = value.get("tools")
+    available = value.get("available_commands")
+    if (
+        not version
+        or not isinstance(entries, list)
+        or not isinstance(available, list)
+        or any(
+            not isinstance(name, str) or _COMMAND_ID.fullmatch(name) is None
+            for name in available
+        )
+        or len(available) != len(set(available))
+    ):
+        raise WorldSignalsError("worldsignals_manifest_invalid")
+    available_names = set(available)
+    accepted: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise WorldSignalsError("worldsignals_manifest_invalid")
+        name = str(entry.get("name") or "").strip().lower()
+        operation_type = str(entry.get("type") or "").strip().lower()
+        parameters = entry.get("parameters")
+        if (
+            _COMMAND_ID.fullmatch(name) is None
+            or name in seen
+            or operation_type not in {"read", "write"}
+            or (parameters is not None and not isinstance(parameters, dict))
+        ):
+            raise WorldSignalsError("worldsignals_manifest_invalid")
+        seen.add(name)
+        if name in available_names:
+            accepted.append({**entry, "name": name, "type": operation_type})
+    if not available_names.issubset(seen):
+        raise WorldSignalsError("worldsignals_manifest_invalid")
+    return version, accepted
 
 
 def _project_tool(entry: dict[str, Any]) -> dict[str, Any]:
@@ -244,15 +396,15 @@ def worldsignals_capabilities(
     raw_capabilities = client.capabilities()
     raw_tools = client.tools()
 
+    if not isinstance(raw_capabilities, dict) or raw_capabilities.get("ok") is not True:
+        raise WorldSignalsError("worldsignals_capabilities_invalid")
+    capability_version = str(raw_capabilities.get("version") or "").strip()
+    tool_version, manifest_entries = _validated_tool_manifest(raw_tools)
+    if not capability_version or capability_version != tool_version:
+        raise WorldSignalsError("worldsignals_manifest_version_mismatch")
+
     capabilities = {k: raw_capabilities[k] for k in _CAPABILITY_DECISION_KEYS if k in raw_capabilities}
     tools: dict[str, Any] = {k: raw_tools[k] for k in _TOOLS_DECISION_KEYS if k in raw_tools}
-
-    entries = raw_tools.get("tools")
-    manifest_entries = [
-        entry
-        for entry in (entries if isinstance(entries, list) else [])
-        if isinstance(entry, dict)
-    ]
     omitted_entries = [
         entry
         for entry in manifest_entries
@@ -402,6 +554,8 @@ def collect_worldsignals_signal_package(
     if operation_class != "read":
         raise WorldSignalsError(f"worldsignals_signal_query_requires_read_command:{query.command}")
     result = source_client.command(query.command, query.arguments)
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        raise WorldSignalsError("worldsignals_signal_command_failed")
     return package_signal_result(
         query=query,
         producer_card_id=producer_card_id,

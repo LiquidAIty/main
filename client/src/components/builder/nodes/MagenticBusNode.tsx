@@ -1,3 +1,8 @@
+/**
+ * Entity: Magnetic TaskGraph
+ * Relationship: Magnetic TaskGraph renders the bus Card as one compact canvas node with a direct orange Card target and paired blue worker-availability connection handles.
+ */
+
 import { Handle, Position } from '@xyflow/react';
 
 const leftHandles = [

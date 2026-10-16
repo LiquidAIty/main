@@ -4,6 +4,10 @@ The Decisions transport rounds probabilities and Scores to two decimal places.
 Validation therefore proves that the returned numbers could represent one real
 distribution without rewriting the provider's raw values.
 """
+
+# Entity: Jev Decisions
+# Relationship: Jev Decisions validates rounded provider probability distributions and confirms that a selected winner can remain maximal within the transport's numeric precision.
+
 from __future__ import annotations
 
 import math

@@ -2,17 +2,23 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./projectAccess', () => ({
+const mocks = vi.hoisted(() => ({
   requireOwnedProject: vi.fn(async () => ({ ownerUserId: 'owner-one' })),
 }));
 
-import { requestPythonRailsJson } from '../services/pythonRailsClient';
+vi.mock('./projectAccess', () => ({
+  requireOwnedProject: mocks.requireOwnedProject,
+}));
+
+import { PythonRailsHttpError, requestPythonRailsJson } from '../services/pythonRailsClient';
 import { createJevGraphFocusRouter } from './jevGraphFocus.routes';
 
 const closers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   await Promise.all(closers.splice(0).map(close => close()));
+  mocks.requireOwnedProject.mockReset();
+  mocks.requireOwnedProject.mockResolvedValue({ ownerUserId: 'owner-one' });
 });
 
 function focusRequest() {
@@ -80,7 +86,12 @@ describe('bounded JevFocus transport', () => {
       decisionId: 'decision-one',
       errorCode: null,
       distribution: { focus_one: 1 },
-      candidates: [],
+      candidates: [{
+        choiceId: 'focus_one',
+        probability: 1,
+        rank: 1,
+        selected: true,
+      }],
     };
     const requestRails = vi.fn<typeof requestPythonRailsJson>(async () => result);
     const { base } = await serve(requestRails);
@@ -115,9 +126,11 @@ describe('bounded JevFocus transport', () => {
     expect(requestRails).not.toHaveBeenCalled();
   });
 
-  it('returns a truthful empty fallback when Python rails is unavailable', async () => {
+  it('returns an HTTP failure instead of a success-shaped fallback when Python rails is unavailable', async () => {
     const requestRails = vi.fn<typeof requestPythonRailsJson>(async () => {
-      throw new Error('PYTHON_RAILS_UNAVAILABLE');
+      throw Object.assign(new Error('PYTHON_RAILS_UNAVAILABLE'), {
+        code: 'PYTHON_RAILS_UNAVAILABLE',
+      });
     });
     const { base } = await serve(requestRails);
     const response = await fetch(`${base}/jev-focus`, {
@@ -126,16 +139,59 @@ describe('bounded JevFocus transport', () => {
       body: JSON.stringify(focusRequest()),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
-      schemaVersion: 'jev-focus.v1',
-      sourceRevision: 'combined-projection:17',
-      status: 'unavailable',
-      decisionId: null,
-      errorCode: 'jev_focus_python_rails_unavailable',
-      distribution: {},
-      candidates: [],
+      error: 'jev_focus_python_rails_unavailable',
     });
     expect(requestRails).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a wrong-revision or malformed Python response', async () => {
+    const requestRails = vi.fn<typeof requestPythonRailsJson>(async () => ({
+      schemaVersion: 'jev-focus.v1',
+      sourceRevision: 'other-revision',
+      status: 'success',
+      decisionId: 'decision-one',
+      errorCode: null,
+      distribution: { focus_one: 2 },
+      candidates: [],
+    }));
+    const { base } = await serve(requestRails);
+    const response = await fetch(`${base}/jev-focus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(focusRequest()),
+    });
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: 'jev_focus_response_invalid' });
+  });
+
+  it('preserves authorization and typed Python HTTP failures', async () => {
+    const requestRails = vi.fn<typeof requestPythonRailsJson>(async () => {
+      throw new PythonRailsHttpError(429, 'provider_rate_limited');
+    });
+    mocks.requireOwnedProject.mockImplementationOnce(async () => {
+      throw new Error('database_unavailable');
+    });
+    const { base } = await serve(requestRails);
+    const denied = await fetch(`${base}/jev-focus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(focusRequest()),
+    });
+    expect(denied.status).toBe(500);
+    expect(await denied.json()).toEqual({ error: 'project_authorization_failed' });
+    expect(requestRails).not.toHaveBeenCalled();
+
+    const limited = await fetch(`${base}/jev-focus`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(focusRequest()),
+    });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({
+      error: 'python_rails_http_429',
+    });
   });
 });

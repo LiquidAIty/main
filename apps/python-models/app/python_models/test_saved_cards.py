@@ -299,7 +299,7 @@ def test_revision_insert_preserves_reasoning_setting() -> None:
 
 
 
-def test_card_save_advances_every_exact_reused_revision_and_ensures_age_presence(
+def test_card_save_forks_reused_revision_for_exact_project_and_ensures_age_presence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements: list[tuple[str, object]] = []
@@ -322,22 +322,11 @@ def test_card_save_advances_every_exact_reused_revision_and_ensures_age_presence
         def fetchone(self):
             if "SELECT 1 FROM ag_catalog.agent_decks" in self.last_query:
                 return {"exists": 1}
-            if "MAX(lineage.revision_number)" in self.last_query:
-                return {
-                    "project_id": "canonical-project",
-                    "deck_id": "canonical-deck",
-                    "card_id": "card-helper",
-                    "latest_revision_number": 7,
-                }
+            if "COALESCE(MAX(revision_number), 0)" in self.last_query:
+                return {"latest_revision_number": 0}
+            if "RETURNING current_revision_id" in self.last_query:
+                return {"current_revision_id": "revision-new"}
             return None
-
-        def fetchall(self):
-            if "RETURNING project_id::text, deck_id" in self.last_query:
-                return [
-                    {"project_id": "project-one", "deck_id": "deck-one"},
-                    {"project_id": "project-two", "deck_id": "deck-two"},
-                ]
-            return []
 
     class Connection:
         committed = False
@@ -396,7 +385,7 @@ def test_card_save_advances_every_exact_reused_revision_and_ensures_age_presence
     assert result["meta"]["deckRevision"] == "next-deck-revision"
     assert connection.committed is True
     assert ensured == [("project-one", "deck-one", "card-helper")]
-    assert inserted == [("canonical-project", "canonical-deck", "card-helper", 8)]
+    assert inserted == [("project-one", "deck-one", "card-helper", 1)]
     profile_lock_index = next(
         index for index, (query, _params) in enumerate(statements)
         if "pg_advisory_xact_lock" in query
@@ -409,25 +398,33 @@ def test_card_save_advances_every_exact_reused_revision_and_ensures_age_presence
         index for index, (query, _params) in enumerate(statements)
         if "agent_decks" in query and "FOR UPDATE" in query
     )
-    revision_owner_read_index = next(
+    revision_lineage_read_index = next(
         index for index, (query, _params) in enumerate(statements)
-        if "MAX(lineage.revision_number)" in query
+        if "COALESCE(MAX(revision_number), 0)" in query
     )
     revision_update_index = next(
         index for index, (query, _params) in enumerate(statements)
-        if "WHERE card_id=%s AND current_revision_id=%s" in query
+        if "WHERE project_id=%s AND deck_id=%s AND card_id=%s" in query
+        and "current_revision_id=%s" in query
     )
     assert profile_lock_index < profile_binding_read_index < deck_lock_index
-    assert deck_lock_index < revision_owner_read_index
+    assert deck_lock_index < revision_lineage_read_index
     assert profile_lock_index < revision_update_index
-    propagation = next(
+    scoped_update = next(
         (query, params)
         for query, params in statements
-        if "WHERE card_id=%s AND current_revision_id=%s" in query
+        if "WHERE project_id=%s AND deck_id=%s AND card_id=%s" in query
+        and "current_revision_id=%s" in query
     )
-    assert propagation[1] == ("revision-new", "card-helper", "revision-old")
-    assert any(
-        params is not None and tuple(params)[-2:] == ("project-two", "deck-two")
-        for query, params in statements
-        if "UPDATE ag_catalog.agent_decks" in query
+    assert scoped_update[1] == (
+        "revision-new",
+        "project-one",
+        "deck-one",
+        "card-helper",
+        "revision-old",
+    )
+    assert "RETURNING current_revision_id" in scoped_update[0]
+    assert not any(
+        params is not None and "project-two" in tuple(params)
+        for _query, params in statements
     )

@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldSignals
+ * Relationship: WorldSignals reports whether its backend and embedded client bundle are available, preserving disabled, offline, and error states for the UI.
+ */
+
 import { Router } from 'express';
 import { resolveEmbedBundleFreshness } from '../services/worldsignalsEmbedFreshness';
 

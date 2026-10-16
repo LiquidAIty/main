@@ -1,8 +1,14 @@
+import { createHash, randomBytes } from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { User } from './userService';
 import { prisma } from '../services/database';
 
 const LOCAL_USER_EMAIL = 'local-user@localhost';
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function sessionDigest(sessionId: string): string {
+  return createHash('sha256').update(sessionId, 'utf8').digest('hex');
+}
 
 export interface Session {
   id: string;
@@ -11,22 +17,25 @@ export interface Session {
 }
 
 export async function createSession(userId: string): Promise<Session> {
+  const sessionId = randomBytes(32).toString('hex');
   const session = await prisma.session.create({
     data: {
+      id: sessionDigest(sessionId),
       userId,
     },
   });
 
   return {
-    id: session.id,
+    id: sessionId,
     userId: session.userId,
     createdAt: session.createdAt,
   };
 }
 
 export async function getUserBySessionId(sessionId: string): Promise<User | null> {
+  const digest = sessionDigest(sessionId);
   const session = await prisma.session.findUnique({
-    where: { id: sessionId },
+    where: { id: digest },
     include: {
       user: {
         select: {
@@ -42,15 +51,21 @@ export async function getUserBySessionId(sessionId: string): Promise<User | null
   if (!session) {
     return null;
   }
+  if (Date.now() - session.createdAt.getTime() >= SESSION_MAX_AGE_MS) {
+    await prisma.session.delete({ where: { id: digest } }).catch((error: any) => {
+      if (String(error?.code || '') !== 'P2025') throw error;
+    });
+    return null;
+  }
 
   return session.user;
 }
 
 export async function removeSession(sessionId: string): Promise<void> {
   await prisma.session.delete({
-    where: { id: sessionId },
-  }).catch(() => {
-    // Session might not exist, ignore error
+    where: { id: sessionDigest(sessionId) },
+  }).catch((error: any) => {
+    if (String(error?.code || '') !== 'P2025') throw error;
   });
 }
 
@@ -78,7 +93,7 @@ export function setSessionCookie(res: Response, sessionId: string, req?: Request
     secure: shouldUseSecureCookie(req),
     sameSite: 'lax',
     path: '/',
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    maxAge: SESSION_MAX_AGE_MS,
   });
 }
 

@@ -1,3 +1,8 @@
+/**
+ * Entity: Development Tooling
+ * Relationship: Development Tooling defines the backend Vitest project, Node environment, spec discovery, and integration-test timeout loaded by the root workspace.
+ */
+
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({

@@ -157,9 +157,7 @@ def finalize_provider_catalog(tools: list[Tool]) -> list[Tool]:
 
 
 def complete_catalog(application_catalog: list[Tool], provider_catalog: list[Tool]) -> list[Tool]:
-    tools = list(application_catalog)
-    existing_names = {tool.name for tool in tools}
-    tools.extend(tool for tool in provider_catalog if tool.name not in existing_names)
+    tools = [*application_catalog, *provider_catalog]
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})

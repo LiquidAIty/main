@@ -15,7 +15,7 @@ import {
   type EdgeChange,
   type Node,
   type NodeChange,
-  type NodeMouseHandler,
+  type OnNodeDrag,
   type OnReconnect,
   type ReactFlowInstance,
 } from '@xyflow/react';
@@ -762,7 +762,7 @@ export default function BuilderCanvas({
     }));
   };
 
-  const onNodeDragStop: NodeMouseHandler = (_event, draggedNode) => {
+  const onNodeDragStop: OnNodeDrag = (_event, draggedNode) => {
     const previous = latestDocumentRef.current.nodes.find((node) => node.id === draggedNode.id);
     if (
       previous &&

@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Subsystems
+ * Relationship: Card Subsystems reads tolerant client presentation attachments, normalizes their identity and capability contracts, and filters invalid or duplicate saved records.
+ */
+
 import type { AgentCardRuntimeOptions, CardSubsystemAttachment } from '../../../types/agentgraph';
 
 const CAPABILITIES = new Set(['state', 'events', 'commands', 'artifacts', 'readiness']);

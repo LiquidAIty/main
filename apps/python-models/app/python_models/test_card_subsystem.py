@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Entity: Card Subsystems
+# Relationship: Card Subsystems verifies product-neutral Python attachment normalization and rejects undeclared capabilities without inferring domain behavior from subsystem identity.
+
 import pytest
 
 from app.python_models.card_subsystem import normalize_card_subsystems

@@ -66,8 +66,7 @@ export function useBuilderProjects({
       const payload = await guardedRequest({
         key: "projects:list:all",
         method: "GET",
-        ttlMs: 3_000,
-        bypassCache: reason === "after-create" || reason === "after-delete",
+        dedupe: false,
         signal: controller.signal,
         fetcher: async (signal) => {
           const response = await fetch(endpoint, { signal });

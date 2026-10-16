@@ -56,7 +56,19 @@ router.post('/', async (req, res) => {
         { expectedRevision: loaded.meta.deckRevision },
       );
     } catch (error) {
-      await discardFreshProject(project.id, ownerUserId).catch(() => undefined);
+      try {
+        await discardFreshProject(project.id, ownerUserId);
+      } catch (compensationError) {
+        console.error('[PROJECT_CREATE] compensation failed', {
+          projectId: project.id,
+          errorClass: compensationError instanceof Error
+            ? compensationError.constructor.name
+            : 'UnknownError',
+        });
+        throw new Error('project_initialization_compensation_failed', {
+          cause: error,
+        });
+      }
       throw error;
     }
     return res.json({ ok: true, project });
@@ -75,7 +87,7 @@ router.delete('/:projectId', async (req, res) => {
     await client.query('BEGIN');
     const result = await client.query(
       'DELETE FROM ag_catalog.projects WHERE id = $1 AND owner_user_id = $2 RETURNING id',
-      [projectId, access.ownerUserId],
+      [access.projectId, access.ownerUserId],
     );
 
     if (result.rowCount === 0) {
@@ -84,7 +96,7 @@ router.delete('/:projectId', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    return res.json({ ok: true, deleted: projectId });
+    return res.json({ ok: true, deleted: access.projectId });
   } catch (err: any) {
     await client?.query('ROLLBACK').catch(() => undefined);
     if (String(err?.code || '') === '23503') {

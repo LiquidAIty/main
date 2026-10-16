@@ -10,13 +10,13 @@ PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
 DECK_ID = "deck_builder"
 
 
-def test_postgres_connection_names_missing_injected_password(monkeypatch) -> None:
+def test_postgres_connection_requires_the_canonical_database_url(monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL_FILE", raising=False)
     monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
     monkeypatch.delenv("POSTGRES_PASSWORD_FILE", raising=False)
     monkeypatch.setattr(provider_config, "_env_loaded", True)
-    with pytest.raises(RuntimeError, match="missing_required_config: POSTGRES_PASSWORD"):
+    with pytest.raises(RuntimeError, match="missing_required_config: DATABASE_URL"):
         connect_postgres()
 
 

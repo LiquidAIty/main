@@ -1,8 +1,3 @@
-// @graph entity: BuilderDeckPersistenceActions
-// @graph role: deck-save-actions
-// @graph relates_to: AgentBuilderWorkspace
-// @graph depends_on: React
-// @graph feeds_to: DeckStore
 import { useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 
@@ -85,7 +80,7 @@ export function useBuilderDeckPersistenceActions({
       if (document) throw new Error("The canvas is saving. Retry when that save finishes.");
       return;
     }
-    const requestedDeckVersion = deck.version;
+    const requestedDeckVersion = requestedDeck.version;
     setDeckSaveBusy(true);
     setDeckStatusMessage("Saving deck...");
     const requestProjectId = canvasProjectId;
@@ -127,34 +122,40 @@ export function useBuilderDeckPersistenceActions({
         throw new Error(safeText(data?.error || "deck_save_failed"));
       }
 
-      if (data?.deck && typeof data.deck === "object") {
-        recordDeckWriteReason("deck-save-merge");
-        setDeck((currentDeck) => {
-          if (currentDeck.version !== requestedDeckVersion) {
-            if (builderDev) {
-              console.warn("[builder] skipped stale deck save merge", {
-                requestVersion: requestedDeckVersion,
-                currentVersion: currentDeck.version,
-              });
-            }
-            return currentDeck;
-          }
-          return readDeckDocument(data.deck as DeckDocument);
-        });
+      if (data?.projectId !== requestProjectId
+        || !data?.deck || typeof data.deck !== "object"
+        || data.deck.id !== deckId
+        || typeof data?.meta?.deckRevision !== "string"
+        || !data.meta.deckRevision
+        || data.meta.deckRevision === revisionBefore) {
+        throw new Error("deck_save_readback_invalid");
       }
-      const revisionAfter =
-        typeof data?.meta?.deckRevision === "string" ? data.meta.deckRevision : deckRevision;
+      const canonicalDeck = readDeckDocument(data.deck as DeckDocument);
+      recordDeckWriteReason("deck-save-merge");
+      setDeck((currentDeck) => {
+        if (currentDeck.version !== requestedDeckVersion) {
+          if (builderDev) {
+            console.warn("[builder] skipped stale deck save merge", {
+              requestVersion: requestedDeckVersion,
+              currentVersion: currentDeck.version,
+            });
+          }
+          return currentDeck;
+        }
+        return canonicalDeck;
+      });
+      const revisionAfter = data.meta.deckRevision;
       setDeckRevision(revisionAfter);
       onDeckPersistProof?.({
         projectId: requestProjectId,
         deckId,
         reason: "manual-save",
-        nodeCount: requestedDeck.nodes.length,
-        edgeCount: requestedDeck.edges.length,
+        nodeCount: canonicalDeck.nodes.length,
+        edgeCount: canonicalDeck.edges.length,
         revisionBefore,
         revisionAfter,
         ok: true,
-        document: requestedDeck,
+        document: canonicalDeck,
       });
       setDeckStatusMessage("Board saved.");
     } catch (err: any) {

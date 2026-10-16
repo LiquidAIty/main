@@ -1,13 +1,3 @@
-/**
- * Temporary UI-preference adapter for embedded WorldSignals layer choices.
- *
- * Scope: per project + per WorldSignals card, versioned by the vendor's layer
- * profile. Stores ONLY layer ids — never provider data or credentials — and
- * never reads or writes the standalone WorldSignals app's own storage. When
- * canonical card/project persistence exists this module is the single seam to
- * replace.
- */
-
 type WorldSignalLayerPrefs = {
   profileVersion: number;
   enabledLayerIds: string[];

@@ -114,7 +114,7 @@ function formatListenError(error: unknown, port: number): string {
 
 function listenOnPort(port: number): Promise<Server> {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port);
+    const server = app.listen(port, '127.0.0.1');
 
     const cleanup = () => {
       server.off('error', onError);
@@ -128,7 +128,7 @@ function listenOnPort(port: number): Promise<Server> {
 
     const onListening = () => {
       cleanup();
-      console.log("[BOOT] listening on :" + port);
+      console.log("[BOOT] listening on 127.0.0.1:" + port);
       resolve(server);
     };
 

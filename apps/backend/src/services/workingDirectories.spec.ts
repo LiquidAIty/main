@@ -1,3 +1,8 @@
+/**
+ * Entity: Working Directories
+ * Relationship: Working Directories verifies portable checkout discovery and explicit packaged-runtime root injection without binding the application to one machine path.
+ */
+
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 

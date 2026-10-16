@@ -1,3 +1,8 @@
+/**
+ * Entity: Internal MCP Auth
+ * Relationship: Internal MCP Auth verifies signed catalog-reader claims, loopback-only transport resolution, and constant-time rejection of missing, short, or foreign process secrets.
+ */
+
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 

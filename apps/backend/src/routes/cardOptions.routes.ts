@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { autoModelCandidates, listConfiguredModelOptions } from '../llm/models.config';
+import { listConfiguredModelOptions } from '../llm/models.config';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 
 const cardOptionsRoutes = Router();
@@ -19,7 +19,6 @@ cardOptionsRoutes.get('/options', async (_req, res) => {
       ok: true,
       fields: options.fields,
       catalogs: options.catalogs,
-      autoModelCandidates,
     });
   } catch {
     return res.status(503).json({ ok: false, error: 'runtime_options_unavailable' });

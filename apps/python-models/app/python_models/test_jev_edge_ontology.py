@@ -1,3 +1,6 @@
+# Entity: Jev Decisions
+# Relationship: Jev Decisions verifies that ThinkGraph and KnowGraph share the canonical relationship vocabulary while retaining KnowGraph's local insufficient-context outcome.
+
 from app.python_models import knowgraph_jev, thinkgraph_relationship_vocabulary
 from app.python_models.jev_edge_ontology import SHARED_JEV_RELATIONSHIPS
 

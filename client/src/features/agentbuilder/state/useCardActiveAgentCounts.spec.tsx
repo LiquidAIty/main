@@ -113,4 +113,58 @@ describe('useCardActiveAgentCounts', () => {
     await waitFor(() => expect(result.current.activeAgentCounts).toEqual({}));
     unmount();
   });
+
+  it('keeps successful Card observations when another Card fails', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (body.cardId === 'card_knowgraph') {
+        return new Response(JSON.stringify({ ok: false }), { status: 503 });
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        result: { cardId: body.cardId, state: 'running', activeWorkers: 1 },
+      }), { status: 200 });
+    });
+
+    const { result, unmount } = renderHook(() => useCardActiveAgentCounts({
+      projectId: 'project-one', deck,
+    }));
+
+    await waitFor(() => expect(result.current.activeAgentCounts).toEqual({
+      card_test_delegate: 2,
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it('continues bounded backoff polling after repeated failures and recovers', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      calls += 1;
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (calls <= 4) {
+        return new Response(JSON.stringify({ ok: false }), { status: 503 });
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        result: { cardId: body.cardId, state: 'running', activeWorkers: 0 },
+      }), { status: 200 });
+    });
+    const { result, unmount } = renderHook(() => useCardActiveAgentCounts({
+      projectId: 'project-one', deck,
+    }));
+    await act(async () => undefined);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(result.current.activeAgentCounts).toEqual({
+      card_test_delegate: 1,
+      card_knowgraph: 1,
+    });
+    unmount();
+  });
 });

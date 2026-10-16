@@ -396,7 +396,7 @@ export default function MainProjectChat({
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
   mainCardId?: string;
   directChatTargets?: DirectChatTarget[];
-  onSend: (t: string, runInput?: MainChatRunInput) => void;
+  onSend: (t: string, runInput?: MainChatRunInput) => void | boolean;
   knowledgeProjectId: string;
   colors: MainProjectChatColors;
   /** A real Hermes turn is active; the composer remains available. */
@@ -581,8 +581,8 @@ export default function MainProjectChat({
 
   const send = () => {
     if (!value.trim() || interactionDisabled || imageReadRef.current) return;
-    if (images.length) onSend(value, { images });
-    else onSend(value);
+    const accepted = images.length ? onSend(value, { images }) : onSend(value);
+    if (accepted === false) return;
     setImages([]);
     setImageError(null);
     setValue("");

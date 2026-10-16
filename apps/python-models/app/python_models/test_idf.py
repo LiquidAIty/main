@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app.python_models import idf as idf_module
 from app.python_models.card_script import saved_script
 from app.python_models.idf import load_idf, materialize_idf, runtime_projection, write_idf
 from app.python_models.idf_contract import (
@@ -328,6 +329,48 @@ def test_each_run_writes_one_file_and_reloads_exact_bytes(
     assert descriptor["idfSha256"] == materialized.idf_sha256
 
 
+def test_failed_retained_file_validation_removes_workspace_for_same_run_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LIQUIDAITY_RUN_INPUT_ROOT", str(tmp_path))
+    materialized = _idf()
+    original_load = idf_module._contract.load_idf_bytes
+
+    def reject_retained_bytes(_bytes: bytes):
+        raise InputMaterializationError("input_file_invalid")
+
+    monkeypatch.setattr(
+        idf_module._contract,
+        "load_idf_bytes",
+        reject_retained_bytes,
+    )
+
+    with pytest.raises(InputMaterializationError, match="input_file_invalid"):
+        write_idf(
+            materialized,
+            project_id="project-one",
+            deck_id="deck-one",
+            run_id="retryable-run",
+        )
+
+    workspace = idf_module.invocation_workspace(
+        "project-one",
+        "deck-one",
+        "retryable-run",
+    )
+    assert not workspace.exists()
+
+    monkeypatch.setattr(idf_module._contract, "load_idf_bytes", original_load)
+    descriptor = write_idf(
+        materialized,
+        project_id="project-one",
+        deck_id="deck-one",
+        run_id="retryable-run",
+    )
+    assert Path(descriptor["idfPath"]).is_file()
+
+
 def test_run_identity_rejects_cross_run_file_reuse(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -354,6 +397,73 @@ def test_noncanonical_or_secret_bearing_idf_fails_closed() -> None:
         load_idf_bytes(corrupted)
     with pytest.raises(InputMaterializationError, match="input_file_secret_field_forbidden"):
         _idf(secret=True)
+
+
+@pytest.mark.parametrize(
+    "secret_key",
+    (
+        "accessToken",
+        "password",
+        "token",
+        "x-api-key",
+        "client-secret",
+        "privateKey",
+    ),
+)
+def test_nested_secret_key_variants_are_rejected(secret_key: str) -> None:
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_file_secret_field_forbidden",
+    ):
+        _idf(capabilities={
+            "toolDefinitions": [{"inputSchema": {secret_key: "forbidden"}}],
+        })
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "https://user:password@example.test/path",
+        "https://example.test/path?access_token=forbidden",
+        "wss://example.test/socket?x-api-key=forbidden",
+    ),
+)
+def test_credential_bearing_urls_are_rejected(url: str) -> None:
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_file_secret_url_forbidden",
+    ):
+        _idf(task=f"Read {url}")
+
+
+@pytest.mark.parametrize("number", (float("nan"), float("inf"), float("-inf")))
+def test_nonfinite_nested_numbers_are_rejected(number: float) -> None:
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_file_number_nonfinite",
+    ):
+        _idf(capabilities={
+            "toolDefinitions": [{"inputSchema": {"default": number}}],
+        })
+
+
+@pytest.mark.parametrize("root", (b"[]\n", b"null\n", b'"text"\n'))
+def test_non_object_idf_root_has_one_domain_error(root: bytes) -> None:
+    with pytest.raises(InputMaterializationError, match="input_file_invalid"):
+        load_idf_bytes(root)
+
+
+def test_retired_operation_reports_its_exact_domain_error() -> None:
+    value = json.loads(_idf().idf_bytes)
+    value["dynamicContext"]["agentBuilderOperation"] = {"mode": "create"}
+
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_retired_operation_forbidden",
+    ):
+        load_idf_bytes((
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
+        ).encode())
 
 
 def test_run_telemetry_ledger_is_not_materialized_or_projected() -> None:

@@ -71,7 +71,9 @@ def _canonical_env_path() -> Optional[Path]:
     override = os.environ.get(ENV_FILE_OVERRIDE, "").strip()
     if override:
         candidate = Path(override)
-        return candidate if candidate.exists() else None
+        if not candidate.is_file():
+            raise RuntimeError(f"config_env_file_unreadable: {ENV_FILE_OVERRIDE}")
+        return candidate
     # apps/backend/.env resolved from this file's repo ancestry — a single known target,
     # not a scan of arbitrary .env files.
     for base in Path(__file__).resolve().parents:
@@ -99,16 +101,6 @@ def _source(env: Mapping[str, str] | None) -> Mapping[str, str]:
         return env
     ensure_env_loaded()
     return os.environ
-
-
-def _host_root(url: str) -> str:
-    """Reduce a configured base URL to scheme://host (drop any /v2/... path suffix)."""
-    raw = str(url or "").strip()
-    if "://" not in raw:
-        return raw
-    scheme, rest = raw.split("://", 1)
-    host = rest.split("/", 1)[0]
-    return f"{scheme}://{host}"
 
 
 # ---------------------------------------------------------------------------
@@ -150,15 +142,29 @@ def resolve_alpaca_credentials(
     stream_base = (src.get("ALPACA_STREAM_URL") or "").strip()
     paper_flag = (src.get("ALPACA_PAPER") or "").strip().lower()
     mode = MODE_PAPER
-    live_host = LIVE_TRADING_HOST in trading_base.lower() and "paper-api" not in trading_base.lower()
+    normalized_trading_base = trading_base.rstrip("/")
+    normalized_data_base = data_base.rstrip("/")
+    normalized_stream_base = stream_base.rstrip("/")
+    live_host = normalized_trading_base == f"https://{LIVE_TRADING_HOST}"
     if live_host or paper_flag in ("0", "false", "no", "off"):
         mode = "live"
+    elif (
+        normalized_trading_base
+        and normalized_trading_base != DEFAULT_PAPER_TRADING_URL
+    ) or (
+        normalized_data_base
+        and normalized_data_base != DEFAULT_DATA_URL
+    ) or (
+        normalized_stream_base
+        and normalized_stream_base != DEFAULT_STREAM_URL
+    ):
+        mode = "invalid"
     return AlpacaCredentials(
         key_id=key,
         secret_key=secret,
-        data_url=_host_root(data_base) or DEFAULT_DATA_URL,
-        paper_trading_url=_host_root(trading_base) or DEFAULT_PAPER_TRADING_URL,
-        stream_url=_host_root(stream_base) or DEFAULT_STREAM_URL,
+        data_url=normalized_data_base or DEFAULT_DATA_URL,
+        paper_trading_url=normalized_trading_base or DEFAULT_PAPER_TRADING_URL,
+        stream_url=normalized_stream_base or DEFAULT_STREAM_URL,
         mode=mode,
     )
 
@@ -191,7 +197,7 @@ def load_alpaca_config(env: Mapping[str, str] | None = None) -> AlpacaConfig:
     creds = resolve_alpaca_credentials(env)
     if creds is None:
         return AlpacaConfig(readiness=UNCONFIGURED, mode=MODE_UNAVAILABLE)
-    if creds.mode == "live":
+    if creds.mode != MODE_PAPER:
         return AlpacaConfig(readiness=INVALID_CONFIG, mode=MODE_UNAVAILABLE)
     return AlpacaConfig(
         readiness=READY,

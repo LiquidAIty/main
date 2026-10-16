@@ -1,12 +1,8 @@
-# @graph entity: KnowGraph API
-# @graph role: ingest-entrypoint
-# @graph relates_to: KnowGraph Ingest, Graphiti
-# @graph depends_on: FastAPI
-# @graph feeds_to: KnowGraph Ingest
 """FastAPI entrypoint for KnowGraph ingestion."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +17,7 @@ from graphiti_identity import graphiti_project_group_id
 import pdf_upload_storage
 
 app = FastAPI(title="KnowGraph")
+logger = logging.getLogger(__name__)
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -28,6 +25,26 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 class GraphitiEpisodeDeleteRequest(BaseModel):
     project_id: str
     graphiti_episode_uuid: str
+
+
+def _ingest_error(error: Exception) -> tuple[int, str, str]:
+    error_type = error.__class__.__name__.lower()
+    error_text = str(error).lower()
+    if "ratelimit" in error_type or any(
+        marker in error_text
+        for marker in ("rate limit", "insufficient_quota", "quota exceeded")
+    ):
+        return 429, "knowgraph_provider_rate_limited", (
+            "KnowGraph provider rate limit or quota exceeded."
+        )
+    if isinstance(error, ValueError) and error_text in {
+        "knowgraph_upload_pdf_required",
+        "knowgraph_upload_empty",
+    }:
+        return 400, error_text, "KnowGraph requires one non-empty PDF."
+    if error_text == "knowgraph_upload_content_address_conflict":
+        return 409, error_text, "KnowGraph upload storage conflict."
+    return 500, "knowgraph_ingest_failed", "KnowGraph ingest failed."
 
 
 async def _delete_graphiti_episode(
@@ -60,9 +77,16 @@ async def delete_episode(payload: GraphitiEpisodeDeleteRequest) -> JSONResponse:
             content={"ok": False, "error": {"message": "KnowGraph item not found."}},
         )
     except (RuntimeError, ValueError, KeyError) as exc:
+        logger.warning(
+            "knowgraph_delete_failed error_type=%s",
+            exc.__class__.__name__,
+        )
         return JSONResponse(
             status_code=409,
-            content={"ok": False, "error": {"message": str(exc)}},
+            content={"ok": False, "error": {
+                "code": "knowgraph_delete_conflict",
+                "message": "KnowGraph deletion could not be completed.",
+            }},
         )
 
 
@@ -94,12 +118,19 @@ async def ingest(
             },
         )
     except Exception as exc:
+        status, code, message = _ingest_error(exc)
+        logger.warning(
+            "knowgraph_ingest_failed code=%s error_type=%s",
+            code,
+            exc.__class__.__name__,
+        )
         return JSONResponse(
-            status_code=500,
+            status_code=status,
             content={
                 "ok": False,
                 "error": {
-                    "message": str(exc),
+                    "code": code,
+                    "message": message,
                 },
             },
         )

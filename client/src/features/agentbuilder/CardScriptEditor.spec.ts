@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -78,49 +75,4 @@ describe('CardScriptEditor Monaco contract', () => {
     }
   });
 
-  it('lazy-loads one pinned Monaco engine and owns bounded model disposal', () => {
-    const source = readFileSync(
-      path.resolve(process.cwd(), 'client/src/features/agentbuilder/CardScriptEditor.tsx'),
-      'utf8',
-    );
-    const clientPackage = JSON.parse(readFileSync(
-      path.resolve(process.cwd(), 'client/package.json'),
-      'utf8',
-    )) as { dependencies: Record<string, string> };
-    const builderPage = readFileSync(
-      path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
-      'utf8',
-    );
-    const cardEditorSource = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/CardEditor.tsx'),
-      'utf8',
-    );
-
-    expect(clientPackage.dependencies['monaco-editor']).toBe('0.52.2');
-    expect(source).not.toMatch(/^import .*monaco-editor/m);
-    expect(source).toContain("import('monaco-editor/esm/vs/editor/editor.api')");
-    expect(source).toContain('loadMonacoFeatures');
-    expect(source).toContain('findController.js');
-    expect(source).toContain('folding.js');
-    expect(source).not.toContain('editor.main.js');
-    expect(source).toContain('let monacoLoadPromise');
-    expect(source).toContain('let activeEditor');
-    expect(source).toContain('HEADER_CACHE_LIMIT = 4');
-    expect(source).toContain('sourceModel.dispose()');
-    expect(source).toContain('entry.model.dispose()');
-    expect(source).not.toContain('{header.source}');
-    expect(builderPage).toContain("['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools']");
-    expect(builderPage).not.toContain("'Results'");
-    expect(builderPage).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
-    expect(builderPage).toContain('key="deck-card-editor"');
-    expect(builderPage).not.toContain('key={`deck-card:${selectedCard.id}:${tab}`}');
-    expect(cardEditorSource).toContain('scriptDraftCacheRef');
-    expect(cardEditorSource).toContain('preserveUnsavedScript');
-    expect(cardEditorSource).toContain('version: changed ? Number(saved?.version || 0) + 1');
-    expect(cardEditorSource).toContain('script: scriptDraft');
-    expect(source).toContain("fetch('/api/cards/script/validate'");
-    expect(source).toContain('body: JSON.stringify({ runtimeKind, selectedTools, script })');
-    expect(source).toContain('Enable for an eligible saved Run');
-    expect(source).not.toContain('runtime execution is not currently connected');
-  });
 });

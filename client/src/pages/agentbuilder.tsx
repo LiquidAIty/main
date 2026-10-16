@@ -664,8 +664,10 @@ export default function AgentBuilder(): React.ReactElement {
     lastDeckPersistReasonRef,
     evaluateBoardIntegrityForSave,
     snapshotDeckBoard,
+    readDeckDocument,
     formatBuilderStatusMessage,
     isAbortLikeError,
+    setDeck: setDeckFromPersistence,
     setDeckRevision,
     setDeckStatusMessage,
   });

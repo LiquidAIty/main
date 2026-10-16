@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+/**
+ * Entity: Graph Presentation
+ * Relationship: Graph Presentation verifies the shared graph-paper substrate and compact zoom, fit, and navigation controls used across graph-backed workspaces.
+ */
+
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 

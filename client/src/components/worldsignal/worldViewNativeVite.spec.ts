@@ -1,5 +1,10 @@
 // @vitest-environment node
 
+/**
+ * Entity: WorldView
+ * Relationship: WorldView verifies that development uses the supervised module URL while production uses the bundled module graph without a localhost dependency.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { worldviewNativeMountModuleSource } from '../../../vite.config';

@@ -125,11 +125,53 @@ def test_hmac_headers_match_worldsignals_contract() -> None:
     assert len(headers["X-SB-Nonce"]) >= 16
 
 
+@pytest.mark.parametrize(
+    ("url", "secret", "error"),
+    (
+        ("http://worldsignals.example:8000", "s" * 32, "backend_url_invalid"),
+        ("https://user:password@worldsignals.example:8000", "s" * 32, "backend_url_invalid"),
+        ("https://worldsignals.example:8000?token=value", "s" * 32, "backend_url_invalid"),
+        ("https://worldsignals.example:8000", "", "hmac_secret_required"),
+    ),
+)
+def test_worldsignals_endpoint_and_remote_hmac_policy(url, secret, error) -> None:
+    with pytest.raises(WorldSignalsError, match=error):
+        WorldSignalsClient(base_url=url, secret=secret)
+
+
+def test_command_is_canonicalized_before_guard_and_transport(monkeypatch) -> None:
+    monkeypatch.delenv("WORLDSIGNALS_EXTENDED_PROFILE", raising=False)
+    client = WorldSignalsClient(base_url="http://127.0.0.1:8000", secret="")
+    requests: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        client,
+        "request",
+        lambda method, path, payload=None: requests.append((method, path, payload)) or {"ok": True},
+    )
+
+    assert client.command("  GET_SUMMARY  ", {"query": "bounded"}) == {"ok": True}
+    assert requests[0][2]["cmd"] == "get_summary"
+    with pytest.raises(WorldSignalsError, match="extended_profile"):
+        client.command("  OSINT_SWEEP  ")
+
+
+def test_command_arguments_reject_nested_credentials_before_network(monkeypatch) -> None:
+    client = WorldSignalsClient(base_url="http://127.0.0.1:8000", secret="")
+    monkeypatch.setattr(
+        wsc._URL_OPENER,
+        "open",
+        lambda *_args, **_kwargs: pytest.fail("network must not be reached"),
+    )
+
+    with pytest.raises(WorldSignalsError, match="argument_secret_forbidden"):
+        client.command("get_summary", {"options": {"accessToken": "forbidden"}})
+
+
 def test_missing_worldsignals_runtime_returns_typed_unavailable_error(monkeypatch) -> None:
     def unavailable(*_args, **_kwargs):
         raise wsc.URLError("backing runtime absent")
 
-    monkeypatch.setattr(wsc, "urlopen", unavailable)
+    monkeypatch.setattr(wsc._URL_OPENER, "open", unavailable)
     client = WorldSignalsClient(base_url="http://127.0.0.1:8000", secret="")
 
     with pytest.raises(WorldSignalsError, match="worldsignals_unreachable"):
@@ -159,7 +201,7 @@ def test_batch_rejects_a_restricted_command_in_the_list(monkeypatch) -> None:
     monkeypatch.delenv("WORLDSIGNALS_EXTENDED_PROFILE", raising=False)
     client = WorldSignalsClient(base_url="http://127.0.0.1:8000", secret="")
     with pytest.raises(WorldSignalsError, match="extended_profile"):
-        client.batch([{"cmd": "get_summary"}, {"cmd": "osint_sweep"}])
+        client.batch([{"cmd": "get_summary"}, {"cmd": "  OSINT_SWEEP  "}])
 
 
 def test_command_operation_classes_come_from_the_canonical_manifest(monkeypatch) -> None:
@@ -168,6 +210,9 @@ def test_command_operation_classes_come_from_the_canonical_manifest(monkeypatch)
         client,
         "tools",
         lambda: {
+            "ok": True,
+            "version": "1.0.0",
+            "available_commands": ["channel_status", "add_watch"],
             "tools": [
                 {"name": "channel_status", "type": "read"},
                 {"name": "add_watch", "type": "write"},
@@ -248,6 +293,10 @@ def test_manifest_filters_and_exact_command_schema_are_bounded(monkeypatch) -> N
         "tools",
         lambda _self: {
             "ok": True,
+            "version": "0.9.82",
+            "available_commands": [
+                "market_snapshot", "add_watch", "weather_now",
+            ],
             "tools": [
                 {
                     "name": "market_snapshot",

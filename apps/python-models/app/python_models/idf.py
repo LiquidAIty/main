@@ -105,6 +105,14 @@ def invocation_workspace(project_id: str, deck_id: str, run_id: str) -> Path:
     return _run_input_root() / sha256(identity.encode("utf-8")).hexdigest()
 
 
+def _discard_failed_idf_workspace(workspace: Path, idf_path: Path) -> None:
+    try:
+        idf_path.unlink(missing_ok=True)
+        workspace.rmdir()
+    except OSError:
+        pass
+
+
 def write_idf(
     materialized: _contract.MaterializedIdf,
     *,
@@ -116,16 +124,22 @@ def write_idf(
 
     workspace = invocation_workspace(project_id, deck_id, run_id)
     idf_path = workspace / _contract.IDF_FILENAME
+    workspace_created = False
     try:
         workspace.mkdir(parents=True, exist_ok=False)
+        workspace_created = True
         with idf_path.open("xb") as destination:
             destination.write(materialized.idf_bytes)
             destination.flush()
             os.fsync(destination.fileno())
         loaded = _contract.load_idf_bytes(idf_path.read_bytes())
     except _contract.InputMaterializationError:
+        if workspace_created:
+            _discard_failed_idf_workspace(workspace, idf_path)
         raise
     except OSError as error:
+        if workspace_created:
+            _discard_failed_idf_workspace(workspace, idf_path)
         raise _contract.InputMaterializationError("input_file_write_failed") from error
     return {
         "workspace": str(workspace),

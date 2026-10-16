@@ -1,3 +1,5 @@
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -5,8 +7,20 @@ import {
   fetchKnowGraphProjection,
   fetchThinkGraphNeighborhood,
   PythonRailsHttpError,
+  PythonRailsResponseError,
   requestPythonRailsJson,
 } from './pythonRailsClient';
+
+async function listen(server: Server): Promise<string> {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address() as AddressInfo;
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function close(server: Server): Promise<void> {
+  server.closeAllConnections();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
 
 describe('pythonRailsClient', () => {
   const envSnapshot = { ...process.env };
@@ -19,6 +33,7 @@ describe('pythonRailsClient', () => {
   afterEach(() => {
     process.env = { ...envSnapshot };
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('uses the configured Python rails URL and preserves HTTP error details', async () => {
@@ -57,6 +72,56 @@ describe('pythonRailsClient', () => {
     await expect(
       requestPythonRailsJson('/health', { method: 'GET' }),
     ).rejects.toThrow('PYTHON_RAILS_UNAVAILABLE');
+  });
+
+  it('normalizes a real reset and timeout to one unavailable transport error', async () => {
+    const resetServer = createServer((request) => request.socket.destroy());
+    process.env.PYTHON_RAILS_URL = await listen(resetServer);
+    try {
+      await expect(requestPythonRailsJson('/reset', { method: 'GET' }))
+        .rejects.toMatchObject({ code: 'PYTHON_RAILS_UNAVAILABLE' });
+    } finally {
+      await close(resetServer);
+    }
+
+    const timeoutServer = createServer((request, response) => {
+      request.once('aborted', () => response.destroy());
+    });
+    process.env.PYTHON_RAILS_URL = await listen(timeoutServer);
+    try {
+      await expect(requestPythonRailsJson(
+        '/timeout',
+        { method: 'GET' },
+        { timeoutMs: 20 },
+      )).rejects.toMatchObject({ code: 'PYTHON_RAILS_UNAVAILABLE' });
+    } finally {
+      await close(timeoutServer);
+    }
+  });
+
+  it('keeps real HTTP failures distinct and types invalid successful JSON', async () => {
+    const server = createServer((request, response) => {
+      if (request.url === '/invalid') {
+        response.writeHead(200, { 'Content-Type': 'text/plain' });
+        response.end('not-json');
+        return;
+      }
+      response.writeHead(503, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ detail: 'rails_not_ready' }));
+    });
+    process.env.PYTHON_RAILS_URL = await listen(server);
+    try {
+      await expect(requestPythonRailsJson('/invalid', { method: 'GET' }))
+        .rejects.toBeInstanceOf(PythonRailsResponseError);
+      await expect(requestPythonRailsJson('/unavailable', { method: 'GET' }))
+        .rejects.toMatchObject({
+          name: 'PythonRailsHttpError',
+          code: 'python_rails_http_503',
+          detail: 'rails_not_ready',
+        } satisfies Partial<PythonRailsHttpError>);
+    } finally {
+      await close(server);
+    }
   });
 
   it('uses the Engraphis ThinkGraph neighborhood endpoint without fallback', async () => {

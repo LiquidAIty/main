@@ -1,3 +1,8 @@
+/**
+ * Entity: Trading
+ * Relationship: Trading verifies explicit instrument resolution, case normalization, and failure without silent exchange guessing or a default symbol.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { resolveInstrument } from './instrument';

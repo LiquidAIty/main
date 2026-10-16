@@ -1,3 +1,8 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Graph Presentation centralizes graph-paper geometry, viewport motion bounds, text sizing, and topology-neutral neighbor and focus helpers shared by canvas rendering.
+ */
+
 const GRAPH_PAPER_MINOR_STEP = 24;
 const GRAPH_PAPER_MAJOR_STEP = GRAPH_PAPER_MINOR_STEP * 4;
 const GRAPH_PAPER_LINE_WIDTH = 1;

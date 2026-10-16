@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: Agent Builder renders the selected knowledge, Trading, WorldSignals, or WorldView companion surface while keeping Canvas and Chat workspaces unobstructed.
+ */
+
 import type { ReactNode } from 'react';
 
 import { GRAPH_THEME, graphCompanionPanelStyle } from '../../../components/graph/graphVisualTokens';

@@ -16,6 +16,7 @@ from app.saved_card_operation_validation import (
     _find_saved_card,
     _load_saved_deck,
     _require,
+    _reasoning_effort_selection,
     _save_saved_deck,
     _subagent_model_selection,
     _validate_auto_flags,
@@ -29,7 +30,7 @@ _CARD_CREATE_KEYS = {
     "templateId", "projectId", "deckId", "expectedRevision", "title", "role",
     "prompt", "runtime", "model", "subagentType",
     "subagentModel", "tools", "skills", "toolsets", "mcpConnectionIds",
-    "autoTools", "autoModel", "position",
+    "autoTools", "autoModel", "reasoningEffort", "position",
 }
 _CARD_CREATE_RUNTIME_KEYS = {"kind", "mode", "profile"}
 _CARD_CREATE_MODEL_KEYS = {
@@ -81,6 +82,13 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
         raise ApplicationToolError("card_create_profile_invalid")
     _validate_auto_flags(
         args, operation="card_create", runtime_mode=runtime_mode,
+    )
+    reasoning_effort = (
+        _reasoning_effort_selection(
+            args["reasoningEffort"], operation="card_create",
+        )
+        if "reasoningEffort" in args
+        else ""
     )
 
     model = args.get("model")
@@ -179,6 +187,8 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
         for field in ("autoTools", "autoModel"):
             if field in args:
                 runtime_options[field] = args[field]
+        if reasoning_effort:
+            runtime_options["reasoningEffort"] = reasoning_effort
         if subagent_model is not None:
             runtime_options["subagentModel"] = subagent_model
         if raw_subagent_type is not None:

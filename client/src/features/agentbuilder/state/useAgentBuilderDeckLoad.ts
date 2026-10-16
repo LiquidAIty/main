@@ -75,7 +75,7 @@ export default function useAgentBuilderDeckLoad({
         const payload = await guardedRequest({
           key: `v3-deck:${canvasProjectId}:${builderDeckId}`,
           method: 'GET',
-          ttlMs: 1_000,
+          dedupe: false,
           signal: controller.signal,
           fetcher: async (signal) => {
             const response = await fetch(endpoint, { signal });
@@ -87,6 +87,9 @@ export default function useAgentBuilderDeckLoad({
         if (controller.signal.aborted) return;
         if (!payload.response.ok) {
           throw new Error(String(payload.data?.error || 'deck_load_failed'));
+        }
+        if (payload.data?.projectId !== canvasProjectId) {
+          throw new Error('deck_project_identity_mismatch');
         }
 
         const savedDeck =

@@ -14,6 +14,7 @@ from app.saved_card_operation_validation import (
     _find_saved_card,
     _load_saved_deck,
     _require,
+    _reasoning_effort_selection,
     _save_saved_deck,
     _subagent_model_selection,
     _validate_auto_flags,
@@ -27,7 +28,7 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "script", "accessMode", "modelKey", "provider", "providerModelId",
     "subagentType", "subagentModel", "tools", "skills",
     "toolsets", "mcpConnectionIds", "configuration", "subsystems",
-    "autoTools", "autoModel",
+    "autoTools", "autoModel", "reasoningEffort",
 }
 
 
@@ -114,6 +115,13 @@ async def card_update_configuration(
         }
     if "subagentType" in updates and updates["subagentType"] not in _SUBAGENT_TYPES:
         raise ApplicationToolError("card_update_subagent_type_invalid")
+    if "reasoningEffort" in updates:
+        updates = {
+            **updates,
+            "reasoningEffort": _reasoning_effort_selection(
+                updates["reasoningEffort"], operation="card_update",
+            ),
+        }
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()

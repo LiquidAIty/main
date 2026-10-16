@@ -1,3 +1,8 @@
+/**
+ * Entity: Working Directories
+ * Relationship: Working Directories resolves the repository plus durable neutral Card and Builder Project folders, rejecting traversal, reserved names, temporary storage, repository overlap, and escaped real paths.
+ */
+
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import os from 'node:os';

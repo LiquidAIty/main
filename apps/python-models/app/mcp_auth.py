@@ -10,14 +10,20 @@ import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from app import mcp_observability
+from app.backend_operation_transport import (
+    open_backend_request,
+    validated_backend_origin,
+)
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 
 
-BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
+BACKEND = validated_backend_origin(
+    os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000")
+)
 HTTP_MCP_PATH = "/mcp"
 PUBLIC_MCP_RESOURCE_URL = os.environ.get("MCP_PUBLIC_RESOURCE_URL", "").strip()
 AUTH0_ISSUER_URL = os.environ.get("MCP_AUTH0_ISSUER_URL", "").strip()
@@ -131,6 +137,8 @@ def oauth_config() -> OAuthConfig:
         required_scope=AUTH0_REQUIRED_SCOPE,
     )
     if not OAUTH_ENFORCED:
+        if config.resource_url:
+            raise RuntimeError("public_mcp_resource_requires_oauth")
         return config
     missing = [
         name
@@ -225,7 +233,10 @@ def _resolve_external_project_context_sync(
             headers=headers,
             method="POST",
         )
-        with urlopen(request, timeout=_MAIN_CONTEXT_TIMEOUT_SECONDS) as response:  # noqa: S310
+        with open_backend_request(
+            request,
+            timeout_seconds=_MAIN_CONTEXT_TIMEOUT_SECONDS,
+        ) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TypeError, ValueError):
         return None

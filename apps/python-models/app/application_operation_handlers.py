@@ -1,5 +1,8 @@
 """Callable handlers for application-owned tool definitions."""
 
+# Entity: Application Tools
+# Relationship: Application Tools validates shared arguments and adapts AgentGraph, Canvas, and saved Card handlers into asynchronous code-owned operation callables.
+
 from __future__ import annotations
 
 import asyncio

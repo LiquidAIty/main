@@ -4,6 +4,10 @@ The vocabulary describes only the directed semantic relationship A -> B.
 Think/Know authority, provenance, temporal content, and pipeline control outcomes
 remain owned by their provider graph paths and are intentionally absent here.
 """
+
+# Entity: Jev Decisions
+# Relationship: Jev Decisions defines the canonical directed relationship vocabulary, selection criteria, and schema fingerprint shared by ThinkGraph and KnowGraph classification.
+
 from __future__ import annotations
 
 import hashlib

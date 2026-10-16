@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mcpMocks = vi.hoisted(() => ({
   close: vi.fn(async () => undefined),
   connect: vi.fn(async () => undefined),
-  listTools: vi.fn(async (): Promise<{ tools: any[] }> => ({ tools: [] })),
+  listTools: vi.fn(async (_params?: { cursor?: string }): Promise<{
+    tools: any[];
+    nextCursor?: string;
+  }> => ({ tools: [] })),
   transportInits: [] as Array<Record<string, any>>,
 }));
 
@@ -33,6 +36,29 @@ import {
   listToolCatalog,
   readToolCatalog,
 } from './toolCatalogMcpClient';
+
+function descriptor(name: string, sourceId: string, providerToolName: string) {
+  return {
+    name,
+    description: `Description for ${name}`,
+    inputSchema: { type: 'object', properties: {} },
+    _meta: { liquidaitySource: {
+      sourceId,
+      namespace: sourceId,
+      providerToolName,
+      connectionKind: 'external-mcp',
+      publication: 'external-mcp',
+      access: 'read',
+      available: true,
+      grantEligible: true,
+      canonicalInputSchema: { type: 'object', properties: {} },
+      serverInjectedArguments: [],
+      dispatcherContextArguments: [],
+      dispatcherOwner: `provider.${providerToolName}`,
+      authenticatedProjection: true,
+    } },
+  };
+}
 
 describe('Python Agent MCP client', () => {
   beforeEach(() => {
@@ -221,5 +247,38 @@ describe('Python Agent MCP client', () => {
     expect(payload.principal).toEqual({ kind: 'catalog-reader' });
     expect(mcpMocks.connect).toHaveBeenCalledOnce();
     expect(mcpMocks.close).not.toHaveBeenCalled();
+  });
+
+  it('reads every MCP page and rejects a cursor cycle', async () => {
+    mcpMocks.listTools
+      .mockResolvedValueOnce({
+        tools: [descriptor('cbm.search_graph', 'cbm', 'search_graph')],
+        nextCursor: 'page-two',
+      })
+      .mockResolvedValueOnce({
+        tools: [descriptor('graphiti.search_nodes', 'graphiti', 'search_nodes')],
+      });
+
+    await expect(listToolCatalog()).resolves.toMatchObject([
+      { name: 'cbm.search_graph' },
+      { name: 'graphiti.search_nodes' },
+    ]);
+    expect(mcpMocks.listTools).toHaveBeenNthCalledWith(1, undefined);
+    expect(mcpMocks.listTools).toHaveBeenNthCalledWith(2, { cursor: 'page-two' });
+
+    mcpMocks.listTools
+      .mockReset()
+      .mockResolvedValue({ tools: [], nextCursor: 'cycle' });
+    await expect(listToolCatalog()).rejects.toThrow('tool_catalog_cursor_cycle');
+  });
+
+  it('rejects an unauthenticated published projection', async () => {
+    const unauthenticated = descriptor('cbm.search_graph', 'cbm', 'search_graph');
+    unauthenticated._meta.liquidaitySource.authenticatedProjection = false;
+    mcpMocks.listTools.mockResolvedValue({ tools: [unauthenticated] });
+
+    await expect(listToolCatalog()).rejects.toThrow(
+      'tool_catalog_source_metadata_invalid: cbm.search_graph',
+    );
   });
 });

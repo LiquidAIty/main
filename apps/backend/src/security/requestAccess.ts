@@ -8,6 +8,8 @@ const DEFAULT_LOCAL_ORIGINS = [
   'http://127.0.0.1:3000',
   'http://localhost:4000',
   'http://127.0.0.1:4000',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
 ];
 
 function normalizeHost(value: string): string {
@@ -56,11 +58,10 @@ export function isLocalDevLoopbackRequest(req: Request): boolean {
   const originHeader = parseOriginHost(String(req.headers.origin || ''));
   const remoteAddress = String(req.socket.remoteAddress || '');
 
-  return (
-    isLoopbackHost(hostHeader) ||
-    isLoopbackHost(originHeader) ||
-    isLoopbackAddress(remoteAddress)
-  );
+  if (!isLoopbackAddress(remoteAddress)) return false;
+  if (hostHeader && !isLoopbackHost(hostHeader)) return false;
+  if (originHeader && !isLoopbackHost(originHeader)) return false;
+  return true;
 }
 
 function safeTokenEquals(expected: string, actual: string): boolean {

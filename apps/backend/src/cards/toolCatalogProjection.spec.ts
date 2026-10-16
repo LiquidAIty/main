@@ -64,6 +64,29 @@ describe('live tool catalog lookup', () => {
       .toThrow('tool_catalog_duplicate_id:cbm.tool_00001');
   });
 
+  it('rejects nonfinite pagination and keeps accepted definitions immutable', () => {
+    const source = definition(1);
+    const catalog = indexLiveToolCatalog([source]);
+
+    expect(() => searchToolCatalogDefinitions(catalog, { offset: Number.POSITIVE_INFINITY }))
+      .toThrow('tool_catalog_pagination_invalid');
+    expect(() => searchToolCatalogDefinitions(catalog, { limit: Number.NaN }))
+      .toThrow('tool_catalog_pagination_invalid');
+
+    source.description = 'mutated after indexing';
+    (source.inputSchema as { properties: Record<string, unknown> }).properties = {
+      changed: { type: 'boolean' },
+    };
+    const retained = resolveToolCatalogDefinitions(catalog, ['cbm.tool_00001'])[0];
+    expect(retained.description).toBe('Read repository slice 1');
+    expect(retained.inputSchema).toEqual({
+      type: 'object',
+      properties: { index: { type: 'integer', const: 1 } },
+    });
+    expect(Object.isFrozen(retained)).toBe(true);
+    expect(Object.isFrozen(retained.inputSchema)).toBe(true);
+  });
+
   it('paginates the Card Tools plane over write/effect operations only', () => {
     const catalog = indexLiveToolCatalog([
       definition(1, 'read'),

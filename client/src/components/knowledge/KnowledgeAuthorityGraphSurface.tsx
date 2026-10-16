@@ -1161,6 +1161,27 @@ type SourceLinkView = {
   fingerprint: string | null;
 };
 
+const SECRET_CITATION_QUERY_KEY = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|authorization)/i;
+
+function safeSourceUrl(value: string): URL | null {
+  if (value.length > 2048 || value.includes('\\')
+    || [...value].some(character => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    })) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' || !parsed.hostname
+      || parsed.username || parsed.password
+      || [...parsed.searchParams.keys()].some(key => SECRET_CITATION_QUERY_KEY.test(key))) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function sourcePathLabel(url: URL): string {
   const finalSegment = decodeURIComponent(
     url.pathname.split('/').filter(Boolean).at(-1) || '',
@@ -1188,11 +1209,8 @@ export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[
   for (const rawUrl of rawUrls) {
     if (typeof rawUrl !== 'string') continue;
     const url = rawUrl.trim();
-    try {
-      const parsed = new URL(url);
-      if (!['http:', 'https:'].includes(parsed.protocol)) continue;
-      validUrls.set(url, parsed);
-    } catch { /* Invalid URLs are not clickable citations. */ }
+    const parsed = safeSourceUrl(url);
+    if (parsed) validUrls.set(url, parsed);
   }
   const fingerprint = validUrls.size === 1
     ? String(
@@ -1387,7 +1405,7 @@ function KnowSide({
     </details> : null}
     {citations.length ? <ul className="graph-know-citations">
       {citations.map(({ link, supports }, index) => <li key={`${link.url}:${index}`}>
-        <a href={link.url} target="_blank" rel="noreferrer">{link.label}</a>
+        <a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
         <small>{link.publisher}</small>
         {supports ? <p>{supports}</p> : null}
       </li>)}

@@ -1,11 +1,10 @@
 // Thin HTTP transport to the Python-owned stable Card/deck domain.
-// TypeScript deliberately owns no SQL, JSONB deck aggregate, Card revision,
+// TypeScript deliberately owns no SQL, deck aggregate, Card revision,
 // relationship authority, or topology mutation in this module.
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import type { DeckDocument } from '../types';
 
-/** The deck currently opened by the Agent Builder view. Projects may own more. */
-/** Stable saved identity of the surviving Builder Card. */
+/** Stable saved identity of the Builder Card used by Main and terminal routes. */
 export const BUILDER_CARD_ID = 'builder';
 
 type DeckResponse = {

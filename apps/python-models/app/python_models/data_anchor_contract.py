@@ -1,5 +1,8 @@
 """Shared limits and value normalization for selected graph references."""
 
+# Entity: Data Anchors
+# Relationship: Data Anchors centralizes bounded graph-context limits, typed resolution failures, canonical JSON, safe value conversion, and UTC timestamp formatting for graph-reference owners.
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

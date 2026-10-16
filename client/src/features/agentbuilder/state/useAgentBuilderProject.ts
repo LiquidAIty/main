@@ -1,3 +1,11 @@
+/**
+ * Entity: Projects
+ * Relationship: Projects exposes active selection, listing, URL updates, refresh, and errors as the Agent Builder workspace's canonical Project state.
+ *
+ * Entity: Agent Builder
+ * Relationship: Agent Builder opens Canvas once when a Project becomes active from Chat and preserves explicit workspace choices thereafter.
+ */
+
 import { useEffect, useRef } from 'react';
 
 import { useBuilderProjects } from '../../../components/builder/useBuilderProjects';

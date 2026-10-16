@@ -1,3 +1,8 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Defines the shared palette, graph-paper navigation values, glass materials, and control styles used across graph canvases, Cards, and inspectors.
+ */
+
 import type { CSSProperties } from 'react';
 import { GRAPH_PAPER, GRAPH_WORKSPACE } from './graphWorkspaceContract';
 

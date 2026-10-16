@@ -198,6 +198,23 @@ describe('knowledge authority graph surfaces', () => {
     ]);
   });
 
+  it('renders only credential-free HTTPS citation links', () => {
+    const links = sourceLinks({
+      source_description: JSON.stringify([
+        'https://example.test/report?document=10#page=2',
+        'http://example.test/insecure',
+        'javascript:alert(1)',
+        'https://user:password@example.test/private',
+        'https://example.test/private?access_token=secret',
+        'https://example.test\\@attacker.test/source',
+      ]),
+    });
+
+    expect(links.map(link => link.url)).toEqual([
+      'https://example.test/report?document=10#page=2',
+    ]);
+  });
+
   it('groups one exact authoritative Entity per authority while retaining provider evidence and edges', () => {
     const think = {
       ...empty('thinkgraph'),

@@ -3,18 +3,53 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 
 KNOW_SCHEMA_VERSION = "know.v1"
 _CITATION_FIELDS = ("url", "title", "publisher", "locator", "supports")
+_SECRET_QUERY_KEY = re.compile(
+    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|authorization)",
+    re.IGNORECASE,
+)
+
+
+def _citation_url(value: Any) -> str | None:
+    url = str(value or "").strip()
+    if (
+        not url
+        or len(url) > 2048
+        or "\\" in url
+        or any(ord(character) < 32 or ord(character) == 127 for character in url)
+    ):
+        return None
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    del port
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or any(_SECRET_QUERY_KEY.search(key) for key, _value in parse_qsl(
+            parsed.query,
+            keep_blank_values=True,
+        ))
+    ):
+        return None
+    return url
 
 
 def _citation(value: Any) -> dict[str, str] | None:
     if not isinstance(value, dict):
         return None
-    url = str(value.get("url") or "").strip()
-    if not url:
+    url = _citation_url(value.get("url"))
+    if url is None:
         return None
     result = {"url": url}
     for field in _CITATION_FIELDS[1:]:

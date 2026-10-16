@@ -1,10 +1,6 @@
 /**
- * Selected-instrument boundary for the read-only market vertical.
- *
- * The market view is driven by an EXPLICIT symbol (e.g. `/tradingui?symbol=RDW`).
- * There is no silent default, no ticker inference, and no KnowGraph auto-selection.
- * The TradingView symbol is resolved through a STRUCTURED, testable mapping — never by
- * string-concatenating an exchange prefix.
+ * Entity: Trading
+ * Relationship: Trading resolves only explicitly configured symbols into structured market and chart identities, returning no default or inferred exchange for unknown instruments.
  */
 
 type InstrumentRef = {

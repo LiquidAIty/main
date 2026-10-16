@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Entity: WorldSignals
+# Relationship: WorldSignals verifies that scoped provider observations remain unassessed, content-addressed, mapping-order stable, geometrically valid, and closed to undeclared authority fields.
+
 import pytest
 from pydantic import ValidationError
 

@@ -90,8 +90,9 @@ export async function guardedRequest<T>(options: GuardedRequestOptions<T>): Prom
     }
   }
 
-  const linked = linkAbortSignal(options.signal);
-  const requestPromise = (async () => {
+  const linked = linkAbortSignal(shouldDedupe ? undefined : options.signal);
+  let requestPromise!: Promise<T>;
+  requestPromise = (async () => {
     try {
       const value = await options.fetcher(linked.signal);
       if (canCache) {
@@ -102,7 +103,9 @@ export async function guardedRequest<T>(options: GuardedRequestOptions<T>): Prom
       }
       return value;
     } finally {
-      requestGuardInFlight.delete(options.key);
+      if (requestGuardInFlight.get(options.key) === requestPromise) {
+        requestGuardInFlight.delete(options.key);
+      }
       linked.cleanup();
     }
   })();

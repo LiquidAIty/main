@@ -32,12 +32,14 @@ type UseAgentBuilderAutosaveArgs = {
     reason: string,
   ) => IntegrityResult;
   snapshotDeckBoard: (document: DeckDocument) => unknown;
+  readDeckDocument: (value: Partial<DeckDocument> | null | undefined) => DeckDocument;
   formatBuilderStatusMessage: (
     errorMessage: unknown,
     fallbackMessage: string,
   ) => string;
   isAbortLikeError: (error: unknown) => boolean;
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
+  setDeck: Dispatch<SetStateAction<DeckDocument>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
 };
 
@@ -76,9 +78,11 @@ export default function useAgentBuilderAutosave({
   lastDeckPersistReasonRef,
   evaluateBoardIntegrityForSave,
   snapshotDeckBoard,
+  readDeckDocument,
   formatBuilderStatusMessage,
   isAbortLikeError,
   setDeckRevision,
+  setDeck,
   setDeckStatusMessage,
 }: UseAgentBuilderAutosaveArgs) {
   useEffect(() => {
@@ -138,10 +142,6 @@ export default function useAgentBuilderAutosave({
                   id: builderDeckId,
                 },
                 expectedRevision: deckRevision,
-                integrity: {
-                  reason,
-                  removedNodeIds: integrity.removedNodeIds,
-                },
               }),
               signal: controller.signal,
             },
@@ -176,15 +176,33 @@ export default function useAgentBuilderAutosave({
             }
             return;
           }
-          const revisionAfter =
-            typeof data?.meta?.deckRevision === 'string'
-              ? data.meta.deckRevision
-              : deckRevision;
-          if (typeof data?.meta?.deckRevision === 'string') {
-            setDeckRevision(data.meta.deckRevision);
+          if (data?.projectId !== canvasProjectId
+            || !data?.deck || typeof data.deck !== 'object'
+            || data.deck.id !== builderDeckId
+            || typeof data?.meta?.deckRevision !== 'string'
+            || !data.meta.deckRevision) {
+            throw new Error('deck_save_readback_invalid');
           }
-          lastPersistedBoardFingerprintRef.current = boardFingerprint;
-          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(persistableDeck);
+          const canonicalDeck = readDeckDocument(data.deck as DeckDocument);
+          const canonicalFingerprint = JSON.stringify({
+            nodes: canonicalDeck.nodes,
+            edges: canonicalDeck.edges,
+          });
+          const revisionAfter = data.meta.deckRevision;
+          setDeck((currentDeck) => {
+            const currentPersistable = projectDeckForPersistence(
+              currentDeck,
+              transientCardIds,
+            );
+            const currentFingerprint = JSON.stringify({
+              nodes: currentPersistable.nodes,
+              edges: currentPersistable.edges,
+            });
+            return currentFingerprint === boardFingerprint ? canonicalDeck : currentDeck;
+          });
+          setDeckRevision(revisionAfter);
+          lastPersistedBoardFingerprintRef.current = canonicalFingerprint;
+          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(canonicalDeck);
           console.info('[builder][deck-save-proof]', {
             projectId: canvasProjectId,
             deckId: builderDeckId,
@@ -247,6 +265,8 @@ export default function useAgentBuilderAutosave({
     lastPersistedBoardSnapshotRef,
     layoutAutosaveAbortRef,
     projectsApi,
+    readDeckDocument,
+    setDeck,
     setDeckRevision,
     setDeckStatusMessage,
     snapshotDeckBoard,

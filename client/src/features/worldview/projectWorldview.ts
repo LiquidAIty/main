@@ -13,10 +13,13 @@ export type ProjectWorldviewState = {
   capabilities: ProjectWorldviewCapability[];
 };
 
+const CAPABILITY_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/;
+
 export function isCapability(value: unknown): value is ProjectWorldviewCapability {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   return typeof row.capabilityId === 'string'
+    && CAPABILITY_ID.test(row.capabilityId)
     && typeof row.enabled === 'boolean'
     && (row.controlledBy === 'user' || row.controlledBy === 'main')
     && (row.lastOrigin === 'user' || row.lastOrigin === 'main'
@@ -32,6 +35,10 @@ function parseState(value: unknown, projectId: string): ProjectWorldviewState {
   const body = value as Record<string, unknown>;
   if (body.ok !== true || body.projectId !== projectId || body.defaultEnabled !== true
     || !Array.isArray(body.capabilities) || !body.capabilities.every(isCapability)) {
+    throw new Error('project_worldview_response_invalid');
+  }
+  const capabilityIds = body.capabilities.map((capability) => capability.capabilityId);
+  if (new Set(capabilityIds).size !== capabilityIds.length) {
     throw new Error('project_worldview_response_invalid');
   }
   return {
@@ -75,6 +82,9 @@ export async function setProjectWorldviewCapability(
   const normalizedCapabilityId = String(capabilityId || '').trim();
   if (!normalizedProjectId) throw new Error('project_id_required');
   if (!normalizedCapabilityId) throw new Error('worldview_capability_id_required');
+  if (!CAPABILITY_ID.test(normalizedCapabilityId)) {
+    throw new Error('worldview_capability_id_invalid');
+  }
   const response = await fetcher(
     `/api/worldview/projects/${encodeURIComponent(normalizedProjectId)}/capabilities/${encodeURIComponent(normalizedCapabilityId)}`,
     {
@@ -88,7 +98,9 @@ export async function setProjectWorldviewCapability(
     throw new Error('project_worldview_response_invalid');
   }
   const body = payload as Record<string, unknown>;
-  if (body.ok !== true || body.projectId !== normalizedProjectId || !isCapability(body.capability)) {
+  if (body.ok !== true || body.projectId !== normalizedProjectId
+    || !isCapability(body.capability)
+    || body.capability.capabilityId !== normalizedCapabilityId) {
     throw new Error('project_worldview_response_invalid');
   }
   return body.capability;

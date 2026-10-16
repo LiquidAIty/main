@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldSignals
+ * Relationship: WorldSignals compares its built embed bundle with relevant source modification times and reports fresh, stale, missing, or unverifiable state without rebuilding it.
+ */
+
 import { existsSync, statSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { resolveRepoRoot } from '../services/workingDirectories';

@@ -446,7 +446,6 @@ def _update_existing_deck_with_cursor(
     }
     if set(current_by_id) - set(incoming_by_id):
         raise CardDomainError("card_deletion_requires_explicit_operation")
-    propagated_decks: set[tuple[str, str]] = set()
     for ordinal, node in enumerate(incoming_nodes):
         card_id = node["id"]
         previous = current_by_id.get(card_id)
@@ -481,45 +480,41 @@ def _update_existing_deck_with_cursor(
                 previous_revision_id = str(previous["_cardRevisionId"])
                 cursor.execute(
                     """
-                    SELECT revision.project_id::text, revision.deck_id,
-                           revision.card_id,
-                           MAX(lineage.revision_number) AS latest_revision_number
-                    FROM ag_catalog.agent_card_revisions AS revision
-                    JOIN ag_catalog.agent_card_revisions AS lineage
-                      ON lineage.project_id=revision.project_id
-                     AND lineage.deck_id=revision.deck_id
-                     AND lineage.card_id=revision.card_id
-                    WHERE revision.revision_id=%s
-                    GROUP BY revision.project_id, revision.deck_id, revision.card_id
+                    SELECT COALESCE(MAX(revision_number), 0) AS latest_revision_number
+                    FROM ag_catalog.agent_card_revisions
+                    WHERE project_id=%s AND deck_id=%s AND card_id=%s
                     """,
-                    (previous_revision_id,),
+                    (project_id, deck_id, card_id),
                 )
-                revision_owner = cursor.fetchone()
-                if revision_owner is None:
-                    raise CardDomainError("card_revision_not_found")
+                revision_lineage = cursor.fetchone()
+                latest_revision_number = int(
+                    (revision_lineage or {}).get("latest_revision_number") or 0
+                )
                 revision_id = _insert_revision(
                     cursor,
-                    str(revision_owner["project_id"]),
-                    str(revision_owner["deck_id"]),
+                    project_id,
+                    deck_id,
                     node,
-                    int(revision_owner["latest_revision_number"]) + 1,
+                    latest_revision_number + 1,
                 )
                 cursor.execute(
                     """
                     UPDATE ag_catalog.agent_cards
                     SET current_revision_id=%s
-                    WHERE card_id=%s AND current_revision_id=%s
-                    RETURNING project_id::text, deck_id
+                    WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                      AND current_revision_id=%s
+                    RETURNING current_revision_id
                     """,
-                    (revision_id, card_id, previous_revision_id),
+                    (
+                        revision_id,
+                        project_id,
+                        deck_id,
+                        card_id,
+                        previous_revision_id,
+                    ),
                 )
-                advanced_decks = {
-                    (str(row["project_id"]), str(row["deck_id"]))
-                    for row in cursor.fetchall()
-                }
-                if not advanced_decks:
+                if cursor.fetchone() is None:
                     raise CardDomainError("card_revision_stale")
-                propagated_decks.update(advanced_decks)
         position = json_object(node.get("position"), "card_position")
         cursor.execute(
             """
@@ -572,20 +567,6 @@ def _update_existing_deck_with_cursor(
                 template["id"],
                 ordinal,
                 str(template.get("content") or ""),
-            ),
-        )
-    propagated_decks.discard((project_id, deck_id))
-    for propagated_project_id, propagated_deck_id in propagated_decks:
-        propagated_at = utc_now()
-        cursor.execute(
-            """
-            UPDATE ag_catalog.agent_decks
-            SET revision=%s, saved_at=%s, updated_at=%s
-            WHERE project_id=%s AND deck_id=%s
-            """,
-            (
-                str(uuid4()), propagated_at, propagated_at,
-                propagated_project_id, propagated_deck_id,
             ),
         )
     revision = str(uuid4())

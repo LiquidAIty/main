@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from app.application_tool_error import ApplicationToolError
+from app.python_models.saved_card_contract import (
+    CardDomainError,
+    REASONING_EFFORTS,
+    reasoning_effort_selection,
+)
 
 
 _CAPABILITY_LIST_FIELDS = {"tools", "skills", "toolsets", "mcpConnectionIds"}
@@ -13,6 +18,7 @@ _SUBAGENT_TYPES = {"none", "leaf", "recursive"}
 _SUBAGENT_MODEL_FIELDS = {
     "provider", "accessMode", "modelKey", "providerModelId",
 }
+_REASONING_EFFORTS = set(REASONING_EFFORTS)
 
 
 def _find_saved_card(deck: dict[str, Any], card_id: str) -> dict[str, Any]:
@@ -79,6 +85,16 @@ def _subagent_model_selection(value: Any) -> dict[str, str]:
         normalized["provider"], normalized["accessMode"]
     )
     return normalized
+
+
+def _reasoning_effort_selection(value: Any, *, operation: str) -> str:
+    try:
+        effort = reasoning_effort_selection(value)
+    except CardDomainError as error:
+        raise ApplicationToolError(f"{operation}_reasoning_effort_invalid") from error
+    if not effort:
+        raise ApplicationToolError(f"{operation}_reasoning_effort_invalid")
+    return effort
 
 
 def _validate_card_provider_selection(

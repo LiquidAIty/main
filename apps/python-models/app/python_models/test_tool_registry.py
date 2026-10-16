@@ -30,6 +30,35 @@ def test_calculator_evaluates_arithmetic():
     assert tool_calculator("2 + 3 * 4") == "14.0"
 
 
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "True",
+        "False + 1",
+        "1 / 0",
+        "1 +",
+        "2 ** 1001",
+        "1e308 * 1e308",
+        "-(" * 18 + "1" + ")" * 18,
+        "+".join("1" for _ in range(70)),
+        "1" * 513,
+    ),
+)
+def test_calculator_rejects_non_arithmetic_or_unbounded_work(expression):
+    with pytest.raises(ValueError, match="calculator_"):
+        tool_calculator(expression)
+
+
+def test_calculator_schema_publishes_the_expression_byte_bound():
+    definition = operation_definition("calculator")
+    assert definition is not None
+    assert definition.parameters_schema["properties"]["expression"] == {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512,
+    }
+
+
 def test_current_datetime_returns_iso_like_string():
     value = tool_current_datetime()
     assert isinstance(value, str) and len(value) >= 10

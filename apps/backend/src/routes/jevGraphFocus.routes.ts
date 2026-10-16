@@ -1,6 +1,9 @@
 import { Router } from 'express';
 
-import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import {
+  PythonRailsHttpError,
+  requestPythonRailsJson,
+} from '../services/pythonRailsClient';
 import { requireOwnedProject } from './projectAccess';
 
 type RequestRails = typeof requestPythonRailsJson;
@@ -141,16 +144,62 @@ function validJevFocusRequest(value: unknown): value is Record<string, unknown> 
   return true;
 }
 
-function unavailable(sourceRevision: string) {
-  return {
-    schemaVersion: 'jev-focus.v1',
-    sourceRevision,
-    status: 'unavailable',
-    decisionId: null,
-    errorCode: 'jev_focus_python_rails_unavailable',
-    distribution: {},
-    candidates: [],
-  };
+function validJevFocusResponse(value: unknown, sourceRevision: string): boolean {
+  if (!record(value)
+    || value.schemaVersion !== 'jev-focus.v1'
+    || value.sourceRevision !== sourceRevision
+    || !['success', 'unavailable', 'timeout', 'invalid', 'error'].includes(
+      String(value.status),
+    )
+    || !record(value.distribution)
+    || !Array.isArray(value.candidates)) {
+    return false;
+  }
+  if (value.status !== 'success') {
+    return value.decisionId === null
+      && boundedString(value.errorCode, 256)
+      && Object.keys(value.distribution).length === 0
+      && value.candidates.length === 0;
+  }
+  if (!boundedString(value.decisionId, 512)
+    || value.errorCode !== null
+    || value.candidates.length < 1
+    || value.candidates.length > 12) {
+    return false;
+  }
+  const choiceIds = new Set<string>();
+  const ranks = new Set<number>();
+  for (const candidate of value.candidates) {
+    if (!record(candidate)
+      || !boundedString(candidate.choiceId, 128)
+      || typeof candidate.probability !== 'number'
+      || !Number.isFinite(candidate.probability)
+      || candidate.probability < 0
+      || candidate.probability > 1
+      || !Number.isSafeInteger(candidate.rank)
+      || Number(candidate.rank) < 1
+      || Number(candidate.rank) > value.candidates.length
+      || typeof candidate.selected !== 'boolean'
+      || choiceIds.has(candidate.choiceId)
+      || ranks.has(Number(candidate.rank))) {
+      return false;
+    }
+    choiceIds.add(candidate.choiceId);
+    ranks.add(Number(candidate.rank));
+  }
+  if (new Set(Object.keys(value.distribution)).size !== choiceIds.size
+    || Object.keys(value.distribution).some(key => !choiceIds.has(key))) {
+    return false;
+  }
+  const probabilities = Object.values(value.distribution);
+  return probabilities.every(probability => (
+    typeof probability === 'number'
+    && Number.isFinite(probability)
+    && probability >= 0
+    && probability <= 1
+  )) && Math.abs(probabilities.reduce<number>((sum, probability) => (
+    sum + Number(probability)
+  ), 0) - 1) <= 0.000_001;
 }
 
 export function createJevGraphFocusRouter(
@@ -163,13 +212,30 @@ export function createJevGraphFocusRouter(
     }
     try {
       if (!await requireOwnedProject(req, res, String(req.body.projectId))) return undefined;
-      return res.json(await requestRails('/graph/jev-focus', {
+    } catch {
+      return res.status(500).json({ error: 'project_authorization_failed' });
+    }
+    try {
+      const result = await requestRails('/graph/jev-focus', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req.body),
-      }));
-    } catch {
-      return res.json(unavailable(String(req.body.sourceRevision)));
+      });
+      if (!validJevFocusResponse(result, String(req.body.sourceRevision))) {
+        return res.status(502).json({ error: 'jev_focus_response_invalid' });
+      }
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof PythonRailsHttpError) {
+        return res.status(error.status).json({ error: error.code });
+      }
+      const unavailable = String((error as { code?: unknown })?.code || '')
+        === 'PYTHON_RAILS_UNAVAILABLE';
+      return res.status(unavailable ? 503 : 502).json({
+        error: unavailable
+          ? 'jev_focus_python_rails_unavailable'
+          : 'jev_focus_request_failed',
+      });
     }
   });
   return router;

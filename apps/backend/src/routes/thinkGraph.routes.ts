@@ -1,3 +1,8 @@
+/**
+ * Entity: ThinkGraph
+ * Relationship: ThinkGraph exposes owner-scoped evidence retirement, full projection, and canonical Entity neighborhood reads while leaving graph data and semantics to Python and Engraphis.
+ */
+
 import { Router } from 'express';
 
 import {

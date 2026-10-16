@@ -1,3 +1,6 @@
+# Entity: Project Knowledge Graph
+# Relationship: Verifies Recent/Relevant separation, context-based Jev ranking, exact Graphiti Entity hydration, and per-authority failure behavior through explicitly controlled provider fixtures.
+
 from __future__ import annotations
 
 from app.python_models import project_graph_relevance as relevance

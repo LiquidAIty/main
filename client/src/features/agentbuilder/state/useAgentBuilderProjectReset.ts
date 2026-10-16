@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: Agent Builder cancels pending deck and layout saves when the workspace changes Projects, preventing persistence from crossing Project boundaries.
+ */
+
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 

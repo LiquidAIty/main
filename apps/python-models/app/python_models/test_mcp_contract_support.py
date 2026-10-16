@@ -1,5 +1,8 @@
 """Test-owned value formatting and provider reset support for MCP contracts."""
 
+# Entity: MCP Host
+# Relationship: MCP Host supplies shared test formatting and provider-reset fixtures that isolate authenticated streamable HTTP and dispatch contract suites.
+
 import json
 
 import pytest

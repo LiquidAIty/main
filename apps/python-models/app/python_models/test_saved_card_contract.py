@@ -1,9 +1,13 @@
+# Entity: Saved Cards
+# Relationship: Verifies stable profile and runtime ownership, strict orchestration and auto-selection flags, retired embedded-team removal, and inert retention of disabled invalid Card Scripts.
+
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
 
 from app.python_models import (
+    card_invocation_authority,
     saved_card_contract,
     saved_cards,
 )
@@ -74,6 +78,35 @@ def test_saved_profiles_stay_unique_and_stable_grants_are_preserved():
         saved_cards._validated_deck_collections({
             "id": "d", "nodes": [controller, duplicate], "edges": [], "promptTemplates": [],
         }, "d")
+
+
+@pytest.mark.parametrize("effort", ("low", "medium", "high", "xhigh", "max", "ultra"))
+def test_reasoning_effort_uses_one_saved_and_invocation_enum(effort: str) -> None:
+    card = _agent("reasoning-card")
+    card["runtimeOptions"]["reasoningEffort"] = effort
+
+    saved_card_contract.validate_new_card_revision(card)
+
+    assert card_invocation_authority.saved_invocation_configuration(card)[
+        "reasoningEffort"
+    ] == effort
+
+
+def test_invalid_historical_reasoning_effort_is_readable_but_cannot_save_or_run() -> None:
+    card = _agent("reasoning-card")
+    card["runtimeOptions"]["reasoningEffort"] = "extreme"
+
+    assert saved_card_contract.stable_card_record(card)["reasoningEffort"] == "extreme"
+    with pytest.raises(
+        saved_card_contract.CardDomainError,
+        match="card_reasoning_effort_invalid",
+    ):
+        saved_card_contract.validate_new_card_revision(card)
+    with pytest.raises(
+        saved_card_contract.CardDomainError,
+        match="card_reasoning_effort_invalid",
+    ):
+        card_invocation_authority.saved_invocation_configuration(card)
 
 def test_existing_saved_hermes_card_profile_is_immutable() -> None:
     previous = saved_card_contract.stable_card_record(_agent(

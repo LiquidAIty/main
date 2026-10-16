@@ -1,4 +1,5 @@
 """Python rails FastAPI lifespan and application composition root."""
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI

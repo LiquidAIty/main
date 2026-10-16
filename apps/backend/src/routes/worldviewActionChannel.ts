@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: WorldView correlates one short-lived Project-and-Card-scoped action at a time with the mounted surface over SSE, including disconnect, timeout, and exact-result settlement.
+ */
+
 import type { Response } from 'express';
 import { randomUUID } from 'node:crypto';
 

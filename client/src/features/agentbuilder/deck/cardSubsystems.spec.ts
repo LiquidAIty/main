@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Subsystems
+ * Relationship: Card Subsystems verifies that the client preserves valid typed Python attachments and filters malformed or duplicate subsystem records from saved Card presentation.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { readCardSubsystemAttachments } from './cardSubsystems';

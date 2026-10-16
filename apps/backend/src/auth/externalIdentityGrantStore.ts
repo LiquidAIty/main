@@ -1,3 +1,8 @@
+/**
+ * Entity: External Identity Grants
+ * Relationship: External Identity Grants resolves a verified OAuth issuer and subject to one existing user and owned Project without storing tokens.
+ */
+
 import { pool } from '../db/pool';
 
 export type ExternalIdentityProjectGrant = {

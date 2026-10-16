@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: WorldView reads effective Project source capabilities and persists explicit user or WorldView-Card overrides while retaining the separately owned Main recommendation fields.
+ */
+
 import { pool } from '../db/pool';
 
 export type ProjectWorldviewCapability = {

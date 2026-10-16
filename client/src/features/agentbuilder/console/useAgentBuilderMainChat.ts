@@ -428,8 +428,13 @@ export default function useAgentBuilderMainChat({
   ]);
 
   const handleSend = useCallback((text: string, runInput?: MainChatRunInput) => {
+    if (!text.trim() || !canvasProjectId) {
+      setTechnical({ key: projectKey, error: 'main_project_required' });
+      return false;
+    }
     void requestMainText(text, runInput).catch(() => undefined);
-  }, [requestMainText]);
+    return true;
+  }, [canvasProjectId, projectKey, requestMainText]);
 
   const startVoiceSession = useCallback(() => {
     if (!canvasProjectId || sessionPending || voiceControllerRef.current) return;

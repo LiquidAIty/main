@@ -1,4 +1,8 @@
 """Trading boundary routes."""
+
+# Entity: Trading
+# Relationship: Trading exposes Python readiness, Project-scoped state reads, and operator interventions while translating domain failures into stable HTTP conflicts.
+
 from fastapi import APIRouter, HTTPException
 from typing import Any
 from app.python_models.trading_broker_observation import lumibot_readiness

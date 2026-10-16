@@ -15,7 +15,19 @@ from mcp.server.lowlevel.server import Server
 from mcp.server.stdio import stdio_server
 
 HTTP_MCP_HOST = '127.0.0.1'
-HTTP_MCP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8765"))
+
+
+def validated_http_mcp_port(value: str) -> int:
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("mcp_http_port_invalid") from error
+    if port < 1 or port > 65535:
+        raise RuntimeError("mcp_http_port_invalid")
+    return port
+
+
+HTTP_MCP_PORT = validated_http_mcp_port(os.environ.get("MCP_HTTP_PORT", "8765"))
 async def run_stdio(server: Server, implementation_version: str) -> None:
     try:
         try:
@@ -45,6 +57,7 @@ async def run_stdio(server: Server, implementation_version: str) -> None:
     finally:
         await mcp_graphiti_provider.close_graphiti()
         await mcp_cbm_provider.close_cbm()
+        mcp_catalog_runtime.reset_catalog_lifecycle()
 
 
 def _safe_request_header(scope: dict[str, Any], name: bytes) -> str:
@@ -163,8 +176,8 @@ async def run_streamable_http(
         f"http://{local_authority}",
         f"http://localhost:{HTTP_MCP_PORT}",
     }
-    if mcp_auth.PUBLIC_MCP_RESOURCE_URL:
-        public_url = urlsplit(mcp_auth.PUBLIC_MCP_RESOURCE_URL)
+    if config_values.resource_url:
+        public_url = urlsplit(config_values.resource_url)
         if public_url.netloc:
             allowed_hosts.add(public_url.netloc)
             allowed_origins.add(f"{public_url.scheme}://{public_url.netloc}")
@@ -216,6 +229,7 @@ async def run_streamable_http(
                     pass
             await mcp_graphiti_provider.close_graphiti()
             await mcp_cbm_provider.close_cbm()
+            mcp_catalog_runtime.reset_catalog_lifecycle()
 
     async def health_endpoint(_request: Any) -> JSONResponse:
         diagnostics = mcp_catalog_runtime.catalog_diagnostics()

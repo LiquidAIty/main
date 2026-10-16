@@ -19,7 +19,10 @@ Hard boundaries (enforced by tests):
 from __future__ import annotations
 
 import hashlib
+import gzip
+import io
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +39,20 @@ SIGNAL_TYPE = "sec_filing_published"
 SEC_API_QUERY_URL = "https://api.sec-api.io"  # sec-api.io Query API (token-authenticated)
 _SEC_SOURCE_HOSTS = frozenset({"sec.gov", "www.sec.gov"})
 MAX_RESULT_LIMIT = 50
+MAX_FORM_TYPES = 16
+MAX_COMPRESSED_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_DECOMPRESSED_RESPONSE_BYTES = 16 * 1024 * 1024
+_TICKER = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
+_CIK = re.compile(r"^[0-9]{1,10}$")
+_FORM = re.compile(r"^[A-Z0-9][A-Z0-9/-]{0,19}$")
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+_SEC_OPENER = urllib.request.build_opener(_RejectRedirects())
 
 # WorldSignalEnvelope / provider statuses.
 STATUS_AVAILABLE = "available"
@@ -124,6 +141,8 @@ class SecFilingSignalResult:
     replay: ReplayRef
     envelopes: list[WorldSignalEnvelope] = field(default_factory=list)
     error: Optional[str] = None
+    omittedRecords: int = 0
+    truncated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -133,6 +152,8 @@ class SecFilingSignalResult:
             "replay": asdict(self.replay),
             "envelopes": [e.to_dict() for e in self.envelopes],
             "error": self.error,
+            "omittedRecords": self.omittedRecords,
+            "truncated": self.truncated,
         }
 
 
@@ -154,7 +175,7 @@ def _query_identity(query: SecFilingQuery) -> str:
             "ticker": (query.issuer.ticker or "").strip().upper(),
             "cik": (query.issuer.cik or "").strip(),
             "company": (query.issuer.companyName or "").strip(),
-            "forms": sorted(f.strip() for f in query.formTypes if f.strip()),
+            "forms": sorted(str(f).strip().upper() for f in query.formTypes),
             "from": query.fromDate,
             "to": query.toDate,
             "limit": query.limit,
@@ -168,7 +189,7 @@ def _query_identity(query: SecFilingQuery) -> str:
 
 def _lucene_query(query: SecFilingQuery) -> str:
     clauses: list[str] = []
-    ticker = (query.issuer.ticker or "").strip()
+    ticker = (query.issuer.ticker or "").strip().upper()
     cik = (query.issuer.cik or "").strip()
     company = (query.issuer.companyName or "").strip()
     if ticker:
@@ -176,8 +197,9 @@ def _lucene_query(query: SecFilingQuery) -> str:
     if cik:
         clauses.append(f"cik:{cik}")
     if company and not ticker and not cik:
-        clauses.append(f'companyName:"{company}"')
-    forms = [f.strip() for f in query.formTypes if f.strip()]
+        escaped_company = company.replace("\\", "\\\\").replace('"', '\\"')
+        clauses.append(f'companyName:"{escaped_company}"')
+    forms = [str(f).strip().upper() for f in query.formTypes]
     if forms:
         form_clause = " OR ".join(f'formType:"{f}"' for f in forms)
         clauses.append(f"({form_clause})")
@@ -198,16 +220,19 @@ def _default_transport(key: str, body: dict[str, Any]) -> dict[str, Any]:
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 (trusted host)
-        raw = response.read()
+    with _SEC_OPENER.open(request, timeout=20) as response:
+        raw = response.read(MAX_COMPRESSED_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_COMPRESSED_RESPONSE_BYTES:
+            raise ValueError("sec_api_response_too_large")
         # sec-api.io returns gzip-compressed JSON; urllib does not auto-decompress, so a bare
         # decode('utf-8') raised UnicodeDecodeError on the gzip magic bytes. Decompress honestly
         # when the server marks the body gzip (or the gzip magic 0x1f8b is present).
         encoding = (response.headers.get("Content-Encoding") or "").lower()
         if "gzip" in encoding or raw[:2] == b"\x1f\x8b":
-            import gzip
-
-            raw = gzip.decompress(raw)
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
+                raw = compressed.read(MAX_DECOMPRESSED_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_DECOMPRESSED_RESPONSE_BYTES:
+                raise ValueError("sec_api_response_too_large")
         payload = raw.decode("utf-8")
     return json.loads(payload)
 
@@ -217,14 +242,39 @@ def _validate_query(query: SecFilingQuery) -> None:
         raise TypeError("sec_filing_query_invalid")
     if not query.issuer.is_explicit():
         raise ValueError("sec_filing_explicit_issuer_required")
-    forms = [f.strip() for f in (query.formTypes or []) if f.strip()]
-    if not forms:
+    ticker = str(query.issuer.ticker or "").strip().upper()
+    cik = str(query.issuer.cik or "").strip()
+    company = str(query.issuer.companyName or "").strip()
+    if ticker and _TICKER.fullmatch(ticker) is None:
+        raise ValueError("sec_filing_ticker_invalid")
+    if cik and _CIK.fullmatch(cik) is None:
+        raise ValueError("sec_filing_cik_invalid")
+    if company and (
+        len(company) > 200
+        or any(ord(character) < 32 or ord(character) == 127 for character in company)
+    ):
+        raise ValueError("sec_filing_company_invalid")
+    forms = [str(value).strip().upper() for value in (query.formTypes or [])]
+    if (
+        not forms
+        or len(forms) > MAX_FORM_TYPES
+        or len(forms) != len(set(forms))
+        or any(_FORM.fullmatch(form) is None for form in forms)
+    ):
         raise ValueError("sec_filing_form_types_required")
-    if not str(query.fromDate or "").strip() or not str(query.toDate or "").strip():
+    if not isinstance(query.fromDate, str) or not isinstance(query.toDate, str):
         raise ValueError("sec_filing_time_window_required")
-    if str(query.fromDate) > str(query.toDate):
+    try:
+        from_date = datetime.strptime(query.fromDate, "%Y-%m-%d").date()
+        to_date = datetime.strptime(query.toDate, "%Y-%m-%d").date()
+    except ValueError as error:
+        raise ValueError("sec_filing_time_window_invalid") from error
+    if from_date.isoformat() != query.fromDate or to_date.isoformat() != query.toDate:
+        raise ValueError("sec_filing_time_window_invalid")
+    if from_date > to_date:
         raise ValueError("sec_filing_time_window_inverted")
-    if not isinstance(query.limit, int) or query.limit < 1 or query.limit > MAX_RESULT_LIMIT:
+    if isinstance(query.limit, bool) or not isinstance(query.limit, int) \
+            or query.limit < 1 or query.limit > MAX_RESULT_LIMIT:
         raise ValueError(f"sec_filing_limit_out_of_range_1_{MAX_RESULT_LIMIT}")
 
 
@@ -279,6 +329,12 @@ def _map_filing_to_envelope(
     period = str(raw.get("periodOfReport") or "").strip() or None
     if not accession or not form_type or not filed_at or not filing_url:
         return None  # honest: incomplete filing record is skipped, never fabricated
+    try:
+        observed = datetime.fromisoformat(filed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if observed.tzinfo is None:
+        return None
     issuer = IssuerRef(
         ticker=(str(raw.get("ticker") or "").strip() or None),
         cik=(str(raw.get("cik") or "").strip() or None),
@@ -357,7 +413,7 @@ def find_recent_sec_filing_signals(
             envelopes=[],
             error=f"sec_api_request_failed: {type(exc).__name__}",
         )
-    except Exception as exc:  # noqa: BLE001 — any transport failure is provider_error
+    except (TimeoutError, OSError) as exc:
         return SecFilingSignalResult(
             status=STATUS_ERROR,
             provider=PROVIDER,
@@ -365,6 +421,15 @@ def find_recent_sec_filing_signals(
             replay=replay,
             envelopes=[],
             error=f"sec_api_transport_error: {type(exc).__name__}",
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return SecFilingSignalResult(
+            status=STATUS_INVALID,
+            provider=PROVIDER,
+            fetchedAt=fetched_at,
+            replay=replay,
+            envelopes=[],
+            error="sec_api_invalid_response",
         )
 
     if not isinstance(payload, dict) or not isinstance(payload.get("filings"), list):
@@ -377,13 +442,18 @@ def find_recent_sec_filing_signals(
             error="sec_api_invalid_response_shape",
         )
 
+    raw_filings = payload["filings"]
     envelopes: list[WorldSignalEnvelope] = []
-    for raw in payload["filings"][: query.limit]:
+    omitted_records = 0
+    for raw in raw_filings[: query.limit]:
         if not isinstance(raw, dict):
+            omitted_records += 1
             continue
         envelope = _map_filing_to_envelope(raw, fetched_at=fetched_at, replay=replay)
         if envelope is not None:
             envelopes.append(envelope)
+        else:
+            omitted_records += 1
 
     return SecFilingSignalResult(
         status=STATUS_AVAILABLE,
@@ -392,4 +462,6 @@ def find_recent_sec_filing_signals(
         replay=replay,
         envelopes=envelopes,
         error=None,
+        omittedRecords=omitted_records,
+        truncated=len(raw_filings) > query.limit,
     )

@@ -6,16 +6,52 @@ import asyncio
 import json
 import os
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from app.application_tool_error import ApplicationToolError
 from mcp.types import TextContent
 
 
-BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 DEFAULT_BACKEND_OPERATION_TIMEOUT_SECONDS = 30.0
 WORLDVIEW_ACTION_HTTP_TIMEOUT_SECONDS = 40.0
+
+
+def validated_backend_origin(value: str) -> str:
+    raw = str(value or "").strip()
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as error:
+        raise RuntimeError("main_backend_url_invalid") from error
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or port is None
+    ):
+        raise RuntimeError("main_backend_url_must_be_loopback_http_origin")
+    return raw.rstrip("/")
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+_BACKEND_OPENER = build_opener(_RejectRedirects())
+BACKEND = validated_backend_origin(
+    os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000")
+)
+
+
+def open_backend_request(request: Request, *, timeout_seconds: float):
+    return _BACKEND_OPENER.open(request, timeout=timeout_seconds)
 
 
 def _internal_secret(*, required: bool) -> str:
@@ -28,7 +64,7 @@ def _internal_secret(*, required: bool) -> str:
 def _request_headers(*, require_internal_secret: bool) -> dict[str, str]:
     secret = _internal_secret(required=require_internal_secret)
     headers = {"Content-Type": "application/json"}
-    if secret:
+    if require_internal_secret:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = secret
     return headers
 
@@ -56,7 +92,7 @@ def request_backend_json(
         method=method,
     )
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 — loopback backend only
+        with open_backend_request(request, timeout_seconds=timeout_seconds) as response:
             value = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         try:
@@ -92,10 +128,10 @@ def post_backend_text_sync(
         method="POST",
     )
     try:
-        with urlopen(
+        with open_backend_request(
             request,
-            timeout=timeout_seconds,
-        ) as response:  # noqa: S310 — loopback backend only
+            timeout_seconds=timeout_seconds,
+        ) as response:
             return response.read().decode("utf-8")
     except HTTPError as error:
         try:

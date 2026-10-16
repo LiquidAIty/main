@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Scripts
+ * Relationship: Card Scripts validates an unsaved Script against the Card's selected live tool definitions and returns its compiled draft, references, and palette fingerprint.
+ */
+
 import { Router } from 'express';
 import { resolveScriptToolDefinitions } from '../cards/toolCatalogProjection';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';

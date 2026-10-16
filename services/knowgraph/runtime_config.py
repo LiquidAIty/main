@@ -12,6 +12,7 @@ FILE_BACKED_CONFIG = (
     "OPENROUTER_API_KEY",
     "NEO4J_PASSWORD",
 )
+ENV_FILE_OVERRIDE = "LIQUIDAITY_ENV_FILE"
 
 
 def _resolve_file_backed_config() -> None:
@@ -30,12 +31,10 @@ def load_runtime_environment() -> None:
     _resolve_file_backed_config()
     service_dir = Path(__file__).resolve().parent
     repo_root = service_dir.parents[1]
-    candidates = (
-        service_dir / ".env",
-        repo_root / "apps" / "backend" / ".env",
-        repo_root / ".env",
-    )
-    for candidate in dict.fromkeys(candidates):
-        if candidate.is_file():
-            load_dotenv(candidate, override=False)
+    override = os.environ.get(ENV_FILE_OVERRIDE, "").strip()
+    candidate = Path(override) if override else repo_root / "apps" / "backend" / ".env"
+    if override and not candidate.is_file():
+        raise RuntimeError(f"config_env_file_unreadable: {ENV_FILE_OVERRIDE}")
+    if candidate.is_file():
+        load_dotenv(candidate, override=False)
     _resolve_file_backed_config()

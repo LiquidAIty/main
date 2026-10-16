@@ -1,3 +1,11 @@
+/**
+ * Entity: Application Startup
+ * Relationship: Loads the backend's one workspace-owned environment file and validates mandatory configuration without depending on the process working directory.
+ *
+ * Entity: Credentials
+ * Relationship: Resolves supported file-backed secrets while preserving process-injected values and keeping secret contents out of configuration errors.
+ */
+
 import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
@@ -12,19 +20,25 @@ const FILE_BACKED_CONFIG = [
   'AUTH_BOOTSTRAP_TOKEN',
   'NEO4J_PASSWORD',
   'POSTGRES_PASSWORD',
+  'ALPACA_API_KEY_ID',
   'ALPACA_API_SECRET_KEY',
   'SEC_API_KEY',
   'MCP_AUTH0_CLIENT_SECRET',
+  'WORLDSIGNALS_HMAC_SECRET',
 ] as const;
 
-function optionalEnvPath(cwd: string): string | null {
-  const candidates = [
-    path.resolve(cwd, 'apps/backend/.env'),
-    path.resolve(cwd, '.env'),
-  ];
-  return candidates.find((candidate, index) => (
-    candidates.indexOf(candidate) === index && fs.existsSync(candidate)
-  )) ?? null;
+export function backendEnvPathFromModuleDirectory(moduleDirectory: string): string {
+  const sourceOrBuildRoot = path.resolve(moduleDirectory, '../..');
+  const backendRoot = path.basename(sourceOrBuildRoot) === 'dist'
+    ? path.dirname(sourceOrBuildRoot)
+    : sourceOrBuildRoot;
+  return path.join(backendRoot, '.env');
+}
+
+const BACKEND_ENV_PATH = backendEnvPathFromModuleDirectory(__dirname);
+
+function optionalEnvPath(envPath: string): string | null {
+  return fs.existsSync(envPath) ? envPath : null;
 }
 
 function resolveFileBackedConfig(env: NodeJS.ProcessEnv): void {
@@ -43,21 +57,21 @@ function resolveFileBackedConfig(env: NodeJS.ProcessEnv): void {
 
 export function loadBackendEnvironment(
   env: NodeJS.ProcessEnv = process.env,
-  cwd = process.cwd(),
+  envPath = BACKEND_ENV_PATH,
 ): void {
   // Docker-injected *_FILE values are process configuration, so resolve them
   // before dotenv. This preserves injected configuration authority over files.
   resolveFileBackedConfig(env);
 
-  const envPath = optionalEnvPath(cwd);
-  if (envPath) {
+  const existingEnvPath = optionalEnvPath(envPath);
+  if (existingEnvPath) {
     const result = dotenv.config({
-      path: envPath,
+      path: existingEnvPath,
       override: false,
       processEnv: env as Record<string, string>,
     });
     if (result.error) {
-      throw new Error(`optional_env_load_failed: ${envPath}`);
+      throw new Error(`optional_env_load_failed: ${existingEnvPath}`);
     }
   }
 

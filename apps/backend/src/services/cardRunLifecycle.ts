@@ -73,6 +73,12 @@ export async function prepareCardRun(args: {
   const request = record(transport.request);
   if (
     String(prepared.runId || '') !== runId
+    || String(prepared.correlationId || '') !== runId
+    || String(prepared.projectId || '') !== args.projectId
+    || String(prepared.deckId || '') !== args.deckId
+    || String(prepared.conversationId || '') !== args.conversationId
+    || String(prepared.cardId || '') !== args.target.card.id
+    || String(prepared.cardRevisionId || '') !== args.target.cardRevisionId
     || String(transport.cardIdentity?.cardId || '') !== args.target.card.id
     || String(request.runtime?.profile || '') !== args.target.profile
     || !String(request.message || '').trim()
@@ -124,7 +130,7 @@ export async function readCardRun(args: {
   if (
     response.ok !== true
     || String(run.runId || '') !== args.runId
-    || !String(run.projectId || '')
+    || String(run.projectId || '') !== args.projectId
     || String(run.deckId || '') !== args.deckId
     || String(run.cardId || '') !== args.cardId
     || String(run.runtimeProfile || '').toLowerCase() !== args.profile.toLowerCase()
@@ -134,24 +140,42 @@ export async function readCardRun(args: {
 
 export function hermesUsageFields(value: unknown): Record<string, number | null> {
   const usage = record(value);
-  const number = (...values: unknown[]): number | null => {
-    const selected = values.find((item) => typeof item === 'number' && Number.isFinite(item));
-    return typeof selected === 'number' ? selected : null;
+  const count = (...values: unknown[]): number | null => {
+    const supplied = values.filter((item): item is number => typeof item === 'number');
+    if (supplied.some((item) => (
+      !Number.isSafeInteger(item) || Number(item) < 0
+    ))) throw new Error('hermes_usage_invalid');
+    return supplied.length > 0 ? Number(supplied[0]) : null;
   };
-  const providerInputTokens = number(usage.input, usage.prompt, usage.input_tokens);
-  const providerOutputTokens = number(usage.output, usage.completion, usage.output_tokens);
-  const reportedTotal = number(usage.total, usage.total_tokens);
+  const amount = (...values: unknown[]): number | null => {
+    const supplied = values.filter((item): item is number => typeof item === 'number');
+    if (supplied.some((item) => (
+      !Number.isFinite(item) || Number(item) < 0
+    ))) throw new Error('hermes_usage_invalid');
+    return supplied.length > 0 ? Number(supplied[0]) : null;
+  };
+  const providerInputTokens = count(usage.input, usage.prompt, usage.input_tokens);
+  const providerOutputTokens = count(usage.output, usage.completion, usage.output_tokens);
+  const providerCachedTokens = count(usage.cached, usage.cached_tokens);
+  const providerReasoningTokens = count(usage.reasoning, usage.reasoning_tokens);
+  const reportedTotal = count(usage.total, usage.total_tokens);
+  const computedTotal = providerInputTokens !== null && providerOutputTokens !== null
+    ? providerInputTokens + providerOutputTokens
+    : null;
+  if (
+    reportedTotal !== null && computedTotal !== null && reportedTotal !== computedTotal
+    || providerCachedTokens !== null && providerInputTokens !== null
+      && providerCachedTokens > providerInputTokens
+    || providerReasoningTokens !== null && providerOutputTokens !== null
+      && providerReasoningTokens > providerOutputTokens
+  ) throw new Error('hermes_usage_invalid');
   return {
     providerInputTokens,
     providerOutputTokens,
-    providerCachedTokens: number(usage.cached, usage.cached_tokens),
-    providerReasoningTokens: number(usage.reasoning, usage.reasoning_tokens),
-    providerTotalTokens: reportedTotal ?? (
-      providerInputTokens !== null && providerOutputTokens !== null
-        ? providerInputTokens + providerOutputTokens
-        : null
-    ),
-    totalCostUsd: number(usage.cost_usd, usage.total_cost_usd),
+    providerCachedTokens,
+    providerReasoningTokens,
+    providerTotalTokens: reportedTotal ?? computedTotal,
+    totalCostUsd: amount(usage.cost_usd, usage.total_cost_usd),
   };
 }
 

@@ -54,6 +54,10 @@ SAVED_PROVIDER_ACCESS_PAIRS = {
     ("local_openai_compatible", "openai-api"),
 }
 
+REASONING_EFFORTS = frozenset({
+    "low", "medium", "high", "xhigh", "max", "ultra",
+})
+
 
 KNOWN_CARD_FIELDS = {
     "id", "kind", "templateId", "title", "subtitle", "role", "status",
@@ -199,6 +203,17 @@ def validate_saved_provider_selection(
             f"card_provider_access_mode_mismatch:{normalized_provider}:{normalized_access_mode}"
         )
     return pair
+
+
+def reasoning_effort_selection(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise CardDomainError("card_reasoning_effort_invalid")
+    normalized = value.strip().lower()
+    if normalized not in REASONING_EFFORTS:
+        raise CardDomainError("card_reasoning_effort_invalid")
+    return normalized
 
 def validate_saved_hermes_runtime_authority(
     provider: Any,
@@ -357,6 +372,7 @@ def validate_new_card_revision(card: dict[str, Any]) -> None:
     ).strip()
     if not model_key or not provider_model_id:
         raise CardDomainError("card_model_selection_incomplete")
+    reasoning_effort_selection(options.get("reasoningEffort"))
     subagent = options.get("subagentModel")
     if subagent is not None:
         if not is_hermes:

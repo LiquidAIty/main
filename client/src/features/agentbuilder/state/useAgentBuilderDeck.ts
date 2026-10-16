@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: Agent Builder owns the current deck document, revision, load and save activity, status, and error state for the open workspace.
+ */
+
 import { useState } from 'react';
 
 import type { DeckDocument } from '../../../types/agentgraph';

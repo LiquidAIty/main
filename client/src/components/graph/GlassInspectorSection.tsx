@@ -1,3 +1,8 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Graph Presentation provides the themed collapsible inspector section used to group graph-adjacent controls, status signals, and detail content without owning their domain data.
+ */
+
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 

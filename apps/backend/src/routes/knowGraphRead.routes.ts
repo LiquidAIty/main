@@ -1,8 +1,3 @@
-// @graph entity: KnowGraphReadRoute
-// @graph role: knowgraph-read-gateway
-// @graph relates_to: AgentBuilderWorkspace, KnowGraph API, KnowGraph
-// @graph depends_on: Express, Python rails
-// @graph feeds_to: KnowGraph
 import { Router, type Request, type Response } from 'express';
 import {
   fetchKnowGraphNeighborhood,

@@ -120,6 +120,62 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         )
         self.assertEqual(kwargs["source_content_sha256"], content_sha256)
 
+    def test_ingest_failure_returns_only_a_stable_safe_error(self) -> None:
+        with tempfile.TemporaryDirectory() as upload_dir:
+            with (
+                patch.object(app, "UPLOADS_DIR", Path(upload_dir)),
+                patch.object(
+                    knowgraph_ingest,
+                    "ingest_pdf",
+                    AsyncMock(side_effect=RuntimeError(
+                        "provider failed at C:\\secret\\path token=do-not-return"
+                    )),
+                ),
+            ):
+                response = asyncio.run(_request(
+                    "POST",
+                    "/ingest",
+                    data={"project_id": "project-1", "document_id": "document-1"},
+                    files={"file": ("source.pdf", b"%PDF-1.4", "application/pdf")},
+                ))
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json(), {
+            "ok": False,
+            "error": {
+                "code": "knowgraph_ingest_failed",
+                "message": "KnowGraph ingest failed.",
+            },
+        })
+        self.assertNotIn("secret", response.text.lower())
+        self.assertNotIn("token", response.text.lower())
+
+    def test_ingest_preserves_safe_rate_limit_classification(self) -> None:
+        class RateLimitError(RuntimeError):
+            pass
+
+        with tempfile.TemporaryDirectory() as upload_dir:
+            with (
+                patch.object(app, "UPLOADS_DIR", Path(upload_dir)),
+                patch.object(
+                    knowgraph_ingest,
+                    "ingest_pdf",
+                    AsyncMock(side_effect=RateLimitError("private provider detail")),
+                ),
+            ):
+                response = asyncio.run(_request(
+                    "POST",
+                    "/ingest",
+                    data={"project_id": "project-1", "document_id": "document-1"},
+                    files={"file": ("source.pdf", b"%PDF-1.4", "application/pdf")},
+                ))
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"], {
+            "code": "knowgraph_provider_rate_limited",
+            "message": "KnowGraph provider rate limit or quota exceeded.",
+        })
+
     def test_pdf_storage_reuses_identical_bytes_without_overwriting(self) -> None:
         payload = b"%PDF-1.4 immutable content"
         digest = hashlib.sha256(payload).hexdigest()
@@ -165,6 +221,30 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         payload = delete_episode.await_args.args[0]
         self.assertEqual(payload.project_id, "project-1")
         self.assertEqual(payload.graphiti_episode_uuid, "episode-1")
+
+    def test_delete_conflict_does_not_return_internal_exception_detail(self) -> None:
+        delete_episode = AsyncMock(
+            side_effect=RuntimeError("neo4j secret at C:\\private\\database")
+        )
+        with patch.object(app, "_delete_graphiti_episode", delete_episode):
+            response = asyncio.run(_request(
+                "POST",
+                "/delete_episode",
+                json={
+                    "project_id": "project-1",
+                    "graphiti_episode_uuid": "episode-1",
+                },
+            ))
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json(), {
+            "ok": False,
+            "error": {
+                "code": "knowgraph_delete_conflict",
+                "message": "KnowGraph deletion could not be completed.",
+            },
+        })
+        self.assertNotIn("secret", response.text.lower())
 
 if __name__ == "__main__":
     unittest.main()

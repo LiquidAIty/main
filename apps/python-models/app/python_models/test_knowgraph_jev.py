@@ -1,3 +1,6 @@
+# Entity: Jev Decisions
+# Relationship: Verifies KnowGraph relationship-choice validation, immutable Graphiti facts, bounded parallel classification, exact failure visibility, and deadline settlement through injected deterministic transports.
+
 from copy import deepcopy
 from threading import Lock
 from time import sleep

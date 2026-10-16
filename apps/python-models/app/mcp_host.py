@@ -1,4 +1,8 @@
 """The one official Python MCP host composition and executable entrypoint."""
+
+# Entity: MCP Host
+# Relationship: MCP Host composes the published resource, tool-catalog, and tool-dispatch handlers into one versioned server and selects its supported stdio or streamable-HTTP transport.
+
 from __future__ import annotations
 
 import asyncio

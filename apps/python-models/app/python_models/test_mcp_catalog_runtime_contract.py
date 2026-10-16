@@ -5,6 +5,7 @@ import socket
 import sys
 
 import pytest
+from mcp.types import Tool
 
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
@@ -23,6 +24,30 @@ from app import (
     mcp_graphiti_provider,
     mcp_observability,
 )
+
+
+def test_frozen_catalog_returns_deep_copies(monkeypatch):
+    original = Tool(
+        name="calculator",
+        description="Stable definition",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", (original,))
+    monkeypatch.setattr(
+        mcp_catalog_runtime,
+        "_CATALOG_COMPLETED_FAMILIES",
+        ("liquidaity",),
+    )
+
+    first = mcp_catalog_runtime.catalog_or_error()
+    first[0].description = "mutated consumer copy"
+    first[0].input_schema["properties"] = {"changed": {"type": "boolean"}}
+
+    second = mcp_catalog_runtime.catalog_or_error()
+    assert second[0].description == "Stable definition"
+    assert second[0].input_schema == {"type": "object", "properties": {}}
 
 
 def test_main_selects_streamable_http_transport(monkeypatch):
@@ -152,6 +177,89 @@ def test_catalog_initialization_is_process_wide_once(monkeypatch):
     assert mcp_catalog_runtime._CATALOG_STATE == "ready"
     assert len(mcp_catalog_runtime._CATALOG_TOOLS or ()) == catalog_size
 
+
+def test_catalog_lifecycle_reset_clears_frozen_and_provider_state(monkeypatch):
+    import asyncio
+
+    cleared = []
+    finished = asyncio.run(asyncio.sleep(0, result=None))
+    assert finished is None
+
+    async def completed_task():
+        return None
+
+    async def build_task():
+        task = asyncio.create_task(completed_task())
+        await task
+        return task
+
+    task = asyncio.run(build_task())
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_INITIALIZATION_TASK", task)
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", "old failure")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE_CODE", "old_failure")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE_SUMMARY", "old failure")
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_COMPLETED_FAMILIES", ("liquidaity", "cbm"))
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_UNAVAILABLE_FAMILIES", ("graphiti",))
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_INITIALIZING_FAMILY", None)
+    monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", (Tool(
+        name="cbm.search_graph",
+        description="stale",
+        inputSchema={"type": "object", "properties": {}},
+    ),))
+    monkeypatch.setattr(
+        mcp_catalog_runtime,
+        "_LATEST_CATALOG_DIAGNOSTIC",
+        {"toolCount": 1, "uniqueToolCount": 1, "catalogHash": "stale"},
+    )
+    monkeypatch.setattr(
+        mcp_catalog_runtime.mcp_provider_operations,
+        "register_cbm_catalog",
+        lambda tools: cleared.append(("cbm", list(tools))),
+    )
+    monkeypatch.setattr(
+        mcp_catalog_runtime.mcp_provider_operations,
+        "register_graphiti_catalog",
+        lambda tools: cleared.append(("graphiti", list(tools))),
+    )
+
+    mcp_catalog_runtime.reset_catalog_lifecycle()
+
+    assert cleared == [("cbm", []), ("graphiti", [])]
+    assert mcp_catalog_runtime._CATALOG_INITIALIZATION_TASK is None
+    assert mcp_catalog_runtime._CATALOG_STATE == "initializing"
+    assert mcp_catalog_runtime._CATALOG_FAILURE is None
+    assert mcp_catalog_runtime._CATALOG_COMPLETED_FAMILIES == ()
+    assert mcp_catalog_runtime._CATALOG_UNAVAILABLE_FAMILIES == ()
+    assert mcp_catalog_runtime._CATALOG_INITIALIZING_FAMILY == "liquidaity"
+    assert mcp_catalog_runtime._CATALOG_TOOLS is None
+    assert mcp_catalog_runtime._LATEST_CATALOG_DIAGNOSTIC is None
+
+
+def test_catalog_lifecycle_reset_refuses_running_initializer(monkeypatch):
+    import asyncio
+
+    async def check():
+        release = asyncio.Event()
+        task = asyncio.create_task(release.wait())
+        monkeypatch.setattr(
+            mcp_catalog_runtime,
+            "_CATALOG_INITIALIZATION_TASK",
+            task,
+        )
+        try:
+            with pytest.raises(
+                RuntimeError,
+                match="mcp_catalog_reset_while_initializing",
+            ):
+                mcp_catalog_runtime.reset_catalog_lifecycle()
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(check())
+
 def test_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
     import asyncio
     import mcp_host
@@ -187,7 +295,7 @@ def test_catalog_initialization_has_no_arbitrary_30_second_deadline():
     assert "wait_for" not in source
     assert "30" not in source
 
-def test_provider_catalog_progress_is_part_of_canonical_startup(monkeypatch):
+def test_empty_provider_catalogs_are_unavailable_not_completed(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -215,12 +323,11 @@ def test_provider_catalog_progress_is_part_of_canonical_startup(monkeypatch):
     ]
     assert [item["completedCatalogFamilies"] for item in snapshots] == [
         ["liquidaity"],
-        ["liquidaity", "cbm"],
+        ["liquidaity"],
     ]
-    assert mcp_catalog_runtime._CATALOG_COMPLETED_FAMILIES == (
-        "liquidaity",
-        "cbm",
-        "graphiti",
+    assert mcp_catalog_runtime._CATALOG_COMPLETED_FAMILIES == ("liquidaity",)
+    assert mcp_catalog_runtime._CATALOG_UNAVAILABLE_FAMILIES == (
+        "cbm", "graphiti",
     )
     assert mcp_catalog_runtime._CATALOG_INITIALIZING_FAMILY is None
 
@@ -262,14 +369,11 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     assert tools
     assert not any(tool.name.startswith("cbm.") for tool in tools)
     assert closed == []
-    assert mcp_catalog_runtime._CATALOG_COMPLETED_FAMILIES == (
-        "liquidaity",
-        "graphiti",
-    )
+    assert mcp_catalog_runtime._CATALOG_COMPLETED_FAMILIES == ("liquidaity",)
     assert mcp_catalog_runtime._CATALOG_INITIALIZING_FAMILY is None
     diagnostics = mcp_catalog_runtime.catalog_diagnostics()
     assert diagnostics["catalogReady"] is True
-    assert diagnostics["unavailableCatalogFamilies"] == ["cbm"]
+    assert diagnostics["unavailableCatalogFamilies"] == ["cbm", "graphiti"]
     listed = asyncio.run(mcp_catalog_runtime.list_tools())
     assert listed
     assert not any(tool.name.startswith("cbm.") for tool in listed)

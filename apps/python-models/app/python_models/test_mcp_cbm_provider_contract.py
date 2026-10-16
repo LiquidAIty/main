@@ -1,5 +1,8 @@
 """MCP Codebase Memory client ownership contract tests."""
 
+# Entity: CodeGraph
+# Relationship: Verifies the one host-owned CBM SDK client lifecycle, canonical repository identity, strict dispatch failure, and refusal to launch a second frontend through controlled client fixtures.
+
 import json
 import os
 import sys

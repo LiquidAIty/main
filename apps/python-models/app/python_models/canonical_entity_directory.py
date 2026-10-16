@@ -1,5 +1,8 @@
 """Complete cross-authority Entity identities for exact shared-name context."""
 
+# Entity: Project Knowledge Graph
+# Relationship: Project Knowledge Graph validates complete ThinkGraph and KnowGraph Entity directories, joins only exact canonical names, and emits a bounded revisioned identity map without copying Thinks, Knows, or edges.
+
 from __future__ import annotations
 
 import hashlib

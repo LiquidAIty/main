@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+/**
+ * Entity: Graph Presentation
+ * Relationship: Verifies the controlled renderer's click arbitration, semantic edge transfer, authority materials, joined palette, and position preservation through its public deterministic test seam.
+ */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 

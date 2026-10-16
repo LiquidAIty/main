@@ -7,6 +7,7 @@ from typing import Any
 from app.application_tool_error import ApplicationToolError
 from app.saved_card_operation_validation import (
     _CAPABILITY_LIST_FIELDS,
+    _REASONING_EFFORTS,
     _SUBAGENT_MODEL_FIELDS,
     _SUBAGENT_TYPES,
 )
@@ -52,6 +53,9 @@ def saved_card_operation_schema(name: str) -> dict[str, Any]:
             "model": model,
             "subagentType": {"type": "string", "enum": sorted(_SUBAGENT_TYPES)},
             "subagentModel": subagent,
+            "reasoningEffort": {
+                "type": "string", "enum": sorted(_REASONING_EFFORTS),
+            },
             "autoTools": {"type": "boolean"},
             "autoModel": {"type": "boolean"},
             **{key: names for key in sorted(_CAPABILITY_LIST_FIELDS)},
@@ -77,6 +81,9 @@ def saved_card_operation_schema(name: str) -> dict[str, Any]:
             },
             "subagentModel": subagent,
             "subagentType": {"type": "string", "enum": sorted(_SUBAGENT_TYPES)},
+            "reasoningEffort": {
+                "type": "string", "enum": sorted(_REASONING_EFFORTS),
+            },
             "autoTools": {"type": "boolean"},
             "autoModel": {"type": "boolean"},
             "configuration": {"type": "object"},

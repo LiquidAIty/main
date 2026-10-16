@@ -43,6 +43,31 @@ function asText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function immutable<T>(value: T): T {
+  const copy = structuredClone(value);
+  const freeze = (item: unknown): void => {
+    if (!item || typeof item !== 'object' || Object.isFrozen(item)) return;
+    for (const child of Object.values(item)) freeze(child);
+    Object.freeze(item);
+  };
+  freeze(copy);
+  return copy;
+}
+
+function paginationInteger(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || !Number.isSafeInteger(parsed)) {
+    throw new Error('tool_catalog_pagination_invalid');
+  }
+  return Math.min(maximum, Math.max(minimum, parsed));
+}
+
 /** Index already-normalized live catalog references for lookup only. No metadata is
  * inferred, merged, scored, or classified in TypeScript. */
 export function indexLiveToolCatalog(
@@ -55,9 +80,13 @@ export function indexLiveToolCatalog(
     if (definitionsById.has(canonicalId)) {
       throw new Error(`tool_catalog_duplicate_id:${canonicalId}`);
     }
-    definitionsById.set(canonicalId, definition);
+    definitionsById.set(canonicalId, immutable(definition));
   }
-  return { references: [...definitions], definitionsById };
+  const references = Object.freeze([...definitionsById.values()]);
+  return {
+    references: references as unknown as ToolCatalogDefinition[],
+    definitionsById,
+  };
 }
 
 export function resolveToolCatalogDefinitions(
@@ -82,8 +111,8 @@ export function searchToolCatalogDefinitions(catalog: ToolCatalogIndex, search: 
   const access = search.access;
   const selectedIds = (search.selectedIds || []).map(asText).filter(Boolean);
   const unresolvedSelectedIds = selectedIds.filter((id) => !catalog.definitionsById.has(id));
-  const offset = Math.max(0, Math.floor(Number(search.offset) || 0));
-  const limit = Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(search.limit) || DEFAULT_LIMIT)));
+  const offset = paginationInteger(search.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+  const limit = paginationInteger(search.limit, DEFAULT_LIMIT, 1, MAX_LIMIT);
   const matches = catalog.references.filter((reference) => {
     if (access && reference.access !== access) return false;
     if (namespace && reference.namespace.toLowerCase() !== namespace) return false;

@@ -1,6 +1,3 @@
-// REAL MCP-boundary integration (SPEC: do not mock MCP discovery).
-// Connects to the already-supervised official HTTP MCP host through the SDK.
-// It is intentionally conditional because this test must never spawn a second host.
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {

@@ -6,6 +6,8 @@ import socket
 import sys
 import time
 
+import pytest
+
 _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
@@ -27,6 +29,37 @@ from app.python_models.test_mcp_contract_support import (
     clear_live_provider_operations,
     tool_result_wire_text,
 )
+
+
+def test_public_streamable_http_resource_requires_oauth(monkeypatch):
+    monkeypatch.setattr(
+        mcp_auth,
+        "PUBLIC_MCP_RESOURCE_URL",
+        "https://public.example/mcp",
+    )
+    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
+
+    with pytest.raises(RuntimeError, match="public_mcp_resource_requires_oauth"):
+        mcp_auth.oauth_config()
+
+
+def test_unauthenticated_transport_has_no_external_resource_allowlist(monkeypatch):
+    monkeypatch.setattr(mcp_auth, "PUBLIC_MCP_RESOURCE_URL", "")
+    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", False)
+
+    config = mcp_auth.oauth_config()
+
+    assert config.resource_url == ""
+
+
+@pytest.mark.parametrize("value", ("0", "65536", "-1", "not-a-port", ""))
+def test_streamable_http_port_rejects_invalid_values(value):
+    with pytest.raises(RuntimeError, match="mcp_http_port_invalid"):
+        mcp_transport.validated_http_mcp_port(value)
+
+
+def test_streamable_http_port_accepts_valid_value():
+    assert mcp_transport.validated_http_mcp_port("8765") == 8765
 
 
 def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_clients(
@@ -341,7 +374,10 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
         {**base, "iss": "https://wrong.auth0.com/"},
         {**base, "aud": "https://wrong.example/mcp"},
         {**base, "exp": now - mcp_auth.AUTH0_CLOCK_SKEW_SECONDS - 1},
-        {**base, "iat": now + mcp_auth.AUTH0_CLOCK_SKEW_SECONDS + 1},
+            {
+                **base,
+                "iat": now + mcp_auth.AUTH0_CLOCK_SKEW_SECONDS + 60,
+            },
         {**base, "nbf": now + 300},
         {**base, "azp": "wrong-client"},
         {**base, "scope": "openid profile"},

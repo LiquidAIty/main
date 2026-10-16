@@ -1,3 +1,8 @@
+/**
+ * Entity: Application Runtime
+ * Relationship: Composes the backend API by mounting each public, internal, and authenticated feature router beneath its stable application path.
+ */
+
 import { Router } from 'express';
 import health from './health.routes';
 import auth from './auth.routes';

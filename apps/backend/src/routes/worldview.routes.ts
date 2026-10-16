@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: WorldView mounts its authorized Project action stream, action results, readiness, capability controls, and internal Run action delivery on separate public and process routes.
+ */
+
 import { Router } from 'express';
 import {
   createProjectWorldviewCapabilityStore,

@@ -1,3 +1,8 @@
+/**
+ * Entity: Projects
+ * Relationship: Projects derives the authenticated owner from each request and rejects access when the referenced Project is not owned by that user.
+ */
+
 import type { Request, Response } from 'express';
 import { getOwnedProjectByReference } from '../services/projectStore';
 
@@ -10,7 +15,7 @@ export async function requireOwnedProject(
   req: Request,
   res: Response,
   projectId: string,
-): Promise<{ ownerUserId: string } | null> {
+): Promise<{ ownerUserId: string; projectId: string } | null> {
   const ownerUserId = authenticatedUserId(req);
   if (!ownerUserId) {
     res.status(401).json({ ok: false, error: 'project_owner_session_required' });
@@ -21,5 +26,5 @@ export async function requireOwnedProject(
     res.status(404).json({ ok: false, error: 'project_not_found' });
     return null;
   }
-  return { ownerUserId };
+  return { ownerUserId, projectId: project.id };
 }

@@ -1,8 +1,3 @@
-// @graph entity: KnowGraphWriteRoute
-// @graph role: knowgraph-write-gateway
-// @graph relates_to: KnowGraph API, KnowGraph
-// @graph depends_on: Express, Multer, KnowGraph API
-// @graph feeds_to: KnowGraph API
 import { Router } from 'express';
 import multer from 'multer';
 import { getOwnedProjectByReference } from '../services/projectStore';
@@ -87,7 +82,9 @@ function buildMultipartForm(
   form.append('document_id', documentId);
   form.append(
     'file',
-    new Blob([file.buffer], { type: file.mimetype || 'application/pdf' }),
+    new Blob([Uint8Array.from(file.buffer)], {
+      type: file.mimetype || 'application/pdf',
+    }),
     file.originalname || `${documentId}.pdf`,
   );
   return form;

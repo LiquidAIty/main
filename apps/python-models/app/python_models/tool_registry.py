@@ -1,5 +1,8 @@
 """Canonical operation lookup and live provider registration."""
 
+# Entity: Tool Catalog
+# Relationship: Tool Catalog assembles code-owned operation definitions once, atomically replaces each live external provider contribution, rejects identity collisions, and resolves exact access and Card-grant eligibility without prose inference.
+
 from __future__ import annotations
 
 import threading

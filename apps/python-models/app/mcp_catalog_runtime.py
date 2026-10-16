@@ -209,10 +209,19 @@ async def _materialize_requested_provider_catalog(
                                     or "Graphiti catalog is unavailable."),
             )
             continue
-        _complete_catalog_family(provider)
         namespaced = mcp_catalog_projection.project_provider_tools(
             provider, provider_tools,
         )
+        if not namespaced:
+            _mark_catalog_family_unavailable(
+                provider,
+                failure_code=f"{provider}_catalog_no_supported_tools",
+                failure_summary=(
+                    f"{provider} catalog exposed no supported tools."
+                ),
+            )
+            continue
+        _complete_catalog_family(provider)
         tools.extend(namespaced)
 
     return mcp_catalog_projection.finalize_provider_catalog(tools)
@@ -359,6 +368,37 @@ def start_catalog_initialization() -> asyncio.Task[None]:
     return task
 
 
+def reset_catalog_lifecycle() -> None:
+    """Clear one stopped host lifespan without carrying provider state forward."""
+
+    global _CATALOG_COMPLETED_FAMILIES, _CATALOG_UNAVAILABLE_FAMILIES
+    global _CATALOG_FAILURE, _CATALOG_FAILURE_CODE
+    global _CATALOG_FAILURE_SUMMARY, _CATALOG_INITIALIZING_FAMILY, _CATALOG_STATE
+    global _CATALOG_TOOLS, _CATALOG_INITIALIZATION_TASK
+    global _LATEST_CATALOG_DIAGNOSTIC
+
+    task = _CATALOG_INITIALIZATION_TASK
+    if task is not None and not task.done():
+        raise RuntimeError("mcp_catalog_reset_while_initializing")
+
+    # Provider operation definitions are process-global because the catalog is
+    # immutable during one host lifespan. Remove them only after the provider
+    # clients have closed so a later lifespan must rediscover exact live tools.
+    mcp_provider_operations.register_cbm_catalog([])
+    mcp_provider_operations.register_graphiti_catalog([])
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        _CATALOG_STATE = "initializing"
+        _CATALOG_FAILURE = None
+        _CATALOG_FAILURE_CODE = None
+        _CATALOG_FAILURE_SUMMARY = None
+        _CATALOG_COMPLETED_FAMILIES = ()
+        _CATALOG_UNAVAILABLE_FAMILIES = ()
+        _CATALOG_INITIALIZING_FAMILY = "liquidaity"
+        _CATALOG_TOOLS = None
+        _CATALOG_INITIALIZATION_TASK = None
+        _LATEST_CATALOG_DIAGNOSTIC = None
+
+
 def catalog_or_error() -> list[Tool]:
     with _CATALOG_DIAGNOSTIC_LOCK:
         state = _CATALOG_STATE
@@ -373,7 +413,7 @@ def catalog_or_error() -> list[Tool]:
         raise RuntimeError("mcp_catalog_readiness_invalid")
     if "liquidaity" not in completed_families:
         raise RuntimeError("mcp_catalog_incomplete:liquidaity")
-    return list(tools)
+    return [tool.model_copy(deep=True) for tool in tools]
 
 
 async def list_tools() -> list[Tool]:

@@ -5,14 +5,23 @@ labeled PROTOCOL FIXTURE injected as the transport, with injected paper credenti
 No order endpoint is ever constructed. No API secret appears in any result.
 """
 
+# Entity: WorldSignals
+# Relationship: Uses explicitly labeled protocol fixtures to verify read-only Alpaca request mapping, paper-account status projection, bounds, encoding, and secret-free results without claiming live-provider acceptance.
+
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+import urllib.error
 
 import pytest
 
+from app.python_models import alpaca_market_data
 from app.python_models.alpaca_market_data import (
     AlpacaInstrumentRef,
     STATUS_AVAILABLE,
     STATUS_ERROR,
+    STATUS_INVALID,
+    STATUS_INVALID_CONFIG,
     STATUS_UNCONFIGURED,
     get_historical_bars,
     get_market_snapshot,
@@ -93,11 +102,29 @@ def test_snapshot_maps_fixture_with_feed_and_timestamp():
     encoded = _RecordingTransport(SNAPSHOT_FIXTURE)
     get_market_snapshot(
         AlpacaInstrumentRef(symbol="BRK/B"),
-        feed="sip & test",
+        feed="sip",
         transport=encoded,
         credentials=PAPER_CREDS,
     )
-    assert "/v2/stocks/BRK%2FB/snapshot?feed=sip+%26+test" in encoded.urls[0]
+    assert "/v2/stocks/BRK%2FB/snapshot?feed=sip" in encoded.urls[0]
+
+
+def test_snapshot_rejects_invalid_instrument_feed_and_nonfinite_numbers():
+    with pytest.raises(ValueError, match="alpaca_instrument_invalid"):
+        get_market_snapshot(AlpacaInstrumentRef(symbol="../orders"), credentials=PAPER_CREDS)
+    with pytest.raises(ValueError, match="alpaca_feed_invalid"):
+        get_market_snapshot(RDW, feed="sip & test", credentials=PAPER_CREDS)
+
+    result = get_market_snapshot(
+        RDW,
+        transport=_RecordingTransport({
+            "latestTrade": {"p": "NaN", "t": "2024-05-10T16:00:00Z"},
+            "latestQuote": {},
+        }),
+        credentials=PAPER_CREDS,
+    )
+    assert result.status == STATUS_INVALID
+    assert result.latestTradePrice is None
 
 
 def test_snapshot_provider_error_on_transport_failure():
@@ -147,18 +174,66 @@ def test_bars_map_fixture_and_honor_limit():
     encoded = _RecordingTransport(BARS_FIXTURE)
     get_historical_bars(
         AlpacaInstrumentRef(symbol="BRK/B"),
-        "1Hour/adjusted",
+        "1Hour",
         start="2024-05-08T00:00:00Z",
         end="2024-05-10T00:00:00Z",
-        feed="sip & test",
+        feed="sip",
         transport=encoded,
         credentials=PAPER_CREDS,
     )
     assert "/v2/stocks/BRK%2FB/bars?" in encoded.urls[0]
-    assert "timeframe=1Hour%2Fadjusted" in encoded.urls[0]
-    assert "feed=sip+%26+test" in encoded.urls[0]
+    assert "timeframe=1Hour" in encoded.urls[0]
+    assert "feed=sip" in encoded.urls[0]
     assert "start=2024-05-08T00%3A00%3A00Z" in encoded.urls[0]
     assert "end=2024-05-10T00%3A00%3A00Z" in encoded.urls[0]
+
+
+def test_bars_validate_inputs_and_report_malformed_records():
+    with pytest.raises(ValueError, match="alpaca_timeframe_invalid"):
+        get_historical_bars(RDW, "1Hour/adjusted", credentials=PAPER_CREDS)
+    with pytest.raises(ValueError, match="alpaca_start_invalid"):
+        get_historical_bars(RDW, "1Day", start="yesterday", credentials=PAPER_CREDS)
+    with pytest.raises(ValueError, match="alpaca_time_range_invalid"):
+        get_historical_bars(
+            RDW,
+            "1Day",
+            start="2024-05-11T00:00:00Z",
+            end="2024-05-10T00:00:00Z",
+            credentials=PAPER_CREDS,
+        )
+
+    result = get_historical_bars(
+        RDW,
+        "1Day",
+        transport=_RecordingTransport({
+            "bars": [
+                BARS_FIXTURE["bars"][0],
+                {"t": "2024-05-09T00:00:00Z", "o": "Infinity", "h": 2, "l": 1, "c": 1.5, "v": 10},
+                {"t": "bad-time", "o": 1, "h": 2, "l": 1, "c": 1.5, "v": 10},
+            ],
+        }),
+        credentials=PAPER_CREDS,
+    )
+    assert result.status == STATUS_AVAILABLE
+    assert len(result.bars) == 1
+    assert result.diagnostics == "alpaca_malformed_bars_omitted:2"
+
+
+def test_live_or_noncanonical_credentials_are_invalid_not_unconfigured():
+    live = AlpacaCredentials(
+        key_id="key",
+        secret_key="secret",
+        mode="live",
+    )
+    foreign = AlpacaCredentials(
+        key_id="key",
+        secret_key="secret",
+        data_url="https://attacker.example",
+        mode="paper",
+    )
+
+    assert get_market_snapshot(RDW, credentials=live).status == STATUS_INVALID_CONFIG
+    assert get_market_snapshot(RDW, credentials=foreign).status == STATUS_INVALID_CONFIG
 
 
 # --- Paper account readiness (status only) ---------------------------------------
@@ -193,3 +268,54 @@ def test_api_secret_never_appears_in_any_result():
     acct = get_paper_account_readiness(transport=_RecordingTransport(ACCOUNT_FIXTURE), credentials=PAPER_CREDS)
     for result in (snap, bars, acct):
         assert "SECRET-XYZ-DO-NOT-LEAK" not in json.dumps(result.to_dict())
+
+
+def test_default_transport_refuses_redirect_before_forwarding_credentials():
+    received_keys: list[str] = []
+
+    class TargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - stdlib handler contract
+            received_keys.append(self.headers.get("APCA-API-KEY-ID", ""))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            return None
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
+    target_thread = Thread(target=target.serve_forever, daemon=True)
+    target_thread.start()
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - stdlib handler contract
+            self.send_response(307)
+            self.send_header(
+                "Location",
+                f"http://127.0.0.1:{target.server_port}/capture",
+            )
+            self.end_headers()
+
+        def log_message(self, *_args):
+            return None
+
+    redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    redirect_thread = Thread(target=redirect.serve_forever, daemon=True)
+    redirect_thread.start()
+    try:
+        headers = {"APCA-API-KEY-ID": "secret-key"}
+        with pytest.raises(urllib.error.HTTPError) as error:
+            alpaca_market_data._default_get(
+                f"http://127.0.0.1:{redirect.server_port}/snapshot",
+                headers,
+            )
+        assert headers["APCA-API-KEY-ID"] == "secret-key"
+        assert error.value.code == 307
+        assert received_keys == []
+    finally:
+        redirect.shutdown()
+        target.shutdown()
+        redirect.server_close()
+        target.server_close()
+        redirect_thread.join(timeout=2)
+        target_thread.join(timeout=2)

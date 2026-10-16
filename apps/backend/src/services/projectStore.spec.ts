@@ -10,6 +10,8 @@ vi.mock('../db/pool', () => ({ pool: db }));
 import {
   attachSavedCardToProject,
   createProject,
+  discardFreshProject,
+  listSavedCardsForProject,
 } from './projectStore';
 import { DEFAULT_PROJECT_CARDS, DEFAULT_PROJECT_EDGES } from '../decks/defaultProjectDeck';
 
@@ -136,7 +138,53 @@ describe('projectStore saved Card membership', () => {
     expect(lockIndex).toBeGreaterThan(-1);
     expect(lockIndex).toBeLessThan(sourceReadIndex);
     expect(statements[lockIndex]?.params).toEqual(['card-profile:research']);
+    const requestedRevisionRead = statements.find(({ sql }) => (
+      sql.includes('revision.revision_id=$1') && sql.includes('source_project.owner_user_id=$3')
+    ));
+    expect(requestedRevisionRead?.params).toEqual([
+      'revision-existing',
+      'card-research',
+      'owner-one',
+    ]);
+    const canonicalRead = statements.find(({ sql }) => sql.includes('FOR SHARE OF source_card'));
+    expect(canonicalRead?.sql).not.toContain('ANY(');
+    expect(canonicalRead?.params).toEqual(['owner-one', 'research']);
     expect(client.query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('lists only saved Cards currently owned by the authenticated user', async () => {
+    db.query.mockResolvedValue({ rows: [] });
+
+    await listSavedCardsForProject('project-one', 'deck_builder', 'owner-one');
+
+    expect(db.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = db.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('source_project.owner_user_id=$3');
+    expect(sql).not.toContain('ANY(');
+    expect(params).toEqual(['project-one', 'deck_builder', 'owner-one']);
+  });
+
+  it('verifies Project ownership before compensating child rows', async () => {
+    const statements: Array<{ sql: string; params: unknown[] | undefined }> = [];
+    const client = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        statements.push({ sql, params });
+        if (sql.includes('FROM ag_catalog.projects') && sql.includes('FOR UPDATE')) {
+          return { rows: [] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+    db.connect.mockResolvedValue(client);
+
+    await expect(discardFreshProject('project-other', 'owner-one'))
+      .rejects.toThrow('project_not_found');
+
+    expect(statements.some(({ sql }) => sql.includes('deck_card_memberships'))).toBe(false);
+    expect(statements.some(({ sql }) => sql.includes('DELETE FROM ag_catalog.agent_cards'))).toBe(false);
+    expect(statements.some(({ sql }) => sql === 'ROLLBACK')).toBe(true);
+    expect(client.release).toHaveBeenCalledTimes(1);
   });
 
 });

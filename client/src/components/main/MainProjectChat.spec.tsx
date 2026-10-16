@@ -275,6 +275,25 @@ describe('MainProjectChat', () => {
     expect(onSend).toHaveBeenCalledWith('  Exact user text.  ');
   });
 
+  it('retains the draft when the owner rejects submission before acceptance', () => {
+    const onSend = vi.fn(() => false);
+    render(
+      <MainProjectChat
+        messages={[]}
+        onSend={onSend}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+    const input = screen.getByTestId('main-chat-input') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'Keep this draft.' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(onSend).toHaveBeenCalledWith('Keep this draft.');
+    expect(input.value).toBe('Keep this draft.');
+  });
+
   it('wraps multiline drafts, sends on Enter and preserves Shift+Enter and composing input', () => {
     const onSend = vi.fn();
     render(<MainProjectChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
@@ -297,10 +316,18 @@ describe('MainProjectChat', () => {
     const resizeCallbacks = new Map<Element, () => void>();
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => panelWidth);
     vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => neededHeight);
-    vi.stubGlobal('ResizeObserver', vi.fn((callback: ResizeObserverCallback) => ({
-      observe: (element: Element) => resizeCallbacks.set(element, () => callback([], {} as ResizeObserver)),
-      unobserve: vi.fn(), disconnect: vi.fn(),
-    })));
+    vi.stubGlobal('ResizeObserver', vi.fn(function ResizeObserverMock(
+      callback: ResizeObserverCallback,
+    ) {
+      return {
+        observe: (element: Element) => resizeCallbacks.set(
+          element,
+          () => callback([], {} as ResizeObserver),
+        ),
+        unobserve: vi.fn(),
+        disconnect: vi.fn(),
+      };
+    }));
     render(<MainProjectChat messages={[]} onSend={vi.fn()} knowledgeProjectId="project-1" colors={colors} />);
     const input = screen.getByTestId('main-chat-input') as HTMLTextAreaElement;
     expect(input.style.height).toBe('72px');
@@ -496,7 +523,9 @@ describe('MainProjectChat', () => {
       font: '',
       measureText: (text: string) => ({ width: Array.from(text).length * 7.5 }),
     } as unknown as CanvasRenderingContext2D);
-    vi.stubGlobal('ResizeObserver', vi.fn((callback: ResizeObserverCallback) => {
+    vi.stubGlobal('ResizeObserver', vi.fn(function ResizeObserverMock(
+      callback: ResizeObserverCallback,
+    ) {
       notifyResize = () => callback([], {} as ResizeObserver);
       return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
     }));

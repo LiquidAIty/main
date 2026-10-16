@@ -1,6 +1,8 @@
-// The rail moon orb: real synodic-phase math driving the central
-// project/intelligence affordance. Extracted verbatim from
-// pages/agentbuilder.tsx (decomposition pass 2026-07-08).
+/**
+ * Entity: Agent Builder
+ * Relationship: Agent Builder computes the current synodic phase and renders the accessible lunar rail affordance with a geometry-derived waxing or waning terminator.
+ */
+
 import React from 'react';
 import { SOLARPUNK_PALETTE } from '../../../components/graph/graphVisualTokens';
 
@@ -162,5 +164,3 @@ export function BuilderRailMoonOrb({
     </svg>
   );
 }
-
-// -------- Main page --------

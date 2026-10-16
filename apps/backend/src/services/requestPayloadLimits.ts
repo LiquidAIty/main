@@ -1,3 +1,8 @@
+/**
+ * Entity: Application Runtime
+ * Relationship: Defines environment-aware request size policy used by the backend JSON parser and KnowGraph upload boundary.
+ */
+
 export function isDevelopmentEnvironment(): boolean {
   return (process.env.NODE_ENV || 'development').toLowerCase() !== 'production';
 }

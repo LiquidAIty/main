@@ -1,5 +1,8 @@
 """Product-neutral saved-Card attachment contract for external subsystems."""
 
+# Entity: Card Subsystems
+# Relationship: Card Subsystems strictly validates and normalizes each product-neutral Python attachment's identity, presentation, contract version, capabilities, and optional configuration schema before saving.
+
 from __future__ import annotations
 
 import re

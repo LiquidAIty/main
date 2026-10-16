@@ -11,6 +11,7 @@ from app.python_models.saved_card_contract import (
     card_runtime,
     is_magnetic_taskgraph_runtime,
     json_object,
+    reasoning_effort_selection,
     runtime_owner,
     string_list,
     subagent_model_selection,
@@ -100,9 +101,7 @@ def saved_invocation_configuration(card: dict[str, Any]) -> dict[str, Any]:
         if runtime.get("kind") != "hermes":
             raise CardDomainError("card_subagent_type_requires_hermes")
         runtime_options["subagentType"] = subagent_type
-    reasoning_effort = str(options.get("reasoningEffort") or "").strip()
-    if len(reasoning_effort) > 64:
-        raise CardDomainError("card_reasoning_effort_invalid")
+    reasoning_effort = reasoning_effort_selection(options.get("reasoningEffort"))
     return {
         "options": options, "runtime": runtime, "autoTools": auto_tools,
         "autoModel": auto_model, "ceiling": ceiling,

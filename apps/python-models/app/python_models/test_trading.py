@@ -1,3 +1,6 @@
+# Entity: Trading
+# Relationship: Verifies deterministic paper-only plans, risk gates, order identity, public LumiBot projection, saved subsystem qualification, Card Script access, and intervention refusal through controlled fixtures.
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

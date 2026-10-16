@@ -1,3 +1,8 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Graph Presentation renders the shared viewport-aligned graph-paper layers and accessible pan, zoom, and fit controls used by Card and knowledge canvases.
+ */
+
 import type { CSSProperties } from 'react';
 
 import { GRAPH_WORKSPACE, getGraphMajorGridGap } from './graphWorkspaceContract';

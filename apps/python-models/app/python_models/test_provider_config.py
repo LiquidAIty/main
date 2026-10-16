@@ -7,6 +7,8 @@ or assert on real secret values — only presence and readiness.
 import json
 import os
 
+import pytest
+
 from app.python_models.provider_config import (
     ENV_FILE_OVERRIDE,
     INVALID_CONFIG,
@@ -27,12 +29,22 @@ def test_canonical_path_targets_backend_env_only():
     assert path is None or path.as_posix().endswith("apps/backend/.env")
 
 
+def test_explicit_missing_env_file_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv(ENV_FILE_OVERRIDE, str(tmp_path / "missing.env"))
+
+    with pytest.raises(
+        RuntimeError,
+        match="config_env_file_unreadable: LIQUIDAITY_ENV_FILE",
+    ):
+        _canonical_env_path()
+
+
 def test_alpaca_config_ready_with_paper_keys():
     env = {
         "ALPACA_API_KEY_ID": "k",
         "ALPACA_API_SECRET_KEY": "s",
         "ALPACA_PAPER": "1",
-        "ALPACA_BASE_URL": "https://paper-api.alpaca.markets/v2",
+        "ALPACA_BASE_URL": "https://paper-api.alpaca.markets",
     }
     config = load_alpaca_config(env)
     assert config.readiness == READY and config.mode == MODE_PAPER
@@ -45,6 +57,26 @@ def test_alpaca_config_rejects_live_base_url():
 
 def test_alpaca_config_rejects_paper_disabled():
     env = {"ALPACA_API_KEY_ID": "k", "ALPACA_API_SECRET_KEY": "s", "ALPACA_PAPER": "0"}
+    assert load_alpaca_config(env).readiness == INVALID_CONFIG
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("ALPACA_BASE_URL", "http://paper-api.alpaca.markets"),
+        ("ALPACA_BASE_URL", "https://user:password@paper-api.alpaca.markets"),
+        ("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2"),
+        ("ALPACA_DATA_URL", "https://data.alpaca.markets?key=value"),
+        ("ALPACA_DATA_URL", "https://attacker.example"),
+        ("ALPACA_STREAM_URL", "wss://stream.data.alpaca.markets/path"),
+    ),
+)
+def test_alpaca_config_rejects_noncanonical_provider_origins(field, value):
+    env = {
+        "ALPACA_API_KEY_ID": "k",
+        "ALPACA_API_SECRET_KEY": "s",
+        field: value,
+    }
     assert load_alpaca_config(env).readiness == INVALID_CONFIG
 
 

@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Authentication provides one shared Prisma client for user and session persistence while reusing the connection during development reloads.
+ */
+
 import '../config/env';
 import { PrismaClient } from '@prisma/client';
 import { resolvePrismaLog } from './prismaLog';

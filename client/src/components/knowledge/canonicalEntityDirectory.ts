@@ -1,3 +1,8 @@
+/**
+ * Entity: Project Knowledge Graph
+ * Relationship: Validates the complete cross-authority Entity directory and exposes exact ThinkGraph and KnowGraph pointers for graph selection and inspection.
+ */
+
 export type CanonicalEntityProviderAuthority = 'thinkgraph' | 'knowgraph';
 export type CanonicalEntityAuthority = CanonicalEntityProviderAuthority | 'both';
 

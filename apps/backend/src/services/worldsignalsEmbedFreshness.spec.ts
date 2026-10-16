@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldSignals
+ * Relationship: WorldSignals verifies honest missing, fresh, stale, nested-source, unrelated-file, and unavailable-source states for its separately built embedded client bundle.
+ */
+
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import os from 'node:os';

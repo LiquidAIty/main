@@ -16,6 +16,8 @@ provider/HTTP failures return ``provider_error``. Nothing is ever fabricated.
 from __future__ import annotations
 
 import json
+import math
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +29,10 @@ from typing import Any, Callable, Mapping, Optional
 # provider module consumes it and never reads os.getenv directly.
 from app.python_models.provider_config import (
     AlpacaCredentials,
+    DEFAULT_DATA_URL,
+    DEFAULT_PAPER_TRADING_URL,
+    DEFAULT_STREAM_URL,
+    INVALID_CONFIG,
     MODE_PAPER,
     MODE_UNAVAILABLE,
     resolve_alpaca_credentials,
@@ -39,8 +45,12 @@ STATUS_EMPTY = "empty"  # valid response, no bars in the requested window
 STATUS_UNCONFIGURED = "provider_unconfigured"
 STATUS_ERROR = "provider_error"
 STATUS_INVALID = "invalid_response"
+STATUS_INVALID_CONFIG = INVALID_CONFIG
 
 MAX_BARS_LIMIT = 1000
+ALLOWED_FEEDS = frozenset({"iex", "sip", "otc"})
+_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9._/-]{0,31}$")
+_TIMEFRAME = re.compile(r"^[1-9][0-9]{0,3}(?:Min|Hour|Day|Week|Month)$")
 
 # A transport is callable(url, headers) -> parsed JSON dict. Injected in tests so
 # mapping/validation run deterministically against labeled protocol fixtures with no
@@ -71,9 +81,17 @@ def _auth_headers(creds: AlpacaCredentials) -> dict[str, str]:
     }
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+_ALPACA_OPENER = urllib.request.build_opener(_RejectRedirects())
+
+
 def _default_get(url: str, headers: dict[str, str]) -> dict[str, Any]:
     request = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+    with _ALPACA_OPENER.open(request, timeout=20) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -158,16 +176,53 @@ def _resolve_paper_creds(
     creds = credentials if credentials is not None else resolve_alpaca_credentials(env)
     if creds is None:
         return None, STATUS_UNCONFIGURED
-    if creds.mode == "live":
-        return None, STATUS_UNCONFIGURED  # live rejected; treated as not-configured for paper
+    if (
+        creds.mode != MODE_PAPER
+        or creds.data_url != DEFAULT_DATA_URL
+        or creds.paper_trading_url != DEFAULT_PAPER_TRADING_URL
+        or creds.stream_url != DEFAULT_STREAM_URL
+    ):
+        return None, STATUS_INVALID_CONFIG
     return creds, None
 
 
 def _as_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    return number if math.isfinite(number) else None
+
+
+def _validated_symbol(instrument: AlpacaInstrumentRef) -> str:
+    if not isinstance(instrument, AlpacaInstrumentRef):
+        raise ValueError("alpaca_explicit_instrument_required")
+    symbol = str(instrument.symbol or "").strip().upper()
+    if instrument.assetClass != "us_equity" or _SYMBOL.fullmatch(symbol) is None:
+        raise ValueError("alpaca_instrument_invalid")
+    return symbol
+
+
+def _validated_feed(value: str) -> str:
+    feed = str(value or "").strip().lower()
+    if feed not in ALLOWED_FEEDS:
+        raise ValueError("alpaca_feed_invalid")
+    return feed
+
+
+def _validated_timestamp(value: Optional[str], field: str) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"alpaca_{field}_invalid") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"alpaca_{field}_invalid")
+    return text
 
 
 def get_market_snapshot(
@@ -179,15 +234,19 @@ def get_market_snapshot(
     env: Mapping[str, str] | None = None,
 ) -> MarketSnapshot:
     """Latest market snapshot for an EXPLICIT instrument (read-only)."""
-    if not isinstance(instrument, AlpacaInstrumentRef) or not instrument.is_explicit():
-        raise ValueError("alpaca_explicit_instrument_required")
+    symbol = _validated_symbol(instrument)
+    feed = _validated_feed(feed)
     fetched = _now_iso()
-    symbol = instrument.symbol.strip().upper()
     creds, blocking = _resolve_paper_creds(credentials, env)
     if blocking is not None:
         return MarketSnapshot(
             provider=PROVIDER, feed=None, symbol=symbol, status=blocking,
-            fetchedAt=fetched, diagnostics="alpaca paper credentials not configured",
+            fetchedAt=fetched,
+            diagnostics=(
+                "alpaca paper credentials not configured"
+                if blocking == STATUS_UNCONFIGURED
+                else "alpaca paper configuration invalid"
+            ),
         )
     encoded_symbol = urllib.parse.quote(symbol, safe="")
     query = urllib.parse.urlencode({"feed": feed})
@@ -206,17 +265,38 @@ def get_market_snapshot(
                               fetchedAt=fetched, diagnostics="alpaca_invalid_snapshot_shape")
     trade = payload.get("latestTrade") or {}
     quote = payload.get("latestQuote") or {}
+    if not isinstance(trade, dict) or not isinstance(quote, dict):
+        return MarketSnapshot(provider=PROVIDER, feed=feed, symbol=symbol, status=STATUS_INVALID,
+                              fetchedAt=fetched, diagnostics="alpaca_invalid_snapshot_shape")
     observed = str(trade.get("t") or quote.get("t") or "").strip() or None
+    try:
+        observed = _validated_timestamp(observed, "snapshot_timestamp")
+    except ValueError:
+        return MarketSnapshot(provider=PROVIDER, feed=feed, symbol=symbol, status=STATUS_INVALID,
+                              fetchedAt=fetched, diagnostics="alpaca_invalid_snapshot_timestamp")
+    price = _as_float(trade.get("p"))
+    bid = _as_float(quote.get("bp"))
+    ask = _as_float(quote.get("ap"))
+    if any(
+        raw is not None and parsed is None
+        for raw, parsed in (
+            (trade.get("p"), price),
+            (quote.get("bp"), bid),
+            (quote.get("ap"), ask),
+        )
+    ):
+        return MarketSnapshot(provider=PROVIDER, feed=feed, symbol=symbol, status=STATUS_INVALID,
+                              fetchedAt=fetched, diagnostics="alpaca_invalid_snapshot_number")
     return MarketSnapshot(
         provider=PROVIDER,
-        feed=str(payload.get("feed") or feed) or None,
+        feed=feed,
         symbol=symbol,
         status=STATUS_AVAILABLE,
         fetchedAt=fetched,
         observedAt=observed,
-        latestTradePrice=_as_float(trade.get("p")),
-        latestQuoteBid=_as_float(quote.get("bp")),
-        latestQuoteAsk=_as_float(quote.get("ap")),
+        latestTradePrice=price,
+        latestQuoteBid=bid,
+        latestQuoteAsk=ask,
         freshness=_freshness(observed, fetched),
     )
 
@@ -234,19 +314,32 @@ def get_historical_bars(
     env: Mapping[str, str] | None = None,
 ) -> HistoricalBars:
     """Bounded historical bars for an EXPLICIT instrument + timeframe (read-only)."""
-    if not isinstance(instrument, AlpacaInstrumentRef) or not instrument.is_explicit():
-        raise ValueError("alpaca_explicit_instrument_required")
-    if not str(timeframe or "").strip():
+    symbol = _validated_symbol(instrument)
+    timeframe = str(timeframe or "").strip()
+    if not timeframe:
         raise ValueError("alpaca_explicit_timeframe_required")
-    if not isinstance(limit, int) or limit < 1 or limit > MAX_BARS_LIMIT:
+    if _TIMEFRAME.fullmatch(timeframe) is None:
+        raise ValueError("alpaca_timeframe_invalid")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > MAX_BARS_LIMIT:
         raise ValueError(f"alpaca_bars_limit_out_of_range_1_{MAX_BARS_LIMIT}")
+    feed = _validated_feed(feed)
+    start = _validated_timestamp(start, "start")
+    end = _validated_timestamp(end, "end")
+    if start and end:
+        start_time = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_time = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        if start_time > end_time:
+            raise ValueError("alpaca_time_range_invalid")
     fetched = _now_iso()
-    symbol = instrument.symbol.strip().upper()
     creds, blocking = _resolve_paper_creds(credentials, env)
     if blocking is not None:
         return HistoricalBars(provider=PROVIDER, feed=None, symbol=symbol, timeframe=timeframe,
                               status=blocking, fetchedAt=fetched, start=start, end=end,
-                              diagnostics="alpaca paper credentials not configured")
+                              diagnostics=(
+                                  "alpaca paper credentials not configured"
+                                  if blocking == STATUS_UNCONFIGURED
+                                  else "alpaca paper configuration invalid"
+                              ))
     params: list[tuple[str, str]] = [
         ("timeframe", timeframe),
         ("limit", str(limit)),
@@ -284,19 +377,34 @@ def get_historical_bars(
                               status=STATUS_INVALID, fetchedAt=fetched, start=start, end=end,
                               diagnostics="alpaca_invalid_bars_shape")
     bars: list[MarketBar] = []
+    malformed_count = 0
     for raw in raw_bars[:limit]:
         if not isinstance(raw, dict):
+            malformed_count += 1
             continue
         ts = str(raw.get("t") or "").strip()
         o, h, l, c = (_as_float(raw.get(k)) for k in ("o", "h", "l", "c"))
         v = _as_float(raw.get("v"))
-        if not ts or None in (o, h, l, c, v):
-            continue  # incomplete bar skipped, never fabricated
+        try:
+            _validated_timestamp(ts or None, "bar_timestamp")
+        except ValueError:
+            ts = ""
+        if not ts or None in (o, h, l, c, v) or v < 0:
+            malformed_count += 1
+            continue
         bars.append(MarketBar(timestamp=ts, open=o, high=h, low=l, close=c, volume=v))
-    return HistoricalBars(provider=PROVIDER, feed=str(payload.get("feed") or feed) or None,
+    return HistoricalBars(provider=PROVIDER, feed=feed,
                           symbol=symbol, timeframe=timeframe,
-                          status=STATUS_AVAILABLE if bars else STATUS_EMPTY,
-                          fetchedAt=fetched, start=start, end=end, bars=bars)
+                          status=(
+                              STATUS_AVAILABLE if bars
+                              else STATUS_INVALID if malformed_count
+                              else STATUS_EMPTY
+                          ),
+                          fetchedAt=fetched, start=start, end=end, bars=bars,
+                          diagnostics=(
+                              f"alpaca_malformed_bars_omitted:{malformed_count}"
+                              if malformed_count else None
+                          ))
 
 
 def get_paper_account_readiness(
@@ -310,7 +418,11 @@ def get_paper_account_readiness(
     creds, blocking = _resolve_paper_creds(credentials, env)
     if blocking is not None:
         return PaperAccountReadiness(provider=PROVIDER, status=blocking, mode=MODE_UNAVAILABLE,
-                                     fetchedAt=fetched, diagnostics="alpaca paper credentials not configured")
+                                     fetchedAt=fetched, diagnostics=(
+                                         "alpaca paper credentials not configured"
+                                         if blocking == STATUS_UNCONFIGURED
+                                         else "alpaca paper configuration invalid"
+                                     ))
     url = f"{creds.paper_trading_url}/v2/account"
     send = transport or _default_get
     try:
@@ -321,9 +433,14 @@ def get_paper_account_readiness(
     except Exception as exc:  # noqa: BLE001
         return PaperAccountReadiness(provider=PROVIDER, status=STATUS_ERROR, mode=MODE_PAPER,
                                      fetchedAt=fetched, diagnostics=f"alpaca_transport_error: {type(exc).__name__}")
-    if not isinstance(payload, dict) or not str(payload.get("status") or "").strip():
+    account_status = str(payload.get("status") or "").strip() if isinstance(payload, dict) else ""
+    if (
+        not account_status
+        or len(account_status) > 32
+        or re.fullmatch(r"[A-Z][A-Z0-9_-]*", account_status) is None
+    ):
         return PaperAccountReadiness(provider=PROVIDER, status=STATUS_INVALID, mode=MODE_PAPER,
                                      fetchedAt=fetched, diagnostics="alpaca_invalid_account_shape")
     # Status ONLY — deliberately ignore cash/equity/positions/account_number.
     return PaperAccountReadiness(provider=PROVIDER, status=STATUS_AVAILABLE, mode=MODE_PAPER,
-                                 fetchedAt=fetched, accountStatus=str(payload.get("status")).strip())
+                                 fetchedAt=fetched, accountStatus=account_status)

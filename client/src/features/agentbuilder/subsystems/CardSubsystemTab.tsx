@@ -23,31 +23,49 @@ export default function CardSubsystemTab({ attachment, readinessEndpoint }: {
 }) {
   const [readiness, setReadiness] = useState<SubsystemReadiness | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   useEffect(() => {
-    if (!readinessEndpoint) return;
+    setReadiness(null);
+    setError(null);
+    setLoading(Boolean(readinessEndpoint));
+    if (!readinessEndpoint) return undefined;
     const controller = new AbortController();
     void fetch(readinessEndpoint, { credentials: 'include', signal: controller.signal })
       .then(async (response) => {
-        const body = await response.json();
-        if (!response.ok) throw new Error(String(body?.error || `subsystem_readiness_${response.status}`));
-        setReadiness(body as SubsystemReadiness);
+        const body: unknown = await response.json();
+        if (controller.signal.aborted) return;
+        const record = body && typeof body === 'object' && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : null;
+        if (!response.ok) {
+          throw new Error(String(record?.error || `subsystem_readiness_${response.status}`));
+        }
+        if (!record || (record.status !== undefined && typeof record.status !== 'string')) {
+          throw new Error('subsystem_readiness_invalid');
+        }
+        setReadiness(record as SubsystemReadiness);
         setError(null);
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
           setError(reason instanceof Error ? reason.message : 'Subsystem readiness unavailable');
         }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [readinessEndpoint]);
+  }, [attachment.id, readinessEndpoint]);
 
   return <div data-testid={`card-subsystem-tab-${attachment.id}`} style={{ display: 'grid', gap: 11 }}>
     <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 10, padding: 12 }}>
       <div style={{ alignItems: 'center', display: 'flex', gap: 8, justifyContent: 'space-between' }}>
         <div><strong style={{ color: INK, fontSize: 13 }}>{attachment.label}</strong>
           <div style={{ color: MUTED, fontSize: 9.5, marginTop: 3 }}>Attached subsystem · public adapter boundary</div></div>
-        <span style={{ border: `1px solid ${CYAN}66`, borderRadius: 999, color: CYAN,
-          fontSize: 9, padding: '4px 7px' }}>{readiness?.status || 'not read'}</span>
+        <span role="status" style={{ border: `1px solid ${CYAN}66`, borderRadius: 999, color: CYAN,
+          fontSize: 9, padding: '4px 7px' }}>
+          {loading ? 'loading' : readiness?.status || (error ? 'unavailable' : 'not read')}
+        </span>
       </div>
       <p style={{ color: MUTED, fontSize: 10.5, lineHeight: 1.5, margin: '10px 0 0' }}>
         This tab exposes the subsystem’s declared capabilities and integration state. Hermes prompt,
@@ -71,7 +89,7 @@ export default function CardSubsystemTab({ attachment, readinessEndpoint }: {
     </section>
     <section style={{ background: FIELD, border: `1px solid ${EDGE}`, borderRadius: 10, padding: 11 }}>
       <strong style={{ color: INK, fontSize: 10.5 }}>Lifecycle</strong>
-      <pre style={{ color: error ? '#ff786e' : MUTED, fontSize: 9, lineHeight: 1.45,
+      <pre role={error ? 'alert' : undefined} style={{ color: error ? '#ff786e' : MUTED, fontSize: 9, lineHeight: 1.45,
         margin: '8px 0 0', overflow: 'auto', whiteSpace: 'pre-wrap' }}>
         {error || JSON.stringify({ version: readiness?.version || null,
           lifecycle: readiness?.lifecycle || null,

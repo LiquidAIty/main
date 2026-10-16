@@ -482,6 +482,7 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         **prepared,
         "runId": resolved_run_id,
         "correlationId": resolved_correlation_id,
+        "conversationId": str(payload.get("conversationId") or "").strip(),
         "telemetryWritten": telemetry_written,
         "inputFile": input_files,
         "magneticTaskGraph": magnetic_taskgraph,
