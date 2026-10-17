@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Entity: Project Knowledge Graph
+# Relationship: Verifies exact Entity-directory reads and bounded Relevant plus distinct Recent context from the separate ThinkGraph and KnowGraph authorities.
+
 import pytest
 
 from app import project_graph_operations

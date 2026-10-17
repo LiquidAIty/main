@@ -1,3 +1,8 @@
+/**
+ * Entity: Projects
+ * Relationship: Deduplicates Project and deck reads, isolates caller cancellation, guards request generations, and safely parses persistence responses for Builder state owners.
+ */
+
 type GuardedRequestOptions<T> = {
   key: string;
   method?: string;

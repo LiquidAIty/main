@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Card Subsystems
+ * Relationship: Verifies that subsystem readiness is scoped to the selected Card, superseded reads cannot leak across selections, and failures remain visible.
+ */
+
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

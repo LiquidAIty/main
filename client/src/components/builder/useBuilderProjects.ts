@@ -1,3 +1,8 @@
+/**
+ * Entity: Projects
+ * Relationship: Loads the authenticated Project list, fences overlapping refreshes, reconciles the active Project with the URL, and preserves explicit preferred selection.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {

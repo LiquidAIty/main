@@ -1,5 +1,8 @@
 """Official stdio and Streamable HTTP transport lifecycles for the MCP host."""
 
+# Entity: External MCP
+# Relationship: Owns the MCP host's stdio and authenticated Streamable HTTP lifecycles, catalog readiness, request context, transport security, and provider cleanup.
+
 from __future__ import annotations
 
 import asyncio

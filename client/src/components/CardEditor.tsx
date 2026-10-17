@@ -1,5 +1,5 @@
 /**
- * Entity: Card Editing
+ * Entity: Card Editor
  * Relationship: This editor changes one saved Card's prompt, runtime, model, reasoning, subagent, skills, tools, connections, and optional script while keeping saved Card authority explicit.
  */
 

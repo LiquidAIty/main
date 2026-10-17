@@ -268,6 +268,34 @@ function rawDataSize(data: RawData): number {
     : data.byteLength;
 }
 
+export function terminalCloseFrame(code: number, reason: string): {
+  code: number;
+  reason: string;
+} {
+  const validCode = code === 1000
+    || (code >= 1001 && code <= 1014 && ![1004, 1005, 1006].includes(code))
+    || (code >= 3000 && code <= 4999);
+  const normalizedCode = code === 0 || code === 1005
+    ? 1000
+    : validCode ? code : 1011;
+  let normalizedReason = '';
+  for (const character of String(reason || '')) {
+    if (Buffer.byteLength(normalizedReason + character, 'utf8') > 123) break;
+    normalizedReason += character;
+  }
+  return { code: normalizedCode, reason: normalizedReason };
+}
+
+function closeTerminalSocket(socket: WebSocket, code: number, reason: string): void {
+  if (socket.readyState !== WebSocket.OPEN && socket.readyState !== WebSocket.CONNECTING) return;
+  const frame = terminalCloseFrame(code, reason);
+  try {
+    socket.close(frame.code, frame.reason);
+  } catch {
+    socket.terminate();
+  }
+}
+
 function bridgeTerminal(browser: WebSocket, binding: TerminalBinding): void {
   const hermes = new WebSocket(binding.upstreamUrl, { maxPayload: 256 * 1024 });
   activeBrowserSockets.add(browser);
@@ -280,10 +308,8 @@ function bridgeTerminal(browser: WebSocket, binding: TerminalBinding): void {
     closed = true;
     activeBrowserSockets.delete(browser);
     activeHermesSockets.delete(hermes);
-    if (browser.readyState === WebSocket.OPEN) browser.close(code, reason);
-    if (hermes.readyState === WebSocket.OPEN || hermes.readyState === WebSocket.CONNECTING) {
-      hermes.close(code, reason);
-    }
+    closeTerminalSocket(browser, code, reason);
+    closeTerminalSocket(hermes, code, reason);
   };
   browser.on('message', (data, binary) => {
     if (hermes.readyState === WebSocket.OPEN) {

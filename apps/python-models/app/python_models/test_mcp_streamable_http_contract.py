@@ -1,5 +1,8 @@
 """MCP Streamable HTTP and protocol contract tests."""
 
+# Entity: External MCP
+# Relationship: Exercises the real local Streamable HTTP host with official clients to verify OAuth, transport security, stateless Card-scoped grants, catalog identity, and shared provider lifecycle.
+
 import json
 import os
 import socket

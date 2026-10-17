@@ -1,4 +1,6 @@
 """Authenticated client primitives for the one official Python MCP host."""
+# Entity: Data Anchors
+# Relationship: Issues short-lived Card-scoped read principals and performs one bounded authenticated MCP session to hydrate selected graph references without granting writes.
 
 from __future__ import annotations
 

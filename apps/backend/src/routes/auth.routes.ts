@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Exposes local bootstrap, signup, login, and logout through server-owned sessions while validating credentials and maintaining the bounded session cookie.
+ */
+
 import { Router } from 'express';
 import {
   canIssueBootstrapSession,

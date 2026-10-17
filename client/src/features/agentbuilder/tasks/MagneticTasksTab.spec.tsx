@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Magnetic TaskGraph
+ * Relationship: Verifies inspect-only Magnetic status renders exact Hermes task states, deterministic dependency layers, saved Card assignees, bounded details, idle state, and timeout.
+ */
+
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { act, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';

@@ -1,3 +1,8 @@
+/**
+ * Entity: Jev Decisions
+ * Relationship: Authenticates and validates one bounded graph-focus Choice request and exact ranked response before returning it to the knowledge canvas.
+ */
+
 import { Router } from 'express';
 
 import {

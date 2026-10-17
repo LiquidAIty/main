@@ -1,5 +1,5 @@
 """Literal schema and byte contract for the canonical retained IDF."""
-# Entity: Input Data Files
+# Entity: Input Data File
 # Relationship: Defines the four-part canonical IDF schema, secret-free validation, historical byte loading, and the versioned reject-only size policy for newly materialized Runs.
 
 from __future__ import annotations

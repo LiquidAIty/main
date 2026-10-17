@@ -5,6 +5,9 @@ records, and returns stable references plus an optional transient projection. It
 never writes a graph, copies one into another authority, or materializes an IDF.
 """
 
+# Entity: Data Anchors
+# Relationship: Resolves exact selected ThinkGraph, KnowGraph, and CodeGraph provider identities into bounded model context, stable references, provenance, and an optional transient projection.
+
 from __future__ import annotations
 
 import hashlib

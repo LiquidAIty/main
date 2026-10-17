@@ -1,3 +1,8 @@
+/**
+ * Entity: KnowGraph
+ * Relationship: Validates one selected PDF and Project, submits authenticated KnowGraph ingestion, clears the picker, and renders bounded success or provider-specific failure feedback.
+ */
+
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 type UploadAttachmentProps = {

@@ -1,4 +1,7 @@
 """ThinkGraph, KnowGraph, and Jev route owners."""
+# Entity: Project Knowledge Graph
+# Relationship: Exposes Python rails routes for ThinkGraph and KnowGraph reads, completed-pair settlement, shared relationship vocabulary, KnowGraph classification, and graph-focus decisions.
+
 from fastapi import APIRouter, HTTPException
 from typing import Any
 

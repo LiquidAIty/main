@@ -39,7 +39,10 @@ vi.mock('../services/workingDirectories', () => ({
   resolveProductChatWorkingDirectory: vi.fn(() => 'C:/Projects/LiquidAIty/main'),
 }));
 
-import router, { installCardTerminalUpgrade } from './cardTerminal.routes';
+import router, {
+  installCardTerminalUpgrade,
+  terminalCloseFrame,
+} from './cardTerminal.routes';
 
 const servers: Server[] = [];
 
@@ -144,6 +147,18 @@ describe('Card terminal authenticated proxy contract', () => {
     expect(serialized).not.toContain('9119');
     expect(serialized).not.toContain('terminalChannelKey');
     expect(serialized).not.toContain('websocketUrl');
+  });
+
+  it('normalizes reserved or oversized upstream close frames before forwarding them', () => {
+    expect(terminalCloseFrame(1005, '')).toEqual({ code: 1000, reason: '' });
+    expect(terminalCloseFrame(1006, 'abnormal')).toEqual({
+      code: 1011,
+      reason: 'abnormal',
+    });
+    expect(terminalCloseFrame(4321, 'x'.repeat(200))).toEqual({
+      code: 4321,
+      reason: 'x'.repeat(123),
+    });
   });
 
   it.each([

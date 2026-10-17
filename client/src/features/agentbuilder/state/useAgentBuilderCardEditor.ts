@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Editor
+ * Relationship: Projects the selected saved Card into editor fields, validates normalized updates, persists the exact deck revision, and records renames or subsystem configuration changes.
+ */
+
 import { useCallback, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 

@@ -1,4 +1,8 @@
 """Read-only Jev focus ranking for a bounded cross-authority neighborhood."""
+
+# Entity: Jev Decisions
+# Relationship: Validates a bounded visual graph neighborhood and obtains one read-only Jev probability ranking for the most useful connected Entities around a fixed center.
+
 from __future__ import annotations
 
 import hashlib

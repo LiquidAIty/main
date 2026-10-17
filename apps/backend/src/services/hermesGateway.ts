@@ -1,3 +1,7 @@
+/**
+ * Entity: Hermes Gateway
+ * Relationship: Owns the backend's authenticated singleton connection to the repository-controlled Hermes JSON-RPC Gateway, including readiness, cancellation, reconnect, and close behavior.
+ */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';

@@ -1,4 +1,6 @@
 """Route-level proof that PDF upload reaches the official Graphiti ingest path."""
+# Entity: KnowGraph
+# Relationship: Verifies content-addressed PDF storage, Project-scoped ingestion and episode deletion, provider version health, and stable secret-free route failures.
 
 from __future__ import annotations
 

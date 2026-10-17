@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Editor
+ * Relationship: Returns the authenticated Card editor's canonical model and runtime option catalogs after validating the Python rails projection.
+ */
+
 import { Router } from 'express';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';

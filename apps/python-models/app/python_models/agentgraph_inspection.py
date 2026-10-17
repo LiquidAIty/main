@@ -1,4 +1,6 @@
 """Read-only saved-deck and AGE AgentGraph inspection."""
+# Entity: AgentGraph
+# Relationship: Reads bounded saved Card authority and identity-only AGE Run, assignment, lineage, tool, graph-access, and artifact observations without storing raw IDF content.
 
 from __future__ import annotations
 

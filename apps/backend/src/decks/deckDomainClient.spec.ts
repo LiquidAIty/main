@@ -1,3 +1,8 @@
+/**
+ * Entity: Saved Cards
+ * Relationship: Verifies the TypeScript deck transport preserves stable identity, exact Python readback, not-found semantics, and compare-and-set revision writes.
+ */
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const requestPythonRailsJson = vi.hoisted(() => vi.fn());

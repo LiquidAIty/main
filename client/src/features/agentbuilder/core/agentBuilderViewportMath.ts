@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Canvas
+ * Relationship: Computes the initial canvas camera that aligns Magnetic with the workspace seam when a right-side workbench is present.
+ */
+
 import type { DeckDocument } from '../../../types/agentgraph';
 
 const MAGENTIC_BUS_BODY_WIDTH = 26;

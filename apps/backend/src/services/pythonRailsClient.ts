@@ -1,3 +1,8 @@
+/**
+ * Entity: Python Rails
+ * Relationship: Performs bounded JSON HTTP transport to the configured Python rails service and exposes unmodified ThinkGraph and KnowGraph read helpers.
+ */
+
 function trimBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
 }

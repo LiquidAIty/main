@@ -1,3 +1,8 @@
+/**
+ * Entity: Projects
+ * Relationship: Verifies Project and deck reads share in-flight requests without letting one caller's abort or stale completion cancel a newer generation.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { guardedRequest } from './requestGuards';

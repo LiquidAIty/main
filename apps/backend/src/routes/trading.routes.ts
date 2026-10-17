@@ -1,3 +1,7 @@
+/**
+ * Entity: Trading
+ * Relationship: Authenticates Project-scoped Trading state, snapshot events, readiness, and bounded pause or resume interventions while Python rails retains domain authority.
+ */
 import { Router } from 'express';
 
 import { requestPythonRailsJson } from '../services/pythonRailsClient';

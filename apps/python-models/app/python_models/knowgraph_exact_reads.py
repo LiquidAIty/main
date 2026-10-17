@@ -1,5 +1,8 @@
 """Exact Project-scoped KnowGraph Entity, episode, and reference reads."""
 
+# Entity: KnowGraph
+# Relationship: Performs exact Project-scoped Graphiti Entity, relationship, episode, Know, directory, and bounded-neighborhood reads for graph context and Data Anchors.
+
 from __future__ import annotations
 
 import hashlib

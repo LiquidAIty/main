@@ -1,3 +1,6 @@
+# Entity: Card Tools
+# Relationship: Uses one bounded Jev choice per granted ordinary tool to narrow the current Run presentation without widening the saved Card's grant ceiling.
+
 from __future__ import annotations
 
 from typing import Any

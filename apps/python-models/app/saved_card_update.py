@@ -1,4 +1,6 @@
 """Exact-revision saved Card configuration updates."""
+# Entity: Saved Cards
+# Relationship: Validates and applies an exact-revision Card configuration update, preserves runtime, tool, and Script ceilings, and returns the persisted revision readback.
 
 from __future__ import annotations
 

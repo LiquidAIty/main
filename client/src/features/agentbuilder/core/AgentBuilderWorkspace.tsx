@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: Lays out the resizable Main chat, Card canvas, companion workspace, rail, and drawer while preserving collision and underlay geometry.
+ */
+
 import type { PointerEvent, ReactNode, RefObject } from 'react';
 
 type AgentBuilderWorkspaceProps = {

@@ -1,4 +1,8 @@
 """ThinkGraph presentation projection from the Engraphis service."""
+
+# Entity: ThinkGraph
+# Relationship: Projects Engraphis Entities, relationships, bounded Think evidence, Jev semantics, and current provider identity into the Project graph presentation without becoming a second graph owner.
+
 from __future__ import annotations
 
 from copy import deepcopy

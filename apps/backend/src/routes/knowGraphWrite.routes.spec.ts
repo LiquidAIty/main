@@ -1,3 +1,8 @@
+/**
+ * Entity: KnowGraph
+ * Relationship: Verifies authenticated PDF ingestion and episode deletion resolve canonical Project ownership, forward only allowed fields, and reject unauthorized Projects before Graphiti.
+ */
+
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';

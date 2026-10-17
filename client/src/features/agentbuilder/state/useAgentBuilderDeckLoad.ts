@@ -1,3 +1,7 @@
+/**
+ * Entity: Agent Canvas
+ * Relationship: Loads the selected Project's canonical saved deck and revision into canvas state while rejecting stale, mismatched, aborted, or incomplete responses.
+ */
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 

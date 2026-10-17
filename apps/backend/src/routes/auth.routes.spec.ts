@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Verifies bootstrap preserves a valid authenticated session, binds only the single local owner when allowed, and refuses unauthorized bootstrap.
+ */
+
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';

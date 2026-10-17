@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Canvas
+ * Relationship: Renders one saved Card with compact identity, active-Run count, Magnetic membership handles, and an orange connector only when orchestration authority exists.
+ */
+
 import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';

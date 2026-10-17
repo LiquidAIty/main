@@ -1,4 +1,6 @@
 """Exact public schemas for saved Card create and configuration operations."""
+# Entity: Saved Cards
+# Relationship: Defines the exact public schemas for creating a saved Card or updating one expected revision without accepting undeclared configuration fields.
 
 from __future__ import annotations
 

@@ -1,65 +1,128 @@
-# Frozen Review — Exact File Exceptions
+# Next Turn — Remaining Refactor and Classification Queue
 
-Status: **FAIL**
+This is a forward scratchpad, not a history report or architecture authority.
 
-Repository: `C:\Projects\LiquidAIty\main`
+## Current boundary
 
-Branch: `main`
+- Eligible first-party TypeScript/TSX/Python files: **358**.
+- Truthfully classified with inline `Entity` / `Relationship` comments: **303 (84.6%)**.
+- Still deliberately unclassified: **55**.
+- Do not batch-generate, reclassify, or add companion metadata. Read and decide one source file at a time.
+- A classification remains a passing grade: repair, split, or delete questionable code before tagging it.
+- The owner confirmed the loaded application currently runs. Preserve that working boundary.
+- One owner-requested Codebase Memory CLI reindex was already completed for this run. Do not reindex again without a new exact request.
 
-HEAD: `f6a248bb182af9d7d3565d965cf8270735e9a892`
+## Explicitly deferred — do not open this boundary until the owner resumes it
 
-This is the next-turn scratchpad for the frozen implementation. It is not architecture authority, a grouped refactor program, or permission to edit every neighboring file.
+WorldSignals, WorldView, and Shadowbroker work is deferred. When resumed, prove the existing first-party adapter before touching either controlled product.
 
-## Blocking defect
+- `client/src/components/worldsignal/worldSignalLayerPrefs.ts`
+- `client/src/components/worldsignal/worldSignalLayerPrefs.spec.ts`
+- `client/src/features/agentbuilder/rail/railVisibility.ts`
+- `client/src/features/agentbuilder/rail/railVisibility.spec.ts`
+- `client/src/features/worldview/projectWorldview.ts`
+- `client/src/features/worldview/projectWorldview.spec.ts`
+- `client/src/components/worldsignal/worldViewInspectorMount.spec.ts`
+- `apps/python-models/app/python_models/project_worldview.py`
+- `apps/python-models/app/python_models/test_project_worldview.py`
+- `client/src/components/worldsignal/GodsEyeSurface.tsx`
+- `client/src/components/worldsignal/GodsEyeSurface.spec.tsx`
+- `client/src/features/agentbuilder/core/AgentBuilderWorkspace.spec.tsx`
+- `client/src/features/agentbuilder/core/AgentBuilderRail.tsx`
+- `client/src/features/agentbuilder/core/AgentBuilderRail.spec.tsx`
+- `client/src/features/agentbuilder/core/useAgentBuilderWorkspaceLayout.ts`
+- `client/src/features/agentbuilder/core/useAgentBuilderWorkspaceLayout.spec.tsx`
+- `apps/python-models/app/python_models/signal_contracts.py`
+- `apps/backend/src/routes/worldview.routes.spec.ts`
+- `apps/backend/src/routes/worldviewRouteHandlers.ts`
+- `client/src/components/worldsignal/loadWorldViewNative.ts`
+- `client/src/components/worldsignal/loadWorldViewNative.spec.ts`
+- `client/src/features/worldview/WorldViewSurface.tsx`
+- `client/src/features/worldview/WorldViewSurface.spec.tsx`
 
-| Priority | Exact file path(s) | Current-source evidence | Smallest next action | Required disposition or proof |
-| --- | --- | --- | --- | --- |
-| P0 | `apps/backend/src/config/env.ts`; launcher evidence in `package.json` and `apps/backend/package.json` | `env.ts:22-23` resolves only `path.resolve(process.cwd(), 'apps/backend/.env')`. The canonical root launcher at `package.json:13` runs `npm --workspace apps/backend`, and that workspace script runs with cwd `C:\Projects\LiquidAIty\main\apps\backend`; the loader therefore probes `...\apps\backend\apps\backend\.env`, which does not exist. The real `apps/backend/.env` is present and `DATABASE_URL` is not process-injected. `env.spec.ts` uses a repo-root-shaped temporary cwd, so it does not exercise the canonical workspace launch. | In a clean retry, change only `env.ts` first so the canonical backend env path is resolved independently of workspace-script cwd; then add an exact workspace-cwd regression case and run `npm run dev:fresh` far enough to prove the rebuilt backend loaded that source. | Owner disposition is required because review is frozen. This is a definite startup regression, not an open design choice. |
+Required later proof:
 
-## Exact file-by-file exception queue
+- WorldSignals: inspect the current command manifest, then prove one signed mainstream command, one refused specialist command, and one unknown-command refusal. Review the current startup HMAC handoff without creating, printing, rotating, or persisting another credential.
+- WorldView: prove real module load, first frame or honest fallback, destruction, Project remount, command readiness, and image readiness before considering any controlled God’s Eye change.
 
-| Priority | Exact file path(s) | Exact uncertainty or blocker with current-source evidence | Smallest one-file-at-a-time next action | Required owner decision or live prerequisite |
-| --- | --- | --- | --- | --- |
-| P0 | `apps/backend/src/services/projectStore.ts`; `apps/backend/src/decks/defaultProjectDeck.ts`; `client/src/features/agentbuilder/deck/newProjectDeck.ts` | New-Project creation still ranks the newest matching core Card revision across all Projects (`projectStore.ts:83-101`), while the backend default declares six Cards plus Team-to-Magnetic topology and the client retains a separate full seed deck. Copy-on-write saves are Project-local now, but the canonical origin of a fresh Project is still ambiguous. | Begin with `projectStore.ts`: replace recency-based discovery only after the canonical seed owner is chosen; then reconcile `defaultProjectDeck.ts`; lastly reduce `newProjectDeck.ts` to any proven client-only unsaved presentation data. | Decide source-owned canonical default revisions versus a first-class saved Card library, and decide whether fresh Projects seed Main-to-Builder only or also Team-to-Magnetic. |
-| P0 | `apps/backend/src/hermes/profileMaterialization.ts`; `apps/backend/src/routes/hermesProfile.routes.ts` | One stable Hermes profile is reconfigured with Project-specific MCP headers (`profileMaterialization.ts:149-151,278-280`). In a multi-user product, two owners using the same logical profile can overwrite persistent profile configuration or share profile-scoped OAuth material. | Start in `profileMaterialization.ts`: remove persistent Project/Run context only after a storage strategy is selected; then make the profile route read/reconcile that exact strategy. | Choose owner-namespaced Hermes profile homes while preserving logical profile names, or fail closed when a second owner reaches an existing profile. Any Hermes storage change needs controlled-vendor review and credential-preservation proof. |
-| P0 | `apps/backend/src/routes/cardTerminal.routes.ts`; `client/src/features/agentbuilder/console/agentTerminalClient.ts` | The terminal-open response returns the reusable Hermes dashboard token together with profile/session/bot-session transport data (`cardTerminal.routes.ts:96-123`). Replacing it cleanly depends on the supported Hermes terminal handshake, not another application runtime. | Start with `cardTerminal.routes.ts`: define a bounded authenticated proxy/handshake response and exact Project/deck/Card/profile/session readback; update the client only after that server contract exists. | Approve the handshake shape and any necessary controlled Hermes adapter change; then prove one real non-Main Card CLI and confirm Main remains headless. |
-| P0 | `apps/python-models/app/python_models/card_script.py`; `HermesLatest/tools/code_execution_tool.py`; `client/src/features/agentbuilder/CardScriptEditor.tsx` | The first-party compiler uses a blacklist-style AST check around imports, private attributes, and named calls, while the real child execution boundary lives in the controlled Hermes runner. Static compiler tests cannot prove aliases, reflection, builtin access, nested selected-tool dispatch, output ceilings, or child-process recovery. | Harden `card_script.py` first with a strict positive grammar and exact compiled-contract validation. Touch the Hermes runner only if direct proof shows its documented extension point cannot enforce the same ceiling; update the editor last for the accepted contract. | Separately authorize any controlled-vendor edit and its divergence record. Live prerequisite: one saved Card -> IDF -> Hermes child -> selected nested tool success plus invalid-script skip/recovery. |
-| P0 | `services/knowgraph/ingest.py`; `services/knowgraph/graphiti_runtime.py`; `services/knowgraph/app.py` | Duplicate detection is a read-before-write sequence (`ingest.py:181-233`) around provider-owned `add_episode`; concurrent uploads can race, and a returned episode can exist before all authority metadata/Jev settlement completes. Unit fixtures do not establish provider transaction or retry behavior. | Start in `ingest.py`: define one versioned Project/source-hash/section reservation and exact readback using the provider's supported primitives; change runtime construction only if that contract requires it; keep `app.py` as transport/error projection. | Decide the durable reservation/repair authority and obtain a real Graphiti/Neo4j loaded duplicate-and-resume proof. Do not add another graph writer or local shadow ledger. |
-| P0 | `apps/python-models/app/python_models/magnetic_taskgraph_authority.py`; `apps/python-models/app/mag_one_operation.py`; `apps/python-models/app/python_models/magnetic_taskgraph_readback.py` | Magnetic currently imports Hermes by mutating process-global `sys.path`/`sys.modules` (`magnetic_taskgraph_authority.py:32-37,152-178`) and a 540-second wait can return `completionPending` with the outer Run deliberately unsettled (`mag_one_operation.py:62-99,189-192`). A safe replacement depends on a public Hermes task/event/continuation boundary. | Start by replacing the import mutation in `magnetic_taskgraph_authority.py` with a package-safe supported Hermes boundary; then make `mag_one_operation.py` settle or resume the same root without adding a scheduler; update readback only against a public event owner. | Approve the continuation behavior after the request window and separately authorize any controlled Hermes change. Live prerequisite: one real approved Magnetic root through blue workers to same-root synthesis and outer-Run settlement. |
-| P0 | `apps/backend/src/main.ts`; `apps/python-models/app/backend_operation_transport.py`; `apps/python-models/app/mcp_auth.py` | The backend now binds only `127.0.0.1`, and Python rails accepts only an explicit loopback HTTP backend origin. That is coherent for the desktop/local process tree but not yet a defined multi-tenant web deployment topology. Relaxing either side without a deployment decision would reopen secret-bearing internal routes. | Decide the deployment boundary first. If services remain co-located, document and prove the loopback topology. If they separate, change `main.ts` first to an explicit bind policy, then replace the Python transport rule with one authenticated/TLS internal origin contract. | Owner decision: co-located loopback deployment versus separated private-service network/reverse proxy. Live prerequisite: deployed auth/CORS/internal-secret proof for the chosen topology. |
-| P1 | `client/src/features/agentbuilder/state/useAgentBuilderAutosave.ts`; `client/src/components/builder/useBuilderDeckPersistenceActions.ts`; `client/src/pages/agentbuilder.tsx` | Autosave and manual save still implement separate request/merge flows over the same revision and abort ref. A local edit can abort a request after the server commits, leaving an uncertain revision; a stale canonical response can update revision state while a newer local draft remains. Correct behavior depends on an explicit conflict/rebase policy. | Start in `useAgentBuilderAutosave.ts`: define one serialized latest-write coordinator contract and retain the newest draft on uncertain outcomes; route manual save through it next; change page wiring last. | Decide whether a concurrent canonical conflict freezes editing for reload or rebases only structurally proven non-conflicting changes. Then prove rapid edits, Project switching, abort-after-commit, manual save, and retry in the loaded UI. |
-| P1 | `apps/backend/src/routes/mainSession.routes.ts`; `client/src/features/agentbuilder/console/useAgentBuilderMainChat.ts`; `client/src/components/main/MainProjectChat.tsx` | The composer now retains text when submission is synchronously rejected, but acceptance, partial stream retention, cancellation, direct-recipient completion, and voice-final deduplication still depend on the real saved Hermes event stream. The current preview used a stale backend and did not repeat a model turn. | Run ordinary Main, direct orange recipient, consultation, cancel-after-partial-output, and voice-final cases against a rebuilt backend. If one fails, repair only the exact owning file before reopening wider Main refactoring. | Live prerequisite: rebuilt source identity, real saved Project/Card sessions, configured provider, and Hermes Gateway. |
-| P1 | `client/src/components/CardEditor.tsx` | The visible `Memory` tab renders only a heading plus a profile-error state (`CardEditor.tsx:1424-1437`). Repository law permits Honcho setup/status only for Main and rejects a generic Card memory-provider field, so filling the tab by inference would create unauthorized product behavior. | In this file only, either remove/hide the empty tab or render the already-approved Main-only Honcho status after the owner chooses; do not add another memory system. | Decide hide/remove versus Main-only Honcho setup/status. |
-| P1 | `apps/python-models/app/python_models/operation_definition.py`; `apps/python-models/app/python_models/tool_catalog.py`; `apps/python-models/app/python_models/engraphis_operations.py`; `client/src/features/agentbuilder/deck/deckPrimitives.ts` | `OperationDefinition.grant_eligible` defaults to true, while `tool_catalog.py` explicitly excludes `engraphis_update_memory` from Card choices and the ThinkGraph source seed still grants that exact tool. Fixing either side silently would change a saved Card/public tool contract. | Decide `engraphis_update_memory` first. Then make eligibility explicit in `operation_definition.py`, align the Python projection, and change the client seed last; prove effective saved grants against the authenticated catalog. | Owner decision: retain `engraphis_update_memory` as a ThinkGraph Card grant or remove it from the source seed as operator/governance-only. |
-| P1 | `apps/python-models/app/python_models/idf_contract.py`; `apps/python-models/app/python_models/idf.py` | Secret/nonfinite checks and failed-write cleanup are stronger, but the one canonical IDF still has no agreed total-byte/image ceiling or versioned policy for large selected graph/tool payloads. Tightening it without real image and graph inputs could reject valid Runs; leaving it unbounded is unsafe for web tenancy. | Start in `idf_contract.py`: choose and encode total plus per-section limits without changing the four-part meaning; apply write-time enforcement in `idf.py`; prove exact retained bytes/hash with realistic Main/Builder images and selected graph context. | Owner decision on accepted image/input ceilings and backward read compatibility; loaded prerequisite is a representative real Run payload. |
-| P1 | `apps/python-models/app/python_models/worldsignals_client.py`; `client/src/components/worldsignal/WorldSignalSurface.tsx`; `client/src/components/worldsignal/WorldSignalsInspectorPanel.tsx` | The Python boundary now validates transport and manifests, but the default product policy remains a negative restricted-command list; an upstream new specialist command can therefore fail open. The embedded client still needs one real readiness/mount/teardown/command cycle against the unmodified Shadowbroker product. | Start in `worldsignals_client.py`: replace the negative policy only after the approved mainstream command set is named and make manifest drift fail closed; then test host and inspector generation cleanup without editing Shadowbroker. | Owner decision on the explicit mainstream allowlist/extended opt-in. Live prerequisite: current Shadowbroker manifest plus one permitted command and one refused specialist command. |
-| P1 | `client/src/components/worldsignal/loadWorldViewNative.ts`; `client/src/components/worldsignal/GodsEyeSurface.tsx`; `client/src/features/worldview/WorldViewSurface.tsx`; `client/vite.config.ts`; controlled boundary `agent-products/gods-eye-view/src/app/mount.js` | Deterministic tests cover the bridge, but module import, first-frame/fallback settlement, destruction, Project remount, and command/image readiness have not been re-proven with the rebuilt host. A contract mismatch may require the controlled God's Eye mount, which cannot be changed as ordinary cleanup. | Prove the existing first-party loader/surface path first. If it fails, repair one first-party owner at a time; touch `mount.js` only with a recorded vendor packet showing no supported external extension can satisfy the contract. | Live WorldView service and visual proof are required; any controlled-fork edit needs separate authorization and divergence documentation. |
-| P1 | `docker-compose.yml` | The root stack still combines proven PostgreSQL/Neo4j dependencies with an unproven Honcho API/deriver/database/Redis stack, injects the complete backend env into Honcho services, and has no current package-script owner for those Honcho services. Deleting the whole file would also delete current graph/database startup material. | Decide the Honcho disposition first; then edit only this file to remove just the unowned services or to narrow and pin an explicitly retained stack. | Owner decision: remove the Honcho services, or name their current product/startup owner and exact secret/version contract. |
-| P2 | `apps/python-models/app/python_models/alpaca_market_data.py`; `apps/python-models/app/python_models/sec_filing_signals.py` | Deterministic fixtures prove validation, bounds, redirect refusal, and safe error projection, but no current run proves the exact live Alpaca or SEC response shapes after hardening. Provider behavior cannot be inferred from fixtures. | Exercise `alpaca_market_data.py` first with one read-only snapshot/bar request, then `sec_filing_signals.py` with one bounded filing query; edit only the file whose live contract disagrees. | Credential owner and external-provider availability are required; no order mutation or graph write is authorized. |
+## Confirmed cleanup or decision work before classification
 
-## Per-file repair and classification rule
+1. Remove or merge duplicate and orphaned code:
 
-- Current inline semantic coverage is **72 / 352 eligible first-party TypeScript/Python files**, containing **75 Entity/Relationship pairs**; **280 eligible files remain**.
-- In the next clean retry, repair and prove one exact file or inseparable boundary at a time.
-- After an eligible first-party TypeScript/Python file is repaired and reread, add or refresh its truthful top-of-file `Entity`/`Relationship` pair.
-- Leave every still-unresolved file uncategorized and keep its exact path in this exception queue. Do not classify it merely to improve coverage, and do not run a batch writer or reclassification pass.
+   - `apps/python-models/app/python_models/test_agentgraph.py` duplicates the durable PostgreSQL/AgentGraph coverage; retain its unique URL-parsing assertion only if it is not covered elsewhere.
+   - `client/src/components/builder/deckValidation.ts` has no production caller; determine whether its tested helpers belong in the real canvas owner or delete the file and test-only residue.
+   - `client/src/components/diagnostics/FrontendCrashBoundary.tsx` has no production caller; either mount the one intended boundary or delete the orphan and its self-supporting test.
 
-## Proof status for the frozen snapshot
+2. Split or simplify mixed authority:
 
-- Deterministic TypeScript: **439 passed, 1 intentionally skipped**.
-- Python rails: **497 passed**.
-- KnowGraph: **28 passed**.
-- TypeScript source/spec checks: **all four passed**.
-- Production builds: **backend passed; client passed**.
-- Dependency audit: **0 vulnerabilities**.
-- `git diff --check`: **passed** in final review (line-ending conversion warnings remain for existing working-copy files).
-- Loaded/visual: **partial and not current-source acceptance**. The client preview rendered, but it used a stale backend; the prior CORS failure and controlled-vendor/bundle warnings remain outside deterministic proof. No new Main, Card Script, Team, Magnetic, graph-write, or external-provider acceptance was completed against the frozen source.
-- Overall review: **FAIL** because the canonical backend launcher cannot discover the real `apps/backend/.env` from its workspace-script cwd unless `DATABASE_URL` is injected by some external shell state.
+   - `client/src/features/agentbuilder/deck/deckPrimitives.ts` mixes text helpers, model/tool defaults, runtime authority, edge normalization, cloning, and IDs. Separate only proven concepts and delete residue.
+   - `apps/python-models/app/python_models/trading_forecast.py` mutates process-global import state for Kronos. Replace that with the supported package/process boundary or remove the unused path.
+   - `apps/python-models/app/python_models/test_hermes_holographic_memory_contract.py` reaches into controlled Hermes through `sys.path` and module replacement. Prefer the existing Hermes-owned tests or an actual public adapter contract.
 
-## Reviewed snapshot
+3. Remove false aliases and error-shaped layers:
 
-Method: SHA-256 of the sorted UTF-8 manifest lines `<working-file-sha256>  <repository-relative-path>\n` for every tracked changed or untracked file in the frozen working tree except this reviewer-owned `turn.md`. The set includes the preserved `.codebase-memory/artifact.json` change and all untracked tests.
+   - `apps/backend/src/llm/models.config.ts` creates duplicate `Direct ID` aliases. Prove saved-data compatibility, then remove aliases rather than retaining two names for one model.
+   - `apps/python-models/app/mcp_observability.py`
+   - `apps/python-models/app/mcp_request_dispatch.py`
+   - `apps/python-models/app/python_models/test_mcp_provider_dispatch_contract.py`
+   - `apps/python-models/app/mcp_catalog_runtime.py`
+   - `apps/python-models/app/python_models/test_mcp_catalog_runtime_contract.py`
 
-Reviewed files: **178**
+   Audit these together for string/JSON-shaped failure inference, duplicate readiness state, or success-shaped projection. Keep real transport, auth, catalog, and provider behavior; delete the parallel interpretation layer and tests that only prove it.
 
-`REVIEW_SNAPSHOT_SHA256: 2361174780684f4b976114bfc090f59e7fef7a6320ac7d4b49547cd54c4aea43`
+4. Repair exact unsafe boundaries:
+
+   - `apps/backend/src/routes/knowGraphWrite.routes.ts` string-classifies ingest failures and can project internal upstream details. Keep transport only and return bounded public errors from typed provider outcomes.
+   - `services/knowgraph/jev_fact_settlement.py` needs deterministic duplicate/resume proof around Graphiti episode creation, authority metadata, and Jev settlement before it passes classification.
+
+5. Resolve Run observation residue as one explicit contract:
+
+   - `apps/python-models/app/python_models/agentgraph_run_observations.py`
+   - `apps/python-models/app/python_models/test_agentgraph_inspection.py`
+   - `apps/python-models/app/python_models/saved_card_contract.py`
+   - `apps/python-models/app/python_models/test_agentgraph_card_topology.py`
+
+   Reconcile the remaining accepted/started/preparation timestamp fields with the intended minimal Card-face and Run contract. AGE may observe real Runs, artifacts, tools, failures, and completion; it must not recreate a fake lifecycle surface.
+
+6. Resolve saved-Card persistence policy before tagging:
+
+   - `apps/python-models/app/python_models/saved_cards.py`
+   - `apps/python-models/app/python_models/test_saved_cards.py`
+
+   Preserve Project-scoped saved Card revisions and data. Resolve the current global logical-profile binding and fresh-Project seed ownership without adding aliases, a second library, or destructive migration.
+
+## ThinkGraph completed-pair rail — retained but not yet a complete feature
+
+The preparation and settlement rails remain source-owned, but automatic Main-pair capture has no approved Hermes caller. Do not claim the feature is current and do not reconnect the deleted TypeScript executor.
+
+- `apps/python-models/app/python_models/thinkgraph_completed_pair_preparation.py`
+- `apps/python-models/app/python_models/thinkgraph_completed_pair_extraction.py`
+- `apps/python-models/app/python_models/thinkgraph_completed_pair_settlement.py`
+
+Before classification, remove operating-policy prose from the extraction module if that policy belongs in the saved ThinkGraph Card, then prove the eventual caller through the approved saved per-Project control.
+
+## Remaining large one-concept candidates
+
+These were not failed. They simply need a complete one-file review before receiving a passing header. Start with the smallest and classify only if the file remains one coherent feature.
+
+- `client/src/features/agentbuilder/tasks/MagneticTasksTab.tsx`
+- `client/src/components/graph/RightGlassDrawer.tsx`
+- `apps/python-models/app/python_models/engraphis.py`
+- `apps/python-models/app/python_models/test_thinkgraph_hybrid.py`
+- `apps/python-models/app/python_models/test_data_anchor.py`
+- `apps/python-models/app/python_models/test_card_runs.py`
+- `client/src/components/builder/BuilderCanvas.tsx`
+- `client/src/components/knowledge/KnowledgeAuthorityGraphSurface.spec.tsx`
+- `client/src/components/knowledge/KnowledgeAuthorityGraphSurface.tsx`
+
+## Proof already clean at this checkpoint
+
+- TypeScript source and spec checks: passed.
+- TypeScript tests: **470 passed, 1 intentionally skipped**.
+- Python rails tests: **508 passed**.
+- KnowGraph tests: **31 passed** with one upstream Graphiti Pydantic deprecation warning.
+- Backend and client production builds: passed; the existing God’s Eye browser-externalization and large-bundle warnings remain deferred with WorldView.
+- Production dependency audit: **0 vulnerabilities**.
+- `git diff --check`: passed; the existing PowerShell line-ending warning remains.
+
+Do not infer external-provider, Magnetic mission, graph-write, or owner visual acceptance from these deterministic proofs.

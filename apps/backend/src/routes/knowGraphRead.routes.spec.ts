@@ -1,3 +1,7 @@
+/**
+ * Entity: KnowGraph
+ * Relationship: Verifies authenticated Project-scoped projection and neighborhood reads, exact provider identities and bounds, and honest upstream failures without graph reshaping.
+ */
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';

@@ -1,4 +1,7 @@
 """Bounded Jev transport and exact Choice response validation."""
+# Entity: Jev Decisions
+# Relationship: Sends bounded Choice requests to Jev and validates decision identifiers, probability distributions, winners, and confidence before application use.
+
 from __future__ import annotations
 
 import hashlib

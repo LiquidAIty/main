@@ -1,5 +1,8 @@
 """Durable Card Run projection and bounded readback."""
 
+# Entity: Card Runs
+# Relationship: Projects durable Run state and performs bounded Project, deck, Card, correlation, and conversation-scoped readback without becoming a runtime controller.
+
 from __future__ import annotations
 
 from datetime import datetime

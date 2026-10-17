@@ -1,3 +1,8 @@
+/**
+ * Entity: Saved Cards
+ * Relationship: Loads one Project's persisted deck and resolves every enabled Card to its exact revision, profile, display address, and unique Main authority.
+ */
+
 import { getDeckDocument } from '../decks/deckDomainClient';
 import type { DeckCard, DeckDocument } from '../types';
 

@@ -1,5 +1,11 @@
 """Source-pair provenance and Jev classification for ThinkGraph relationships."""
 
+# Entity: ThinkGraph
+# Relationship: Freezes bounded existing Engraphis context for each model-authored directed relationship proposal and preserves the accepted classification as edge provenance.
+#
+# Entity: Jev Decisions
+# Relationship: Obtains and validates one full probabilistic Choice over the Project relationship vocabulary before any ThinkGraph relationship write occurs.
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed

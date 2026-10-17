@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Crash Diagnostics
+ * Relationship: Verifies the root crash boundary converts child render failures into a copyable diagnostic panel without losing the captured error.
+ */
+
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";

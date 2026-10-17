@@ -1,3 +1,8 @@
+/**
+ * Entity: Crash Diagnostics
+ * Relationship: Captures React, window, and unhandled-promise failures with route and Project context for the visible copyable crash report.
+ */
+
 export type FrontendCrashRecord = {
   type: "react_error_boundary" | "window_error" | "unhandled_rejection";
   message: string;

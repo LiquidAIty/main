@@ -1,3 +1,7 @@
+/**
+ * Entity: Jev Decisions
+ * Relationship: Verifies bounded Project-authorized graph-focus transport, exact projection revisions, strict response validation, and honest Python rails failures without a fallback decision.
+ */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';

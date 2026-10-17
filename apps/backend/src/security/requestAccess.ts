@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Defines loopback, bootstrap-token, and CORS trust checks so local-development sessions and internal HTTP routes cannot be authorized by spoofed headers.
+ */
+
 import crypto from 'crypto';
 import type { Request } from 'express';
 

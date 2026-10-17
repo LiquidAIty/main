@@ -1,4 +1,6 @@
 """Execution start and aggregate progress for accepted Card Runs."""
+# Entity: Card Runs
+# Relationship: Starts one accepted Hermes Run from exact submission evidence and records bounded Magnetic aggregate progress, usage, cost, and active-worker telemetry.
 
 from __future__ import annotations
 

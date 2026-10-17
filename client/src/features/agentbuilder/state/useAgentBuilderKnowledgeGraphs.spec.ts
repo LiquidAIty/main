@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: KnowGraph
+ * Relationship: Verifies accepted Know deletion refreshes the provider projection exactly once while refusal preserves the current graph and avoids false refresh.
+ */
+
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

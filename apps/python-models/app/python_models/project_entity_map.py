@@ -1,4 +1,6 @@
 """Lightweight current Project Entity and Relationship map for model context."""
+# Entity: Entity Grounding
+# Relationship: Combines canonical Entity identities with current ThinkGraph and KnowGraph relationship state, excludes evidence bodies, and appends the bounded map to Card context.
 
 from __future__ import annotations
 

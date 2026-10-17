@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Canvas
+ * Relationship: Polls inspect-only Run status for each saved Card and projects truthful parent-plus-worker counts and active identities to the Canvas.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 
 import type { DeckDocument } from '../../../types/agentgraph';

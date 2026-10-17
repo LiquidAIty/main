@@ -1,3 +1,8 @@
+/**
+ * Entity: Model Selection
+ * Relationship: Verifies pinned model identities and provider classifications remain available to the canonical Card model selector without compatibility aliases.
+ */
+
 import { describe, it, expect } from 'vitest';
 import { MODEL_REGISTRY } from './models.config';
 

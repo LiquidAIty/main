@@ -1,5 +1,5 @@
 """Read-only exact Project Entity operations."""
-# Entity: Knowledge Graphs
+# Entity: Project Knowledge Graph
 # Relationship: Publishes explicit grantable Project Entity directory and bounded cross-authority context reads while graph providers retain data ownership.
 
 from __future__ import annotations

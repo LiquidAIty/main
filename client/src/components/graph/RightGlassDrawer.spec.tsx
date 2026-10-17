@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Graph Presentation
+ * Relationship: Verifies the shared glass drawer docks, detaches, resizes, snaps, collapses without remounting children, supports keyboard movement, and cancels interrupted gestures.
+ */
+
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';

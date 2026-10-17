@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Trading
+ * Relationship: Verifies the Trading workspace mounts read-only charts, switches Portfolio and Journal views, preserves plan evidence, and keeps execution controls disabled.
+ */
+
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';

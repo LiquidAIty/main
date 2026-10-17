@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Canvas
+ * Relationship: Embeds the shared Card-and-rail canvas in large or companion workspace shells while forwarding exact selection, activity, and persistence state.
+ */
+
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 
 import BuilderCanvas from '../../../components/builder/BuilderCanvas';

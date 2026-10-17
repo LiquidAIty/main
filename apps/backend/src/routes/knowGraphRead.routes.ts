@@ -1,3 +1,8 @@
+/**
+ * Entity: KnowGraph
+ * Relationship: Authenticates Project ownership and serves bounded KnowGraph Entity projections or focused neighborhoods from Python rails.
+ */
+
 import { Router, type Request, type Response } from 'express';
 import {
   fetchKnowGraphNeighborhood,

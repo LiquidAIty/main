@@ -1,3 +1,8 @@
+/**
+ * Entity: Hermes Profiles
+ * Relationship: Loads one authorized saved Card's profile, learning, and MCP status, applies bounded operations, and manages validated loopback OAuth start, poll, and cancel lifecycle.
+ */
+
 export type HermesMcpServerView = {
   name: string;
   transport: string;

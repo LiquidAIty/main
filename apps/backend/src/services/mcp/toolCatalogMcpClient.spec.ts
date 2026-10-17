@@ -1,3 +1,8 @@
+/**
+ * Entity: Tool Catalog
+ * Relationship: Verifies the authenticated internal MCP reader exposes the complete canonical operation catalog without retired graph or agent wrapper tools.
+ */
+
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {

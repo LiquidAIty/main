@@ -1,5 +1,8 @@
 """Saved AGE Card topology and authorization projections."""
 
+# Entity: AgentGraph
+# Relationship: Persists and validates Project-owned Card topology, deriving exact outbound orange orchestrator targets and independent blue Magnetic worker authority from saved edges.
+
 from __future__ import annotations
 
 import re

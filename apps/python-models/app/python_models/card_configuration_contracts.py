@@ -1,4 +1,6 @@
 """Typed saved-Card runtime and model configuration contracts."""
+# Entity: Saved Cards
+# Relationship: Defines strict saved Card runtime, model, subagent, grant, orchestration, and reasoning fields shared by editing, validation, and execution.
 
 from __future__ import annotations
 

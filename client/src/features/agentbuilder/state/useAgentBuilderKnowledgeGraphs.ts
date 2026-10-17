@@ -1,3 +1,8 @@
+/**
+ * Entity: Project Knowledge Graph
+ * Relationship: Loads, validates, and independently refreshes ThinkGraph and KnowGraph projections, reads provider neighborhoods, applies visual physics, and performs explicit evidence removal.
+ */
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';

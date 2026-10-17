@@ -1,4 +1,9 @@
 // Thin HTTP transport to the Python-owned stable Card/deck domain.
+/**
+ * Entity: Saved Cards
+ * Relationship: Transports exact deck reads and compare-and-set writes between TypeScript routes and the Python-owned saved Card domain.
+ */
+
 // TypeScript deliberately owns no SQL, deck aggregate, Card revision,
 // relationship authority, or topology mutation in this module.
 import { requestPythonRailsJson } from '../services/pythonRailsClient';

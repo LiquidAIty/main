@@ -1,3 +1,6 @@
+# Entity: Tool Catalog
+# Relationship: Verifies application and provider tool catalogs reject name collisions while retaining distinct canonical MCP operations.
+
 from __future__ import annotations
 
 import pytest

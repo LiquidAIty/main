@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Editor
+ * Relationship: Verifies the Card options route returns only validated Python-owned fields and catalogs and fails closed on malformed projections.
+ */
+
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';

@@ -1,4 +1,6 @@
 """Process-owned Graphiti MCP provider lifecycle for the LiquidAIty MCP host."""
+# Entity: KnowGraph
+# Relationship: Discovers Graphiti's MCP catalog without opening providers, lazily initializes configured Neo4j and model services on first call, and closes the driver.
 
 from __future__ import annotations
 

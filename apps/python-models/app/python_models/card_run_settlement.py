@@ -1,4 +1,6 @@
 """Terminal settlement for durable Card Runs."""
+# Entity: Card Runs
+# Relationship: Validates terminal Run state and Hermes or provider evidence, idempotently settles usage, cost, errors, results, and task aggregates, then records AgentGraph completion.
 
 from __future__ import annotations
 

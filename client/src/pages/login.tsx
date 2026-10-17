@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Collects user credentials, requests the server-owned login session, displays exact failure text, and navigates authenticated users into the application.
+ */
+
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 

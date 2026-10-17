@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Runs
+ * Relationship: Provides the process-authenticated prepare, start, and finish bridge for exact non-Magnetic saved Card turns while preserving Run, profile, model, Script, and usage identity.
+ */
+
 import { Router, type Request } from 'express';
 
 import { hermesProfileModelSelection } from '../hermes/profileMaterialization';

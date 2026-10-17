@@ -1,3 +1,8 @@
+/**
+ * Entity: Database Access
+ * Relationship: Verifies backend PostgreSQL pooling never replays an ambiguous statement and retries only connection acquisition before any statement is submitted.
+ */
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const postgres = vi.hoisted(() => ({

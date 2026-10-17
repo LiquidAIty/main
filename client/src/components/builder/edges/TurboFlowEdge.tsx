@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Canvas
+ * Relationship: Renders persisted Card topology as curved rails with distinct orange orchestration, blue Magnetic membership, active, selected, and inert-invalid states.
+ */
+
 import { BaseEdge, getBezierPath, type EdgeProps } from "@xyflow/react";
 
 import type { DeckEdgeType } from "../../../types/agentgraph";

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Entity: KnowGraph
+# Relationship: Verifies that the KnowGraph service loads one explicit environment source, honors process-secret precedence, and fails closed without exposing secret values.
+
 import os
 
 import pytest

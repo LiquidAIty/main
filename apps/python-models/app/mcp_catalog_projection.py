@@ -1,4 +1,6 @@
 """MCP Tool construction, provider discovery, and request projection."""
+# Entity: Tool Catalog
+# Relationship: Builds the authenticated MCP catalog, discovers selected external provider families, rejects duplicate names, and filters each request to its exact grants.
 
 from __future__ import annotations
 

@@ -1,5 +1,8 @@
 """Provider graph retrieval followed by bounded Jev context relevance."""
 
+# Entity: Entity Grounding
+# Relationship: Retrieves bounded Project candidates from ThinkGraph and KnowGraph, uses Jev to select one Relevant record per authority, and pairs each with one distinct Recent record for current-request context.
+
 from __future__ import annotations
 
 import asyncio

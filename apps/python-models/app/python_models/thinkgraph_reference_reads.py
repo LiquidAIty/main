@@ -1,4 +1,6 @@
 """Exact project-scoped reads from the Engraphis ThinkGraph authority."""
+# Entity: ThinkGraph
+# Relationship: Reads one exact Project-scoped Engraphis Entity or Think, bounds optional relationship expansion, and projects portable content with native provenance and truncation.
 
 from __future__ import annotations
 

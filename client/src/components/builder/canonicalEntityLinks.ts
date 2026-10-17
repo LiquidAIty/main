@@ -1,3 +1,7 @@
+/**
+ * Entity: Entity Grounding
+ * Relationship: Links exact current canonical Entity names in assistant text to their matching ThinkGraph and KnowGraph visual nodes while refusing protected text, stale revisions, and mismatched provider identities.
+ */
 import type {
   GraphProjectionNode,
   GraphProjectionV1,

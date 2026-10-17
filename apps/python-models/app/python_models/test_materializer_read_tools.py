@@ -1,4 +1,6 @@
 """Focused no-provider proof for the shared internal MCP Card client."""
+# Entity: Data Anchors
+# Relationship: Verifies Card-scoped graph preload uses one short-lived read-only MCP principal, preserves successful concurrent reads, and contains unavailable or timed-out providers.
 
 from __future__ import annotations
 

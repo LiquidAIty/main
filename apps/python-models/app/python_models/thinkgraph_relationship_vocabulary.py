@@ -1,4 +1,6 @@
 """Project-scoped ThinkGraph relationship vocabulary and promotion."""
+# Entity: ThinkGraph
+# Relationship: Maintains each Project's bounded relationship vocabulary, normalizes proposed predicates, prepares Jev choices, and atomically promotes only a winning valid label.
 
 from __future__ import annotations
 

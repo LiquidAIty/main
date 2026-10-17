@@ -1,5 +1,8 @@
 """Bounded KnowGraph projection and neighborhood reads for the UI."""
 
+# Entity: KnowGraph
+# Relationship: Projects bounded Project-scoped Graphiti Entities, relationships, two-sided Know evidence, and one-hop neighborhoods for the visual graph without copying graph authority.
+
 from __future__ import annotations
 
 from typing import Any

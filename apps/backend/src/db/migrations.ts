@@ -1,3 +1,8 @@
+/**
+ * Entity: Database Migrations
+ * Relationship: Applies the immutable backend migration ledger under an advisory lock, verifies checksums and transaction envelopes, and delays listening through bounded PostgreSQL recovery.
+ */
+
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';

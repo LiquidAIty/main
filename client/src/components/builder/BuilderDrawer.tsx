@@ -1,3 +1,8 @@
+/**
+ * Entity: Projects
+ * Relationship: Provides the full-height modal drawer shell used by Project navigation, including outside-click and explicit close behavior.
+ */
+
 import React from "react";
 
 type BuilderDrawerColors = {

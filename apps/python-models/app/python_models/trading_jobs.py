@@ -1,5 +1,8 @@
 """PostgreSQL Trade Job, decision, and readback ownership."""
 
+# Entity: Trading
+# Relationship: Owns Project-scoped paper Trade Jobs and model decisions, joins them to read-only broker evidence and Run artifacts, and keeps unapproved execution interventions unavailable.
+
 from __future__ import annotations
 
 import json

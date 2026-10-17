@@ -1,3 +1,8 @@
+/**
+ * Entity: Database Access
+ * Relationship: Owns the backend PostgreSQL pool, replaces ended or transiently failed connections, never replays submitted statements, and closes cleanly at process shutdown.
+ */
+
 import '../config/env';
 import { Pool } from 'pg';
 

@@ -1,4 +1,6 @@
 """Saved Card creation through the canonical optimistic deck authority."""
+# Entity: Saved Cards
+# Relationship: Validates one explicit Card definition against template, runtime, provider, model, tool, subagent, and revision authority before persisting a new immutable identity.
 
 from __future__ import annotations
 

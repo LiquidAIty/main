@@ -1,3 +1,7 @@
+/**
+ * Entity: Trading
+ * Relationship: Defines the paper-only Trading configuration and read-model contracts, then reconciles full broker and job snapshots by provider-owned identities.
+ */
 export const TRADE_ACTIONS = [
   'WAIT',
   'ENTER',

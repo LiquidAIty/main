@@ -1,3 +1,8 @@
+/**
+ * Entity: Trading
+ * Relationship: Verifies authenticated Trading routes forward exact saved Card selectors, stream normalized state, record bounded interventions with actor lineage, and reject order-shaped actions.
+ */
+
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';

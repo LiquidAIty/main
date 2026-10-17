@@ -1,3 +1,7 @@
+/**
+ * Entity: Python Rails
+ * Relationship: Verifies the backend's single configured Python rails transport, typed failure boundaries, timeouts, and exact ThinkGraph and KnowGraph read endpoints.
+ */
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

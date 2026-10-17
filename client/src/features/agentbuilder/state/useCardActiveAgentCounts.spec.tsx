@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Agent Canvas
+ * Relationship: Verifies passive per-Card owner and worker counts for canvas badges, including Project scoping, partial failure, terminal Runs, and bounded polling recovery.
+ */
+
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

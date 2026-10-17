@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Main Chat
+ * Relationship: Verifies Main chat bubbles shrink-wrap within the active lane, reflow at narrow widths, and reuse cached text measurements during resize.
+ */
+
 import { layout } from '@chenglou/pretext';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {

@@ -1,3 +1,8 @@
+/**
+ * Entity: Trading
+ * Relationship: Renders autosaving Trading risk, lifecycle, timeframe, strategy, and connection controls while keeping malformed strategy JSON local until valid.
+ */
+
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 import {

@@ -1,4 +1,6 @@
 """Focused proof for the automatically injected Entity/Relationship map."""
+# Entity: Entity Grounding
+# Relationship: Verifies the injected Project Entity map contains only canonical identities and relationship state from each authority, never Think, Know, citation, or episode bodies.
 
 from __future__ import annotations
 

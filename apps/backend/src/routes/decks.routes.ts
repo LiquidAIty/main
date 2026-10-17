@@ -1,3 +1,7 @@
+/**
+ * Entity: Saved Cards
+ * Relationship: Exposes authenticated Project deck load/save and saved-Card membership operations with canonical revision checks, readback, and bounded compensation.
+ */
 import { Router } from 'express';
 import {
   getDeckDocument,

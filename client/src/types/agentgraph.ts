@@ -1,3 +1,8 @@
+/**
+ * Entity: Saved Cards
+ * Relationship: Defines the client-side saved deck, Card configuration, subsystem, Script, and orange or blue topology types consumed by the Canvas and editor.
+ */
+
 export type PromptTemplate = {
   id: string;
   content: string;

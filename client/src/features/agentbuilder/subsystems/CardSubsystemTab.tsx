@@ -1,3 +1,7 @@
+/**
+ * Entity: Card Subsystems
+ * Relationship: Presents one Card's declared subsystem adapter, capabilities, lifecycle, and readiness without widening the Card's ordinary Hermes or graph authority.
+ */
 import { useEffect, useState } from 'react';
 
 import type { CardSubsystemAttachment } from '../../../types/agentgraph';

@@ -1,3 +1,6 @@
+# Entity: Model Selection
+# Relationship: Filters backend-authored model candidates by saved provider, context, tools, images, and reasoning requirements, then uses Jev only when multiple compatible choices remain.
+
 from __future__ import annotations
 
 from typing import Any

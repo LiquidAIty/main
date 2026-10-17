@@ -1,3 +1,8 @@
+/**
+ * Entity: Project Knowledge Graph
+ * Relationship: Lazy-loads the joined ThinkGraph and KnowGraph canvas, projects independent provider status, and forwards evidence inspection and removal actions.
+ */
+
 import { Suspense, lazy } from 'react';
 
 import { GraphPaperBackground } from '../graph/GraphCanvasChrome';

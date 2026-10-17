@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Verifies password hashing, timing-resistant absent-user checks, hash upgrades, secret-free user returns, and single-owner local bootstrap.
+ */
+
 import bcrypt from 'bcryptjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

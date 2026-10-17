@@ -1,4 +1,6 @@
 """Canonical IDF retention and input-artifact persistence for Card Runs."""
+# Entity: Input Data File
+# Relationship: Writes or reopens the one canonical in.idf, records its exact artifact identity, reloads verified bytes, and projects the mechanical runtime request.
 
 from __future__ import annotations
 

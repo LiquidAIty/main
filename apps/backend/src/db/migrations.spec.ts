@@ -1,3 +1,7 @@
+/**
+ * Entity: Database Migrations
+ * Relationship: Verifies ordered transactional migration application, immutable applied-ledger evidence, forward-only schema corrections, and fail-closed backend startup.
+ */
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';

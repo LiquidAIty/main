@@ -1,5 +1,8 @@
 """Saved Canvas inspection and one-wire optimistic updates."""
 
+# Entity: Agent Canvas
+# Relationship: Publishes exact saved-Canvas inspection and single-wire update operations while enforcing Project revisions, Card endpoints, edge types, and topology authority.
+
 from __future__ import annotations
 
 import asyncio

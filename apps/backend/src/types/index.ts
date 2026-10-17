@@ -1,3 +1,8 @@
+/**
+ * Entity: Saved Cards
+ * Relationship: Defines the backend's canonical saved deck, Card revision and configuration, subsystem, Script, and orange or blue topology transport types.
+ */
+
 export type PromptTemplate = {
   id: string;
   content: string;

@@ -1,3 +1,8 @@
+/**
+ * Entity: Trading
+ * Relationship: Verifies the Trading Card exposes only typed decisions and reads saved parameters under immutable paper-only, execution-disabled safety defaults.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import {

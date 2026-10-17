@@ -1,3 +1,6 @@
+# Entity: Saved Cards
+# Relationship: Verifies Card creation and configuration expose the exact reasoning enum, persist accepted choices, and reject unrecognized levels.
+
 from __future__ import annotations
 
 import asyncio

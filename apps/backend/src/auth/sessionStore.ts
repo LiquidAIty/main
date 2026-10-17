@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Persists only hashed session tokens, resolves and expires owner sessions, creates the single local-owner session, and applies bounded secure cookies.
+ */
+
 import { createHash, randomBytes } from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { User } from './userService';

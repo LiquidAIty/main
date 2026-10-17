@@ -1,4 +1,6 @@
 """Generic loopback backend transport for application-owned operations."""
+# Entity: Python Rails
+# Relationship: Carries bounded loopback Python-to-backend JSON or text requests, refuses redirects, and includes the supervised process secret only when explicitly required.
 
 from __future__ import annotations
 

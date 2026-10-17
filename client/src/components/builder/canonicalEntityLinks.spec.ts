@@ -1,3 +1,8 @@
+/**
+ * Entity: Entity Grounding
+ * Relationship: Verifies assistant text links only current exact canonical Entity names to matching provider nodes, preserves source bytes, excludes code and URLs, and refuses stale or cross-Project evidence.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import type {

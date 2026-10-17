@@ -1,3 +1,6 @@
+# Entity: Internal MCP Auth
+# Relationship: Verifies Python rails accepts only exact loopback backend origins, emits the process secret only for internal calls, and refuses redirect forwarding.
+
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, HTTPServer

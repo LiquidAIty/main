@@ -1,4 +1,7 @@
 """Bounded, non-history decision context for one saved Card Run."""
+# Entity: Jev Decisions
+# Relationship: Projects one bounded non-history context from the current request, saved instructions, graph references, attachment metadata, and visible-token estimate.
+
 from __future__ import annotations
 
 import math

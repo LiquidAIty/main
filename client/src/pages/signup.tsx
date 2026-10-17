@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Collects new user identity and password, requests account and session creation, reports server refusal, and navigates successful signups into the application.
+ */
+
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 

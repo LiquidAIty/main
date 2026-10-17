@@ -1,3 +1,8 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Maps validated live Jev winner probabilities into bounded transient edge and node physics while preserving provider data, history, and profile-independent graph meaning.
+ */
+
 import type {
   GraphProjectionEdge,
   GraphProjectionNode,

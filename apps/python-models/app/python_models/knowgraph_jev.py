@@ -5,6 +5,13 @@ module returns one bounded canonical relationship Choice for each fact touched
 by the active Graphiti ingest. The ingest owner persists successful metadata on
 that same relationship; this module never admits, rejects, or rewrites facts.
 """
+
+# Entity: KnowGraph
+# Relationship: Supplies bounded source, Entity, temporal, and nearby-fact context for relationship classification without admitting, deleting, or rewriting Graphiti facts.
+#
+# Entity: Jev Decisions
+# Relationship: Obtains and validates one probabilistic canonical relationship Choice per Graphiti fact, with bounded concurrency and explicit incomplete outcomes.
+
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait

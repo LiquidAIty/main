@@ -1,3 +1,8 @@
+/**
+ * Entity: Internal MCP Auth
+ * Relationship: Restricts backend-to-MCP transport to loopback, mints the catalog-reader bearer, and timing-safely verifies the supervised process secret for internal routes.
+ */
+
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const INTERNAL_MCP_ISSUER = 'liquidaity-runtime';

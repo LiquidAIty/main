@@ -1,3 +1,11 @@
+/**
+ * Entity: External MCP
+ * Relationship: Resolves a verified external identity to one owned Project, persisted Card profile, active Run, and exact saved tool-grant ceiling.
+ *
+ * Entity: Card Editor
+ * Relationship: Returns the canonical editor projection for one exact Project, deck, and Card only to the supervised internal MCP process.
+ */
+
 import { Router, type Request } from 'express';
 
 import { resolveExternalIdentityProjectGrant } from '../auth/externalIdentityGrantStore';

@@ -1,3 +1,8 @@
+/**
+ * Entity: Saved Cards
+ * Relationship: Verifies authorized deck loads and compare-and-set saves consistently use and return the canonical owned Project identity.
+ */
+
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';

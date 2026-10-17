@@ -1,4 +1,6 @@
 """Read-only inspection and model-text projections from a validated IDF."""
+# Entity: Input Data File
+# Relationship: Builds read-only model text, size estimates, and public inspection summaries from the exact validated materialized IDF bytes.
 
 from __future__ import annotations
 

@@ -1,4 +1,6 @@
 """Process-owned configuration boundary for the LiquidAIty KnowGraph service."""
+# Entity: KnowGraph
+# Relationship: Loads KnowGraph's process environment from canonical backend configuration or file-backed secrets without overriding injected values.
 
 from __future__ import annotations
 

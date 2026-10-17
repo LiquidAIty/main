@@ -1,3 +1,8 @@
+/**
+ * Entity: ThinkGraph
+ * Relationship: Verifies owner-scoped Engraphis projections, exact neighborhood reads, bounded retirement, required identities, and honest Python failure projection.
+ */
+
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';

@@ -1,5 +1,11 @@
 """OAuth, internal-principal, and authenticated Project/profile context for MCP."""
 
+# Entity: External MCP
+# Relationship: Verifies OAuth configuration and Auth0 bearer tokens, then resolves an optional authenticated Project and saved-profile context for context-dependent tools.
+#
+# Entity: Internal MCP Auth
+# Relationship: Verifies the exact signed catalog-reader or materializer-read principal and carries its bounded Project, Run, Card, and granted-tool authority into dispatch.
+
 from __future__ import annotations
 
 import asyncio

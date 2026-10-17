@@ -1,3 +1,6 @@
+# Entity: Jev Decisions
+# Relationship: Verifies bounded non-history context, per-tool USE or OMIT decisions, deterministic single-model selection, and valid Jev choice among multiple compatible models.
+
 from __future__ import annotations
 
 import pytest

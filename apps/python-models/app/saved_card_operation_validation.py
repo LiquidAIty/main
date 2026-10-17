@@ -1,5 +1,8 @@
 """Shared validation for saved Card create and configuration operations."""
 
+# Entity: Saved Cards
+# Relationship: Validates create and update inputs against saved Card runtime, provider, subagent, reasoning, capability, and tool-grant contracts before persistence.
+
 from __future__ import annotations
 
 from typing import Any

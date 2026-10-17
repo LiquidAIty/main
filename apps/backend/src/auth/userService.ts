@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Creates and verifies users with bounded bcrypt work, upgrades weak hashes, hides credential fields, and preserves the single local-development owner identity.
+ */
+
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { prisma } from '../services/database';

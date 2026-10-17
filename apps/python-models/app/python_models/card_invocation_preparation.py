@@ -1,5 +1,11 @@
 """Graph selection, AutoTools/AutoModel, and canonical Card IDF preparation."""
 
+# Entity: Card Runs
+# Relationship: Resolves the exact saved Card revision, sender authority, current graph selections, effective tools, Script presentation, AutoTools, and AutoModel decisions for one Run.
+#
+# Entity: Input Data File
+# Relationship: Passes those resolved stable and transient inputs to the sole canonical IDF materializer and verifies every required selected graph reference before execution.
+
 from __future__ import annotations
 
 import json

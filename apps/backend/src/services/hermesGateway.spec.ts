@@ -1,3 +1,8 @@
+/**
+ * Entity: Hermes Gateway
+ * Relationship: Verifies the shared Gateway connection accepts only loopback credentials, closes failed attempts, and preserves a newer replacement client against stale finalizers.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({

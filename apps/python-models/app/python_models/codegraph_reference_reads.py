@@ -1,4 +1,6 @@
 """Exact repository-symbol reads from the official Codebase Memory authority."""
+# Entity: CodeGraph
+# Relationship: Reads one exact qualified symbol and optional bounded call neighborhood through authenticated CBM tools, preserving source coordinates and native provenance.
 
 from __future__ import annotations
 

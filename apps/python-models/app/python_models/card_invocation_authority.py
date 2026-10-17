@@ -1,4 +1,6 @@
 """Saved Card, sender, execution, and configuration authority for one invocation."""
+# Entity: Card Runs
+# Relationship: Authorizes one Card invocation against exact orange or blue topology and projects its saved runtime, model, tools, skills, and subagent configuration.
 
 from __future__ import annotations
 

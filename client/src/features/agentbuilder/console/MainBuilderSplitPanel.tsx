@@ -1,3 +1,7 @@
+/**
+ * Entity: Application Shell
+ * Relationship: Preserves Main as the ambient Project conversation while letting the user collapse, split, resize, or expand the active Card work surface below it.
+ */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 const HANDLE_HEIGHT = 12;

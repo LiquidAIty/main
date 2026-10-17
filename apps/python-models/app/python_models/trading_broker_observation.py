@@ -1,5 +1,8 @@
 """Actual read-only LumiBot and Alpaca observation for paper trading state."""
 
+# Entity: Trading
+# Relationship: Reads bounded paper-account, position, order, equity, and market observations through configured LumiBot and Alpaca interfaces without starting a strategy or authorizing orders.
+
 from __future__ import annotations
 
 import atexit

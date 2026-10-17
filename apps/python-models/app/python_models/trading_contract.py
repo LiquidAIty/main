@@ -1,4 +1,6 @@
 """Fail-closed contracts for the paper-only Trading Card boundary."""
+# Entity: Trading
+# Relationship: Validates paper-only Trading configuration, complete trade plans, deterministic risk gates, supported market settings, and stable future paper-order identities without submitting orders.
 
 from __future__ import annotations
 

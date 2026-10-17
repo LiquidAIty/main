@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Trading
+ * Relationship: Verifies Trading inspector controls autosave valid configuration changes while preserving invalid strategy text locally until correction.
+ */
+
 import React, { useState } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';

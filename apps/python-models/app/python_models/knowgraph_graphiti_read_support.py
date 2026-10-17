@@ -1,5 +1,8 @@
 """Shared Graphiti/Neo4j read connection and Relationship metadata."""
 
+# Entity: KnowGraph
+# Relationship: Provides Project-scoped Graphiti read support, filters citation URLs and embeddings from visual projection, and validates persisted Jev relationship metadata.
+
 from __future__ import annotations
 
 import json
@@ -184,4 +187,3 @@ def persisted_knowgraph_jev(
         "vocabulary_version": str(properties.get("jev_ontology_version") or ""),
         "vocabulary_hash": str(properties.get("jev_ontology_hash") or ""),
     }
-

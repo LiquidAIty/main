@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Verifies development bootstrap trusts only real loopback sockets with matching headers, exposes only loopback CORS origins, and never activates in production.
+ */
+
 import type { Request } from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from './requestAccess';

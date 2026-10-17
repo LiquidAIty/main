@@ -1,3 +1,8 @@
+/**
+ * Entity: Authentication
+ * Relationship: Verifies session bearer tokens are digest-only at rest, expired records are removed, delete failures remain honest, and cookie attributes match lifecycle.
+ */
+
 import { createHash } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -1,3 +1,8 @@
+/**
+ * Entity: Application Shell
+ * Relationship: Installs global crash reporting and mounts the root React application inside its top-level recovery boundary.
+ */
+
 import React from "react";
 import { createRoot } from "react-dom/client";
 // Case-exact import: on the case-insensitive Windows FS a "./app" import

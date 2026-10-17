@@ -1,5 +1,5 @@
 """Sole materializer and retained-file owner for one canonical Run ``in.idf``."""
-# Entity: Input Data Files
+# Entity: Input Data File
 # Relationship: Materializes, size-validates, writes, reloads, hashes, and mechanically projects the one canonical Run input without an alternate payload or silent truncation.
 
 from __future__ import annotations

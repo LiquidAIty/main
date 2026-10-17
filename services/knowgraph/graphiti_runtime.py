@@ -1,4 +1,6 @@
 """Process-scoped Graphiti provider, model, embedding, and driver construction."""
+# Entity: KnowGraph
+# Relationship: Resolves one service-level provider, model, embedding, and Neo4j configuration and constructs the Graphiti ingestion runtime without exposing secret values.
 
 from __future__ import annotations
 

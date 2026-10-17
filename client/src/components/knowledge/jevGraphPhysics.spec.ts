@@ -1,3 +1,8 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Verifies valid live Jev probabilities alter only bounded visual mass and spring fields while preserving provider graph meaning and superseded evidence.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import type { GraphProjectionV1 } from './KnowledgeAuthorityGraphSurface';

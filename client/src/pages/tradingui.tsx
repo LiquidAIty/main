@@ -1,3 +1,7 @@
+/**
+ * Entity: Trading
+ * Relationship: Presents read-only market charts, paper portfolio state, plan and journal evidence, and bounded pause or resume interventions for the selected Trading Card.
+ */
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import './tradingui.css';
 import type { AgentCardInstance } from '../types/agentgraph';
