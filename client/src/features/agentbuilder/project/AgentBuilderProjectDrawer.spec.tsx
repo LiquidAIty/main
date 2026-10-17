@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Projects
+ * Relationship: Verifies Project creation sends only identity fields and navigates only after exact persisted deck and revision readback.
+ */
+
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +24,7 @@ afterEach(() => {
 });
 
 function renderDrawer(refreshProjects = vi.fn(async () => undefined)) {
+  const setProjectsError = vi.fn();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -37,18 +43,24 @@ function renderDrawer(refreshProjects = vi.fn(async () => undefined)) {
         onClose={() => undefined}
         refreshProjects={refreshProjects}
         setActiveProjectWithUrl={() => undefined}
-        setProjectsError={() => undefined}
+        setProjectsError={setProjectsError}
       />,
     );
   });
-  return { host: container, refreshProjects };
+  return { host: container, refreshProjects, setProjectsError };
 }
 
 describe('AgentBuilderProjectDrawer Project creation', () => {
-  it('uses the one server-owned Project create request and never posts INITIAL_DECK', async () => {
+  it('uses one server-owned Project create request and never posts a client seed deck', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
-      json: async () => ({ ok: true, project: { id: 'project-new' } }),
+      json: async () => ({
+        ok: true,
+        projectId: 'project-new',
+        project: { id: 'project-new' },
+        deck: { id: 'deck_builder' },
+        meta: { deckRevision: 'revision-new' },
+      }),
       text: async () => '',
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -80,5 +92,37 @@ describe('AgentBuilderProjectDrawer Project creation', () => {
     }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/decks'))).toBe(false);
     expect(refreshProjects).toHaveBeenCalledWith('after-create', 'project-new');
+  });
+
+  it('does not navigate when Project creation lacks canonical deck readback', async () => {
+    const refreshProjects = vi.fn(async () => undefined);
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, project: { id: 'project-new' } }),
+      text: async () => '',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { host, setProjectsError } = renderDrawer(refreshProjects);
+
+    act(() => {
+      (host.querySelector('[data-testid="new-project-button"]') as HTMLButtonElement).click();
+    });
+    const input = host.querySelector('[data-testid="project-name-input"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      setter?.call(input, 'Unsettled Project');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      (host.querySelector('[data-testid="create-project-submit"]') as HTMLButtonElement).click();
+    });
+
+    expect(refreshProjects).not.toHaveBeenCalled();
+    expect(setProjectsError).toHaveBeenCalledWith(
+      'Failed to create project: project_create_readback_invalid',
+    );
   });
 });

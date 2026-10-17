@@ -1,4 +1,6 @@
 """One authored definition for every callable product operation."""
+# Entity: Tool Grants
+# Relationship: Defines the mandatory grant eligibility and optional exact Hermes-profile ceiling carried by every callable operation into catalogs and Runs.
 
 from __future__ import annotations
 
@@ -25,11 +27,12 @@ class OperationDefinition:
     publishers: frozenset[str]
     access: str
     namespace: str
+    grant_eligible: bool
     external_source_id: str = "main_mcp"
     output_schema: dict[str, Any] | None = None
     title: str | None = None
     annotations: dict[str, Any] | None = None
-    grant_eligible: bool = True
+    grant_profiles: frozenset[str] = frozenset()
     server_injected_arguments: frozenset[str] = frozenset()
     dispatcher_context_arguments: frozenset[str] = frozenset()
     dispatcher_owner: str = ""
@@ -85,6 +88,19 @@ class OperationDefinition:
         if not isinstance(self.grant_eligible, bool):
             raise RuntimeError(
                 f"operation_grant_eligibility_invalid:{self.canonical_id}"
+            )
+        if (
+            not isinstance(self.grant_profiles, frozenset)
+            or any(
+                not isinstance(profile, str)
+                or not profile
+                or profile != profile.strip().lower()
+                for profile in self.grant_profiles
+            )
+            or (not self.grant_eligible and self.grant_profiles)
+        ):
+            raise RuntimeError(
+                f"operation_grant_profiles_invalid:{self.canonical_id}"
             )
         properties = self.parameters_schema.get("properties", {})
         if (

@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldSignals
+ * Relationship: Renders the canonical Inspector's live market and layer controls from the current ready WorldSignals bridge, clearing observations whenever that mounted generation changes.
+ */
+
 import React, { useEffect, useMemo, useState } from 'react';
 
 import GlassInspectorSection from '../graph/GlassInspectorSection';
@@ -43,6 +48,9 @@ function MarketsSection({
   const [readError, setReadError] = useState<string | null>(null);
 
   useEffect(() => {
+    setSnapshot(null);
+    setObservedAt(null);
+    setReadError(null);
     if (!bridge) return undefined;
     let cancelled = false;
     const read = () => {

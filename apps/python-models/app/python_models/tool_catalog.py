@@ -1,4 +1,6 @@
 """Deterministic projection of canonical operations into the selectable catalog."""
+# Entity: Tool Grants
+# Relationship: Projects each canonical operation's explicit availability, eligibility, and exact profile ceiling into the authenticated Card tool catalog without aliases or inferred grants.
 
 from __future__ import annotations
 
@@ -20,7 +22,6 @@ _CARD_CATALOG_EXCLUDED_IDS = frozenset({
     # Retained operator/governance operations are not ordinary Card choices.
     "engraphis_conflict_review",
     "engraphis_session",
-    "engraphis_update_memory",
 })
 _LIVE_PROVIDER_CATALOG_SOURCES = frozenset({"cbm", "graphiti"})
 
@@ -93,6 +94,7 @@ def operation_catalog_descriptor(definition: OperationDefinition) -> dict[str, A
         "description": definition.description,
         "available": definition.available,
         "grantEligible": definition.grant_eligible,
+        "grantProfiles": sorted(definition.grant_profiles),
         "access": definition.access,
         "inputSchema": input_schema,
         "canonicalInputSchema": canonical_schema,
@@ -140,6 +142,7 @@ def provider_tool_catalog_descriptor(raw: Any) -> dict[str, Any] | None:
     description = raw.get("description")
     available = raw.get("available")
     grant_eligible = raw.get("grantEligible")
+    grant_profiles = raw.get("grantProfiles")
     access = str(raw.get("access") or "").strip()
     input_schema = raw.get("inputSchema")
     canonical_schema = raw.get("canonicalInputSchema")
@@ -158,6 +161,15 @@ def provider_tool_catalog_descriptor(raw: Any) -> dict[str, Any] | None:
         or not isinstance(description, str)
         or not isinstance(available, bool)
         or not isinstance(grant_eligible, bool)
+        or not isinstance(grant_profiles, list)
+        or any(
+            not isinstance(profile, str)
+            or not profile
+            or profile != profile.strip().lower()
+            for profile in grant_profiles
+        )
+        or len(grant_profiles) != len(set(grant_profiles))
+        or (not grant_eligible and grant_profiles)
         or access not in {"read", "write"}
         or not isinstance(input_schema, dict)
         or input_schema.get("type") != "object"
@@ -183,6 +195,7 @@ def provider_tool_catalog_descriptor(raw: Any) -> dict[str, Any] | None:
         "description": description,
         "available": available,
         "grantEligible": grant_eligible,
+        "grantProfiles": list(grant_profiles),
         "access": access,
         "inputSchema": deepcopy(input_schema),
         "canonicalInputSchema": deepcopy(canonical_schema),
@@ -270,6 +283,7 @@ def validate_live_tool_catalog(descriptors: Any) -> list[dict[str, Any]]:
         publications = raw.get("publications")
         available = raw.get("available")
         grant_eligible = raw.get("grantEligible")
+        grant_profiles = raw.get("grantProfiles")
         access = str(raw.get("access") or "").strip()
         input_schema = raw.get("inputSchema")
         canonical_schema = raw.get("canonicalInputSchema")
@@ -286,6 +300,15 @@ def validate_live_tool_catalog(descriptors: Any) -> list[dict[str, Any]]:
             or not set(publications) <= _CATALOG_PUBLICATIONS
             or not isinstance(available, bool)
             or not isinstance(grant_eligible, bool)
+            or not isinstance(grant_profiles, list)
+            or any(
+                not isinstance(profile, str)
+                or not profile
+                or profile != profile.strip().lower()
+                for profile in grant_profiles
+            )
+            or len(grant_profiles) != len(set(grant_profiles))
+            or (not grant_eligible and grant_profiles)
             or access not in {"read", "write"}
             or not isinstance(input_schema, dict) or input_schema.get("type") != "object"
             or not isinstance(canonical_schema, dict) or canonical_schema.get("type") != "object"

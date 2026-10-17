@@ -1,8 +1,14 @@
+/**
+ * Entity: Projects
+ * Relationship: Renders owner-scoped Project creation, selection, deletion, and sign-out controls while accepting only a canonical persisted deck response for navigation.
+ */
+
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 
 import BuilderDrawer from '../../../components/builder/BuilderDrawer';
 import { safeText } from '../deck/deckPrimitives';
+import { BUILDER_DECK_ID } from '../deck/newProjectDeck';
 
 type ProjectSummary = {
   id: string;
@@ -86,12 +92,18 @@ export default function AgentBuilderProjectDrawer({
         data && typeof data === 'object'
           ? (data as {
               id?: unknown;
+              projectId?: unknown;
               project?: { id?: unknown };
+              deck?: { id?: unknown };
+              meta?: { deckRevision?: unknown };
             })
           : null;
       const newId = String(record?.project?.id || record?.id || '').trim();
-      if (!newId) {
-        throw new Error('project_create_missing_id');
+      if (!newId
+        || String(record?.projectId || '').trim() !== newId
+        || String(record?.deck?.id || '').trim() !== BUILDER_DECK_ID
+        || !String(record?.meta?.deckRevision || '').trim()) {
+        throw new Error('project_create_readback_invalid');
       }
 
       setShowCreateProjectForm(false);

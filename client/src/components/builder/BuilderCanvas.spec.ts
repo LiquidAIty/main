@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Canvas
+ * Relationship: Verifies Card rendering, topology editing, viewport recovery, and orange-versus-blue connection rules against explicit behavior-focused deck fixtures.
+ */
+
 import React from 'react';
 import { Handle } from '@xyflow/react';
 import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@xyflow/react';
@@ -32,11 +37,10 @@ import {
 } from '../../features/agentbuilder/core/agentBuilderViewportMath';
 import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
 import MagenticBusNode from './nodes/MagenticBusNode';
-import { INITIAL_DECK } from '../../features/agentbuilder/deck/newProjectDeck';
 
 describe('canvas connection validation', () => {
   it('keeps blue Magnetic availability identical in either endpoint order', () => {
-    const deck = structuredClone(INITIAL_DECK);
+    const deck = createCanvasTestDocument();
     for (const [cardId, busHandle] of [
       ['card_team', 'bus-in-1'],
       ['card_trading_workbench', 'bus-in-2'],
@@ -57,7 +61,7 @@ describe('canvas connection validation', () => {
   });
 
   it('classifies a Magnetic endpoint as blue regardless of the card-side handle', () => {
-    const deck = structuredClone(INITIAL_DECK);
+    const deck = createCanvasTestDocument();
     const connection = {
       source: 'card_trading_workbench',
       target: 'card_magentic',
@@ -85,7 +89,7 @@ describe('canvas connection validation', () => {
   });
 
   it('preserves disabled state and existing presentation fields through load and Canvas conversion', () => {
-    const deck = structuredClone(INITIAL_DECK);
+    const deck = createCanvasTestDocument();
     const wire = { ...deck.edges[0], enabled: false, label: 'Existing label', style: { opacity: 0.4 } };
     deck.edges = sanitizeDeckEdges([wire]);
     const displayed = toFlowEdges(deck, null, null, new Set([wire.id]));
@@ -94,7 +98,7 @@ describe('canvas connection validation', () => {
   });
 
   it('rejects invalid creations and reconnections without changing blue membership', () => {
-    const deck = structuredClone(INITIAL_DECK);
+    const deck = createCanvasTestDocument();
     const connect: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'> = {
       source: 'card_main_chat', target: 'builder', sourceHandle: 'card-control', targetHandle: null,
     };
@@ -115,7 +119,7 @@ describe('canvas connection validation', () => {
   });
 
   it('allows independent orange and blue masters while preserving one master per topology', () => {
-    const deck = structuredClone(INITIAL_DECK);
+    const deck = createCanvasTestDocument();
     const orange = {
       id: 'team-master',
       source: 'card_main_chat',
@@ -187,9 +191,9 @@ describe('canvas connection validation', () => {
 });
 
 describe('BuilderCanvas runtime-truth helpers', () => {
-  it('renders the real orange system topology beside the blue Trading worker topology', () => {
+  it('renders every Card and exact orange and blue edge in the explicit canvas fixture', () => {
     const nodes = toFlowNodes(
-      structuredClone(INITIAL_DECK),
+      createCanvasTestDocument(),
       null,
       null,
       false,
@@ -204,13 +208,18 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     expect(byId.get('card_trading_workbench')?.hidden).not.toBe(true);
     expect(byId.get('card_worldsignals_agent')?.hidden).not.toBe(true);
 
-    const edges = toFlowEdges(structuredClone(INITIAL_DECK), null, null, new Set());
+    const edges = toFlowEdges(createCanvasTestDocument(), null, null, new Set());
     const edgesById = new Map(edges.map((edge) => [edge.id, edge] as const));
-    expect(edgesById.get('edge_main_chat_thinkgraph')?.hidden).not.toBe(true);
-    expect(edgesById.get('edge_main_chat_agent_builder')?.hidden).not.toBe(true);
-    expect(edgesById.get('edge_main_chat_hermes')?.hidden).not.toBe(true);
-    expect(edgesById.get('edge_main_chat_magnetic')?.hidden).not.toBe(true);
-    expect(edgesById.get('edge_team_magentic_bus')?.hidden).not.toBe(true);
+    expect([...edgesById]).toHaveLength(4);
+    for (const edgeId of [
+      'edge_main_chat_agent_builder',
+      'edge_team_magentic_bus',
+      'edge_worldsignals_magentic_bus',
+      'edge_trading_magentic_bus',
+    ]) {
+      expect(edgesById.has(edgeId)).toBe(true);
+      expect(edgesById.get(edgeId)?.hidden).not.toBe(true);
+    }
   });
 
   it('fits every rendered Card when the Fit view control is used', () => {
@@ -1155,6 +1164,69 @@ function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
       },
     ],
     edges,
+  };
+}
+
+function createCanvasTestDocument(): DeckDocument {
+  const card = (
+    id: string,
+    mode: 'main' | 'delegate' | 'magentic_one',
+    profile: string,
+    x: number,
+    y: number,
+  ): AgentCardInstance => ({
+    id,
+    kind: 'agent',
+    templateId: `template_${id}`,
+    runtime: { kind: 'hermes', mode, profile },
+    runtimeOptions: {},
+    title: id,
+    position: { x, y },
+  });
+  return {
+    id: 'deck_canvas_test',
+    name: 'Canvas Test',
+    promptTemplates: [],
+    version: 1,
+    nodes: [
+      card('card_main_chat', 'main', 'main', -24, -24),
+      card('builder', 'delegate', 'builder', 360, -80),
+      card('card_thinkgraph', 'delegate', 'thinkgraph', -260, 120),
+      card('card_magentic', 'magentic_one', 'card_magentic', 140, 120),
+      card('card_team', 'delegate', 'team', 600, 340),
+      card('card_knowgraph', 'delegate', 'knowgraph', 260, 480),
+      card('card_trading_workbench', 'delegate', 'trading', 520, 140),
+      card('card_worldsignals_agent', 'delegate', 'worldsignals', 0, 260),
+    ],
+    edges: [
+      {
+        id: 'edge_main_chat_agent_builder',
+        source: 'card_main_chat',
+        target: 'builder',
+        edgeType: 'flow',
+      },
+      {
+        id: 'edge_team_magentic_bus',
+        source: 'card_team',
+        target: 'card_magentic',
+        targetHandle: 'bus-in-5',
+        edgeType: 'magentic_option',
+      },
+      {
+        id: 'edge_worldsignals_magentic_bus',
+        source: 'card_worldsignals_agent',
+        target: 'card_magentic',
+        targetHandle: 'bus-in-3',
+        edgeType: 'magentic_option',
+      },
+      {
+        id: 'edge_trading_magentic_bus',
+        source: 'card_magentic',
+        sourceHandle: 'bus-out-4',
+        target: 'card_trading_workbench',
+        edgeType: 'magentic_option',
+      },
+    ],
   };
 }
 

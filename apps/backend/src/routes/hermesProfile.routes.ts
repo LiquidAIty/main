@@ -1,3 +1,8 @@
+/**
+ * Entity: Hermes Profiles
+ * Relationship: Authenticates exact Project, Card, and single-owner profile authority before exposing bounded learning, MCP connection, and OAuth operations.
+ */
+
 import { Router, type Request, type Response } from 'express';
 
 import {
@@ -7,7 +12,10 @@ import {
 } from '../hermes/profileMaterialization';
 import { hermesGateway, type HermesGatewayClient } from '../services/hermesGateway';
 import { readToolCatalog } from '../services/mcp/toolCatalogMcpClient';
-import { getOwnedProjectByReference } from '../services/projectStore';
+import {
+  assertHermesProfileOwner,
+  getOwnedProjectByReference,
+} from '../services/projectStore';
 import {
   objectRecord,
   projectCardAuthority,
@@ -40,7 +48,7 @@ function errorStatus(error: unknown): number {
   const message = error instanceof Error ? error.message : String(error);
   if (message === 'deck_not_found' || message === 'card_not_found') return 404;
   if (message.endsWith('_required') || message.endsWith('_unsupported')) return 400;
-  if (message.endsWith('_access_denied')) return 403;
+  if (message.endsWith('_access_denied') || message === 'hermes_profile_owner_conflict') return 403;
   return 503;
 }
 
@@ -70,6 +78,7 @@ async function resolveAuthorizedCard(
     throw new Error('card_not_found');
   }
   const card = matches[0];
+  await assertHermesProfileOwner(card.profile, userId);
   const client = await hermesGateway();
   const request = <T>(method: string, params: Record<string, unknown> = {}) => (
     client.request<T>(method, params)
@@ -77,14 +86,16 @@ async function resolveAuthorizedCard(
   const existing = await ensureSavedCardProfile(
     request,
     card.card,
+    userId,
   );
   const toolCatalog = await readToolCatalog();
   const profile = await materializeSavedCardProfile(
     request,
     card.card,
-    projectId,
+    userId,
     existing,
     toolCatalog.tools,
+    toolCatalog.unavailableFamilies,
   );
   return { authority, card, client, profile };
 }

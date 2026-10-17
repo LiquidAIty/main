@@ -284,6 +284,7 @@ def test_provider_redirect_does_not_forward_the_api_key(monkeypatch):
         def do_POST(self):  # noqa: N802 - stdlib handler contract
             self.send_response(307)
             self.send_header("Location", f"http://127.0.0.1:{target.server_port}/capture")
+            self.send_header("Content-Length", "0")
             self.end_headers()
 
         def log_message(self, *_args):

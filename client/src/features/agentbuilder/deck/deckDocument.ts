@@ -1,4 +1,8 @@
-// Deck document logic: structural validation and exact saved-state loading.
+/**
+ * Entity: Agent Builder
+ * Relationship: Validates canonical deck responses, constructs projectless canvas state, and creates one unattached Assist Card without supplying persisted Project defaults.
+ */
+
 import type {
   AgentCardInstance,
   DeckDocument,
@@ -9,9 +13,9 @@ import {
   uid,
 } from './deckPrimitives';
 import {
-  INITIAL_AGENT_TEMPLATES,
-  INITIAL_DECK,
-  INITIAL_PROMPT_TEMPLATES,
+  ASSIST_AGENT_TEMPLATE,
+  ASSIST_PROMPT_TEMPLATE,
+  PROJECTLESS_DECK,
 } from './newProjectDeck';
 
 /**
@@ -29,10 +33,8 @@ export function buildQuickAddAssistCard(
   deck: DeckDocument,
   runtime: { kind: 'hermes'; mode: 'delegate' },
 ): { nextDeck: DeckDocument; nextNode: AgentCardInstance } {
-  const template =
-    INITIAL_AGENT_TEMPLATES.find((entry) => entry.id === 'template_assist') || null;
-  const promptContent =
-    (INITIAL_PROMPT_TEMPLATES.find((entry) => entry.id === 'prompt_assist')?.content) || '';
+  const template = ASSIST_AGENT_TEMPLATE;
+  const promptContent = ASSIST_PROMPT_TEMPLATE.content;
   const rightMostX = deck.nodes.reduce(
     (max, node) => Math.max(max, node.position.x || 0),
     -220,
@@ -142,12 +144,5 @@ export function resolveProjectDeckLoadResult(
 }
 
 export function buildProjectlessDeckDocument(): DeckDocument {
-  return readDeckDocument({
-    id: INITIAL_DECK.id,
-    name: INITIAL_DECK.name,
-    version: INITIAL_DECK.version,
-    promptTemplates: INITIAL_DECK.promptTemplates,
-    nodes: [],
-    edges: [],
-  });
+  return readDeckDocument(PROJECTLESS_DECK);
 }

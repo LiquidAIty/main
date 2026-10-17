@@ -1,3 +1,8 @@
+/**
+ * Entity: Tool Grants
+ * Relationship: Verifies immutable catalog lookup, pagination, selected Script grants, and exact saved-profile exclusion for scoped operations.
+ */
+
 import { describe, expect, it } from 'vitest';
 import {
   indexLiveToolCatalog,
@@ -19,6 +24,7 @@ function definition(index: number, access: 'read' | 'write' = 'read'): ToolCatal
     description: `Read repository slice ${index}`,
     available: true,
     grantEligible: true,
+    grantProfiles: [],
     access,
     inputSchema: { type: 'object', properties: { index: { type: 'integer', const: index } } },
     canonicalInputSchema: {
@@ -129,6 +135,32 @@ describe('live tool catalog lookup', () => {
       'cbm.tool_00001',
       'cbm.tool_00004',
     ]);
+  });
+
+  it('keeps a profile-scoped tool visible only to its exact saved profile', () => {
+    const scoped = {
+      ...definition(5, 'write'),
+      canonicalId: 'engraphis_update_memory',
+      grantProfiles: ['thinkgraph'],
+    };
+    const catalog = indexLiveToolCatalog([definition(1), scoped]);
+
+    expect(searchToolCatalogDefinitions(catalog, {
+      profile: 'thinkgraph',
+      selectedIds: ['engraphis_update_memory'],
+    }).selectedKnownReferences.map((item) => item.canonicalId)).toEqual([
+      'engraphis_update_memory',
+    ]);
+    const ordinary = searchToolCatalogDefinitions(catalog, {
+      profile: 'main',
+      selectedIds: ['engraphis_update_memory'],
+    });
+    expect(ordinary.references.map((item) => item.canonicalId))
+      .not.toContain('engraphis_update_memory');
+    expect(ordinary.unresolvedSelectedIds).toEqual(['engraphis_update_memory']);
+    expect(resolveScriptToolDefinitions(catalog, {
+      selectedIds: ['engraphis_update_memory'],
+    }, 'main')).toEqual([]);
   });
 
   it('rejects an unknown saved Script handle instead of silently dropping it', () => {

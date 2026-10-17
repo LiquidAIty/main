@@ -1,4 +1,6 @@
 """Main request-context and WorldView application operations."""
+# Entity: WorldView
+# Relationship: Defines the authenticated Main capability control and saved WorldView Card action surface with explicit grant boundaries.
 
 from __future__ import annotations
 
@@ -137,6 +139,8 @@ def main_worldview_operation_definitions(
             publishers=external,
             access="write",
             namespace="main",
+            grant_eligible=True,
+            grant_profiles=frozenset({"main"}),
             annotations={
                 "readOnlyHint": False,
                 "destructiveHint": False,
@@ -181,6 +185,7 @@ def main_worldview_operation_definitions(
             publishers=internal,
             access="write",
             namespace="worldview",
+            grant_eligible=True,
             annotations={
                 "readOnlyHint": False,
                 "destructiveHint": False,

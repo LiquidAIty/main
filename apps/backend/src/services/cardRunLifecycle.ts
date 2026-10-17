@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Runs
+ * Relationship: Transports one saved Card request through Python preparation and Run lifecycle readbacks, enforcing exact Project/deck/Card/revision/session identities at every transition.
+ */
+
 import { randomUUID } from 'node:crypto';
 
 import { autoModelCandidates } from '../llm/models.config';
@@ -71,7 +76,7 @@ export async function prepareCardRun(args: {
   }));
   const transport = record(prepared.hermesTransport);
   const request = record(transport.request);
-  if (
+  const identityMismatch = (
     String(prepared.runId || '') !== runId
     || String(prepared.correlationId || '') !== runId
     || String(prepared.projectId || '') !== args.projectId
@@ -82,7 +87,16 @@ export async function prepareCardRun(args: {
     || String(transport.cardIdentity?.cardId || '') !== args.target.card.id
     || String(request.runtime?.profile || '') !== args.target.profile
     || !String(request.message || '').trim()
-  ) throw new Error('saved_card_preparation_identity_mismatch');
+  );
+  if (identityMismatch) {
+    await finishCardRun({
+      runId,
+      state: 'failed',
+      errorCode: 'saved_card_preparation_identity_mismatch',
+      errorSummary: 'saved_card_preparation_identity_mismatch',
+    }).catch(() => undefined);
+    throw new Error('saved_card_preparation_identity_mismatch');
+  }
   return { runId, request };
 }
 
@@ -154,9 +168,12 @@ export function hermesUsageFields(value: unknown): Record<string, number | null>
     ))) throw new Error('hermes_usage_invalid');
     return supplied.length > 0 ? Number(supplied[0]) : null;
   };
-  const providerInputTokens = count(usage.input, usage.prompt, usage.input_tokens);
-  const providerOutputTokens = count(usage.output, usage.completion, usage.output_tokens);
-  const providerCachedTokens = count(usage.cached, usage.cached_tokens);
+  // Hermes exposes both canonical uncached buckets (`input`/`output`) and the
+  // provider-facing totals (`prompt`/`completion`). Run accounting records the
+  // provider totals, with cache reads and reasoning retained as their subsets.
+  const providerInputTokens = count(usage.prompt, usage.input, usage.prompt_tokens, usage.input_tokens);
+  const providerOutputTokens = count(usage.completion, usage.output, usage.completion_tokens, usage.output_tokens);
+  const providerCachedTokens = count(usage.cache_read, usage.cached, usage.cached_tokens);
   const providerReasoningTokens = count(usage.reasoning, usage.reasoning_tokens);
   const reportedTotal = count(usage.total, usage.total_tokens);
   const computedTotal = providerInputTokens !== null && providerOutputTokens !== null

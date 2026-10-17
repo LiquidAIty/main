@@ -1,3 +1,8 @@
+/**
+ * Entity: Tool Grants
+ * Relationship: Serves authenticated Card editor and Script palettes filtered by the exact saved Card profile, so profile-scoped tools never become ordinary choices.
+ */
+
 import { createHash } from 'crypto';
 import { Router } from 'express';
 import { getDeckDocument } from '../decks/deckDomainClient';
@@ -30,8 +35,8 @@ export async function loadLiveToolCatalog() {
   if (!Array.isArray(materialized?.references)) throw new Error('live_tool_catalog_invalid');
   return indexLiveToolCatalog(materialized.references as ToolCatalogDefinition[]);
 }
-async function cardCatalogOptions(projectId: string, deckId: string, cardId: string) {
-  if (!projectId || !deckId || !cardId) return { catalogOptions: [], selectedIds: [] };
+async function cardCatalogScope(projectId: string, deckId: string, cardId: string) {
+  if (!projectId || !deckId || !cardId) return { selectedIds: [], cardProfile: '' };
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = deck?.nodes.find((node) => node.id === cardId);
   if (!deck || !card) throw new Error('card_not_found');
@@ -42,8 +47,15 @@ async function cardCatalogOptions(projectId: string, deckId: string, cardId: str
     ...(saved.mcpConnectionIds || []).map((name) => 'mcp:' + name),
     ...(saved.provider && saved.modelKey ? ['model:' + saved.provider + ':' + saved.modelKey] : []),
   ].filter((value): value is string => typeof value === 'string' && Boolean(value));
+  return {
+    selectedIds: [...new Set(selectedIds)],
+    cardProfile: String(card.runtime.profile || '').trim().toLowerCase(),
+  };
+}
+async function cardCatalogOptions(projectId: string, deckId: string, cardId: string) {
+  const scope = await cardCatalogScope(projectId, deckId, cardId);
   const catalog = await loadLiveToolCatalog();
-  return { catalogOptions: catalog.references, selectedIds: [...new Set(selectedIds)] };
+  return { catalogOptions: catalog.references, ...scope };
 }
 export function scriptPaletteFingerprint(definitions: ToolCatalogDefinition[]): string {
   return createHash('sha256').update(JSON.stringify(definitions)).digest('hex');
@@ -101,6 +113,13 @@ builderIddRoutes.get('/card-editor', async (req, res) => {
 });
 builderIddRoutes.get('/tools', async (req, res) => {
   try {
+    const projectId = String(req.query.projectId || '').trim();
+    const deckId = String(req.query.deckId || '').trim();
+    const cardId = String(req.query.cardId || '').trim();
+    if (projectId && !(await authorizeCardProject(req, projectId))) {
+      return res.status(403).json({ ok: false, error: 'card_editor_project_access_denied' });
+    }
+    const scope = await cardCatalogScope(projectId, deckId, cardId);
     const catalog = await loadLiveToolCatalog();
     const selectedIds = commaSeparatedIds(req.query.selectedIds);
     return res.json({
@@ -114,6 +133,7 @@ builderIddRoutes.get('/tools', async (req, res) => {
         selectedIds,
         offset: typeof req.query.offset === 'string' ? Number(req.query.offset) : undefined,
         limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined,
+        profile: scope.cardProfile,
       }),
     });
   } catch (error) {
@@ -136,10 +156,17 @@ builderIddRoutes.get('/tools', async (req, res) => {
 });
 builderIddRoutes.get('/script-tools', async (req, res) => {
   try {
+    const projectId = String(req.query.projectId || '').trim();
+    const deckId = String(req.query.deckId || '').trim();
+    const cardId = String(req.query.cardId || '').trim();
+    if (projectId && !(await authorizeCardProject(req, projectId))) {
+      return res.status(403).json({ ok: false, error: 'card_editor_project_access_denied' });
+    }
+    const scope = await cardCatalogScope(projectId, deckId, cardId);
     const catalog = await loadLiveToolCatalog();
     const references = resolveScriptToolDefinitions(catalog, {
       selectedIds: commaSeparatedIds(req.query.selectedIds),
-    });
+    }, scope.cardProfile);
     const referenceIds = new Set(references.map((reference) => reference.canonicalId));
     const defaultAgentTools = commaSeparatedIds(req.query.selectedIds)
       .filter((canonicalId) => referenceIds.has(canonicalId));
@@ -151,7 +178,7 @@ builderIddRoutes.get('/script-tools', async (req, res) => {
         catalogTools: catalog.references,
         selectedTools: references.map((reference) => reference.canonicalId),
         defaultAgentTools,
-        cardId: typeof req.query.cardId === 'string' ? req.query.cardId : '',
+        cardId,
       }),
     });
     return res.json({ ok: true, references, paletteFingerprint, header });

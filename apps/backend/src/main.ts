@@ -1,3 +1,11 @@
+/**
+ * Entity: Application Runtime
+ * Relationship: Boots the loopback backend, mounts authenticated APIs, supervises migrations and shutdown, and attaches transport upgrades to the same HTTP server.
+ *
+ * Entity: Card Terminal
+ * Relationship: Installs and closes the authenticated Card-terminal WebSocket proxy on the existing backend listener without creating another terminal runtime.
+ */
+
 import "./config/env";
 import express from "express";
 import type { Server } from "node:http";
@@ -8,6 +16,10 @@ import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/req
 import { closeToolCatalogMcpClient } from "./services/mcp/toolCatalogMcpClient";
 import { closeHermesGateway } from "./services/hermesGateway";
 import { listenAfterRequiredMigrations } from "./db/migrations";
+import {
+  closeCardTerminalProxy,
+  installCardTerminalUpgrade,
+} from './routes/cardTerminal.routes';
 
 const app = express();
 app.set('etag', false);
@@ -115,6 +127,7 @@ function formatListenError(error: unknown, port: number): string {
 function listenOnPort(port: number): Promise<Server> {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, '127.0.0.1');
+    installCardTerminalUpgrade(server);
 
     const cleanup = () => {
       server.off('error', onError);
@@ -143,6 +156,7 @@ function installShutdownHooks() {
 
   const shutdown = async () => {
     try {
+      closeCardTerminalProxy();
       closeHermesGateway();
       if (backendServer) await closeServer(backendServer);
       await closeToolCatalogMcpClient();

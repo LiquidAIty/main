@@ -13,8 +13,10 @@ Hard boundaries (enforced by tests):
     honest ``provider_unconfigured`` status; provider/transport failures return
     ``provider_error``; a malformed body returns ``invalid_response``;
   * the API key is read from the environment only and never appears in any returned
-    object, replay identity, error string, or log.
+object, replay identity, error string, or log.
 """
+# Entity: Market Research
+# Relationship: Performs bounded read-only SEC filing queries and maps only complete SEC.gov-sourced records into provenance-bearing signal envelopes without graph or trading side effects.
 
 from __future__ import annotations
 

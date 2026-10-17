@@ -127,6 +127,30 @@ def test_snapshot_rejects_invalid_instrument_feed_and_nonfinite_numbers():
     assert result.latestTradePrice is None
 
 
+def test_snapshot_requires_an_observation_time_and_at_least_one_market_value():
+    missing_time = get_market_snapshot(
+        RDW,
+        transport=_RecordingTransport({
+            "latestTrade": {"p": 12.34},
+            "latestQuote": {"bp": 12.30, "ap": 12.38},
+        }),
+        credentials=PAPER_CREDS,
+    )
+    assert missing_time.status == STATUS_INVALID
+    assert missing_time.diagnostics == "alpaca_snapshot_timestamp_missing"
+
+    missing_values = get_market_snapshot(
+        RDW,
+        transport=_RecordingTransport({
+            "latestTrade": {"t": "2024-05-10T16:00:00Z"},
+            "latestQuote": {},
+        }),
+        credentials=PAPER_CREDS,
+    )
+    assert missing_values.status == STATUS_INVALID
+    assert missing_values.diagnostics == "alpaca_snapshot_value_missing"
+
+
 def test_snapshot_provider_error_on_transport_failure():
     def _boom(_u, _h):
         raise RuntimeError("net down")
@@ -319,3 +343,28 @@ def test_default_transport_refuses_redirect_before_forwarding_credentials():
         target.server_close()
         redirect_thread.join(timeout=2)
         target_thread.join(timeout=2)
+
+
+def test_default_transport_rejects_an_oversized_body_before_json_parsing():
+    class OversizedHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - stdlib handler contract
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{" + (b"x" * alpaca_market_data.MAX_RESPONSE_BYTES) + b"}")
+
+        def log_message(self, *_args):
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), OversizedHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(ValueError, match="alpaca_response_too_large"):
+            alpaca_market_data._default_get(
+                f"http://127.0.0.1:{server.server_port}/snapshot",
+                {},
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

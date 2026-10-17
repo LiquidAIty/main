@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+/**
+ * Entity: Main Chat
+ * Relationship: Verifies the bounded conversation viewport, draft-preserving composer, exact @Card suggestions, image ceilings, voice controls, and visible error presentation.
+ */
+
 import React from 'react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -379,11 +384,11 @@ describe('MainProjectChat', () => {
     fireEvent.change(files, { target: { files: [new File(['svg'], 'vector.svg', { type: 'image/svg+xml' })] } });
     await screen.findByText('Choose a PNG, JPEG, WebP or GIF image.');
     const oversized = new File(['pixels'], 'large.png', { type: 'image/png' });
-    Object.defineProperty(oversized, 'size', { value: 10 * 1024 * 1024 + 1 });
+    Object.defineProperty(oversized, 'size', { value: 2 * 1024 * 1024 + 1 });
     fireEvent.change(files, { target: { files: [oversized] } });
-    await screen.findByText('Each image must be between 1 byte and 10 MB.');
-    fireEvent.change(files, { target: { files: Array.from({ length: 12 }, () => pasted) } });
-    await screen.findByText('A message can include at most 12 images.');
+    await screen.findByText('Each image must be between 1 byte and 2 MB.');
+    fireEvent.change(files, { target: { files: Array.from({ length: 4 }, () => pasted) } });
+    await screen.findByText('A message can include at most 4 images.');
     expect(screen.getAllByRole('img')).toHaveLength(1);
     expect(onSend).not.toHaveBeenCalled();
   });

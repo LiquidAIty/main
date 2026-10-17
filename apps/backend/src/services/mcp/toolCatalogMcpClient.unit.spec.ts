@@ -1,3 +1,8 @@
+/**
+ * Entity: Tool Grants
+ * Relationship: Verifies authenticated MCP catalog metadata preserves provider identity, availability, explicit grant eligibility, profile ceilings, pagination, and isolated definition failures.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mcpMocks = vi.hoisted(() => ({
@@ -51,6 +56,7 @@ function descriptor(name: string, sourceId: string, providerToolName: string) {
       access: 'read',
       available: true,
       grantEligible: true,
+      grantProfiles: [],
       canonicalInputSchema: { type: 'object', properties: {} },
       serverInjectedArguments: [],
       dispatcherContextArguments: [],
@@ -119,6 +125,7 @@ describe('Python Agent MCP client', () => {
             access: 'read',
             available: true,
             grantEligible: true,
+            grantProfiles: [],
             canonicalInputSchema: { type: 'object', properties: {} },
             serverInjectedArguments: [],
             dispatcherContextArguments: [],
@@ -175,7 +182,7 @@ describe('Python Agent MCP client', () => {
         _meta: { liquidaitySource: {
           sourceId: 'cbm', namespace: 'cbm', providerToolName: 'search_graph',
           connectionKind: 'external-mcp', publication: 'external-mcp', access: 'read',
-          available: true, grantEligible: true,
+          available: true, grantEligible: true, grantProfiles: [],
           canonicalInputSchema: { type: 'object', properties: {} },
           serverInjectedArguments: [], dispatcherContextArguments: [],
           dispatcherOwner: 'app.mcp_provider_operations.call_cbm_operation', authenticatedProjection: true,
@@ -220,6 +227,7 @@ describe('Python Agent MCP client', () => {
             access: 'read',
             available: true,
             grantEligible: true,
+            grantProfiles: [],
             canonicalInputSchema: { type: 'object', properties: {} },
             serverInjectedArguments: [],
             dispatcherContextArguments: [],

@@ -276,6 +276,42 @@ def test_new_run_fails_closed_when_root_input_files_cannot_persist(
         },
     }]
 
+
+def test_hermes_begin_run_returns_the_same_card_identity_at_both_transport_levels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared_grounded_runtime({
+        "kind": "hermes", "mode": "main", "profile": "main",
+    })
+    monkeypatch.setattr(
+        card_run_preparation, "accept_run_request",
+        lambda _payload: _accepted_run_snapshot(),
+    )
+    monkeypatch.setattr(
+        card_invocation_preparation, "prepare_run_invocation",
+        lambda _payload, **_kwargs: prepared,
+    )
+    monkeypatch.setattr(
+        card_run_preparation, "_insert_run",
+        lambda *_args, **_kwargs: ("run-one", "correlation-one", True),
+    )
+    monkeypatch.setattr(card_run_inputs, "retain_required_run_idf", _fake_retain_idf)
+    monkeypatch.setattr(
+        agentgraph_run_observations, "observe_run_preparation_complete",
+        lambda *_args, **_kwargs: True,
+    )
+
+    result = card_run_preparation.begin_run({
+        "runId": "run-one",
+        "correlationId": "correlation-one",
+        "conversationId": "conversation-one",
+        "assignment": "test task",
+    })
+
+    assert result["cardId"] == "card-one"
+    assert result["hermesTransport"]["cardIdentity"]["cardId"] == "card-one"
+    assert result["hermesTransport"]["request"]["runtime"]["profile"] == "main"
+
 def test_mag_one_participant_validation_fails_before_runtime_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -5,6 +5,10 @@ The compiler is structural: it validates Python syntax, a literal
 code or interprets intent. Invalid source remains saved and inspectable, but
 cannot become the active runtime presentation.
 """
+
+# Entity: Card Scripts
+# Relationship: Compiles one saved Card's bounded Python tool recipe against its current grants into the exact per-turn Hermes Script contract.
+
 from __future__ import annotations
 
 import ast
@@ -21,18 +25,13 @@ from app.python_models.idd import load_input_data_dictionary
 SCRIPT_MAX_BYTES = 32_768
 SCRIPT_MODES = frozenset({"tool_recipe"})
 TOOL_MODE_VALUES = {"OFF": 0, "SCRIPT": 1, "AGENT": 2, "BOTH": 3}
-SAFE_IMPORT_ROOTS = frozenset({
-    "collections", "datetime", "decimal", "fractions", "functools",
-    "hermes_tools", "itertools", "json", "math", "re", "statistics",
+HERMES_TOOL_IMPORTS = frozenset({
+    "AGENT", "BOTH", "OFF", "SCRIPT", "input", "output", "tools",
 })
 
 
 class CardScriptValidationError(ValueError):
     """Secret-safe structural error in saved Card Script data."""
-FORBIDDEN_CALLS = frozenset({
-    "__import__", "breakpoint", "compile", "eval", "exec", "globals",
-    "help", "input", "locals", "open", "vars",
-})
 
 
 class CardScript(BaseModel):
@@ -296,53 +295,177 @@ def _literal_contract(tree: ast.Module) -> dict[str, Any]:
     return contract
 
 
-def _validate_import(node: ast.Import | ast.ImportFrom) -> None:
-    if isinstance(node, ast.Import):
-        roots = [alias.name.split(".", 1)[0] for alias in node.names]
-    else:
-        roots = [(node.module or "").split(".", 1)[0]]
-    if any(root not in SAFE_IMPORT_ROOTS for root in roots):
-        raise ValueError("card_script_import_not_granted")
-    if isinstance(node, ast.ImportFrom) and node.module == "hermes_tools":
-        names = {alias.name for alias in node.names}
-        if not names or not names.issubset({
-            "AGENT", "BOTH", "OFF", "SCRIPT", "input", "output", "tools",
-        }):
+def _contract_declaration(node: ast.stmt) -> bool:
+    if isinstance(node, ast.Assign):
+        return len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+            and node.targets[0].id == "CARD_SCRIPT"
+    return False
+
+
+def _public_identifier(value: str) -> bool:
+    return bool(value) and not value.startswith("_") and value.isidentifier()
+
+
+class _RecipeGrammar:
+    """Positive grammar for the deliberately small executable recipe language."""
+
+    def __init__(self) -> None:
+        self.imported: set[str] = set()
+        self.locals: set[str] = set()
+        self.handles: list[str] = []
+        self.output_calls = 0
+        self.import_count = 0
+
+    def validate(self, tree: ast.Module) -> tuple[list[str], int]:
+        for node in tree.body:
+            if _contract_declaration(node):
+                continue
+            if isinstance(node, ast.ImportFrom):
+                self._import(node)
+                continue
+            if isinstance(node, ast.Import):
+                raise ValueError("card_script_import_not_granted")
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                self._assignment(node)
+                continue
+            if isinstance(node, ast.Expr):
+                self._output_statement(node)
+                continue
+            raise ValueError(
+                f"card_script_statement_not_allowed:{node.__class__.__name__}"
+            )
+        if self.import_count != 1:
+            raise ValueError("card_script_hermes_tools_import_required_once")
+        if self.output_calls != 1:
+            raise ValueError("card_script_output_emit_required_once")
+        return self.handles, self.output_calls
+
+    def _import(self, node: ast.ImportFrom) -> None:
+        if self.import_count or node.level != 0 or node.module != "hermes_tools":
+            raise ValueError("card_script_import_not_granted")
+        names: list[str] = []
+        for alias in node.names:
+            if alias.asname is not None or alias.name not in HERMES_TOOL_IMPORTS:
+                raise ValueError("card_script_hermes_tools_import_invalid")
+            if alias.name in names:
+                raise ValueError("card_script_hermes_tools_import_invalid")
+            names.append(alias.name)
+        if not names or "output" not in names:
             raise ValueError("card_script_hermes_tools_import_invalid")
+        self.imported.update(names)
+        self.import_count = 1
+
+    def _assignment(self, node: ast.Assign | ast.AnnAssign) -> None:
+        if isinstance(node, ast.AnnAssign):
+            raise ValueError("card_script_annotation_not_allowed")
+        if isinstance(node, ast.Assign):
+            if len(node.targets) != 1:
+                raise ValueError("card_script_assignment_target_invalid")
+            target, value = node.targets[0], node.value
+        else:
+            if node.value is None:
+                raise ValueError("card_script_assignment_value_required")
+            target, value = node.target, node.value
+        tool_id = _tool_assignment_id(target)
+        if tool_id is not None:
+            if "tools" not in self.imported:
+                raise ValueError("card_script_tools_import_required")
+            _tool_mode_value(value)
+            return
+        if not isinstance(target, ast.Name) or not _public_identifier(target.id):
+            raise ValueError("card_script_assignment_target_invalid")
+        if target.id in HERMES_TOOL_IMPORTS or target.id == "CARD_SCRIPT":
+            raise ValueError("card_script_assignment_target_reserved")
+        if target.id in self.locals:
+            raise ValueError(f"card_script_assignment_duplicate:{target.id}")
+        self._expression(value)
+        self.locals.add(target.id)
+
+    def _output_statement(self, node: ast.Expr) -> None:
+        call = node.value
+        if not isinstance(call, ast.Call):
+            raise ValueError("card_script_expression_statement_not_allowed")
+        if self._is_call(call, "tools", "call"):
+            self._tool_call(call)
+            return
+        if not self._is_call(call, "output", "emit"):
+            raise ValueError("card_script_expression_statement_not_allowed")
+        if "output" not in self.imported or len(call.args) != 1 or call.keywords:
+            raise ValueError("card_script_output_emit_invalid")
+        self._expression(call.args[0])
+        self.output_calls += 1
+
+    @staticmethod
+    def _is_call(node: ast.Call, owner: str, method: str) -> bool:
+        return isinstance(node.func, ast.Attribute) \
+            and isinstance(node.func.value, ast.Name) \
+            and node.func.value.id == owner and node.func.attr == method
+
+    def _expression(self, node: ast.expr) -> None:
+        if isinstance(node, ast.Constant):
+            if not isinstance(node.value, (str, int, float, bool, type(None))):
+                raise ValueError("card_script_literal_invalid")
+            return
+        if isinstance(node, ast.Name):
+            if node.id not in self.locals:
+                raise ValueError(f"card_script_name_not_available:{node.id}")
+            return
+        if isinstance(node, ast.Attribute):
+            if (
+                "input" not in self.imported
+                or not isinstance(node.value, ast.Name)
+                or node.value.id != "input"
+                or not _public_identifier(node.attr)
+            ):
+                raise ValueError("card_script_attribute_not_allowed")
+            return
+        if isinstance(node, (ast.List, ast.Tuple)):
+            for item in node.elts:
+                self._expression(item)
+            return
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if key is None:
+                    raise ValueError("card_script_unpacking_not_allowed")
+                self._expression(key)
+                self._expression(value)
+            return
+        if isinstance(node, ast.UnaryOp) and isinstance(
+            node.op, (ast.UAdd, ast.USub, ast.Not),
+        ):
+            self._expression(node.operand)
+            return
+        if isinstance(node, ast.Call) and self._is_call(node, "tools", "call"):
+            self._tool_call(node)
+            return
+        raise ValueError(
+            f"card_script_expression_not_allowed:{node.__class__.__name__}"
+        )
+
+    def _tool_call(self, node: ast.Call) -> None:
+        if "tools" not in self.imported:
+            raise ValueError("card_script_tools_import_required")
+        if (
+            not node.args
+            or not isinstance(node.args[0], ast.Constant)
+            or not isinstance(node.args[0].value, str)
+        ):
+            raise ValueError("card_script_tool_handle_must_be_literal")
+        handle = node.args[0].value.strip()
+        if not handle:
+            raise ValueError("card_script_tool_handle_required")
+        for argument in node.args[1:]:
+            self._expression(argument)
+        for keyword in node.keywords:
+            if keyword.arg is None or not _public_identifier(keyword.arg):
+                raise ValueError("card_script_tool_argument_invalid")
+            self._expression(keyword.value)
+        if handle not in self.handles:
+            self.handles.append(handle)
 
 
 def _tool_handles(tree: ast.Module) -> tuple[list[str], int]:
-    handles: list[str] = []
-    output_calls = 0
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            _validate_import(node)
-        if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
-            raise ValueError("card_script_private_attribute_forbidden")
-        if not isinstance(node, ast.Call):
-            continue
-        if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
-            raise ValueError(f"card_script_call_forbidden:{node.func.id}")
-        if not isinstance(node.func, ast.Attribute) or not isinstance(node.func.value, ast.Name):
-            continue
-        owner = node.func.value.id
-        if owner == "tools" and node.func.attr == "call":
-            if (
-                not node.args
-                or not isinstance(node.args[0], ast.Constant)
-                or not isinstance(node.args[0].value, str)
-            ):
-                raise ValueError("card_script_tool_handle_must_be_literal")
-            handle = node.args[0].value.strip()
-            if not handle:
-                raise ValueError("card_script_tool_handle_required")
-            if handle not in handles:
-                handles.append(handle)
-        elif owner == "output" and node.func.attr == "emit":
-            output_calls += 1
-    if output_calls == 0:
-        raise ValueError("card_script_output_emit_required")
-    return handles, output_calls
+    return _RecipeGrammar().validate(tree)
 
 
 def _tool_assignment_id(target: ast.expr) -> str | None:

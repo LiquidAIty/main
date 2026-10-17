@@ -1,3 +1,11 @@
+/**
+ * Entity: Card Runs
+ * Relationship: Returns authenticated latest Run metrics and status for one exact saved Card without exposing another Project's execution state.
+ *
+ * Entity: Magnetic Runs
+ * Relationship: Reconciles terminal Hermes root readback into the same outer Magnetic Run through Python rails before returning worker progress.
+ */
+
 import { Router, type Request } from 'express';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
@@ -89,7 +97,10 @@ cardRunReadRoutes.post('/runs/read', async (req, res) => {
       const magnetic = objectRecord(await requestPythonRailsJson('/magnetic/taskgraph/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hermesRootId }),
+        body: JSON.stringify({
+          runId: String(latest.runId || ''),
+          hermesRootId,
+        }),
       }));
       const metrics = magneticTaskMetrics(magnetic);
       return res.json({
@@ -98,7 +109,7 @@ cardRunReadRoutes.post('/runs/read', async (req, res) => {
           ...magnetic,
           runId: String(latest.runId || ''),
           cardId,
-          state: String(latest.state || ''),
+          state: String(magnetic.state || latest.state || ''),
           hermesExecutionState: String(magnetic.state || ''),
           activeWorkers: metrics.activeWorkers,
         },

@@ -1,4 +1,6 @@
 """Focused coverage for the deterministic tool registry primitives."""
+# Entity: Tool Grants
+# Relationship: Verifies every operation has one canonical identity, explicit publication and grant metadata, and duplicate-free provider discovery.
 import json
 from copy import deepcopy
 
@@ -281,6 +283,12 @@ def test_engraphis_is_internal_while_cbm_comes_only_from_live_discovery():
     assert graphiti_operation_policy("graphiti.search_nodes")["access"] == "read"
     assert "cbm.search_graph" not in code_owned_names
     assert "graphiti.search_nodes" not in code_owned_names
+    update_memory = next(
+        item for item in code_owned_tool_projection()
+        if item["canonicalId"] == "engraphis_update_memory"
+    )
+    assert update_memory["grantEligible"] is True
+    assert update_memory["grantProfiles"] == ["thinkgraph"]
 
     definition = OperationDefinition(
         canonical_id="cbm.unfamiliar_current_tool",
@@ -291,6 +299,7 @@ def test_engraphis_is_internal_while_cbm_comes_only_from_live_discovery():
         publishers=frozenset({"external-mcp"}),
         access="write",
         namespace="cbm",
+        grant_eligible=True,
         external_source_id="cbm",
     )
     try:
@@ -320,6 +329,7 @@ def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monke
         "access": "read",
         "available": True,
         "grantEligible": True,
+        "grantProfiles": [],
         "inputSchema": {"type": "object", "properties": {}},
         "canonicalInputSchema": {"type": "object", "properties": {}},
         "serverInjectedArguments": [],
@@ -371,6 +381,7 @@ def test_combined_publisher_contracts_have_no_duplicate_discovery_tuple():
         "access": "read",
         "available": True,
         "grantEligible": True,
+        "grantProfiles": [],
         "inputSchema": {"type": "object", "properties": {}},
         "canonicalInputSchema": {"type": "object", "properties": {}},
         "serverInjectedArguments": [],

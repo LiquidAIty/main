@@ -727,6 +727,11 @@ export default function BuilderCanvas({
     const frame = window.requestAnimationFrame(() => {
       if (landingViewport) {
         reactFlowInstance.setViewport(landingViewport, { duration: 0 });
+      } else {
+        // Core Projects deliberately have no workbench Card. Fit their saved
+        // Cards and rails instead of leaving negative seed coordinates outside
+        // the visible canvas until the user discovers the Fit View control.
+        fitBuilderCanvasView(reactFlowInstance);
       }
     });
     return () => {

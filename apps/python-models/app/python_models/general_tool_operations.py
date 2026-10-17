@@ -1,4 +1,6 @@
 """Basic general-purpose Python tool handlers and definitions."""
+# Entity: Card Tools
+# Relationship: Supplies the bounded date/time and arithmetic operations that any explicitly configured Card may grant.
 
 from __future__ import annotations
 
@@ -116,6 +118,7 @@ def general_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_closed,
         ),
@@ -138,6 +141,7 @@ def general_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_closed,
         ),

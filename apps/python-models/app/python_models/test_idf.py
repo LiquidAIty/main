@@ -1,3 +1,7 @@
+"""Canonical IDF contract, limits, retained bytes, and projection tests."""
+# Entity: Input Data Files
+# Relationship: Proves exact four-part bytes, graph/tool/image retention, secret rejection, versioned new-input limits, failed-write cleanup, and historical read compatibility.
+
 from __future__ import annotations
 
 import json
@@ -10,7 +14,15 @@ from app.python_models.card_script import saved_script
 from app.python_models.idf import load_idf, materialize_idf, runtime_projection, write_idf
 from app.python_models.idf_contract import (
     IDF_FILENAME,
+    IDF_IMAGE_BYTES_MAX,
+    IDF_IMAGES_MAX,
+    IDF_LIMIT_POLICY_VERSION,
+    IDF_SECTION_BYTES_MAX,
+    IDF_TASK_BYTES_MAX,
+    IDF_TOTAL_BYTES_MAX,
     InputMaterializationError,
+    canonical_line,
+    idf_size_report,
     load_idf_bytes,
 )
 from app.python_models.idf_projection import idf_public, model_task
@@ -143,6 +155,100 @@ def test_empty_graph_section_is_valid_and_idf_is_graph_first() -> None:
         "dynamicContext",
     ]
     assert load_idf_bytes(materialized.idf_bytes) == materialized
+
+
+def test_representative_main_and_builder_inputs_fit_the_versioned_policy() -> None:
+    encoded_image = "data:image/jpeg;base64," + ("A" * (1024 * 1024))
+    main = _idf(
+        task="Compare Rocket Lab and SpaceX for a long-term decision. " * 1000,
+        graph_context="Relevant and recent Project evidence. " * 8000,
+        images=[
+            {"name": "market.jpg", "mediaType": "image/jpeg", "dataUrl": encoded_image},
+            {"name": "worldview.jpg", "mediaType": "image/jpeg", "dataUrl": encoded_image},
+        ],
+    )
+    builder = _idf(
+        task="Implement the approved UI repair and verify it.",
+        graph_context="Current source relationship and contract evidence. " * 12000,
+        stable_extra={"instructions": "Saved Builder instructions. " * 8000},
+        capabilities={
+            "toolDefinitions": [
+                {
+                    "canonicalId": f"cbm.tool_{index}",
+                    "description": "Bounded repository operation " + ("x" * 1000),
+                }
+                for index in range(200)
+            ],
+        },
+    )
+
+    for materialized in (main, builder):
+        report = idf_size_report(materialized.idf)
+        assert report["policyVersion"] == IDF_LIMIT_POLICY_VERSION
+        assert report["totalBytes"] == len(materialized.idf_bytes)
+        assert report["totalBytes"] < IDF_TOTAL_BYTES_MAX
+        assert all(
+            report["sectionBytes"][section] < maximum
+            for section, maximum in IDF_SECTION_BYTES_MAX.items()
+        )
+
+
+def test_new_idf_limits_reject_without_truncating_values() -> None:
+    with pytest.raises(InputMaterializationError, match="input_task_too_large"):
+        _idf(task="x" * (IDF_TASK_BYTES_MAX + 1))
+    with pytest.raises(InputMaterializationError, match="input_images_too_many"):
+        _idf(images=[{"name": str(index)} for index in range(IDF_IMAGES_MAX + 1)])
+    with pytest.raises(InputMaterializationError, match="input_image_too_large"):
+        _idf(images=[{
+            "name": "large.jpg",
+            "mediaType": "image/jpeg",
+            "dataUrl": "data:image/jpeg;base64," + ("A" * IDF_IMAGE_BYTES_MAX),
+        }])
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_section_too_large:actualGraphData",
+    ):
+        _idf(graph_context="g" * IDF_SECTION_BYTES_MAX["actualGraphData"])
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_section_too_large:stableSavedCardContext",
+    ):
+        _idf(stable_extra={
+            "instructions": "s" * IDF_SECTION_BYTES_MAX["stableSavedCardContext"],
+        })
+    with pytest.raises(
+        InputMaterializationError,
+        match="input_section_too_large:selectedToolsAndGrants",
+    ):
+        _idf(capabilities={
+            "toolDefinitions": [{
+                "canonicalId": "large.tool",
+                "description": "t" * IDF_SECTION_BYTES_MAX["selectedToolsAndGrants"],
+            }],
+        })
+
+
+def test_historical_oversized_idf_remains_readable_but_cannot_be_written_as_new(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = json.loads(_idf().idf_bytes)
+    value["dynamicContext"]["task"] = "x" * (IDF_TASK_BYTES_MAX + 1)
+    historical_bytes = canonical_line(value)
+    historical = load_idf_bytes(historical_bytes)
+    assert historical.idf_bytes == historical_bytes
+
+    monkeypatch.setenv("LIQUIDAITY_RUN_INPUT_ROOT", str(tmp_path))
+    with pytest.raises(InputMaterializationError, match="input_task_too_large"):
+        write_idf(
+            historical,
+            project_id="project-one",
+            deck_id="deck-one",
+            run_id="oversized-new-run",
+        )
+    assert not idf_module.invocation_workspace(
+        "project-one", "deck-one", "oversized-new-run",
+    ).exists()
 
 
 def test_idf_projection_preserves_exact_user_task_whitespace() -> None:

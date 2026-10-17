@@ -1,4 +1,10 @@
 """Card, IDD, tool, Script, deck, Run, and Magnetic routes."""
+# Entity: Saved Cards
+# Relationship: Exposes Python-owned deck, Card Script, IDD, tool-catalog, and durable Run operations through typed internal HTTP routes.
+#
+# Entity: Magnetic Runs
+# Relationship: Reconciles one bound Hermes task root into its existing outer Run whenever authenticated status readback observes terminal state.
+
 from fastapi import APIRouter, HTTPException
 from typing import Any
 from app.python_models.saved_card_contract import CardDomainError
@@ -22,6 +28,7 @@ def idd_card_editor_materialize(payload: dict[str, Any]):
         return materialize_card_editor(
             payload.get("models"), catalog_options=payload.get("catalogOptions"),
             selected_ids=payload.get("selectedIds"),
+            card_profile=payload.get("cardProfile"),
         )
     except IddValidationError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
@@ -176,6 +183,14 @@ def domain_run_history(payload: dict[str, Any]):
 @router.post("/magnetic/taskgraph/status")
 def magnetic_taskgraph_status(payload: dict[str, Any]):
     try:
+        run_id = str(payload.get("runId") or "").strip()
+        if run_id:
+            from app.mag_one_operation import reconcile_magnetic_taskgraph_run
+
+            return reconcile_magnetic_taskgraph_run(
+                run_id,
+                str(payload.get("hermesRootId") or "").strip(),
+            )
         return read_magnetic_taskgraph(payload)
     except MagneticTaskGraphError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err

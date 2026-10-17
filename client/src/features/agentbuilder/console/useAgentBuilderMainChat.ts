@@ -1,3 +1,8 @@
+/**
+ * Entity: Main Chat
+ * Relationship: This hook owns the Project-scoped Main conversation view, exact saved-Card addressing, streamed partial replies, cancellation state, and one final voice submission per Hermes capture.
+ */
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
@@ -23,7 +28,7 @@ export type MainProjectChatMessage = MainConversationMessage & {
 
 export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
 export type MainChatRunInput = { images?: MainRunImage[] };
-export const MAX_MAIN_CHAT_IMAGES = 12;
+export const MAX_MAIN_CHAT_IMAGES = 4;
 
 type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
@@ -85,20 +90,38 @@ function cardParticipant(agent: AddressableAgent): MainConversationParticipant {
   };
 }
 
-function requestedParticipant(
+function leadingCardAddress(text: string): string | null {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('@')) return null;
+  let address = '';
+  for (const character of trimmed.slice(1, 65)) {
+    const lower = character.toLowerCase();
+    const allowed = (lower >= 'a' && lower <= 'z')
+      || (character >= '0' && character <= '9')
+      || character === '_'
+      || character === '-';
+    if (!allowed) break;
+    address += character;
+  }
+  if (!address || !((address[0].toLowerCase() >= 'a' && address[0].toLowerCase() <= 'z')
+    || (address[0] >= '0' && address[0] <= '9'))) return null;
+  const following = trimmed[address.length + 1];
+  if (following && ![' ', '\t', '\r', '\n'].includes(following)) return null;
+  return address.toLowerCase();
+}
+
+export function requestedParticipant(
   text: string,
   mainCardId: string,
   agents: AddressableAgent[],
 ): MainConversationParticipant {
-  const match = /^\s*@([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/i.exec(text);
-  if (!match) {
+  const address = leadingCardAddress(text);
+  if (!address) {
     return { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
   }
-  const address = match[1].toLowerCase();
   const target = agents.find((agent) => agent.address.toLowerCase() === address);
-  return target
-    ? cardParticipant(target)
-    : { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
+  if (!target) throw new Error(`main_address_not_authorized:${address}`);
+  return cardParticipant(target);
 }
 
 function requestUserMessageIndex(messages: MainProjectChatMessage[], requestKey: string): number {
@@ -148,6 +171,8 @@ export default function useAgentBuilderMainChat({
     requestKey: string;
   }>());
   const voiceControllerRef = useRef<AbortController | null>(null);
+  const voiceTranscriptRef = useRef<string | null>(null);
+  const voiceTurnActiveRef = useRef(false);
 
   const messages = transcript.key === projectKey ? transcript.messages : [];
   const addressableAgents = authority.key === projectKey ? authority.agents : [];
@@ -164,6 +189,8 @@ export default function useAgentBuilderMainChat({
     activeStreamsRef.current.clear();
     voiceControllerRef.current?.abort();
     voiceControllerRef.current = null;
+    voiceTranscriptRef.current = null;
+    voiceTurnActiveRef.current = false;
     setTranscript({ key: projectKey, messages: [] });
     setAuthority({ key: projectKey, mainCardId: '', agents: [] });
     setTechnical({ key: projectKey, error: null });
@@ -262,13 +289,11 @@ export default function useAgentBuilderMainChat({
     const addressedCardId = requestTarget.cardId && requestTarget.cardId !== mainCardId
       ? requestTarget.cardId : null;
     const images = [...(runInput.images || [])];
-    if (prepareRunImages && images.length < MAX_MAIN_CHAT_IMAGES) {
-      const prepared = await prepareRunImages(addressedCardId);
-      images.push(...prepared.slice(0, MAX_MAIN_CHAT_IMAGES - images.length));
-    }
     let runId: string | null = null;
+    let streamedText = '';
     const appendText = (chunk: string) => {
       if (!chunk) return;
+      streamedText += chunk;
       setTranscript((current) => {
         if (current.key !== projectKey) return current;
         const copy = [...current.messages];
@@ -291,24 +316,27 @@ export default function useAgentBuilderMainChat({
         return { key: projectKey, messages: copy };
       });
     };
-    const finishText = (textValue: string) => {
+    const finishText = (textValue: string, status: 'complete' | 'error' = 'complete') => {
       setTranscript((current) => {
         if (current.key !== projectKey) return current;
         const copy = [...current.messages];
         const assistantIndex = copy.findIndex((message) => (
           message.role === 'assistant' && message.requestKey === requestKey
         ));
-        if (!textValue.trim()) {
+        const retainedText = textValue.trim()
+          ? textValue
+          : assistantIndex >= 0 ? copy[assistantIndex].text : '';
+        if (!retainedText.trim()) {
           if (assistantIndex >= 0) copy.splice(assistantIndex, 1);
         } else if (assistantIndex >= 0) {
           copy[assistantIndex] = {
-            role: 'assistant', text: textValue, speaker: responseParticipant,
-            status: 'complete', requestKey,
+            role: 'assistant', text: retainedText, speaker: responseParticipant,
+            status, requestKey,
           };
         } else {
           copy.push({
-            role: 'assistant', text: textValue, speaker: responseParticipant,
-            status: 'complete', requestKey,
+            role: 'assistant', text: retainedText, speaker: responseParticipant,
+            status, requestKey,
           });
         }
         return { key: projectKey, messages: copy };
@@ -316,6 +344,10 @@ export default function useAgentBuilderMainChat({
     };
 
     try {
+      if (prepareRunImages && images.length < MAX_MAIN_CHAT_IMAGES) {
+        const prepared = await prepareRunImages(addressedCardId);
+        images.push(...prepared.slice(0, MAX_MAIN_CHAT_IMAGES - images.length));
+      }
       const { finalText } = await streamSession({
         projectId: canvasProjectId,
         deckId,
@@ -370,7 +402,7 @@ export default function useAgentBuilderMainChat({
           if (event.kind === 'text') appendText(String(event.text || ''));
         },
       });
-      finishText(finalText);
+      finishText(finalText || streamedText);
       setTranscript((current) => current.key !== projectKey ? current : ({
         key: projectKey,
         messages: current.messages.map((message) => (
@@ -383,7 +415,7 @@ export default function useAgentBuilderMainChat({
       return finalText;
     } catch (error) {
       if (controller.signal.aborted) {
-        finishText('');
+        finishText(streamedText);
         setTranscript((current) => current.key !== projectKey ? current : ({
           key: projectKey,
           messages: current.messages.map((message) => (
@@ -400,7 +432,9 @@ export default function useAgentBuilderMainChat({
         const assistantIndex = copy.findIndex((message) => (
           message.role === 'assistant' && message.requestKey === requestKey
         ));
-        if (assistantIndex >= 0) copy.splice(assistantIndex, 1);
+        if (assistantIndex >= 0) {
+          copy[assistantIndex] = { ...copy[assistantIndex], status: 'error' };
+        }
         const userIndex = requestUserMessageIndex(copy, requestKey);
         if (userIndex >= 0) copy[userIndex] = { ...copy[userIndex], status: 'error' };
         return { key: projectKey, messages: copy };
@@ -432,14 +466,25 @@ export default function useAgentBuilderMainChat({
       setTechnical({ key: projectKey, error: 'main_project_required' });
       return false;
     }
+    try {
+      requestedParticipant(text, mainCardId, addressableAgents);
+    } catch (error) {
+      setTechnical({
+        key: projectKey,
+        error: error instanceof Error ? error.message : 'main_address_not_authorized',
+      });
+      return false;
+    }
     void requestMainText(text, runInput).catch(() => undefined);
     return true;
-  }, [canvasProjectId, projectKey, requestMainText]);
+  }, [addressableAgents, canvasProjectId, mainCardId, projectKey, requestMainText]);
 
   const startVoiceSession = useCallback(() => {
     if (!canvasProjectId || sessionPending || voiceControllerRef.current) return;
     const controller = new AbortController();
     voiceControllerRef.current = controller;
+    voiceTranscriptRef.current = null;
+    voiceTurnActiveRef.current = false;
     setVoiceState({ key: projectKey, phase: 'listening', error: null });
     void streamVoiceCapture({
       projectId: canvasProjectId,
@@ -451,16 +496,31 @@ export default function useAgentBuilderMainChat({
           return;
         }
         if (event.kind === 'status') {
-          const status = String(event.event?.payload?.status || event.state?.status || '');
+          const status = String(
+            event.event?.payload?.state
+            || event.event?.payload?.status
+            || event.state?.status
+            || '',
+          );
           if (status === 'speaking') setVoiceState({ key: projectKey, phase: 'speaking', error: null });
-          else if (status === 'recording') setVoiceState({ key: projectKey, phase: 'listening', error: null });
+          else if (status === 'recording' || status === 'listening') {
+            voiceTranscriptRef.current = null;
+            setVoiceState({ key: projectKey, phase: 'listening', error: null });
+          }
           return;
         }
         if (event.kind !== 'transcript') return;
         const payload = event.event?.payload || {};
+        if (payload.stop_phrase === true || payload.no_speech_limit === true) {
+          voiceTranscriptRef.current = null;
+          voiceTurnActiveRef.current = false;
+          setVoiceState({ key: projectKey, phase: 'idle', error: null });
+          return;
+        }
         const text = String(payload.text || payload.transcript || '').trim();
-        const final = payload.final === true || payload.is_final === true;
-        if (!text || !final) return;
+        if (!text || voiceTranscriptRef.current === text || voiceTurnActiveRef.current) return;
+        voiceTranscriptRef.current = text;
+        voiceTurnActiveRef.current = true;
         setVoiceState({ key: projectKey, phase: 'processing', error: null });
         void requestMainText(text).then(() => {
           setVoiceState({ key: projectKey, phase: 'idle', error: null });
@@ -470,6 +530,8 @@ export default function useAgentBuilderMainChat({
             phase: 'error',
             error: error instanceof Error ? error.message : 'voice_transcript_failed',
           });
+        }).finally(() => {
+          voiceTurnActiveRef.current = false;
         });
       },
     }).catch((error) => {
@@ -489,6 +551,8 @@ export default function useAgentBuilderMainChat({
     await stopVoiceCapture({ projectId: canvasProjectId, deckId });
     voiceControllerRef.current?.abort();
     voiceControllerRef.current = null;
+    voiceTranscriptRef.current = null;
+    voiceTurnActiveRef.current = false;
     setVoiceState({ key: projectKey, phase: 'idle', error: null });
   }, [canvasProjectId, deckId, projectKey]);
 

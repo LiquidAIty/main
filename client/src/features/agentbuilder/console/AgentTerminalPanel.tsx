@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Terminal
+ * Relationship: Mounts one terminal view for the selected Card, forwards input and resize frames, and tears down the prior identity before any retargeting.
+ */
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -25,10 +30,6 @@ type PendingOpen = {
 
 function isConnected(session: AgentTerminalSession | null): session is AgentTerminalSession {
   return session?.status === 'connected';
-}
-
-function isAttached(session: AgentTerminalSession | null): session is AgentTerminalSession {
-  return isConnected(session) && Boolean(session.terminalChannelKey);
 }
 
 export default function AgentTerminalPanel({
@@ -85,7 +86,7 @@ export default function AgentTerminalPanel({
           sizeRef.current = { cols: terminal.cols, rows: terminal.rows };
           const active = sessionRef.current;
           const sizeKey = `${terminal.cols}x${terminal.rows}`;
-          if (isAttached(active) && lastResizeRef.current !== sizeKey) {
+          if (isConnected(active) && lastResizeRef.current !== sizeKey) {
             lastResizeRef.current = sizeKey;
             streamRef.current?.resize(terminal.cols, terminal.rows);
           }
@@ -123,9 +124,9 @@ export default function AgentTerminalPanel({
   }, [client, identityKey, stableIdentity]);
 
   useEffect(() => {
-    const needsOpen = !session || (isConnected(session) && !session.terminalChannelKey);
+    const needsOpen = !session;
     if (!terminalReady || !needsOpen || error) return;
-    const key = `${identityKey}:${session?.sessionId || 'new'}:hermes-tui`;
+    const key = `${identityKey}:new:hermes-tui`;
     let pending = pendingOpenRef.current;
     if (!pending || pending.key !== key) {
       pending = { key, promise: client.open(stableIdentity, sizeRef.current) };
@@ -179,7 +180,6 @@ export default function AgentTerminalPanel({
       data-session-id={session?.sessionId || ''}
       data-card-id={session?.cardId || identity.cardId}
       data-profile={session?.profile || ''}
-      data-terminal-channel-key={session?.terminalChannelKey || ''}
       data-close-code={session?.closeCode ?? ''}
       data-status={connectionStatus}
       aria-label="Card terminal"

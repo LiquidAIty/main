@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
+
+/**
+ * Entity: Agent Builder
+ * Relationship: Verifies canonical saved-deck hydration preserves exact Card configuration and topology without merging browser-owned Project defaults.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import type { AgentCardInstance, CardRuntime, DeckDocument } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
-import {
-  INITIAL_AGENT_TEMPLATES,
-  INITIAL_DECK,
-} from '../features/agentbuilder/deck/newProjectDeck';
+import { PROJECTLESS_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
   readDeckDocument,
   resolveProjectDeckLoadResult,
@@ -43,6 +46,75 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
   };
 }
 
+function savedSystemDeck(): DeckDocument {
+  return {
+    id: 'deck_builder',
+    name: 'Saved System Deck',
+    promptTemplates: [
+      { id: 'prompt_main', content: 'Saved Main prompt' },
+      { id: 'prompt_builder', content: 'Saved Builder prompt' },
+    ],
+    version: PROJECTLESS_DECK.version,
+    nodes: [
+      createCard('card_main_chat', { kind: 'hermes', mode: 'main', profile: 'main' }, {
+        templateId: 'template_main_chat',
+        title: 'Main',
+        runtimeOptions: { provider: 'openai', modelKey: 'main-model', tools: ['canvas.inspect'] },
+      }),
+      createCard('builder', { kind: 'hermes', mode: 'delegate', profile: 'builder' }, {
+        templateId: 'template_assist',
+        title: 'Builder',
+        runtimeOptions: { provider: 'openai', modelKey: 'builder-model', tools: ['cbm.search_graph'] },
+      }),
+      createCard('card_magentic', {
+        kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic',
+      }, {
+        templateId: 'template_magentic',
+        title: 'Magnetic',
+      }),
+      createCard('card_knowgraph', {
+        kind: 'hermes', mode: 'delegate', profile: 'knowgraph',
+      }, {
+        templateId: 'template_knowgraph',
+        title: 'KnowGraph',
+        runtimeOptions: { provider: 'openai', modelKey: 'know-model', tools: ['graphiti.search_nodes'] },
+      }),
+      createCard('card_trading_workbench', {
+        kind: 'hermes', mode: 'delegate', profile: 'trading',
+      }, {
+        templateId: 'template_trading_workbench',
+        title: 'Trading',
+      }),
+      createCard('card_worldsignals_agent', {
+        kind: 'hermes', mode: 'delegate', profile: 'worldsignals',
+      }, {
+        templateId: 'template_worldsignals_agent',
+        title: 'WorldSignals',
+      }),
+    ],
+    edges: [
+      {
+        id: 'edge_main_builder',
+        source: 'card_main_chat',
+        target: 'builder',
+        edgeType: 'flow',
+      },
+      {
+        id: 'edge_worldsignals_magnetic',
+        source: 'card_worldsignals_agent',
+        target: 'card_magentic',
+        edgeType: 'magentic_option',
+      },
+      {
+        id: 'edge_magnetic_trading',
+        source: 'card_magentic',
+        target: 'card_trading_workbench',
+        edgeType: 'magentic_option',
+      },
+    ],
+  };
+}
+
 describe('agentbuilder authoring flow', () => {
   it('does not manufacture Delegate authority from a Card id or template', () => {
     const deck = createDeck([
@@ -60,60 +132,12 @@ describe('agentbuilder authoring flow', () => {
     });
   });
 
-  it('seeds Builder and keeps the remaining Card bindings and topology explicit', () => {
-    expect(INITIAL_DECK.nodes.map(node => [node.id, node.title, node.runtime])).toEqual([
-      ['card_main_chat', 'Main', { kind: 'hermes', mode: 'main', profile: 'main' }],
-      ['builder', 'Builder', { kind: 'hermes', mode: 'delegate', profile: 'builder' }],
-      ['card_thinkgraph', 'ThinkGraph', { kind: 'hermes', mode: 'delegate', profile: 'thinkgraph' }],
-      ['card_magentic', 'Magnetic', {
-        kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic',
-      }],
-      ['card_team', 'Team', { kind: 'hermes', mode: 'delegate', profile: 'team' }],
-      ['card_knowgraph', 'KnowGraph', { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' }],
-      ['card_trading_workbench', 'Trading', { kind: 'hermes', mode: 'delegate', profile: 'trading' }],
-      ['card_worldsignals_agent', 'WorldSignals', {
-        kind: 'hermes', mode: 'delegate', profile: 'worldsignals',
-      }],
-    ]);
-    expect(INITIAL_DECK.nodes.map(node => node.templateId)).toEqual([
-      'template_main_chat', 'template_assist', 'template_thinkgraph', 'template_magentic',
-      'template_team', 'template_knowgraph', 'template_trading_workbench',
-      'template_worldsignals_agent',
-    ]);
-    expect(INITIAL_DECK.edges.map(({ source, target, edgeType }) => ({ source, target, edgeType }))).toEqual([
-      { source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
-      { source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' },
-      { source: 'card_magentic', target: 'card_trading_workbench', edgeType: 'magentic_option' },
-      { source: 'card_team', target: 'card_magentic', edgeType: 'magentic_option' },
-    ]);
-    const builder = INITIAL_DECK.nodes.find(node => node.id === 'builder');
-    const main = INITIAL_DECK.nodes.find(node => node.id === 'card_main_chat');
-    expect(main?.runtime).toMatchObject({ kind: 'hermes', mode: 'main' });
-    expect(main?.runtimeOptions).not.toHaveProperty('orchestrator');
-    expect(builder?.runtimeOptions).toMatchObject({
-      modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
-      skills: ['agent-builder-inspection'],
-      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
-      tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'cbm.search_graph',
-        'cbm.trace_path', 'cbm.get_code_snippet', 'cbm.check_index_coverage', 'cbm.detect_changes',
-        'cbm.search_code', 'cbm.query_graph'],
-    });
-    expect(builder?.runtimeOptions).not.toHaveProperty('team');
-    expect(INITIAL_DECK.nodes
-      .filter((node) => node.id !== 'builder')
-      .every((node) => (node.runtimeOptions?.tools || [])
-        .every((tool) => !tool.startsWith('cbm.')))).toBe(true);
-    expect(INITIAL_AGENT_TEMPLATES.every((template) => (template.tools || [])
-      .every((tool) => !tool.startsWith('cbm.')))).toBe(true);
-    expect(INITIAL_DECK.nodes.some(node => node.id === 'card_agent_builder')).toBe(false);
-  });
-
   it('loads a real saved deck and preserves its visible chain', () => {
     const savedDeck: DeckDocument = {
       id: 'deck_builder',
       name: 'Saved Deck',
       promptTemplates: [],
-      version: INITIAL_DECK.version,
+      version: PROJECTLESS_DECK.version,
       nodes: [
         createCard('card_saved_a', { kind: 'hermes', mode: 'main', profile: 'saved-main' }, {
           templateId: 'template_main_chat',
@@ -166,20 +190,23 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('round-trips real restored research cards with saved branch and recombine topology intact', () => {
+    const original = savedSystemDeck();
     const savedDeck: DeckDocument = {
-      ...JSON.parse(JSON.stringify(INITIAL_DECK)),
+      ...structuredClone(original),
       version: 2,
     };
 
     const loaded = resolveProjectDeckPayload(savedDeck);
     const rehydrated = readDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
 
-    expect(rehydrated.nodes.map((node) => node.title)).toEqual(INITIAL_DECK.nodes.map((node) => node.title));
+    expect(rehydrated.nodes.map((node) => node.title)).toEqual(
+      original.nodes.map((node) => node.title),
+    );
     expect(rehydrated.edges.map((edge) => ({
       source: edge.source,
       target: edge.target,
       edgeType: edge.edgeType,
-    }))).toEqual(INITIAL_DECK.edges.map((edge) => ({
+    }))).toEqual(original.edges.map((edge) => ({
       source: edge.source,
       target: edge.target,
       edgeType: edge.edgeType,
@@ -191,7 +218,7 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('treats trimmed saved system decks as real saved state instead of fallback display mode', () => {
-    const orchestratorNode = INITIAL_DECK.nodes.find(
+    const orchestratorNode = savedSystemDeck().nodes.find(
       (node) => node.id === 'card_magentic',
     );
     if (!orchestratorNode) {
@@ -280,7 +307,7 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('never replaces saved system-card tool grants during hydration', () => {
-    const stale = JSON.parse(JSON.stringify(INITIAL_DECK)) as DeckDocument;
+    const stale = structuredClone(savedSystemDeck());
     stale.version = 77;
     const main = stale.nodes.find((node) => node.id === 'card_main_chat');
     const builder = stale.nodes.find((node) => node.id === 'builder');
@@ -348,11 +375,12 @@ describe('agentbuilder authoring flow', () => {
       title: 'Code Agent',
       position: { x: 0, y: 0 },
     };
+    const saved = savedSystemDeck();
     const hydrated = readDeckDocument({
-      ...INITIAL_DECK,
-      nodes: [...INITIAL_DECK.nodes, retiredCodeCard],
+      ...saved,
+      nodes: [...saved.nodes, retiredCodeCard],
       promptTemplates: [
-        ...INITIAL_DECK.promptTemplates,
+        ...saved.promptTemplates,
         { id: 'prompt_code_workbench', content: 'retired' },
       ],
     });
@@ -438,10 +466,11 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('preserves explicit deletion of optional system cards on reload', () => {
+    const saved = savedSystemDeck();
     const trimmedSavedDeck: DeckDocument = {
-      ...JSON.parse(JSON.stringify(INITIAL_DECK)),
+      ...structuredClone(saved),
       version: 5,
-      nodes: INITIAL_DECK.nodes.filter(
+      nodes: saved.nodes.filter(
         (node) =>
           node.id !== 'card_trading_workbench' &&
           node.id !== 'card_worldsignals_agent',

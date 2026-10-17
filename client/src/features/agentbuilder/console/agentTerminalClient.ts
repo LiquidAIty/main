@@ -1,10 +1,16 @@
+/**
+ * Entity: Card Terminal
+ * Relationship: Opens and streams the authenticated same-origin terminal proxy while validating exact Project, deck, Card, profile, and session identity.
+ */
+
 export type AgentTerminalStatus = 'opening' | 'connected' | 'disconnected' | 'failed';
 
 export type AgentTerminalSession = {
+  projectId: string;
+  deckId: string;
   sessionId: string;
   cardId: string;
   profile: string;
-  terminalChannelKey: string | null;
   status: AgentTerminalStatus;
   cols: number;
   rows: number;
@@ -40,6 +46,17 @@ function terminalDimension(value: unknown, defaultValue: number): number {
   return Number.isSafeInteger(value) && Number(value) >= 1 ? Number(value) : defaultValue;
 }
 
+function sameOriginWebSocketUrl(path: string): string {
+  if (!path.startsWith('/api/card-terminals/') || !path.endsWith('/stream')) {
+    throw new Error('card_terminal_invalid_response');
+  }
+  const url = new URL(path, window.location.href);
+  url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.username = '';
+  url.password = '';
+  return url.toString();
+}
+
 export type AgentTerminalClient = {
   open(identity: AgentTerminalIdentity, size: { cols: number; rows: number }): Promise<AgentTerminalSession>;
   stream(session: AgentTerminalSession, handlers: StreamHandlers): AgentTerminalStream;
@@ -58,29 +75,32 @@ export const agentTerminalClient: AgentTerminalClient = {
       throw new Error(typeof payload?.error === 'string'
         ? payload.error : `card_terminal_open_failed_${response.status}`);
     }
+    const projectId = String(payload.projectId || '');
+    const deckId = String(payload.deckId || '');
     const cardId = String(payload.cardId || '');
     const profile = String(payload.profile || '');
     const sessionId = String(payload.sessionId || '');
-    const terminalChannelKey = String(payload.terminalChannelKey || '');
-    const websocketUrl = String(payload.websocketUrl || '');
+    const websocketPath = String(payload.websocketPath || '');
     if (
-      !cardId
+      projectId !== identity.projectId
+      || deckId !== identity.deckId
+      || cardId !== identity.cardId
       || !profile
       || !sessionId
-      || !terminalChannelKey
-      || !/^wss?:\/\//i.test(websocketUrl)
+      || !websocketPath
     ) {
       throw new Error('card_terminal_invalid_response');
     }
     return {
+      projectId,
+      deckId,
       sessionId,
       cardId,
       profile,
-      terminalChannelKey,
       status: 'opening',
       cols: terminalDimension(payload.cols, size.cols),
       rows: terminalDimension(payload.rows, size.rows),
-      websocketUrl,
+      websocketUrl: sameOriginWebSocketUrl(websocketPath),
     };
   },
 

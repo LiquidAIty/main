@@ -1,3 +1,11 @@
+/**
+ * Entity: Main Chat
+ * Relationship: Runs and observes Main turns, exact orange-recipient delivery, cancellation, voice capture, and Project conversation persistence through saved Hermes sessions.
+ *
+ * Entity: Hermes Profiles
+ * Relationship: Creates and resumes owner-authorized Project-scoped Card sessions while preserving each saved Card's stable logical profile and request-scoped context.
+ */
+
 import { Router, type Request, type Response } from 'express';
 
 import {
@@ -29,7 +37,10 @@ import {
   startCardRun,
   type PreparedCardRun,
 } from '../services/cardRunLifecycle';
-import { getOwnedProjectByReference } from '../services/projectStore';
+import {
+  assertHermesProfileOwner,
+  getOwnedProjectByReference,
+} from '../services/projectStore';
 import {
   projectCardAuthority,
   type ProjectCardBinding,
@@ -187,16 +198,36 @@ function mainBotRosterCards(authority: ProjectCardAuthority): ProjectCardBinding
   });
 }
 
-function explicitlyAddressedCard(
+function leadingCardAddress(message: string): string | null {
+  const trimmed = message.trimStart();
+  if (!trimmed.startsWith('@')) return null;
+  let address = '';
+  for (const character of trimmed.slice(1, 65)) {
+    const lower = character.toLowerCase();
+    const allowed = (lower >= 'a' && lower <= 'z')
+      || (character >= '0' && character <= '9')
+      || character === '_'
+      || character === '-';
+    if (!allowed) break;
+    address += character;
+  }
+  if (!address || !((address[0].toLowerCase() >= 'a' && address[0].toLowerCase() <= 'z')
+    || (address[0] >= '0' && address[0] <= '9'))) return null;
+  const following = trimmed[address.length + 1];
+  if (following && ![' ', '\t', '\r', '\n'].includes(following)) return null;
+  return address.toLowerCase();
+}
+
+export function explicitlyAddressedCard(
   message: string,
   roster: ProjectCardBinding[],
 ): ProjectCardBinding | null {
-  const match = /^\s*@([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/i.exec(message);
-  if (!match) return null;
-  const address = match[1].toLowerCase();
+  const address = leadingCardAddress(message);
+  if (!address) return null;
   const matches = roster.filter((card) => card.address?.toLowerCase() === address);
-  if (matches.length > 1) throw new Error(`main_address_ambiguous:${match[1].toLowerCase()}`);
-  return matches[0] || null;
+  if (matches.length > 1) throw new Error(`main_address_ambiguous:${address}`);
+  if (matches.length === 0) throw new Error(`main_address_not_authorized:${address}`);
+  return matches[0];
 }
 
 export function messageAgentTargetMatchesCard(value: unknown, card: ProjectCardBinding): boolean {
@@ -526,6 +557,8 @@ async function projectSessionCatalog(
     : activeProjectCards(authority, selected);
   const projectSessionId = String(scope.projectSessionId || scope.projectId || '').trim();
   if (!projectSessionId) throw new Error('hermes_project_session_identity_missing');
+  const ownerUserId = String(scope.userId || '').trim();
+  if (!ownerUserId) throw new Error('hermes_profile_owner_required');
   if (!requiredCards.some((card) => card.card.id === selected.card.id)) {
     throw new Error(`hermes_session_card_unavailable:${selected.card.id}`);
   }
@@ -533,7 +566,11 @@ async function projectSessionCatalog(
   const toolCatalog = await readToolCatalog();
   const provisioned = new Map<string, HermesProfileState>();
   for (const card of requiredCards) {
-    provisioned.set(card.profile.toLowerCase(), await ensureSavedCardProfile(request, card.card));
+    await assertHermesProfileOwner(card.profile, ownerUserId);
+    provisioned.set(
+      card.profile.toLowerCase(),
+      await ensureSavedCardProfile(request, card.card, ownerUserId),
+    );
   }
   const profiles = new Map<string, HermesProfileState>();
   for (const card of requiredCards) {
@@ -541,9 +578,10 @@ async function projectSessionCatalog(
     profiles.set(profile, await materializeSavedCardProfile(
       request,
       card.card,
-      projectSessionId,
+      ownerUserId,
       provisioned.get(profile),
       toolCatalog.tools,
+      toolCatalog.unavailableFamilies,
     ));
   }
   const sessions: Record<string, ProjectCardSession> = {};
@@ -761,7 +799,9 @@ async function executeHermesTurn(args: {
       const text = String(event.payload?.text || '');
       const completionError = hermesCompletionError(event.payload);
       if (completionError) recipientError = completionError;
-      else recipientCompletion = { text, event };
+      else if (recipientCompletion) {
+        recipientError = new Error('hermes_recipient_completion_duplicate');
+      } else recipientCompletion = { text, event };
       finishRecipientIfReady();
     };
     const flushExpectedRecipientEvents = () => {
@@ -961,7 +1001,9 @@ async function finishRun(args: {
 }): Promise<void> {
   const provider = record(args.binding?.info);
   const requestedProvider = record(args.run.request.provider);
-  const usage = args.result ? hermesUsageFields(args.result.event.payload?.usage) : {};
+  // `usage` is the cumulative lifetime session counter. A product Run owns the
+  // exact current-turn delta emitted by Hermes as `turn_usage`.
+  const usage = args.result ? hermesUsageFields(args.result.event.payload?.turn_usage) : {};
   await finishCardRun({
       runId: args.run.runId,
       state: args.cancelled ? 'cancelled' : args.error ? 'failed' : 'completed',
@@ -1077,6 +1119,8 @@ mainSessionRoutes.post('/chat', async (req, res) => {
 
   let binding: SessionBinding | null = null;
   let runSettled = false;
+  let streamedReplyText = '';
+  let streamedReplySpeaker = main;
   try {
     const client = await hermesGateway();
     binding = await cardSession(client, authority, main, {
@@ -1137,7 +1181,10 @@ mainSessionRoutes.post('/chat', async (req, res) => {
           void started.catch(() => undefined);
         } else if (event.type === 'message.delta') {
           if (!addressedTarget || speaker.card.id === addressedTarget.card.id) {
-            writeSse(res, 'text', { ...eventIdentity, text: String(event.payload?.text || '') });
+            const text = String(event.payload?.text || '');
+            streamedReplyText += text;
+            streamedReplySpeaker = speaker;
+            writeSse(res, 'text', { ...eventIdentity, text });
           }
         } else if (event.type.includes('reasoning')) {
           writeSse(res, 'reasoning', { ...eventIdentity, event });
@@ -1194,7 +1241,12 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       || activeTurnInterruptTargets.get(interruptTargetKey)?.stopRequested === true;
     if (!runSettled) await finishRun({ run, binding, error, cancelled }).catch(() => undefined);
     if (cancelled) {
-      writeSse(res, 'done', { ...identity, fullText: '', state: 'cancelled' });
+      writeSse(res, 'done', {
+        ...identity,
+        participant: participant(streamedReplySpeaker),
+        fullText: streamedReplyText,
+        state: 'cancelled',
+      });
     } else {
       writeSse(res, 'error', {
         ...identity,

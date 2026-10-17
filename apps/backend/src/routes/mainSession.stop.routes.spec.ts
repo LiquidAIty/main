@@ -1,3 +1,8 @@
+/**
+ * Entity: Main Chat
+ * Relationship: Verifies cancelling an addressed recipient interrupts the exact Hermes submission and settles the outer Run without persisting incomplete recipient output.
+ */
+
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -37,6 +42,7 @@ const lifecycleMocks = vi.hoisted(() => ({
 }));
 
 const projectMocks = vi.hoisted(() => ({
+  assertHermesProfileOwner: vi.fn(async () => undefined),
   getOwnedProjectByReference: vi.fn(async () => ({
     id: 'project-one',
     ownerUserId: 'user-one',
@@ -50,6 +56,7 @@ const gatewayMocks = vi.hoisted(() => ({
 
 vi.mock('../conversations/store', () => conversationMocks);
 vi.mock('../services/projectStore', () => ({
+  assertHermesProfileOwner: projectMocks.assertHermesProfileOwner,
   getOwnedProjectByReference: projectMocks.getOwnedProjectByReference,
 }));
 vi.mock('../services/projectCardAuthority', async () => {

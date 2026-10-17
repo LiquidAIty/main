@@ -1,10 +1,12 @@
 """Application operation for the saved Magnetic Card."""
 
+# Entity: Magnetic Runs
+# Relationship: Starts one approved Magnetic outer Run, observes the same Hermes root through its request window, and idempotently settles that Run when later readback becomes terminal.
+
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
 from typing import Any
 from uuid import uuid4
@@ -91,7 +93,7 @@ def _wait_for_completion(
         if remaining <= 0:
             return ({
                 **result,
-                "ok": False,
+                "ok": True,
                 "runId": run_id,
                 "completionPending": True,
                 "outerRunSettled": False,
@@ -104,8 +106,15 @@ def _failure_fields(result: dict[str, Any], state: str) -> dict[str, str]:
     if state == "completed":
         return {}
     summary = str(result.get("error") or "").strip()
-    match = re.match(r"^([a-z][a-z0-9_]{2,120})(?::|$)", summary)
-    code = match.group(1) if match else f"magnetic_taskgraph_{state}"
+    candidate = summary.split(":", 1)[0]
+    code = (
+        candidate
+        if 3 <= len(candidate) <= 121
+        and candidate[0].islower()
+        and all(character.islower() or character.isdigit() or character == "_"
+                for character in candidate)
+        else f"magnetic_taskgraph_{state}"
+    )
     return {"errorCode": code, "errorSummary": summary or code}
 
 
@@ -142,6 +151,31 @@ def _settle_terminal_result(
         "ok": state == "completed",
         "runId": run_id,
         "outerRunSettled": True,
+    }
+
+
+def reconcile_magnetic_taskgraph_run(
+    run_id: str,
+    hermes_root_id: str,
+) -> dict[str, Any]:
+    """Request-driven continuation for one already-bound Magnetic root."""
+
+    from app.python_models.magnetic_taskgraph_readback import read_magnetic_taskgraph
+
+    result = read_magnetic_taskgraph({"hermesRootId": hermes_root_id})
+    if str(result.get("hermesRootId") or "").strip() != hermes_root_id:
+        raise MagneticTaskGraphError("magnetic_taskgraph_root_identity_mismatch")
+    metrics = _task_metrics(result)
+    state = str(result.get("state") or "").strip()
+    if state in _MAGNETIC_TERMINAL_STATES:
+        return _settle_terminal_result(run_id, result, metrics)
+    _record_progress(run_id, result, metrics)
+    return {
+        **result,
+        "ok": True,
+        "runId": run_id,
+        "completionPending": True,
+        "outerRunSettled": False,
     }
 
 
@@ -270,6 +304,8 @@ def mag_one_operation_definitions(
             publishers=external,
             access="write",
             namespace="main",
+            grant_eligible=True,
+            grant_profiles=frozenset({"main"}),
             annotations={
                 "readOnlyHint": False,
                 "destructiveHint": False,

@@ -1,4 +1,6 @@
 """Engraphis Smart operation contracts, invocation, and application-only actions."""
+# Entity: ThinkGraph
+# Relationship: Binds Engraphis Smart operations to Project-owned ThinkGraph scope and marks the retained memory-update grant as exclusive to the saved ThinkGraph profile.
 from __future__ import annotations
 
 import asyncio
@@ -113,6 +115,13 @@ def operation_definitions() -> list[Any]:
                 publishers=frozenset({"internal-plugin", "external-mcp"}),
                 access=access,
                 namespace="engraphis",
+                grant_eligible=name not in {
+                    "engraphis_conflict_review", "engraphis_session",
+                },
+                grant_profiles=(
+                    frozenset({"thinkgraph"})
+                    if name == "engraphis_update_memory" else frozenset()
+                ),
                 external_source_id="engraphis",
                 output_schema=deepcopy(item.get("outputSchema")),
                 title=str(

@@ -1,3 +1,8 @@
+/**
+ * Entity: Main Chat
+ * Relationship: Verifies Project-session closure, exact direct-recipient correlation, and Hermes completion classification across saved Card sessions.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DeckCard, DeckDocument } from '../types';
@@ -33,9 +38,20 @@ vi.mock('../services/workingDirectories', () => ({
   resolveProductChatWorkingDirectory: vi.fn(() => 'C:/Projects/LiquidAIty/main'),
 }));
 
+vi.mock('../services/projectStore', async () => {
+  const actual = await vi.importActual<typeof import('../services/projectStore')>(
+    '../services/projectStore',
+  );
+  return {
+    ...actual,
+    assertHermesProfileOwner: vi.fn(async () => undefined),
+  };
+});
+
 import {
   cardSession,
   directRecipientSubmissionId,
+  explicitlyAddressedCard,
   hermesCompletionError,
   messageAgentTargetMatchesCard,
 } from './mainSession.routes';
@@ -154,6 +170,16 @@ describe('Main Project-session closure', () => {
 });
 
 describe('direct saved-Card delivery correlation', () => {
+  it('rejects an explicit address that is absent from the exact orange roster', () => {
+    const target = binding(card('card-builder', 'builder'));
+    target.address = 'Builder';
+
+    expect(explicitlyAddressedCard('normal Main question', [target])).toBeNull();
+    expect(explicitlyAddressedCard('@Builder make this precise', [target])).toBe(target);
+    expect(() => explicitlyAddressedCard('@Trader compare these', [target]))
+      .toThrow('main_address_not_authorized:trader');
+  });
+
   it('recognizes only the exact authorized profile or saved address', () => {
     const target = binding(card('card-world-signals', 'worldsignals'));
     target.address = 'WorldSignals';

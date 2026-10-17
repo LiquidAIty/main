@@ -3,6 +3,11 @@
 IDD is data, not an authenticator or a second runtime schema. Ordinary Card
 execution uses its executable contracts and saved grants, not this palette.
 """
+# Entity: Input Data Dictionary
+# Relationship: Reads the one literal IDD and materializes composable Card editor fields, templates, and configured model choices without becoming runtime authority.
+#
+# Entity: Tool Grants
+# Relationship: Projects the authenticated live tool catalog into the selected Card's editor palette while honoring explicit eligibility and exact profile ceilings.
 from __future__ import annotations
 
 import json
@@ -194,12 +199,14 @@ def materialize_runtime_options(model_options: Any, *, document: dict[str, Any] 
 
 def materialize_card_editor(
     model_options: Any, *, catalog_options: Any = None, selected_ids: Any = None,
+    card_profile: Any = None,
 ) -> dict[str, Any]:
     """Project one current live tool catalog into the disposable Builder palette."""
     document = load_input_data_dictionary()
     runtime_options = materialize_runtime_options(model_options, document=document)
     models = runtime_options["catalogs"]["configured-models"]
     selected = set(selected_ids or [])
+    profile = str(card_profile or "").strip().lower()
     if not all(isinstance(value, str) for value in selected):
         raise IddValidationError("builder_selection_invalid")
     options: dict[str, dict[str, Any]] = {}
@@ -232,6 +239,7 @@ def materialize_card_editor(
         publications = reference.get("publications")
         access = reference.get("access")
         grant_eligible = reference.get("grantEligible")
+        grant_profiles = reference.get("grantProfiles")
         available = reference.get("available")
         schema = reference.get("inputSchema")
         if (
@@ -244,13 +252,30 @@ def materialize_card_editor(
             or any(value not in {"card-profile", "external-mcp"} for value in publications)
             or access not in {"read", "write"}
             or not isinstance(grant_eligible, bool)
+            or not isinstance(grant_profiles, list)
+            or any(
+                not isinstance(grant_profile, str)
+                or not grant_profile
+                or grant_profile != grant_profile.strip().lower()
+                for grant_profile in grant_profiles
+            )
+            or len(grant_profiles) != len(set(grant_profiles))
+            or (not grant_eligible and grant_profiles)
             or not isinstance(available, bool)
             or not isinstance(schema, dict)
             or schema.get("type") != "object"
         ):
             raise IddValidationError("builder_tool_catalog_entry_invalid")
-        selectable = available and grant_eligible
-        diagnostics = [] if grant_eligible else ["tool_not_grant_eligible"]
+        profile_eligible = not grant_profiles or profile in grant_profiles
+        selectable = available and grant_eligible and profile_eligible
+        diagnostics = (
+            []
+            if grant_eligible and profile_eligible
+            else [
+                "tool_profile_not_granted"
+                if grant_eligible else "tool_not_grant_eligible"
+            ]
+        )
         add(
             canonical_id, "tool", provider, provider, schema, selectable, diagnostics,
         )
@@ -263,6 +288,7 @@ def materialize_card_editor(
             "access": access,
             "publications": list(publications),
             "grantEligible": grant_eligible,
+            "grantProfiles": list(grant_profiles),
             "inputSchema": deepcopy(schema),
             "outputSchema": deepcopy(reference.get("outputSchema")),
         })
@@ -277,5 +303,6 @@ def materialize_card_editor(
     # Selection is not source freshness and never implies effective authorization.
     palette["fingerprint"] = builder_fingerprint({
         "idd": document, "models": models, "catalogOptions": catalog_options or [],
+        "cardProfile": profile,
     })
     return {**palette, **runtime_options}

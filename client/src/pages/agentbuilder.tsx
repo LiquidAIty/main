@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: This page composes the Project-scoped Builder workspace, joining Main chat, the Card canvas and editors, graph and product surfaces, and canonical deck persistence without owning their domain logic.
+ */
+
 import React, {
   Suspense,
   lazy,
@@ -42,7 +47,6 @@ import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderD
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
 import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuilderProject';
 import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBuilderProjectDrawer';
-import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderKnowledgeGraphs from '../features/agentbuilder/state/useAgentBuilderKnowledgeGraphs';
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
@@ -85,12 +89,6 @@ import {
   BuilderRailMoonOrb,
   synodicPhaseFromDate,
 } from '../features/agentbuilder/core/BuilderRailMoonOrb';
-import {
-  isAbortLikeError,
-} from '../components/builder/requestGuards';
-import {
-  useBuilderDeckPersistenceActions,
-} from '../components/builder/useBuilderDeckPersistenceActions';
 import type {
   AgentCardInstance,
   DeckEdge,
@@ -208,7 +206,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Skills', 'Tools'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 
 function hasTaskLedger(card: AgentCardInstance | null | undefined): boolean {
@@ -492,8 +490,6 @@ export default function AgentBuilder(): React.ReactElement {
   }, []);
 
   // agent builder state
-  const deckSaveAbortRef = useRef<AbortController | null>(null);
-  const activeProjectLatestRef = useRef('');
   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
@@ -502,7 +498,6 @@ export default function AgentBuilder(): React.ReactElement {
     nodes: AgentCardInstance[];
     edges: DeckEdge[];
   } | null>(null);
-  const layoutAutosaveAbortRef = useRef<AbortController | null>(null);
   const lastDeckPersistReasonRef = useRef<string | null>(null);
 
   const recordDeckWriteReason = useCallback(
@@ -623,6 +618,34 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     setTransientNewCardIds(new Set());
   }, [canvasProjectId]);
+  const {
+    handleSaveDeck,
+    persistenceFrozen,
+    reloadCanonical,
+    reloadToken,
+  } = useAgentBuilderAutosave({
+    builderDev: BUILDER_DEV,
+    canvasProjectId,
+    projectsApi: PROJECTS_API,
+    builderDeckId: BUILDER_DECK_ID,
+    deck,
+    deckRevision,
+    deckLoadBusy,
+    deckLoadError,
+    stateLoaded,
+    transientCardIds: transientNewCardIds,
+    lastPersistedBoardFingerprintRef,
+    lastPersistedBoardSnapshotRef,
+    lastDeckPersistReasonRef,
+    evaluateBoardIntegrityForSave,
+    snapshotDeckBoard,
+    readDeckDocument,
+    formatBuilderStatusMessage,
+    setDeck: setDeckFromPersistence,
+    setDeckRevision,
+    setDeckSaveBusy,
+    setDeckStatusMessage,
+  });
   useAgentBuilderDeckLoad({
     canvasProjectId,
     projectsApi: PROJECTS_API,
@@ -639,67 +662,8 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckLoadError,
     setStateLoaded,
     setDeckStatusMessage,
-    reloadToken: 0,
+    reloadToken,
   });
-  useAgentBuilderProjectReset({
-    canvasProjectId,
-    deckSaveAbortRef,
-    layoutAutosaveAbortRef,
-    setDeckSaveBusy,
-  });
-  useAgentBuilderAutosave({
-    builderDev: BUILDER_DEV,
-    canvasProjectId,
-    projectsApi: PROJECTS_API,
-    builderDeckId: BUILDER_DECK_ID,
-    deck,
-    deckRevision,
-    deckLoadBusy,
-    deckLoadError,
-    stateLoaded,
-    transientCardIds: transientNewCardIds,
-    layoutAutosaveAbortRef,
-    lastPersistedBoardFingerprintRef,
-    lastPersistedBoardSnapshotRef,
-    lastDeckPersistReasonRef,
-    evaluateBoardIntegrityForSave,
-    snapshotDeckBoard,
-    readDeckDocument,
-    formatBuilderStatusMessage,
-    isAbortLikeError,
-    setDeck: setDeckFromPersistence,
-    setDeckRevision,
-    setDeckStatusMessage,
-  });
-
-  const { handleSaveDeck } =
-    useBuilderDeckPersistenceActions({
-      builderDev: BUILDER_DEV,
-      canvasProjectId,
-      deck,
-      deckId: BUILDER_DECK_ID,
-      deckRevision,
-      deckSaveAbortRef: layoutAutosaveAbortRef,
-      formatBuilderStatusMessage,
-      readDeckDocument,
-      setDeck: setDeckFromPersistence,
-      setDeckRevision,
-      setDeckSaveBusy,
-      setDeckStatusMessage,
-      projectsApi: PROJECTS_API,
-      activeProjectLatestRef,
-      recordDeckWriteReason,
-      onDeckPersistProof: (entry) => {
-        if (entry.ok) {
-          lastPersistedBoardFingerprintRef.current = JSON.stringify({
-            nodes: (entry.document || deck).nodes,
-            edges: (entry.document || deck).edges,
-          });
-          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(entry.document || deck);
-        }
-        console.info('[builder][deck-save-proof]', entry);
-      },
-    });
 
 
 
@@ -1198,10 +1162,6 @@ export default function AgentBuilder(): React.ReactElement {
     return <div className="space-y-3">{renderEditorContent()}</div>;
   };
 
-  useEffect(() => {
-    activeProjectLatestRef.current = activeProject;
-  }, [activeProject]);
-
   const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | 'worldview' | null>(() => {
     if (workspaceView === 'canvas' && canonicalDeckReady && selectedCard) return 'agent';
     // The canonical Inspector also serves the WorldSignals companion surface —
@@ -1361,6 +1321,40 @@ export default function AgentBuilder(): React.ReactElement {
         inspectMode={false}
         focusZone={canvasFocusZone}
       />
+    ) : persistenceFrozen ? (
+      <div
+        role="alert"
+        data-testid="canonical-canvas-reload-required"
+        style={graphDrawerSectionStyle({
+          height: '100%',
+          display: 'grid',
+          placeItems: 'center',
+          border: 0,
+          borderRadius: 0,
+          color: 'rgba(255,162,162,0.95)',
+        })}
+      >
+        <div style={{ display: 'grid', justifyItems: 'center', gap: 12, maxWidth: 460 }}>
+          <div style={{ textAlign: 'center' }}>
+            {deckStatusMessage || 'The saved canvas must be reloaded before editing can continue.'}
+          </div>
+          <button
+            type="button"
+            data-testid="reload-canonical-canvas"
+            onClick={reloadCanonical}
+            disabled={deckSaveBusy}
+            style={{
+              border: `1px solid ${C.primary}`,
+              borderRadius: 8,
+              background: C.panel,
+              color: C.text,
+              padding: '8px 12px',
+            }}
+          >
+            Reload saved canvas
+          </button>
+        </div>
+      </div>
     ) : (
       <div
         role={deckLoadError ? 'alert' : 'status'}

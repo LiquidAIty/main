@@ -1,3 +1,8 @@
+/**
+ * Entity: Main Chat
+ * Relationship: Renders the Project conversation and bounded composer, preserving drafts on rejected submissions and enforcing the same image count and byte ceiling accepted by the canonical IDF path.
+ */
+
 import {
   Fragment,
   useCallback,
@@ -61,7 +66,7 @@ function shouldRenderMessage(message: MainProjectChatMessage): boolean {
 
 type ComposerImage = { name: string; mediaType: string; dataUrl: string; kind: "user-upload" };
 const COMPOSER_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-const MAX_COMPOSER_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_COMPOSER_IMAGE_BYTES = 2 * 1024 * 1024;
 const MESSAGE_LANE_MAX_WIDTH = 760;
 
 const CANONICAL_ENTITY_LINK_STYLE = Object.freeze({
@@ -87,7 +92,7 @@ function readComposerImage(file: File): Promise<ComposerImage> {
     return Promise.reject(new Error("Choose a PNG, JPEG, WebP or GIF image."));
   }
   if (file.size < 1 || file.size > MAX_COMPOSER_IMAGE_BYTES) {
-    return Promise.reject(new Error("Each image must be between 1 byte and 10 MB."));
+    return Promise.reject(new Error("Each image must be between 1 byte and 2 MB."));
   }
   const name = (file.name || "image.png").trim();
   if (name.length > 200 || /[\\/]/.test(name)) {

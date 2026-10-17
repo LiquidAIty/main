@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Editing
+ * Relationship: This editor changes one saved Card's prompt, runtime, model, reasoning, subagent, skills, tools, connections, and optional script while keeping saved Card authority explicit.
+ */
+
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type {
@@ -101,7 +106,9 @@ type InputDictionaryToolReference = {
   canonicalId: string;
   displayName?: string;
   shortDescription?: string;
-  availability: 'available' | 'disabled';
+  available: boolean;
+  grantEligible: boolean;
+  grantProfiles: string[];
 };
 
 type InputDictionaryToolPage = {
@@ -123,7 +130,7 @@ function buildInputDictionarySelectedRows(
       name: reference.canonicalId,
       title: reference.displayName || reference.canonicalId,
       description: reference.shortDescription,
-      availability: reference.availability,
+      availability: reference.available ? 'available' as const : 'disabled' as const,
     }));
   const knownNames = new Set(known.map((reference) => reference.name));
   return [
@@ -994,6 +1001,9 @@ export function CardEditor({
         setToolDictionaryBusy(true);
         try {
           const params = new URLSearchParams({
+            projectId,
+            deckId,
+            cardId,
             query: toolDictionaryQuery,
             offset: String(toolDictionaryOffset),
             limit: '100',
@@ -1042,6 +1052,9 @@ export function CardEditor({
   }, [
     isLocalConfigMode,
     localConfig,
+    projectId,
+    deckId,
+    cardId,
     savedToolNames.join('\u0000'),
     toolDictionaryNamespace,
     toolDictionaryOffset,
@@ -1313,6 +1326,8 @@ export function CardEditor({
       return (
         <CardScriptEditor
           cardId={cardId}
+          projectId={projectId}
+          deckId={deckId}
           runtimeKind={localConfig.runtime.kind}
           script={scriptDraft}
           selectedTools={savedToolNames}
@@ -1417,22 +1432,6 @@ export function CardEditor({
           ) : (
             <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Loading…</div>
           )}
-        </section>
-      );
-    }
-
-    if (sectionTab === 'Memory') {
-      return (
-        <section
-          data-testid="agent-manager-memory"
-          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
-        >
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Memory</div>
-          {runtimeKind === 'hermes' && hermesProfileStatus === 'failed' ? (
-            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {hermesProfileError || 'Memory unavailable.'}
-            </div>
-          ) : null}
         </section>
       );
     }
@@ -1751,7 +1750,7 @@ export function CardEditor({
                   <input
                     type="checkbox"
                     checked={savedToolNames.includes(tool.canonicalId)}
-                    disabled={tool.availability !== 'available'}
+                    disabled={!tool.available}
                     onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
                     aria-label={`Include ${tool.displayName || tool.canonicalId}`}
                   />
@@ -1760,7 +1759,7 @@ export function CardEditor({
                       {tool.displayName || tool.canonicalId}
                     </span>
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
-                      {tool.availability !== 'available' ? ' · Unavailable in current catalog' : ''}
+                      {!tool.available ? ' · Unavailable in current catalog' : ''}
                     </span>
                   </span>
                 </label>
@@ -1998,9 +1997,7 @@ export function CardEditor({
             ) : null}
           </div>
         )
-      : activeTab === 'Memory'
-        ? renderSectionBody('Memory')
-        : activeTab === 'Skills'
+      : activeTab === 'Skills'
           ? renderSectionBody('Skills')
           : activeTab === 'Tools'
             ? (

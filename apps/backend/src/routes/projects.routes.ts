@@ -1,9 +1,18 @@
+/**
+ * Entity: Projects
+ * Relationship: Exposes authenticated Project list, create, and delete routes while preserving exact owner scope and explicit partial-state failures.
+ *
+ * Entity: Project Seeds
+ * Relationship: Persists the backend-owned canonical deck through the Python deck authority and returns its exact Project, deck, and revision readback.
+ */
+
 import { Router } from 'express';
 import { pool } from '../db/pool';
 import { getDeckDocument, saveDeckDocument } from '../decks/deckDomainClient';
 import {
+  createDefaultProjectDeck,
   DEFAULT_PROJECT_DECK_ID,
-  DEFAULT_PROJECT_EDGES,
+  isDefaultProjectDeckReadback,
 } from '../decks/defaultProjectDeck';
 import {
   createProject,
@@ -41,37 +50,62 @@ router.post('/', async (req, res) => {
       typeof code === 'string' ? code : null,
       ownerUserId,
     );
+    let initialized: Awaited<ReturnType<typeof saveDeckDocument>>;
     try {
-      const loaded = await getDeckDocument(project.id, DEFAULT_PROJECT_DECK_ID);
-      if (!loaded.deck || !loaded.meta.deckRevision) {
-        throw new Error('default_project_deck_missing');
-      }
-      await saveDeckDocument(
+      initialized = await saveDeckDocument(
         project.id,
         DEFAULT_PROJECT_DECK_ID,
-        {
-          ...loaded.deck,
-          edges: DEFAULT_PROJECT_EDGES.map((edge) => ({ ...edge })),
-        },
-        { expectedRevision: loaded.meta.deckRevision },
+        createDefaultProjectDeck(),
+        { expectedRevision: null },
       );
+      if (!initialized.meta.deckRevision
+        || !isDefaultProjectDeckReadback(initialized.deck)) {
+        throw new Error('default_project_deck_readback_invalid');
+      }
     } catch (error) {
+      let recovered: Awaited<ReturnType<typeof getDeckDocument>>;
       try {
-        await discardFreshProject(project.id, ownerUserId);
-      } catch (compensationError) {
-        console.error('[PROJECT_CREATE] compensation failed', {
-          projectId: project.id,
-          errorClass: compensationError instanceof Error
-            ? compensationError.constructor.name
-            : 'UnknownError',
-        });
-        throw new Error('project_initialization_compensation_failed', {
-          cause: error,
+        recovered = await getDeckDocument(project.id, DEFAULT_PROJECT_DECK_ID);
+      } catch (readbackError) {
+        throw new Error('project_initialization_outcome_unknown', {
+          cause: readbackError,
         });
       }
-      throw error;
+      if (recovered.deck) {
+        if (!recovered.meta.deckRevision
+          || !isDefaultProjectDeckReadback(recovered.deck)) {
+          throw new Error('default_project_deck_readback_invalid', {
+            cause: error,
+          });
+        }
+        initialized = {
+          deck: recovered.deck,
+          meta: recovered.meta,
+        };
+      } else {
+        try {
+          await discardFreshProject(project.id, ownerUserId);
+        } catch (compensationError) {
+          console.error('[PROJECT_CREATE] compensation failed', {
+            projectId: project.id,
+            errorClass: compensationError instanceof Error
+              ? compensationError.constructor.name
+              : 'UnknownError',
+          });
+          throw new Error('project_initialization_compensation_failed', {
+            cause: error,
+          });
+        }
+        throw error;
+      }
     }
-    return res.json({ ok: true, project });
+    return res.json({
+      ok: true,
+      project,
+      projectId: project.id,
+      deck: initialized.deck,
+      meta: initialized.meta,
+    });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to create project' });
   }

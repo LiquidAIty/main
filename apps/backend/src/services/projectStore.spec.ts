@@ -1,3 +1,11 @@
+/**
+ * Entity: Projects
+ * Relationship: Verifies owner-scoped Project identity creation and compensation never derive fresh state from another Project's Card revisions.
+ *
+ * Entity: Saved Cards
+ * Relationship: Verifies exact owner-scoped Card listing and attachment preserve profile uniqueness and Project-local membership authority.
+ */
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
@@ -8,12 +16,13 @@ const db = vi.hoisted(() => ({
 vi.mock('../db/pool', () => ({ pool: db }));
 
 import {
+  assertHermesProfileOwner,
   attachSavedCardToProject,
   createProject,
   discardFreshProject,
   listSavedCardsForProject,
 } from './projectStore';
-import { DEFAULT_PROJECT_CARDS, DEFAULT_PROJECT_EDGES } from '../decks/defaultProjectDeck';
+import { DEFAULT_PROJECT_DECK } from '../decks/defaultProjectDeck';
 
 describe('projectStore saved Card membership', () => {
   beforeEach(() => {
@@ -21,19 +30,11 @@ describe('projectStore saved Card membership', () => {
     db.connect.mockReset();
   });
 
-  it('creates a Project by reusing the exact default saved-Card revisions', async () => {
+  it('creates only the owner-scoped Project identity without scanning or copying another Project', async () => {
     const statements: Array<{ sql: string; params: unknown[] | undefined }> = [];
     const client = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         statements.push({ sql, params });
-        if (sql.includes('WITH expected(card_id, runtime_profile)')) {
-          return {
-            rows: DEFAULT_PROJECT_CARDS.map((card) => ({
-              card_id: card.cardId,
-              current_revision_id: `revision-${card.cardId}`,
-            })),
-          };
-        }
         if (sql.includes('INSERT INTO ag_catalog.projects')) {
           return {
             rows: [{
@@ -53,31 +54,26 @@ describe('projectStore saved Card membership', () => {
 
     await createProject('New Project', 'new-project', 'owner-one');
 
-    expect(statements.some(({ sql }) => sql.includes('agent_card_revisions'))).toBe(true);
-    expect(statements.some(({ sql }) => sql.includes('INSERT INTO ag_catalog.agent_card_revisions'))).toBe(false);
-    const cardWrites = statements.filter(({ sql }) => sql.includes('INSERT INTO ag_catalog.agent_cards'));
-    expect(cardWrites).toHaveLength(DEFAULT_PROJECT_CARDS.length);
-    expect(cardWrites.map(({ params }) => params?.[3])).toEqual(
-      DEFAULT_PROJECT_CARDS.map((card) => `revision-${card.cardId}`),
-    );
-    const firstSourceRead = statements.findIndex(({ sql }) => (
-      sql.includes('WITH expected(card_id, runtime_profile)')
-    ));
-    const profileLocks = statements
-      .map(({ sql, params }, index) => ({ sql, params, index }))
-      .filter(({ sql }) => sql.includes('pg_advisory_xact_lock'));
-    expect(profileLocks).toHaveLength(DEFAULT_PROJECT_CARDS.length);
-    expect(profileLocks.every(({ index }) => index < firstSourceRead)).toBe(true);
-    expect(statements.some(({ sql }) => /agent-[a-f0-9-]+/i.test(sql))).toBe(false);
+    expect(statements).toHaveLength(3);
+    expect(statements.map(({ sql }) => sql)).toEqual([
+      'BEGIN',
+      expect.stringContaining('INSERT INTO ag_catalog.projects'),
+      'COMMIT',
+    ]);
+    expect(statements.some(({ sql }) => sql.includes('agent_cards'))).toBe(false);
+    expect(statements.some(({ sql }) => sql.includes('agent_card_revisions'))).toBe(false);
+    expect(statements.some(({ sql }) => sql.includes('agent_decks'))).toBe(false);
+    expect(statements.some(({ sql }) => sql.includes('deck_card_memberships'))).toBe(false);
+    expect(statements.some(({ sql }) => sql.includes('pg_advisory_xact_lock'))).toBe(false);
     expect(client.query).toHaveBeenCalledWith('COMMIT');
   });
 
   it('keeps Main and Builder identities separate with one Builder authorization flow', () => {
-    expect(DEFAULT_PROJECT_CARDS.find((card) => card.cardId === 'card_main_chat')?.profile)
+    expect(DEFAULT_PROJECT_DECK.nodes.find((card) => card.id === 'card_main_chat')?.runtime.profile)
       .toBe('main');
-    expect(DEFAULT_PROJECT_CARDS.find((card) => card.cardId === 'builder')?.profile)
+    expect(DEFAULT_PROJECT_DECK.nodes.find((card) => card.id === 'builder')?.runtime.profile)
       .toBe('builder');
-    expect(DEFAULT_PROJECT_EDGES.filter((edge) => edge.edgeType === 'flow')).toEqual([
+    expect(DEFAULT_PROJECT_DECK.edges.filter((edge) => edge.edgeType === 'flow')).toEqual([
       { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
     ]);
   });
@@ -162,6 +158,26 @@ describe('projectStore saved Card membership', () => {
     expect(sql).toContain('source_project.owner_user_id=$3');
     expect(sql).not.toContain('ANY(');
     expect(params).toEqual(['project-one', 'deck_builder', 'owner-one']);
+  });
+
+  it('accepts a stable Hermes profile only when exactly one saved owner matches', async () => {
+    db.query.mockResolvedValue({ rows: [{ owner_user_id: 'owner-one' }] });
+
+    await expect(assertHermesProfileOwner('Builder', 'owner-one')).resolves.toBeUndefined();
+
+    const [sql, params] = db.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('SELECT DISTINCT project.owner_user_id');
+    expect(sql).toContain("revision.runtime_kind='hermes'");
+    expect(params).toEqual(['builder']);
+  });
+
+  it('fails closed when one stable Hermes profile is referenced by multiple owners', async () => {
+    db.query.mockResolvedValue({
+      rows: [{ owner_user_id: 'owner-one' }, { owner_user_id: 'owner-two' }],
+    });
+
+    await expect(assertHermesProfileOwner('builder', 'owner-one'))
+      .rejects.toThrow('hermes_profile_owner_conflict');
   });
 
   it('verifies Project ownership before compensating child rows', async () => {

@@ -1,4 +1,6 @@
 """Market-data and SEC-read Python tool handlers and definitions."""
+# Entity: Market Research
+# Relationship: Publishes explicit read-only grants for bounded SEC filings, Alpaca market data, and paper-account readiness without order authority.
 
 from __future__ import annotations
 
@@ -136,6 +138,7 @@ def market_sec_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_open,
         ),
@@ -175,6 +178,7 @@ def market_sec_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_open,
         ),
@@ -216,6 +220,7 @@ def market_sec_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_open,
         ),
@@ -245,8 +250,8 @@ def market_sec_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_open,
         ),
     ]
-

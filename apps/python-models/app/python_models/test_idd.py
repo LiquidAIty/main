@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# Entity: Input Data Dictionary
+# Relationship: Verifies the literal IDD remains the sole composable Card-definition source and resolves its referenced executable contracts without copied runtime catalogs.
+#
+# Entity: Card Scripts
+# Relationship: Verifies bounded recipes compile only from the positive grammar and cannot escape the saved Card's selected-tool or child-process ceilings.
+
 import pytest
 from pydantic import ValidationError
 from app.python_models.idd import IddValidationError, load_input_data_dictionary, materialize_card_editor, materialize_runtime_options, template_objects
@@ -257,6 +263,47 @@ output.emit({"agent": {"run": False}})
         compile_card_script(source, selected_tools=["cbm.search_graph"])
 
 
+def _recipe_source(body: str, import_line: str = (
+    "from hermes_tools import SCRIPT, input, output, tools"
+)) -> str:
+    return f'''CARD_SCRIPT = {{
+    "mode": "tool_recipe",
+    "input": {{"type": "object", "properties": {{"query": {{"type": "string"}}}}}},
+    "output": {{"type": "object", "properties": {{"result": {{}}}}, "required": ["result"]}},
+}}
+{import_line}
+tools.cbm.search_graph = SCRIPT
+{body}
+output.emit({{"result": {{}}}})
+'''
+
+
+@pytest.mark.parametrize("source,error", [
+    (_recipe_source("value = __builtins__"), "card_script_name_not_available:__builtins__"),
+    (_recipe_source('value = getattr(input, "__class__")'), "card_script_expression_not_allowed:Call"),
+    (_recipe_source("value = input.__class__"), "card_script_attribute_not_allowed"),
+    (_recipe_source("value = (lambda: 1)"), "card_script_expression_not_allowed:Lambda"),
+    (_recipe_source("def escape():\n    return 1"), "card_script_statement_not_allowed:FunctionDef"),
+    (_recipe_source("for item in []:\n    value = item"), "card_script_statement_not_allowed:For"),
+    (_recipe_source('tools.call(input.query)'), "card_script_tool_handle_must_be_literal"),
+    (_recipe_source('tools.call("cbm.search_graph", **{"query": input.query})'),
+     "card_script_tool_argument_invalid"),
+    (_recipe_source('output.emit({"result": {}})'), "card_script_output_emit_required_once"),
+    (_recipe_source("value = 1", "import json"), "card_script_import_not_granted"),
+    (_recipe_source(
+        "value = 1",
+        "from hermes_tools import output as emitted, tools, SCRIPT",
+    ), "card_script_hermes_tools_import_invalid"),
+])
+def test_positive_recipe_grammar_rejects_every_unapproved_construct(
+    source: str,
+    error: str,
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        compile_card_script(source, selected_tools=["cbm.search_graph"])
+    assert str(raised.value) == error
+
+
 def test_generated_python_header_is_complete_read_only_and_grant_aware() -> None:
     catalog = [
         {
@@ -413,6 +460,7 @@ def test_builder_projects_live_catalog_option_and_marks_stale_selection():
         "available": True,
         "access": "read",
         "grantEligible": True,
+        "grantProfiles": [],
         "inputSchema": schema,
         "outputSchema": {"type": "object"},
     }

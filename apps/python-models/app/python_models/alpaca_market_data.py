@@ -12,6 +12,8 @@ or placed in any result. Live-mode credentials are rejected for this lane. When
 credentials are absent the providers return the honest ``provider_unconfigured`` status;
 provider/HTTP failures return ``provider_error``. Nothing is ever fabricated.
 """
+# Entity: Market Research
+# Relationship: Performs bounded read-only Alpaca paper-account and market-data requests, returning typed availability or safe failure without exposing credentials or order authority.
 
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ STATUS_INVALID = "invalid_response"
 STATUS_INVALID_CONFIG = INVALID_CONFIG
 
 MAX_BARS_LIMIT = 1000
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 ALLOWED_FEEDS = frozenset({"iex", "sip", "otc"})
 _SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9._/-]{0,31}$")
 _TIMEFRAME = re.compile(r"^[1-9][0-9]{0,3}(?:Min|Hour|Day|Week|Month)$")
@@ -92,7 +95,10 @@ _ALPACA_OPENER = urllib.request.build_opener(_RejectRedirects())
 def _default_get(url: str, headers: dict[str, str]) -> dict[str, Any]:
     request = urllib.request.Request(url, headers=headers, method="GET")
     with _ALPACA_OPENER.open(request, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise ValueError("alpaca_response_too_large")
+        return json.loads(raw.decode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +280,9 @@ def get_market_snapshot(
     except ValueError:
         return MarketSnapshot(provider=PROVIDER, feed=feed, symbol=symbol, status=STATUS_INVALID,
                               fetchedAt=fetched, diagnostics="alpaca_invalid_snapshot_timestamp")
+    if observed is None:
+        return MarketSnapshot(provider=PROVIDER, feed=feed, symbol=symbol, status=STATUS_INVALID,
+                              fetchedAt=fetched, diagnostics="alpaca_snapshot_timestamp_missing")
     price = _as_float(trade.get("p"))
     bid = _as_float(quote.get("bp"))
     ask = _as_float(quote.get("ap"))
@@ -287,6 +296,9 @@ def get_market_snapshot(
     ):
         return MarketSnapshot(provider=PROVIDER, feed=feed, symbol=symbol, status=STATUS_INVALID,
                               fetchedAt=fetched, diagnostics="alpaca_invalid_snapshot_number")
+    if price is None and bid is None and ask is None:
+        return MarketSnapshot(provider=PROVIDER, feed=feed, symbol=symbol, status=STATUS_INVALID,
+                              fetchedAt=fetched, diagnostics="alpaca_snapshot_value_missing")
     return MarketSnapshot(
         provider=PROVIDER,
         feed=feed,

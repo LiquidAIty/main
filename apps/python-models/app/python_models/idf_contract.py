@@ -1,4 +1,6 @@
 """Literal schema and byte contract for the canonical retained IDF."""
+# Entity: Input Data Files
+# Relationship: Defines the four-part canonical IDF schema, secret-free validation, historical byte loading, and the versioned reject-only size policy for newly materialized Runs.
 
 from __future__ import annotations
 
@@ -19,6 +21,17 @@ from app.python_models.graph_reference_contracts import (
 
 
 IDF_FILENAME = "in.idf"
+IDF_LIMIT_POLICY_VERSION = "idf-limits.v1"
+IDF_TOTAL_BYTES_MAX = 16 * 1024 * 1024
+IDF_SECTION_BYTES_MAX = {
+    "actualGraphData": 6 * 1024 * 1024,
+    "stableSavedCardContext": 2 * 1024 * 1024,
+    "selectedToolsAndGrants": 4 * 1024 * 1024,
+    "dynamicContext": 12 * 1024 * 1024,
+}
+IDF_TASK_BYTES_MAX = 512 * 1024
+IDF_IMAGES_MAX = 4
+IDF_IMAGE_BYTES_MAX = 3 * 1024 * 1024
 _FORBIDDEN_SECRET_KEYS = frozenset({
     "apikey", "apikeyid", "authorization", "bearer", "bearertoken",
     "accesstoken", "refreshtoken", "clientsecret", "oauthstate",
@@ -181,6 +194,44 @@ def canonical_line(value: Any) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
     ).encode("utf-8")
+
+
+def idf_size_report(idf: Idf) -> dict[str, Any]:
+    """Measure canonical bytes without changing or truncating any retained value."""
+
+    value = idf.model_dump(mode="json")
+    sections = {
+        name: len(canonical_line(value[name]))
+        for name in IDF_SECTION_BYTES_MAX
+    }
+    return {
+        "policyVersion": IDF_LIMIT_POLICY_VERSION,
+        "totalBytes": len(canonical_line(value)),
+        "sectionBytes": sections,
+        "taskBytes": len(idf.dynamicContext.task.encode("utf-8")),
+        "imageCount": len(idf.dynamicContext.images),
+        "imageBytes": [
+            len(canonical_line(image)) for image in idf.dynamicContext.images
+        ],
+    }
+
+
+def assert_new_idf_limits(idf: Idf) -> dict[str, Any]:
+    """Reject an oversized new IDF; historical load remains byte-compatible."""
+
+    report = idf_size_report(idf)
+    if report["taskBytes"] > IDF_TASK_BYTES_MAX:
+        raise InputMaterializationError("input_task_too_large")
+    if report["imageCount"] > IDF_IMAGES_MAX:
+        raise InputMaterializationError("input_images_too_many")
+    if any(size > IDF_IMAGE_BYTES_MAX for size in report["imageBytes"]):
+        raise InputMaterializationError("input_image_too_large")
+    for section, maximum in IDF_SECTION_BYTES_MAX.items():
+        if report["sectionBytes"][section] > maximum:
+            raise InputMaterializationError(f"input_section_too_large:{section}")
+    if report["totalBytes"] > IDF_TOTAL_BYTES_MAX:
+        raise InputMaterializationError("input_file_too_large")
+    return report
 
 
 def _normalized_secret_key(value: Any) -> str:

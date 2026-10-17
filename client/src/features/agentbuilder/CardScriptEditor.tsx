@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+/**
+ * Entity: Card Scripts
+ * Relationship: Presents the grant-aware Script editor, positive recipe grammar, validation diagnostics, activation control, and generated read-only tool definitions.
+ */
+
 import type { AgentCardRuntimeOptions } from '../../types/agentgraph';
 import './CardScriptEditor.css';
 
@@ -81,6 +86,8 @@ const SCRIPT_SECTIONS = [
 ] as const;
 
 const STARTER_SCRIPT = `# region Optimized Tool Configuration
+# Accepted grammar: one literal contract, one hermes_tools import, top-level
+# tool modes and local values, literal tools.call handles, one output.emit.
 CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {
@@ -461,12 +468,16 @@ function changedSourceDraft(
 
 export function CardScriptEditor({
   cardId,
+  projectId,
+  deckId,
   runtimeKind,
   script,
   selectedTools,
   onChange,
 }: {
   cardId: string;
+  projectId: string;
+  deckId: string;
   runtimeKind: 'hermes';
   script: CardScript;
   selectedTools: string[];
@@ -507,10 +518,12 @@ export function CardScriptEditor({
   const selectionQuery = useMemo(() => {
     const params = new URLSearchParams({
       cardId,
+      projectId,
+      deckId,
       selectedIds: selectedTools.join(','),
     });
     return params.toString();
-  }, [cardId, selectedTools.join('\u0000')]);
+  }, [cardId, deckId, projectId, selectedTools.join('\u0000')]);
 
   const switchDocument = (next: 'source' | 'header') => {
     const editor = editorRef.current;
@@ -917,7 +930,9 @@ export function CardScriptEditor({
       <header className="card-script-ide__header">
         <div className="card-script-ide__identity">
           <strong>Card Python Script</strong>
-          
+          <small data-testid="card-script-grammar">
+            Literal contract · hermes_tools only · top-level recipe · one output.emit
+          </small>
         </div>
         <label className="card-script-ide__activation">
           <input

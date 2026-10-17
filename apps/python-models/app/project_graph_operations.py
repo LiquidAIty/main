@@ -1,4 +1,6 @@
 """Read-only exact Project Entity operations."""
+# Entity: Knowledge Graphs
+# Relationship: Publishes explicit grantable Project Entity directory and bounded cross-authority context reads while graph providers retain data ownership.
 
 from __future__ import annotations
 
@@ -335,6 +337,7 @@ def project_graph_operation_definitions(
         publishers=external,
         access="read",
         namespace="project_graph",
+        grant_eligible=True,
         annotations={
             "readOnlyHint": True,
             "destructiveHint": False,
@@ -392,6 +395,7 @@ def project_graph_operation_definitions(
         publishers=external,
         access="read",
         namespace="project_graph",
+        grant_eligible=True,
         annotations={
             "readOnlyHint": True,
             "destructiveHint": False,

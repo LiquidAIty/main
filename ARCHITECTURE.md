@@ -143,6 +143,28 @@ there is no separate CodeGraph backend route or graph owner.
 Route names are transport addresses, not agent identities or separate runtimes. The retired generic
 Card-runtime and loopback Hermes Card-tools routes remain absent.
 
+## Current co-located loopback launch
+
+The launch target is one supervised local process graph. Internal services do not bind publicly:
+
+| Surface | Loopback owner |
+| --- | --- |
+| Client development / preview | `127.0.0.1:5173` / `127.0.0.1:4173` |
+| Backend HTTP and Card-terminal upgrade | `127.0.0.1:4000` |
+| Python rails | `127.0.0.1:8003` |
+| KnowGraph | `127.0.0.1:8001` |
+| Application MCP host | `127.0.0.1:8765` |
+| Hermes Gateway, sessions and PTY | `127.0.0.1:9119` |
+| WorldView provider | `127.0.0.1:4174` |
+| WorldSignals backend / frontend | `127.0.0.1:8000` / `127.0.0.1:3000` by default |
+
+The browser reaches the backend and companion applications only through same-origin client proxies.
+The backend alone holds the internal process secret and Hermes dashboard credential. Card terminals use
+the authenticated backend WebSocket upgrade; the browser never receives a reusable Hermes token or direct
+PTY URL. The optional ngrok MCP publication is a separate OAuth-protected external resource and exposes
+only the MCP host, never the internal backend routes. A separated private-service deployment remains future
+work and requires a separately approved authenticated TLS topology.
+
 ## HermesLatest application boundary
 
 One independently supervised `hermes serve` process starts from the root `dev:hermes` Node package
@@ -408,6 +430,7 @@ LiquidAIty execution boundary. No other Hermes customization is accepted by this
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
 | `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. Hermes keeps profile creation, execution, sessions, Bot delivery, learning, queue, task ledger, PTY, MCP transport, and child Python execution. Local hunks add Project roster/session inputs, receiving-Card Run context, exact process/Run correlation, profile-MCP request headers, Card Script presentation, and the existing Team/Magnetic authority constraints without another runtime. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, per-turn application tool callback, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
+| Same Hermes baseline | `HermesLatest/hermes_cli/taskgraph_adapter.py::{validate_profiles,stage_root,activate_root,read_root,main}`; focused adapter tests | Provide one generic, JSON-serializable public process boundary over Hermes's existing profile and Kanban APIs so another co-located runtime can stage, activate, and read the same task root without importing Hermes internals or mutating process-global Python module state. Hermes retains its database, dispatcher, attempts, workers, dependencies, authority events, and synthesis. | External alternative check: shipped CLI/Gateway do not expose exact allowed-assignee, authority-event, blocked-stage/activate, or whole-root readback contracts; Python-rails and Hermes package pins conflict. Proof requires adapter unit tests plus application Magnetic tests and one loaded same-root mission. Fork cost is one additive module; rollback removes it and disables the dependent Magnetic adapter without migrating task data. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
 `HermesLatest/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved

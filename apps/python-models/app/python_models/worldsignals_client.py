@@ -1,4 +1,6 @@
 """Server-side client for the WorldSignals agent command channel."""
+# Entity: WorldSignals
+# Relationship: Enforces the explicit mainstream and opt-in specialist command sets, validates manifest drift, and carries bounded authenticated requests to the unmodified WorldSignals product.
 
 from __future__ import annotations
 
@@ -92,34 +94,39 @@ def _validated_base_url(value: str, secret: str) -> str:
     return raw.rstrip("/")
 
 
-# Capability boundary — enforced here, at the one chokepoint both the MCP host
-# and the tool registry route through, NOT in prompt wording. WorldSignals is a
-# mainstream live-world intelligence product by default: markets, weather,
-# transport, energy, infrastructure, news, entities, imagery, watches. The
-# upstream app also ships recon/SIGINT/mesh-governance commands; those stay
-# implemented upstream but are NOT in the default automatic grant. They are
-# refused unless an operator explicitly enables the extended profile via
-# WORLDSIGNALS_EXTENDED_PROFILE=1. This makes the default product genuinely
-# non-cyber — it is a real boundary, not concealment.
-WORLDSIGNALS_RESTRICTED_COMMANDS: frozenset[str] = frozenset({
-    # Network recon / device discovery (Shodan-centric)
-    "osint_sweep",
-    "osint_lookup",
-    "osint_tools",
-    "entity_expand",
-    # Signals intelligence
-    "get_sigint_totals",
-    # InfoNet / mesh governance, Dead Drop messaging, reputation
-    "list_gates",
-    "read_gate_messages",
-    "post_gate_message",
-    "cast_vote",
-    "send_dm",
-    "poll_dms",
-    "join_infonet_swarm",
-    "ensure_infonet_ready",
-    "infonet_status",
+# Explicit fail-closed policy. Every command in the current upstream manifest
+# belongs to exactly one set; an upstream addition is refused until reviewed.
+WORLDSIGNALS_MAINSTREAM_COMMANDS: frozenset[str] = frozenset({
+    "get_telemetry", "get_slow_telemetry", "get_summary", "get_report",
+    "get_layer_slice", "find_flights", "find_ships", "find_entity",
+    "correlate_entity", "get_entity_trail", "get_entity_profile", "brief_area",
+    "what_changed", "search_telemetry", "search_news", "entities_near",
+    "get_prediction_markets", "get_ai_pins", "get_correlations", "channel_status",
+    "list_watches", "timemachine_list", "timemachine_config", "get_layers",
+    "place_pin", "take_snapshot", "delete_pin", "timemachine_playback",
+    "create_layer", "update_layer", "delete_layer", "refresh_feed",
+    "add_watch", "track_entity", "watch_area", "remove_watch", "clear_watches",
+    "show_satellite", "show_sentinel",
 })
+WORLDSIGNALS_EXTENDED_COMMANDS: frozenset[str] = frozenset({
+    "get_sigint_totals",
+    "sar_status", "sar_anomalies_recent", "sar_anomalies_near",
+    "sar_scene_search", "sar_coverage_for_aoi", "sar_aoi_list", "sar_pin_click",
+    "list_analysis_zones",
+    "osint_lookup", "osint_tools", "entity_expand", "route_query", "run_playbook",
+    "gt_risk_heatmap", "gt_dossier", "gt_analyze", "gt_backtest",
+    "gt_rolling_freeze", "gt_rolling_label", "gt_rolling_backtest",
+    "gt_micro_rolling", "gt_top_alerts",
+    "infonet_status", "list_gates", "read_gate_messages", "poll_dms",
+    "inject_data", "sar_aoi_add", "sar_aoi_remove", "sar_pin_from_anomaly",
+    "sar_watch_anomaly", "sar_focus_aoi", "place_analysis_zone",
+    "delete_analysis_zone", "clear_analysis_zones", "osint_sweep",
+    "ensure_infonet_ready", "join_infonet_swarm", "post_gate_message",
+    "cast_vote", "send_dm",
+})
+WORLDSIGNALS_POLICY_COMMANDS = (
+    WORLDSIGNALS_MAINSTREAM_COMMANDS | WORLDSIGNALS_EXTENDED_COMMANDS
+)
 
 
 def _extended_profile_enabled() -> bool:
@@ -128,13 +135,15 @@ def _extended_profile_enabled() -> bool:
 
 def _guard_command(command: str) -> str:
     command = _canonical_command(command)
-    if command in WORLDSIGNALS_RESTRICTED_COMMANDS and not _extended_profile_enabled():
+    if command in WORLDSIGNALS_MAINSTREAM_COMMANDS:
+        return command
+    if command in WORLDSIGNALS_EXTENDED_COMMANDS and not _extended_profile_enabled():
         raise WorldSignalsError(
-            f"worldsignals_command_requires_extended_profile: '{command}' is a recon/SIGINT/"
-            "mesh command outside the default mainstream WorldSignals profile. Enable it "
-            "deliberately via WORLDSIGNALS_EXTENDED_PROFILE=1; it is not part of the automatic grant."
+            f"worldsignals_command_requires_extended_profile:{command}"
         )
-    return command
+    if command in WORLDSIGNALS_EXTENDED_COMMANDS:
+        return command
+    raise WorldSignalsError(f"worldsignals_command_not_allowed:{command}")
 
 
 class WorldSignalsClient:
@@ -337,6 +346,9 @@ def _validated_tool_manifest(value: Any) -> tuple[str, list[dict[str, Any]]]:
             accepted.append({**entry, "name": name, "type": operation_type})
     if not available_names.issubset(seen):
         raise WorldSignalsError("worldsignals_manifest_invalid")
+    unknown = sorted(seen - WORLDSIGNALS_POLICY_COMMANDS)
+    if unknown:
+        raise WorldSignalsError(f"worldsignals_manifest_policy_drift:{unknown[0]}")
     return version, accepted
 
 
@@ -406,12 +418,9 @@ def worldsignals_capabilities(
     capabilities = {k: raw_capabilities[k] for k in _CAPABILITY_DECISION_KEYS if k in raw_capabilities}
     tools: dict[str, Any] = {k: raw_tools[k] for k in _TOOLS_DECISION_KEYS if k in raw_tools}
     omitted_entries = [
-        entry
-        for entry in manifest_entries
-        if (
-            str(entry.get("name") or "") in WORLDSIGNALS_RESTRICTED_COMMANDS
-            and not _extended_profile_enabled()
-        )
+        entry for entry in manifest_entries
+        if str(entry.get("name") or "") in WORLDSIGNALS_EXTENDED_COMMANDS
+        and not _extended_profile_enabled()
     ]
     allowed_entries = [
         entry

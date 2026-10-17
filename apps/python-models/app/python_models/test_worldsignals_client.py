@@ -1,3 +1,7 @@
+"""WorldSignals transport, manifest policy, and signal-package tests."""
+# Entity: WorldSignals
+# Relationship: Verifies bounded authenticated transport, explicit mainstream and specialist command policy, fail-closed manifest drift, and provenance-bound read packages.
+
 import hashlib
 import hmac
 import json
@@ -7,7 +11,8 @@ import pytest
 from app.python_models import worldsignals_client as wsc
 from app.python_models import tool_registry as tr
 from app.python_models.worldsignals_client import (
-    WORLDSIGNALS_RESTRICTED_COMMANDS,
+    WORLDSIGNALS_EXTENDED_COMMANDS,
+    WORLDSIGNALS_MAINSTREAM_COMMANDS,
     WorldSignalsClient,
     WorldSignalsError,
     collect_worldsignals_signal_package,
@@ -181,7 +186,7 @@ def test_missing_worldsignals_runtime_returns_typed_unavailable_error(monkeypatc
 def test_mainstream_commands_pass_the_default_capability_boundary() -> None:
     # A representative mainstream research command is never gated.
     for cmd in ("get_summary", "find_entity", "correlate_entity", "search_news", "add_watch", "brief_area"):
-        assert cmd not in WORLDSIGNALS_RESTRICTED_COMMANDS
+        assert cmd in WORLDSIGNALS_MAINSTREAM_COMMANDS
         _guard_command(cmd)  # must not raise
 
 
@@ -250,7 +255,7 @@ def test_manifest_does_not_advertise_commands_the_guard_will_refuse(monkeypatch)
     result = worldsignals_capabilities()
     names = {tool["name"] for tool in result["tools"]["tools"]}
     assert names == {"get_summary"}
-    assert not names & set(WORLDSIGNALS_RESTRICTED_COMMANDS)
+    assert not names & set(WORLDSIGNALS_EXTENDED_COMMANDS)
     assert "osint_sweep" not in result["tools"]["available_commands"]
     assert result["tools"]["profile"] == "mainstream"
     assert result["tools"]["omitted_restricted_commands"] == 2
@@ -271,6 +276,20 @@ def test_extended_profile_advertises_the_full_roster(monkeypatch) -> None:
     assert names == {"get_summary", "osint_sweep"}
     assert result["tools"]["profile"] == "extended"
     assert result["tools"]["omitted_restricted_commands"] == 0
+
+
+def test_unknown_manifest_addition_fails_closed(monkeypatch) -> None:
+    _fake_upstream(monkeypatch, tool_names=["get_summary", "unreviewed_command"])
+    with pytest.raises(
+        WorldSignalsError,
+        match="worldsignals_manifest_policy_drift:unreviewed_command",
+    ):
+        worldsignals_capabilities()
+    with pytest.raises(
+        WorldSignalsError,
+        match="worldsignals_command_not_allowed:unreviewed_command",
+    ):
+        _guard_command("unreviewed_command")
 
 
 def test_long_descriptions_are_bounded(monkeypatch) -> None:
@@ -295,11 +314,11 @@ def test_manifest_filters_and_exact_command_schema_are_bounded(monkeypatch) -> N
             "ok": True,
             "version": "0.9.82",
             "available_commands": [
-                "market_snapshot", "add_watch", "weather_now",
+                "get_prediction_markets", "add_watch", "find_entity",
             ],
             "tools": [
                 {
-                    "name": "market_snapshot",
+                    "name": "get_prediction_markets",
                     "type": "read",
                     "domain": "markets",
                     "description": "Current market prices.",
@@ -313,7 +332,7 @@ def test_manifest_filters_and_exact_command_schema_are_bounded(monkeypatch) -> N
                     "parameters": {"symbol": {"type": "string"}},
                 },
                 {
-                    "name": "weather_now",
+                    "name": "find_entity",
                     "type": "read",
                     "domain": "weather",
                     "description": "Current conditions.",
@@ -324,10 +343,10 @@ def test_manifest_filters_and_exact_command_schema_are_bounded(monkeypatch) -> N
     )
 
     reads = worldsignals_capabilities(domain="markets", operation_class="read")
-    assert [tool["name"] for tool in reads["tools"]["tools"]] == ["market_snapshot"]
+    assert [tool["name"] for tool in reads["tools"]["tools"]] == ["get_prediction_markets"]
     assert reads["tools"]["inventory"] == {"total": 3, "read": 2, "write": 1, "other": 0}
 
-    exact = worldsignals_capabilities(command="weather_now")
+    exact = worldsignals_capabilities(command="find_entity")
     assert exact["tools"]["match_count"] == 1
     assert exact["tools"]["tools"][0]["parameters"] == {"location": {"type": "string"}}
 

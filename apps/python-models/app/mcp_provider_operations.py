@@ -1,4 +1,9 @@
 """CBM and Graphiti publication, invocation, and result policy."""
+# Entity: External MCP
+# Relationship: Discovers and dispatches bounded CBM and Graphiti provider operations through their current authenticated MCP contracts.
+#
+# Entity: Tool Grants
+# Relationship: Publishes canonical operation metadata, including explicit eligibility and profile ceilings, into the authenticated tool catalog.
 
 from __future__ import annotations
 
@@ -226,6 +231,7 @@ def register_cbm_catalog(tools: list[Tool]) -> None:
             publishers=frozenset({"external-mcp"}),
             access="read" if read_only is True else "write",
             namespace="cbm",
+            grant_eligible=True,
             external_source_id="cbm",
             output_schema=(
                 copy.deepcopy(tool.output_schema)
@@ -317,6 +323,7 @@ def register_graphiti_catalog(tools: list[Tool]) -> None:
             publishers=frozenset({"external-mcp"}),
             access=str(policy["access"]),
             namespace="graphiti",
+            grant_eligible=True,
             external_source_id="graphiti",
             output_schema=(
                 copy.deepcopy(tool.output_schema)
@@ -387,6 +394,7 @@ def bind_operation_access(tool: Tool) -> Tool:
         "access": access,
         "available": definition.available,
         "grantEligible": definition.grant_eligible,
+        "grantProfiles": sorted(definition.grant_profiles),
         "canonicalInputSchema": canonical_input_schema,
         "serverInjectedArguments": sorted(definition.server_injected_arguments),
         "dispatcherContextArguments": sorted(definition.dispatcher_context_arguments),

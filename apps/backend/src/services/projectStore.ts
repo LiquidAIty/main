@@ -1,9 +1,17 @@
+/**
+ * Entity: Projects
+ * Relationship: Creates, lists, authorizes, and compensates owner-scoped Project records without deriving one Project's state from another Project.
+ *
+ * Entity: Saved Cards
+ * Relationship: Lists and attaches exact owner-scoped saved Card revisions while preserving Project-local membership, profile uniqueness, and compare-and-swap deck authority.
+ *
+ * Entity: Hermes Profiles
+ * Relationship: Proves one stable logical profile is referenced by exactly one authenticated owner before any reusable Hermes profile or credential surface is accessed.
+ */
+
 import { randomUUID } from 'crypto';
 import { pool } from '../db/pool';
-import {
-  DEFAULT_PROJECT_CARDS,
-  DEFAULT_PROJECT_DECK_ID,
-} from '../decks/defaultProjectDeck';
+import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import type { ProjectSummary } from '../types/project';
 
 export type OwnedProject = ProjectSummary & {
@@ -70,45 +78,6 @@ export async function createProject(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Card revision propagation and Project membership creation take the same
-    // transaction-scoped profile locks. Whichever operation starts second
-    // therefore reads after the first has committed and cannot reintroduce a
-    // superseded Card revision into a new Project.
-    await lockCardProfiles(client, DEFAULT_PROJECT_CARDS.map((card) => card.profile));
-    const identityParams = DEFAULT_PROJECT_CARDS.flatMap((card) => [card.cardId, card.profile]);
-    const values = DEFAULT_PROJECT_CARDS.map((_, index) => (
-      `($${index * 2 + 1}::text,$${index * 2 + 2}::text)`
-    )).join(',');
-    const result = await client.query(
-      `WITH expected(card_id, runtime_profile) AS (VALUES ${values}),
-         ranked AS (
-           SELECT expected.card_id, card.current_revision_id,
-                  row_number() OVER (
-                    PARTITION BY expected.card_id
-                    ORDER BY revision.created_at DESC,
-                             revision.revision_number DESC,
-                             revision.revision_id DESC
-                  ) AS rank
-           FROM expected
-           JOIN ag_catalog.agent_cards AS card
-             ON card.card_id=expected.card_id
-           JOIN ag_catalog.agent_card_revisions AS revision
-             ON revision.revision_id=card.current_revision_id
-            AND revision.runtime_profile=expected.runtime_profile
-         )
-         SELECT card_id, current_revision_id::text
-         FROM ranked WHERE rank=1
-         ORDER BY card_id`,
-      identityParams,
-    );
-    const systemCards = result.rows.map((row) => ({
-      card_id: String(row.card_id),
-      current_revision_id: String(row.current_revision_id),
-    }));
-    const resolved = new Map(systemCards.map((row) => [row.card_id, row.current_revision_id]));
-    const missing = DEFAULT_PROJECT_CARDS.find((card) => !resolved.get(card.cardId));
-    if (missing) throw new Error(`default_project_card_unavailable:${missing.cardId}`);
-
     const { rows } = await client.query(
       `INSERT INTO ${PROJECTS_TABLE}
          (id, name, code, status, agent_tools, agent_io_schema, agent_permissions, owner_user_id)
@@ -118,32 +87,6 @@ export async function createProject(
     );
     const row = rows[0];
     if (!row) throw new Error('project_create_failed');
-
-    const deckRevision = randomUUID();
-    await client.query(
-        `INSERT INTO ag_catalog.agent_decks
-           (project_id, deck_id, name, project_code_folder, document_version, revision, saved_at, updated_at)
-         VALUES ($1,$2,'Agent Card Deck',NULL,10,$3,NOW(),NOW())`,
-        [projectId, DEFAULT_PROJECT_DECK_ID, deckRevision],
-      );
-    const revisionByCard = new Map(systemCards.map((entry) => [entry.card_id, entry.current_revision_id]));
-    for (const [ordinal, card] of DEFAULT_PROJECT_CARDS.entries()) {
-        const revisionId = revisionByCard.get(card.cardId);
-        if (!revisionId) throw new Error(`default_project_card_unavailable:${card.cardId}`);
-        await client.query(
-          `INSERT INTO ag_catalog.agent_cards
-             (project_id, deck_id, card_id, current_revision_id)
-           VALUES ($1,$2,$3,$4)`,
-          [projectId, DEFAULT_PROJECT_DECK_ID, card.cardId, revisionId],
-        );
-        await client.query(
-          `INSERT INTO ag_catalog.deck_card_memberships
-           (project_id, deck_id, card_id, ordinal, position_x, position_y,
-              parent_graph_id, presentation_config)
-           VALUES ($1,$2,$3,$4,$5,$6,NULL,'{}'::jsonb)`,
-          [projectId, DEFAULT_PROJECT_DECK_ID, card.cardId, ordinal, card.x, card.y],
-        );
-    }
     await client.query('COMMIT');
     return {
       id: row.id,
@@ -251,6 +194,31 @@ export async function getOwnedProjectByReference(
     status: row.status ?? null,
     ownerUserId: String(row.owner_user_id || ''),
   };
+}
+
+export async function assertHermesProfileOwner(
+  runtimeProfile: string,
+  ownerUserId: string,
+): Promise<void> {
+  const profile = String(runtimeProfile || '').trim().toLowerCase();
+  const owner = String(ownerUserId || '').trim();
+  if (!profile || !owner) throw new Error('hermes_profile_owner_required');
+  const { rows } = await pool.query(
+    `SELECT DISTINCT project.owner_user_id
+     FROM ag_catalog.agent_cards AS card
+     JOIN ag_catalog.agent_card_revisions AS revision
+       ON revision.revision_id=card.current_revision_id
+     JOIN ag_catalog.projects AS project
+       ON project.id=card.project_id
+     WHERE revision.runtime_kind='hermes'
+       AND LOWER(revision.runtime_profile)=$1
+     ORDER BY project.owner_user_id`,
+    [profile],
+  );
+  const owners = rows.map((row) => String(row.owner_user_id || '').trim()).filter(Boolean);
+  if (owners.length !== 1 || owners[0] !== owner) {
+    throw new Error('hermes_profile_owner_conflict');
+  }
 }
 
 export async function listSavedCardsForProject(

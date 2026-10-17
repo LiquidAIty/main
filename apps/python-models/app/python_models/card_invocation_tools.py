@@ -1,4 +1,6 @@
 """Live catalog, saved grants, and Script tool selection."""
+# Entity: Tool Grants
+# Relationship: Intersects a saved Card's selected tool ceiling with live availability, explicit eligibility, and the exact Hermes-profile scope before Run or Script presentation.
 
 from __future__ import annotations
 
@@ -84,6 +86,17 @@ def resolve_effective_card_tools(
     if ineligible_tools:
         raise CardDomainError(
             f"configured_tool_not_grant_eligible:{ineligible_tools[0]}"
+        )
+    runtime_profile = str(runtime.get("profile") or "").strip().lower()
+    profile_restricted_tools = [
+        name for name in catalog_ceiling
+        if name in by_id
+        and by_id[name].get("grantProfiles")
+        and runtime_profile not in by_id[name]["grantProfiles"]
+    ]
+    if profile_restricted_tools:
+        raise CardDomainError(
+            f"configured_tool_profile_not_granted:{profile_restricted_tools[0]}"
         )
     def unavailable_reason(name: str) -> str | None:
         if name in tool_catalog_failures:

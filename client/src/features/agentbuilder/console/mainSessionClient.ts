@@ -1,3 +1,8 @@
+/**
+ * Entity: Main Chat
+ * Relationship: This transport validates Main history and SSE identities, admits exactly one final turn result, closes at the explicit end frame, and carries Hermes voice events without inventing assistant output.
+ */
+
 export type MainConversationParticipant = {
   kind: 'user' | 'card';
   label: string;
@@ -159,9 +164,24 @@ export async function streamSession(args: {
   let buffer = '';
   let finalText = '';
   let streamFailure: SessionStreamError | null = null;
+  let sawDone = false;
   let sawEnd = false;
   const receive = (kind: string, data: Record<string, unknown>) => {
-    if (kind === 'done') finalText = String(data.fullText ?? finalText);
+    if (sawEnd) return;
+    if (kind === 'done') {
+      const completedText = String(data.fullText ?? finalText);
+      if (sawDone && completedText !== finalText) {
+        streamFailure = new SessionStreamError({
+          code: 'session_stream_completion_conflict',
+          message: 'The Main stream returned conflicting completion frames.',
+          route: `${BASE}/chat`,
+        });
+        return;
+      }
+      if (sawDone) return;
+      sawDone = true;
+      finalText = completedText;
+    }
     if (kind === 'end') sawEnd = true;
     if (kind === 'error') {
       streamFailure = new SessionStreamError({
@@ -180,6 +200,10 @@ export async function streamSession(args: {
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     buffer = parseSseFrames(buffer, receive);
+    if (sawEnd) {
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
   }
   buffer += decoder.decode();
   parseSseFrames(buffer, receive);
@@ -188,6 +212,13 @@ export async function streamSession(args: {
     throw new SessionStreamError({
       code: 'session_stream_incomplete',
       message: 'The Main stream ended before its end event.',
+      route: `${BASE}/chat`,
+    });
+  }
+  if (!sawDone) {
+    throw new SessionStreamError({
+      code: 'session_stream_completion_missing',
+      message: 'The Main stream ended without a completion event.',
       route: `${BASE}/chat`,
     });
   }
@@ -394,6 +425,8 @@ export async function streamVoiceCapture(args: {
     buffer += decoder.decode(value, { stream: true });
     buffer = parseSseFrames(buffer, receive);
   }
+  buffer += decoder.decode();
+  parseSseFrames(buffer, receive);
   if (failure) throw failure;
 }
 

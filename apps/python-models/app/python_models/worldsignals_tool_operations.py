@@ -1,4 +1,6 @@
 """WorldSignals package handlers and operation definitions."""
+# Entity: WorldSignals
+# Relationship: Publishes the explicit grantable capability, command, polling, event, and evidence-package surface for the current WorldSignals adapter policy.
 
 from __future__ import annotations
 
@@ -91,6 +93,7 @@ def worldsignals_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_open,
         ),
@@ -113,6 +116,7 @@ def worldsignals_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="write",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=_annotations(
                 read_only=False, destructive=True, idempotent=False, open_world=True,
@@ -148,6 +152,7 @@ def worldsignals_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="write",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=_annotations(
                 read_only=False, destructive=True, idempotent=False, open_world=True,
@@ -167,6 +172,7 @@ def worldsignals_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="write",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=_annotations(
                 read_only=False, destructive=True, idempotent=False, open_world=True,
@@ -191,6 +197,7 @@ def worldsignals_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_open,
         ),
@@ -231,6 +238,7 @@ def worldsignals_tool_operation_definitions() -> list[OperationDefinition]:
             publishers=internal,
             access="read",
             namespace="python",
+            grant_eligible=True,
             external_source_id="python_runtime",
             annotations=read_open,
             dispatcher_context_arguments=frozenset({

@@ -1,3 +1,11 @@
+/**
+ * Entity: Application Startup
+ * Relationship: Builds and serves the client on explicit loopback ports while proxying only the approved local backend and companion-service transports.
+ *
+ * Entity: WorldView
+ * Relationship: Bundles the controlled WorldView mount, scopes its styles to the owning pane, and proxies its loopback provider surface.
+ */
+
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
@@ -208,9 +216,9 @@ export default defineConfig(({ mode, command }) => {
       ],
     },
     server: {
-      host: '::',
+      host: '127.0.0.1',
       port: 5173,
-      strictPort: false,
+      strictPort: true,
       proxy: {
         '/cesium-ion': {
           target: 'https://api.cesium.com',
@@ -245,6 +253,7 @@ export default defineConfig(({ mode, command }) => {
           target: 'http://127.0.0.1:4000',
           changeOrigin: true,
           secure: false,
+          ws: true,
         },
       },
     },
@@ -273,6 +282,7 @@ export default defineConfig(({ mode, command }) => {
           target: 'http://127.0.0.1:4000',
           changeOrigin: true,
           secure: false,
+          ws: true,
         },
       },
     },

@@ -1,4 +1,6 @@
 """AgentGraph, Canvas, and saved Card operation definitions."""
+# Entity: Card Tools
+# Relationship: Publishes explicit grantable operations for inspecting AgentGraph and for reading or changing the authenticated saved Canvas and Card configuration.
 
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ def agentgraph_operation_definitions(
             publishers=external,
             access="read",
             namespace="main",
+            grant_eligible=True,
             annotations={
                 "readOnlyHint": True,
                 "destructiveHint": False,
@@ -73,6 +76,7 @@ def canvas_card_operation_definitions(
             publishers=external,
             access="read",
             namespace="main",
+            grant_eligible=True,
             annotations={
                 "readOnlyHint": True,
                 "destructiveHint": False,
@@ -95,6 +99,7 @@ def canvas_card_operation_definitions(
             publishers=external,
             access="write",
             namespace="main",
+            grant_eligible=True,
             annotations={
                 "readOnlyHint": False,
                 "destructiveHint": False,
@@ -117,6 +122,7 @@ def canvas_card_operation_definitions(
             publishers=external,
             access="write",
             namespace="main",
+            grant_eligible=True,
             annotations={
                 "readOnlyHint": False,
                 "destructiveHint": True,
@@ -143,6 +149,7 @@ def canvas_card_operation_definitions(
             publishers=external,
             access="write",
             namespace="main",
+            grant_eligible=True,
             annotations={
                 "readOnlyHint": False,
                 "destructiveHint": True,

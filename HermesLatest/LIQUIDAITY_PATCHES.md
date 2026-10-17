@@ -1,6 +1,6 @@
 # HermesLatest application patch overlay
 
-This register is the update contract for seven bounded extension families carried on top of Hermes
+This register is the update contract for eight bounded extension families carried on top of Hermes
 Agent. It describes current source; it is not runtime authority and it does not permit unrelated vendor
 cleanup.
 
@@ -43,6 +43,9 @@ or fallback checkout is retained.
    temporary workers, and synthesize on that same root through Hermes's task ledger.
 7. TaskGraph / Magnetic: persist and enforce the exact blue-worker assignment ceiling and creator lineage
    while leaving ordinary Hermes tasks unrestricted.
+8. Package-safe taskgraph adapter: expose existing Hermes profile validation plus blocked-root stage,
+   authority binding, activation and whole-root readback through one generic Hermes-interpreter process
+   boundary. It owns no scheduler, retry loop, task copy or LiquidAIty runtime semantics.
 
 Codex app-server's internal Dynamic Tools support remains its vendored session protocol for the two
 session-bound Hermes capabilities recorded below; it is not an application tool-authority path.
@@ -58,6 +61,7 @@ IDE/editor/compiler/executor is preserved; its broader hook-point design remains
 | `agent/card_script_tool.py` | Card Python | Validates the immutable Script contract, hashes, schemas, exact tool names/states and budgets; runs one child Python recipe and dispatches nested calls through the profile's registered tools. |
 | `tui_gateway/saved_card_turn.py` | Receiving-Card lifecycle | Validates Project/Card context, transports prepare/start/finish through the existing process-authenticated endpoint, binds current Run headers, and counts actual model plus Script tool calls. |
 | `hermes_cli/kanban_team.py` | AutoTeam | Owns the explicit Team task mode/policy, root construction/readback, activation and bounded decomposition-failure settlement. |
+| `hermes_cli/taskgraph_adapter.py` | Package-safe taskgraph adapter | Validates profiles and performs exact stage, authority-event binding, activation, and root/descendant readback through the existing Kanban database APIs; its CLI accepts one bounded JSON request and returns one bounded JSON result. |
 | `skills/autonomous-ai-agents/agent-builder-inspection/SKILL.md` | Profile fencing | Bundled Builder guidance selected by the saved Builder Card and seeded by Hermes's existing fresh-profile skill sync; it adds no permission, loader or execution path. |
 
 ## Compatibility hunks in upstream production files

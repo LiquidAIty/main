@@ -1,3 +1,8 @@
+/**
+ * Entity: Card Scripts
+ * Relationship: Verifies the editor presents the positive recipe grammar, bounded starter, canonical examples, and grant-aware Monaco authoring controls.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -14,9 +19,11 @@ describe('CardScriptEditor Monaco contract', () => {
     for (const section of SCRIPT_SECTIONS) {
       expect(STARTER_SCRIPT).toContain(`# region ${section}`);
     }
-    expect(STARTER_SCRIPT.match(/# region /g)).toHaveLength(3);
-    expect(STARTER_SCRIPT.match(/# endregion/g)).toHaveLength(3);
+    expect(STARTER_SCRIPT.split('# region ')).toHaveLength(4);
+    expect(STARTER_SCRIPT.split('# endregion')).toHaveLength(4);
     expect(STARTER_SCRIPT).toContain('"mode": "tool_recipe"');
+    expect(STARTER_SCRIPT).toContain('Accepted grammar: one literal contract');
+    expect(STARTER_SCRIPT).toContain('from hermes_tools import SCRIPT, input, output, tools');
     expect(STARTER_SCRIPT).toContain('output.emit({');
     expect(STARTER_SCRIPT).not.toContain('card.subagents');
     expect(STARTER_SCRIPT).not.toContain('delegate_task');

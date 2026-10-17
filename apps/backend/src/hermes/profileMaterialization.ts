@@ -1,3 +1,9 @@
+/**
+ * Entity: Hermes Profiles
+ * Relationship: Materializes saved Card prompts, models, grants, and reusable profile capabilities while enforcing one owner and keeping Project and Run context request-scoped.
+ */
+
+import { createHash } from 'node:crypto';
 import type { DeckCard, DeckDocument } from '../types';
 import { exactStrings, objectRecord } from '../services/projectCardAuthority';
 import type { ToolCatalogDescriptor } from '../services/mcp/toolCatalogMcpClient';
@@ -34,6 +40,7 @@ const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
 const TEAM_CARD_IDS = new Set(['card_team']);
 const CARD_PROFILE_MCP_SERVER = 'liquidaity';
+const PROFILE_OWNER_META_KEY = 'hermes-bots';
 
 function gatewayErrorCode(error: unknown): number | null {
   const value = error && typeof error === 'object'
@@ -48,6 +55,21 @@ function cardEnabled(card: DeckCard): boolean {
 
 function equalStrings(left: string[], right: string[]): boolean {
   return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
+function profileOwnerRef(ownerUserId: string): string {
+  const owner = String(ownerUserId || '').trim();
+  if (!owner) throw new Error('hermes_profile_owner_required');
+  return createHash('sha256').update(owner, 'utf8').digest('hex');
+}
+
+function assertProfileOwner(profile: HermesProfileState, ownerUserId: string): void {
+  const meta = objectRecord(profile.ui_meta);
+  const cardMeta = objectRecord(meta[PROFILE_OWNER_META_KEY]);
+  const existing = String(cardMeta.owner_ref || '').trim();
+  if (existing && existing !== profileOwnerRef(ownerUserId)) {
+    throw new Error('hermes_profile_owner_conflict');
+  }
 }
 
 function cardProfileMcpUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -83,8 +105,12 @@ function cardProfileMcpOauth(env: NodeJS.ProcessEnv = process.env): {
 function cardProfileMcpTools(
   card: DeckCard,
   toolCatalog: readonly ToolCatalogDescriptor[],
+  unavailableToolCatalogFamilies: readonly string[],
 ): string[] {
   const options = objectRecord(card.runtimeOptions);
+  const unavailableFamilies = new Set(
+    unavailableToolCatalogFamilies.map((family) => String(family).trim().toLowerCase()),
+  );
   const catalogById = new Map<string, ToolCatalogDescriptor>();
   for (const definition of toolCatalog) {
     if (catalogById.has(definition.name)) {
@@ -94,11 +120,17 @@ function cardProfileMcpTools(
   }
   return exactStrings(options.tools).flatMap((toolId) => {
     const definition = catalogById.get(toolId);
+    const family = toolId.includes('.') ? toolId.split('.', 1)[0].toLowerCase() : '';
+    if (!definition && family && unavailableFamilies.has(family)) {
+      return [];
+    }
     if (
       !definition
       || definition.publication !== 'external-mcp'
       || !definition.available
       || !definition.grantEligible
+      || (definition.grantProfiles.length > 0
+        && !definition.grantProfiles.includes(card.runtime.profile.toLowerCase()))
     ) {
       throw new Error(`hermes_profile_tool_unavailable:${card.runtime.profile}:${toolId}`);
     }
@@ -109,10 +141,9 @@ function cardProfileMcpTools(
 async function ensureCardProfileMcpServer(
   request: HermesRequest,
   card: DeckCard,
-  projectId: string,
+  current: HermesProfileState,
   selectedTools: string[],
 ): Promise<boolean> {
-  if (!selectedTools.length) return false;
   const expectedUrl = cardProfileMcpUrl();
   const oauth = cardProfileMcpOauth();
   const listed = objectRecord(await request('mcp.servers.list', {
@@ -124,6 +155,12 @@ async function ensureCardProfileMcpServer(
   if (matches.length > 1) {
     throw new Error(`hermes_profile_mcp_server_ambiguous:${card.runtime.profile}`);
   }
+  const currentServer = (current.mcp_servers || []).find((server) => (
+    String(server.name || '').trim() === CARD_PROFILE_MCP_SERVER
+  ));
+  const hasPersistedProjectContext = Boolean(
+    String(currentServer?.context_headers?.project_id || '').trim(),
+  );
   if (matches.length === 1) {
     const server = matches[0];
     let normalizedUrl = '';
@@ -135,8 +172,17 @@ async function ensureCardProfileMcpServer(
     if (normalizedUrl !== expectedUrl || String(server.auth || '').trim() !== 'oauth') {
       throw new Error(`hermes_profile_mcp_server_definition_mismatch:${card.runtime.profile}`);
     }
-    return false;
+    if (!hasPersistedProjectContext) return false;
+    const removed = objectRecord(await request('mcp.servers.remove', {
+      profile: card.runtime.profile,
+      name: CARD_PROFILE_MCP_SERVER,
+    }));
+    if (removed.ok !== true || removed.removed !== true) {
+      throw new Error(`hermes_profile_mcp_server_rewrite_failed:${card.runtime.profile}`);
+    }
+    if (!selectedTools.length) return true;
   }
+  if (!selectedTools.length) return false;
   const added = objectRecord(await request('mcp.servers.add', {
     profile: card.runtime.profile,
     name: CARD_PROFILE_MCP_SERVER,
@@ -147,7 +193,6 @@ async function ensureCardProfileMcpServer(
       enabled: true,
       strict_redirect_headers: true,
       headers: {
-        'X-LiquidAIty-Project-Id': projectId,
         'X-LiquidAIty-Hermes-Profile': card.runtime.profile,
       },
       tools: { include: selectedTools },
@@ -235,9 +280,11 @@ export function savedCardBotRoster(deck: DeckDocument, card: DeckCard): string[]
 function configuredProfileParams(
   card: DeckCard,
   current: HermesProfileState,
-  projectId: string,
+  ownerUserId: string,
   toolCatalog: readonly ToolCatalogDescriptor[],
+  unavailableToolCatalogFamilies: readonly string[],
 ): Record<string, unknown> {
+  assertProfileOwner(current, ownerUserId);
   const options = objectRecord(card.runtimeOptions);
   const model = hermesProfileModelSelection(options);
   const installedSkills = (current.skills || [])
@@ -258,7 +305,11 @@ function configuredProfileParams(
   if (selectedMcpConnections.includes(CARD_PROFILE_MCP_SERVER)) {
     throw new Error(`hermes_profile_mcp_connection_reserved:${CARD_PROFILE_MCP_SERVER}`);
   }
-  const selectedCardProfileTools = cardProfileMcpTools(card, toolCatalog);
+  const selectedCardProfileTools = cardProfileMcpTools(
+    card,
+    toolCatalog,
+    unavailableToolCatalogFamilies,
+  );
   const delegation = delegationSettings(options, current);
   if (delegation?.enabled && !selectedToolsets.includes('delegation')) {
     selectedToolsets.push('delegation');
@@ -274,30 +325,30 @@ function configuredProfileParams(
   const desiredMcpToolFilters = selectedCardProfileTools.length
     ? { [CARD_PROFILE_MCP_SERVER]: selectedCardProfileTools }
     : {};
-  const desiredMcpContextHeaders = selectedCardProfileTools.length
-    ? { [CARD_PROFILE_MCP_SERVER]: {
-      project_id: projectId,
-      profile: card.runtime.profile,
-    } }
-    : {};
   const params: Record<string, unknown> = { name: card.runtime.profile };
   if (!Array.isArray(current.bot_mode_roster) || current.bot_mode_roster.length !== 0) {
     params.bot_mode_roster = [];
   }
   const currentUiMeta = objectRecord(current.ui_meta);
-  const currentBotMeta = objectRecord(currentUiMeta['hermes-bots']);
+  const currentBotMeta = objectRecord(currentUiMeta[PROFILE_OWNER_META_KEY]);
   const cardTitle = String(card.title || '').trim();
+  const ownerRef = profileOwnerRef(ownerUserId);
   if (
     String(currentBotMeta.title || '').trim() !== cardTitle
-    || currentBotMeta.project_scoped !== true
+    || String(currentBotMeta.owner_ref || '').trim() !== ownerRef
+    || currentBotMeta.owner_scoped !== true
   ) {
     params.ui_meta = {
-      'hermes-bots': { ...currentBotMeta, title: cardTitle, project_scoped: true },
+      [PROFILE_OWNER_META_KEY]: {
+        title: cardTitle,
+        owner_ref: ownerRef,
+        owner_scoped: true,
+      },
     };
     const revisions = objectRecord(current.ui_meta_revisions);
-    const currentRevision = revisions['hermes-bots'];
+    const currentRevision = revisions[PROFILE_OWNER_META_KEY];
     params.ui_meta_expected_revisions = {
-      'hermes-bots': Number.isInteger(currentRevision) && currentRevision >= 0
+      [PROFILE_OWNER_META_KEY]: Number.isInteger(currentRevision) && currentRevision >= 0
         ? currentRevision
         : 0,
     };
@@ -332,21 +383,9 @@ function configuredProfileParams(
   const mcpFiltersMatch = Object.entries(desiredMcpToolFilters).every(([name, tools]) => (
     JSON.stringify(currentMcpToolFilters[name]) === JSON.stringify(tools)
   ));
-  const currentMcpContextHeaders = Object.fromEntries((current.mcp_servers || []).flatMap((item) => {
-    const name = String(item.name || '').trim();
-    const context = item.context_headers;
-    return name && context ? [[name, {
-      project_id: String(context.project_id || '').trim(),
-      profile: String(context.profile || '').trim(),
-    }]] : [];
-  }));
-  const mcpContextMatches = Object.entries(desiredMcpContextHeaders).every(([name, context]) => (
-    JSON.stringify(currentMcpContextHeaders[name]) === JSON.stringify(context)
-  ));
-  if (!equalStrings(enabledMcp, desiredMcp) || !mcpFiltersMatch || !mcpContextMatches) {
+  if (!equalStrings(enabledMcp, desiredMcp) || !mcpFiltersMatch) {
     params.enabled_mcp_servers = desiredMcp;
     params.mcp_tool_filters = desiredMcpToolFilters;
-    params.mcp_context_headers = desiredMcpContextHeaders;
   }
   if (delegation && JSON.stringify(current.delegation || {}) !== JSON.stringify(delegation)) {
     params.delegation = delegation;
@@ -359,10 +398,17 @@ function configuredProfileParams(
 function assertMaterialized(
   card: DeckCard,
   profile: HermesProfileState,
-  projectId: string,
+  ownerUserId: string,
   toolCatalog: readonly ToolCatalogDescriptor[],
+  unavailableToolCatalogFamilies: readonly string[],
 ): void {
-  const pending = configuredProfileParams(card, profile, projectId, toolCatalog);
+  const pending = configuredProfileParams(
+    card,
+    profile,
+    ownerUserId,
+    toolCatalog,
+    unavailableToolCatalogFamilies,
+  );
   if (Object.keys(pending).length !== 1) {
     throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
   }
@@ -371,6 +417,7 @@ function assertMaterialized(
 export async function ensureSavedCardProfile(
   request: HermesRequest,
   card: DeckCard,
+  ownerUserId: string,
 ): Promise<HermesProfileState> {
   const describeParams: Record<string, unknown> = { name: card.runtime.profile };
   const describe = async (): Promise<HermesProfileState> => {
@@ -378,7 +425,9 @@ export async function ensureSavedCardProfile(
     if (String(profile.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()) {
       throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
     }
-    return profile as HermesProfileState;
+    const state = profile as HermesProfileState;
+    assertProfileOwner(state, ownerUserId);
+    return state;
   };
   try {
     return await describe();
@@ -408,14 +457,15 @@ export async function ensureSavedCardProfile(
 export async function materializeSavedCardProfile(
   request: HermesRequest,
   card: DeckCard,
-  projectId: string,
+  ownerUserId: string,
   existingProfile?: HermesProfileState,
   toolCatalog: readonly ToolCatalogDescriptor[] = [],
+  unavailableToolCatalogFamilies: readonly string[] = [],
 ): Promise<HermesProfileState> {
   if (
     card.runtime.kind !== 'hermes'
     || !PROFILE_PATTERN.test(card.runtime.profile)
-    || !String(projectId || '').trim()
+    || !String(ownerUserId || '').trim()
   ) {
     throw new Error('hermes_profile_card_invalid');
   }
@@ -425,11 +475,22 @@ export async function materializeSavedCardProfile(
   if (String(current?.name || '').toLowerCase() !== card.runtime.profile.toLowerCase()) {
     throw new Error(`hermes_profile_readback_mismatch:${card.runtime.profile}`);
   }
-  const selectedCardProfileTools = cardProfileMcpTools(card, toolCatalog);
-  if (await ensureCardProfileMcpServer(request, card, projectId, selectedCardProfileTools)) {
+  assertProfileOwner(current, ownerUserId);
+  const selectedCardProfileTools = cardProfileMcpTools(
+    card,
+    toolCatalog,
+    unavailableToolCatalogFamilies,
+  );
+  if (await ensureCardProfileMcpServer(request, card, current, selectedCardProfileTools)) {
     current = await request<HermesProfileState>('profiles.describe', describeParams);
   }
-  const params = configuredProfileParams(card, current, projectId, toolCatalog);
+  const params = configuredProfileParams(
+    card,
+    current,
+    ownerUserId,
+    toolCatalog,
+    unavailableToolCatalogFamilies,
+  );
   if (Object.keys(params).length > 1) {
     const configured = objectRecord(await request('profiles.configure', params));
     if (configured.ok !== true || configured.confirm_required === true) {
@@ -437,6 +498,12 @@ export async function materializeSavedCardProfile(
     }
     current = await request<HermesProfileState>('profiles.describe', describeParams);
   }
-  assertMaterialized(card, current, projectId, toolCatalog);
+  assertMaterialized(
+    card,
+    current,
+    ownerUserId,
+    toolCatalog,
+    unavailableToolCatalogFamilies,
+  );
   return current;
 }

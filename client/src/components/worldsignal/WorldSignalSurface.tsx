@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldSignals
+ * Relationship: Mounts the unmodified WorldSignals product for one Project/Card generation and exposes its Inspector bridge only after the product reports readiness, with exact teardown and retryable module loading.
+ */
+
 import React, { useEffect, useRef, useState } from 'react';
 
 import { readLayerPrefs, writeLayerPrefs } from './worldSignalLayerPrefs';
@@ -95,7 +100,8 @@ type WorldSignalsEmbedModule = {
 let embedModulePromise: Promise<WorldSignalsEmbedModule> | null = null;
 function loadEmbedModule(): Promise<WorldSignalsEmbedModule> {
   if (embedModulePromise) return embedModulePromise;
-  embedModulePromise = new Promise<WorldSignalsEmbedModule>((resolve, reject) => {
+  let pending!: Promise<WorldSignalsEmbedModule>;
+  pending = new Promise<WorldSignalsEmbedModule>((resolve, reject) => {
     const w = window as unknown as { __worldSignalsEmbed?: WorldSignalsEmbedModule };
     if (w.__worldSignalsEmbed) return resolve(w.__worldSignalsEmbed);
     const script = document.createElement('script');
@@ -104,20 +110,31 @@ function loadEmbedModule(): Promise<WorldSignalsEmbedModule> {
     // `as unknown as` (the same double-step line 99 already uses): Window has no
     // index signature, so a direct cast is a TS2352 error, not a lint nit.
     const globals = window as unknown as Record<string, unknown>;
+    const cleanup = () => {
+      delete globals[done];
+      delete globals[`${done}Err`];
+      script.remove();
+    };
     globals[done] = (mod: WorldSignalsEmbedModule) => {
+      cleanup();
       w.__worldSignalsEmbed = mod;
       resolve(mod);
     };
-    globals[`${done}Err`] = (message: string) =>
+    const fail = (message: string) => {
+      cleanup();
+      if (embedModulePromise === pending) embedModulePromise = null;
       reject(new Error(message || 'worldsignals_embed_load_failed'));
+    };
+    globals[`${done}Err`] = fail;
     script.textContent =
       `import(${JSON.stringify(EMBED_MODULE_URL)})` +
       `.then((m) => window.${done}(m))` +
       `.catch((e) => window.${done}Err(String(e && e.message || e)));`;
-    script.onerror = () => reject(new Error('worldsignals_embed_script_error'));
+    script.onerror = () => fail('worldsignals_embed_script_error');
     document.head.appendChild(script);
   });
-  return embedModulePromise;
+  embedModulePromise = pending;
+  return pending;
 }
 
 type WorldSignalSurfaceProps = {
@@ -141,8 +158,10 @@ export default function WorldSignalSurface({
 }: WorldSignalSurfaceProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<WorldSignalsMountHandle | null>(null);
+  const mountGenerationRef = useRef(0);
   const [health, setHealth] = useState<WorldSignalsHealth | null>(null);
   const [mountError, setMountError] = useState<string | null>(null);
+  const [mountReady, setMountReady] = useState(false);
 
   // Latest-callback refs keep the mount effect stable across host re-renders.
   const callbacksRef = useRef({ onInspectorSectionRequest, onLayerStateChange, onBridgeChange });
@@ -173,25 +192,53 @@ export default function WorldSignalSurface({
 
   useEffect(() => {
     if (!backendReachable || !containerRef.current || handleRef.current) return;
+    const generation = mountGenerationRef.current + 1;
+    mountGenerationRef.current = generation;
     let disposed = false;
+    let mountedHandle: WorldSignalsMountHandle | null = null;
+    let readySignalled = false;
     const container = containerRef.current;
     const canPersist = Boolean(projectId && cardId);
     const saved = canPersist ? readLayerPrefs(projectId as string, cardId as string) : null;
     // Guard so a stale profile version triggers at most one reset.
     let resetForNewProfile = false;
+    setMountError(null);
+    setMountReady(false);
+
+    const current = () => (
+      !disposed && mountGenerationRef.current === generation
+    );
+    const publishBridge = (handle: WorldSignalsMountHandle) => {
+      if (!current()) return;
+      setMountReady(true);
+      callbacksRef.current.onBridgeChange?.({
+        getLayerState: () => handle.getLayerState(),
+        setLayerEnabled: (layerId, enabled) => handle.setLayerEnabled(layerId, enabled),
+        resetLayersToWorldIntelligenceDefaults: () =>
+          handle.resetLayersToWorldIntelligenceDefaults(),
+        getMarketsSnapshot: () => handle.getMarketsSnapshot(),
+      });
+    };
 
     (async () => {
       try {
         const module = await loadEmbedModule();
-        if (disposed) return;
+        if (!current()) return;
         const handle = module.mountWorldSignals(container, {
           apiBaseUrl: WORLDSIGNALS_API_BASE,
           assetBaseUrl: EMBED_BASE,
+          projectId: projectId || undefined,
           initialEnabledLayerIds: saved?.enabledLayerIds,
+          onReady: () => {
+            readySignalled = true;
+            if (mountedHandle) publishBridge(mountedHandle);
+          },
           onInspectorSectionRequest: (section) => {
+            if (!current()) return;
             callbacksRef.current.onInspectorSectionRequest?.(section);
           },
           onLayerStateChange: (state) => {
+            if (!current()) return;
             // A saved set from an older profile version is discarded: reset to
             // the current World Intelligence defaults, which re-fires this
             // handler with a matching version and persists it.
@@ -208,28 +255,32 @@ export default function WorldSignalSurface({
             }
             callbacksRef.current.onLayerStateChange?.(state);
           },
-          onError: (error) => setMountError(`${error.code}: ${error.message}`),
+          onError: (error) => {
+            if (current()) setMountError(`${error.code}: ${error.message}`);
+          },
         });
+        mountedHandle = handle;
+        if (!current()) {
+          handle.unmount();
+          return;
+        }
         handleRef.current = handle;
-        callbacksRef.current.onBridgeChange?.({
-          getLayerState: () => handle.getLayerState(),
-          setLayerEnabled: (layerId, enabled) => handle.setLayerEnabled(layerId, enabled),
-          resetLayersToWorldIntelligenceDefaults: () =>
-            handle.resetLayersToWorldIntelligenceDefaults(),
-          getMarketsSnapshot: () => handle.getMarketsSnapshot(),
-        });
+        if (readySignalled) publishBridge(handle);
       } catch (error) {
-        if (disposed) return;
+        if (!current()) return;
         setMountError(error instanceof Error ? error.message : 'worldsignals_mount_failed');
       }
     })();
 
     return () => {
       disposed = true;
-      callbacksRef.current.onBridgeChange?.(null);
-      callbacksRef.current.onLayerStateChange?.(null);
-      handleRef.current?.unmount();
-      handleRef.current = null;
+      if (mountGenerationRef.current === generation) {
+        callbacksRef.current.onBridgeChange?.(null);
+        callbacksRef.current.onLayerStateChange?.(null);
+        setMountReady(false);
+      }
+      mountedHandle?.unmount();
+      if (handleRef.current === mountedHandle) handleRef.current = null;
     };
   }, [backendReachable, projectId, cardId]);
 
@@ -252,7 +303,12 @@ export default function WorldSignalSurface({
 
   return (
     <section style={styles.root} aria-label="WorldSignals workspace">
-      <div ref={containerRef} style={styles.mount} data-testid="worldsignals-mount" />
+      <div
+        ref={containerRef}
+        style={styles.mount}
+        data-testid="worldsignals-mount"
+        data-ready={mountReady ? 'true' : 'false'}
+      />
     </section>
   );
 }

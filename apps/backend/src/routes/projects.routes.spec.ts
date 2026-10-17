@@ -1,7 +1,16 @@
+/**
+ * Entity: Projects
+ * Relationship: Verifies authenticated Project creation and deletion return exact owner-scoped identities and report partial-state failures honestly.
+ *
+ * Entity: Project Seeds
+ * Relationship: Verifies Project creation persists and returns the backend-owned canonical deck, recovers committed readback, and compensates only proven absent decks.
+ */
+
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDefaultProjectDeck } from '../decks/defaultProjectDeck';
 
 const mocks = vi.hoisted(() => ({
   authenticatedUserId: vi.fn(),
@@ -55,13 +64,92 @@ describe('Project route lifecycle', () => {
       id: 'project-new', name: 'New Project', code: 'new-project', status: 'active',
     });
     mocks.getDeckDocument.mockResolvedValue({
-      deck: { id: 'deck_builder', name: 'Deck', nodes: [], edges: [], promptTemplates: [] },
-      meta: { deckRevision: 'deck-before' },
+      deck: null,
+      meta: { deckRevision: null },
+    });
+    mocks.saveDeckDocument.mockResolvedValue({
+      deck: createDefaultProjectDeck(),
+      meta: { deckRevision: 'deck-created', deckSavedAt: '2026-10-16T00:00:00Z' },
     });
   });
 
   afterEach(() => {
     vi.resetAllMocks();
+  });
+
+  it('persists and returns the exact backend-owned canonical deck', async () => {
+    const response = await request('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'New Project', code: 'new-project' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      projectId: 'project-new',
+      project: { id: 'project-new' },
+      deck: {
+        id: 'deck_builder',
+        nodes: [
+          { id: 'card_main_chat' },
+          { id: 'builder' },
+          { id: 'card_thinkgraph' },
+          { id: 'card_magentic' },
+          { id: 'card_team' },
+          { id: 'card_knowgraph' },
+        ],
+      },
+      meta: { deckRevision: 'deck-created' },
+    });
+    expect(mocks.saveDeckDocument).toHaveBeenCalledWith(
+      'project-new',
+      'deck_builder',
+      createDefaultProjectDeck(),
+      { expectedRevision: null },
+    );
+    expect(mocks.discardFreshProject).not.toHaveBeenCalled();
+  });
+
+  it('returns exact canonical readback when the write response is lost after commit', async () => {
+    const persisted = createDefaultProjectDeck();
+    mocks.saveDeckDocument.mockRejectedValue(new Error('python_rails_reset'));
+    mocks.getDeckDocument.mockResolvedValue({
+      deck: persisted,
+      meta: { deckRevision: 'deck-recovered', deckSavedAt: '2026-10-16T00:00:00Z' },
+    });
+
+    const response = await request('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'New Project' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      projectId: 'project-new',
+      deck: { id: 'deck_builder' },
+      meta: { deckRevision: 'deck-recovered' },
+    });
+    expect(mocks.discardFreshProject).not.toHaveBeenCalled();
+  });
+
+  it('does not delete a potentially committed Project when canonical readback is unavailable', async () => {
+    mocks.saveDeckDocument.mockRejectedValue(new Error('python_rails_reset'));
+    mocks.getDeckDocument.mockRejectedValue(new Error('python_rails_unavailable'));
+
+    const response = await request('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'New Project' }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: 'project_initialization_outcome_unknown',
+    });
+    expect(mocks.discardFreshProject).not.toHaveBeenCalled();
   });
 
   it('reports a failed creation compensation instead of hiding partial state', async () => {

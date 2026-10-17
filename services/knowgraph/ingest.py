@@ -1,5 +1,8 @@
 """PDF source authority and Graphiti episode ingestion for KnowGraph."""
 
+# Entity: KnowGraph
+# Relationship: Converts each immutable PDF section into one versioned duplicate-safe Graphiti episode and completes its authority metadata and Jev fact settlement.
+
 from __future__ import annotations
 
 import hashlib
@@ -16,6 +19,7 @@ import jev_fact_settlement
 from graphiti_identity import graphiti_project_group_id
 
 GRAPHITI_EPISODE_NAMESPACE = "liquidaity:knowgraph:episode"
+INGEST_SETTLEMENT_VERSION = "knowgraph.ingest.v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -110,7 +114,7 @@ async def _record_episode_authority(
     provider: str,
     model_id: str,
 ) -> None:
-    await graphiti.driver.execute_query(
+    result = await graphiti.driver.execute_query(
         """
         MATCH (episode:Episodic {uuid: $episode_id})
         SET episode.project_id = $project_id,
@@ -124,7 +128,16 @@ async def _record_episode_authority(
             episode.content_fingerprint = $content_fingerprint,
             episode.extraction_provider = $provider,
             episode.extraction_model = $model_id,
-            episode.graphiti_version = $graphiti_version
+            episode.graphiti_version = $graphiti_version,
+            episode.ingest_settlement_version = $settlement_version,
+            episode.ingest_settlement_status = coalesce(
+                episode.ingest_settlement_status, 'pending'
+            )
+        RETURN episode.uuid AS uuid,
+               episode.project_id AS project_id,
+               episode.document_id AS document_id,
+               episode.source_content_sha256 AS source_content_sha256,
+               episode.content_fingerprint AS content_fingerprint
         """,
         episode_id=episode_id,
         project_id=project_id,
@@ -137,7 +150,110 @@ async def _record_episode_authority(
         provider=provider,
         model_id=model_id,
         graphiti_version=graphiti_runtime.graphiti_core_version(),
+        settlement_version=INGEST_SETTLEMENT_VERSION,
     )
+    records = graphiti_runtime.graphiti_records(result)
+    if len(records) != 1:
+        raise RuntimeError("knowgraph_episode_authority_readback_missing")
+    record = records[0]
+    if (
+        str(record.get("uuid") or "") != episode_id
+        or str(record.get("project_id") or "") != project_id
+        or str(record.get("document_id") or "") != document_id
+        or str(record.get("source_content_sha256") or "")
+        != source_content_sha256
+        or str(record.get("content_fingerprint") or "")
+        != content_fingerprint
+    ):
+        raise RuntimeError("knowgraph_episode_authority_readback_invalid")
+
+
+async def _record_episode_settlement(
+    graphiti: Any,
+    *,
+    episode_id: str,
+    jev_classification: dict[str, Any],
+) -> None:
+    unsettled = jev_classification.get("still_unsettled_fact_uuids")
+    status = "complete" if isinstance(unsettled, list) and not unsettled else "repair_required"
+    result = await graphiti.driver.execute_query(
+        """
+        MATCH (episode:Episodic {uuid: $episode_id})
+        SET episode.ingest_settlement_version = $settlement_version,
+            episode.ingest_settlement_status = $status,
+            episode.jev_settlement_json = $jev_settlement_json
+        RETURN episode.uuid AS uuid,
+               episode.ingest_settlement_version AS settlement_version,
+               episode.ingest_settlement_status AS status
+        """,
+        episode_id=episode_id,
+        settlement_version=INGEST_SETTLEMENT_VERSION,
+        status=status,
+        jev_settlement_json=_serialize_metadata_json(jev_classification),
+    )
+    records = graphiti_runtime.graphiti_records(result)
+    if (
+        len(records) != 1
+        or str(records[0].get("uuid") or "") != episode_id
+        or str(records[0].get("settlement_version") or "")
+        != INGEST_SETTLEMENT_VERSION
+        or str(records[0].get("status") or "") != status
+    ):
+        raise RuntimeError("knowgraph_episode_settlement_readback_invalid")
+
+
+async def _read_episode_facts(
+    graphiti: Any,
+    *,
+    episode_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    result = await graphiti.driver.execute_query(
+        """
+        MATCH (source:Entity)-[fact]->(target:Entity)
+        WHERE $episode_id IN coalesce(fact.episodes, [])
+        RETURN toString(fact.uuid) AS uuid,
+               toString(fact.source_node_uuid) AS source_node_uuid,
+               toString(fact.target_node_uuid) AS target_node_uuid,
+               fact.name AS name,
+               fact.fact AS fact,
+               fact.episodes AS episodes,
+               fact.created_at AS created_at,
+               fact.valid_at AS valid_at,
+               fact.invalid_at AS invalid_at,
+               fact.expired_at AS expired_at,
+               toString(source.uuid) AS source_uuid,
+               source.name AS source_name,
+               toString(target.uuid) AS target_uuid,
+               target.name AS target_name
+        ORDER BY toString(fact.uuid)
+        """,
+        episode_id=episode_id,
+        routing_="r",
+    )
+    edges: list[dict[str, Any]] = []
+    nodes: dict[str, dict[str, Any]] = {}
+    for record in graphiti_runtime.graphiti_records(result):
+        fact_id = str(record.get("uuid") or "").strip()
+        source_id = str(record.get("source_uuid") or "").strip()
+        target_id = str(record.get("target_uuid") or "").strip()
+        if not fact_id or not source_id or not target_id:
+            continue
+        nodes[source_id] = {
+            "uuid": source_id,
+            "name": str(record.get("source_name") or ""),
+        }
+        nodes[target_id] = {
+            "uuid": target_id,
+            "name": str(record.get("target_name") or ""),
+        }
+        edges.append({
+            key: record.get(key)
+            for key in (
+                "uuid", "source_node_uuid", "target_node_uuid", "name", "fact",
+                "episodes", "created_at", "valid_at", "invalid_at", "expired_at",
+            )
+        })
+    return edges, list(nodes.values())
 
 
 def _empty_jev_classification(status: str, reason: str) -> dict[str, Any]:
@@ -186,6 +302,70 @@ async def _ingest_pdf_episode(
             content_fingerprint=content_fingerprint,
         )
         if existing_episode_id:
+            await _record_episode_authority(
+                graphiti,
+                episode_id=existing_episode_id,
+                project_id=project_id,
+                document_id=document_id,
+                source_name=source_name,
+                source_reference=source_reference,
+                source_content_sha256=source_content_sha256,
+                metadata_json=_serialize_metadata_json(metadata),
+                content_fingerprint=content_fingerprint,
+                provider=runtime.provider,
+                model_id=runtime.model_id,
+            )
+            edges, nodes = await _read_episode_facts(
+                graphiti,
+                episode_id=existing_episode_id,
+            )
+            try:
+                relationship_vocabulary = await (
+                    jev_fact_settlement.read_project_relationship_vocabulary(project_id)
+                )
+                vocabulary_guidance = {
+                    "status": "available",
+                    "version": relationship_vocabulary.get("version"),
+                    "hash": relationship_vocabulary.get("hash"),
+                    "count": relationship_vocabulary.get("count"),
+                }
+                jev_classification = await (
+                    jev_fact_settlement.classify_episode_facts_with_jev(
+                        graphiti,
+                        project_id=project_id,
+                        edges=edges,
+                        nodes=nodes,
+                        episode_id=existing_episode_id,
+                        source_name=source_name,
+                        source_reference=source_reference,
+                        text=text,
+                        reference_time=reference_time,
+                        relationship_vocabulary=relationship_vocabulary,
+                    )
+                )
+            except Exception as error:
+                unsettled = [
+                    str(jev_fact_settlement.graphiti_value(edge, "uuid") or "")
+                    for edge in edges
+                    if str(jev_fact_settlement.graphiti_value(edge, "uuid") or "")
+                ]
+                vocabulary_guidance = {
+                    "status": "unavailable",
+                    "failure_reason": str(error).strip() or type(error).__name__,
+                }
+                jev_classification = {
+                    **_empty_jev_classification(
+                        "unavailable", str(error).strip() or type(error).__name__
+                    ),
+                    "touched_fact_count": len(edges),
+                    "unfinished_fact_uuids": unsettled,
+                    "still_unsettled_fact_uuids": unsettled,
+                }
+            await _record_episode_settlement(
+                graphiti,
+                episode_id=existing_episode_id,
+                jev_classification=jev_classification,
+            )
             return {
                 "status": "already_ingested",
                 "ingest_id": candidate_episode_id,
@@ -200,13 +380,10 @@ async def _ingest_pdf_episode(
                 "content_fingerprint": content_fingerprint,
                 "idempotent": True,
                 "graphiti_version": graphiti_runtime.graphiti_core_version(),
-                "relationship_vocabulary_guidance": {
-                    "status": "not_checked",
-                    "reason": "episode_already_ingested",
-                },
-                "jev_classification": _empty_jev_classification(
-                    "not_checked", "episode_already_ingested"
-                ),
+                "entity_count": len(nodes),
+                "fact_count": len(edges),
+                "relationship_vocabulary_guidance": vocabulary_guidance,
+                "jev_classification": jev_classification,
             }
 
         relationship_vocabulary: dict[str, Any] | None = None
@@ -231,6 +408,7 @@ async def _ingest_pdf_episode(
             }
 
         result = await graphiti.add_episode(
+            uuid=candidate_episode_id,
             name=source_name,
             episode_body=text,
             source_description=source_reference,
@@ -241,6 +419,8 @@ async def _ingest_pdf_episode(
             custom_extraction_instructions=extraction_guidance,
         )
         episode_id = str(result.episode.uuid)
+        if episode_id != candidate_episode_id:
+            raise RuntimeError("knowgraph_episode_identity_readback_invalid")
         await _record_episode_authority(
             graphiti,
             episode_id=episode_id,
@@ -285,6 +465,11 @@ async def _ingest_pdf_episode(
                 "unfinished_fact_uuids": unsettled,
                 "still_unsettled_fact_uuids": unsettled,
             }
+        await _record_episode_settlement(
+            graphiti,
+            episode_id=episode_id,
+            jev_classification=jev_classification,
+        )
         return {
             "status": "ingested",
             "ingest_id": candidate_episode_id,

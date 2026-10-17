@@ -1,4 +1,6 @@
 """Sole materializer and retained-file owner for one canonical Run ``in.idf``."""
+# Entity: Input Data Files
+# Relationship: Materializes, size-validates, writes, reloads, hashes, and mechanically projects the one canonical Run input without an alternate payload or silent truncation.
 
 from __future__ import annotations
 
@@ -88,6 +90,7 @@ def materialize_idf(
         ),
     )
     _contract.assert_secret_free(idf.model_dump())
+    _contract.assert_new_idf_limits(idf)
     return _contract.load_idf_bytes(
         _contract.canonical_line(idf.model_dump(mode="json"))
     )
@@ -122,6 +125,7 @@ def write_idf(
 ) -> dict[str, Any]:
     """Write exactly one IDF file and validate the retained bytes."""
 
+    _contract.assert_new_idf_limits(materialized.idf)
     workspace = invocation_workspace(project_id, deck_id, run_id)
     idf_path = workspace / _contract.IDF_FILENAME
     workspace_created = False

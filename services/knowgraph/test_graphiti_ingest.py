@@ -1,5 +1,8 @@
 """Deterministic proof for the Graphiti KnowGraph ingestion boundary."""
 
+# Entity: KnowGraph
+# Relationship: Verifies deterministic episode identity, duplicate exclusion, interrupted settlement recovery, exact authority readback, and idempotent Jev fact repair.
+
 from __future__ import annotations
 
 import asyncio
@@ -31,7 +34,38 @@ class FakeGraphDriver:
 
     async def execute_query(self, cypher: str, **params):
         self.queries.append((cypher, params))
-        if self.existing_episode_id and "LIMIT 1" in cypher:
+        if "episode.project_id AS project_id" in cypher:
+            rows = [{
+                "uuid": params["episode_id"],
+                "project_id": params["project_id"],
+                "document_id": params["document_id"],
+                "source_content_sha256": params["source_content_sha256"],
+                "content_fingerprint": params["content_fingerprint"],
+            }]
+        elif "episode.ingest_settlement_status AS status" in cypher:
+            rows = [{
+                "uuid": params["episode_id"],
+                "settlement_version": params["settlement_version"],
+                "status": params["status"],
+            }]
+        elif "source_uuid" in cypher and self.existing_episode_id:
+            rows = [{
+                "uuid": "fact-1",
+                "source_node_uuid": "entity-a",
+                "target_node_uuid": "entity-b",
+                "name": "supplies launch services to",
+                "fact": "Alpha supplies launch services to Beta.",
+                "episodes": [self.existing_episode_id],
+                "created_at": datetime(2026, 7, 1, 12, tzinfo=timezone.utc),
+                "valid_at": datetime(2026, 6, 30, 12, tzinfo=timezone.utc),
+                "invalid_at": None,
+                "expired_at": None,
+                "source_uuid": "entity-a",
+                "source_name": "Alpha",
+                "target_uuid": "entity-b",
+                "target_name": "Beta",
+            }]
+        elif self.existing_episode_id and "LIMIT 1" in cypher:
             rows = [{"uuid": self.existing_episode_id}]
         elif (
             "fact.jev_graphiti_signature AS graphiti_signature" in cypher
@@ -79,6 +113,7 @@ class FakeGraphiti:
         existing_episode_id: str | None = None,
         existing_jev: dict[str, dict] | None = None,
         persist_error: Exception | None = None,
+        add_barrier: asyncio.Barrier | None = None,
     ) -> None:
         self.driver = FakeGraphDriver(
             existing_episode_id=existing_episode_id,
@@ -86,6 +121,7 @@ class FakeGraphiti:
             persist_error=persist_error,
         )
         self.add_calls: list[dict] = []
+        self.add_barrier = add_barrier
         self.jev_calls: list[list[dict]] = []
         self.graphiti_edge = SimpleNamespace(
             uuid="fact-1",
@@ -102,13 +138,21 @@ class FakeGraphiti:
 
     async def add_episode(self, **kwargs):
         self.add_calls.append(kwargs)
+        if self.add_barrier is not None:
+            await self.add_barrier.wait()
+        episode_id = str(kwargs["uuid"])
+        self.driver.existing_episode_id = episode_id
+        edge = SimpleNamespace(**{
+            **vars(self.graphiti_edge),
+            "episodes": [episode_id],
+        })
         return SimpleNamespace(
-            episode=SimpleNamespace(uuid="graphiti-episode-1"),
+            episode=SimpleNamespace(uuid=episode_id),
             nodes=[
                 SimpleNamespace(uuid="entity-a", name="Alpha"),
                 SimpleNamespace(uuid="entity-b", name="Beta"),
             ],
-            edges=[self.graphiti_edge],
+            edges=[edge],
         )
 
 
@@ -347,8 +391,11 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(len(graphiti.add_calls), 1)
         call = graphiti.add_calls[0]
         self.assertEqual(call["group_id"], "liquidaity-project-1")
-        self.assertNotIn("uuid", call)
-        self.assertEqual(result["episode_id"], "graphiti-episode-1")
+        expected_episode_id = ingest._episode_identity(
+            "project-1", "document-1", "Temporal knowledge is grounded in a source."
+        )[0]
+        self.assertEqual(call["uuid"], expected_episode_id)
+        self.assertEqual(result["episode_id"], expected_episode_id)
         self.assertEqual(result["graphiti_version"], graphiti_runtime.graphiti_core_version())
         self.assertEqual(result["relationship_vocabulary_guidance"], {
             "status": "available",
@@ -601,21 +648,116 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(classification["still_unsettled_fact_uuids"], ["fact-1"])
         self.assertEqual(classification["failed_fact_uuids"], [])
 
-    def test_duplicate_episode_skips_graphiti_and_provider_work(self) -> None:
+    def test_concurrent_duplicate_requests_share_one_deterministic_episode_identity(self) -> None:
+        graphiti = FakeGraphiti(add_barrier=asyncio.Barrier(2))
+        vocabulary = {
+            "version": "project.relationship-vocabulary.v1",
+            "hash": "vocabulary-hash",
+            "count": 20,
+            "maximum": 252,
+            "atMaximum": False,
+            "labels": _decision()["choice_options"][:-1],
+        }
+
+        async def read_vocabulary(_project_id: str) -> dict:
+            return vocabulary
+
+        async def classify(_project_id: str, facts: list[dict]) -> list[dict]:
+            return [_decision(str(fact["graphitiFactUuid"])) for fact in facts]
+
+        async def submit_twice() -> list[dict]:
+            arguments = {
+                "project_id": "project-1",
+                "document_id": "document-1",
+                "text": "Temporal knowledge is grounded in a source.",
+                "source_name": "Source",
+                "source_reference": "knowgraph-upload://sha256/" + "a" * 64 + "/source.pdf",
+                "source_content_sha256": "a" * 64,
+                "metadata": {"published_at": "2026-06-30T12:00:00Z"},
+                "reference_time": datetime(2026, 7, 1, 12, tzinfo=timezone.utc),
+            }
+            return list(await asyncio.gather(
+                ingest._ingest_pdf_episode(**arguments),
+                ingest._ingest_pdf_episode(**arguments),
+            ))
+
+        with patch.object(
+            graphiti_runtime,
+            "create_graphiti_runtime",
+            return_value=(_runtime(), graphiti, "neo4j"),
+        ), patch.object(
+            jev_fact_settlement,
+            "read_project_relationship_vocabulary",
+            side_effect=read_vocabulary,
+        ), patch.object(
+            jev_fact_settlement,
+            "_call_knowgraph_jev",
+            side_effect=classify,
+        ):
+            results = asyncio.run(submit_twice())
+
+        expected_id = ingest._episode_identity(
+            "project-1", "document-1", "Temporal knowledge is grounded in a source."
+        )[0]
+        self.assertEqual({result["episode_id"] for result in results}, {expected_id})
+        self.assertEqual({call["uuid"] for call in graphiti.add_calls}, {expected_id})
+        self.assertEqual(graphiti.driver.existing_episode_id, expected_id)
+
+    def test_interrupted_authority_write_resumes_same_provider_episode(self) -> None:
+        graphiti = FakeGraphiti()
+        with patch.object(
+            ingest,
+            "_record_episode_authority",
+            side_effect=RuntimeError("authority write interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "authority write interrupted"):
+                _run(graphiti)
+
+        self.assertEqual(len(graphiti.add_calls), 1)
+        candidate_id = str(graphiti.add_calls[0]["uuid"])
+        self.assertEqual(graphiti.driver.existing_episode_id, candidate_id)
+
+        resumed = _run(graphiti)
+
+        self.assertEqual(len(graphiti.add_calls), 1)
+        self.assertEqual(resumed["episode_id"], candidate_id)
+        self.assertEqual(resumed["status"], "already_ingested")
+        self.assertEqual(resumed["jev_classification"]["status"], "success")
+
+    def test_unsettled_jev_metadata_repairs_on_same_episode_retry(self) -> None:
+        graphiti = FakeGraphiti()
+        first = _run(graphiti, jev_error=RuntimeError("jev unavailable"))
+
+        self.assertEqual(first["jev_classification"]["status"], "unavailable")
+        self.assertEqual(
+            first["jev_classification"]["still_unsettled_fact_uuids"],
+            ["fact-1"],
+        )
+        self.assertEqual(len(graphiti.add_calls), 1)
+
+        repaired = _run(graphiti)
+
+        self.assertEqual(len(graphiti.add_calls), 1)
+        self.assertEqual(repaired["status"], "already_ingested")
+        self.assertEqual(repaired["jev_classification"]["status"], "success")
+        self.assertEqual(repaired["jev_classification"]["still_unsettled_fact_uuids"], [])
+
+    def test_duplicate_episode_repairs_provider_owned_settlement_without_reextracting(self) -> None:
         graphiti = FakeGraphiti(existing_episode_id="graphiti-existing-episode")
         result = _run(graphiti)
 
         self.assertTrue(result["idempotent"])
         self.assertEqual(result["status"], "already_ingested")
         self.assertEqual(result["episode_id"], "graphiti-existing-episode")
-        self.assertEqual(result["jev_classification"]["status"], "not_checked")
-        self.assertEqual(
-            result["jev_classification"]["reason"], "episode_already_ingested"
-        )
-        self.assertNotIn("failure_reason", result["jev_classification"])
+        self.assertEqual(result["jev_classification"]["status"], "success")
+        self.assertEqual(result["jev_classification"]["succeeded_fact_uuids"], ["fact-1"])
         self.assertEqual(graphiti.add_calls, [])
-        self.assertEqual(graphiti.jev_calls, [])
-        self.assertEqual(len(graphiti.driver.queries), 1)
+        self.assertEqual(len(graphiti.jev_calls), 1)
+        self.assertGreater(len(graphiti.driver.queries), 1)
+        self.assertTrue(any(
+            "episode.ingest_settlement_status AS status" in cypher
+            for cypher, _params in graphiti.driver.queries
+        ))
         self.assertTrue(graphiti.driver.closed)
 
     def test_document_jev_aggregation_preserves_partial_section_success(self) -> None:

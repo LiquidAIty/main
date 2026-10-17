@@ -1,3 +1,10 @@
+"""Saved-Card invocation, graph context, tool grant, and IDF preparation tests."""
+# Entity: Card Runs
+# Relationship: Verifies exact saved-Card invocation authority, graph context, provider configuration, and canonical IDF preparation without alternate runners or copied context.
+#
+# Entity: Tool Grants
+# Relationship: Proves catalog discovery cannot broaden saved grants and profile-scoped ThinkGraph operations cannot execute from an ordinary Card.
+
 from __future__ import annotations
 
 import json
@@ -69,6 +76,7 @@ def _external_tool(name: str, *, read_only: bool) -> dict:
             "openWorldHint": True,
         },
         "grantEligible": True,
+        "grantProfiles": [],
         "available": True,
     }
 
@@ -492,6 +500,7 @@ def test_catalog_does_not_broaden_saved_card_grants(
                 "openWorldHint": True,
             },
             "grantEligible": True,
+            "grantProfiles": [],
         }
 
     invocation = card_invocation_preparation.materialize_invocation({
@@ -514,6 +523,30 @@ def test_catalog_does_not_broaden_saved_card_grants(
         "engraphis_remember",
     ]
     assert "cbm.index_repository" not in grants["enabledTools"]
+
+
+def test_profile_scoped_thinkgraph_grant_never_reaches_an_ordinary_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _destination_fixture(monkeypatch)
+    card = loaded["deck"]["nodes"][1]
+    card["runtimeOptions"]["tools"] = ["engraphis_update_memory"]
+
+    with pytest.raises(
+        saved_card_contract.CardDomainError,
+        match="configured_tool_profile_not_granted:engraphis_update_memory",
+    ):
+        card_invocation_preparation.materialize_invocation(
+            _destination_payload("hermes")
+        )
+
+    card["runtime"]["profile"] = "thinkgraph"
+    invocation = card_invocation_preparation.materialize_invocation(
+        _destination_payload("hermes")
+    )
+    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == [
+        "engraphis_update_memory"
+    ]
 
 @pytest.mark.parametrize(
     "runtime",

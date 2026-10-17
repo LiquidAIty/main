@@ -1,14 +1,16 @@
-"""Hermes profile, task-store, and saved blue-worker authority validation."""
+"""Saved blue-worker validation and package-safe Hermes taskgraph transport."""
+
+# Entity: Magnetic TaskGraph
+# Relationship: Validates exact saved blue-worker authority and invokes Hermes's public taskgraph adapter without importing or mutating Hermes modules in Python rails.
 
 from __future__ import annotations
 
 import json
-import importlib.util
-import sys
-import threading
-from contextlib import contextmanager
+import os
+import subprocess
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
+
 
 class MagneticTaskGraphError(RuntimeError):
     pass
@@ -16,8 +18,8 @@ class MagneticTaskGraphError(RuntimeError):
 
 _TEAM_CARD_ID = "card_team"
 _MAX_HANDOFF_SUMMARY_CHARS = 2_000
-_HERMES_AUTHORITY_EVENT = "card_authority_bound"
-_HERMES_TASK_IMPORT_LOCK = threading.RLock()
+_ADAPTER_TIMEOUT_SECONDS = 60
+_ADAPTER_RESPONSE_BYTES = 2_000_000
 
 
 def _required_text(value: Any, field: str) -> str:
@@ -27,27 +29,66 @@ def _required_text(value: Any, field: str) -> str:
     return text
 
 
-def _runtime_paths() -> tuple[Path, Path]:
+def _runtime_paths() -> tuple[Path, Path, Path]:
     repository = Path(__file__).resolve().parents[4]
     hermes_root = repository / "HermesLatest"
     hermes_home = hermes_root / ".hermes"
-    if not hermes_root.is_dir():
+    candidates = (
+        hermes_root / ".venv" / "Scripts" / "python.exe",
+        hermes_root / ".venv" / "bin" / "python",
+    )
+    python = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if not hermes_root.is_dir() or not hermes_home.is_dir() or python is None:
         raise MagneticTaskGraphError("magnetic_taskgraph_hermes_runtime_missing")
-    if str(hermes_root) not in sys.path:
-        sys.path.insert(0, str(hermes_root))
-    return hermes_root, hermes_home
+    return hermes_root, hermes_home, python
 
 
-@contextmanager
-def _default_home_scope(hermes_home: Path) -> Iterator[None]:
-    """Give Hermes profile APIs their repository root without cross-thread leakage."""
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-
-    token = set_hermes_home_override(hermes_home)
+def call_hermes_taskgraph_adapter(
+    request: dict[str, Any],
+    *,
+    timeout_seconds: int = _ADAPTER_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    hermes_root, hermes_home, python = _runtime_paths()
+    encoded = json.dumps(
+        request,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    environment = {
+        **os.environ,
+        "HERMES_HOME": str(hermes_home),
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
     try:
-        yield
-    finally:
-        reset_hermes_home_override(token)
+        completed = subprocess.run(
+            [str(python), "-m", "hermes_cli.taskgraph_adapter"],
+            cwd=str(hermes_root),
+            env=environment,
+            input=encoded,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise MagneticTaskGraphError(
+            f"magnetic_taskgraph_hermes_adapter_unavailable:{error.__class__.__name__}"
+        ) from error
+    if len(completed.stdout.encode("utf-8")) > _ADAPTER_RESPONSE_BYTES:
+        raise MagneticTaskGraphError("magnetic_taskgraph_hermes_adapter_response_too_large")
+    try:
+        response = json.loads(completed.stdout)
+    except (TypeError, ValueError) as error:
+        raise MagneticTaskGraphError("magnetic_taskgraph_hermes_adapter_response_invalid") from error
+    if not isinstance(response, dict):
+        raise MagneticTaskGraphError("magnetic_taskgraph_hermes_adapter_response_invalid")
+    if completed.returncode != 0 or response.get("ok") is not True:
+        code = str(response.get("error") or "failed").strip()[:240]
+        raise MagneticTaskGraphError(f"magnetic_taskgraph_hermes_adapter_failed:{code}")
+    return response
 
 
 def _hermes_model(provider: dict[str, Any], options: dict[str, Any]) -> tuple[str, str]:
@@ -75,117 +116,28 @@ def _hermes_model(provider: dict[str, Any], options: dict[str, Any]) -> tuple[st
 def _ensure_orchestrator_identity(
     spec: dict[str, Any], workers: list[dict[str, Any]],
 ) -> tuple[str, str, str]:
-    hermes_profile = _required_text(spec.get("hermesProfile"), "magnetic_taskgraph_hermes_profile").lower()
-    instructions = spec.get("instructions")
-    if not isinstance(instructions, str) or not instructions.strip():
-        raise MagneticTaskGraphError("magnetic_taskgraph_instructions_required")
+    profile = _required_text(
+        spec.get("hermesProfile"), "magnetic_taskgraph_hermes_profile",
+    ).lower()
+    instructions = _required_text(
+        spec.get("instructions"), "magnetic_taskgraph_instructions",
+    )
     provider = spec.get("provider") if isinstance(spec.get("provider"), dict) else {}
     options = spec.get("runtimeOptions") if isinstance(spec.get("runtimeOptions"), dict) else {}
     hermes_provider, model = _hermes_model(provider, options)
-    _, hermes_home = _runtime_paths()
-
-    with _default_home_scope(hermes_home):
-        from hermes_cli.profiles import normalize_profile_name, validate_profile_name
-        from hermes_constants import named_profile_is_live
-
-        def profile_home(name: str) -> Path | None:
-            canonical = normalize_profile_name(name)
-            try:
-                validate_profile_name(canonical)
-            except ValueError:
-                return None
-            candidate = hermes_home if canonical == "default" else hermes_home / "profiles" / canonical
-            if canonical == "default":
-                return candidate if candidate.is_dir() else None
-            return candidate if named_profile_is_live(candidate) else None
-
-        orchestrator_home = profile_home(hermes_profile)
-        if orchestrator_home is None:
-            raise MagneticTaskGraphError(
-                f"magnetic_taskgraph_orchestrator_profile_missing:{hermes_profile}"
-            )
-        missing = [
-            _required_text(worker.get("profile"), "magnetic_taskgraph_worker_identity")
-            for worker in workers
-            if profile_home(_required_text(worker.get("profile"), "magnetic_taskgraph_worker_identity")) is None
-        ]
-        if missing:
-            raise MagneticTaskGraphError(
-                f"magnetic_taskgraph_worker_profile_missing:{','.join(missing)}"
-            )
-
-        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-        from hermes_cli.config import load_config
-
-        token = set_hermes_home_override(orchestrator_home)
-        try:
-            config = load_config() or {}
-            model_config = config.get("model") or {}
-            agent_config = config.get("agent") or {}
-            soul_path = orchestrator_home / "SOUL.md"
-            try:
-                soul = soul_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                soul = None
-            if (
-                model_config.get("provider") != hermes_provider
-                or model_config.get("default") != model
-                or "system_prompt" in agent_config
-                or soul != instructions
-            ):
-                raise MagneticTaskGraphError("magnetic_taskgraph_orchestrator_materialization_mismatch")
-        finally:
-            reset_hermes_home_override(token)
-    return hermes_profile, hermes_provider, model
-
-
-def _task_db_path() -> Path:
-    _, hermes_home = _runtime_paths()
-    return hermes_home / "kanban.db"
-
-
-@contextmanager
-def hermes_task_runtime_scope() -> Iterator[None]:
-    """Give embedded Hermes task calls their own flat ``utils.py`` binding.
-
-    Graphiti and Hermes both publish a top-level ``utils`` module. The scope is
-    locked because ``sys.modules`` is process-wide; every lazy Hermes import and
-    task-store operation completes before the previous provider module returns.
-    """
-
-    hermes_root, _hermes_home = _runtime_paths()
-    with _HERMES_TASK_IMPORT_LOCK:
-        previous_utils = {
-            name: module
-            for name, module in tuple(sys.modules.items())
-            if name == "utils" or name.startswith("utils.")
-        }
-        for name in previous_utils:
-            sys.modules.pop(name, None)
-        utils_path = hermes_root / "utils.py"
-        spec = importlib.util.spec_from_file_location("utils", utils_path)
-        if spec is None or spec.loader is None:
-            raise MagneticTaskGraphError("magnetic_taskgraph_hermes_utils_missing")
-        hermes_utils = importlib.util.module_from_spec(spec)
-        sys.modules["utils"] = hermes_utils
-        try:
-            spec.loader.exec_module(hermes_utils)
-            yield
-        finally:
-            for name in tuple(sys.modules):
-                if name == "utils" or name.startswith("utils."):
-                    sys.modules.pop(name, None)
-            sys.modules.update(previous_utils)
-
-
-def _task_store() -> tuple[Path, Any, Any]:
-    """Return Hermes task modules while ``hermes_task_runtime_scope`` is active."""
-
-    db_path = _task_db_path()
-    from hermes_cli import kanban_db as task_db
-    from hermes_cli import kanban_db_connect as task_db_connect
-
-    return db_path, task_db, task_db_connect
+    worker_profiles = [
+        _required_text(worker.get("profile"), "magnetic_taskgraph_worker_identity").lower()
+        for worker in workers
+    ]
+    call_hermes_taskgraph_adapter({
+        "action": "validate_profiles",
+        "profile": profile,
+        "provider": hermes_provider,
+        "model": model,
+        "instructions": instructions,
+        "workers": worker_profiles,
+    })
+    return profile, hermes_provider, model
 
 
 def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
@@ -194,10 +146,16 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
     seen: set[str] = set()
     for worker in workers:
         card_id = _required_text(worker.get("cardId"), "magnetic_taskgraph_worker_card")
-        revision_id = _required_text(worker.get("cardRevisionId"), "magnetic_taskgraph_worker_revision")
-        identity = _required_text(worker.get("profile"), "magnetic_taskgraph_worker_identity").lower()
+        revision_id = _required_text(
+            worker.get("cardRevisionId"), "magnetic_taskgraph_worker_revision",
+        )
+        identity = _required_text(
+            worker.get("profile"), "magnetic_taskgraph_worker_identity",
+        ).lower()
         if identity in seen:
-            raise MagneticTaskGraphError(f"magnetic_taskgraph_worker_identity_duplicate:{identity}")
+            raise MagneticTaskGraphError(
+                f"magnetic_taskgraph_worker_identity_duplicate:{identity}"
+            )
         seen.add(identity)
         identities.append(identity)
         title = str(worker.get("title") or card_id).strip()
@@ -211,24 +169,26 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
                 or not isinstance(capabilities.get("savedToolIds"), list)
                 or len(capabilities["savedToolIds"]) > 128
             ):
-                raise MagneticTaskGraphError("magnetic_taskgraph_worker_capabilities_invalid")
-            saved_tools = [
+                raise MagneticTaskGraphError(
+                    "magnetic_taskgraph_worker_capabilities_invalid"
+                )
+            eligible_tools = [
                 _required_text(value, "magnetic_taskgraph_worker_saved_capability")
                 for value in capabilities["savedToolIds"]
             ]
-            if len(saved_tools) != len(set(saved_tools)):
-                raise MagneticTaskGraphError("magnetic_taskgraph_worker_capabilities_invalid")
-            eligible_tools = saved_tools
+            if len(eligible_tools) != len(set(eligible_tools)):
+                raise MagneticTaskGraphError(
+                    "magnetic_taskgraph_worker_capabilities_invalid"
+                )
         details = [description] if description else []
         if capabilities is not None:
             details.append(
                 "Saved Card tools: "
                 + (", ".join(eligible_tools) if eligible_tools else "none")
             )
-        capability = f"; {'; '.join(details)}" if details else ""
+        suffix = f"; {'; '.join(details)}" if details else ""
         lines.append(
-            f"- {identity}: Card {card_id} revision {revision_id}; "
-            f"{title}{capability}"
+            f"- {identity}: Card {card_id} revision {revision_id}; {title}{suffix}"
         )
     if not identities:
         raise MagneticTaskGraphError("magnetic_taskgraph_no_connected_workers")
@@ -236,13 +196,13 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
 
 
 def _direct_team_worker(workers: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Return the sole Team worker, while rejecting a mismatched structural marker."""
-
     for worker in workers:
         card_id = _required_text(worker.get("cardId"), "magnetic_taskgraph_worker_card")
         marked_team = worker.get("teamTaskMode") is True
         if marked_team != (card_id == _TEAM_CARD_ID):
-            raise MagneticTaskGraphError(f"magnetic_taskgraph_team_identity_invalid:{card_id}")
+            raise MagneticTaskGraphError(
+                f"magnetic_taskgraph_team_identity_invalid:{card_id}"
+            )
     if len(workers) == 1 and workers[0].get("cardId") == _TEAM_CARD_ID:
         return workers[0]
     return None
@@ -260,7 +220,9 @@ def _worker_authorities(
         if not isinstance(candidate, dict) or set(candidate) != expected_keys:
             raise MagneticTaskGraphError("magnetic_taskgraph_worker_authorities_invalid")
         authority = {
-            "cardId": _required_text(candidate.get("cardId"), "magnetic_taskgraph_authority_card"),
+            "cardId": _required_text(
+                candidate.get("cardId"), "magnetic_taskgraph_authority_card",
+            ),
             "cardRevisionId": _required_text(
                 candidate.get("cardRevisionId"), "magnetic_taskgraph_authority_revision",
             ),
@@ -269,7 +231,9 @@ def _worker_authorities(
             ).lower(),
         }
         if (
-            authority["cardId"] != _required_text(worker.get("cardId"), "magnetic_taskgraph_worker_card")
+            authority["cardId"] != _required_text(
+                worker.get("cardId"), "magnetic_taskgraph_worker_card",
+            )
             or authority["cardRevisionId"] != _required_text(
                 worker.get("cardRevisionId"), "magnetic_taskgraph_worker_revision",
             )
@@ -282,60 +246,3 @@ def _worker_authorities(
         seen.add(authority["profile"])
         authorities.append(authority)
     return authorities
-
-
-def _bind_hermes_worker_authorities(
-    connection: Any,
-    task_db: Any,
-    root_id: str,
-    authorities: list[dict[str, str]],
-) -> None:
-    expected = {"workers": authorities}
-    with task_db.write_txn(connection):
-        rows = connection.execute(
-            "SELECT payload FROM task_events WHERE task_id = ? AND kind = ? ORDER BY id",
-            (root_id, _HERMES_AUTHORITY_EVENT),
-        ).fetchall()
-        if not rows:
-            task_db.append_task_event(connection, root_id, _HERMES_AUTHORITY_EVENT, expected)
-            return
-        if (
-            len(rows) != 1
-            or not isinstance(rows[0]["payload"], str)
-            or _parse_worker_authority_event(rows[0]["payload"]) != expected
-        ):
-            raise MagneticTaskGraphError("magnetic_taskgraph_worker_authority_binding_mismatch")
-
-def _parse_worker_authority_event(raw: str) -> dict[str, Any]:
-    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        value: dict[str, Any] = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError("duplicate key")
-            value[key] = item
-        return value
-
-    try:
-        parsed = json.loads(
-            raw,
-            object_pairs_hook=reject_duplicate_keys,
-            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("invalid constant")),
-        )
-    except (TypeError, ValueError, RecursionError) as error:
-        raise MagneticTaskGraphError("magnetic_taskgraph_worker_authority_event_invalid") from error
-    if not isinstance(parsed, dict):
-        raise MagneticTaskGraphError("magnetic_taskgraph_worker_authority_event_invalid")
-    workers = parsed.get("workers")
-    if isinstance(workers, list):
-        # Existing task events may carry the retired revision-content hash.
-        # The immutable Card revision ID is the authority; normalize old events
-        # on read so resumable roots keep their exact saved worker identities.
-        parsed = {
-            **parsed,
-            "workers": [
-                {key: item for key, item in worker.items() if key != "configurationFingerprint"}
-                if isinstance(worker, dict) else worker
-                for worker in workers
-            ],
-        }
-    return parsed

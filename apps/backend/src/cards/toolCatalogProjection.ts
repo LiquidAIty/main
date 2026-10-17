@@ -1,3 +1,8 @@
+/**
+ * Entity: Tool Grants
+ * Relationship: Indexes the authenticated tool catalog and exposes only definitions grantable to the exact saved Hermes profile selected by the caller.
+ */
+
 export type ToolCatalogDefinition = {
   canonicalId: string;
   provider: string;
@@ -8,6 +13,7 @@ export type ToolCatalogDefinition = {
   description: string;
   available: boolean;
   grantEligible: boolean;
+  grantProfiles: string[];
   access: 'read' | 'write';
   inputSchema: Record<string, unknown>;
   canonicalInputSchema: Record<string, unknown>;
@@ -30,6 +36,7 @@ export type ToolCatalogSearch = {
   selectedIds?: readonly string[];
   offset?: number;
   limit?: number;
+  profile?: string;
 };
 
 export type ScriptToolSelection = {
@@ -38,6 +45,16 @@ export type ScriptToolSelection = {
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+
+export function toolGrantMatchesProfile(
+  definition: ToolCatalogDefinition,
+  profileValue: unknown,
+): boolean {
+  if (!definition.grantEligible) return false;
+  if (!definition.grantProfiles.length) return true;
+  const profile = asText(profileValue).toLowerCase();
+  return Boolean(profile) && definition.grantProfiles.includes(profile);
+}
 
 function asText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -109,11 +126,16 @@ export function searchToolCatalogDefinitions(catalog: ToolCatalogIndex, search: 
   const query = asText(search.query).toLowerCase();
   const namespace = asText(search.namespace).toLowerCase();
   const access = search.access;
+  const profile = asText(search.profile).toLowerCase();
   const selectedIds = (search.selectedIds || []).map(asText).filter(Boolean);
-  const unresolvedSelectedIds = selectedIds.filter((id) => !catalog.definitionsById.has(id));
+  const unresolvedSelectedIds = selectedIds.filter((id) => {
+    const definition = catalog.definitionsById.get(id);
+    return !definition || !toolGrantMatchesProfile(definition, profile);
+  });
   const offset = paginationInteger(search.offset, 0, 0, Number.MAX_SAFE_INTEGER);
   const limit = paginationInteger(search.limit, DEFAULT_LIMIT, 1, MAX_LIMIT);
   const matches = catalog.references.filter((reference) => {
+    if (!toolGrantMatchesProfile(reference, profile)) return false;
     if (access && reference.access !== access) return false;
     if (namespace && reference.namespace.toLowerCase() !== namespace) return false;
     if (!query) return true;
@@ -130,7 +152,11 @@ export function searchToolCatalogDefinitions(catalog: ToolCatalogIndex, search: 
   });
   const selectedKnownIds = selectedIds.filter((id) => {
     const definition = catalog.definitionsById.get(id);
-    return Boolean(definition && (!access || definition.access === access));
+    return Boolean(
+      definition
+      && toolGrantMatchesProfile(definition, profile)
+      && (!access || definition.access === access),
+    );
   });
   return {
     references: matches.slice(offset, offset + limit),
@@ -153,6 +179,7 @@ export function searchToolCatalogDefinitions(catalog: ToolCatalogIndex, search: 
 export function resolveScriptToolDefinitions(
   catalog: ToolCatalogIndex,
   selection: ScriptToolSelection,
+  profile = '',
 ): ToolCatalogDefinition[] {
   const selectedIds = selection.selectedIds.map(asText).filter(Boolean);
   const unresolved = selectedIds.find((id) => !catalog.definitionsById.has(id));
@@ -160,7 +187,7 @@ export function resolveScriptToolDefinitions(
   return resolveToolCatalogDefinitions(catalog, selectedIds)
     .filter((reference) => (
       reference.available
-      && reference.grantEligible
+      && toolGrantMatchesProfile(reference, profile)
       && reference.publications.includes('card-profile')
     ));
 }

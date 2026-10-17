@@ -1,6 +1,15 @@
-import { createHash } from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
+/**
+ * Entity: Card Terminal
+ * Relationship: Authorizes one non-Main saved Card session and proxies its existing Hermes PTY without exposing reusable gateway credentials to the browser.
+ */
 
+import { createHash } from 'node:crypto';
+import type { IncomingMessage, Server } from 'node:http';
+import type { Duplex } from 'node:stream';
+import { Router, type Request, type Response } from 'express';
+import WebSocket, { WebSocketServer, type RawData } from 'ws';
+
+import { getUserBySessionId } from '../auth/sessionStore';
 import { BUILDER_CARD_ID } from '../decks/deckDomainClient';
 import { DEFAULT_PROJECT_DECK_ID } from '../decks/defaultProjectDeck';
 import { hermesGateway } from '../services/hermesGateway';
@@ -13,8 +22,23 @@ import {
 import { cardProjectSession } from './mainSession.routes';
 
 const cardTerminalRoutes = Router();
+const terminalProxyServer = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+const installedServers = new WeakSet<Server>();
+const activeBrowserSockets = new Set<WebSocket>();
+const activeHermesSockets = new Set<WebSocket>();
 
 type ProjectAuthorization = { userId: string; projectSessionId: string };
+
+type TerminalBinding = {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  profile: string;
+  sessionId: string;
+  cols: number;
+  rows: number;
+  upstreamUrl: string;
+};
 
 async function authorizeProject(
   req: Request,
@@ -26,10 +50,24 @@ async function authorizeProject(
     res.status(401).json({ ok: false, error: 'terminal_owner_authentication_required' });
     return null;
   }
+  try {
+    return await authorizeProjectOwner(projectId, userId);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'terminal_project_access_denied') {
+      res.status(403).json({ ok: false, error: error.message });
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function authorizeProjectOwner(
+  projectId: string,
+  userId: string,
+): Promise<ProjectAuthorization> {
   const project = await getOwnedProjectByReference(projectId, userId);
   if (!project || project.ownerUserId !== userId) {
-    res.status(403).json({ ok: false, error: 'terminal_project_access_denied' });
-    return null;
+    throw new Error('terminal_project_access_denied');
   }
   const projectSessionId = String(project.id || '').trim();
   if (!projectSessionId) throw new Error('terminal_project_identity_missing');
@@ -42,17 +80,93 @@ function terminalDimension(value: unknown, defaultValue: number, maximum: number
     : defaultValue;
 }
 
-function terminalWebSocketUrl(query: URLSearchParams): string {
+function hermesTerminalUrl(query: URLSearchParams): string {
   const gateway = new URL(
     String(process.env.HERMES_GATEWAY_URL || 'ws://127.0.0.1:9119/api/ws').trim(),
   );
-  if (gateway.protocol !== 'ws:' && gateway.protocol !== 'wss:') {
+  if (
+    (gateway.protocol !== 'ws:' && gateway.protocol !== 'wss:')
+    || !['127.0.0.1', 'localhost', '::1'].includes(gateway.hostname)
+  ) {
     throw new Error('hermes_gateway_url_invalid');
   }
   gateway.pathname = '/api/pty';
   gateway.search = query.toString();
   gateway.hash = '';
   return gateway.toString();
+}
+
+async function resolveTerminalBinding(input: {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  userId: string;
+  cols?: unknown;
+  rows?: unknown;
+}): Promise<TerminalBinding> {
+  const authorization = await authorizeProjectOwner(input.projectId, input.userId);
+  const authority = await projectCardAuthority(input.projectId, input.deckId);
+  const matches = authority.cards.filter((item) => item.card.id === input.cardId);
+  if (
+    matches.length !== 1
+    || matches[0].card.runtime.kind !== 'hermes'
+    || matches[0].card.runtime.mode === 'magentic_one'
+  ) throw new Error('terminal_card_unavailable');
+  const target = matches[0];
+  if (target.card.runtime.mode === 'main') throw new Error('terminal_main_headless');
+  const cwd = input.cardId === BUILDER_CARD_ID
+    ? resolveBuilderProjectCodeDirectory(
+      authorization.projectSessionId,
+      authority.deck.projectCodeFolder,
+    )
+    : resolveProductChatWorkingDirectory(
+      `${input.userId}:${authorization.projectSessionId}:${input.cardId}`,
+    );
+  const client = await hermesGateway();
+  const binding = await cardProjectSession(client, authority, target, {
+    cwd,
+    projectId: input.projectId,
+    projectSessionId: authorization.projectSessionId,
+    userId: input.userId,
+  });
+  const token = String(process.env.HERMES_DASHBOARD_SESSION_TOKEN || '').trim();
+  if (
+    token.length !== 64
+    || [...token.toLowerCase()].some((character) => !'0123456789abcdef'.includes(character))
+  ) throw new Error('hermes_gateway_credential_missing');
+  const channel = createHash('sha256').update(JSON.stringify([
+    input.userId,
+    authorization.projectSessionId,
+    input.deckId,
+    input.cardId,
+    target.profile,
+  ])).digest('hex');
+  const query = new URLSearchParams({
+    token,
+    profile: target.profile,
+    project_session: binding.sessionId,
+    channel,
+    cwd,
+    attach: channel,
+    bot_mode_roster: binding.botModeRoster.join(','),
+    bot_mode_sessions: Object.entries(binding.botModeSessions)
+      .map(([profile, sessionId]) => `${profile}=${sessionId}`).join(','),
+  });
+  return {
+    projectId: input.projectId,
+    deckId: input.deckId,
+    cardId: input.cardId,
+    profile: target.profile,
+    sessionId: binding.sessionId,
+    cols: terminalDimension(input.cols, 80, 2_000),
+    rows: terminalDimension(input.rows, 24, 1_000),
+    upstreamUrl: hermesTerminalUrl(query),
+  };
+}
+
+function terminalStreamPath(binding: Pick<TerminalBinding, 'projectId' | 'deckId' | 'cardId'>): string {
+  return `/api/card-terminals/${encodeURIComponent(binding.projectId)}`
+    + `/${encodeURIComponent(binding.deckId)}/${encodeURIComponent(binding.cardId)}/stream`;
 }
 
 cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => {
@@ -69,69 +183,174 @@ cardTerminalRoutes.post('/:projectId/:deckId/:cardId/open', async (req, res) => 
     return res.status(503).json({ ok: false, error: 'terminal_project_authority_unavailable' });
   }
   if (!authorization) return undefined;
-  const { userId, projectSessionId } = authorization;
 
   try {
-    const authority = await projectCardAuthority(projectId, deckId);
-    const matches = authority.cards.filter((item) => item.card.id === cardId);
-    if (
-      matches.length !== 1
-      || matches[0].card.runtime.kind !== 'hermes'
-      || matches[0].card.runtime.mode === 'magentic_one'
-    ) return res.status(409).json({ ok: false, error: 'terminal_card_unavailable' });
-    const target = matches[0];
-    if (target.card.runtime.mode === 'main') {
-      return res.status(409).json({ ok: false, error: 'terminal_main_headless' });
-    }
-    const cwd = cardId === BUILDER_CARD_ID
-      ? resolveBuilderProjectCodeDirectory(projectSessionId, authority.deck.projectCodeFolder)
-      : resolveProductChatWorkingDirectory(`${userId}:${projectSessionId}:${cardId}`);
-    const client = await hermesGateway();
-    const binding = await cardProjectSession(client, authority, target, {
-      cwd,
+    const binding = await resolveTerminalBinding({
       projectId,
-      projectSessionId,
-      userId,
-    });
-    const token = String(process.env.HERMES_DASHBOARD_SESSION_TOKEN || '').trim();
-    if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('hermes_gateway_credential_missing');
-    // Hermes requires a filesystem-safe channel and PTY reconnect key. This is
-    // transport state only; the actual persisted Hermes session remains
-    // `binding.sessionId`.
-    const terminalChannelKey = createHash('sha256').update(JSON.stringify([
-      userId,
-      projectSessionId,
       deckId,
       cardId,
-      target.profile,
-    ])).digest('hex');
-    const query = new URLSearchParams({
-      token,
-      profile: target.profile,
-      project_session: binding.sessionId,
-      channel: terminalChannelKey,
-      cwd,
-      attach: terminalChannelKey,
-      bot_mode_roster: binding.botModeRoster.join(','),
-      bot_mode_sessions: Object.entries(binding.botModeSessions)
-        .map(([profile, sessionId]) => `${profile}=${sessionId}`).join(','),
+      userId: authorization.userId,
+      cols: req.body?.cols,
+      rows: req.body?.rows,
     });
     return res.json({
       ok: true,
-      cardId,
-      profile: target.profile,
+      projectId: binding.projectId,
+      deckId: binding.deckId,
+      cardId: binding.cardId,
+      profile: binding.profile,
       sessionId: binding.sessionId,
-      terminalChannelKey,
-      cols: terminalDimension(req.body?.cols, 80, 2_000),
-      rows: terminalDimension(req.body?.rows, 24, 1_000),
-      websocketUrl: terminalWebSocketUrl(query),
+      cols: binding.cols,
+      rows: binding.rows,
+      websocketPath: terminalStreamPath(binding),
     });
   } catch (error) {
-    return res.status(503).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'terminal_open_failed',
-    });
+    const message = error instanceof Error ? error.message : 'terminal_open_failed';
+    const status = ['terminal_card_unavailable', 'terminal_main_headless'].includes(message)
+      ? 409
+      : message === 'terminal_project_access_denied' ? 403 : 503;
+    return res.status(status).json({ ok: false, error: message });
   }
 });
+
+function cookieValue(header: string | undefined, name: string): string {
+  for (const part of String(header || '').split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 1 || part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function upgradeIdentity(urlValue: string | undefined): {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+} | null {
+  let path: string;
+  try {
+    path = new URL(String(urlValue || '/'), 'http://127.0.0.1').pathname;
+  } catch {
+    return null;
+  }
+  const parts = path.split('/').filter(Boolean);
+  if (
+    parts.length !== 6
+    || parts[0] !== 'api'
+    || parts[1] !== 'card-terminals'
+    || parts[5] !== 'stream'
+  ) return null;
+  try {
+    const projectId = decodeURIComponent(parts[2]).trim();
+    const deckId = decodeURIComponent(parts[3]).trim();
+    const cardId = decodeURIComponent(parts[4]).trim();
+    return projectId && deckId && cardId ? { projectId, deckId, cardId } : null;
+  } catch {
+    return null;
+  }
+}
+
+function refuseUpgrade(socket: Duplex, status: number, message: string): void {
+  if (!socket.destroyed) {
+    socket.end(
+      `HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+    );
+  }
+}
+
+function rawDataSize(data: RawData): number {
+  return Array.isArray(data)
+    ? data.reduce((total, chunk) => total + chunk.byteLength, 0)
+    : data.byteLength;
+}
+
+function bridgeTerminal(browser: WebSocket, binding: TerminalBinding): void {
+  const hermes = new WebSocket(binding.upstreamUrl, { maxPayload: 256 * 1024 });
+  activeBrowserSockets.add(browser);
+  activeHermesSockets.add(hermes);
+  const pending: Array<{ data: RawData; binary: boolean }> = [];
+  let pendingBytes = 0;
+  let closed = false;
+  const close = (code = 1000, reason = '') => {
+    if (closed) return;
+    closed = true;
+    activeBrowserSockets.delete(browser);
+    activeHermesSockets.delete(hermes);
+    if (browser.readyState === WebSocket.OPEN) browser.close(code, reason);
+    if (hermes.readyState === WebSocket.OPEN || hermes.readyState === WebSocket.CONNECTING) {
+      hermes.close(code, reason);
+    }
+  };
+  browser.on('message', (data, binary) => {
+    if (hermes.readyState === WebSocket.OPEN) {
+      hermes.send(data, { binary });
+      return;
+    }
+    const size = rawDataSize(data);
+    if (pendingBytes + size > 256 * 1024) {
+      close(1009, 'terminal input limit exceeded');
+      return;
+    }
+    pending.push({ data, binary });
+    pendingBytes += size;
+  });
+  hermes.on('open', () => {
+    for (const frame of pending.splice(0)) {
+      hermes.send(frame.data, { binary: frame.binary });
+    }
+    pendingBytes = 0;
+  });
+  hermes.on('message', (data, binary) => {
+    if (browser.readyState === WebSocket.OPEN) browser.send(data, { binary });
+  });
+  browser.on('close', (code, reason) => close(code || 1000, reason.toString()));
+  hermes.on('close', (code, reason) => close(code || 1000, reason.toString()));
+  browser.on('error', () => close(1011, 'browser terminal transport failed'));
+  hermes.on('error', () => close(1011, 'Hermes terminal transport failed'));
+}
+
+async function authorizeUpgrade(
+  request: IncomingMessage,
+  identity: { projectId: string; deckId: string; cardId: string },
+): Promise<TerminalBinding> {
+  const sessionId = cookieValue(request.headers.cookie, 'sid');
+  if (!sessionId) throw new Error('terminal_owner_authentication_required');
+  const user = await getUserBySessionId(sessionId);
+  if (!user) throw new Error('terminal_owner_authentication_required');
+  return resolveTerminalBinding({ ...identity, userId: user.id });
+}
+
+export function installCardTerminalUpgrade(server: Server): void {
+  if (installedServers.has(server)) return;
+  installedServers.add(server);
+  server.on('upgrade', (request, socket, head) => {
+    const identity = upgradeIdentity(request.url);
+    if (!identity) return;
+    void authorizeUpgrade(request, identity).then((binding) => {
+      terminalProxyServer.handleUpgrade(request, socket, head, (browser) => {
+        bridgeTerminal(browser, binding);
+      });
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : 'terminal_upgrade_failed';
+      refuseUpgrade(
+        socket,
+        message === 'terminal_owner_authentication_required' ? 401
+          : message === 'terminal_project_access_denied' ? 403 : 409,
+        'Terminal upgrade refused',
+      );
+    });
+  });
+}
+
+export function closeCardTerminalProxy(): void {
+  for (const socket of activeBrowserSockets) socket.close(1001, 'backend shutting down');
+  for (const socket of activeHermesSockets) socket.close(1001, 'backend shutting down');
+  activeBrowserSockets.clear();
+  activeHermesSockets.clear();
+}
 
 export default cardTerminalRoutes;

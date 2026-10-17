@@ -1,4 +1,6 @@
 """Accepted Card Run request persistence and fallible preparation."""
+# Entity: Card Runs
+# Relationship: Accepts one durable outer Run, prepares and retains its canonical IDF, returns exact Hermes transport identity, and settles preparation failures without creating another runtime.
 
 from __future__ import annotations
 
@@ -483,6 +485,7 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         "runId": resolved_run_id,
         "correlationId": resolved_correlation_id,
         "conversationId": str(payload.get("conversationId") or "").strip(),
+        "cardId": str(card_identity["cardId"]),
         "telemetryWritten": telemetry_written,
         "inputFile": input_files,
         "magneticTaskGraph": magnetic_taskgraph,

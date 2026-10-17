@@ -1,3 +1,8 @@
+/**
+ * Entity: Tool Grants
+ * Relationship: Reads the authenticated MCP catalog and preserves each operation's availability, explicit grant eligibility, and exact Hermes-profile ceiling for downstream Card authorization.
+ */
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
@@ -60,6 +65,7 @@ export type ToolCatalogDescriptor = {
   access: 'read' | 'write';
   available: boolean;
   grantEligible: boolean;
+  grantProfiles: string[];
   inputSchema: Record<string, unknown>;
   canonicalInputSchema: Record<string, unknown>;
   serverInjectedArguments: string[];
@@ -103,6 +109,7 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
       ).trim();
       const available = providerSource.available;
       const grantEligible = providerSource.grantEligible;
+      const grantProfiles = providerSource.grantProfiles;
       const canonicalInputSchema = providerSource.canonicalInputSchema;
       const serverInjectedArguments = providerSource.serverInjectedArguments;
       const dispatcherContextArguments = providerSource.dispatcherContextArguments;
@@ -117,6 +124,14 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
         || !['read', 'write'].includes(access)
         || typeof available !== 'boolean'
         || typeof grantEligible !== 'boolean'
+        || !Array.isArray(grantProfiles)
+        || grantProfiles.some((profile) => (
+          typeof profile !== 'string'
+          || !profile
+          || profile !== profile.trim().toLowerCase()
+        ))
+        || grantProfiles.length !== new Set(grantProfiles).size
+        || (grantEligible === false && grantProfiles.length > 0)
         || !canonicalInputSchema
         || typeof canonicalInputSchema !== 'object'
         || Array.isArray(canonicalInputSchema)
@@ -150,6 +165,7 @@ function parseToolCatalogDescriptor(tool: any): ToolCatalogDescriptor {
         access: access as 'read' | 'write',
         available,
         grantEligible,
+        grantProfiles: [...grantProfiles] as string[],
         inputSchema: tool.inputSchema as Record<string, unknown>,
         canonicalInputSchema: canonicalInputSchema as Record<string, unknown>,
         serverInjectedArguments: [...serverInjectedArguments] as string[],
