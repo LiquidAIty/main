@@ -1,4 +1,11 @@
 """Focused proof for the one-Think, Jev-governed Engraphis lifecycle."""
+
+# Entity: ThinkGraph
+# Relationship: Exercises completed-pair extraction, atomic Engraphis Think writes, exact Entity attachment, duplicate handling, projection, and reads across the retained ThinkGraph lifecycle.
+#
+# Entity: Jev Decisions
+# Relationship: Verifies every free-form Think relationship receives a bounded Jev choice before atomic edge settlement, including vocabulary promotion, provider failure, and rollback.
+
 from __future__ import annotations
 
 from copy import deepcopy

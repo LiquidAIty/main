@@ -1637,9 +1637,9 @@ export function KnowledgeGraphProjectionSurface({
       && knowEvidenceIdentity(item as Record<string, unknown>) !== null
     ))
   ));
-  const defaultSelectedAuthority = directThinkAvailable
-    ? 'thinkgraph'
-    : directKnowAvailable ? 'knowgraph' : null;
+  const defaultSelectedAuthority = directKnowAvailable
+    ? 'knowgraph'
+    : directThinkAvailable ? 'thinkgraph' : null;
   const inspectedNodeAuthority = selectedAuthority
     && ((selectedAuthority === 'thinkgraph' && directThinkAvailable)
       || (selectedAuthority === 'knowgraph' && directKnowAvailable))

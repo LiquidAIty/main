@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# Entity: Card Runs
+# Relationship: Verifies scoped Run acceptance, canonical IDF retention, execution transitions, readback, measured usage, failure settlement, and exact saved revision authority across one outer Card Run.
+#
+# Entity: Magnetic Runs
+# Relationship: Verifies one Magnetic outer Run retains its exact Hermes root, projects only connected saved workers, accepts bounded progress, and settles final synthesis without another session.
+
 from datetime import datetime, timezone
 
 import pytest

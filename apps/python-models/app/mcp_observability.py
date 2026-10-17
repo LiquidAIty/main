@@ -1,8 +1,10 @@
-"""Process/source observability and wire-safe MCP failure/result classification."""
+"""Process/source observability and structurally typed MCP outcomes."""
+
+# Entity: External MCP
+# Relationship: Records bounded MCP process, catalog, session, authorization, and request events while hashing sensitive identities and redacting secrets from local diagnostic details.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -109,98 +111,24 @@ def sanitize_failure_detail(value: Any) -> str:
 
 def typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]:
     detail = sanitize_failure_detail(value)
-    lowered = detail.lower()
-    if "local_embedding_model_unavailable" in lowered:
-        code, retryable = "local_embedding_model_unavailable", False
-    elif "tool_not_granted" in lowered:
-        code, retryable = "tool_not_granted", False
-    elif isinstance(value, (asyncio.TimeoutError, TimeoutError)) or any(
-        term in lowered for term in ("timeout", "timed out", "deadline")
-    ):
-        code, retryable = "timeout", True
-    elif any(
-        term in lowered
-        for term in (
-            "session terminated", "session not found", "session expired",
-            "session closed", "transport closed", "connection closed",
+    if isinstance(value, TimeoutError):
+        code, category, retryable = "timeout", "TIMEOUT", True
+    elif isinstance(value, PermissionError):
+        code, category, retryable = "permission_denied", "AUTHORIZATION", False
+    elif isinstance(value, ConnectionError):
+        code, category, retryable = (
+            "dependency_unavailable", "DEPENDENCY_UNAVAILABLE", True,
         )
-    ):
-        code, retryable = "session_terminated", False
-    elif any(
-        term in lowered
-        for term in (
-            "token expired", "token has expired", "expired token",
-            "authentication expired", "auth expired",
-        )
-    ):
-        code, retryable = "authentication_expired", False
-    elif any(
-        term in lowered
-        for term in (
-            "invalid argument", "invalid arguments", "invalid_argument", "invalid params",
-        )
-    ):
-        code, retryable = "invalid_arguments", False
-    elif any(
-        term in lowered
-        for term in (
-            "no workspace named", "workspace not found", "no repo named",
-            "repository not found",
-        )
-    ):
-        code, retryable = "resource_not_found", False
-    elif any(term in lowered for term in ("insufficient", "credit", "quota exceeded")):
-        code, retryable = "insufficient_credits", False
-    elif any(
-        term in lowered
-        for term in ("unauthorized", "authentication", "invalid api key", "401")
-    ):
-        code, retryable = "authentication_failed", False
-    elif any(term in lowered for term in ("rate limit", "too many requests", "429")):
-        code, retryable = "rate_limited", True
-    elif "dimension" in lowered and any(term in lowered for term in ("embedding", "vector")):
-        code, retryable = "embedding_dimension_mismatch", False
-    elif any(
-        term in lowered
-        for term in ("malformed", "invalid json", "model output", "validation error")
-    ):
-        code, retryable = "malformed_model_output", False
-    elif any(term in lowered for term in ("queue", "worker")):
-        code, retryable = "queue_failure", True
-    elif any(term in lowered for term in (
-        "service unavailable", "connection refused", "actively refused",
-        "backend_unreachable", "worldsignals_unreachable", "winerror 10061",
-    )):
-        code, retryable = "service_unavailable", True
-    elif any(term in lowered for term in ("neo4j", "database")):
-        code, retryable = "database_failure", True
     elif isinstance(value, (AttributeError, TypeError)):
-        code, retryable = "internal_handler_failure", False
-    else:
-        code, retryable = (
-            ("internal_failure", False)
-            if dependency in {"mcp", "tool-runtime"}
-            else ("provider_failure", False)
+        code, category, retryable = (
+            "internal_handler_failure", "INTERNAL", False,
         )
-    if code in {
-        "database_failure", "queue_failure", "service_unavailable",
-        "local_embedding_model_unavailable",
-    }:
-        category = "DEPENDENCY_UNAVAILABLE"
-    elif code in {"authentication_expired", "authentication_failed"}:
-        category = "AUTHENTICATION"
-    elif code == "session_terminated":
-        category = "SESSION_LIFECYCLE"
-    elif code == "timeout":
-        category = "TIMEOUT"
-    elif code == "invalid_arguments":
-        category = "INVALID_ARGUMENT"
-    elif code == "resource_not_found":
-        category = "NOT_FOUND"
-    elif code in {"internal_handler_failure", "internal_failure"}:
-        category = "INTERNAL"
     else:
-        category = "PROVIDER"
+        code, category, retryable = (
+            ("internal_failure", "INTERNAL", False)
+            if dependency in {"mcp", "tool-runtime"}
+            else ("provider_failure", "PROVIDER", False)
+        )
     return {
         "ok": False,
         "error": code,
@@ -213,24 +141,8 @@ def typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]
 
 
 def tool_result_category(result: Any) -> str:
-    try:
-        if isinstance(result, CallToolResult):
-            if result.is_error:
-                return "tool_error"
-            blocks = result.content
-        else:
-            blocks = result if isinstance(result, list) else []
-        for block in blocks:
-            text = getattr(block, "text", "")
-            if isinstance(text, str) and text:
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(payload, dict) and (
-                    payload.get("ok") is False or bool(payload.get("error"))
-                ):
-                    return "tool_error"
-    except Exception:
-        return "tool_error"
-    return "success"
+    return (
+        "tool_error"
+        if isinstance(result, CallToolResult) and result.is_error is True
+        else "success"
+    )

@@ -23,8 +23,8 @@ function safeWindowLocation() {
     return { route: "", href: "" };
   }
   return {
-    route: window.location.pathname + window.location.search + window.location.hash,
-    href: window.location.href,
+    route: window.location.pathname,
+    href: window.location.origin + window.location.pathname,
   };
 }
 

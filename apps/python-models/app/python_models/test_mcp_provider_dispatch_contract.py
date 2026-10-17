@@ -1,17 +1,14 @@
 """Behavioral MCP provider-publication and request-dispatch contracts."""
 
+# Entity: External MCP
+# Relationship: Verifies authenticated catalog publication, exact provider schemas and annotations, grant enforcement, timeout recovery, and two-sided Know projection through MCP dispatch.
+
 import json
-import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 from app import mcp_request_dispatch, mcp_transport
-from mcp.types import TextContent
-
-_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _APP_DIR not in sys.path:
-    sys.path.insert(0, _APP_DIR)
+from mcp.types import CallToolResult, TextContent, Tool
 
 from app.python_models.provider_config import ensure_env_loaded
 
@@ -23,16 +20,14 @@ from app import (
     mcp_catalog_runtime,
     mcp_cbm_provider,
     mcp_graphiti_provider,
+    mcp_host,
+    mcp_observability,
     mcp_provider_operations,
 )
 from app.python_models.test_mcp_contract_support import clear_live_provider_operations
 from app.python_models.tool_catalog import code_owned_tool_projection
-from mcp.types import Tool
-
-
 def test_saved_card_tools_share_one_authenticated_mcp_projection(monkeypatch):
     import asyncio
-    import mcp_host
 
     tools = asyncio.run(mcp_catalog_projection.application_tools())
     names = {tool.name for tool in tools}
@@ -71,8 +66,6 @@ def test_saved_card_tools_share_one_authenticated_mcp_projection(monkeypatch):
 
 
 def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():
-    import mcp_host
-
     providerTool = Tool(
         name="search_graph",
         description="providerTool",
@@ -101,8 +94,6 @@ def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():
 def test_unfamiliar_cbm_tool_is_not_added_to_the_curated_card_catalog(
     clear_live_provider_operations,
 ):
-    import mcp_host
-
     providerTool = Tool(
         name="future_provider_tool",
         inputSchema={
@@ -118,7 +109,6 @@ def test_unfamiliar_cbm_tool_is_not_added_to_the_curated_card_catalog(
 
 def test_hidden_provider_operations_cannot_be_guessed(monkeypatch):
     import asyncio
-    import mcp_host
     from app.python_models import engraphis_operations
 
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "ready")
@@ -148,9 +138,15 @@ def test_hidden_provider_operations_cannot_be_guessed(monkeypatch):
         assert denied.is_error is True
         assert "unknown_tool" in denied.content[0].text
         direct = asyncio.run(mcp_request_dispatch.dispatch_tool(hidden_name, {}))
-        assert json.loads(direct[0].text) == {
+        assert isinstance(direct, CallToolResult)
+        assert direct.is_error is True
+        assert json.loads(direct.content[0].text) == {
             "ok": False,
             "error": f"unknown_tool: {hidden_name}",
+            "failureCode": "unknown_tool",
+            "errorCategory": "NOT_FOUND",
+            "retryable": False,
+            "dependency": "mcp",
         }
 
 @pytest.mark.parametrize("name,expected_access", [
@@ -158,7 +154,6 @@ def test_hidden_provider_operations_cannot_be_guessed(monkeypatch):
     ("engraphis_get_memory", "read"),
 ])
 def test_operation_access_requires_exact_canonical_annotations(name, expected_access):
-    import mcp_host
     from app.python_models.tool_registry import operation_definition
 
     definition = operation_definition(name)
@@ -178,8 +173,6 @@ def test_operation_access_requires_exact_canonical_annotations(name, expected_ac
 def test_ungranted_and_destructive_tools_are_not_callable(
     monkeypatch, clear_live_provider_operations,
 ):
-    import mcp_host
-
     mcp_provider_operations.register_cbm_catalog(mcp_provider_operations.namespace_provider_tools("cbm", [
         Tool(
             name="search_graph",
@@ -227,7 +220,6 @@ def test_ungranted_and_destructive_tools_are_not_callable(
 
 def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkeypatch):
     import asyncio
-    import mcp_host
 
     calls = []
     providerTool = Tool(name="search_graph", description="Provider search", inputSchema={
@@ -250,9 +242,29 @@ def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkey
     assert advertised.input_schema == providerTool.input_schema
     assert advertised.description == providerTool.description
 
+
+def test_provider_results_preserve_protocol_declared_error_state_without_parsing_text():
+    error_shaped_text = TextContent(
+        type="text",
+        text=json.dumps({"ok": False, "error": "provider prose"}),
+    )
+
+    untyped = mcp_provider_operations._normalize_provider_tool_result([
+        error_shaped_text,
+    ])
+    declared = CallToolResult(content=[error_shaped_text], isError=True)
+
+    assert untyped.is_error is False
+    assert untyped.content == [error_shaped_text]
+    assert mcp_provider_operations._normalize_provider_tool_result(declared) is declared
+
+    assert mcp_observability.typed_failure(
+        RuntimeError("rate limit 429 database queue timeout"),
+    )["failureCode"] == "provider_failure"
+    assert mcp_observability.typed_failure(TimeoutError())["failureCode"] == "timeout"
+
 def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
     import asyncio
-    import mcp_host
 
     cancelled = False
 
@@ -286,7 +298,6 @@ def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
 
 def test_graphiti_add_memory_dispatch_preserves_provider_arguments(monkeypatch):
     import asyncio
-    import mcp_host
 
     calls = []
 

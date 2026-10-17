@@ -1,5 +1,8 @@
 """Pure saved-Card identity, runtime, provider, and serialization contract."""
 
+# Entity: Saved Cards
+# Relationship: Defines and validates saved Card identity, immutable Hermes bindings, provider and model selections, grants, Scripts, subsystems, automatic selectors, and canonical revision serialization.
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,7 @@
+/**
+ * Entity: Model Selection
+ * Relationship: Defines the canonical provider model registry and projects those exact entries into saved Card selectors and bounded automatic-model candidates.
+ */
 export type Provider = "openai" | "openrouter";
 
 export type ModelEntry = {
@@ -103,41 +107,14 @@ export const autoModelCandidates: AutoModelCandidate[] = Object.entries(MODEL_RE
 /** Materialize the saved-card model choices from the canonical runtime registry.
  * The IDD validates these records before the card editor consumes them. */
 export function listConfiguredModelOptions(openaiDefault: string): ConfiguredModelOption[] {
-  const byProviderAndKey = new Map<string, ConfiguredModelOption>();
-  const add = (option: ConfiguredModelOption) => {
-    const identity = `${option.provider}:${option.key}`;
-    if (!byProviderAndKey.has(identity)) byProviderAndKey.set(identity, option);
-  };
-
-  for (const [key, model] of Object.entries(MODEL_REGISTRY)) {
-    add({
+  if (MODEL_REGISTRY[openaiDefault]?.provider !== 'openai') {
+    throw new Error('configured_openai_default_unknown');
+  }
+  return Object.entries(MODEL_REGISTRY).map(([key, model]) => ({
       provider: model.provider,
       key,
       label: model.label,
       providerModelId: model.id,
       default: model.provider === 'openai' && key === openaiDefault,
-    });
-    if (model.provider === 'openrouter') {
-      add({
-        provider: model.provider,
-        key: model.id,
-        label: `${model.label} (Direct ID)`,
-        providerModelId: model.id,
-        default: false,
-      });
-    }
-  }
-
-  if (![...byProviderAndKey.values()].some(
-    (option) => option.provider === 'openai' && option.key === openaiDefault,
-  )) {
-    add({
-      provider: 'openai',
-      key: openaiDefault,
-      label: `${openaiDefault} (default)`,
-      providerModelId: openaiDefault,
-      default: true,
-    });
-  }
-  return [...byProviderAndKey.values()];
+    }));
 }

@@ -3,6 +3,9 @@ import multer from 'multer';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { isDevelopmentEnvironment } from '../services/requestPayloadLimits';
 
+// Entity: KnowGraph
+// Relationship: Accepts authenticated PDF ingestion and episode deletion, resolves each Project reference to its owner-authorized canonical ID, and exposes only bounded application-owned Graphiti write results.
+
 const router = Router();
 
 // Local development accepts large real-document fixtures; production keeps a bounded default.
@@ -100,30 +103,45 @@ async function readResponseDataSafe(response: Response): Promise<any> {
   }
 }
 
-function pickErrorMessage(payload: any): string {
-  const candidate =
-    payload?.error?.message ??
-    payload?.message ??
-    payload?.error ??
-    '';
-  return String(candidate || '').trim();
-}
-
-function normalizeKnowgraphIngestError(message: string): string {
-  const raw = String(message || '').trim();
-  const lower = raw.toLowerCase();
-  if (
-    lower.includes('ratelimiterror') ||
-    lower.includes('rate limit') ||
-    lower.includes('insufficient_quota') ||
-    lower.includes('quota')
-  ) {
-    return 'KnowGraph ingest failed: rate limit or quota exceeded.';
+function knowgraphUpstreamFailure(
+  operation: 'ingest' | 'delete',
+  status: number,
+): { ok: false; error: { code: string; message: string } } {
+  const operationLabel = operation === 'ingest' ? 'ingest' : 'deletion';
+  if (status === 401 || status === 403) {
+    return {
+      ok: false,
+      error: {
+        code: `knowgraph_${operation}_provider_authorization_failed`,
+        message: `KnowGraph ${operationLabel} was refused by the configured provider.`,
+      },
+    };
   }
-  if (!raw) {
-    return 'KnowGraph ingest failed.';
+  if (status === 408 || status === 504) {
+    return {
+      ok: false,
+      error: {
+        code: `knowgraph_${operation}_provider_timeout`,
+        message: `KnowGraph ${operationLabel} timed out at the configured provider.`,
+      },
+    };
   }
-  return `KnowGraph ingest failed. ${raw}`;
+  if (status === 429) {
+    return {
+      ok: false,
+      error: {
+        code: `knowgraph_${operation}_rate_limited`,
+        message: `KnowGraph ${operationLabel} is temporarily rate limited.`,
+      },
+    };
+  }
+  return {
+    ok: false,
+    error: {
+      code: `knowgraph_${operation}_upstream_${status}`,
+      message: `KnowGraph ${operationLabel} failed at the configured provider.`,
+    },
+  };
 }
 
 async function proxyKnowgraphPdfIngest(input: {
@@ -168,17 +186,9 @@ async function proxyKnowgraphPdfIngest(input: {
     return { status: response.status, data };
   }
 
-  const upstreamMessage = pickErrorMessage(data);
   return {
     status: response.status,
-    data: {
-      ok: false,
-      error: {
-        code: `knowgraph_ingest_upstream_${response.status}`,
-        message: normalizeKnowgraphIngestError(upstreamMessage),
-      },
-      upstream: data,
-    },
+    data: knowgraphUpstreamFailure('ingest', response.status),
   };
 }
 
@@ -214,13 +224,14 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
       file,
     });
     return res.status(upstream.status).json(upstream.data);
-  } catch (error: any) {
-    const message =
-      error?.cause?.message ||
-      (typeof error?.toString === 'function' ? error.toString() : undefined) ||
-      error?.message ||
-      'KnowGraph proxy request failed';
-    return res.status(502).json({ ok: false, error: { message } });
+  } catch {
+    return res.status(502).json({
+      ok: false,
+      error: {
+        code: 'knowgraph_ingest_unavailable',
+        message: 'KnowGraph ingest service is unavailable.',
+      },
+    });
   }
 });
 
@@ -257,11 +268,17 @@ router.post('/delete-episode', async (req, res) => {
       }),
       signal: AbortSignal.timeout(30_000),
     });
+    if (!response.ok) {
+      return res.status(response.status).json(knowgraphUpstreamFailure('delete', response.status));
+    }
     return res.status(response.status).json(await readResponseDataSafe(response));
-  } catch (error: any) {
+  } catch {
     return res.status(502).json({
       ok: false,
-      error: { message: error?.message || 'KnowGraph deletion proxy failed' },
+      error: {
+        code: 'knowgraph_delete_unavailable',
+        message: 'KnowGraph deletion service is unavailable.',
+      },
     });
   }
 });

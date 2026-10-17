@@ -17,7 +17,7 @@ from typing import Any
 
 from mcp.types import CallToolResult, TextContent, Tool
 
-from app import mcp_cbm_provider, mcp_graphiti_provider, mcp_observability
+from app import mcp_cbm_provider, mcp_graphiti_provider
 from app.python_models.knowgraph_know_contract import encode_know_payload
 from app.python_models.operation_definition import OperationDefinition
 from app.python_models.tool_registry import (
@@ -426,7 +426,7 @@ async def call_graphiti_operation(name: str, arguments: dict[str, Any]) -> Any:
 
 
 def _normalize_graphiti_result(result: Any) -> Any:
-    return _normalize_provider_tool_result(result, dependency="graphiti")
+    return _normalize_provider_tool_result(result)
 
 
 def _bounded_graphiti_episodes(
@@ -494,46 +494,22 @@ def _bounded_graphiti_episodes(
     )
 
 
-def _normalize_provider_tool_result(result: Any, *, dependency: str) -> Any:
-    structured: Any = None
+def _normalize_provider_tool_result(result: Any) -> Any:
+    """Preserve provider-declared MCP success or failure without parsing prose."""
+
+    if isinstance(result, CallToolResult):
+        return result
     if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], list):
         blocks = result[0]
-        structured = result[1]
+        structured = result[1] if isinstance(result[1], dict) else None
     else:
-        blocks = result.content if isinstance(result, CallToolResult) else result
+        blocks = result
+        structured = None
     if not isinstance(blocks, list):
-        return result
-    for block in blocks:
-        text = getattr(block, "text", "")
-        if not isinstance(text, str) or not text:
-            continue
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            if text.startswith("Error:"):
-                failure = mcp_observability.typed_failure(text, dependency=dependency)
-                return CallToolResult(
-                    content=[TextContent(type="text", text=json.dumps(failure))],
-                    isError=True,
-                )
-            continue
-        if isinstance(payload, dict) and payload.get("error"):
-            failure = (
-                payload
-                if payload.get("failureCode")
-                else mcp_observability.typed_failure(
-                    payload["error"], dependency=dependency,
-                )
-            )
-            return CallToolResult(
-                content=[TextContent(type="text", text=json.dumps(failure))],
-                isError=True,
-            )
-    if isinstance(result, CallToolResult):
         return result
     return CallToolResult(
         content=blocks,
-        structuredContent=structured if isinstance(structured, dict) else None,
+        structuredContent=structured,
         isError=False,
     )
 

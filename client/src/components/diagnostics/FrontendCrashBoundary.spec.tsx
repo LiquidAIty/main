@@ -19,6 +19,7 @@ describe("FrontendCrashBoundary", () => {
   afterEach(() => {
     cleanup();
     clearFrontendCrash();
+    window.history.replaceState({}, "", "/");
     vi.clearAllMocks();
     vi.resetModules();
     vi.restoreAllMocks();
@@ -46,6 +47,32 @@ describe("FrontendCrashBoundary", () => {
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain(
       "boundary_test_crash",
     );
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("keeps query credentials and fragments out of the copyable report", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/agentbuilder?projectId=project-one&access_token=secret-value#oauth-callback",
+    );
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    render(
+      <FrontendCrashBoundary>
+        <ThrowingChild />
+      </FrontendCrashBoundary>,
+    );
+
+    const report = (screen.getByRole("textbox") as HTMLTextAreaElement).value;
+    expect(report).toContain("route: /agentbuilder");
+    expect(report).toContain("projectId: project-one");
+    expect(report).not.toContain("access_token");
+    expect(report).not.toContain("secret-value");
+    expect(report).not.toContain("oauth-callback");
 
     consoleErrorSpy.mockRestore();
   });

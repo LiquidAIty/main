@@ -492,12 +492,11 @@ describe('knowledge authority graph surfaces', () => {
 
     expect(screen.getByRole('tab', { name: 'Think' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Know' })).toBeTruthy();
-    expect(screen.getByText('Direct Think summary.')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.queryByText('Technical details')).toBeNull();
     expect(screen.queryByText('Reread contents')).toBeNull();
     expect(screen.queryByText('Use selected in chat')).toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
     expect(screen.getByTestId('knowledge-know-records').textContent)
       .toContain('Direct sourced Know.');
     expect(screen.getAllByRole('link').some(link => (
@@ -510,7 +509,7 @@ describe('knowledge authority graph surfaces', () => {
     expect(removeThink).not.toHaveBeenCalled();
   });
 
-  it('defaults joined Entities to Think and preserves the chosen authority lens across node selections', () => {
+  it('defaults joined Entities to Know and preserves the chosen authority lens across node selections', () => {
     const thinkRecord = (id: string, summary: string) => ({
       id,
       ingestedAt: '2026-10-03T12:00:00Z',
@@ -568,14 +567,14 @@ describe('knowledge authority graph surfaces', () => {
     const node = (label: string) => graph.data.nodes.find((candidate: any) => candidate.label === label);
 
     act(() => graph.nodeClick(node('Joined A')));
-    expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('Think A.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
     expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Know A.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Think' }));
+    expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');
 
     act(() => graph.nodeClick(node('Joined B')));
-    expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByText('Know B.')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Think B.')).toBeTruthy();
 
     act(() => graph.nodeClick(node('Think only')));
     expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');

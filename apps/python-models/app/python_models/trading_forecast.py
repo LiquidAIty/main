@@ -5,9 +5,13 @@ paper-data boundary.  It returns predicted OHLCV bars with explicit model and
 market-data provenance; it never creates a trade, signal, position, or order.
 """
 
+# Entity: Trading
+# Relationship: Fetches bounded Alpaca historical bars and runs the controlled Kronos model to return read-only forecast OHLCV points with explicit market-data and model provenance.
+
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import re
 import sys
 from datetime import datetime, timezone
@@ -28,6 +32,7 @@ KRONOS_MODEL_REF = "NeoQuasar/Kronos-small"
 KRONOS_TOKENIZER_REF = "NeoQuasar/Kronos-Tokenizer-base"
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _KRONOS_ROOT = _REPO_ROOT / "agent-products" / "kronos"
+_KRONOS_PACKAGE_NAME = "_liquidaity_kronos_model"
 _TIMEFRAME = re.compile(r"^(?P<count>[1-9][0-9]*)(?P<unit>Min|Hour|Day|Week|Month)$")
 _PREDICTION_LOCK = Lock()
 
@@ -60,16 +65,34 @@ def _future_timestamps(last_timestamp: str, timeframe: str, horizon: int) -> Any
 
 @lru_cache(maxsize=1)
 def _kronos_predictor() -> Any:
-    if not _KRONOS_ROOT.is_dir():
+    package_root = _KRONOS_ROOT / "model"
+    package_entry = package_root / "__init__.py"
+    if not package_entry.is_file():
         raise TradingForecastError("kronos_source_unavailable")
-    source_root = str(_KRONOS_ROOT)
-    if source_root not in sys.path:
-        sys.path.insert(0, source_root)
-    from model import Kronos, KronosPredictor, KronosTokenizer
+    spec = importlib.util.spec_from_file_location(
+        _KRONOS_PACKAGE_NAME,
+        package_entry,
+        submodule_search_locations=[str(package_root)],
+    )
+    if spec is None or spec.loader is None:
+        raise TradingForecastError("kronos_source_unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_KRONOS_PACKAGE_NAME] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        for name in list(sys.modules):
+            if name == _KRONOS_PACKAGE_NAME or name.startswith(
+                f"{_KRONOS_PACKAGE_NAME}."
+            ):
+                sys.modules.pop(name, None)
+        raise
 
-    tokenizer = KronosTokenizer.from_pretrained(KRONOS_TOKENIZER_REF)
-    model = Kronos.from_pretrained(KRONOS_MODEL_REF)
-    return KronosPredictor(model, tokenizer, device="cpu", max_context=512)
+    tokenizer = module.KronosTokenizer.from_pretrained(KRONOS_TOKENIZER_REF)
+    model = module.Kronos.from_pretrained(KRONOS_MODEL_REF)
+    return module.KronosPredictor(
+        model, tokenizer, device="cpu", max_context=512,
+    )
 
 
 def _market_data_provenance(bars: HistoricalBars) -> dict[str, Any]:

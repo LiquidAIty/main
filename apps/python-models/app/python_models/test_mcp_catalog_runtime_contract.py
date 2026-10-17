@@ -1,15 +1,12 @@
 """MCP process-wide catalog lifecycle contract tests."""
 
-import os
+# Entity: Tool Catalog
+# Relationship: Verifies catalog immutability, single initialization, transport readiness during slow startup, provider-family unavailability, lifecycle reset, and truthful terminal failure states.
+
 import socket
-import sys
 
 import pytest
 from mcp.types import Tool
-
-_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _APP_DIR not in sys.path:
-    sys.path.insert(0, _APP_DIR)
 
 from app.python_models.provider_config import ensure_env_loaded
 
@@ -52,7 +49,7 @@ def test_frozen_catalog_returns_deep_copies(monkeypatch):
 
 def test_main_selects_streamable_http_transport(monkeypatch):
     import asyncio
-    import mcp_host
+    from app import mcp_host
 
     events = []
 
@@ -72,13 +69,18 @@ def test_main_selects_streamable_http_transport(monkeypatch):
 
 def test_catalog_guard_never_exposes_initializing_or_failed_catalog(monkeypatch):
     import asyncio
-    import mcp_host
+    from app import mcp_host
     from mcp.types import Tool
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", None)
+    monkeypatch.setattr(
+        mcp_catalog_runtime,
+        "_CATALOG_INITIALIZING_FAMILY",
+        "liquidaity",
+    )
     with pytest.raises(RuntimeError, match="mcp_catalog_initializing"):
         mcp_catalog_runtime.catalog_or_error()
 
@@ -106,7 +108,7 @@ def test_catalog_guard_never_exposes_initializing_or_failed_catalog(monkeypatch)
 
 def test_http_tools_list_waits_for_the_one_frozen_catalog(monkeypatch):
     import asyncio
-    import mcp_host
+    from app import mcp_host
     from mcp.types import Tool
 
     release = asyncio.Event()
@@ -138,7 +140,7 @@ def test_http_tools_list_waits_for_the_one_frozen_catalog(monkeypatch):
 
 def test_catalog_initialization_is_process_wide_once(monkeypatch):
     import asyncio
-    import mcp_host
+    from app import mcp_host
     from mcp.types import Tool
 
     calls = 0
@@ -262,7 +264,7 @@ def test_catalog_lifecycle_reset_refuses_running_initializer(monkeypatch):
 
 def test_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
     import asyncio
-    import mcp_host
+    from app import mcp_host
 
     async def incomplete_initializer():
         return None
@@ -289,7 +291,7 @@ def test_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
 
 def test_catalog_initialization_has_no_arbitrary_30_second_deadline():
     import inspect
-    import mcp_host
+    from app import mcp_host
 
     source = inspect.getsource(mcp_catalog_runtime.initialize_catalog_once)
     assert "wait_for" not in source
@@ -297,7 +299,7 @@ def test_catalog_initialization_has_no_arbitrary_30_second_deadline():
 
 def test_empty_provider_catalogs_are_unavailable_not_completed(monkeypatch):
     import asyncio
-    import mcp_host
+    from app import mcp_host
 
     snapshots = []
 
@@ -335,7 +337,7 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     monkeypatch,
 ):
     import asyncio
-    import mcp_host
+    from app import mcp_host
 
     traces = []
     closed = []
@@ -380,14 +382,14 @@ def test_cbm_catalog_failure_is_reported_without_cross_task_client_teardown(
     assert any(
         event == "catalog_family_unavailable"
         and fields["catalog_family"] == "cbm"
-        and fields["failure_code"] == "cbm_process_not_running"
+        and fields["failure_code"] == "cbm_catalog_initialization_failed"
         for event, fields in traces
     )
 
 def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     import asyncio
     import httpx
-    import mcp_host
+    from app import mcp_host
     from mcp import Client
     from mcp.types import Tool
 
@@ -483,7 +485,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
 
 def test_catalog_failure_is_truthful_and_unavailable(monkeypatch, capsys):
     import asyncio
-    import mcp_host
+    from app import mcp_host
 
     async def failed_catalog():
         raise RuntimeError("graphiti_catalog_failed")
@@ -492,6 +494,11 @@ def test_catalog_failure_is_truthful_and_unavailable(monkeypatch, capsys):
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_catalog_runtime, "_CATALOG_TOOLS", None)
+    monkeypatch.setattr(
+        mcp_catalog_runtime,
+        "_CATALOG_INITIALIZING_FAMILY",
+        "liquidaity",
+    )
 
     asyncio.run(mcp_catalog_runtime.initialize_catalog_once())
 
@@ -502,7 +509,9 @@ def test_catalog_failure_is_truthful_and_unavailable(monkeypatch, capsys):
     assert diagnostics["catalogFailure"] == (
         "RuntimeError: graphiti_catalog_failed"
     )
-    assert diagnostics["failureCode"] == "graphiti_catalog_failed"
+    assert diagnostics["failureCode"] == (
+        "liquidaity_catalog_initialization_failed"
+    )
     assert diagnostics["failureSummary"] == diagnostics["catalogFailure"]
     assert diagnostics["completedCatalogFamilies"] == []
     assert diagnostics["initializingCatalogFamily"] == "liquidaity"

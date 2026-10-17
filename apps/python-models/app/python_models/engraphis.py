@@ -6,6 +6,10 @@ database or tenant. Relationship admission, completed-pair settlement, Smart
 operations, graph Focus, and presentation projection live with their direct
 owners instead of this store seam.
 """
+
+# Entity: ThinkGraph
+# Relationship: Owns the Project-scoped Engraphis service and exact Entity and Think read primitives used by projection, grounding, relationship settlement, and provider-scoped retrieval.
+
 from __future__ import annotations
 
 import atexit

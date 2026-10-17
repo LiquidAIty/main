@@ -1,6 +1,6 @@
 /**
  * Entity: KnowGraph
- * Relationship: Verifies authenticated PDF ingestion and episode deletion resolve canonical Project ownership, forward only allowed fields, and reject unauthorized Projects before Graphiti.
+ * Relationship: Verifies authenticated PDF ingestion and episode deletion resolve canonical Project ownership, forward only allowed fields, reject unauthorized Projects, and never expose Graphiti failure bodies.
  */
 
 import type { Server } from 'node:http';
@@ -38,6 +38,26 @@ async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+}
+
+async function createKnowgraphServer(input: {
+  ingestStatus?: number;
+  ingestBody?: unknown;
+  deleteStatus?: number;
+  deleteBody?: unknown;
+}): Promise<{ server: Server; baseUrl: string }> {
+  const app = express();
+  app.post('/ingest', (_req, res) => {
+    res.status(input.ingestStatus ?? 200).json(input.ingestBody ?? { ok: true });
+  });
+  app.post('/delete_episode', (_req, res) => {
+    res.status(input.deleteStatus ?? 200).json(input.deleteBody ?? { ok: true });
+  });
+  const server = await new Promise<Server>((resolve) => {
+    const nextServer = app.listen(0, '127.0.0.1', () => resolve(nextServer));
+  });
+  const address = server.address() as AddressInfo;
+  return { server, baseUrl: `http://127.0.0.1:${address.port}` };
 }
 
 function uploadBody(projectId: string): FormData {
@@ -169,6 +189,100 @@ describe('KnowGraph document project authority', () => {
       });
     } finally {
       await closeServer(server);
+    }
+  });
+
+  it('projects an upstream ingest refusal without exposing its body', async () => {
+    const upstream = await createKnowgraphServer({
+      ingestStatus: 429,
+      ingestBody: {
+        error: {
+          message: 'secret-provider-diagnostic insufficient_quota',
+        },
+      },
+    });
+    process.env.KNOWGRAPH_URL = upstream.baseUrl;
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });
+    const api = await createApiServer('user-1');
+    try {
+      const response = await fetch(`${api.baseUrl}/ingest`, {
+        method: 'POST',
+        body: uploadBody('project-alias'),
+      });
+      expect(response.status).toBe(429);
+      const payload = await response.json();
+      expect(payload).toEqual({
+        ok: false,
+        error: {
+          code: 'knowgraph_ingest_rate_limited',
+          message: 'KnowGraph ingest is temporarily rate limited.',
+        },
+      });
+      expect(JSON.stringify(payload)).not.toContain('secret-provider-diagnostic');
+      expect(payload).not.toHaveProperty('upstream');
+    } finally {
+      await closeServer(api.server);
+      await closeServer(upstream.server);
+    }
+  });
+
+  it('returns a stable unavailable error without exposing a transport exception', async () => {
+    const closedUpstream = await createKnowgraphServer({});
+    process.env.KNOWGRAPH_URL = closedUpstream.baseUrl;
+    await closeServer(closedUpstream.server);
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });
+    const api = await createApiServer('user-1');
+    try {
+      const response = await fetch(`${api.baseUrl}/ingest`, {
+        method: 'POST',
+        body: uploadBody('project-alias'),
+      });
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: {
+          code: 'knowgraph_ingest_unavailable',
+          message: 'KnowGraph ingest service is unavailable.',
+        },
+      });
+    } finally {
+      await closeServer(api.server);
+    }
+  });
+
+  it('projects an upstream deletion failure without exposing its body', async () => {
+    const upstream = await createKnowgraphServer({
+      deleteStatus: 500,
+      deleteBody: {
+        error: 'secret-graphiti-delete-diagnostic',
+      },
+    });
+    process.env.KNOWGRAPH_URL = upstream.baseUrl;
+    mocks.getOwnedProjectByReference.mockResolvedValueOnce({ id: 'project-canonical' });
+    const api = await createApiServer('user-1');
+    try {
+      const response = await fetch(`${api.baseUrl}/delete-episode`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project_id: 'project-alias',
+          graphiti_episode_uuid: 'episode-1',
+        }),
+      });
+      expect(response.status).toBe(500);
+      const payload = await response.json();
+      expect(payload).toEqual({
+        ok: false,
+        error: {
+          code: 'knowgraph_delete_upstream_500',
+          message: 'KnowGraph deletion failed at the configured provider.',
+        },
+      });
+      expect(JSON.stringify(payload)).not.toContain('secret-graphiti-delete-diagnostic');
+      expect(payload).not.toHaveProperty('upstream');
+    } finally {
+      await closeServer(api.server);
+      await closeServer(upstream.server);
     }
   });
 });

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# Entity: Saved Cards
+# Relationship: Verifies deck validation, stable Card-to-profile identity across Projects, topology persistence, portable project folders, reasoning settings, revision forking, and optimistic saves.
+
 import pytest
 
 from app.python_models import (

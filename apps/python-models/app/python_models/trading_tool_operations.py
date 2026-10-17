@@ -1,5 +1,5 @@
 """Trading state and decision Python tool handlers and definitions."""
-# Entity: Trading Project
+# Entity: Trading
 # Relationship: Publishes the explicitly grantable Trade Job, decision-journal, and bounded Kronos forecast operations without adding live order execution.
 
 from __future__ import annotations

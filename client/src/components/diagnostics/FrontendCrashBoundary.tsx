@@ -1,3 +1,7 @@
+/**
+ * Entity: Crash Diagnostics
+ * Relationship: Catches root and Agent Builder render failures and presents the captured route, Project, canvas, stack, and recovery details as copyable diagnostics.
+ */
 import React from "react";
 import {
   getLastFrontendCrash,
@@ -34,7 +38,7 @@ function buildCopyableCrashText(
     "A frontend error occurred",
     `message: ${error?.message || crashRecord?.message || "unknown error"}`,
     `route: ${crashRecord?.route || (typeof window !== "undefined" ? window.location.pathname : "")}`,
-    `href: ${crashRecord?.href || (typeof window !== "undefined" ? window.location.href : "")}`,
+    `href: ${crashRecord?.href || (typeof window !== "undefined" ? window.location.origin + window.location.pathname : "")}`,
     `projectId: ${crashRecord?.projectId ?? "n/a"}`,
     `activeDeckOrCanvasId: ${crashRecord?.activeDeckOrCanvasId ?? "n/a"}`,
   ];

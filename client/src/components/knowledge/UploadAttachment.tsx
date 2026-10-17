@@ -1,6 +1,6 @@
 /**
  * Entity: KnowGraph
- * Relationship: Validates one selected PDF and Project, submits authenticated KnowGraph ingestion, clears the picker, and renders bounded success or provider-specific failure feedback.
+ * Relationship: Validates one selected PDF and Project, submits authenticated KnowGraph ingestion, clears the picker, and renders bounded application-owned success or failure feedback.
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
@@ -53,12 +53,8 @@ async function postKnowgraphIngest(file: File, projectId: string): Promise<{
   return { response, payload };
 }
 
-function formatUploadError(endpoint: string, status: number, body: string): string {
-  const compact = String(body || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 200);
-  return `${endpoint} | ${status} | ${compact || "no response body"}`;
+function formatUploadError(endpoint: string, status: number, code: string): string {
+  return `${endpoint} | ${status} | ${code || "request_failed"}`;
 }
 
 function normalizeIngestErrorMessage(payload: any, status: number): string {
@@ -68,25 +64,20 @@ function normalizeIngestErrorMessage(payload: any, status: number): string {
   if (status === 401) {
     return "Your Project session is not authorized to import knowledge. Sign in again before retrying.";
   }
-  const raw = String(
-    payload?.error?.message ||
-      payload?.message ||
-      payload?.error ||
-      "",
-  ).trim();
-  if (!raw) {
-    return formatUploadError("/api/knowgraph/ingest", status, "");
-  }
-  const lower = raw.toLowerCase();
-  if (
-    lower.includes("ratelimiterror") ||
-    lower.includes("rate limit") ||
-    lower.includes("insufficient_quota") ||
-    lower.includes("quota")
-  ) {
+  const code = typeof payload?.error?.code === "string" ? payload.error.code : "";
+  if (code === "knowgraph_ingest_rate_limited") {
     return "KnowGraph ingest failed: configured provider/model is rate limited or out of quota. No provider fallback was used.";
   }
-  return raw;
+  if (code === "knowgraph_ingest_provider_authorization_failed") {
+    return "KnowGraph ingest was refused by the configured provider.";
+  }
+  if (code === "knowgraph_ingest_provider_timeout") {
+    return "KnowGraph ingest timed out at the configured provider.";
+  }
+  if (code === "knowgraph_ingest_unavailable") {
+    return "KnowGraph ingest service is unavailable.";
+  }
+  return formatUploadError("/api/knowgraph/ingest", status, code);
 }
 
 export default function UploadAttachment({
@@ -150,9 +141,9 @@ export default function UploadAttachment({
       setToastType("ok");
       const sectionCount = Number(payload?.section_count || 0);
       setToast(sectionCount > 1 ? `Knowledge imported (${sectionCount} sections)` : "Knowledge imported");
-    } catch (error: any) {
+    } catch {
       setToastType("error");
-      setToast(formatUploadError("/api/knowgraph/ingest", 0, error?.message || "Failed to fetch"));
+      setToast("KnowGraph ingest request could not reach the application.");
     } finally {
       setUploading(false);
       clearInput();

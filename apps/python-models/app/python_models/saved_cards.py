@@ -1,5 +1,8 @@
 """PostgreSQL Project, deck, saved-Card revision, save, and delete authority."""
 
+# Entity: Saved Cards
+# Relationship: Persists Project-scoped decks and immutable Card revisions, validates topology and portable project folders, and enforces each stable Card's permanent Hermes profile binding.
+
 from __future__ import annotations
 
 import re

@@ -1,3 +1,7 @@
+/**
+ * Entity: Graph Presentation
+ * Relationship: Provides the shared dockable, movable, resizable, keyboard-accessible glass drawer used to inspect graph and workspace details without remounting its contents.
+ */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { GRAPH_THEME, graphDrawerButtonStyle, graphInspectorPanelStyle } from "./graphVisualTokens";

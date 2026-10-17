@@ -1,5 +1,11 @@
 """Jev classification and durable annotation of actual Graphiti facts."""
 
+# Entity: KnowGraph
+# Relationship: Collects current Graphiti facts from an ingested episode and persists validated classification metadata on those exact provider-owned relationships without replacing their fact text.
+#
+# Entity: Jev Decisions
+# Relationship: Validates Jev choice distributions against the shared Project vocabulary and idempotently reuses or repairs fact classifications when signatures or vocabulary change.
+
 from __future__ import annotations
 
 import hashlib

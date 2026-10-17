@@ -1,4 +1,10 @@
-// Shared Card/deck normalization primitives for the Agent Builder workspace.
+/**
+ * Entity: Saved Cards
+ * Relationship: Normalizes Card runtime configuration, optional editor text, default new-Card model authority, identifiers, and detached deck copies for Project editing.
+ *
+ * Entity: Agent Canvas
+ * Relationship: Recognizes saved orange orchestrator authority and canonical orange or blue edge types used by Card nodes, rails, and topology editing.
+ */
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
@@ -29,51 +35,6 @@ export function cleanOptionalText(value: unknown): string | null {
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-export const MAIN_CHAT_MODEL_KEY = 'gpt-5.6-sol';
-export const AGENT_BUILDER_MODEL_KEY = 'gpt-5.6-sol';
-export const KNOWGRAPH_MODEL_KEY = 'gpt-5.6-sol';
-export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
-export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-// Builder's non-administrative CodeGraph corridor. Indexing, trace ingestion,
-// ADR mutation, and project deletion stay outside ordinary Card grants.
-export const CODEBASE_MEMORY_TOOLS = [
-  'cbm.search_graph',
-  'cbm.trace_path',
-  'cbm.get_code_snippet',
-  'cbm.check_index_coverage',
-  'cbm.detect_changes',
-] as const;
-// Builder seed selections. Runtime availability and saved grants remain authoritative.
-export const AGENT_BUILDER_CONTROLLER_TOOLS = [
-  'canvas.inspect',
-  'card.create',
-  'card.update_configuration',
-  ...CODEBASE_MEMORY_TOOLS,
-  'cbm.search_code',
-  'cbm.query_graph',
-] as const;
-export const MAIN_CHAT_CONTROLLER_TOOLS = [
-  'canvas.inspect',
-  'run_mag_one',
-  'worldview.set_capability',
-] as const;
-export const THINKGRAPH_CARD_TOOLS = [
-  'engraphis_recall_context',
-  'engraphis_get_memory',
-  'engraphis_remember',
-  'engraphis_update_memory',
-] as const;
-export const KNOWGRAPH_CARD_TOOLS = [
-  'canvas.inspect',
-  'engraphis_get_memory',
-  'graphiti.get_entity_edge',
-  'graphiti.get_episode_entities',
-  'graphiti.get_episodes',
-  'graphiti.get_status',
-  'graphiti.search_memory_facts',
-  'graphiti.search_nodes',
-  'graphiti.add_memory_to_entity',
-] as const;
 export function normalizeCardRuntime(value: unknown): CardRuntime | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;

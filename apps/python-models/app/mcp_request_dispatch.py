@@ -1,5 +1,8 @@
 """Canonical MCP request authorization, dispatch, timeout, and typed results."""
 
+# Entity: External MCP
+# Relationship: Authorizes MCP calls, injects server-owned scope, invokes the exact operation under bounded timeouts, and returns protocol-declared outcomes without interpreting result prose.
+
 from __future__ import annotations
 
 import asyncio
@@ -17,6 +20,31 @@ from mcp.types import CallToolResult, TextContent
 MCP_CALL_TIMEOUT_SECONDS = 30.0
 ENGRAPHIS_OPERATION_TIMEOUT_SECONDS = 120.0
 MAG_ONE_COMPLETION_TIMEOUT_SECONDS = 570.0
+
+
+def _tool_error_result(
+    error: str,
+    *,
+    failure_code: str,
+    category: str,
+    dependency: str = "mcp",
+    retryable: bool = False,
+) -> CallToolResult:
+    payload = {
+        "ok": False,
+        "error": error,
+        "failureCode": failure_code,
+        "errorCategory": category,
+        "retryable": retryable,
+        "dependency": dependency,
+    }
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload))],
+        structuredContent=payload,
+        isError=True,
+    )
+
+
 def request_tool_is_allowed(
     name: str,
     definition: OperationDefinition | None = None,
@@ -94,16 +122,24 @@ async def dispatch_tool(
         mcp_provider_operations.is_provider_operation_name(name)
         and name not in mcp_catalog_runtime.published_mcp_tool_names()
     ):
-        return [TextContent(type="text", text=json.dumps({
-            "ok": False, "error": f"unknown_tool: {name}",
-        }))]
+        return _tool_error_result(
+            f"unknown_tool: {name}",
+            failure_code="unknown_tool",
+            category="NOT_FOUND",
+        )
     definition = operation_definition(name)
     if definition is None:
-        return [TextContent(type="text", text=json.dumps({
-            "ok": False, "error": f"unknown_tool: {name}",
-        }))]
+        return _tool_error_result(
+            f"unknown_tool: {name}",
+            failure_code="unknown_tool",
+            category="NOT_FOUND",
+        )
     if not request_tool_is_allowed(name, definition):
-        raise PermissionError(f"tool_not_granted: {name}")
+        return _tool_error_result(
+            f"tool_not_granted: {name}",
+            failure_code="tool_not_granted",
+            category="AUTHORIZATION",
+        )
     allowed = allowed_operation_keys(definition)
     server_injected = definition.server_injected_arguments
     dispatcher_context = definition.dispatcher_context_arguments
@@ -112,11 +148,11 @@ async def dispatch_tool(
         (SERVER_OWNED_ARGUMENTS | set(server_injected)) & args.keys()
     )
     if supplied_identity:
-        return [TextContent(type="text", text=json.dumps({
-            "ok": False,
-            "error": "caller_identity_rejected: "
-            + ",".join(supplied_identity),
-        }))]
+        return _tool_error_result(
+            "caller_identity_rejected: " + ",".join(supplied_identity),
+            failure_code="caller_identity_rejected",
+            category="INVALID_ARGUMENT",
+        )
     if context is not None:
         try:
             for field in ("projectId", "deckId", "conversationId"):
@@ -156,8 +192,13 @@ async def dispatch_tool(
                 raise ValueError(
                     "server_injected_argument_unavailable:" + ",".join(missing_injected)
                 )
-        except (KeyError, RuntimeError, ValueError) as err:
-            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+        except (KeyError, RuntimeError, ValueError):
+            return _tool_error_result(
+                "server_context_unavailable",
+                failure_code="server_context_unavailable",
+                category="INTERNAL",
+                dependency="tool-runtime",
+            )
     caller_card_id = str(args.get("_callerCardId", "") or "").strip()
     if not caller_card_id and context is not None:
         caller_card_id = str(context.get("callerCardId") or "").strip()
@@ -165,24 +206,26 @@ async def dispatch_tool(
         args["_callerCardId"] = caller_card_id
     extra = [k for k in args.keys() if k not in allowed]
     if extra:
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
-            )
-        ]
+        return _tool_error_result(
+            f"tool_arguments_rejected: {','.join(sorted(extra))}",
+            failure_code="tool_arguments_rejected",
+            category="INVALID_ARGUMENT",
+        )
     try:
         result = definition.handler(**args)
         if inspect.isawaitable(result):
             result = await result
     except ApplicationToolError as error:
-        return [TextContent(type="text", text=json.dumps({
-            "ok": False, "error": str(error),
-        }))]
+        return _tool_error_result(
+            str(error),
+            failure_code="application_tool_failure",
+            category="APPLICATION",
+            dependency="tool-runtime",
+        )
     if isinstance(result, CallToolResult):
         return result
     if isinstance(result, list):
-        return result
+        return CallToolResult(content=result, isError=False)
     result_text = json.dumps(result, default=str, ensure_ascii=False)
     return CallToolResult(
         content=[TextContent(type="text", text=result_text)],
@@ -233,8 +276,6 @@ async def execute_tool_request(
             result_category=result_category,
             completed=True,
         )
-        if result_category == "tool_error" and isinstance(result, list):
-            result = CallToolResult(content=result, isError=True)
         return result
     except Exception as error:
         failure = mcp_observability.typed_failure(

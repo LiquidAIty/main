@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { MODEL_REGISTRY } from './models.config';
+import { listConfiguredModelOptions, MODEL_REGISTRY } from './models.config';
 
 // Canonical model catalog: DeepSeek V4 Flash 0731 is a first-class entry,
 // selectable through the canonical Card options and IDD projections.
@@ -41,5 +41,25 @@ describe('canonical model catalog — DeepSeek V4 Pro 0813', () => {
       id: KEY,
       autoModelFacts: { eligible: false },
     });
+  });
+});
+
+describe('configured model options', () => {
+  it('projects each canonical registry key exactly once without Direct ID aliases', () => {
+    const options = listConfiguredModelOptions('gpt-5.6-luna');
+
+    expect(options.map((option) => option.key)).toEqual(Object.keys(MODEL_REGISTRY));
+    expect(new Set(options.map((option) => `${option.provider}:${option.key}`)).size)
+      .toBe(options.length);
+    expect(options.filter((option) => option.default).map((option) => option.key))
+      .toEqual(['gpt-5.6-luna']);
+    expect(options.some((option) => option.label.includes('Direct ID'))).toBe(false);
+  });
+
+  it('rejects a configured default that is not a canonical OpenAI registry key', () => {
+    expect(() => listConfiguredModelOptions('gpt-invented-default'))
+      .toThrow('configured_openai_default_unknown');
+    expect(() => listConfiguredModelOptions('or-deepseek-chat'))
+      .toThrow('configured_openai_default_unknown');
   });
 });

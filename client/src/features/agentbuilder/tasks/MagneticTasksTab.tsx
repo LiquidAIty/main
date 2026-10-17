@@ -1,3 +1,7 @@
+/**
+ * Entity: Magnetic TaskGraph
+ * Relationship: Renders inspect-only Hermes task dependencies, saved Card assignments, bounded handoffs, and current task states for the selected Magnetic Run.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,

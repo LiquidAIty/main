@@ -1,11 +1,13 @@
 """The one frozen MCP catalog lifecycle and readiness state machine."""
 
+# Entity: Tool Catalog
+# Relationship: Owns the single process-wide MCP catalog lifecycle, freezes provider-backed tool definitions, exposes bounded readiness, and resets registrations only between host lifespans.
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import os
-import re
 import sys
 import threading
 import traceback
@@ -78,20 +80,15 @@ def catalog_diagnostics() -> dict[str, Any]:
 def _catalog_failure_details(error: Exception) -> tuple[str, str]:
     """Return a stable failure code and an HTTP-safe bounded summary."""
     detail = mcp_observability.sanitize_failure_detail(error)
-    if "CBM daemon could not start within 30000 ms" in str(error):
-        code = "cbm_daemon_start_timeout"
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        family = _CATALOG_INITIALIZING_FAMILY
+    prefix = f"{family}_catalog" if family else "catalog"
+    if isinstance(error, TimeoutError):
+        code = f"{prefix}_initialization_timeout"
+    elif isinstance(error, PermissionError):
+        code = f"{prefix}_authorization_failed"
     else:
-        match = re.match(r"^([a-z][a-z0-9_]+)(?::|$)", detail)
-        if match is not None:
-            code = match.group(1)
-        else:
-            with _CATALOG_DIAGNOSTIC_LOCK:
-                family = _CATALOG_INITIALIZING_FAMILY
-            code = (
-                f"{family}_catalog_initialization_failed"
-                if family
-                else "catalog_initialization_failed"
-            )
+        code = f"{prefix}_initialization_failed"
     return code, f"{error.__class__.__name__}: {detail or 'no detail'}"
 
 
@@ -155,7 +152,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
     tools = await mcp_catalog_projection.application_tools()
     _complete_catalog_family("liquidaity")
     tools = [mcp_provider_operations.bind_operation_access(tool) for tool in tools]
-    provider_tools = await _materialize_requested_provider_catalog(
+    provider_tools = await _materialize_configured_provider_catalog(
         tuple(mcp_provider_operations.PROVIDER_PREFIXES)
     )
     catalog = mcp_catalog_projection.complete_catalog(tools, provider_tools)
@@ -180,10 +177,10 @@ async def _materialize_complete_catalog() -> list[Tool]:
     return catalog
 
 
-async def _materialize_requested_provider_catalog(
+async def _materialize_configured_provider_catalog(
     families: tuple[str, ...],
 ) -> list[Tool]:
-    """Late-bind only the provider families selected by the authorized request."""
+    """Materialize each configured provider family once for the frozen host catalog."""
     tools: list[Tool] = []
     for provider in families:
         _set_catalog_initializing_family(provider)
