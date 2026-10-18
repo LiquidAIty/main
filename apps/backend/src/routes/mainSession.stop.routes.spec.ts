@@ -384,6 +384,43 @@ describe('Main direct-recipient stop settlement', () => {
     expect(conversationMocks.appendConversationReplyOnce).not.toHaveBeenCalled();
   });
 
+  it('settles a pre-session Gateway failure without fabricated provider evidence', async () => {
+    gatewayMocks.hermesGateway.mockRejectedValue(
+      new Error('WebSocket heartbeat acknowledgement timed out'),
+    );
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve();
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: '@Builder investigate the exact issue',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000005',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000006',
+      }),
+    });
+    const stream = await chat.text();
+
+    expect(chat.status).toBe(200);
+    expect(stream).toContain('"code":"WebSocket heartbeat acknowledgement timed out"');
+    expect(stream).toContain('event: end');
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-one',
+      state: 'failed',
+      errorCode: 'hermes_turn_failed',
+      errorSummary: 'WebSocket heartbeat acknowledgement timed out',
+    }));
+    const settlement = lifecycleMocks.finishCardRun.mock.calls.at(-1)?.[0];
+    expect(settlement).not.toHaveProperty('effectiveProvider');
+    expect(settlement).not.toHaveProperty('provider');
+    expect(settlement).not.toHaveProperty('model');
+    expect(settlement?.hermesSessionRef).toBeUndefined();
+    expect(conversationMocks.appendConversationReplyOnce).not.toHaveBeenCalled();
+  });
+
   it('interrupts the exact recipient, cancels the outer Run, and persists no partial reply', async () => {
     let markRecipientWaiting!: () => void;
     const recipientWaiting = new Promise<void>((resolve) => { markRecipientWaiting = resolve; });

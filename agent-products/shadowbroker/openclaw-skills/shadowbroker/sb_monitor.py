@@ -1,12 +1,15 @@
-"""ShadowBroker autonomous monitoring agent — heartbeat & anomaly detection.
+"""Prototype heartbeat and anomaly helpers; disabled in the published preview.
 
-Runs on OpenClaw's scheduling system. On each heartbeat:
+This module can be called by a separately configured OpenClaw scheduler. The
+shipped ``skill.yaml`` disables that heartbeat, so importing this package does
+not create autonomous monitoring or external notifications. If an operator
+deliberately wires the prototype, each heartbeat can:
   1. Pull telemetry from ShadowBroker
   2. Run anomaly detection (new military activity, geofence breaches, etc.)
   3. Take time-machine snapshots at configured intervals
   4. Send alerts via the configured channel (Discord, Telegram, etc.)
 
-Usage (in OpenClaw skill config):
+Prototype configuration (not enabled by the shipped skill):
     heartbeat_interval: 60  # seconds
     heartbeat_handler: sb_monitor.heartbeat
 """
@@ -830,4 +833,3 @@ async def heartbeat_with_feeds(sb_client) -> list[str]:
     messages.extend(feed_messages)
 
     return messages
-

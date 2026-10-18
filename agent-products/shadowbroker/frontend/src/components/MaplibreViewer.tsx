@@ -15,7 +15,7 @@ import Map, {
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { computeNightPolygon } from '@/utils/solarTerminator';
 import { darkStyle, lightStyle } from '@/components/map/styles/mapStyles';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import { AlertTriangle, Radio, Activity, Play, Satellite, ExternalLink, Info } from 'lucide-react';
 import WikiImage from '@/components/WikiImage';
 import FishingDestinationRoute from '@/components/map/FishingDestinationRoute';
@@ -23,6 +23,10 @@ import { useTheme } from '@/lib/ThemeContext';
 import { PIN_CATEGORY_LABELS, PIN_CATEGORY_COLORS, type PinCategory } from '@/types/aiIntel';
 import { getAllPinIcons } from '@/components/map/pinIcons';
 import { AIIntelPinDetail } from '@/components/map/AIIntelPinDetail';
+
+maplibregl.setWorkerUrl(
+  new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).toString(),
+);
 
 import {
   svgPlaneCyan,
@@ -886,19 +890,23 @@ const MaplibreViewer = ({
       }
     };
 
-    // Suppress "image not found" warnings — retry when the async load finishes
-    map.on('styleimagemissing', (ev: maplibregl.MapStyleImageMissingEvent) => {
-      const id = ev.id;
+    // MapLibre v6 resolves a missing image through this callback before its
+    // promise settles. The former styleimagemissing/addImage path no longer
+    // resolves the current request in v6.
+    map.setMissingStyleImageResolver(async (id: string) => {
       const url = pendingImages[id];
-      if (url) {
+      if (!url || map.hasImage(id)) return;
+      await new Promise<void>((resolve) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
-        img.src = url;
         img.onload = () => {
           if (!map.hasImage(id)) map.addImage(id, img);
           delete pendingImages[id];
+          resolve();
         };
-      }
+        img.onerror = () => resolve();
+        img.src = url;
+      });
     });
 
     // AI Intel teardrop pin icons — one per category color

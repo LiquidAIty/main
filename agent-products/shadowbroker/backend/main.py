@@ -2562,22 +2562,15 @@ def _redact_composed_gate_message(payload: dict[str, Any]) -> dict[str, Any]:
         "nonce": str(payload.get("nonce", "") or ""),
         "sender_ref": str(payload.get("sender_ref", "") or ""),
         "format": str(payload.get("format", "mls1") or "mls1"),
-        "transport_lock": str(payload.get("transport_lock", "") or ""),
         "timestamp": float(payload.get("timestamp", 0) or 0),
     }
     epoch = payload.get("epoch", 0)
     if epoch:
         safe["epoch"] = int(epoch or 0)
-    if payload.get("reply_to"):
-        safe["reply_to"] = str(payload.get("reply_to", "") or "")
     if payload.get("detail"):
         safe["detail"] = str(payload.get("detail", "") or "")
     if payload.get("key_commitment"):
         safe["key_commitment"] = str(payload.get("key_commitment", "") or "")
-    if payload.get("gate_envelope"):
-        safe["gate_envelope"] = str(payload.get("gate_envelope", "") or "")
-    if payload.get("envelope_hash"):
-        safe["envelope_hash"] = str(payload.get("envelope_hash", "") or "")
     return safe
 
 
@@ -11243,25 +11236,7 @@ async def api_wormhole_dm_contact_delete(request: Request, peer_id: str):
     return {"ok": True, "peer_id": peer_id, "deleted": deleted}
 
 
-@app.post("/api/wormhole/dm/contact/{peer_id}/sever", dependencies=[Depends(require_admin)])
-@limiter.limit("60/minute")
-async def api_wormhole_dm_contact_sever(request: Request, peer_id: str):
-    from services.mesh.mesh_wormhole_contacts import sever_wormhole_dm_contact
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    block = bool(body.get("block", False))
-    try:
-        return sever_wormhole_dm_contact(peer_id, block=block)
-    except ValueError as exc:
-        return {"ok": False, "detail": str(exc)}
-
-
-_WORMHOLE_PUBLIC_FIELDS = {"installed", "configured", "running", "ready", "arti_ready"}
+_WORMHOLE_PUBLIC_FIELDS = {"installed", "configured", "running", "ready"}
 
 
 def _redact_wormhole_status(state: dict[str, Any], authenticated: bool) -> dict[str, Any]:

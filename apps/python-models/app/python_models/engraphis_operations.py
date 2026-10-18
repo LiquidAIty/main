@@ -98,6 +98,17 @@ def operation_definitions() -> list[Any]:
             access = "read" if name in READ_TOOLS else "write" if name in WRITE_TOOLS else ""
             if not name or not access:
                 raise RuntimeError(f"engraphis_operation_access_missing:{name}")
+            description = str(item.get("description") or name).strip()
+            if name == "engraphis_recall_context":
+                description += (
+                    " Each successful recall appends a retrieval/accounting receipt, so it is "
+                    "not read-only or safe to retry blindly after an uncertain transport failure."
+                )
+            elif name == "engraphis_remember_entities":
+                description = (
+                    "Atomically store one durable memory per exact Entity. Each fact requires "
+                    "content and entity_name and may reuse an exact entity_id."
+                )
 
             async def dispatch(
                 *, _name: str = name, projectId: str = "", **arguments: Any,
@@ -108,7 +119,7 @@ def operation_definitions() -> list[Any]:
 
             definitions.append(OperationDefinition(
                 canonical_id=name,
-                description=str(item.get("description") or name),
+                description=description,
                 parameters_schema=deepcopy(item["inputSchema"]),
                 handler=dispatch,
                 available=True,

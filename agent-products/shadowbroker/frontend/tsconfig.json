@@ -4,7 +4,7 @@
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": ["node", "geojson"],
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
@@ -31,5 +31,11 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "infonet-terminal"]
+  "exclude": [
+    "node_modules",
+    "infonet-terminal",
+    "src/__tests__/**",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
 }

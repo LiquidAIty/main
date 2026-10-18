@@ -31,19 +31,15 @@ Prerequisites:
 
 ## CI / GitHub Actions
 
-The repo also has a desktop matrix workflow at:
+The repository does **not currently track** the previously documented desktop matrix workflow:
 
 ```text
 .github/workflows/desktop-release.yml
 ```
 
-What it does today:
-
-- builds unsigned desktop artifacts on Windows, macOS, and Linux
-- uploads bundle artifacts for PRs and branch builds
-- on `v*.*.*` tags, attaches release assets to the GitHub release
-- forwards Apple signing/notarization secrets to the macOS build **if** they
-  exist, but does not require them
+Desktop CI, release-asset upload, signing, and updater publication are TODO and
+are outside the supported v0.9.83 Web/Docker release. The local build procedure
+below remains useful development documentation, but it is not a CI or publication receipt.
 
 See [RELEASE_INPUTS.md](./RELEASE_INPUTS.md) for the plain-language answer to
 "what would I need later?".

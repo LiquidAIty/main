@@ -6,8 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import os
 import sys
 import threading
 import traceback
@@ -19,7 +17,6 @@ from app import mcp_auth, mcp_catalog_projection, mcp_graphiti_provider
 from app import mcp_observability, mcp_provider_operations
 
 
-_HOST_SOURCE_PATH = os.path.join(os.path.dirname(__file__), "mcp_host.py")
 
 
 _CATALOG_DIAGNOSTIC_LOCK = threading.Lock()
@@ -46,11 +43,7 @@ def catalog_diagnostics() -> dict[str, Any]:
         completed_families = list(_CATALOG_COMPLETED_FAMILIES)
         unavailable_families = list(_CATALOG_UNAVAILABLE_FAMILIES)
         initializing_family = _CATALOG_INITIALIZING_FAMILY
-    try:
-        with open(_HOST_SOURCE_PATH, "rb") as source_file:
-            current_source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
-    except OSError:
-        current_source_sha256 = None
+    current_source_sha256 = mcp_observability.catalog_source_sha256() or None
     catalog_ready = bool(state == "ready" and identity and "liquidaity" in completed_families)
     return {
         "state": state,

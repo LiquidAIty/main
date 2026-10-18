@@ -37,13 +37,13 @@ def _hermes_package_version() -> str:
 
 _MCP_IMPLEMENTATION_VERSION = _hermes_package_version()
 _PUBLIC_MCP_DESCRIPTION = (
-    "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
-    "ThinkGraph, KnowGraph, and supported agent runtimes. "
-    "Start with main.context to resolve the authenticated Main conversation and project scope. "
-    "Use main.submit to send one bounded mission through that saved Main and its authorized orange Card roster. "
-    "Use the currently published tool names and schemas; preserve returned provider IDs and provenance. "
-    "Saved Cards own their configuration and granted capabilities. "
-    "An accepted operation is not proof of completion; use its returned status and evidence."
+    "Use LiquidAIty when the user asks to inspect or operate an authenticated Project, "
+    "saved Card, AgentGraph, CodeGraph, ThinkGraph, KnowGraph, WorldView, or supported "
+    "runtime. Use only tools advertised for this connection; main.context resolves the "
+    "current Main scope when available. Read tools return bounded Project data. Write tools "
+    "may persist configuration or start real work and must match explicit user intent. "
+    "Preserve provider IDs and provenance. An accepted operation is not completed work; "
+    "use the returned status and evidence."
 )
 
 class ToolChangeNotificationServer(Server):
@@ -51,7 +51,7 @@ class ToolChangeNotificationServer(Server):
         experimental_capabilities: dict[str, dict[str, Any]] | None = None,
         extensions: dict[str, dict[str, Any]] | None = None):
         return super().create_initialization_options(
-            notification_options or NotificationOptions(tools_changed=True),
+            notification_options or NotificationOptions(tools_changed=False),
             experimental_capabilities, extensions,
         )
 

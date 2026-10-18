@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -77,7 +77,7 @@ def test_backend_transport_refuses_redirect_before_forwarding_secret() -> None:
         def log_message(self, *_args) -> None:
             return None
 
-    target = HTTPServer(("127.0.0.1", 0), TargetHandler)
+    target = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
     target_thread = Thread(target=target.serve_forever, daemon=True)
     target_thread.start()
 
@@ -94,7 +94,7 @@ def test_backend_transport_refuses_redirect_before_forwarding_secret() -> None:
         def log_message(self, *_args) -> None:
             return None
 
-    redirect = HTTPServer(("127.0.0.1", 0), RedirectHandler)
+    redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
     redirect_thread = Thread(target=redirect.serve_forever, daemon=True)
     redirect_thread.start()
     try:

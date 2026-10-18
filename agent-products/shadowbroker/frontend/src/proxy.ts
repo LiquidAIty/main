@@ -29,7 +29,7 @@ function buildCsp(nonce: string, strictScripts = false): string {
     "child-src 'self' blob:",
     "frame-src 'self' https://video.ibm.com https://ustream.tv https://www.ustream.tv https://t.me",
     "media-src 'self' blob:",
-    "frame-ancestors 'self'",
+    "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
   ];

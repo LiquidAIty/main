@@ -125,13 +125,6 @@ SYSTEM:
       if (lowerQuery === 'status') {
         const resp = await fetch(`${base}/status`);
         const data = await resp.json();
-        const threat = data.threat_level;
-        const threatLabel =
-          threat && typeof threat === 'object'
-            ? threat.available === false
-              ? `UNAVAILABLE (${threat.status || 'unknown'})`
-              : `${threat.level || 'N/A'} (${threat.score ?? 'N/A'}/100)`
-            : threat || 'N/A';
         return {
           content: `🌍✅ SHADOWBROKER AI STATUS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -150,6 +143,13 @@ Version: ${data.version || '1.0'}`,
           .filter(([, v]) => (v as number) > 0)
           .map(([k, v]) => `  • ${k}: ${v}`)
           .join('\n');
+        const threat = data.threat_level;
+        const threatLabel =
+          threat && typeof threat === 'object'
+            ? threat.available === false
+              ? `UNAVAILABLE (${threat.status || 'unknown'})`
+              : `${threat.level || 'N/A'} (${threat.score ?? 'N/A'}/100)`
+            : threat || 'N/A';
         return {
           content: `🌍📡 TELEMETRY SUMMARY:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━

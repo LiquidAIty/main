@@ -58,10 +58,39 @@ _CARD_CATALOG_PROVIDER_TOOL_NAMES = {
         "get_entity_edge",
         "get_episode_entities",
         "get_episodes",
+        "get_status",
         "search_memory_facts",
         "search_nodes",
         "summarize_saga",
     }),
+}
+_PROVIDER_TOOL_TITLES = {
+    "cbm": {
+        "check_index_coverage": "Check CodeGraph index coverage",
+        "detect_changes": "Detect repository code changes",
+        "get_architecture": "Read repository architecture",
+        "get_code_snippet": "Read a CodeGraph source snippet",
+        "get_graph_schema": "Read the CodeGraph schema",
+        "query_graph": "Query CodeGraph structure",
+        "search_code": "Search repository source",
+        "search_graph": "Search CodeGraph structure",
+        "trace_path": "Trace a CodeGraph path",
+    },
+    "graphiti": {
+        "add_memory": "Add a KnowGraph memory episode",
+        "add_memory_to_entity": "Add a Know to an Entity",
+        "build_communities": "Build KnowGraph communities",
+        "clear_graph": "Clear KnowGraph data",
+        "delete_entity_edge": "Delete a KnowGraph relationship",
+        "delete_episode": "Delete a KnowGraph episode",
+        "get_entity_edge": "Read a KnowGraph relationship",
+        "get_episode_entities": "Read episode entities and relationships",
+        "get_episodes": "List KnowGraph episodes",
+        "get_status": "Read KnowGraph status",
+        "search_memory_facts": "Search KnowGraph facts",
+        "search_nodes": "Search KnowGraph entities",
+        "summarize_saga": "Summarize a KnowGraph saga",
+    },
 }
 _GRAPHITI_SERVER_INJECTED_ARGUMENTS = frozenset({"group_id", "group_ids"})
 _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -158,6 +187,7 @@ def namespace_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         provider_tool_name = tool.name
         payload["name"] = prefix + provider_tool_name
+        payload["title"] = _PROVIDER_TOOL_TITLES[provider][provider_tool_name]
         meta = dict(payload.get("_meta") or {})
         meta["liquidaitySource"] = {
             "sourceId": provider,

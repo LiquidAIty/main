@@ -23,6 +23,7 @@
   --font-roboto-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
     monospace;
+  --font-jetbrains-mono: var(--font-roboto-mono);
 }
 
 /* Light theme: only the map basemap changes — UI stays dark */

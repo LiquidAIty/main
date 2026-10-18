@@ -2,9 +2,10 @@
 name: shadowbroker
 description: >
   Query the ShadowBroker OSINT intelligence platform for real-time geospatial
-  intelligence, place AI intel pins on the map, manage autonomous monitoring,
+  intelligence, place operator-requested AI intel pins, create saved watches,
   inject data into native layers, fetch satellite imagery, aggregate news,
-  generate intelligence reports, and participate in the Wormhole mesh network.
+  generate intelligence reports, and perform explicit full-tier actions on the
+  experimental Wormhole mesh network. No autonomous agent runner is included.
 ---
 
 # ShadowBroker Intelligence Skill
@@ -14,6 +15,11 @@ running on `localhost:8000`. It tracks military flights, ships, satellites, SIGI
 earthquakes, fires, GDELT conflict events, prediction markets, and 30+ other data
 layers — all with geographic coordinates.
 
+This skill is a preview client for operator-directed sessions. Saved watches and
+SSE events are server capabilities; the package does not install an autonomous
+monitor, scheduler, or outbound notification service. Oracle and governance
+writes remain outside the published agent surface.
+
 ## Agent Fast Path (read first)
 
 ShadowBroker exposes dozens of read commands. **Do not explore them.** Use the
@@ -22,7 +28,7 @@ three-tool surface:
 | Tool | When |
 |------|------|
 | `await sb.ask("natural language question")` | **Default for reads** — server routes to fastest command |
-| `await sb.run_playbook("hot_snapshot")` | Pre-batched snapshots (morning brief, monitor poll, status) |
+| `await sb.run_playbook("hot_snapshot")` | Caller-initiated snapshots (morning brief, saved-watch poll, status) |
 | `await sb.channel_status()` | Liveness (~5 ms) — never `/api/health` |
 
 **Latency tiers:** `get_entity_profile` / `find_entity` / `get_entity_trail` / `find_flights` / `search_news` / `entities_near` → **⚡ &lt;30 ms**.
@@ -34,7 +40,7 @@ answer = await sb.ask("where is the Patriots jet")
 
 # Named batch plans
 brief = await sb.run_playbook("hot_snapshot")
-monitor = await sb.run_playbook("monitor_heartbeat")
+watch_snapshot = await sb.run_playbook("monitor_heartbeat")  # one manual snapshot
 
 # Structured lookup when you already parsed fields
 entity = await sb.send_command("find_entity", {"owner": "musk", "compact": True})
@@ -46,7 +52,7 @@ batch = await sb.send_batch([
 ])
 ```
 
-**Playbooks:** `hot_snapshot`, `morning_brief`, `status_check`, `monitor_heartbeat`, `track_snapshot`, `jet_recon`, `area_brief`, `entity_recon`.
+**Playbooks:** `hot_snapshot`, `morning_brief`, `status_check`, `monitor_heartbeat`, `track_snapshot`, `jet_recon`, `area_brief`, `entity_recon`. Every playbook is caller-initiated; `monitor_heartbeat` does not create a recurring agent.
 
 **Anti-patterns:** `search_telemetry` for known tail numbers; `get_telemetry` for routine polls; sequential `send_command` loops; empty `layers: []` on `get_layer_slice`.
 
@@ -101,9 +107,9 @@ python openclaw-skills/shadowbroker/verify_hmac.py
 Hand-rolled signers must hash the **exact** POST bytes. Use compact JSON:
 `json.dumps(payload, separators=(",", ":"), sort_keys=True)`.
 
-### SSE Stream (Preferred — Low-Latency Push)
+### SSE Stream (Preferred During an Active Session)
 
-Open the SSE stream **first** and keep it open for the session.  The server pushes
+Open the SSE stream **first** and keep it open only for the active client session. The server pushes
 `layer_changed` events whenever any data layer refreshes — you know exactly which
 layers to fetch instead of blind-polling.
 
@@ -408,19 +414,21 @@ await sb.clear_injected("cctv")     # just CCTV
 **When to use**: When the user wants to add their own data sources to existing
 layers (e.g., "add this CCTV camera I found", "add this military base").
 
-### 8. Wormhole / InfoNet / Mesh Network
+### 8. Wormhole / InfoNet / Mesh Network (Explicit Full-Tier Actions)
 
-OpenClaw agents participate in the private Infonet **on behalf of the operator**
-who configured the skill. All traffic uses the operator's wormhole persona and
-local node runtime (MLS gate crypto, Ed25519 signing, Tor onion transport) —
-the agent does not get a separate fleet identity.
+When the operator explicitly requests one of these actions, a full-tier client
+uses the operator's Wormhole persona and local node runtime. The agent does not
+get a separate fleet identity. InfoNet is an experimental testnet: gate chat is
+signed and obfuscated, not end-to-end private, and wire privacy depends on the
+configured transport.
 
 **Access tiers**
 
 - `restricted` (default): read Infonet status, list gates, read gate messages,
   poll DMs.
 - `full` (`OPENCLAW_ACCESS_TIER=full`): also warm Tor, join the swarm, post
-  gate messages, cast votes, and send DMs when the user commands it.
+  gate messages, cast votes, and send experimental DMs only when the user
+  explicitly commands the exact action.
 
 Remote agents authenticate with HMAC on `/api/ai/channel/command`; loopback
 uses the local operator lane.
@@ -432,7 +440,7 @@ await sb.ensure_infonet_ready(join_swarm=True)
 # Status snapshot (chain health, wormhole, runtime)
 status = await sb.infonet_status()
 
-# Read the public Infonet gate (MLS-encrypted, decrypt with operator keys)
+# Read the experimental InfoNet gate; decrypt where the local runtime supports it
 messages = await sb.read_gate_messages("infonet", limit=20, decrypt=True)
 
 # Post on behalf of the operator (full tier) — propagates via peer-push
@@ -443,7 +451,7 @@ await sb.post_to_infonet("same as post_to_gate on infonet gate")
 # Upvote / downvote a node (full tier)
 await sb.cast_vote("!sb_peer_id_or_pubkey", vote=1, gate="infonet")
 
-# Encrypted DMs (peer_id / !sb_... recipient)
+# Experimental DMs (peer_id / !sb_... recipient); do not claim production privacy
 await sb.send_encrypted_dm("!sb_recipient", "Eyes only: carrier update")
 dms = await sb.read_encrypted_dms(limit=20)
 
@@ -459,9 +467,11 @@ await sb.dead_drop_leave("location_hash", "anonymous intelligence payload")
 found = await sb.dead_drop_check("location_hash")
 ```
 
-### 9. Alert Delivery
+### 9. Operator-Configured Alert Delivery
 
-Send branded alerts to the user's messaging channels:
+These helpers send an immediate external message only after the user has
+configured the destination and requested the send. They are not a background
+monitor or scheduled alert service:
 
 ```python
 from sb_alerts import AlertDispatcher
@@ -729,18 +739,19 @@ When the user asks a question, follow this decision tree:
    - YES if the user explicitly wants data in a specific layer (CCTV, ships, etc.)
    - Use `inject_data()` — items tagged automatically for later removal
 
-7. **Should I set up persistent monitoring?**
-   - YES if the user wants ongoing tracking (aircraft, ship, geofence, keyword)
-   - Use `add_watch` — alerts push instantly via SSE, no polling needed
+7. **Should I create a saved watch?**
+   - YES only when the user explicitly requests an aircraft, ship, geofence, or keyword watch
+   - Use `add_watch`; events arrive only while a client is connected to SSE. This does not create an autonomous agent runtime or external notifier
 
-8. **Should I send an alert?**
-   - YES if the user has configured alert channels
+8. **Should I send an external alert?**
+   - YES only when the user explicitly requests it and has configured the destination
    - Use the `AlertDispatcher` with the correct signature
 
-### Telegram rhetoric monitoring (watchdog)
+### Operator-Requested Telegram Saved Watches
 
-Use watchdog watches for push alerts over SSE — no polling required. Keyword
-watches now scan Telegram OSINT too (translated **and** original text).
+An operator may create saved watches whose events are exposed over SSE while a
+client is connected. Keyword watches scan Telegram OSINT too (translated **and**
+original text). This is not autonomous monitoring or guaranteed notification.
 
 ```python
 # Alert when "nuclear" appears in news, GDELT, or Telegram OSINT
@@ -762,14 +773,15 @@ await sb.send_command("add_watch", {
 })
 ```
 
-When a watch fires, you receive an SSE `alert` event. Forward it with
-`sb_alerts.send_intel()` if the user has Discord/Telegram notification channels.
+When a watch fires during an active session, you receive an SSE `alert` event.
+Forward it with `sb_alerts.send_intel()` only on an explicit user request to use
+an already configured Discord/Telegram destination.
 
 ---
 
 ## Important Rules
 
-1. **Open SSE stream first** — call `sb.stream_updates()` at session start and keep it open. It pushes `layer_changed` events so you know exactly which layers to fetch, and delivers watchdog alerts instantly.
+1. **Open SSE during the active session** — call `sb.stream_updates()` at session start and keep it open only while the client is running. It pushes `layer_changed` and saved-watch events; it is not a background monitoring guarantee.
 2. **Fetch targeted, not everything** — use `get_layer_slice()`, `find_flights()`, `search_telemetry()`, `entities_near()` instead of full `get_telemetry()` dumps. Per-layer incremental versioning means unchanged layers transfer zero bytes.
 3. **Always use signatures** — every outbound message starts with the appropriate `sig()` prefix
 4. **Geocode before pinning** — never guess coordinates, always use `geocode()`

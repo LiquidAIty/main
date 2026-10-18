@@ -83,7 +83,10 @@ describe('backend-owned default Project deck', () => {
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
-      tools: expect.arrayContaining(['graphiti.add_memory_to_entity']),
+      tools: expect.arrayContaining([
+        'graphiti.add_memory_to_entity',
+        'graphiti.get_status',
+      ]),
     });
   });
 

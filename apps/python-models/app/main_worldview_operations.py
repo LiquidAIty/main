@@ -244,7 +244,8 @@ def main_worldview_operation_definitions(
             description=(
                 "Read the compact server-owned Main entry context for this authenticated "
                 "Main request: project, deck, conversation, parent run, and saved "
-                "Main-card identities, plus the exact served catalog/process/source identity. "
+                "Main-card identities, plus the canonical frozen host catalog and "
+                "process/source identity. Request authorization may expose a smaller tool list. "
                 "Accepts no caller-supplied identity or context payload."
             ),
             parameters_schema={"type": "object", "properties": {}, "required": []},

@@ -118,10 +118,9 @@ The release flow now:
 If the Tauri CLI is missing, the build scripts now fail immediately with the
 correct `cargo install tauri-cli@^2` instruction.
 
-The repo also now has a no-secrets desktop matrix workflow at
-[`../.github/workflows/desktop-release.yml`](../.github/workflows/desktop-release.yml)
-that builds unsigned desktop artifacts on Windows, macOS, and Linux and turns
-`v*.*.*` tags into downloadable GitHub release assets.
+There is no tracked desktop release workflow yet. The local packaging path can
+produce unsigned artifacts, but CI matrix builds and tag-driven GitHub release
+uploads remain distribution TODOs.
 
 See [`tauri-skeleton/RELEASE.md`](./tauri-skeleton/RELEASE.md) for release-path
 details and [`tauri-skeleton/RELEASE_INPUTS.md`](./tauri-skeleton/RELEASE_INPUTS.md)

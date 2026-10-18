@@ -89,6 +89,16 @@ def test_catalog_matches_the_installed_smart_interface_without_added_graph_field
     assert original["engraphis_recall_context"].annotations.model_dump(
         by_alias=True,
     )["readOnlyHint"] is False
+    assert "retrieval/accounting receipt" in next(
+        definition.description
+        for definition in operations.operation_definitions()
+        if definition.canonical_id == "engraphis_recall_context"
+    )
+    assert next(
+        definition.description
+        for definition in operations.operation_definitions()
+        if definition.canonical_id == "engraphis_remember_entities"
+    ).startswith("Atomically store one durable memory per exact Entity")
 
 
 def test_operation_definitions_can_initialize_inside_an_active_event_loop():

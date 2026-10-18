@@ -714,7 +714,7 @@ class ShadowBrokerClient:
     # ── Wormhole / InfoNet (operator-delegated via command channel) ───
 
     async def ensure_infonet_ready(self, *, join_swarm: bool = True) -> dict:
-        """Warm Tor, enable the node, and join the private Infonet swarm."""
+        """Warm Tor, enable the node, and join the experimental InfoNet swarm."""
         resp = await self.send_command(
             "ensure_infonet_ready",
             {"join_swarm": join_swarm},
@@ -741,7 +741,7 @@ class ShadowBrokerClient:
         limit: int = 20,
         decrypt: bool = False,
     ) -> dict:
-        """Read gate messages (optionally decrypt with the operator MLS persona)."""
+        """Read experimental gate messages and request local decryption when available."""
         return self.unwrap_channel_result(
             await self.send_command(
                 "read_gate_messages",
@@ -750,7 +750,7 @@ class ShadowBrokerClient:
         )
 
     async def post_to_gate(self, gate_id: str, message: str, *, reply_to: str = "") -> dict:
-        """Post an MLS-encrypted gate message on behalf of the operator."""
+        """Post to an experimental gate on behalf of the operator."""
         resp = await self.send_command(
             "post_gate_message",
             {
@@ -1528,4 +1528,3 @@ class ShadowBrokerClient:
                 _log.getLogger(__name__).warning("SSE connection error: %s — reconnecting in %.0fs", e, delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, max_reconnect_delay)
-

@@ -1,15 +1,15 @@
 name: shadowbroker
 description: >-
-  ShadowBroker OSINT intelligence co-pilot.
-  Provides autonomous monitoring, map pinning, satellite imagery,
-  news aggregation, proximity alerts, and full Wormhole/InfoNet participation.
+  External-agent integration preview for bounded ShadowBroker telemetry reads
+  and explicit allowlisted actions. OpenClaw is the reference client; autonomous
+  monitoring, Oracle/governance writes, and production privacy remain TODO.
 
 version: 1.0.0
 author: ShadowBroker AI Module
 
-# Heartbeat configuration — how often the autonomous monitor runs
+# Autonomous monitoring is not enabled by the published preview.
 heartbeat:
-  enabled: true
+  enabled: false
   interval_seconds: 60
   handler: sb_monitor.heartbeat
 
@@ -55,19 +55,15 @@ capabilities:
   - satellite_imagery       # On-demand Sentinel-2 satellite photos
   - news_aggregation        # GDELT + news by location
   - data_injection          # Inject data into native ShadowBroker layers
-  - proximity_monitoring    # "Near Me" radius-based telemetry
-  - anomaly_detection       # Spike detection, new entity tracking
-  - geofencing              # Trip-wire zones with instant alerts
+  - proximity_queries       # Explicit bounded near-location reads
+  - anomaly_reads           # Explicit current anomaly queries
+  - saved_watches           # Operator-created watches; no autonomous guarantee
   - time_machine            # Historical snapshot queries and pattern detection
-  - correlation_alerts      # Multi-layer correlation alerts (RF, military, infra)
+  - correlation_reads       # Read current multi-layer correlations
   - alpr_awareness          # ALPR/surveillance camera location awareness
-  - wormhole_identity       # Ed25519 identity on the Wormhole network
-  - infonet_participation   # Read/write to the decentralized InfoNet
-  - gate_messaging          # Encrypted group channel communication
-  - encrypted_dm            # End-to-end encrypted direct messages
-  - meshtastic_bridge       # LoRa radio network interaction
-  - dead_drop               # Anonymous intelligence exchange
-  - cover_traffic           # Command channel cover polling (high-privacy mode)
+  - infonet_status          # Read current InfoNet readiness
+  - experimental_gate_posts # Full-tier explicit gate post command
+  - experimental_dm         # Full-tier explicit DM command; no production privacy claim
   - sar_ground_change       # SAR anomaly queries, AOI management, map fly-to
   - analysis_zones          # Agent-authored map overlays with written assessments
 
@@ -87,4 +83,4 @@ signatures:
 # API base URL (local-only, no auth needed for loopback)
 config:
   api_base: "http://127.0.0.1:8000"
-  auth_mode: "local_operator"   # Uses require_local_operator (loopback)
+  auth_mode: "hmac"            # Shared HMAC principal; per-agent credentials are TODO

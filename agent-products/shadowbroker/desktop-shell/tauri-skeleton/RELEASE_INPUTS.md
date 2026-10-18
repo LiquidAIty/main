@@ -6,11 +6,13 @@ any secrets.
 
 ## What works now with zero input
 
-- Windows, macOS, and Linux desktop builds in GitHub Actions
-- PR/main-branch artifact builds through `.github/workflows/desktop-release.yml`
-- tag-driven GitHub release asset upload for `v*.*.*`
-- unsigned installers/bundles plus `release-manifest.json`, `SHA256SUMS.txt`,
-  and Tauri updater metadata when the updater private key is available locally
+- Local desktop staging/build scripts and manifest generation remain in source.
+- Web/Docker publication does not require desktop signing credentials.
+
+There is no tracked `.github/workflows/desktop-release.yml` in this release.
+Cross-platform desktop CI, tag-driven asset upload, signing, notarization, and
+updater publication are TODO and must be implemented and proven before desktop
+artifacts are advertised as a supported release channel.
 
 ## What you only need later
 

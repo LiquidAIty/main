@@ -56,7 +56,7 @@ ShadowBroker includes an optional **Shodan connector** for operator-supplied API
 <summary>🗺️ Interesting Use Cases</summary>
 
 * **Track Air Force One**, the private jets of billionaires and dictators, and every military tanker, ISR, and fighter broadcasting ADS-B. Air Force One and all of the accompanying Presidential/Vice Presidential planes are highlighted and monitored from the moment they leave the ground. 
-* **Connect an AI agent as a co-analyst** through ShadowBroker's HMAC-signed agentic command channel — supports OpenClaw and any other agent that speaks the protocol (Claude, GPT, LangChain, custom). The agent gets full read/write access to all 40+ data layers, compact cross-layer search (`search_telemetry`, `search_news`), the full recon toolkit (`osint_lookup` for IP/DNS/WHOIS/sanctions/CVE/etc.), entity-graph expansion, pin placement, map control, SAR ground-change, mesh networking, and alert delivery. It sees everything the operator sees and can take actions on the map in real time.
+* **Connect an external agent as a bounded co-analyst** through ShadowBroker's HMAC-signed command channel. OpenClaw is the reference client. The default restricted tier exposes the exact read commands returned by discovery; full tier adds only its explicit allowlisted writes. Agent Oracle/governance writes, autonomous monitoring, per-agent credentials, and broad framework compatibility remain TODO.
 * **Communicate on the InfoNet testnet** — The first decentralized intelligence mesh built into an OSINT tool. Obfuscated messaging with gate personas, Dead Drop peer-to-peer exchange, and a built-in terminal CLI. No accounts, no signup. Privacy is not guaranteed yet — this is an experimental testnet — but the protocol is live and being hardened.
 * **Right-click anywhere on Earth** for a country dossier (head of state, population, languages), Wikipedia summary, and the latest Sentinel-2 satellite photo at 10m resolution
 * **Click a KiwiSDR node** and tune into live shortwave radio directly in the dashboard. Click a police scanner feed and eavesdrop in one click.
@@ -98,7 +98,7 @@ provide equivalent single-writer persistence before using stateful Oracle or Inf
 
 ---
 
-⚡ Quick Start (Docker)</summary>
+## ⚡ Quick Start (Docker)
 
 ### From GitHub (default — uses GHCR images)
 
@@ -118,7 +118,9 @@ docker compose -f docker-compose.yml -f docker-compose.gitlab.yml pull
 docker compose -f docker-compose.yml -f docker-compose.gitlab.yml up -d
 ```
 
-Both paths produce identical containers — same source, same CI, same images byte-for-byte. Pick whichever ecosystem you already use.
+Both paths target the same source and container definitions, but they are built independently. Treat each
+registry image as its own artifact and verify its published digest; do not assume the GitHub and GitLab images
+are byte-for-byte identical.
 
 Open `http://localhost:3000` to view the dashboard! *(Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine)*
 
@@ -171,7 +173,7 @@ Release maintainers should run `python backend/scripts/release_helper.py hash <S
 
 ### CSP Hardening
 
-The production frontend ships with a hydration-compatible CSP and a strict nonce-only CSP in `Content-Security-Policy-Report-Only`. Set `SHADOWBROKER_STRICT_CSP=1` only after verifying the exact build hydrates correctly in your deployment. Runtime Google Fonts are not required; the bundled Next font pipeline serves the dashboard font from the app build.
+The production frontend ships with a hydration-compatible CSP and a strict nonce-only CSP in `Content-Security-Policy-Report-Only`. Set `SHADOWBROKER_STRICT_CSP=1` only after verifying the exact build hydrates correctly in your deployment. Google Fonts are not required at build time or runtime; the dashboard uses the local system monospace stack.
 
 ### ⚠️ **Stuck on the old version?**
 
@@ -205,7 +207,7 @@ docker compose up -d
 > single-writer persistent `/app/data` volume for Oracle/InfoNet state. Do not describe this chart as
 > high-availability for stateful features until persistence and writer coordination are implemented and proven.
 
-For high-availability deployments or home-lab clusters, ShadowBroker supports deployment via **Helm**. This chart is based on the `bjw-s-labs` template and provides a robust, modular setup for both the backend and frontend.
+For stateless evaluation or home-lab experimentation, ShadowBroker includes a **Helm** chart. This chart is based on the `bjw-s-labs` template and provides a modular setup for the backend and frontend; it is not a supported high-availability path for stateful features.
 
 **1. Add the Repository:**
 ```bash
@@ -225,7 +227,7 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
 ```
 
 **3. Key Features:**
-*   **Modular Architecture:** Individually scale the intelligence backend and the HUD frontend.
+*   **Modular Architecture:** Deploy the intelligence backend and HUD frontend separately. Stateful Oracle/InfoNet operation remains single-writer until chart persistence and coordination are implemented.
 *   **Security Context:** Runs with restricted UIDs (1001) for container hardening.
 *   **Ingress Ready:** Compatible with Traefik, Cert-Manager, and Gateway API for secure, external access to your intelligence node.
 
@@ -793,7 +795,7 @@ services:
     # image: registry.gitlab.com/bigbodycobain/shadowbroker/backend:latest
     container_name: shadowbroker-backend
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     environment:
       - AIS_API_KEY=your_aisstream_key          # Required — get one free at aisstream.io
       - OPENSKY_CLIENT_ID=                       # Optional — higher flight data rate limits
@@ -812,7 +814,7 @@ services:
     # image: registry.gitlab.com/bigbodycobain/shadowbroker/frontend:latest
     container_name: shadowbroker-frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - BACKEND_URL=http://backend:8000   # Docker internal networking — no rebuild needed
     depends_on:
@@ -861,7 +863,7 @@ If you want to modify the code or run from source:
 
 #### Prerequisites
 
-* **Node.js** 20.9+ and **npm** — [nodejs.org](https://nodejs.org/) (required by the locked Next.js release)
+* **Node.js** 22.14+ and **npm** — [nodejs.org](https://nodejs.org/) (required by the locked frontend build and test toolchain)
 * **Python** 3.10, 3.11, or 3.12 with `pip` — [python.org](https://www.python.org/downloads/) (**check "Add to PATH"** during install)
   * ⚠️ Python 3.13+ may have compatibility issues with some dependencies. **3.11 or 3.12 is recommended.**
 * API keys for: `aisstream.io` (required), and optionally `opensky-network.org` (OAuth2), `lta.gov.sg`

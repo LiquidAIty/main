@@ -17,7 +17,6 @@ import {
   Bitcoin,
   Newspaper,
   ExternalLink,
-  Lock,
   Zap,
 } from 'lucide-react';
 import { API_BASE } from '@/lib/api';

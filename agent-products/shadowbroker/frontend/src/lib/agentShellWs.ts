@@ -1,3 +1,5 @@
+import { API_BASE } from '@/lib/api';
+
 export async function mintAgentShellWsToken(): Promise<string | null> {
   if (typeof window === 'undefined') return null;
   try {

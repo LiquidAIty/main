@@ -1035,6 +1035,11 @@ async function finishRun(args: {
 }): Promise<void> {
   const provider = record(args.binding?.info);
   const requestedProvider = record(args.run.request.provider);
+  const providerEvidence = args.binding ? {
+    effectiveProvider: String(provider.provider || requestedProvider.provider || ''),
+    model: String(provider.model || requestedProvider.providerModelId || ''),
+    provider: String(provider.provider || requestedProvider.provider || ''),
+  } : {};
   // `usage` is the cumulative lifetime session counter. A product Run owns the
   // exact current-turn delta emitted by Hermes as `turn_usage`.
   const usage = args.result ? hermesUsageFields(args.result.event.payload?.turn_usage) : {};
@@ -1050,9 +1055,7 @@ async function finishRun(args: {
       providerTurnRef: args.result
         ? String(args.result.event.payload?.submission_id || args.run.runId)
         : undefined,
-      effectiveProvider: String(provider.provider || requestedProvider.provider || ''),
-      model: String(provider.model || requestedProvider.providerModelId || ''),
-      provider: String(provider.provider || requestedProvider.provider || ''),
+      ...providerEvidence,
       toolCallCount: args.result?.toolCalls ?? 0,
       ...usage,
   });

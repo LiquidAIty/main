@@ -604,11 +604,10 @@ def test_public_wormhole_settings_redact_sensitive_fields(monkeypatch):
 
     response = asyncio.run(main.api_get_wormhole_settings(_request("/api/settings/wormhole")))
 
-    assert response == {
-        "enabled": True,
-        "transport": "tor",
-        "anonymous_mode": True,
-    }
+    assert response == {"enabled": True}
+    assert "transport" not in response
+    assert "anonymous_mode" not in response
+    assert "socks_proxy" not in response
 
 
 def test_admin_wormhole_settings_keep_sensitive_fields(monkeypatch):
@@ -650,10 +649,10 @@ def test_public_privacy_profile_hides_transport_metadata(monkeypatch):
 
     response = asyncio.run(main.api_get_privacy_profile(_request("/api/settings/privacy-profile")))
 
-    assert response == {
-        "profile": "high",
-        "wormhole_enabled": True,
-    }
+    assert response == {"wormhole_enabled": True}
+    assert "profile" not in response
+    assert "transport" not in response
+    assert "anonymous_mode" not in response
 
 
 def test_public_settings_wormhole_status_uses_redacted_shape(monkeypatch):
@@ -695,6 +694,7 @@ def test_authenticated_settings_wormhole_status_includes_privacy_core_attestatio
     import auth
     from httpx import ASGITransport, AsyncClient
     from services.config import get_settings
+    from services import privacy_core_attestation
 
     monkeypatch.setenv("MESH_PRIVATE_CLEARNET_FALLBACK", "block")
     monkeypatch.setenv("MESH_BLOCK_LEGACY_NODE_ID_COMPAT", "true")
@@ -710,6 +710,15 @@ def test_authenticated_settings_wormhole_status_includes_privacy_core_attestatio
             "wormhole_enabled": True,
             "ready": True,
             "effective_transport": "tor_arti",
+        },
+    )
+    monkeypatch.setattr(
+        privacy_core_attestation,
+        "privacy_core_attestation",
+        lambda: {
+            "attestation_state": "attested_current",
+            "override_active": False,
+            "detail": "test attestation",
         },
     )
     monkeypatch.setattr(
@@ -1157,7 +1166,7 @@ def test_dm_relay_auto_msg_id_omits_sender_suffix(tmp_path, monkeypatch):
     assert "1234" not in str(result["msg_id"])
 
 
-def test_public_event_endpoints_preserve_redactions(client, monkeypatch):
+def test_public_event_endpoints_preserve_redactions(remote_client, monkeypatch):
     from services.mesh import mesh_hashchain
 
     fake_infonet = _FakePublicInfonet()
@@ -1172,17 +1181,17 @@ def test_public_event_endpoints_preserve_redactions(client, monkeypatch):
     monkeypatch.setattr(main, "_is_debug_test_request", lambda *_args, **_kwargs: False)
 
     collection_responses = [
-        client.get("/api/mesh/infonet/messages").json()["messages"],
-        client.get("/api/mesh/infonet/events").json()["events"],
-        client.get("/api/mesh/infonet/sync").json()["events"],
+        remote_client.get("/api/mesh/infonet/messages").json()["messages"],
+        remote_client.get("/api/mesh/infonet/events").json()["events"],
+        remote_client.get("/api/mesh/infonet/sync").json()["events"],
         asyncio.run(
             main.infonet_sync_post(
                 _json_request("/api/mesh/infonet/sync", {"locator": ["head-1"]})
             )
         )["events"],
     ]
-    node_response = client.get("/api/mesh/infonet/node/!node-1").json()["events"]
-    single_event = client.get("/api/mesh/infonet/event/rotate-1").json()
+    node_response = remote_client.get("/api/mesh/infonet/node/!node-1").json()["events"]
+    single_event = remote_client.get("/api/mesh/infonet/event/rotate-1").json()
 
     for events in collection_responses:
         assert all(evt.get("event_type") != "gate_message" for evt in events)
@@ -1281,8 +1290,16 @@ def test_mesh_metrics_allows_audit_scope(client, monkeypatch):
 
 def test_dm_send_rejects_unsealed_shared_private_dm(monkeypatch):
     from services import wormhole_supervisor
+    from services.mesh import mesh_wormhole_contacts
 
+    monkeypatch.setenv("MESH_SIGNED_WRITE_CONTEXT_REQUIRED", "false")
     monkeypatch.setattr(wormhole_supervisor, "get_transport_tier", lambda: "private_strong")
+    monkeypatch.setattr(main, "_verify_signed_write", lambda **_kwargs: (True, "ok"))
+    monkeypatch.setattr(
+        mesh_wormhole_contacts,
+        "verified_first_contact_requirement",
+        lambda _recipient_id: {"ok": True, "trust_level": "verified"},
+    )
 
     response = asyncio.run(
         main.dm_send(
@@ -1301,6 +1318,7 @@ def test_dm_send_rejects_unsealed_shared_private_dm(monkeypatch):
                     "signature": "sig",
                     "sequence": 1,
                     "protocol_version": "infonet/2",
+                    "transport_lock": "private_strong",
                 },
             )
         )
@@ -1512,11 +1530,12 @@ def test_gate_persona_sign_logs_hashed_ids_on_failure(caplog, monkeypatch):
 
 
 def test_reputation_logs_hash_node_and_gate_identifiers(tmp_path, monkeypatch, caplog):
-    from services.mesh import mesh_reputation
+    from services.mesh import mesh_reputation, mesh_secure_storage
 
     monkeypatch.setattr(mesh_reputation, "DATA_DIR", tmp_path)
     monkeypatch.setattr(mesh_reputation, "LEDGER_FILE", tmp_path / "reputation_ledger.json")
     monkeypatch.setattr(mesh_reputation, "GATES_FILE", tmp_path / "gates.json")
+    monkeypatch.setattr(mesh_secure_storage, "DATA_DIR", tmp_path)
 
     ledger = mesh_reputation.ReputationLedger()
     suffix = tmp_path.name.replace("-", "")

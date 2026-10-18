@@ -121,14 +121,11 @@ These are source/documentation gaps, not permission to repair them during this d
    Interactive profile OAuth, enabled Card Script execution/failure recovery, Team, Magnetic, graph writes,
    external clients, and final owner visual acceptance remain separate.
 7. The 2026-10-17 CodeGraph implementation passed its focused provider, transport, projection, hook,
-   renderer, and shared-Inspector checks and loaded real CBM Feature data before the final pagination
-   correction. The owner then authorized one application-CBM frontend retry. A read-only CLI preflight
-   reported canonical project `C-Projects-LiquidAIty-main` ready, but the canonical application reload's
-   one frontend still failed with `CBM daemon is active or starting but could not accept this client within
-   30000 ms`. The MCP host froze 48 unique tools with `cbm` as the sole unavailable family, and the loaded
-   Code view correctly showed `0 Features · 0 Files · unverified` plus `Graph failed: read_failed` rather
-   than stale or empty-success data. Loaded File/Symbol expansion, source readback, and owner visual
-   acceptance remain blocked and unproven.
+   renderer, and shared-Inspector checks. The subsequently authorized daemon recovery and canonical
+   reload succeeded: the MCP host froze 57 generated/published/unique tools with no unavailable family,
+   and the loaded Code view rendered 51 real Features and 374 Files with no `read_failed` state or retired
+   Feature sorter. Main and Builder then completed one real turn each and their outer Runs read back.
+   CodeGraph freshness still reports `unverified`, and final owner visual acceptance remains separate.
 
 ## Loaded core checkpoint — reached 2026-10-14
 
@@ -141,6 +138,51 @@ principal, and their stale tests are absent from the live application path.
 The same loaded pass recorded the real Main/Bot/Builder terminal cases in `turn.md`. It did not prove
 OAuth-backed tool execution, an enabled Card Script, Team, Magnetic, graph writes, external clients, or
 complete owner visual acceptance.
+
+## Oracle, external MCP, and saved-agent publish checkpoint — reached 2026-10-18
+
+The bounded publish-preparation pass now has the following separate results:
+
+- The LiquidAIty MCP host reloaded the current catalog with 58 generated/published/unique tools,
+  completed `liquidaity`, `cbm`, and `graphiti` families, no unavailable family, catalog hash
+  `1ad9a7da010a924b75815357a13f51b64707668ef6523b48f691d70c7e2fb1c3`, and the complete
+  catalog-source hash `47b01fa48c4f1025fe880c8e67ce067e3b68e7759a8bfd0e91cf43d05e2b1163` with
+  `sourceCurrent=true`. The connected LiquidAIty tool's real `main.context` returned that receipt.
+- The catalog now includes the source-default KnowGraph `graphiti.get_status` grant, human-facing
+  provider titles, accurate Engraphis side-effect copy, frozen-catalog `listChanged=false`, and a
+  multi-file source identity. The current cached development-plugin surface must still be refreshed or
+  reconnected before its discovery snapshot can expose current `main.submit` metadata. Plugin Management
+  cannot manage this created-by-owner development reference as a public installed plugin.
+- The existing saved Project correctly retained its own revisions and grants. External calls to
+  `graphiti.get_status` and `graphiti.search_nodes` returned `tool_not_granted`; no source-default rewrite
+  or saved-Card mutation was applied to bypass persisted authority.
+- Fresh loaded saved-Card turns completed for Main, Builder, and ThinkGraph. Direct Builder execution
+  produced one correlated `message_agent` delivery, its own completed child Run, primary-source research,
+  and a persisted Builder reply. Trader routing and its child Run completed with an exact unavailable-tool
+  refusal. WorldView routing reached its real child session but failed on
+  `turn_mcp_tool_unavailable:mcp__liquidaity__worldview_action`; both the child and outer Main Runs settled
+  failed. No trade, graph write, globe action, or saved configuration change was performed.
+- A pre-session Hermes heartbeat timeout exposed an outer-Run settlement defect. The failed test Run was
+  settled explicitly, and current source now omits nonexistent provider evidence before a session binding;
+  the focused regression and the complete root TypeScript suite pass.
+- The controlled ShadowBroker source is a Web/Docker experimental Oracle release candidate: release
+  carriers agree at 0.9.83; production frontend dependencies report zero known vulnerabilities; strict
+  production-source type checking, Next standalone, Vite embed, backend release gates, Compose parsing,
+  and clean source image builds passed. The loaded local backend/frontend containers are healthy, the UI
+  returns HTTP 200, MKT remains explicitly off, and Oracle provider search returns the expected 409 refusal.
+  No provider-backed market read, signed prediction, settlement, persistence-after-restart, or owner visual
+  acceptance was performed.
+- ShadowBroker `/api/health` returns HTTP 200 and version 0.9.83, but its aggregate data SLO remains
+  `error` because live UAP/NUFORC and global FIRMS have never fetched successfully; other stale/low-volume
+  feeds remain yellow. Container health is green, but full data-plane health is not.
+
+Remaining publish TODOs are explicit: refresh/reconnect the development plugin; complete saved-profile MCP
+OAuth for Trader and WorldView; run provider-opted-in Oracle read/write/persistence acceptance only after the
+operator enables MKT and authorizes test ledger writes; resolve the optional-feed SLO failures; rerun the
+frontend image build against the final dev-only lockfile after the last clean `npm ci` attempt stalled; reduce
+the five high-severity dev-only Next ESLint advisories when an upstream-compatible fix exists; complete
+browser visual acceptance; and keep agent Oracle/governance writes, autonomous agent monitoring, per-agent
+credentials, desktop distribution, and stateful Helm/HA as deferred work rather than release claims.
 
 ## Cleaned source checkpoint — reached 2026-10-15
 
@@ -170,10 +212,10 @@ trade, credential change, or saved Card mutation was performed.
 Profile OAuth tool readback and Card Script success/failure recovery require their real external or saved
 prerequisites. A new model turn, Team, Magnetic, graph writes, external-client acceptance, and Jeremiah's final
 visual acceptance remain separate and must not be inferred from health, deterministic, or inspector proof.
-CodeGraph's one explicitly authorized application-CBM frontend retry was performed and failed with the same
-30-second upstream-daemon attachment error. The final positive loaded path cannot be accepted. Any further
-CBM retry, restart, repair, reindex, cache access, project mutation, or configuration change requires a new
-exact owner instruction.
+CodeGraph's authorized daemon recovery and canonical application reload completed successfully; the exact
+positive evidence is recorded in `turn.md`. No additional CBM lifecycle mutation is implied by that result.
+Any new CBM restart, repair, reindex, cache access, project mutation, or configuration change still requires
+a new exact owner instruction.
 
 ## Next graph boundary — deferred
 

@@ -21,11 +21,52 @@ from mcp.types import CallToolResult
 
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
-_MCP_HOST_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_host.py")
+_APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+CATALOG_SOURCE_PATHS = (
+    os.path.join(_APP_ROOT, "mcp_host.py"),
+    os.path.join(_APP_ROOT, "mcp_auth.py"),
+    os.path.join(_APP_ROOT, "mcp_catalog_runtime.py"),
+    os.path.join(_APP_ROOT, "mcp_catalog_projection.py"),
+    os.path.join(_APP_ROOT, "mcp_provider_operations.py"),
+    os.path.join(_APP_ROOT, "application_operation_catalog.py"),
+    os.path.join(_APP_ROOT, "agent_canvas_card_operations.py"),
+    os.path.join(_APP_ROOT, "mag_one_operation.py"),
+    os.path.join(_APP_ROOT, "main_worldview_operations.py"),
+    os.path.join(_APP_ROOT, "project_graph_operations.py"),
+    os.path.join(_APP_ROOT, "saved_canvas_tools.py"),
+    os.path.join(_APP_ROOT, "saved_card_operation_schema.py"),
+    os.path.join(_APP_ROOT, "saved_card_operation_validation.py"),
+    os.path.join(_APP_ROOT, "python_models", "engraphis_operations.py"),
+    os.path.join(_APP_ROOT, "python_models", "general_tool_operations.py"),
+    os.path.join(_APP_ROOT, "python_models", "graph_reference_contracts.py"),
+    os.path.join(_APP_ROOT, "python_models", "market_sec_tool_operations.py"),
+    os.path.join(_APP_ROOT, "python_models", "operation_definition.py"),
+    os.path.join(_APP_ROOT, "python_models", "saved_card_contract.py"),
+    os.path.join(_APP_ROOT, "python_models", "tool_catalog.py"),
+    os.path.join(_APP_ROOT, "python_models", "tool_registry.py"),
+    os.path.join(_APP_ROOT, "python_models", "trading_tool_operations.py"),
+    os.path.join(_APP_ROOT, "python_models", "worldsignals_tool_operations.py"),
+)
+
+
+def catalog_source_sha256() -> str:
+    """Hash the complete code-owned catalog composition boundary."""
+    digest = hashlib.sha256()
+    try:
+        for source_path in CATALOG_SOURCE_PATHS:
+            relative = os.path.relpath(source_path, _REPO_ROOT).replace("\\", "/")
+            digest.update(relative.encode("utf-8"))
+            digest.update(b"\0")
+            with open(source_path, "rb") as source_file:
+                digest.update(source_file.read())
+            digest.update(b"\0")
+    except OSError:
+        return ""
+    return digest.hexdigest()
 
 
 def _startup_source_identity() -> tuple[str, str]:
-    """Capture the exact loaded checkout and mcp_host.py source bytes once."""
+    """Capture the loaded checkout and complete catalog-source bundle once."""
     try:
         revision = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -37,11 +78,7 @@ def _startup_source_identity() -> tuple[str, str]:
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         revision = ""
-    try:
-        with open(_MCP_HOST_SOURCE, "rb") as source_file:
-            source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
-    except OSError:
-        source_sha256 = ""
+    source_sha256 = catalog_source_sha256()
     return revision, source_sha256
 
 

@@ -65,7 +65,7 @@ variables:
     - docker buildx create --use --name multiarch --driver docker-container tls-env
 
 frontend-test:
-  image: node:20
+  image: node:22
   stage: test
   script:
     - cd frontend

@@ -1,16 +1,8 @@
 import type { Metadata } from 'next';
-import { JetBrains_Mono } from 'next/font/google';
 import DesktopBridgeBootstrap from '@/components/DesktopBridgeBootstrap';
 import { ThemeProvider } from '@/lib/ThemeContext';
 import { I18nProvider } from '@/i18n';
 import './globals.css';
-
-const jetBrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['400', '700'],
-  display: 'swap',
-  variable: '--font-jetbrains-mono',
-});
 
 export const metadata: Metadata = {
   title: 'WorldSignals',
@@ -30,7 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${jetBrainsMono.variable} antialiased bg-[var(--bg-primary)]`} suppressHydrationWarning>
+      <body className="antialiased bg-[var(--bg-primary)]" suppressHydrationWarning>
         <I18nProvider>
           <ThemeProvider>
             <DesktopBridgeBootstrap />

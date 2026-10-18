@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { IS_EMBEDDED } from '@/lib/api';
+import { API_BASE, IS_EMBEDDED } from '@/lib/api';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ExternalLink, Key, Shield, Radar, Globe, Satellite, Ship, Radio, Bot, Copy, Check, Network } from 'lucide-react';
+import { X, ExternalLink, Key, Shield, Radar, Globe, Satellite, Ship, Radio, Copy, Check, Network } from 'lucide-react';
 
 const CURRENT_ONBOARDING_VERSION = '0.9.81-agentic-onboarding-1';
 const STORAGE_KEY = `shadowbroker_onboarding_complete_v${CURRENT_ONBOARDING_VERSION}`;

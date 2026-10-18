@@ -1,6 +1,6 @@
 # Wormhole DM Root Operations Runbook
 
-This runbook covers the v0.9.7 operator flow for DM root witness and
+This runbook covers the current v0.9.83 operator flow for DM root witness and
 transparency monitoring.
 
 ## Goals
@@ -44,4 +44,4 @@ node scripts/mesh/sync-dm-root-external-assurance.mjs
 2. Verify root transparency tests pass.
 3. Verify no runtime root, witness, Tor, key, or relay-state files are staged.
 4. Build release archives from the committed tree with `git archive`.
-5. Attach `ShadowBroker_v0.9.7.zip` to the GitHub release for v0.9.6 updater compatibility.
+5. Attach `ShadowBroker_v0.9.83.zip` and `SHA256SUMS.txt` to the GitHub release when publishing the ZIP updater target.

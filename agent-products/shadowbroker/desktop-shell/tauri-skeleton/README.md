@@ -162,13 +162,12 @@ What works:
 - Browser companion opener with honest reduced-trust scoping
 - Branded bundle icon set (`.png`, `.ico`, `.icns`, Windows tile assets)
 - Release checksums + artifact manifest alongside bundle output
-- GitHub Actions desktop build matrix for Windows/macOS/Linux
-- Tag-driven GitHub release asset upload without required secrets
 
 What is still not done:
 
 - Windows code signing
 - macOS notarization credentials
+- GitHub Actions desktop build matrix and tag-driven release upload
 - Auto-update publishing
 - Final installer copy / splash polish
 - Standalone-browser-equivalent companion parity

@@ -1,7 +1,7 @@
 # ShadowBroker InfoNet Threat Model
 
-ShadowBroker v0.9.7 ships InfoNet and Wormhole as an experimental testnet.
-This document is the release-facing threat model for those systems. It is
+InfoNet and Wormhole were introduced in v0.9.7 and remain an experimental
+testnet in the v0.9.83 release scope. This document is the release-facing threat model for those systems. It is
 intended to keep README, UI, and release claims aligned with the implementation.
 
 ## Privacy Classification
@@ -22,7 +22,7 @@ intended to keep README, UI, and release claims aligned with the implementation.
 - Local runtime mistakes such as leaking caches, operator keys, relay state, or hidden-service material through Git.
 - Update-channel integrity checks for release zip assets and optional SHA-256 pins.
 
-## Out Of Scope For v0.9.7
+## Out Of Scope For v0.9.83
 
 - A guarantee of end-to-end private messaging across every lane.
 - Strong anonymity against a global network observer.
@@ -33,6 +33,6 @@ intended to keep README, UI, and release claims aligned with the implementation.
 ## Required Operator Guidance
 
 - Do not send sensitive material on public mesh, InfoNet gate chat, or experimental DMs.
-- Treat all v0.9.7 mesh lanes as testnet lanes.
+- Treat all v0.9.83 mesh lanes as testnet lanes.
 - Keep runtime keys, relay state, Tor hidden-service data, and `backend/data/*` operator state out of Git.
-- Use the release zip asset for v0.9.6 auto-update compatibility, and prefer signed/hashed release artifacts where available.
+- When publishing an updater target, attach the versioned release zip and its `SHA256SUMS.txt`; prefer signed/hashed release artifacts where available.

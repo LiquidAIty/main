@@ -1,11 +1,15 @@
 # Developer override — build images from source instead of pulling from GHCR.
-# Usage: docker compose -f docker-compose.yml -f docker-compose.build.yml build
+# Include docker-compose.override.yml when the local runtime should retain the
+# pinned deployment's environment while replacing only its image identities:
+# docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.build.yml build
 services:
   backend:
+    image: ghcr.io/bigbodycobain/shadowbroker-backend:latest
     build:
       context: .
       dockerfile: ./backend/Dockerfile
 
   frontend:
+    image: ghcr.io/bigbodycobain/shadowbroker-frontend:latest
     build:
       context: ./frontend

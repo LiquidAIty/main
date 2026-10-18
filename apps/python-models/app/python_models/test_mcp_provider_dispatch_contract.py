@@ -296,6 +296,7 @@ def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkey
     advertised = mcp_provider_operations.namespace_provider_tools("cbm", [providerTool])[0]
     assert advertised.input_schema == providerTool.input_schema
     assert advertised.description == providerTool.description
+    assert advertised.title == "Search CodeGraph structure"
 
 
 def test_provider_results_preserve_protocol_declared_error_state_without_parsing_text():
