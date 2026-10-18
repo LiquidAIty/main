@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Agent Builder
+ * Relationship: Verifies continuous pointer resizing, surface-specific minimums, collision thresholds, inspector closure, cancellation, and independent standard versus WorldView widths.
+ */
+
 import { act, renderHook } from '@testing-library/react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { describe, expect, it, vi } from 'vitest';

@@ -196,6 +196,21 @@ _THREAT_TIERS = [
 ]
 
 
+def unavailable_threat_level(status: str, detail: str = "") -> dict:
+    """Represent missing/failed inputs without converting them into GREEN."""
+    payload = {
+        "available": False,
+        "status": status,
+        "score": None,
+        "level": "UNAVAILABLE",
+        "color": "#6b7280",
+        "drivers": [],
+    }
+    if detail:
+        payload["detail"] = detail
+    return payload
+
+
 def compute_global_threat_level(
     news_items: list[dict],
     markets: list[dict] | None = None,
@@ -218,7 +233,7 @@ def compute_global_threat_level(
         0.10 × correlation_alerts
     """
     if not news_items:
-        return {"score": 0, "level": "GREEN", "color": "#22c55e", "drivers": []}
+        return unavailable_threat_level("no_data", "No current news inputs were available.")
 
     # --- Component 1: negative sentiment intensity (0-100) ---
     neg_scores = [abs(it.get("sentiment", 0)) for it in news_items if (it.get("sentiment") or 0) <= -0.05]
@@ -302,6 +317,8 @@ def compute_global_threat_level(
         drivers.append("Baseline — no significant threat indicators")
 
     return {
+        "available": True,
+        "status": "available",
         "score": score,
         "level": level,
         "color": color,

@@ -86,6 +86,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
         "parentRunId": "main-run-one",
         "callerCardId": "card_main_chat",
         "grantedTools": ["calculator", "cbm.search_graph", "main.context"],
+        "mainEntryAuthorized": True,
     }
     project_contexts = {
         "external-main-token": main_context,
@@ -277,7 +278,9 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             first_catalog, first_context, first_identity, first_cbm_client, first_protocol = first
             second_catalog, second_context, second_identity, second_cbm_client, second_protocol = second
             assert first_catalog == second_catalog
-            assert first_catalog == ["calculator", "cbm.search_graph", "main.context"]
+            assert first_catalog == [
+                "calculator", "cbm.search_graph", "main.context", "main.submit",
+            ]
             assert card_one[0] == card_two[0]
             assert card_one[0] == ["cbm.search_graph"]
             assert len(first_catalog) == len(set(first_catalog))
@@ -286,7 +289,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert not any(name.startswith("mcp__") for name in first_catalog)
             assert first_context == second_context == {
                 key: value for key, value in main_context.items()
-                if key != "grantedTools"
+                if key not in {"grantedTools", "mainEntryAuthorized"}
             }
             assert first_identity == second_identity
             assert card_one[2] == card_two[2]

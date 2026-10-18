@@ -28,6 +28,7 @@ class OperationDefinition:
     access: str
     namespace: str
     grant_eligible: bool
+    external_entry: bool = False
     external_source_id: str = "main_mcp"
     output_schema: dict[str, Any] | None = None
     title: str | None = None
@@ -88,6 +89,17 @@ class OperationDefinition:
         if not isinstance(self.grant_eligible, bool):
             raise RuntimeError(
                 f"operation_grant_eligibility_invalid:{self.canonical_id}"
+            )
+        if not isinstance(self.external_entry, bool) or (
+            self.external_entry
+            and (
+                self.grant_eligible
+                or "external-mcp" not in self.publishers
+                or self.external_source_id != "main_mcp"
+            )
+        ):
+            raise RuntimeError(
+                f"operation_external_entry_invalid:{self.canonical_id}"
             )
         if (
             not isinstance(self.grant_profiles, frozenset)

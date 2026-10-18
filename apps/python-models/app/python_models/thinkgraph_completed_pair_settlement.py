@@ -178,8 +178,8 @@ def _validate_settle_payload(
     if pair_reference_value != pair_reference(completed):
         raise ValueError("thinkgraph_pair_reference_invalid")
     structured_output = payload.get("structuredOutput")
-    if not isinstance(structured_output, (str, dict, list)):
-        raise ValueError("thinkgraph_card_output_invalid_json")
+    if not isinstance(structured_output, dict):
+        raise ValueError("thinkgraph_card_output_invalid")
     raw_run = payload.get("cardRun")
     if not isinstance(raw_run, dict):
         raise ValueError("thinkgraph_card_run_invalid")

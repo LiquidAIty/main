@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: Owns the React lifecycle wrapper around the one Earth mount, exposing bounded controls, actions, images, readiness callbacks, and exact teardown to the WorldView host.
+ */
+
 import React, {
   forwardRef,
   useEffect,
@@ -249,7 +254,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
 
   return (
     <section style={styles.root} aria-label="WorldView globe">
-      <div ref={rootRef} id="worldview-native-root" style={styles.mount} />
+      <div ref={rootRef} id="worldview-gods-eye-root" style={styles.mount} />
       {status === 'failed' || visualReadiness?.phase === 'unavailable' ? (
         <div style={styles.failed} role="alert">
           <strong>WorldView could not start</strong>

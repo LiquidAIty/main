@@ -1,10 +1,14 @@
 """Typed, provider-neutral contracts for sourced signal handoffs.
 
-These models carry bounded observations between saved Card Runs. They do not
+These models carry bounded identity and list envelopes between saved Card Runs;
+the provider transport owns the nested raw-response byte ceiling. They do not
 classify meaning, choose a recipient, authorize a graph write, or imply that a
 source result has been assessed. Card/Run identity is supplied by the trusted
 runtime caller, never inferred from a model-authored query.
 """
+
+# Entity: WorldSignals
+# Relationship: Defines immutable Project-, Card-, Run-, source-, evidence-, time-, geometry-, and payload-scoped contracts for unassessed observations supplied to the one Earth experience.
 
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -25,7 +30,23 @@ from pydantic import (
 
 BoundedId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 BoundedText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4_000)]
-IsoTimestamp = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+
+
+def _validate_iso_timestamp(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("signal_timestamp_invalid") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("signal_timestamp_timezone_required")
+    return value
+
+
+IsoTimestamp = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
+    AfterValidator(_validate_iso_timestamp),
+]
 
 
 class SignalContract(BaseModel):

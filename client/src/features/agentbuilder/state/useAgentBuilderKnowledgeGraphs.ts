@@ -1,11 +1,17 @@
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Loads, validates, and independently refreshes ThinkGraph and KnowGraph projections, reads provider neighborhoods, applies visual physics, and performs explicit evidence removal.
+ * Relationship: Loads and independently refreshes ThinkGraph and KnowGraph, while exposing opt-in saved-authority CodeGraph projection, file expansion, and exact-source reads to the existing graph workspace.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
+import {
+  emptyCodeGraphProjection,
+  mergeCodeGraphProjections,
+  validateCodeGraphReadEnvelope,
+  type CodeGraphSelectedSymbol,
+} from '../../../components/knowledge/codeGraphProjection';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import type { KnowledgeGraphKind } from '../../../types/agentgraph';
 
@@ -20,6 +26,16 @@ type KnowledgeGraphState = {
   ) => Promise<GraphProjectionV1>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
+  codeGraph: {
+    projection: GraphProjectionV1;
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    error: string | null;
+    warning: string | null;
+    freshness: string;
+  };
+  loadCodeGraph: () => Promise<GraphProjectionV1 | null>;
+  readCodeGraphFile: (filePath: string) => Promise<GraphProjectionV1 | null>;
+  readCodeGraphSource: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
 };
 
 const KNOWGRAPH_STARTUP_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
@@ -39,6 +55,14 @@ function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
 
 function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function codeGraphMessage(value: {
+  status: string;
+  errors: Array<{ code: string }>;
+}, fallback: string): string {
+  return value.errors.map(error => error.code).filter(Boolean).join(' · ')
+    || (value.status === 'not_found' ? 'codegraph_record_not_found' : fallback);
 }
 
 function emptyProjection(
@@ -125,6 +149,19 @@ export default function useAgentBuilderKnowledgeGraphs({
   const knowRequestRef = useRef(0);
   const thinkAbortRef = useRef<AbortController | null>(null);
   const knowAbortRef = useRef<AbortController | null>(null);
+  const [codeGraph, setCodeGraph] = useState<KnowledgeGraphState['codeGraph']>(() => ({
+    projection: emptyCodeGraphProjection(projectId),
+    status: 'idle',
+    error: null,
+    warning: null,
+    freshness: 'unverified',
+  }));
+  const codeProjectionRequestRef = useRef(0);
+  const codeFileRequestRef = useRef(0);
+  const codeSourceRequestRef = useRef(0);
+  const codeProjectionAbortRef = useRef<AbortController | null>(null);
+  const codeFileAbortRef = useRef<AbortController | null>(null);
+  const codeSourceAbortRef = useRef<AbortController | null>(null);
 
   const refreshThinkGraph = useCallback(async () => {
     const requestId = ++thinkRequestRef.current;
@@ -214,6 +251,19 @@ export default function useAgentBuilderKnowledgeGraphs({
     setErrors({});
     setProjections(emptyGraphs(projectId));
     setStatuses({ thinkgraph: 'loading', knowgraph: 'loading' });
+    setCodeGraph({
+      projection: emptyCodeGraphProjection(projectId),
+      status: 'idle',
+      error: null,
+      warning: null,
+      freshness: 'unverified',
+    });
+    codeProjectionRequestRef.current += 1;
+    codeFileRequestRef.current += 1;
+    codeSourceRequestRef.current += 1;
+    codeProjectionAbortRef.current?.abort();
+    codeFileAbortRef.current?.abort();
+    codeSourceAbortRef.current?.abort();
     void refreshThinkGraph();
     void refreshKnowGraph();
     return () => {
@@ -221,8 +271,121 @@ export default function useAgentBuilderKnowledgeGraphs({
       knowRequestRef.current += 1;
       thinkAbortRef.current?.abort();
       knowAbortRef.current?.abort();
+      codeProjectionRequestRef.current += 1;
+      codeFileRequestRef.current += 1;
+      codeSourceRequestRef.current += 1;
+      codeProjectionAbortRef.current?.abort();
+      codeFileAbortRef.current?.abort();
+      codeSourceAbortRef.current?.abort();
     };
   }, [conversationId, deckId, projectId, refreshKnowGraph, refreshThinkGraph]);
+
+  const loadCodeGraph = useCallback(async (): Promise<GraphProjectionV1 | null> => {
+    const requestId = ++codeProjectionRequestRef.current;
+    codeProjectionAbortRef.current?.abort();
+    const controller = new AbortController();
+    codeProjectionAbortRef.current = controller;
+    if (!projectId.trim()) {
+      setCodeGraph(current => ({ ...current, status: 'ready' }));
+      return emptyCodeGraphProjection(projectId);
+    }
+    setCodeGraph(current => ({
+      ...current, status: 'loading', error: null, warning: null,
+    }));
+    try {
+      const response = await fetch('/api/codegraph/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, mode: 'projection' }),
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
+      }
+      const envelope = validateCodeGraphReadEnvelope(payload, {
+        projectId, mode: 'projection',
+      });
+      if (requestId !== codeProjectionRequestRef.current) return null;
+      if (!envelope.projection || ['unavailable', 'not_found'].includes(envelope.status)) {
+        throw new Error(codeGraphMessage(envelope, 'codegraph_projection_unavailable'));
+      }
+      const warning = envelope.status === 'partial'
+        ? codeGraphMessage(envelope, 'codegraph_projection_partial')
+        : null;
+      setCodeGraph({
+        projection: envelope.projection,
+        status: 'ready',
+        error: null,
+        warning,
+        freshness: envelope.freshness.status,
+      });
+      return envelope.projection;
+    } catch (error) {
+      if (controller.signal.aborted || requestId !== codeProjectionRequestRef.current) return null;
+      const message = error instanceof Error ? error.message : String(error);
+      setCodeGraph(current => ({
+        ...current, status: 'error', error: message, warning: null,
+      }));
+      return null;
+    }
+  }, [projectId]);
+
+  const readCodeGraphFile = useCallback(async (
+    filePath: string,
+  ): Promise<GraphProjectionV1 | null> => {
+    const requestId = ++codeFileRequestRef.current;
+    codeFileAbortRef.current?.abort();
+    const controller = new AbortController();
+    codeFileAbortRef.current = controller;
+    const response = await fetch('/api/codegraph/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, mode: 'file', filePath }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
+    const envelope = validateCodeGraphReadEnvelope(payload, { projectId, mode: 'file' });
+    if (requestId !== codeFileRequestRef.current) return null;
+    if (!envelope.projection || ['unavailable', 'not_found'].includes(envelope.status)) {
+      throw new Error(codeGraphMessage(envelope, 'codegraph_file_unavailable'));
+    }
+    setCodeGraph(current => ({
+      ...current,
+      projection: mergeCodeGraphProjections(current.projection, envelope.projection!),
+      status: 'ready',
+      error: null,
+      warning: envelope.status === 'partial'
+        ? codeGraphMessage(envelope, 'codegraph_file_partial')
+        : current.warning,
+      freshness: envelope.freshness.status,
+    }));
+    return envelope.projection;
+  }, [projectId]);
+
+  const readCodeGraphSource = useCallback(async (
+    qualifiedName: string,
+  ): Promise<CodeGraphSelectedSymbol | null> => {
+    const requestId = ++codeSourceRequestRef.current;
+    codeSourceAbortRef.current?.abort();
+    const controller = new AbortController();
+    codeSourceAbortRef.current = controller;
+    const response = await fetch('/api/codegraph/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, mode: 'source', qualifiedName }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(String(payload?.error || `codegraph_http_${response.status}`));
+    const envelope = validateCodeGraphReadEnvelope(payload, { projectId, mode: 'source' });
+    if (requestId !== codeSourceRequestRef.current) return null;
+    if (!envelope.selectedSymbol || ['unavailable', 'not_found'].includes(envelope.status)) {
+      throw new Error(codeGraphMessage(envelope, 'codegraph_source_unavailable'));
+    }
+    return envelope.selectedSymbol;
+  }, [projectId]);
 
   const readProviderNeighborhood = useCallback(async (
     graph: KnowledgeGraphKind,
@@ -281,5 +444,9 @@ export default function useAgentBuilderKnowledgeGraphs({
     readProviderNeighborhood,
     removeThinkGraphEvidence,
     removeKnowGraphEvidence,
+    codeGraph,
+    loadCodeGraph,
+    readCodeGraphFile,
+    readCodeGraphSource,
   };
 }

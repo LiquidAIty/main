@@ -78,4 +78,36 @@ describe('Main session SSE completion', () => {
       code: 'session_stream_completion_missing',
     });
   });
+
+  it('reports an initial fetch failure as a typed transport failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('connection reset');
+    }));
+
+    await expect(streamSession({
+      projectId: 'project-a',
+      message: 'hello',
+      onEvent: () => undefined,
+    })).rejects.toMatchObject<Partial<SessionStreamError>>({
+      code: 'session_stream_transport_failed',
+      message: 'connection reset',
+    });
+  });
+
+  it('reports a body-reader failure as a typed transport failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new TypeError('stream socket closed'));
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })));
+
+    await expect(streamSession({
+      projectId: 'project-a',
+      message: 'hello',
+      onEvent: () => undefined,
+    })).rejects.toMatchObject<Partial<SessionStreamError>>({
+      code: 'session_stream_transport_failed',
+      message: 'stream socket closed',
+    });
+  });
 });

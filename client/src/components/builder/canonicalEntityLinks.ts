@@ -6,7 +6,7 @@ import type {
   GraphProjectionNode,
   GraphProjectionV1,
   JoinedGraphPresentation,
-} from '../knowledge/KnowledgeAuthorityGraphSurface';
+} from '../knowledge/knowledgeGraphProjection';
 import {
   isCanonicalEntityDirectory,
   readCanonicalEntityProviderPointers,

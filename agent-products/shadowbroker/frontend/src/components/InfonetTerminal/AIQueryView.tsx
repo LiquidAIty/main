@@ -32,12 +32,11 @@ export default function AIQueryView({ onBack }: AIQueryViewProps) {
   const [messages, setMessages] = useState<AIMessage[]>([
     {
       role: 'system',
-      content: `🌍📡 SHADOWBROKER AI CO-PILOT ONLINE
+      content: `🌍📡 SHADOWBROKER COMMAND CONSOLE PREVIEW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Connected to ShadowBroker OSINT platform.
-I can query telemetry, place pins on the map,
-search satellite imagery, aggregate news,
-and access all 30+ data layers.
+This built-in surface runs explicit ShadowBroker commands.
+It is not a bundled model or autonomous agent.
+Connect an external OpenClaw-compatible agent for model-driven work.
 
 Type a question or command to get started.
 Use "help" to see capabilities.`,
@@ -126,6 +125,13 @@ SYSTEM:
       if (lowerQuery === 'status') {
         const resp = await fetch(`${base}/status`);
         const data = await resp.json();
+        const threat = data.threat_level;
+        const threatLabel =
+          threat && typeof threat === 'object'
+            ? threat.available === false
+              ? `UNAVAILABLE (${threat.status || 'unknown'})`
+              : `${threat.level || 'N/A'} (${threat.score ?? 'N/A'}/100)`
+            : threat || 'N/A';
         return {
           content: `🌍✅ SHADOWBROKER AI STATUS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -149,7 +155,7 @@ Version: ${data.version || '1.0'}`,
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${lines || '  No active telemetry data.'}
 
-Threat Level: ${data.threat_level || 'N/A'}
+Threat Level: ${threatLabel}
 SIGINT Totals: ${JSON.stringify(data.sigint_totals || {}, null, 0)}`,
         };
       }
@@ -177,6 +183,11 @@ ${data.report || JSON.stringify(data, null, 2)}`,
               body: JSON.stringify({ lat, lng, label, category: 'research' }),
             });
             const data = await resp.json();
+            if (!resp.ok || data.ok === false) {
+              return {
+                content: `❌ Pin was not placed: ${data.detail || data.error || `HTTP ${resp.status}`}`,
+              };
+            }
             return {
               content: `🌍📌 SHADOWBROKER PINNING:
 Pin placed successfully!
@@ -387,9 +398,12 @@ Make sure the ShadowBroker backend is running on localhost:8000.`,
           </button>
           <Brain size={18} className="text-purple-400" />
           <span className="text-sm tracking-[0.2em] text-purple-400 uppercase font-bold">
-            AI Co-Pilot
+            Command Console Preview
           </span>
-          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.6)]" />
+          <span
+            className="w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.5)]"
+            title="External agent not bundled"
+          />
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -407,7 +421,7 @@ Make sure the ShadowBroker backend is running on localhost:8000.`,
           <button
             onClick={() => setMessages([{
               role: 'system',
-              content: '🌍✅ Chat cleared. Ready for queries.',
+              content: '🌍✅ Console cleared. Ready for explicit commands; external agent still required for model reasoning.',
               timestamp: Date.now(),
             }])}
             className="text-gray-600 hover:text-red-400 transition-colors"

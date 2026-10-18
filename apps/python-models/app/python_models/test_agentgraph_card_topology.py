@@ -1,13 +1,18 @@
+"""Saved orange and blue Card-topology contracts."""
+
+# Entity: AgentGraph
+# Relationship: Verifies saved directional orange flow authority and blue Magnetic membership use exact enabled Card identities without granting reverse or presentation-derived authority.
+#
+# Entity: Magnetic TaskGraph
+# Relationship: Verifies blue topology projects only callable saved workers with each worker’s exact Card revision, Hermes profile, provider, and Team mode.
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 
 import pytest
 
 from app.python_models import (
-    agentgraph_query,
-    agentgraph_run_observations,
     agentgraph_topology,
     saved_card_contract,
 )
@@ -395,149 +400,3 @@ def test_connected_magnetic_taskgraph_worker_projects_exact_saved_card_binding()
         agentgraph_topology.connected_hermes_card_targets(
             "mag-one", cards, edges, edge_type="magentic_option", strict=True,
         )
-
-def test_age_run_preparation_records_identity_without_claiming_execution_or_tool_use(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    statements: list[tuple[str, dict]] = []
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(agentgraph_run_observations, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_query, "execute_fixed_agentgraph_query",
-        lambda _cursor, query, params, _columns: (
-            statements.append((query, params))
-            or ([{"run_id": "run-one"}] if "RETURN run.runId" in query else [])
-        ),
-    )
-    prepared = {
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "cardIdentity": {"cardId": "card-one"},
-        "idf": {"stableSavedCardContext": {"runtime": {
-            "kind": "hermes", "mode": "main", "profile": "main",
-        }}},
-    }
-    assert agentgraph_run_observations.observe_run_preparation_complete(
-        prepared,
-        {
-            "acceptedAt": "2026-10-01T20:00:00.000Z",
-            "senderCardId": "card-parent",
-            "originatingRunId": "run-parent",
-            "graphRecords": [{
-                "graphitiEpisodeId": "episode:stale-request",
-                "reason": "must not drive telemetry",
-                "asOf": "2026-08-17T00:00:00Z",
-                "required": True,
-            }],
-        },
-        run_id="run-one",
-        correlation_id="correlation-one",
-        input_file={"idfSha256": "a" * 64, "idfBytes": 321},
-    ) is True
-    assert any("EXECUTED_BY" in query for query, _params in statements)
-    assert any("ASSIGNED_TO" in query for query, _params in statements)
-    assert any("CHILD_RUN" in query for query, _params in statements)
-    child_params = next(params for query, params in statements if "CHILD_RUN" in query)
-    assert child_params == {"parentRunId": "run-parent", "runId": "run-one"}
-    assert statements[0][1]["hermesProfile"] == "main"
-    assert statements[0][1]["acceptedAt"] == "2026-10-01T20:00:00.000Z"
-    assert statements[0][1]["preparationElapsedMs"] is not None
-    assert statements[0][1]["idfSha256"] == "a" * 64
-    assert statements[0][1]["idfBytes"] == 321
-    assert "run.state=coalesce(run.state, 'pending')" in statements[0][0]
-    assert "run.startedAt" not in statements[0][0]
-    assert "hermesChildId" not in statements[0][0]
-    assert "driverSource" not in statements[0][0]
-    assert "contextAuthorityMode" not in statements[0][0]
-    assert "run.preparationState='completed'" in statements[0][0]
-    assert all("USED_TOOL" not in query for query, _params in statements)
-    assert all("[edge:USED]" not in query for query, _params in statements)
-    assert all("[edge:VIEWED]" not in query for query, _params in statements)
-
-    statements.clear()
-    started_at = datetime(2026, 10, 1, 20, 0, 1, tzinfo=timezone.utc)
-    assert agentgraph_run_observations.observe_run_execution_started(
-        run_id="run-one",
-        submission_id="run-one",
-        hermes_session_id="stored-main",
-        started_at=started_at,
-    ) is True
-    assert "SET run.state='running'" in statements[0][0]
-    assert statements[0][1] == {
-        "runId": "run-one",
-        "submissionId": "run-one",
-        "hermesSessionId": "stored-main",
-        "startedAt": started_at.isoformat(),
-    }
-
-    statements.clear()
-    assert agentgraph_run_observations.observe_run_finish("run-one", "completed") is True
-    assert len(statements) == 1
-    assert "SET run.state=$state" in statements[0][0]
-
-    statements.clear()
-    assert agentgraph_run_observations.observe_artifact(
-        "run-one",
-        "artifact-one",
-        "report",
-        "artifact://report-one",
-    ) is True
-    assert len(statements) == 1
-    assert "PRODUCED_ARTIFACT" in statements[0][0]
-
-def test_run_finish_links_hermes_identity_to_the_same_observed_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    statements: list[tuple[str, dict]] = []
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(agentgraph_run_observations, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_query, "execute_fixed_agentgraph_query",
-        lambda _cursor, query, params, _columns: statements.append((query, params)) or [],
-    )
-
-    assert agentgraph_run_observations.observe_run_finish("request-one", "failed", {
-        "providerThreadRef": "provider-root-one",
-        "providerTurnRef": "provider-run-one",
-        "errorCode": "provider_failure",
-        "errorSummary": "provider source failure",
-    }) is True
-    query, params = statements[0]
-    assert "MATCH (run:Run {runId: $runId})" in query
-    assert "run.hermesRunId=$hermesRunId" in query
-    assert params["runId"] == "request-one"
-    assert params["hermesRootId"] == "provider-root-one"
-    assert params["hermesRunId"] == "provider-run-one"
-    assert params["errorSummary"] == "provider source failure"

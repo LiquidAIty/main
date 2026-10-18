@@ -84,6 +84,7 @@ mcpInternalRoutes.post('/context', async (req, res) => {
         parentRunId,
         callerCardId: matchedCard.id,
         grantedTools,
+        mainEntryAuthorized: matchedCard.runtime.mode === 'main',
       },
     });
   } catch (error) {

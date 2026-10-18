@@ -8,6 +8,7 @@
 
 import { Router, type Request, type Response } from 'express';
 
+import { resolveExternalIdentityProjectGrant } from '../auth/externalIdentityGrantStore';
 import {
   appendConversationReplyOnce,
   appendConversationTurn,
@@ -47,6 +48,7 @@ import {
   type ProjectCardAuthority,
 } from '../services/projectCardAuthority';
 import { readToolCatalog } from '../services/mcp/toolCatalogMcpClient';
+import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import {
   resolveBuilderProjectCodeDirectory,
   resolveProductChatWorkingDirectory,
@@ -146,14 +148,36 @@ function savedCardReasoningEffort(card: ProjectCardBinding): string {
   return value;
 }
 
-type ProjectAuthorization = { userId: string; projectSessionId: string };
+type ProjectAuthorization = {
+  userId: string;
+  projectSessionId: string;
+  expectedMainCardId?: string;
+};
 
 async function authorizeProject(
   req: Request,
   res: Response,
   projectId: string,
 ): Promise<ProjectAuthorization | null> {
-  const userId = String((req as Request & { userId?: string }).userId || '').trim();
+  let userId = String((req as Request & { userId?: string }).userId || '').trim();
+  let expectedMainCardId = '';
+  if (!userId && internalMcpProcessSecretAuthorized(
+    req.headers['x-liquidaity-internal-mcp-secret'],
+  )) {
+    const issuer = String(req.body?.externalIssuer || '').trim();
+    const subject = String(req.body?.externalSubject || '').trim();
+    expectedMainCardId = String(req.body?.expectedMainCardId || '').trim();
+    if (!issuer || !subject || !expectedMainCardId) {
+      res.status(401).json({ ok: false, error: 'main_external_identity_required' });
+      return null;
+    }
+    const grant = await resolveExternalIdentityProjectGrant(issuer, subject);
+    if (!grant) {
+      res.status(403).json({ ok: false, error: 'external_identity_grant_required' });
+      return null;
+    }
+    userId = grant.userId;
+  }
   if (!userId) {
     res.status(401).json({ ok: false, error: 'main_owner_authentication_required' });
     return null;
@@ -165,7 +189,11 @@ async function authorizeProject(
   }
   const projectSessionId = String(project.id || '').trim();
   if (!projectSessionId) throw new Error('main_project_identity_missing');
-  return { userId, projectSessionId };
+  return {
+    userId,
+    projectSessionId,
+    ...(expectedMainCardId ? { expectedMainCardId } : {}),
+  };
 }
 
 function participant(card: ProjectCardBinding): ConversationParticipant {
@@ -766,12 +794,14 @@ async function executeHermesTurn(args: {
     let recipientError: Error | null = null;
     const pendingRecipientEvents = new Map<string, HermesGatewayEvent[]>();
     let timer: ReturnType<typeof setTimeout>;
-    let detach: () => void = () => undefined;
+    let detachEvent: () => void = () => undefined;
+    let detachState: () => void = () => undefined;
     const finish = (error?: Error, value?: TurnResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      detach();
+      detachEvent();
+      detachState();
       if (error) reject(error);
       else resolve(value!);
     };
@@ -810,7 +840,11 @@ async function executeHermesTurn(args: {
       pendingRecipientEvents.delete(expectedRecipientSubmissionId);
       for (const event of events) observeRecipientEvent(event);
     };
-    detach = args.client.onEvent((event) => {
+    detachState = args.client.onState((state) => {
+      if (state !== 'closed' && state !== 'error') return;
+      finish(new Error(`hermes_gateway_${state}_during_turn`));
+    });
+    detachEvent = args.client.onEvent((event) => {
       if (recipientBinding && event.session_id === recipientBinding.liveHandle) {
         if (!addressedToolId && !expectedRecipientSubmissionId) return;
         const eventSubmissionId = String(event.payload?.submission_id || '').trim();
@@ -1045,7 +1079,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     return res.status(503).json({ ok: false, error: 'main_project_authority_unavailable' });
   }
   if (!authorization) return undefined;
-  const { userId, projectSessionId } = authorization;
+  const { userId, projectSessionId, expectedMainCardId } = authorization;
   const conversationId = projectSessionId;
 
   let authority: ProjectCardAuthority;
@@ -1054,6 +1088,9 @@ mainSessionRoutes.post('/chat', async (req, res) => {
   try {
     authority = await projectCardAuthority(projectId, deckId);
     main = authority.main;
+    if (expectedMainCardId && main.card.id !== expectedMainCardId) {
+      throw new Error('external_main_card_binding_changed');
+    }
     addressedTarget = explicitlyAddressedCard(message, mainBotRosterCards(authority));
   } catch (error) {
     return res.status(409).json({

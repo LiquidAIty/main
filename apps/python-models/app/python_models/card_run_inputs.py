@@ -39,9 +39,14 @@ def _record_run_input_artifact(run_id: str, input_file: dict[str, Any]) -> None:
                     content_hash, "canonical-runtime-input", size_bytes,
                 ),
             )
-    for artifact_id, kind, locator, *_ in rows:
+    for artifact_id, kind, locator, _media_type, content_hash, size_bytes in rows:
         agentgraph_run_observations.observe_artifact(
-            run_id, artifact_id, kind, locator
+            run_id,
+            artifact_id,
+            kind,
+            locator,
+            content_hash,
+            size_bytes,
         )
 
 

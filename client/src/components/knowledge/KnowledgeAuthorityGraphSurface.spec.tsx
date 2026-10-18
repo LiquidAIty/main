@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Project Knowledge Graph
+ * Relationship: Verifies one joined renderer, provider-status isolation, focus lifecycle, presentation settings, selection, and shared inspector wiring without inventing graph identity or mutation.
+ */
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -35,7 +40,9 @@ vi.mock('../../vendor/engraphis/engraphis-graph.js', () => {
           links: data.links || data.edges || [],
         };
       }),
-      setHighlight: vi.fn(), setLayers: vi.fn(), setThemeColors: vi.fn(), graphToScreen: (x: number, y: number) => ({ x, y }),
+      setHighlight: vi.fn(), setLayers: vi.fn(), setThemeColors: vi.fn(),
+      setColorBy: vi.fn(), setTypeColors: vi.fn(),
+      graphToScreen: (x: number, y: number) => ({ x, y }),
       setPreset: vi.fn(() => ({ size: 5, font: 13, linkw: 1, labelDensity: 40, repel: 120, link: 30, gravity: 14 })), setStyle: vi.fn(), setSettings: vi.fn(),
       resize: vi.fn(), setCollapse: vi.fn(), focus: vi.fn(() => true), clearFocus: vi.fn(), freeze: vi.fn(), reheat: vi.fn(), fit: vi.fn(), destroy: vi.fn(() => canvas.remove()),
       wheel: vi.fn(),
@@ -51,13 +58,12 @@ class ResizeObserverStub { observe() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
 import {
-  composeThinkKnowPresentation as composeAuthorityThinkKnowPresentation,
   JoinedKnowledgeGraphSurface,
   KnowledgeGraphProjectionSurface,
-  knowEvidenceIdentity,
-  sourceLinks,
-  type GraphProjectionV1,
 } from './KnowledgeAuthorityGraphSurface';
+import {
+  type GraphProjectionV1,
+} from './knowledgeGraphProjection';
 import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
 function KnowGraphProjectionSurface({
@@ -91,6 +97,27 @@ describe('knowledge authority graph surfaces', () => {
     projectId: 'project-1',
     nodes: [],
     edges: [],
+  });
+
+  const emptyCode = (): GraphProjectionV1 => ({
+    schemaVersion: 'codegraph.projection.v1',
+    authority: 'codegraph',
+    projectId: 'project-1',
+    nodes: [],
+    edges: [],
+  });
+
+  const codeProps = (projection: GraphProjectionV1 = emptyCode()) => ({
+    codeGraph: {
+      projection,
+      status: 'ready' as const,
+      error: null,
+      warning: null,
+      freshness: 'current',
+    },
+    onOpenCodeGraph: vi.fn(async () => projection),
+    onReadCodeGraphFile: vi.fn(async () => null),
+    onReadCodeGraphSource: vi.fn(async () => null),
   });
 
   const currentProjections = (
@@ -160,254 +187,12 @@ describe('knowledge authority graph surfaces', () => {
     };
   };
 
-  const composeThinkKnowPresentation = (
-    think: GraphProjectionV1,
-    know: GraphProjectionV1,
-  ) => {
-    const projections = currentProjections(think, know);
-    return composeAuthorityThinkKnowPresentation(
-      projections.thinkgraph, projections.knowgraph,
-    );
-  };
 
-  it('uses only the exact attached Graphiti episode identity for a Know', () => {
-    expect(knowEvidenceIdentity({ graphitiEpisodeId: 'episode-1' })).toBe('episode-1');
-    expect(knowEvidenceIdentity({ graphitiEpisodeId: '  ' })).toBeNull();
-    expect(knowEvidenceIdentity({ graphitiFactUuid: 'fact-1' })).toBeNull();
-  });
 
-  it('keeps same-domain documents distinct while collapsing exact source URLs', () => {
-    const links = sourceLinks({
-      source_description: JSON.stringify([
-        'https://investors.rocketlabcorp.com/news/third-quarter-2025-results',
-        'https://investors.rocketlabcorp.com/news/fourth-quarter-2025-results',
-        'https://investors.rocketlabcorp.com/news/third-quarter-2025-results',
-      ]),
-    });
-    expect(links.map(link => [link.label, link.publisher, link.url])).toEqual([
-      [
-        'Third quarter 2025 results',
-        'investors.rocketlabcorp.com',
-        'https://investors.rocketlabcorp.com/news/third-quarter-2025-results',
-      ],
-      [
-        'Fourth quarter 2025 results',
-        'investors.rocketlabcorp.com',
-        'https://investors.rocketlabcorp.com/news/fourth-quarter-2025-results',
-      ],
-    ]);
-  });
 
-  it('renders only credential-free HTTPS citation links', () => {
-    const links = sourceLinks({
-      source_description: JSON.stringify([
-        'https://example.test/report?document=10#page=2',
-        'http://example.test/insecure',
-        'javascript:alert(1)',
-        'https://user:password@example.test/private',
-        'https://example.test/private?access_token=secret',
-        'https://example.test\\@attacker.test/source',
-      ]),
-    });
 
-    expect(links.map(link => link.url)).toEqual([
-      'https://example.test/report?document=10#page=2',
-    ]);
-  });
 
-  it('groups one exact authoritative Entity per authority while retaining provider evidence and edges', () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [
-        { id: 'think-1', canonicalId: 'shared-entity', label: 'Shared',
-          properties: { evidence: [{ id: 'think-evidence' }] } },
-        { id: 'same-id', label: 'Case', properties: {} },
-        { id: 'think-target', label: 'Think target', properties: {} },
-        { id: 'empty', label: '', properties: {} },
-      ],
-      edges: [{
-        id: 'same-edge', source: 'think-1', target: 'think-target', predicate: 'DEPENDS_ON',
-        layer: 'causal', properties: {},
-      }],
-    };
-    const know = {
-      ...empty('knowgraph'),
-      nodes: [
-        { id: 'know-1', canonicalId: 'shared-entity', label: 'Shared',
-          properties: { evidence: [{ id: 'know-evidence' }] } },
-        { id: 'same-id', label: 'case', properties: {} },
-        { id: 'know-target', label: 'Know target', properties: {} },
-        { id: 'empty', label: '', properties: {} },
-      ],
-      edges: [{
-        id: 'same-edge', source: 'know-1', target: 'know-target', predicate: 'SUPPORTS',
-        layer: 'semantic', properties: {},
-      }],
-    };
-    const before = structuredClone({ think, know });
 
-    const presentation = composeThinkKnowPresentation(think, know);
-    const sharedVisualId = presentation.visualNodeIdByProviderMember.get('thinkgraph:think-1');
-    expect(sharedVisualId).toBe(presentation.visualNodeIdByProviderMember.get('knowgraph:know-1'));
-    expect(presentation.nodeVariants.get(sharedVisualId!)?.map(
-      variant => [variant.authority, variant.node.id],
-    )).toEqual([
-      ['thinkgraph', think.nodes[0].id],
-      ['knowgraph', know.nodes[0].id],
-    ]);
-    expect(presentation.nodeVariants.get(sharedVisualId!)?.map(
-      variant => [variant.authority, variant.node.properties?.evidence],
-    )).toEqual([
-      ['thinkgraph', [{ id: 'think-evidence' }]],
-      ['knowgraph', [{ id: 'know-evidence' }]],
-    ]);
-    expect(presentation.visualNodeIdByProviderMember.get('thinkgraph:same-id'))
-      .not.toBe(presentation.visualNodeIdByProviderMember.get('knowgraph:same-id'));
-    expect(presentation.visualNodeIdByProviderMember.get('thinkgraph:empty'))
-      .not.toBe(presentation.visualNodeIdByProviderMember.get('knowgraph:empty'));
-    expect(presentation.projection.edges.map(edge => [edge.id, edge.layer, edge.predicate]))
-      .toEqual([
-        ['thinkgraph:same-edge', 'thinkgraph', 'DEPENDS_ON'],
-        ['knowgraph:same-edge', 'knowgraph', 'SUPPORTS'],
-      ]);
-    expect(presentation.projection.edges[0].properties?.providerSemanticLayer).toBe('causal');
-    expect(presentation.projection.edges[1].properties?.providerSemanticLayer).toBe('semantic');
-    expect(presentation.edgeVariants.get('thinkgraph:same-edge')?.edge).toBe(think.edges[0]);
-    expect(presentation.edgeVariants.get('knowgraph:same-edge')?.edge).toBe(know.edges[0]);
-    expect(presentation.projection.nodes.find(node => node.id === sharedVisualId)).toMatchObject({
-      material_kind: 'solarpunk',
-      material_role: 'PAIRED_SOLARPUNK_MATERIAL',
-      material_blue: '#4FA2AD',
-      material_orange: '#F2A64A',
-    });
-    expect({ think, know }).toEqual(before);
-
-    const renamedProviderIds = composeThinkKnowPresentation(
-      { ...think, nodes: [{ id: 'replacement-think', canonicalId: 'shared-entity', label: 'Shared', properties: {} }], edges: [] },
-      { ...know, nodes: [{ id: 'replacement-know', canonicalId: 'shared-entity', label: 'Shared', properties: {} }], edges: [] },
-    );
-    expect(renamedProviderIds.visualNodeIdByProviderMember.get('thinkgraph:replacement-think'))
-      .toBe(sharedVisualId);
-  });
-
-  it('joins exact names, keeps different names separate, and never uses provider IDs as join keys', () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [
-        { id: 'think-exact', label: 'Exact', properties: {} },
-        { id: 'think-different', label: 'Think name', properties: {} },
-        { id: 'think-target', label: 'Think target', properties: {} },
-      ],
-      edges: [
-        { id: 'think-mismatch', source: 'think-exact', target: 'think-target', predicate: 'THINK_REL', properties: {} },
-        { id: 'think-same-rel', source: 'think-different', target: 'think-target', predicate: 'SAME_REL', properties: {} },
-      ],
-    };
-    const know = {
-      ...empty('knowgraph'),
-      nodes: [
-        { id: 'know-exact', label: 'Exact', properties: {} },
-        { id: 'know-different', label: 'Know name', properties: {} },
-        { id: 'know-target', label: 'Know target', properties: {} },
-      ],
-      edges: [
-        { id: 'know-mismatch', source: 'know-exact', target: 'know-target', predicate: 'KNOW_REL', properties: {} },
-        { id: 'know-same-rel', source: 'know-different', target: 'know-target', predicate: 'SAME_REL', properties: {} },
-      ],
-    };
-    const before = structuredClone({ think, know });
-
-    const presentation = composeThinkKnowPresentation(think, know);
-    const exactVisualId = presentation.visualNodeIdByProviderMember.get('thinkgraph:think-exact');
-    expect(exactVisualId).toBe(
-      presentation.visualNodeIdByProviderMember.get('knowgraph:know-exact'),
-    );
-    expect(presentation.nodeVariants.get(exactVisualId!)?.map(
-      variant => [variant.authority, variant.node.id],
-    )).toEqual([
-      ['thinkgraph', think.nodes[0].id],
-      ['knowgraph', know.nodes[0].id],
-    ]);
-    expect(presentation.visualNodeIdByProviderMember.get('thinkgraph:think-different'))
-      .not.toBe(presentation.visualNodeIdByProviderMember.get('knowgraph:know-different'));
-
-    expect(presentation.projection.edges).toHaveLength(think.edges.length + know.edges.length);
-    expect(presentation.edgeVariants.size).toBe(think.edges.length + know.edges.length);
-    for (const visualEdge of presentation.projection.edges) {
-      const providerVariant = presentation.edgeVariants.get(visualEdge.id)!;
-      expect(visualEdge.source).toBe(presentation.visualNodeIdByProviderMember.get(
-        `${providerVariant.authority}:${providerVariant.edge.source}`,
-      ));
-      expect(visualEdge.target).toBe(presentation.visualNodeIdByProviderMember.get(
-        `${providerVariant.authority}:${providerVariant.edge.target}`,
-      ));
-    }
-    expect({ think, know }).toEqual(before);
-    expect(think.nodes.map(node => node.id)).toEqual(['think-exact', 'think-different', 'think-target']);
-    expect(know.nodes.map(node => node.id)).toEqual(['know-exact', 'know-different', 'know-target']);
-    expect(think.edges.map(edge => edge.id)).toEqual(['think-mismatch', 'think-same-rel']);
-    expect(know.edges.map(edge => edge.id)).toEqual(['know-mismatch', 'know-same-rel']);
-
-    const trimmed = composeThinkKnowPresentation(
-      { ...empty('thinkgraph'), nodes: [{ id: 'think-trimmed', label: '  Trimmed name  ', properties: {} }] },
-      { ...empty('knowgraph'), nodes: [{ id: 'know-trimmed', label: 'Trimmed name', properties: {} }] },
-    );
-    expect(trimmed.projection.nodes).toHaveLength(2);
-    expect(trimmed.visualNodeIdByProviderMember.get('thinkgraph:think-trimmed'))
-      .toBe('thinkgraph:think-trimmed');
-    expect(trimmed.visualNodeIdByProviderMember.get('knowgraph:know-trimmed'))
-      .toBe('knowgraph:know-trimmed');
-  });
-
-  it('keeps ambiguous and cross-Project Entities separate while the exact directory owns identity', () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [
-        { id: 'think-a', label: 'Shared', type: 'person_or_concept', properties: {} },
-        { id: 'think-b', label: 'Shared', type: 'person_or_concept', properties: {} },
-      ],
-    };
-    const know = {
-      ...empty('knowgraph'),
-      nodes: [{ id: 'know-a', label: 'Shared', type: 'Organization', properties: {} }],
-    };
-    expect(composeThinkKnowPresentation(think, know).projection.nodes.map(node => node.id))
-      .toEqual(['thinkgraph:think-a', 'thinkgraph:think-b', 'knowgraph:know-a']);
-
-    const current = currentProjections(
-      { ...empty('thinkgraph'), nodes: [{ id: 'think-kind', label: 'Subject', type: 'person_or_concept', properties: {} }] },
-      { ...empty('knowgraph'), nodes: [{ id: 'know-kind', label: 'Subject', type: 'Organization', properties: {} }] },
-    );
-    const currentThink = current.thinkgraph;
-    currentThink.nodes[0] = { ...currentThink.nodes[0], entityKind: 'conflicting-kind' };
-    const currentKnow = current.knowgraph;
-    expect(composeAuthorityThinkKnowPresentation(currentThink, currentKnow).projection.nodes.map(node => node.id))
-      .toEqual(['node-name:Subject']);
-
-    const otherProject = { ...currentKnow, projectId: 'project-2' };
-    expect(composeAuthorityThinkKnowPresentation(currentThink, otherProject).projection.nodes.map(node => node.id))
-      .toEqual(['thinkgraph:think-kind', 'knowgraph:know-kind']);
-  });
-
-  it('joins exact Rocket Lab names while retaining both provider records', () => {
-    const think = {
-      ...empty('thinkgraph'),
-      nodes: [{
-        id: 'ent-think-rocket-lab', canonicalId: 'ent-think-rocket-lab',
-        label: 'Rocket Lab', properties: {},
-      }],
-    };
-    const know = {
-      ...empty('knowgraph'),
-      nodes: [{
-        id: 'uuid-know-rocket-lab', canonicalId: 'uuid-know-rocket-lab',
-        label: 'Rocket Lab', properties: {},
-      }],
-    };
-
-    expect(composeThinkKnowPresentation(think, know).projection.nodes)
-      .toHaveLength(1);
-  });
 
   it.each([
     ['thinkgraph', 'Think', 'Know'],
@@ -941,7 +726,16 @@ describe('knowledge authority graph surfaces', () => {
     expect(forceGraphMocks.instances.at(-1).data.nodes.map((node: { id: string }) => node.id)).toEqual(['source']);
   });
 
-  it('keeps CodeGraph out of the launch graph surface', () => {
+  it('keeps Code out of the default canvas and opens it inside the same Graphs workspace', async () => {
+    const codeProjection: GraphProjectionV1 = {
+      ...emptyCode(),
+      nodes: [
+        { id: 'feature:CodeGraph', label: 'CodeGraph', authority: 'codegraph', type: 'Feature', etype: 'Feature', properties: { recordKind: 'feature', featureName: 'CodeGraph' } },
+        { id: 'file:surface', label: 'surface.tsx', authority: 'codegraph', type: 'File', etype: 'File', properties: { recordKind: 'file', filePath: 'client/src/surface.tsx', qualifiedName: 'file:surface', features: ['CodeGraph'] } },
+      ],
+      edges: [{ id: 'feature-file', source: 'feature:CodeGraph', target: 'file:surface', predicate: 'FEATURE_CONTRIBUTION' }],
+    };
+    const props = codeProps(codeProjection);
     const { container } = render(
       <KnowledgeGraphFramework
         projections={{
@@ -949,11 +743,27 @@ describe('knowledge authority graph surfaces', () => {
           knowgraph: empty('knowgraph'),
         }}
         errors={{}}
+        {...props}
       />,
     );
 
     expect(container.querySelector('[data-testid="knowledge-codegraph-surface"]')).toBeNull();
-    expect(screen.queryByRole('tablist', { name: 'Knowledge graph view' })).toBeNull();
+    expect(screen.getByRole('tablist', { name: 'Graph authority' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+    await waitFor(() => expect(screen.getByTestId('knowledge-codegraph-surface')).toBeTruthy());
+    expect(props.onOpenCodeGraph).not.toHaveBeenCalled();
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'CodeGraph Feature' })).toBeNull();
+    expect(screen.queryByText('All Features')).toBeNull();
+    expect(screen.getByText('1 Features · 1 Files · current')).toBeTruthy();
+    expect(container.querySelectorAll('.knowledge-authority-network')).toHaveLength(1);
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(graph.setColorBy).toHaveBeenCalledWith('type');
+    expect(graph.data.nodes.map((node: any) => node.etype)).toEqual(['Feature', 'File']);
+    act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'File')));
+    expect(props.onReadCodeGraphFile).toHaveBeenCalledWith('client/src/surface.tsx');
+    expect(screen.getByTestId('codegraph-node-details').textContent)
+      .toContain('client/src/surface.tsx');
   });
 
   it('keeps the relationship word and probability hover-only on a ThinkGraph edge', () => {
@@ -984,7 +794,7 @@ describe('knowledge authority graph surfaces', () => {
   it('renders the joined provider surface in the existing canvas and binds the pull tab to Engraphis settings', async () => {
     const { container } = render(<KnowledgeGraphFramework
       projections={{ thinkgraph: empty('thinkgraph'), knowgraph: empty('knowgraph') }}
-      errors={{}} />);
+      errors={{}} {...codeProps()} />);
     await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')).toBeTruthy());
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.getByText('No knowledge yet.')).toBeTruthy();
@@ -1217,6 +1027,7 @@ describe('knowledge authority graph surfaces', () => {
     render(<KnowledgeGraphFramework
       projections={{ thinkgraph: think, knowgraph: know }}
       errors={{}}
+      {...codeProps()}
     />);
     await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')).toBeTruthy());
     const graph = forceGraphMocks.instances.at(-1);

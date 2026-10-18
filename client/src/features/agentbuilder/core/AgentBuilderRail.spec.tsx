@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Agent Builder
+ * Relationship: Verifies rail destinations, callbacks, saved-Card entry, shared lunar styling, and absence of retired Kanban or terminal launchers.
+ */
+
 import React, { act } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOLARPUNK_PALETTE } from '../../../components/graph/graphVisualTokens';
 import AgentBuilderRail from './AgentBuilderRail';
@@ -30,8 +35,13 @@ const baseProps = {
 };
 
 let container: HTMLDivElement | null = null;
+let mountedRoot: Root | null = null;
 
 afterEach(() => {
+  if (mountedRoot) {
+    act(() => mountedRoot?.unmount());
+    mountedRoot = null;
+  }
   if (container) {
     container.remove();
     container = null;
@@ -41,9 +51,9 @@ afterEach(() => {
 function render(node: React.ReactElement) {
   container = document.createElement('div');
   document.body.appendChild(container);
-  const root = createRoot(container);
+  mountedRoot = createRoot(container);
   act(() => {
-    root.render(node);
+    mountedRoot?.render(node);
   });
   return container;
 }

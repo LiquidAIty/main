@@ -40,6 +40,7 @@ _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
     "ThinkGraph, KnowGraph, and supported agent runtimes. "
     "Start with main.context to resolve the authenticated Main conversation and project scope. "
+    "Use main.submit to send one bounded mission through that saved Main and its authorized orange Card roster. "
     "Use the currently published tool names and schemas; preserve returned provider IDs and provenance. "
     "Saved Cards own their configuration and granted capabilities. "
     "An accepted operation is not proof of completion; use its returned status and evidence."

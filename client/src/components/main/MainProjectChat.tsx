@@ -149,6 +149,30 @@ function safeMarkdownUrl(value: string): string | null {
   }
 }
 
+function isMarkdownWordCharacter(value: string | undefined): boolean {
+  return Boolean(value && /[\p{L}\p{N}]/u.test(value));
+}
+
+function isIntrawordUnderscore(text: string, index: number): boolean {
+  return isMarkdownWordCharacter(text[index - 1])
+    && isMarkdownWordCharacter(text[index + 1]);
+}
+
+function findClosingUnderscore(text: string, opening: number): number {
+  for (
+    let candidate = text.indexOf('_', opening + 1);
+    candidate >= 0;
+    candidate = text.indexOf('_', candidate + 1)
+  ) {
+    if (
+      candidate > opening + 1
+      && !isIntrawordUnderscore(text, candidate)
+      && !/\s/u.test(text[candidate - 1])
+    ) return candidate;
+  }
+  return -1;
+}
+
 function inlineChatMarkdown(
   text: string,
   role: MainProjectChatMessage["role"],
@@ -186,9 +210,15 @@ function inlineChatMarkdown(
         continue;
       }
     }
-    if (text[cursor] === '*' || text[cursor] === '_') {
-      const marker = text[cursor];
-      const close = text.indexOf(marker, cursor + 1);
+    const marker = text[cursor];
+    const underscoreCanOpen = marker === '_'
+      && !isIntrawordUnderscore(text, cursor)
+      && Boolean(text[cursor + 1])
+      && !/\s/u.test(text[cursor + 1]);
+    if (marker === '*' || underscoreCanOpen) {
+      const close = marker === '_'
+        ? findClosingUnderscore(text, cursor)
+        : text.indexOf(marker, cursor + 1);
       if (close > cursor + 1) {
         const current = token++;
         output.push(<em key={`${keyPrefix}:em:${current}`}>

@@ -9,11 +9,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from typing import Any, Callable
 
 import pytest
 
 from app.python_models import engraphis as service_adapter
+from app.python_models import thinkgraph_reference_reads
 from app.python_models import (
     thinkgraph_completed_pair_extraction as completed_pair_extraction,
 )
@@ -34,6 +36,7 @@ from app.python_models.jev_edge_ontology import SHARED_JEV_RELATIONSHIPS
 from app.python_models.thinkgraph_relationship_vocabulary import (
     relationship_choice_plan,
 )
+from app.python_models.thinkgraph_reference_reads import read_thinkgraph_exact
 
 
 @pytest.fixture()
@@ -47,6 +50,125 @@ def engraphis_service():
         yield service
     finally:
         service.close()
+
+
+def _seed_reference_graph(service: Any) -> tuple[str, str]:
+    first = service.remember(
+        "Current Engraphis graph content",
+        workspace="project-1",
+        title="Current fact",
+    )["id"]
+    second = service.remember(
+        "Project-scoped Engraphis engine content",
+        workspace="project-1",
+        title="Engraphis memory",
+    )["id"]
+    service.link(
+        first,
+        second,
+        workspace="project-1",
+        relation="supports",
+        reason="Retained Engraphis evidence",
+    )
+    return first, second
+
+
+def test_exact_thinkgraph_read_is_project_scoped_and_read_only(
+    engraphis_service: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, _ = _seed_reference_graph(engraphis_service)
+    monkeypatch.setattr(service_adapter, "_service", engraphis_service)
+    before = engraphis_service.store.conn.total_changes
+
+    record = read_thinkgraph_exact(
+        "project-1",
+        "engraphisMemoryId",
+        first,
+    )
+
+    assert record is not None
+    assert record["engraphisMemoryId"] == first
+    assert record["content"] == "Current Engraphis graph content"
+    assert read_thinkgraph_exact(
+        "other-project",
+        "engraphisMemoryId",
+        first,
+    ) is None
+    assert engraphis_service.store.conn.total_changes == before
+
+
+def test_exact_thinkgraph_read_accepts_project_scoped_engraphis_id(
+    engraphis_service: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, second = _seed_reference_graph(engraphis_service)
+    monkeypatch.setattr(service_adapter, "_service", engraphis_service)
+
+    record = read_thinkgraph_exact(
+        "project-1",
+        "engraphisMemoryId",
+        second,
+    )
+
+    assert record is not None
+    assert record["engraphisMemoryId"] == second
+    assert record["recordId"] == second
+    assert record["content"] == "Project-scoped Engraphis engine content"
+
+
+def test_think_handoff_prefers_self_contained_thinks_and_keeps_engraphis_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_payload = {
+        "entity": {
+            "canonical_id": "entity-one",
+            "type": "person_or_concept",
+            "label": "Jev",
+            "member_ids": ["entity-one"],
+            "relations": [],
+            "history": [],
+            "truncation": {
+                "relations": False,
+                "evidence": False,
+                "history": False,
+            },
+            "evidence": [
+                {
+                    "memory_id": "mem_think",
+                    "excerpt": "Self-contained structured Think.",
+                    "metadata": {
+                        "thinkgraph_origin": {"authority": "thinkgraph"},
+                    },
+                },
+                {
+                    "memory_id": "mem_other",
+                    "excerpt": "Other Engraphis evidence.",
+                    "metadata": {"provenance": {"source": "test"}},
+                },
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        thinkgraph_reference_reads,
+        "private_operation",
+        lambda *_args, **_kwargs: provider_payload,
+    )
+
+    record = read_thinkgraph_exact(
+        "project-1",
+        "engraphisEntityId",
+        "entity-one",
+    )
+
+    assert "portableKind" not in record
+    assert record["content"] == "Self-contained structured Think."
+    assert [
+        item["memory_id"] for item in record["metadata"]["thinks"]
+    ] == ["mem_think"]
+    assert [
+        item["memory_id"] for item in record["metadata"]["evidence"]
+    ] == ["mem_other"]
 
 
 def _card_run(run_id: str = "thinkgraph-run-one") -> dict[str, str]:
@@ -261,6 +383,27 @@ def test_multiple_entity_chunks_are_distinct_and_relationships_are_source_owned(
     ]
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        json.dumps(_structured_output()),
+        f"```json\n{json.dumps(_structured_output())}\n```",
+        [_fact()],
+    ],
+)
+def test_structured_extraction_rejects_untyped_model_output(value: Any) -> None:
+    with pytest.raises(
+        relationship_vocabulary.ThinkGraphIntakeError,
+        match="thinkgraph_card_entity_think_count_invalid",
+    ):
+        completed_pair_extraction.extract_saved_card_facts(
+            value,
+            pair_text="USER: x\nMAIN: y",
+            context={},
+            card_run=_card_run(),
+        )
+
+
 def test_relationship_choice_plan_has_no_abstention_option() -> None:
     vocabulary = tuple(SHARED_JEV_RELATIONSHIPS)
     long_proposal = relationship_choice_plan(
@@ -351,12 +494,15 @@ def test_prepare_is_non_persisting_and_returns_exact_extraction_contract(
         {"facts": [_fact(), _fact(title="duplicate second fact")]},
         {"facts": [{key: value for key, value in _fact().items() if key != "think"}]},
         {"wrong": [_fact()]},
+        json.dumps(_structured_output()),
+        f"```json\n{json.dumps(_structured_output())}\n```",
+        [_fact()],
     ],
 )
 def test_invalid_or_duplicate_entity_card_output_creates_no_graph_rows(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
-    structured_output: dict[str, Any],
+    structured_output: Any,
 ) -> None:
     calls = 0
 
@@ -842,8 +988,6 @@ def test_projection_and_anchor_keep_entity_ids_separate_from_think_id(
     engraphis_service: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.python_models.thinkgraph_reference_reads import read_thinkgraph_exact
-
     settled = _settle(engraphis_service, monkeypatch)
     monkeypatch.setattr(projection_adapter, "_projection_entity_directory", lambda _project: None)
     projection = projection_adapter.projection("project-one")

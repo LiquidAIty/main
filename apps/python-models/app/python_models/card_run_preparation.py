@@ -363,7 +363,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
 
     accepted = accept_run_request(payload)
     try:
-        return _begin_accepted_run(payload)
+        return _begin_accepted_run(payload, accepted)
     except Exception as error:
         if accepted is not None:
             error_summary = str(error)
@@ -395,7 +395,10 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         raise
 
 
-def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
+def _begin_accepted_run(
+    payload: dict[str, Any],
+    accepted: dict[str, Any],
+) -> dict[str, Any]:
     """Create one Run, retain its one IDF, then expose one Hermes request."""
 
     current_request = required_content(payload.get("assignment"), "assignment")
@@ -473,12 +476,16 @@ def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
         }
     telemetry_written = False
     if created:
+        preparation_ended_at = utc_now()
         telemetry_written = agentgraph_run_observations.observe_run_preparation_complete(
             prepared,
             payload,
             run_id=resolved_run_id,
             correlation_id=resolved_correlation_id,
-            input_file=input_files,
+            preparation_started_at=accepted_at(
+                accepted["preparationStartedAt"]
+            ),
+            ended_at=preparation_ended_at,
         )
     return {
         **prepared,

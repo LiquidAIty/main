@@ -12,20 +12,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .thinkgraph_relationship_vocabulary import ThinkGraphIntakeError
 
 
-def _strict_card_json(value: Any) -> Any:
-    if isinstance(value, str):
-        raw = value.strip()
-        if raw.startswith("```json") and raw.endswith("```"):
-            raw = raw[7:-3].strip()
-        try:
-            return json.loads(raw)
-        except (TypeError, ValueError) as error:
-            raise ThinkGraphIntakeError(
-                "thinkgraph_card_output_invalid_json"
-            ) from error
-    return value
-
-
 class _StructuredModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -172,19 +158,18 @@ def extract_saved_card_facts(
     context: dict[str, Any],
     card_run: dict[str, str],
 ) -> list[Any]:
-    strict_value = _strict_card_json(value)
     if (
-        not isinstance(strict_value, dict)
-        or set(strict_value) != {"facts"}
-        or not isinstance(strict_value.get("facts"), list)
-        or not 0 <= len(strict_value["facts"]) <= 20
+        not isinstance(value, dict)
+        or set(value) != {"facts"}
+        or not isinstance(value.get("facts"), list)
+        or not 0 <= len(value["facts"]) <= 20
     ):
         raise ThinkGraphIntakeError("thinkgraph_card_entity_think_count_invalid")
-    if not strict_value["facts"]:
+    if not value["facts"]:
         return []
     extractor = _engraphis_structured_extractor(
         _SavedCardStructuredResult(
-            strict_value,
+            value,
             card_run["resolvedProvider"],
             card_run["resolvedModel"],
         )
@@ -193,7 +178,7 @@ def extract_saved_card_facts(
         pair_text,
         context=json.dumps(context, ensure_ascii=False, sort_keys=True),
     )
-    if len(facts) != len(strict_value["facts"]) or any(
+    if len(facts) != len(value["facts"]) or any(
         isinstance(fact.metadata, dict)
         and fact.metadata.get("extraction_fallback")
         for fact in facts

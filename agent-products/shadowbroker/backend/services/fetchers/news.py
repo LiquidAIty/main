@@ -10,7 +10,12 @@ import feedparser
 from services.network_utils import fetch_with_curl
 from services.fetchers._store import latest_data, _data_lock, _mark_fresh
 from services.fetchers.retry import with_retry
-from services.oracle_service import enrich_news_items, compute_global_threat_level, detect_breaking_events
+from services.oracle_service import (
+    compute_global_threat_level,
+    detect_breaking_events,
+    enrich_news_items,
+    unavailable_threat_level,
+)
 
 
 def news_fetch_enabled() -> bool:
@@ -186,6 +191,9 @@ def fetch_news():
         logger.debug("News fetch skipped; unset NEWS_ENABLED=false to re-enable")
         with _data_lock:
             latest_data["news"] = []
+            latest_data["threat_level"] = unavailable_threat_level(
+                "disabled", "News ingestion is disabled by operator configuration."
+            )
         _mark_fresh("news")
         return
     from services.news_feed_config import get_feeds
@@ -348,7 +356,9 @@ def fetch_news():
         )
     except Exception as e:
         logger.warning(f"Threat level computation failed: {e}")
-        threat_level = {"score": 0, "level": "GREEN", "color": "#22c55e", "drivers": []}
+        threat_level = unavailable_threat_level(
+            "error", "Threat computation failed; no threat level was produced."
+        )
 
     with _data_lock:
         latest_data['news'] = news_items

@@ -218,6 +218,61 @@ def test_ungranted_and_destructive_tools_are_not_callable(
     assert mcp_request_dispatch.request_tool_is_allowed("graphiti.add_memory") is False
     assert mcp_request_dispatch.request_tool_is_allowed("graphiti.clear_graph") is False
 
+
+def test_external_main_entries_use_verified_project_binding_not_card_grants(monkeypatch):
+    context = {
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "conversationId": "project-one",
+        "parentRunId": "",
+        "callerCardId": "card_main_chat",
+        "grantedTools": ["canvas.inspect"],
+        "mainEntryAuthorized": True,
+    }
+    monkeypatch.setattr(mcp_auth, "OAUTH_ENFORCED", True)
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: context)
+    monkeypatch.setattr(
+        mcp_catalog_runtime,
+        "published_mcp_tool_names",
+        lambda: frozenset({"main.context", "main.submit", "canvas.inspect"}),
+    )
+
+    assert mcp_request_dispatch.request_tool_is_allowed("main.context") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("main.submit") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("canvas.inspect") is True
+
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: None)
+    assert mcp_request_dispatch.request_tool_is_allowed("main.context") is False
+    assert mcp_request_dispatch.request_tool_is_allowed("main.submit") is False
+
+
+def test_authenticated_catalog_keeps_external_main_entries_outside_saved_grants(monkeypatch):
+    context = {
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "conversationId": "project-one",
+        "parentRunId": "",
+        "callerCardId": "card_main_chat",
+        "grantedTools": ["canvas.inspect"],
+        "mainEntryAuthorized": True,
+    }
+    monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_auth, "access_token_available", lambda: True)
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: context)
+    tools = [
+        Tool(name=name, inputSchema={"type": "object", "properties": {}})
+        for name in ("main.context", "main.submit", "canvas.inspect", "card.create")
+    ]
+
+    assert [tool.name for tool in mcp_catalog_projection.catalog_for_request(tools)] == [
+        "main.context", "main.submit", "canvas.inspect",
+    ]
+    context["mainEntryAuthorized"] = False
+    assert [tool.name for tool in mcp_catalog_projection.catalog_for_request(tools)] == [
+        "canvas.inspect",
+    ]
+
 def test_cbm_dispatch_preserves_provider_arguments_schema_and_description(monkeypatch):
     import asyncio
 

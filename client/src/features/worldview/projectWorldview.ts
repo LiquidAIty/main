@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: Transports authenticated Project capability reads and explicit user writes for the one Earth surface while rejecting malformed, cross-Project, duplicate, or mismatched server state.
+ */
+
 export type ProjectWorldviewCapability = {
   capabilityId: string;
   enabled: boolean;

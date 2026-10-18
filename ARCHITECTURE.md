@@ -59,7 +59,7 @@ and inverse deletion/rename mechanics.
 | Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_authority.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_preparation.py`, `card_run_inputs.py`, `card_run_readback.py`, `card_run_execution.py`, `card_run_settlement.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, invocation authority, effective tools, graph selection and IDF preparation, Run acceptance/preparation, canonical input retention, readback/projection, execution progress, terminal settlement, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
 | Canonical Run input | `idf.py`, `idf_contract.py`, `idf_graph_records.py`, and `idf_projection.py` under `apps/python-models/app/python_models/`; sole constructor `idf.py::materialize_idf` | Literal contract, bounded graph-record construction, inspection/model projections, and one materializer which writes and rereads one UTF-8 `in.idf` before execution |
 | Card Python Script | `apps/python-models/app/python_models/card_script.py`, the existing Card editor transport, and `HermesLatest/agent/{card_turn_tools,card_script_tool}.py` | Saved Card-owned source, structural compilation, live selected-tool validation, one immutable turn contract, and execution through Hermes' existing child Python runner against profile-loaded tools; no TypeScript executor or application callback tool protocol |
-| Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, and no semantic routing |
+| Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, the opt-in shared-workspace Code view, and no semantic routing |
 | Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; it does not own Hermes processes or sessions |
 | Hermes runtime | `HermesLatest/` | Hermes inference, profiles, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
 | Magnetic TaskGraph | `magnetic_taskgraph_authority.py`, `magnetic_taskgraph_submission.py`, and `magnetic_taskgraph_readback.py` under `apps/python-models/app/python_models/`, with the exact invocation owner in `apps/python-models/app/mag_one_operation.py` | Literal owners for saved profile/worker authority, headless root staging and outer-Run binding, redacted status/final-result observation, and invocation-scoped waiting/progress/terminal outer-Run settlement against Hermes' existing SQLite task/dependency APIs; Card Run reads never reconcile or settle execution |
@@ -135,10 +135,13 @@ boundary and are mounted separately from browser authentication.
 | `/api/idd` | `builderIdd.routes.ts` owns Builder/editor-only IDD fields, deterministic live-catalog tool projection, and Script-header projection |
 | `/api/mcp` | `mcpInternal.routes.ts` owns only process-authenticated Project/profile context and the configured-model/IDD projection used by Hermes profile MCP tools |
 | `/api/thinkgraph` and `/api/knowgraph` | Engraphis and Graphiti projections/operations without merging authority |
+| `/api/codegraph/read` | One fixed-purpose Project-owned CodeGraph projection/file/source read; the server injects `deck_builder`/`builder`, Python reloads that persisted Card revision, and the official MCP host enforces its live read-only CBM grants |
 | `/api/projects` | Project and deck transport |
 
-CodeGraph is reached through the saved Card's granted CBM operations in the canonical tool catalog;
-there is no separate CodeGraph backend route or graph owner.
+CodeGraph remains reached through the saved Card's granted CBM operations in the canonical tool catalog.
+The browser's one fixed-purpose read route does not expose a generic MCP caller, provider operation,
+raw Cypher, alternate catalog, cache, or graph owner; it enters the same short-lived materializer-read
+principal for the persisted Builder Card and returns honest unavailable/partial outcomes.
 
 Route names are transport addresses, not agent identities or separate runtimes. The retired generic
 Card-runtime and loopback Hermes Card-tools routes remain absent.
@@ -245,9 +248,13 @@ join the same upstream per-account daemon/cache/runtime identity outside the rep
 plugins, and connectors do not launch another frontend. The upstream watcher owns ordinary freshness;
 indexing/deletion are explicit application-MCP administrative operations.
 
-Product CodeGraph reads use granted `cbm.*` MCP tools and bounded CBM references selected into the canonical
-IDF. There is no separate browser CodeGraph route or catalog. Builder and other authorized Cards call
-the official CBM provider through the application MCP host; saved Card grants remain the ceiling.
+Product CodeGraph reads use granted `cbm.*` MCP tools. Builder and other authorized Cards call the
+official CBM provider through the application MCP host; saved Card grants remain the ceiling. The
+Agent Builder Graphs workspace may request only the application-owned `projection`, `file`, or `source`
+purpose through `/api/codegraph/read`. Backend authentication canonicalizes the Project and injects
+`deck_builder`/`builder`; Python rereads that saved Card and the MCP host remains the final live schema,
+access, and grant authority. The route cannot accept browser-authored tools, queries, provider identity,
+MCP location, Card identity, or deck identity.
 
 Codex repository development is a separate consumer. During a PromptSpec, only the Primary uses the
 installed one-shot CBM CLI, before dispatching read-only scouts. It uses CBM as a directional map of

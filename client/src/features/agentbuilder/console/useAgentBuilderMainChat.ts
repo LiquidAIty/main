@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from '../../../components/knowledge/knowledgeGraphProjection';
 import {
   loadSessionHistory,
   type AddressableAgent,

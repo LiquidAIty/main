@@ -5,6 +5,7 @@ import { Popup } from 'react-map-gl/maplibre';
 import { Radio } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { TELEGRAM_MARKER_OFFSET } from '@/components/map/geoJSONBuilders';
+import { API_BASE } from '@/lib/api';
 import { buildTelegramMediaProxyUrl } from '@/lib/telegramProxy';
 import type { TelegramOsintPost } from '@/types/dashboard';
 

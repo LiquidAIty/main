@@ -1,13 +1,18 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: Verifies product-rail visibility follows enabled saved Cards and attached surfaces while orange flow and blue Magnetic wires remain independent execution authorities.
+ */
+
 import { describe, expect, it } from 'vitest';
 
-import type { DeckDocument } from '../../../types/agentgraph';
+import type { AgentCardInstance, DeckDocument } from '../../../types/agentgraph';
 import { deriveVisibleRailItems, isWorldViewCard } from './railVisibility';
 
-const worldView = {
+const worldView: AgentCardInstance = {
   id: 'card-generated-id',
   title: 'WorldView',
-  role: 'Signal discovery',
-  prompt: 'Inspect sourced signals.',
+  role: 'Geospatial orchestration',
+  prompt: 'Operate the one Earth experience.',
   templateId: 'template_assist',
   runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldview' },
   runtimeOptions: {
@@ -23,38 +28,88 @@ const worldView = {
     }],
   },
   position: { x: 0, y: 0 },
-} as const;
+};
 
-const magOne = {
-  id: 'card_magentic', title: 'Mag One', role: 'Manager', prompt: '',
-  templateId: 'template_magentic',
-  runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
-  position: { x: 100, y: 0 },
-} as const;
+const worldSignals: AgentCardInstance = {
+  ...worldView,
+  id: 'card_worldsignals_agent',
+  title: 'WorldSignals',
+  runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldsignals' },
+  runtimeOptions: {},
+};
 
-function deck(connected: boolean): Pick<DeckDocument, 'nodes' | 'edges'> {
-  return {
-    nodes: [worldView, magOne] as DeckDocument['nodes'],
-    edges: connected ? [{
-      id: 'edge-worldview-mag-one',
-      source: 'card_magentic',
-      target: 'card-generated-id',
-      edgeType: 'magentic_option',
-    }] : [],
-  };
+const trading: AgentCardInstance = {
+  ...worldView,
+  id: 'card_trading_workbench',
+  title: 'Trader',
+  runtime: { kind: 'hermes', mode: 'delegate', profile: 'trader' },
+  runtimeOptions: {},
+};
+
+function visible(
+  nodes: AgentCardInstance[],
+  workspaceView = 'canvas',
+): ReturnType<typeof deriveVisibleRailItems> {
+  return deriveVisibleRailItems({
+    deck: { nodes, edges: [] },
+    workspaceView,
+  });
 }
 
-describe('WorldView rail visibility', () => {
-  it('derives the product surface from the saved subsystem attachment, not a Card id', () => {
-    expect(isWorldViewCard(worldView as any)).toBe(true);
-    expect(deriveVisibleRailItems({ deck: deck(true), workspaceView: 'canvas' }).showWorldview)
-      .toBe(true);
+describe('product rail visibility', () => {
+  it('recognizes the one Earth surface from its saved subsystem attachment, not Card id', () => {
+    expect(isWorldViewCard(worldView)).toBe(true);
+    expect(isWorldViewCard({
+      ...worldView,
+      id: 'another-saved-identity',
+    })).toBe(true);
+    expect(isWorldViewCard(worldSignals)).toBe(false);
   });
 
-  it('keeps an unattached WorldView Card out of the rail until its workspace is active', () => {
-    expect(deriveVisibleRailItems({ deck: deck(false), workspaceView: 'canvas' }).showWorldview)
-      .toBe(false);
-    expect(deriveVisibleRailItems({ deck: deck(false), workspaceView: 'worldview' }).showWorldview)
-      .toBe(true);
+  it('shows enabled saved product Cards without requiring orange or blue topology', () => {
+    expect(visible([
+      worldView,
+      worldSignals,
+      trading,
+    ])).toEqual({
+      showKnowledge: true,
+      showWorldsignal: true,
+      showWorldview: true,
+      showTrading: true,
+    });
+  });
+
+  it('keeps orange and blue wires independent from surface visibility', () => {
+    const nodes = [worldView];
+    const withoutWires = deriveVisibleRailItems({
+      deck: { nodes, edges: [] },
+      workspaceView: 'canvas',
+    });
+    const withUnrelatedWires = deriveVisibleRailItems({
+      deck: {
+        nodes,
+        edges: [
+          { id: 'orange', source: 'main', target: worldView.id, edgeType: 'flow' },
+          {
+            id: 'blue', source: 'card_magentic', target: worldView.id,
+            edgeType: 'magentic_option',
+          },
+        ],
+      },
+      workspaceView: 'canvas',
+    });
+
+    expect(withUnrelatedWires).toEqual(withoutWires);
+    expect(withoutWires.showWorldview).toBe(true);
+  });
+
+  it('hides a disabled saved Card unless its already-open workspace remains active', () => {
+    const disabled = {
+      ...worldView,
+      enabled: false,
+    };
+
+    expect(visible([disabled]).showWorldview).toBe(false);
+    expect(visible([disabled], 'worldview').showWorldview).toBe(true);
   });
 });

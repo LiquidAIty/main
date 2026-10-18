@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ChevronLeft, Search, Activity, Shield, Crosshair, DollarSign, Newspaper, ExternalLink, Loader } from 'lucide-react';
 import { useDataKeys } from '@/hooks/useDataStore';
+import { usePredictionMarketsOptIn } from '@/hooks/usePredictionMarketsOptIn';
 import { API_BASE } from '@/lib/api';
 import type { DashboardData, StockTicker } from '@/types/dashboard';
 
@@ -88,7 +89,10 @@ export default function MarketView({ onBack }: MarketViewProps) {
   const [searchHasMore, setSearchHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [allBrowseOffset, setAllBrowseOffset] = useState(0);
+  const [loadError, setLoadError] = useState('');
+  const [initialLoading, setInitialLoading] = useState(true);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { status: marketStatus, refreshStatus } = usePredictionMarketsOptIn();
 
   const data = useDataKeys(DATA_KEYS) as DataSlice;
   const stocks = data?.stocks;
@@ -110,10 +114,12 @@ export default function MarketView({ onBack }: MarketViewProps) {
   useEffect(() => {
     let mounted = true;
     (async () => {
+      setInitialLoading(true);
+      setLoadError('');
       try {
         const res = await fetch(`${API_BASE}/api/mesh/oracle/markets`);
-        if (res.ok) {
-          const d = await res.json();
+        if (!res.ok) throw new Error(`Oracle markets unavailable (${res.status})`);
+        const d = await res.json();
           const cats = d.categories || {};
           const all: PredictionMarket[] = [];
           for (const cat of Object.values(cats) as PredictionMarket[][]) {
@@ -131,8 +137,11 @@ export default function MarketView({ onBack }: MarketViewProps) {
             more.ALL = Number(d.total_count || 0) > all.length;
             setMarketHasMore(more);
           }
-        }
-      } catch { /* silent */ }
+      } catch {
+        if (mounted) setLoadError('Oracle market data is unavailable.');
+      } finally {
+        if (mounted) setInitialLoading(false);
+      }
     })();
     return () => { mounted = false; };
   }, [appendUniqueMarkets]);
@@ -145,20 +154,32 @@ export default function MarketView({ onBack }: MarketViewProps) {
       setIsSearching(false);
       return;
     }
+    if (marketStatus?.enabled === false) {
+      setSearchResults([]);
+      setSearchHasMore(false);
+      setLoadError('Provider search is disabled. Enable MKT before contacting Polymarket or Kalshi.');
+      setIsSearching(false);
+      return;
+    }
     setIsSearching(true);
+    setLoadError('');
     try {
       const res = await fetch(
         `${API_BASE}/api/mesh/oracle/search?q=${encodeURIComponent(query)}&limit=50&offset=${offset}`,
       );
-      if (res.ok) {
-        const d = await res.json();
-        const results = d.results || [];
-        setSearchResults((prev) => (offset > 0 ? appendUniqueMarkets(prev, results) : results));
-        setSearchHasMore(Boolean(d.has_more));
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || `Oracle search unavailable (${res.status})`);
+      const results = d.results || [];
+      setSearchResults((prev) => (offset > 0 ? appendUniqueMarkets(prev, results) : results));
+      setSearchHasMore(Boolean(d.has_more));
+      if (Array.isArray(d.provider_errors) && d.provider_errors.length > 0) {
+        setLoadError(`Partial results: ${d.provider_errors.join(' and ')} unavailable.`);
       }
-    } catch { /* silent */ }
+    } catch {
+      setLoadError('Oracle search is unavailable.');
+    }
     setIsSearching(false);
-  }, [appendUniqueMarkets]);
+  }, [appendUniqueMarkets, marketStatus?.enabled]);
 
   const loadMoreMarkets = useCallback(async () => {
     if (loadingMore) return;
@@ -175,17 +196,18 @@ export default function MarketView({ onBack }: MarketViewProps) {
       const res = await fetch(
         `${API_BASE}/api/mesh/oracle/markets/more?category=${encodeURIComponent(category)}&offset=${loadedForCategory}&limit=50`,
       );
-      if (res.ok) {
-        const d = await res.json();
-        const markets = d.markets || [];
-        setAllMarkets((prev) => appendUniqueMarkets(prev, markets));
-        if (category === 'ALL') {
-          setAllBrowseOffset((prev) => prev + markets.length);
-        }
-        setMarketHasMore((prev) => ({ ...prev, [category]: Boolean(d.has_more) }));
-        setMarketTotals((prev) => ({ ...prev, [category]: d.total ?? prev[category] ?? loadedForCategory }));
+      if (!res.ok) throw new Error(`Oracle market page unavailable (${res.status})`);
+      const d = await res.json();
+      const markets = d.markets || [];
+      setAllMarkets((prev) => appendUniqueMarkets(prev, markets));
+      if (category === 'ALL') {
+        setAllBrowseOffset((prev) => prev + markets.length);
       }
-    } catch { /* silent */ }
+      setMarketHasMore((prev) => ({ ...prev, [category]: Boolean(d.has_more) }));
+      setMarketTotals((prev) => ({ ...prev, [category]: d.total ?? prev[category] ?? loadedForCategory }));
+    } catch {
+      setLoadError('Could not load more Oracle markets.');
+    }
     finally {
       setLoadingMore(false);
     }
@@ -199,6 +221,10 @@ export default function MarketView({ onBack }: MarketViewProps) {
     },
     [searchMarkets],
   );
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus]);
 
   // Use search results when searching, otherwise show all markets
   const displayMarkets = searchInput.length >= 2 ? searchResults : allMarkets;
@@ -241,9 +267,15 @@ export default function MarketView({ onBack }: MarketViewProps) {
           PREDICTION MARKETS
         </h1>
         <p className="text-gray-500 text-sm mt-1">
-          Live Polymarket + Kalshi feeds. Search anything — all markets from both platforms.
+          Operator-opted-in Polymarket + Kalshi feeds. Search contacts providers only when MKT is enabled.
           {' '}{allMarkets.length > 0 && `${allMarkets.length} cached markets.`}
         </p>
+        {marketStatus?.enabled === false && (
+          <p className="text-amber-400/80 text-xs mt-2">
+            Provider access is off. Enable MKT in Global Threat Intercept to search or refresh live markets.
+          </p>
+        )}
+        {loadError && <p className="text-red-400/80 text-xs mt-2">{loadError}</p>}
       </div>
 
       {/* Categories */}
@@ -419,8 +451,12 @@ export default function MarketView({ onBack }: MarketViewProps) {
           );
         }) : (
           <div className="text-center text-gray-600 py-8">
-            {isSearching ? (
+            {initialLoading || isSearching ? (
               <p className="text-sm">Searching Polymarket + Kalshi...</p>
+            ) : marketStatus?.enabled === false ? (
+              <p className="text-sm italic">Provider access is disabled; no live search was attempted.</p>
+            ) : loadError ? (
+              <p className="text-sm italic">Oracle markets are unavailable.</p>
             ) : (
               <p className="text-sm italic">No markets found{searchInput ? ` for "${searchInput}"` : ''}.</p>
             )}

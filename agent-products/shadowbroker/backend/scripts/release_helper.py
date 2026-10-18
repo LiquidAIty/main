@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,75 @@ def _write_package_json(data: dict) -> None:
 
 def current_version() -> str:
     return str(_read_package_json().get("version") or "").strip()
+
+
+def release_version_sources(root: Path = ROOT) -> dict[str, str]:
+    """Read the explicit release-version carriers without importing the app."""
+
+    versions: dict[str, str] = {}
+
+    def json_version(label: str, relative_path: str, *keys: str) -> None:
+        payload = json.loads((root / relative_path).read_text(encoding="utf-8"))
+        value = payload
+        for key in keys:
+            value = value[key]
+        versions[label] = str(value)
+
+    def regex_versions(label: str, relative_path: str, pattern: str) -> None:
+        text = (root / relative_path).read_text(encoding="utf-8")
+        matches = re.findall(pattern, text, flags=re.MULTILINE)
+        if not matches:
+            versions[label] = "<missing>"
+            return
+        for index, value in enumerate(matches, start=1):
+            suffix = f" #{index}" if len(matches) > 1 else ""
+            versions[f"{label}{suffix}"] = str(value)
+
+    json_version("frontend package", "frontend/package.json", "version")
+    json_version("frontend lock", "frontend/package-lock.json", "version")
+    json_version("desktop package", "desktop-shell/package.json", "version")
+    json_version("desktop lock", "desktop-shell/package-lock.json", "version")
+    json_version(
+        "tauri config",
+        "desktop-shell/tauri-skeleton/src-tauri/tauri.conf.json",
+        "version",
+    )
+    regex_versions("workspace package", "pyproject.toml", r'^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"')
+    regex_versions("backend package", "backend/pyproject.toml", r'^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"')
+    regex_versions("backend app", "backend/main.py", r'^APP_VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"')
+    regex_versions(
+        "health fallback",
+        "backend/routers/health.py",
+        r'_HEALTH_APP_VERSION",\s*"([0-9]+\.[0-9]+\.[0-9]+)"',
+    )
+    regex_versions(
+        "agent tools API",
+        "backend/routers/ai_intel.py",
+        r'"version":\s*"([0-9]+\.[0-9]+\.[0-9]+)",\s*"access_tier"',
+    )
+    regex_versions(
+        "agent capabilities API",
+        "backend/routers/ai_intel.py",
+        r'"version":\s*"([0-9]+\.[0-9]+\.[0-9]+)",\s*"routing"',
+    )
+    regex_versions("helm chart", "helm/chart/Chart.yaml", r'^version:\s*"?([0-9]+\.[0-9]+\.[0-9]+)"?')
+    regex_versions("helm app", "helm/chart/Chart.yaml", r'^appVersion:\s*"?([0-9]+\.[0-9]+\.[0-9]+)"?')
+    regex_versions(
+        "tauri package",
+        "desktop-shell/tauri-skeleton/src-tauri/Cargo.toml",
+        r'^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"',
+    )
+    regex_versions(
+        "changelog",
+        "frontend/src/components/ChangelogModal.tsx",
+        r"CURRENT_VERSION\s*=\s*'([0-9]+\.[0-9]+\.[0-9]+)'",
+    )
+    regex_versions(
+        "startup notice",
+        "frontend/src/components/StartupWarmupModal.tsx",
+        r"CURRENT_VERSION\s*=\s*'([0-9]+\.[0-9]+\.[0-9]+)'",
+    )
+    return versions
 
 
 def set_version(version: str) -> str:
@@ -143,6 +213,20 @@ def cmd_set_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_version(_args: argparse.Namespace) -> int:
+    expected = current_version()
+    sources = release_version_sources()
+    mismatches = {label: value for label, value in sources.items() if value != expected}
+    for label, value in sources.items():
+        marker = "OK" if value == expected else "MISMATCH"
+        print(f"{marker:8} {label:24} {value}")
+    if mismatches:
+        print(f"Release version mismatch: expected {expected}", file=sys.stderr)
+        return 1
+    print(f"Release versions are coherent at {expected}")
+    return 0
+
+
 def cmd_hash(args: argparse.Namespace) -> int:
     version = _normalize_version(args.version) if args.version else current_version()
     if not version:
@@ -211,6 +295,12 @@ def build_parser() -> argparse.ArgumentParser:
     set_version_parser = subparsers.add_parser("set-version", help="Update frontend/package.json version")
     set_version_parser.add_argument("version", help="Version like 0.9.7")
     set_version_parser.set_defaults(func=cmd_set_version)
+
+    check_version_parser = subparsers.add_parser(
+        "check-version",
+        help="Fail unless every release-facing version carrier matches frontend/package.json",
+    )
+    check_version_parser.set_defaults(func=cmd_check_version)
 
     hash_parser = subparsers.add_parser(
         "hash", help="Compute SHA-256 for a release ZIP and print the updater pin"

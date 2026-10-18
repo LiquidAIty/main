@@ -122,34 +122,6 @@
       "main",
       "routers.mesh_public"
     ],
-    "GET /api/mesh/oracle/consensus": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "GET /api/mesh/oracle/markets": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "GET /api/mesh/oracle/markets/more": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "GET /api/mesh/oracle/predictions": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "GET /api/mesh/oracle/profile": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "GET /api/mesh/oracle/search": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "GET /api/mesh/oracle/stakes/{message_id}": [
-      "main",
-      "routers.mesh_oracle"
-    ],
     "GET /api/mesh/peers": [
       "main",
       "routers.mesh_operator",
@@ -182,10 +154,6 @@
     "GET /api/mesh/trust/vouches": [
       "main",
       "routers.mesh_dm"
-    ],
-    "GET /api/oracle/region-intel": [
-      "main",
-      "routers.sigint"
     ],
     "GET /api/radio/nearest": [
       "main",
@@ -383,22 +351,6 @@
     "POST /api/mesh/infonet/sync": [
       "main",
       "routers.mesh_public"
-    ],
-    "POST /api/mesh/oracle/predict": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "POST /api/mesh/oracle/resolve": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "POST /api/mesh/oracle/resolve-stakes": [
-      "main",
-      "routers.mesh_oracle"
-    ],
-    "POST /api/mesh/oracle/stake": [
-      "main",
-      "routers.mesh_oracle"
     ],
     "POST /api/mesh/peers": [
       "main",

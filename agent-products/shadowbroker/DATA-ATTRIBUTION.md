@@ -62,6 +62,8 @@ These sources have their own terms; consult each link before redistributing.
 | CARTO basemaps | https://carto.com | CARTO attribution required | Dark map tiles (OSM-derived) |
 | Esri World Imagery | https://www.arcgis.com | Esri terms | High-res satellite basemap |
 | IODA (Georgia Tech) | https://ioda.inetintel.cc.gatech.edu | Research/academic terms | Internet outage data |
+| Polymarket | https://docs.polymarket.com | Polymarket API/data terms | Opt-in prediction-market prices and metadata; used as approximate market data, never automatic settlement truth |
+| Kalshi | https://docs.kalshi.com | Kalshi API/data terms | Opt-in prediction-market prices and metadata; operators must review provider terms before redistribution |
 
 ---
 

@@ -1,3 +1,8 @@
+"""Bounded read-only AgentGraph inspection contracts."""
+
+# Entity: AgentGraph
+# Relationship: Verifies Project-scoped saved Card authority and exact AGE Run, assignment, lineage, and artifact observations without synthetic tool telemetry or raw IDF content.
+
 from __future__ import annotations
 
 import pytest
@@ -72,42 +77,6 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
                 "sender_card_id": "card-main",
                 "target_card_id": "card-one",
             }]
-        if "count(edge)" in query:
-            return [{
-                "run_id": "run-one",
-                "operation": "read",
-                "event_count": 1,
-            }]
-        if "USED_TOOL" in query:
-            return [{
-                "run_id": "run-one",
-                "tool_id": "cbm.search_graph",
-                "event": {
-                    "eventId": "tool:event-one",
-                    "timestamp": "2026-08-18T12:00:00Z",
-                    "projectId": "project-one",
-                    "deckId": "deck-one",
-                    "conversationId": "conversation-one",
-                    "cardId": "card-one",
-                    "authority": "codegraph",
-                    "operation": "read",
-                    "toolName": "cbm.search_graph",
-                    "entityIds": ["pkg._runtime_owner"],
-                    "relationshipIds": [],
-                    "resultHash": "a" * 64,
-                    "truncated": False,
-                },
-            }]
-        if "-[:USED]->" in query:
-            return [{
-                "run_id": "run-one",
-                "authority": "KnowGraph",
-                "provider_id": "episode:one",
-            }]
-        if "-[:VIEWED]->" in query:
-            return []
-        if "-[:READ]->" in query:
-            return [{"run_id": "run-one", "authority": "CodeGraph", "provider_id": "pkg.materialized"}]
         if "PRODUCED_ARTIFACT" in query:
             return [{
                 "run_id": "run-one",
@@ -115,6 +84,8 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
                     "artifactId": "artifact-one",
                     "artifactKind": "report",
                     "locator": "artifact://one",
+                    "contentSha256": "a" * 64,
+                    "sizeBytes": 321,
                 },
             }]
         return []
@@ -155,8 +126,8 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "state": "completed",
         "projectId": "project-one",
         "deckId": "deck-one",
-        "conversationId": "",
-        "rootRunId": "run-one",
+        "conversationId": None,
+        "rootRunId": None,
         "startedAt": None,
         "acceptedAt": None,
         "finishedAt": None,
@@ -170,16 +141,14 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "cardId": "card-one",
         "assignedFromCardIds": ["card-main"],
         "parentRunIds": [],
-            "childRunIds": [],
-            "usedTools": ["cbm.search_graph"],
-            "graphReads": 1,
-            "graphWrites": 0,
+        "childRunIds": [],
         "artifacts": [{
             "artifactId": "artifact-one",
             "artifactKind": "report",
             "locator": "artifact://one",
+            "contentSha256": "a" * 64,
+            "sizeBytes": 321,
         }],
-        "idf": {"sha256": None, "bytes": None},
     }]
     assert all(params["projectId"] == "project-one" for _query, params in age_calls)
     assert all(params["deckId"] == "deck-one" for _query, params in age_calls)

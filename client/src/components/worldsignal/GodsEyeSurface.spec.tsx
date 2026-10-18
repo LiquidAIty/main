@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: WorldView
+ * Relationship: Verifies the React-owned WorldView wrapper gates commands on its mounted handle, forwards callbacks, reports failures, and invokes exact teardown without claiming renderer pixels.
+ */
+
 import React, { createRef } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,12 +60,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('WorldView direct native mount', () => {
+describe('WorldView React mount wrapper', () => {
   it('mounts into the React-owned root without an iframe', async () => {
     render(<GodsEyeSurface {...scope} />);
     await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
     const [root, config] = native.load.mock.calls[0];
-    expect(root).toBe(document.getElementById('worldview-native-root'));
+    expect(root).toBe(document.getElementById('worldview-gods-eye-root'));
     expect(config).toEqual(expect.objectContaining(scope));
     expect(document.querySelector('iframe')).toBeNull();
     expect(screen.queryByText('Starting WorldView…')).toBeNull();
@@ -124,7 +129,7 @@ describe('WorldView direct native mount', () => {
   it('destroys the native lifecycle on React unmount', async () => {
     const view = render(<GodsEyeSurface {...scope} />);
     await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(document.getElementById('worldview-native-root')).toBeTruthy());
+    await waitFor(() => expect(document.getElementById('worldview-gods-eye-root')).toBeTruthy());
     view.unmount();
     expect(native.destroy).toHaveBeenCalledTimes(1);
   });

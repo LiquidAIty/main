@@ -565,29 +565,23 @@ export default function InfonetShell({
     } else if (trimmedCmd === 'mesh') {
       output = (
         <div className="text-gray-400">
-          <p>SYNCING PUBLIC MESH LEDGER...</p>
-          <p className="text-gray-500 mt-1">Block: #894921 | Hash: 0x9f8a...2b1c</p>
-          <p className="text-gray-500">Block: #894920 | Hash: 0x3e1d...9a4f</p>
-          <p className="text-gray-500">Block: #894919 | Hash: 0x7c2b...1e8d</p>
-          <p className="text-green-400 mt-2">Ledger synchronized.</p>
+          <p>MESH STATUS IS NOT SYNTHESIZED IN THIS COMMAND.</p>
+          <p className="text-gray-500 mt-1">Use the live Network Stats view for observed peers, transport, and ledger state.</p>
         </div>
       );
     } else if (trimmedCmd === 'radio') {
       output = (
         <div className="text-gray-400">
-          <p className="flex items-center"><Radio size={14} className="mr-2 animate-pulse text-red-400" /> SCANNING FREQUENCIES...</p>
-          <p className="text-gray-500 mt-1">144.390 MHz - APRS traffic detected</p>
-          <p className="text-gray-500">462.562 MHz - Encrypted burst</p>
-          <p className="text-gray-500">8.992 MHz - EAM broadcast intercepted</p>
+          <p className="flex items-center"><Radio size={14} className="mr-2 text-amber-400" /> NO LIVE RADIO SCAN IS WIRED TO THIS COMMAND.</p>
+          <p className="text-gray-500 mt-1">Use the Radio and SIGINT surfaces for provider-backed observations.</p>
         </div>
       );
     } else if (trimmedCmd === 'wormhole') {
       output = (
         <div className="text-gray-400">
-          <p>OBFUSCATED LANE STATUS:</p>
-          <p className="text-gray-500 mt-1">Status: <span className="text-green-400">ONLINE</span></p>
-          <p className="text-gray-500">Active Tunnels: 3</p>
-          <p className="text-gray-500 mt-2">Use <span className="text-gray-300 font-bold">join [gate]</span> to open an obfuscated gate room.</p>
+          <p>WORMHOLE STATUS IS AVAILABLE ONLY FROM LIVE NODE DIAGNOSTICS.</p>
+          <p className="text-gray-500 mt-1">No tunnel count or online state is inferred here.</p>
+          <p className="text-gray-500 mt-2">Use <span className="text-gray-300 font-bold">join [gate]</span> only after the Node view reports a ready transport.</p>
         </div>
       );
     } else if (trimmedCmd === 'whoami') {

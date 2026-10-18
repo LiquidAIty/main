@@ -1,3 +1,8 @@
+/**
+ * Entity: Project Knowledge Graph
+ * Relationship: Owns the single shared renderer lifecycle for joined Think/Know and opt-in Code views, preserving authority-specific selection, camera, settings, and one Inspector over exact projections.
+ */
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import '../../vendor/engraphis/vendor/d3.min.js';
 import '../../vendor/engraphis/vendor/force-graph.min.js';
@@ -5,7 +10,7 @@ import '../../vendor/engraphis/engraphis-graph.js';
 
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
-import { GRAPH_THEME, SOLARPUNK_PALETTE } from '../graph/graphVisualTokens';
+import { GRAPH_THEME } from '../graph/graphVisualTokens';
 import {
   applyJevGraphPhysics,
   JEV_GRAPH_PHYSICS_PROFILE_LABELS,
@@ -17,903 +22,70 @@ import {
   type CanonicalEntityFocusRequest,
 } from '../builder/canonicalEntityLinks';
 import {
-  isCanonicalEntityDirectory,
-  readCanonicalEntityProviderPointers,
-  type CanonicalEntityDirectory,
-  type CanonicalEntityHeader,
-} from './canonicalEntityDirectory';
+  DEFAULT_SOLARPUNK_COLORS,
+  combinedCyberMaterialFields,
+  composeThinkKnowPresentation,
+  providerMemberKey,
+  solarpunkMaterialFields,
+  visualSourceKind,
+  type GraphAuthority,
+  type GraphProjectionEdge,
+  type GraphProjectionNode,
+  type GraphProjectionV1,
+  type GraphSurfaceAuthority,
+  type JoinedGraphEdgeVariant,
+  type JoinedGraphNodeVariant,
+  type JoinedGraphPresentation,
+  type ReadProviderFocusNeighborhood,
+  type SolarpunkColors,
+} from './knowledgeGraphProjection';
+import {
+  codeGraphFeatures,
+  type CodeGraphSelectedSymbol,
+} from './codeGraphProjection';
+import {
+  CALM_FOCUS_GALAXY_SETTINGS,
+  FOCUS_RELEASE_MILLISECONDS,
+  MAX_JEV_FOCUS_CANDIDATES,
+  buildJevFocusCandidates,
+  composeExpandedFocusPresentation,
+  composeFocusNeighborhoodPresentation,
+  composeFocusReleasePresentation,
+  composeManualFocusPresentation,
+  focusCenterMembers,
+  requestJevFocus,
+  selectedFocusCandidates,
+  type FocusReleaseView,
+  type JevFocusDecisionView,
+  type ManualFocusEntry,
+} from './knowledgeGraphFocus';
+import {
+  SOLARPUNK_HEX,
+  presentationStorageKey,
+  rendererStyle,
+  safePresentationPreferences,
+  solarpunkEdgeFields,
+  withoutSolarpunkEdgeMaterial,
+  withoutSolarpunkMaterial,
+  type GraphPresentationPreferences,
+  type PresentationStyle,
+  type RendererLayout,
+  type RendererStyle,
+} from './knowledgeGraphPresentationPreferences';
+import {
+  INSPECTOR_RECORD_LIMIT,
+  CodeGraphNodeDetails,
+  KnowGraphKnow,
+  KnowSourceList,
+  ThinkRecordCard,
+  compactProbability,
+  graphEntryTime,
+  knowEvidenceIdentity,
+  probabilityLabel,
+  type KnowInspectorRecord,
+} from './KnowledgeGraphInspector';
+import type { CanonicalEntityDirectory } from './canonicalEntityDirectory';
 import './knowledgeAuthorityGraphSurface.css';
-
-type GraphAuthority = 'thinkgraph' | 'knowgraph';
-type GraphSurfaceAuthority = GraphAuthority | 'joined';
-
-export type ReadProviderFocusNeighborhood = (
-  authority: GraphAuthority,
-  providerId: string,
-  signal?: AbortSignal,
-) => Promise<GraphProjectionV1>;
-
-// The server-owned graph projection contract rendered by the provider surfaces.
-export type GraphProjectionNode = {
-  id: string;
-  canonicalId?: string;
-  canonicalName?: string;
-  entityKind?: string;
-  label: string;
-  title?: string;
-  type?: string;
-  labels?: string[];
-  authority?: string;
-  projectId?: string;
-  createdAt?: string;
-  validFrom?: string;
-  validTo?: string | null;
-  ingestedAt?: string;
-  updatedAt?: string;
-  mentionCount?: number;
-  lastMentionedAt?: string;
-  properties?: Record<string, unknown>;
-  degree?: number;
-  semantic_mass?: number;
-  gravity_mass?: number;
-  visual_radius?: number;
-  etype?: string;
-  anchor_role?: 'global' | 'community' | null;
-  system_anchor_id?: string;
-  community_id?: string;
-  scene_rank?: number;
-  material_kind?: 'solarpunk' | 'joined-cyber';
-  material_role?: GraphNodeMaterialRole;
-  material_blue?: string;
-  material_orange?: string;
-  material_surface?: string;
-  material_think_active?: boolean;
-  material_know_active?: boolean;
-  material_focus_active?: boolean;
-};
-
-export type GraphProjectionEdge = {
-  id: string;
-  source: string;
-  target: string;
-  predicate: string;
-  relation?: string;
-  label?: string;
-  mentionCount?: number;
-  lastMentionedAt?: string;
-  properties?: Record<string, unknown>;
-  provenance?: Record<string, unknown>;
-  provenanceCount?: number;
-  validFrom?: string;
-  validTo?: string | null;
-  relationship_strength?: number;
-  label_confidence?: number;
-  strength?: number;
-  spring_strength?: number;
-  rest_length?: number;
-  visual_width?: number;
-  layer?: string;
-  material_kind?: 'solarpunk' | 'joined-cyber';
-  material_authority?: GraphAuthority;
-  material_color?: string;
-};
-
-export type GraphProjectionV1 = {
-  schemaVersion: string;
-  authority?: string;
-  projectId: string;
-  revision?: string;
-  analysis?: {
-    revision: string;
-    communities: Array<{ id: string; memberCount: number; members: string[]; centralNodes: string[]; gateways: string[] }>;
-    gaps: Array<{ source: string; target: string; edgeClass: 'derived'; derivedType: string; reason: string }>;
-    durationMs: number;
-  };
-  scene?: { nodes: GraphProjectionNode[]; edges: GraphProjectionEdge[]; [key: string]: unknown };
-  embedding?: Record<string, unknown>;
-  counts?: { nodes: number; edges: number };
-  nodes: GraphProjectionNode[];
-  edges: GraphProjectionEdge[];
-  canonicalEntityDirectory?: CanonicalEntityDirectory | null;
-};
-
-type JoinedGraphNodeVariant = {
-  authority: GraphAuthority;
-  node: GraphProjectionNode;
-};
-
-type JoinedGraphEdgeVariant = {
-  authority: GraphAuthority;
-  edge: GraphProjectionEdge;
-};
-
-export type JoinedGraphPresentation = {
-  projection: GraphProjectionV1;
-  providerProjections: Record<GraphAuthority, GraphProjectionV1>;
-  nodeVariants: Map<string, JoinedGraphNodeVariant[]>;
-  edgeVariants: Map<string, JoinedGraphEdgeVariant>;
-  visualNodeIdByProviderMember: Map<string, string>;
-};
-
-type JevFocusIncidentRelationshipView = {
-  edgeId: string;
-  relationshipId: string;
-  sourceVisualId: string;
-  sourceId: string;
-  sourceTitle: string;
-  targetVisualId: string;
-  targetId: string;
-  targetTitle: string;
-  predicate: string;
-  direction: 'incoming' | 'outgoing';
-  relationshipWeight: number | null;
-};
-
-type JevFocusCandidateView = {
-  visualId: string;
-  authority: 'ThinkGraph' | 'KnowGraph';
-  entityId: string;
-  title: string;
-  description: string | null;
-  incidentRelationships: JevFocusIncidentRelationshipView[];
-};
-
-type JevFocusCenterMemberView = {
-  authority: 'ThinkGraph' | 'KnowGraph';
-  entityId: string;
-  title: string;
-  description: string | null;
-};
-
-type JevFocusDecisionCandidateView = JevFocusCandidateView & {
-  choiceId: string;
-  probability: number;
-  selected: boolean;
-  rank: number;
-};
-
-type JevFocusDecisionView = {
-  status: 'success' | 'unavailable' | 'timeout' | 'invalid' | 'error';
-  errorCode: string | null;
-  candidates: JevFocusDecisionCandidateView[];
-};
-
-type ManualFocusEntry = {
-  centerId: string;
-  centerTitle: string;
-  status: 'reading' | 'loading' | JevFocusDecisionView['status'];
-  decision: JevFocusDecisionView | null;
-  requestIdentity: number;
-  projectionKey: string;
-  presentation: JoinedGraphPresentation;
-  readWarning: string | null;
-};
-
-type FocusReleaseView = {
-  nodeIds: string[];
-  edgeIds: string[];
-};
-
-const MAX_JEV_FOCUS_CANDIDATES = 12;
-const FOCUS_RELEASE_MILLISECONDS = 1_400;
-const CALM_FOCUS_GALAXY_SETTINGS = {
-  repel: 25,
-  gravity: 48,
-  damping: 6,
-} as const;
-
-const GRAPH_NODE_MATERIALS = {
-  think: 'THINK_MATERIAL',
-  know: 'KNOW_MATERIAL',
-  paired: 'PAIRED_SOLARPUNK_MATERIAL',
-} as const;
-
-const COMBINED_CYBER_MATERIAL = 'PAIRED_CYBER_MATERIAL' as const;
-
-type GraphNodeMaterialRole =
-  | typeof GRAPH_NODE_MATERIALS[keyof typeof GRAPH_NODE_MATERIALS]
-  | typeof COMBINED_CYBER_MATERIAL;
-
-function solarpunkMaterialFields(
-  source: 'think' | 'know' | 'paired',
-  thinkActive = false,
-  knowActive = false,
-  colors: SolarpunkColors = DEFAULT_SOLARPUNK_COLORS,
-): Pick<GraphProjectionNode,
-  | 'material_kind'
-  | 'material_role'
-  | 'material_blue'
-  | 'material_orange'
-  | 'material_surface'
-  | 'material_think_active'
-  | 'material_know_active'> {
-  return {
-    material_kind: 'solarpunk',
-    material_role: GRAPH_NODE_MATERIALS[source],
-    material_blue: colors.think,
-    material_orange: colors.know,
-    material_surface: GRAPH_THEME.surface.base,
-    material_think_active: thinkActive,
-    material_know_active: knowActive,
-  };
-}
-
-function combinedCyberMaterialFields(
-  source: 'think' | 'know' | 'paired',
-  thinkActive = false,
-  knowActive = false,
-  colors: SolarpunkColors = DEFAULT_SOLARPUNK_COLORS,
-): Pick<GraphProjectionNode,
-  | 'material_kind'
-  | 'material_role'
-  | 'material_blue'
-  | 'material_orange'
-  | 'material_surface'
-  | 'material_think_active'
-  | 'material_know_active'> {
-  return {
-    ...solarpunkMaterialFields(source, thinkActive, knowActive, colors),
-    material_kind: 'joined-cyber',
-    material_role: source === 'paired' ? COMBINED_CYBER_MATERIAL : GRAPH_NODE_MATERIALS[source],
-  };
-}
-
-function providerMemberKey(authority: GraphAuthority, providerId: string): string {
-  return `${authority}:${providerId}`;
-}
-
-function providerRenderId(authority: GraphAuthority, providerId: string): string {
-  return `${authority}:${encodeURIComponent(providerId)}`;
-}
-
-type CanonicalEntityIndex = {
-  directory: CanonicalEntityDirectory;
-  byProviderId: Record<GraphAuthority, Map<string, CanonicalEntityHeader>>;
-};
-
-function canonicalEntityIndex(
-  thinkProjection: GraphProjectionV1,
-  knowProjection: GraphProjectionV1,
-): CanonicalEntityIndex | null {
-  const directory = thinkProjection.canonicalEntityDirectory;
-  if (!isCanonicalEntityDirectory(directory)
-    || !thinkProjection.projectId
-    || thinkProjection.projectId !== knowProjection.projectId
-    || directory.projectId !== thinkProjection.projectId) return null;
-
-  const byProviderId: CanonicalEntityIndex['byProviderId'] = {
-    thinkgraph: new Map(),
-    knowgraph: new Map(),
-  };
-  const counts = { thinkgraph: 0, knowgraph: 0 };
-  for (const entity of directory.entities) {
-    const pointers = readCanonicalEntityProviderPointers(entity);
-    if (!pointers) return null;
-    for (const pointer of pointers) {
-      if (byProviderId[pointer.authority].has(pointer.entityId)) return null;
-      byProviderId[pointer.authority].set(pointer.entityId, entity);
-      counts[pointer.authority] += 1;
-    }
-  }
-  if (counts.thinkgraph !== directory.counts.engraphis
-    || counts.knowgraph !== directory.counts.graphiti) return null;
-  return { directory, byProviderId };
-}
-
-function canonicalEntityHeader(
-  index: CanonicalEntityIndex | null,
-  authority: GraphAuthority,
-  node: GraphProjectionNode,
-): CanonicalEntityHeader | null {
-  const header = index?.byProviderId[authority].get(node.id);
-  if (!header
-    || node.canonicalName !== header.canonicalName
-    || node.label !== header.canonicalName
-    || node.projectId !== index!.directory.projectId) return null;
-  return header;
-}
-
-function presentationNode(
-  visualId: string,
-  variants: JoinedGraphNodeVariant[],
-): GraphProjectionNode {
-  const primary = variants.find(variant => variant.authority === 'thinkgraph') || variants[0];
-  const sourceKind = visualSourceKind(variants);
-  return {
-    ...primary.node,
-    id: visualId,
-    canonicalId: undefined,
-    authority: 'joined',
-    ...solarpunkMaterialFields(sourceKind, false, false),
-    properties: { ...(primary.node.properties || {}) },
-  } as GraphProjectionNode;
-}
-
-/**
- * Builds one non-authoritative renderer view over the two provider projections.
- * A complete current Entity directory supplies each authority's exact
- * stored canonical name, kind, provider identity, Project, and revision. The
- * single mixed presentation
- * co-covers a name only when exactly one projection record from each authority
- * byte-matches its own header. No label normalization, fuzzy/alias inference,
- * shared provider ID, or persisted cross-graph identity is introduced.
- */
-export function composeThinkKnowPresentation(
-  thinkProjection: GraphProjectionV1,
-  knowProjection: GraphProjectionV1,
-): JoinedGraphPresentation {
-  const providerProjections = {
-    thinkgraph: thinkProjection,
-    knowgraph: knowProjection,
-  };
-  const entityIndex = canonicalEntityIndex(thinkProjection, knowProjection);
-  const eligibleByName: Record<GraphAuthority, Map<string, GraphProjectionNode[]>> = {
-    thinkgraph: new Map(),
-    knowgraph: new Map(),
-  };
-  const registerEligible = (authority: GraphAuthority, node: GraphProjectionNode) => {
-    const header = canonicalEntityHeader(entityIndex, authority, node);
-    if (!header) return;
-    const records = eligibleByName[authority].get(header.canonicalName) || [];
-    records.push(node);
-    eligibleByName[authority].set(header.canonicalName, records);
-  };
-  thinkProjection.nodes.forEach(node => registerEligible('thinkgraph', node));
-  knowProjection.nodes.forEach(node => registerEligible('knowgraph', node));
-  const pairedNames = new Set([...eligibleByName.thinkgraph.entries()]
-    .filter(([name, records]) => records.length === 1
-      && eligibleByName.knowgraph.get(name)?.length === 1)
-    .map(([name]) => name));
-  const nodeVariants = new Map<string, JoinedGraphNodeVariant[]>();
-  const visualNodeIdByProviderMember = new Map<string, string>();
-  const addNode = (authority: GraphAuthority, node: GraphProjectionNode) => {
-    const header = canonicalEntityHeader(entityIndex, authority, node);
-    const visualId = header && pairedNames.has(header.canonicalName)
-      ? `node-name:${encodeURIComponent(header.canonicalName)}`
-      : providerRenderId(authority, node.id);
-    const variants = nodeVariants.get(visualId) || [];
-    variants.push({ authority, node });
-    nodeVariants.set(visualId, variants);
-    visualNodeIdByProviderMember.set(providerMemberKey(authority, node.id), visualId);
-  };
-  thinkProjection.nodes.forEach(node => addNode('thinkgraph', node));
-  knowProjection.nodes.forEach(node => addNode('knowgraph', node));
-
-  const nodes = [...nodeVariants.entries()]
-    .map(([visualId, variants]) => presentationNode(visualId, variants));
-  const visibleNodeIds = new Set(nodes.map(node => node.id));
-  for (const [memberKey, visualId] of visualNodeIdByProviderMember) {
-    if (!visibleNodeIds.has(visualId)) visualNodeIdByProviderMember.delete(memberKey);
-  }
-  const edgeVariants = new Map<string, JoinedGraphEdgeVariant>();
-  const edges: GraphProjectionEdge[] = [];
-  const addEdges = (authority: GraphAuthority, projection: GraphProjectionV1) => {
-    for (const edge of projection.edges) {
-      const source = visualNodeIdByProviderMember.get(providerMemberKey(authority, edge.source));
-      const target = visualNodeIdByProviderMember.get(providerMemberKey(authority, edge.target));
-      if (!source || !target || !visibleNodeIds.has(source) || !visibleNodeIds.has(target)) continue;
-      const visualId = providerRenderId(authority, edge.id);
-      edges.push({
-        ...edge,
-        id: visualId,
-        source,
-        target,
-        layer: authority,
-        properties: {
-          ...(edge.properties || {}),
-          ...(edge.layer ? { providerSemanticLayer: edge.layer } : {}),
-        },
-      });
-      edgeVariants.set(visualId, { authority, edge });
-    }
-  };
-  addEdges('thinkgraph', thinkProjection);
-  addEdges('knowgraph', knowProjection);
-
-  return {
-    projection: {
-      schemaVersion: 'think-know.presentation.v1',
-      authority: 'joined',
-      projectId: thinkProjection.projectId || knowProjection.projectId,
-      revision: `${thinkProjection.revision || ''}:${knowProjection.revision || ''}`,
-      counts: { nodes: nodes.length, edges: edges.length },
-      nodes,
-      edges,
-      ...(entityIndex
-        ? { canonicalEntityDirectory: entityIndex.directory }
-        : {}),
-    },
-    providerProjections,
-    nodeVariants,
-    edgeVariants,
-    visualNodeIdByProviderMember,
-  };
-}
-
-function composeFocusNeighborhoodPresentation(
-  base: JoinedGraphPresentation,
-  centerId: string,
-  reads: Partial<Record<GraphAuthority, GraphProjectionV1[]>>,
-): JoinedGraphPresentation {
-  const centerVariants = base.nodeVariants.get(centerId) || [];
-  const merged = (authority: GraphAuthority): GraphProjectionV1 => {
-    const nodes = new Map<string, GraphProjectionNode>();
-    for (const variant of centerVariants) {
-      if (variant.authority === authority) nodes.set(variant.node.id, variant.node);
-    }
-    const edges = new Map<string, GraphProjectionEdge>();
-    for (const projection of reads[authority] || []) {
-      projection.nodes.forEach(node => nodes.set(node.id, node));
-      projection.edges.forEach(edge => edges.set(edge.id, edge));
-    }
-    const visibleIds = new Set(nodes.keys());
-    const boundedEdges = [...edges.values()].filter(edge => (
-      visibleIds.has(edge.source) && visibleIds.has(edge.target)
-    ));
-    const revisions = (reads[authority] || []).map(value => value.revision || value.schemaVersion);
-    return {
-      schemaVersion: `${authority}.jev-focus-neighborhood.v1`,
-      authority,
-      projectId: base.projection.projectId,
-      revision: revisions.length ? revisions.join(':') : 'center-only',
-      counts: { nodes: nodes.size, edges: boundedEdges.length },
-      nodes: [...nodes.values()],
-      edges: boundedEdges,
-      ...(authority === 'thinkgraph'
-        ? { canonicalEntityDirectory:
-          base.providerProjections.thinkgraph.canonicalEntityDirectory }
-        : {}),
-    };
-  };
-  return composeThinkKnowPresentation(merged('thinkgraph'), merged('knowgraph'));
-}
-
-function visualSourceKind(variants: JoinedGraphNodeVariant[]): 'think' | 'know' | 'paired' {
-  const authorities = new Set(variants.map(variant => variant.authority));
-  return authorities.size > 1 ? 'paired'
-    : authorities.has('knowgraph') ? 'know' : 'think';
-}
-
-function finiteUnitInterval(value: unknown): number | null {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : null;
-}
-
-function focusRelationshipWeight(edge: GraphProjectionEdge): number | null {
-  const properties = edge.properties || {};
-  const jev = properties.jev && typeof properties.jev === 'object'
-    && !Array.isArray(properties.jev)
-    ? properties.jev as Record<string, unknown>
-    : null;
-  const distribution = jev?.distribution && typeof jev.distribution === 'object'
-    && !Array.isArray(jev.distribution)
-    ? jev.distribution as Record<string, unknown>
-    : null;
-  const winner = String(jev?.winner || edge.predicate || '');
-  const values = [
-    distribution?.[winner],
-    edge.relationship_strength,
-    properties.relationship_strength,
-    edge.strength,
-    properties.strength,
-    edge.label_confidence,
-    properties.label_confidence,
-  ];
-  for (const value of values) {
-    const numeric = finiteUnitInterval(value);
-    if (numeric !== null) return numeric;
-  }
-  return null;
-}
-
-function boundedProviderDescription(node: GraphProjectionNode): string | null {
-  const properties = node.properties || {};
-  const evidence = Array.isArray(properties.evidence) ? properties.evidence : [];
-  const evidenceText = evidence.flatMap((item): unknown[] => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
-    const record = item as Record<string, any>;
-    const idea = record.idea && typeof record.idea === 'object' && !Array.isArray(record.idea)
-      ? record.idea as Record<string, unknown>
-      : {};
-    const counterIdea = record.counterIdea
-      && typeof record.counterIdea === 'object'
-      && !Array.isArray(record.counterIdea)
-      ? record.counterIdea as Record<string, unknown>
-      : {};
-    return [
-      record.summary,
-      idea.body,
-      idea.detail,
-      counterIdea.body,
-      counterIdea.detail,
-    ];
-  });
-  for (const value of [
-    properties.description,
-    properties.summary,
-    properties.statement,
-    properties.fact,
-    properties.content,
-    properties.reason,
-    ...evidenceText,
-    node.title,
-  ]) {
-    if (typeof value !== 'string') continue;
-    const text = value.trim();
-    if (text && text !== node.label) return text.slice(0, 1_200);
-  }
-  return null;
-}
-
-/**
- * Builds the complete already-loaded local relationship vocabulary considered
- * for one JevFocus Choice. The caller refuses an oversized or partially read
- * neighborhood instead of silently dropping provider Entities.
- */
-function buildJevFocusCandidates(
-  projection: GraphProjectionV1,
-  presentation: JoinedGraphPresentation,
-  centerId: string,
-): JevFocusCandidateView[] {
-  const centerMembers = presentation.nodeVariants.get(centerId) || [];
-  const centerIdsByAuthority: Record<GraphAuthority, Set<string>> = {
-    thinkgraph: new Set(centerMembers
-      .filter(member => member.authority === 'thinkgraph')
-      .map(member => member.node.id)),
-    knowgraph: new Set(centerMembers
-      .filter(member => member.authority === 'knowgraph')
-      .map(member => member.node.id)),
-  };
-  const candidates = new Map<string, JevFocusCandidateView>();
-  for (const edge of projection.edges) {
-    if (edge.source !== centerId && edge.target !== centerId) continue;
-    const variant = presentation.edgeVariants.get(edge.id);
-    if (!variant) continue;
-    const centerIds = centerIdsByAuthority[variant.authority];
-    const sourceIsCenter = centerIds.has(variant.edge.source);
-    const targetIsCenter = centerIds.has(variant.edge.target);
-    if (sourceIsCenter === targetIsCenter) continue;
-    const providerId = sourceIsCenter ? variant.edge.target : variant.edge.source;
-    const providerProjection = presentation.providerProjections[variant.authority];
-    const neighbor = providerProjection.nodes.find(node => node.id === providerId);
-    const visualId = presentation.visualNodeIdByProviderMember.get(
-      providerMemberKey(variant.authority, providerId),
-    );
-    if (!neighbor || !visualId || visualId === centerId) continue;
-    const providerLabel = (id: string) => providerProjection.nodes.find(node => node.id === id)?.label || id;
-    const authorityName = variant.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph';
-    const candidateKey = `${authorityName}:${providerId}`;
-    const candidate = candidates.get(candidateKey) || {
-      visualId,
-      authority: authorityName,
-      entityId: providerId,
-      title: neighbor.label || neighbor.title || neighbor.id,
-      description: boundedProviderDescription(neighbor),
-      incidentRelationships: [],
-    } satisfies JevFocusCandidateView;
-    if (!candidate.incidentRelationships.some(item => item.relationshipId === variant.edge.id)) {
-      candidate.incidentRelationships.push({
-        edgeId: edge.id,
-        relationshipId: variant.edge.id,
-        sourceVisualId: edge.source,
-        sourceId: variant.edge.source,
-        sourceTitle: providerLabel(variant.edge.source),
-        targetVisualId: edge.target,
-        targetId: variant.edge.target,
-        targetTitle: providerLabel(variant.edge.target),
-        predicate: variant.edge.predicate,
-        direction: sourceIsCenter ? 'outgoing' : 'incoming',
-        relationshipWeight: focusRelationshipWeight(edge),
-      });
-    }
-    candidates.set(candidateKey, candidate);
-  }
-  return [...candidates.values()]
-    .sort((left, right) => (
-      left.authority.localeCompare(right.authority) || left.entityId.localeCompare(right.entityId)
-    ))
-    .map(candidate => ({
-      ...candidate,
-      incidentRelationships: [...candidate.incidentRelationships]
-        .sort((left, right) => left.relationshipId.localeCompare(right.relationshipId)),
-    }));
-}
-
-function selectedFocusCandidates(entry: ManualFocusEntry): JevFocusDecisionCandidateView[] {
-  return entry.status === 'success' && entry.decision?.status === 'success'
-    ? entry.decision.candidates
-      .filter(candidate => candidate.selected)
-      .sort((left, right) => left.rank - right.rank
-        || left.authority.localeCompare(right.authority)
-        || left.entityId.localeCompare(right.entityId))
-    : [];
-}
-
-function focusCenterMembers(
-  presentation: JoinedGraphPresentation,
-  centerId: string,
-): JevFocusCenterMemberView[] {
-  return (presentation.nodeVariants.get(centerId) || []).map(variant => ({
-    authority: variant.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph',
-    entityId: variant.node.id,
-    title: variant.node.label || variant.node.title || variant.node.id,
-    description: boundedProviderDescription(variant.node),
-  }));
-}
-
-/** Render-only focus projection. The center is user-owned; only a successful
- * JevFocus response may promote surrounding real edges and endpoint nodes. */
-function composeManualFocusPresentation(
-  projection: GraphProjectionV1,
-  entry: ManualFocusEntry,
-): { projection: GraphProjectionV1; nodeIds: string[]; edgeIds: string[] } {
-  const center = projection.nodes.find(node => node.id === entry.centerId);
-  if (!center) return { projection, nodeIds: [], edgeIds: [] };
-  const selectedCandidates = selectedFocusCandidates(entry);
-  const selectedEdgeIds = new Set(selectedCandidates.flatMap(candidate => (
-    candidate.incidentRelationships.map(relationship => relationship.edgeId)
-  )));
-  const selectedEdges = projection.edges.filter(edge => selectedEdgeIds.has(edge.id));
-  const nodeIds = new Set<string>([entry.centerId]);
-  selectedCandidates.forEach(candidate => nodeIds.add(candidate.visualId));
-  const probabilityByNode = new Map<string, number>();
-  for (const candidate of selectedCandidates) {
-    probabilityByNode.set(candidate.visualId, Math.max(
-      probabilityByNode.get(candidate.visualId) || 0,
-      finiteUnitInterval(candidate.probability) || 0,
-    ));
-  }
-  const nodes = projection.nodes.filter(node => nodeIds.has(node.id)).map((node) => {
-    const isCenter = node.id === entry.centerId;
-    const probability = isCenter ? 1 : probabilityByNode.get(node.id) || 0;
-    // Manual focus is a calm, local navigation view. Probability remains intact
-    // in the decision/inspector; this bounded curve only controls transient paint
-    // and gravity so one Entity cannot consume the complete canvas.
-    const gravityMass = isCenter ? 7 : 1.5 + (4 * probability);
-    const visualRadius = 1.2 * (1.5 + (2 * Math.pow(gravityMass, 2 / 3)));
-    return {
-      ...node,
-      anchor_role: isCenter ? 'global' as const : 'community' as const,
-      system_anchor_id: entry.centerId,
-      scene_rank: isCenter ? 100 : Math.max(1, Math.round(probability * 90)),
-      gravity_mass: gravityMass,
-      visual_radius: visualRadius,
-      material_focus_active: true,
-      properties: {
-        ...(node.properties || {}),
-        manualFocusPresentation: 'blackhole',
-        ...(isCenter ? { manualFocusCenter: true } : { jevFocusProbability: probability }),
-      },
-    };
-  });
-  const scene = projection.scene;
-  const sceneNodeIds = new Set(nodes.map(node => node.id));
-  const mappedNodes = new Map(nodes.map(node => [node.id, node]));
-  const projectedScene = scene ? {
-    ...scene,
-    nodes: (Array.isArray(scene.nodes) ? scene.nodes : [])
-      .filter(node => sceneNodeIds.has(node.id))
-      .map(node => ({ ...node, ...(mappedNodes.get(node.id) || {}) })),
-    edges: selectedEdges,
-    ...(Array.isArray((scene as Record<string, unknown>).links) ? { links: selectedEdges } : {}),
-  } : undefined;
-  return {
-    projection: {
-      ...projection,
-      schemaVersion: `${projection.schemaVersion}.jev-focus`,
-      counts: { nodes: nodes.length, edges: selectedEdges.length },
-      nodes,
-      edges: selectedEdges,
-      ...(projectedScene ? { scene: projectedScene } : {}),
-    },
-    nodeIds: [...nodeIds],
-    edgeIds: selectedEdges.map(edge => edge.id),
-  };
-}
-
-/** Compact view over the last accepted focus result. It reuses the exact same
- * visual nodes and provider relationships without another read or Jev call. */
-function composeExpandedFocusPresentation(
-  projection: GraphProjectionV1,
-  entry: ManualFocusEntry | null,
-): GraphProjectionV1 | null {
-  if (!entry || entry.status !== 'success' || entry.decision?.status !== 'success') return null;
-  const focused = composeManualFocusPresentation(projection, entry);
-  const nodeIds = new Set(focused.nodeIds);
-  const edgeIds = new Set(focused.edgeIds);
-  const nodes = projection.nodes.filter(node => nodeIds.has(node.id));
-  const edges = projection.edges.filter(edge => edgeIds.has(edge.id));
-  const scene = projection.scene;
-  const projectedScene = scene ? {
-    ...scene,
-    nodes: (Array.isArray(scene.nodes) ? scene.nodes : []).filter(node => nodeIds.has(node.id)),
-    edges,
-    ...(Array.isArray((scene as Record<string, unknown>).links) ? { links: edges } : {}),
-  } : undefined;
-  return {
-    ...projection,
-    schemaVersion: `${projection.schemaVersion}.jev-focus-expanded`,
-    counts: { nodes: nodes.length, edges: edges.length },
-    nodes,
-    edges,
-    ...(projectedScene ? { scene: projectedScene } : {}),
-  };
-}
-
-function parseJevFocusDecision(
-  value: unknown,
-  expected: JevFocusCandidateView[],
-  expectedSourceRevision: string,
-): JevFocusDecisionView {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('jev_focus_response_invalid');
-  }
-  const raw = value as Record<string, unknown>;
-  const status = String(raw.status || '') as JevFocusDecisionView['status'];
-  if (raw.schemaVersion !== 'jev-focus.v1'
-    || raw.sourceRevision !== expectedSourceRevision
-    || !['success', 'unavailable', 'timeout', 'invalid', 'error'].includes(status)) {
-    throw new Error('jev_focus_response_invalid');
-  }
-  if (status !== 'success') {
-    if ((raw.candidates && Array.isArray(raw.candidates) && raw.candidates.length)
-      || (raw.distribution && typeof raw.distribution === 'object'
-        && Object.keys(raw.distribution as object).length)) {
-      throw new Error('jev_focus_fallback_must_not_claim_distribution');
-    }
-    return {
-      status,
-      errorCode: typeof raw.errorCode === 'string' ? raw.errorCode : 'jev_focus_unavailable',
-      candidates: [],
-    };
-  }
-  const rawCandidates = Array.isArray(raw.candidates) ? raw.candidates : [];
-  const candidateKey = (candidate: Pick<JevFocusCandidateView, 'authority' | 'entityId'>) => (
-    `${candidate.authority}:${candidate.entityId}`
-  );
-  const expectedByProviderMember = new Map(expected.map(candidate => [candidateKey(candidate), candidate]));
-  const candidates: JevFocusDecisionCandidateView[] = rawCandidates.map((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      throw new Error('jev_focus_response_invalid');
-    }
-    const candidate = item as Record<string, unknown>;
-    const authority = String(candidate.authority || '') as JevFocusCandidateView['authority'];
-    const entityId = String(candidate.entityId || '');
-    const source = expectedByProviderMember.get(`${authority}:${entityId}`);
-    const probability = Number(candidate.probability);
-    const rank = Number(candidate.rank);
-    if (!source || typeof candidate.choiceId !== 'string' || !candidate.choiceId
-      || !Number.isFinite(probability) || probability < 0 || probability > 1
-      || !Number.isInteger(rank) || rank < 1) {
-      throw new Error('jev_focus_response_invalid');
-    }
-    return {
-      ...source,
-      choiceId: candidate.choiceId,
-      probability,
-      selected: candidate.selected === true,
-      rank,
-    };
-  });
-  if (candidates.length !== expected.length
-    || new Set(candidates.map(candidate => candidateKey(candidate))).size !== expected.length
-    || new Set(candidates.map(candidate => candidate.choiceId)).size !== expected.length) {
-    throw new Error('jev_focus_response_invalid');
-  }
-  const distribution = raw.distribution && typeof raw.distribution === 'object'
-    && !Array.isArray(raw.distribution)
-    ? raw.distribution as Record<string, unknown>
-    : {};
-  const choiceIds = new Set(candidates.map(candidate => candidate.choiceId));
-  if (Object.keys(distribution).length !== choiceIds.size
-    || Object.keys(distribution).some(choiceId => !choiceIds.has(choiceId))) {
-    throw new Error('jev_focus_response_invalid');
-  }
-  const normalizedDistribution: Record<string, number> = {};
-  for (const choiceId of choiceIds) {
-    const probability = Number(distribution[choiceId]);
-    if (!Number.isFinite(probability) || probability < 0 || probability > 1) {
-      throw new Error('jev_focus_response_invalid');
-    }
-    normalizedDistribution[choiceId] = probability;
-  }
-  const probabilityValues = Object.values(normalizedDistribution);
-  const roundingHalfStep = 0.005;
-  const roundedTotalCanEqualOne = probabilityValues.some(probability => probability !== 0)
-    && probabilityValues.reduce(
-      (sum, probability) => sum + Math.max(0, probability - roundingHalfStep), 0,
-    ) <= 1 + Number.EPSILON
-    && probabilityValues.reduce(
-      (sum, probability) => sum + Math.min(1, probability + roundingHalfStep), 0,
-    ) >= 1 - Number.EPSILON;
-  const ranked = [...candidates].sort((left, right) => (
-    right.probability - left.probability
-      || left.authority.localeCompare(right.authority)
-      || left.entityId.localeCompare(right.entityId)
-  ));
-  const ranks = new Set(candidates.map(candidate => candidate.rank));
-  const selectedVisualIds = new Set<string>();
-  for (const candidate of ranked) {
-    if (selectedVisualIds.size >= 8) break;
-    selectedVisualIds.add(candidate.visualId);
-  }
-  const decisionId = typeof raw.decisionId === 'string' ? raw.decisionId.trim() : '';
-  if (!roundedTotalCanEqualOne
-    || !decisionId
-    || ranks.size !== candidates.length
-    || candidates.some(candidate => candidate.rank < 1 || candidate.rank > candidates.length)
-    || ranked.some((candidate, index) => candidate.rank !== index + 1)
-    || candidates.some(candidate => (
-      Math.abs(candidate.probability - normalizedDistribution[candidate.choiceId]) > 0.000001
-      || candidate.selected !== selectedVisualIds.has(candidate.visualId)
-    ))) {
-    throw new Error('jev_focus_response_invalid');
-  }
-  return {
-    status: 'success',
-    errorCode: null,
-    candidates,
-  };
-}
-
-async function requestJevFocus({
-  projectId,
-  centerId,
-  centerTitle,
-  centerProviderMembers,
-  sourceRevision,
-  candidates,
-  signal,
-}: {
-  projectId: string;
-  centerId: string;
-  centerTitle: string;
-  centerProviderMembers: JevFocusCenterMemberView[];
-  sourceRevision: string;
-  candidates: JevFocusCandidateView[];
-  signal: AbortSignal;
-}): Promise<JevFocusDecisionView> {
-  if (!candidates.length) {
-    return {
-      status: 'unavailable', errorCode: 'jev_focus_no_connected_candidates', candidates: [],
-    };
-  }
-  const response = await fetch('/api/graph/jev-focus', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal,
-    body: JSON.stringify({
-      schemaVersion: 'jev-focus.request.v1',
-      projectId,
-      sourceRevision,
-      center: { visualId: centerId, title: centerTitle, providerMembers: centerProviderMembers },
-      candidates,
-    }),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(String(payload?.error || 'jev_focus_request_failed'));
-  return parseJevFocusDecision(payload, candidates, sourceRevision);
-}
-
-function composeFocusReleasePresentation(
-  projection: GraphProjectionV1,
-  release: FocusReleaseView | null,
-): GraphProjectionV1 {
-  if (!release) return projection;
-  const elevated = new Set(release.nodeIds);
-  return {
-    ...projection,
-    nodes: projection.nodes.map(node => elevated.has(node.id) ? {
-      ...node,
-      material_focus_active: true,
-      properties: { ...(node.properties || {}), focusRelease: true },
-    } : node),
-    edges: projection.edges.map(edge => release.edgeIds.includes(edge.id) ? {
-      ...edge,
-      properties: { ...(edge.properties || {}), focusRelease: true },
-    } : edge),
-  };
-}
 
 export function JoinedKnowledgeGraphSurface({
   projections,
@@ -978,151 +150,47 @@ export function JoinedKnowledgeGraphSurface({
   );
 }
 
-type RendererLayout = 'compact' | 'original' | 'communities' | 'radial' | 'galaxy';
-type PresentationStyle = 'classic' | 'cyber' | 'galaxy' | 'solar' | 'solarpunk';
-type RendererStyle = Exclude<PresentationStyle, 'solarpunk'>;
-type SolarpunkColors = {
-  think: string;
-  know: string;
-  thinkRelationship: string;
-  knowRelationship: string;
-};
-type GraphPresentationPreferences = {
-  schemaVersion: 2 | 3 | 4 | 5 | 6;
-  layout: RendererLayout;
-  style: PresentationStyle;
-  physicsProfile: JevGraphPhysicsProfile;
-  settings: Record<string, number | boolean | string>;
-  solarpunkColors: SolarpunkColors;
-};
-
-const DEFAULT_SOLARPUNK_COLORS: SolarpunkColors = {
-  think: SOLARPUNK_PALETTE.sea,
-  know: SOLARPUNK_PALETTE.sun,
-  thinkRelationship: SOLARPUNK_PALETTE.sea,
-  knowRelationship: SOLARPUNK_PALETTE.sun,
-};
-const RENDERER_LAYOUTS = new Set<RendererLayout>([
-  'compact', 'original', 'communities', 'radial', 'galaxy',
-]);
-const PRESENTATION_STYLES = new Set<PresentationStyle>([
-  'classic', 'cyber', 'galaxy', 'solar', 'solarpunk',
-]);
-const JEV_PHYSICS = new Set<JevGraphPhysicsProfile>(JEV_GRAPH_PHYSICS_PROFILES);
-const SOLARPUNK_HEX = /^#[0-9a-f]{6}$/i;
-const PRESENTATION_SETTING_BOUNDS = {
-  size: [1, 12],
-  font: [6, 24],
-  linkw: [0.1, 2],
-  labelDensity: [1, 100],
-  repel: [0, 400],
-  link: [4, 80],
-  gravity: [0, 400],
-} as const;
-
-export function knowEvidenceIdentity(item: Record<string, unknown>): string | null {
-  const providerEpisodeId = typeof item.graphitiEpisodeId === 'string'
-    ? item.graphitiEpisodeId.trim()
-    : '';
-  return providerEpisodeId || null;
-}
-
-function safePresentationSettings(value: unknown): Record<string, number | boolean | string> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const source = value as Record<string, unknown>;
-  const settings: Record<string, number | boolean | string> = {};
-  if (typeof source.labels === 'boolean') settings.labels = source.labels;
-  for (const [key, [minimum, maximum]] of Object.entries(PRESENTATION_SETTING_BOUNDS)) {
-    const candidate = source[key];
-    if (typeof candidate === 'number' && Number.isFinite(candidate)
-      && candidate >= minimum && candidate <= maximum) {
-      settings[key] = candidate;
-    }
-  }
-  return settings;
-}
-
-function presentationStorageKey(authority: GraphSurfaceAuthority): string {
-  return `liquidaity.graph.${authority}.presentation.v1`;
-}
-
-function safePresentationPreferences(
-  authority: GraphSurfaceAuthority,
-): Partial<GraphPresentationPreferences> {
-  if (typeof window === 'undefined') return {};
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(presentationStorageKey(authority)) || '{}');
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const settings = safePresentationSettings(parsed.settings);
-    const rawColors = parsed.solarpunkColors && typeof parsed.solarpunkColors === 'object'
-      ? parsed.solarpunkColors as Partial<SolarpunkColors>
-      : {};
-    const defaultColors = DEFAULT_SOLARPUNK_COLORS;
-    const legacyThinkColor = /^(?:#6e5fae|#3979e8)$/i.test(String(rawColors.think || ''));
-    const legacyThinkEdgeColor = /^#3979e8$/i.test(
-      String(rawColors.thinkRelationship || ''),
-    );
-    return {
-      ...([2, 3, 4, 5, 6].includes(parsed.schemaVersion)
-        ? { schemaVersion: parsed.schemaVersion as 2 | 3 | 4 | 5 | 6 }
-        : {}),
-      ...(RENDERER_LAYOUTS.has(parsed.layout) ? { layout: parsed.layout } : {}),
-      ...(PRESENTATION_STYLES.has(parsed.style) ? { style: parsed.style } : {}),
-      ...(JEV_PHYSICS.has(parsed.physicsProfile) ? { physicsProfile: parsed.physicsProfile } : {}),
-      ...(settings ? { settings } : {}),
-      solarpunkColors: {
-        think: !legacyThinkColor && SOLARPUNK_HEX.test(String(rawColors.think || ''))
-          ? String(rawColors.think) : defaultColors.think,
-        know: SOLARPUNK_HEX.test(String(rawColors.know || ''))
-          ? String(rawColors.know) : defaultColors.know,
-        thinkRelationship: !legacyThinkEdgeColor
-          && SOLARPUNK_HEX.test(String(rawColors.thinkRelationship || ''))
-          ? String(rawColors.thinkRelationship) : defaultColors.thinkRelationship,
-        knowRelationship: SOLARPUNK_HEX.test(String(rawColors.knowRelationship || ''))
-          ? String(rawColors.knowRelationship) : defaultColors.knowRelationship,
-      },
-    };
-  } catch {
-    return {};
-  }
-}
-
-function rendererStyle(style: PresentationStyle): RendererStyle {
-  return style === 'solarpunk' ? 'cyber' : style;
-}
-
-function withoutSolarpunkMaterial(node: GraphProjectionNode): GraphProjectionNode {
-  const next = { ...node };
-  delete next.material_kind;
-  delete next.material_role;
-  delete next.material_blue;
-  delete next.material_orange;
-  delete next.material_surface;
-  delete next.material_think_active;
-  delete next.material_know_active;
-  delete next.material_focus_active;
-  return next;
-}
-
-function solarpunkEdgeFields(
-  authority: GraphAuthority,
-  colors: SolarpunkColors,
-): Pick<GraphProjectionEdge, 'material_kind' | 'material_authority' | 'material_color'> {
-  return {
-    material_kind: 'solarpunk',
-    material_authority: authority,
-    material_color: authority === 'knowgraph'
-      ? colors.knowRelationship
-      : colors.thinkRelationship,
-  };
-}
-
-function withoutSolarpunkEdgeMaterial(edge: GraphProjectionEdge): GraphProjectionEdge {
-  const next = { ...edge };
-  delete next.material_kind;
-  delete next.material_authority;
-  delete next.material_color;
-  return next;
+export function CodeGraphSurface({
+  projection,
+  status,
+  error,
+  warning,
+  freshness,
+  onReadFile,
+  onReadSource,
+}: {
+  projection: GraphProjectionV1;
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  error: string | null;
+  warning: string | null;
+  freshness: string;
+  onReadFile: (filePath: string) => Promise<GraphProjectionV1 | null>;
+  onReadSource: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
+}) {
+  const features = useMemo(() => codeGraphFeatures(projection), [projection]);
+  const fileCount = useMemo(() => projection.nodes.filter(node => (
+    node.properties?.recordKind === 'file'
+  )).length, [projection]);
+  return <div style={{ position: 'absolute', inset: 0 }} data-testid="knowledge-codegraph-view">
+    <div
+      title="CodeGraph projection size and CBM index freshness"
+      style={{
+        position: 'absolute', right: 56, top: 8, zIndex: 8,
+        color: '#a9c1c2', fontSize: 11,
+      }}
+    >
+      {features.length} Features · {fileCount} Files · {freshness}
+    </div>
+    <KnowledgeGraphProjectionSurface
+      authority="codegraph"
+      projection={projection}
+      status={status}
+      error={error}
+      warning={warning}
+      onReadCodeGraphFile={onReadFile}
+      onReadCodeGraphSource={onReadSource}
+    />
+  </div>;
 }
 
 type EngraphisRenderer = {
@@ -1132,6 +200,8 @@ type EngraphisRenderer = {
   setData: (data: { nodes: unknown[]; links?: unknown[]; edges?: unknown[] }) => void;
   setHighlight: (id: string | null) => void;
   setThemeColors: (colors: Record<string, string>) => void;
+  setColorBy: (name: string) => void;
+  setTypeColors: (colors: Record<string, string>) => void;
   graphToScreen: (x: number, y: number) => { x: number; y: number };
   fit: () => void;
   resize: () => void;
@@ -1154,313 +224,6 @@ declare global {
   }
 }
 
-type SourceLinkView = {
-  url: string;
-  label: string;
-  publisher: string;
-  fingerprint: string | null;
-};
-
-const SECRET_CITATION_QUERY_KEY = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|authorization)/i;
-
-function safeSourceUrl(value: string): URL | null {
-  if (value.length > 2048 || value.includes('\\')
-    || [...value].some(character => {
-      const code = character.charCodeAt(0);
-      return code < 32 || code === 127;
-    })) return null;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== 'https:' || !parsed.hostname
-      || parsed.username || parsed.password
-      || [...parsed.searchParams.keys()].some(key => SECRET_CITATION_QUERY_KEY.test(key))) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function sourcePathLabel(url: URL): string {
-  const finalSegment = decodeURIComponent(
-    url.pathname.split('/').filter(Boolean).at(-1) || '',
-  ).replace(/\.[a-z0-9]+$/i, '');
-  const readable = finalSegment.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return readable
-    ? readable.charAt(0).toUpperCase() + readable.slice(1)
-    : url.hostname;
-}
-
-export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[] {
-  const rawUrls: unknown[] = [candidate.source_url, candidate.url];
-  const described = candidate.source_description ?? candidate.sourceDescription;
-  if (Array.isArray(described)) rawUrls.push(...described);
-  else if (typeof described === 'string' && described.trim()) {
-    try {
-      const parsed = JSON.parse(described);
-      if (Array.isArray(parsed)) rawUrls.push(...parsed);
-      else rawUrls.push(described);
-    } catch {
-      rawUrls.push(described);
-    }
-  }
-  const validUrls = new Map<string, URL>();
-  for (const rawUrl of rawUrls) {
-    if (typeof rawUrl !== 'string') continue;
-    const url = rawUrl.trim();
-    const parsed = safeSourceUrl(url);
-    if (parsed) validUrls.set(url, parsed);
-  }
-  const fingerprint = validUrls.size === 1
-    ? String(
-      candidate.content_fingerprint
-      || candidate.source_fingerprint
-      || candidate.document_fingerprint
-      || '',
-    ).trim() || null
-    : null;
-  const explicitLabel = validUrls.size === 1
-    ? String(candidate.source_title || candidate.title || '').trim()
-    : '';
-  const links = new Map<string, SourceLinkView>();
-  for (const [url, parsed] of validUrls) {
-    const item = {
-      url,
-      label: explicitLabel || sourcePathLabel(parsed),
-      publisher: String(candidate.publisher || parsed.hostname),
-      fingerprint,
-    };
-    links.set(fingerprint ? `fingerprint:${fingerprint}` : `url:${url}`, item);
-  }
-  return [...links.values()];
-}
-
-function graphEntryTime(value: unknown): { dateTime: string; label: string } | null {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value === 'object' && !Array.isArray(value)) {
-    const parts = value as Record<string, unknown>;
-    const year = Number(parts.year);
-    const month = Number(parts.month);
-    const day = Number(parts.day);
-    if (Number.isInteger(year) && Number.isInteger(month) && Number.isInteger(day)) {
-      const milliseconds = Date.UTC(
-        year,
-        month - 1,
-        day,
-        Number(parts.hour || 0),
-        Number(parts.minute || 0),
-        Number(parts.second || 0),
-        Math.floor(Number(parts.nanosecond || 0) / 1_000_000),
-      ) - Number(parts.timeZoneOffsetSeconds || 0) * 1_000;
-      const date = new Date(milliseconds);
-      if (!Number.isNaN(date.getTime())) {
-        return { dateTime: date.toISOString(), label: date.toLocaleString() };
-      }
-    }
-  }
-  const numeric = Number(value);
-  const milliseconds = Number.isFinite(numeric)
-    ? numeric * (Math.abs(numeric) < 10_000_000_000 ? 1_000 : 1)
-    : Date.parse(String(value));
-  if (!Number.isFinite(milliseconds)) return null;
-  const date = new Date(milliseconds);
-  if (Number.isNaN(date.getTime())) return null;
-  return { dateTime: date.toISOString(), label: date.toLocaleString() };
-}
-
-function probabilityLabel(value: unknown): string | null {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return null;
-  return `${(Math.max(0, Math.min(1, numeric)) * 100).toFixed(1)}%`;
-}
-
-function compactProbability(value: unknown): string | null {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return null;
-  return Math.max(0, Math.min(1, numeric)).toFixed(2).replace(/^0/, '');
-}
-
-function thinkRelationships(item: Record<string, any>): string[] {
-  const metadata = item.metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
-  const structured = metadata.structured_extraction;
-  const raw = structured && typeof structured === 'object' && !Array.isArray(structured)
-    ? structured.relations
-    : metadata.relations;
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((value): string[] => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-    const relation = value as Record<string, unknown>;
-    const source = typeof relation.source === 'string' ? relation.source.trim() : '';
-    const predicate = typeof relation.relation === 'string' ? relation.relation.trim() : '';
-    const target = typeof relation.target === 'string' ? relation.target.trim() : '';
-    return source && predicate && target ? [`${source} ${predicate} ${target}`] : [];
-  });
-}
-
-function ThinkRecordCard({
-  item,
-  heading,
-  removing = false,
-  onRemove,
-}: {
-  item: Record<string, any>;
-  heading: string;
-  removing?: boolean;
-  onRemove?: () => void;
-}) {
-  const entryTime = graphEntryTime(item.ingestedAt);
-  const summary = typeof item.summary === 'string' && item.summary.trim()
-    ? item.summary
-    : typeof item.content === 'string' && item.content.trim()
-      ? item.content
-      : null;
-  const relationships = thinkRelationships(item);
-  return <section className="graph-note graph-think" data-memory-id={item.id}>
-    <div className="graph-think-heading">
-      <h4>{String(item.title || heading)}</h4>
-    </div>
-    {entryTime ? <p className="graph-record-time"><time dateTime={entryTime.dateTime}>
-      {entryTime.label}
-    </time></p> : null}
-    {summary ? <p>{summary}</p> : null}
-    {relationships.length ? <section className="graph-think-section">
-      <h5>Relationships</h5>
-      <ul>{relationships.map(value => <li key={value}>{value}</li>)}</ul>
-    </section> : null}
-    {onRemove ? <button type="button" aria-label="Delete record" disabled={removing}
-      style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }} onClick={() => {
-      if (window.confirm('Delete this record?')) onRemove();
-    }}>
-      {removing ? 'Deleting…' : 'Delete'}
-    </button> : null}
-  </section>;
-}
-
-type KnowInspectorRecord = {
-  episodeId: string;
-  know: Record<string, any>;
-  episode: Record<string, any>;
-};
-
-const INSPECTOR_RECORD_LIMIT = 2;
-
-function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
-  const sources = new Map<string, SourceLinkView>();
-  for (const record of records) {
-    const candidates: Record<string, unknown>[] = [record.episode];
-    for (const sideKey of ['idea', 'counterIdea'] as const) {
-      const side = record.episode[sideKey];
-      if (!side || typeof side !== 'object' || Array.isArray(side)) continue;
-      const citations = (side as Record<string, unknown>).citations;
-      if (!Array.isArray(citations)) continue;
-      for (const citation of citations) {
-        if (citation && typeof citation === 'object' && !Array.isArray(citation)) {
-          candidates.push(citation as Record<string, unknown>);
-        }
-      }
-    }
-    for (const candidate of candidates) {
-      for (const link of sourceLinks(candidate)) {
-        sources.set(
-          link.fingerprint ? `fingerprint:${link.fingerprint}` : `url:${link.url}`,
-          link,
-        );
-      }
-    }
-  }
-  return [...sources.values()];
-}
-
-function KnowSide({
-  label,
-  side,
-}: {
-  label: 'For' | 'Against';
-  side: Record<string, unknown>;
-}) {
-  const body = typeof side.body === 'string' ? side.body.trim() : '';
-  if (!body) return null;
-  const detail = typeof side.detail === 'string' ? side.detail.trim() : '';
-  const citations = Array.isArray(side.citations)
-    ? side.citations.flatMap((candidate): Array<{
-        link: SourceLinkView;
-        supports: string;
-      }> => {
-        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
-        const citation = candidate as Record<string, unknown>;
-        return sourceLinks(citation).map(link => ({
-          link,
-          supports: typeof citation.supports === 'string' ? citation.supports.trim() : '',
-        }));
-      })
-    : [];
-  return <div className="graph-know-side">
-    <strong>{label}</strong>
-    <p>{body}</p>
-    {detail && detail !== body ? <details>
-      <summary>More</summary>
-      <p>{detail}</p>
-    </details> : null}
-    {citations.length ? <ul className="graph-know-citations">
-      {citations.map(({ link, supports }, index) => <li key={`${link.url}:${index}`}>
-        <a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
-        <small>{link.publisher}</small>
-        {supports ? <p>{supports}</p> : null}
-      </li>)}
-    </ul> : null}
-  </div>;
-}
-
-function KnowGraphKnow({
-  record,
-  heading,
-  removing = false,
-  onRemove,
-}: {
-  record: KnowInspectorRecord;
-  heading: string;
-  removing?: boolean;
-  onRemove?: () => void;
-}) {
-  const { episodeId, know } = record;
-  const entryTime = graphEntryTime(know.observedAt);
-  const sourceDate = graphEntryTime(know.sourceDate);
-  return <section className="graph-note graph-know" data-episode-id={episodeId}>
-    <div className="graph-think-heading"><h5>{String(know.title || heading)}</h5></div>
-    <KnowSide label="For" side={know.idea || {}} />
-    <KnowSide label="Against" side={know.counterIdea || {}} />
-    {entryTime ? <p className="graph-record-time"><span>Observed</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
-    {sourceDate ? <p className="graph-record-time"><span>Source date</span>{' '}<time dateTime={sourceDate.dateTime}>{sourceDate.label}</time></p> : null}
-    {onRemove ? <button
-      type="button"
-      aria-label="Delete record"
-      disabled={removing}
-      style={{ width: 'fit-content', padding: '3px 8px', fontSize: 11 }}
-      onClick={() => {
-        if (window.confirm('Delete this record?')) onRemove();
-      }}
-    >{removing ? 'Deleting…' : 'Delete'}</button> : null}
-  </section>;
-}
-
-function KnowSourceList({
-  records,
-}: {
-  records: KnowInspectorRecord[];
-}) {
-  const sources = uniqueRecordSources(records);
-  if (!sources.length) return null;
-  return <section className="knowgraph-sources graph-entity-sources">
-    <h4>Sources</h4>
-    {sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
-      <span>{source.label}</span>
-      <small>{source.publisher}</small>
-    </a>)}
-  </section>;
-}
-
 export function KnowledgeGraphProjectionSurface({
   projection,
   status,
@@ -1473,6 +236,8 @@ export function KnowledgeGraphProjectionSurface({
   onRemoveKnowEvidence,
   canonicalEntityDirectory,
   entityFocusRequest,
+  onReadCodeGraphFile,
+  onReadCodeGraphSource,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -1485,6 +250,8 @@ export function KnowledgeGraphProjectionSurface({
   onRemoveKnowEvidence?: (episodeId: string) => Promise<void>;
   canonicalEntityDirectory?: CanonicalEntityDirectory | null;
   entityFocusRequest?: CanonicalEntityFocusRequest | null;
+  onReadCodeGraphFile?: (filePath: string) => Promise<GraphProjectionV1 | null>;
+  onReadCodeGraphSource?: (qualifiedName: string) => Promise<CodeGraphSelectedSymbol | null>;
 }) {
   const savedPresentationRef = useRef(safePresentationPreferences(authority));
   const savedPresentation = savedPresentationRef.current;
@@ -1504,7 +271,9 @@ export function KnowledgeGraphProjectionSurface({
   );
   const [layout, setLayout] = useState<RendererLayout>(savedPresentation.layout || 'compact');
   const [style, setStyle] = useState<PresentationStyle>(
-    savedPresentationIsCurrent ? savedPresentation.style || 'solarpunk' : 'solarpunk',
+    authority === 'codegraph'
+      ? savedPresentation.style || 'cyber'
+      : savedPresentationIsCurrent ? savedPresentation.style || 'solarpunk' : 'solarpunk',
   );
   const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(
     savedPresentation.physicsProfile || 'galaxy',
@@ -1545,6 +314,9 @@ export function KnowledgeGraphProjectionSurface({
   const [renderError, setRenderError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const [codeSource, setCodeSource] = useState<CodeGraphSelectedSymbol | null>(null);
+  const [codeSourceLoading, setCodeSourceLoading] = useState(false);
+  const [codeSourceError, setCodeSourceError] = useState<string | null>(null);
   const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef<{ x: number; y: number; scale: number } | null>(null);
   presentationStateRef.current = { layout, style, physicsProfile, settings };
@@ -1558,8 +330,10 @@ export function KnowledgeGraphProjectionSurface({
     || expandedFocusResult?.presentation
     || joinedPresentation;
   const localDisplayProjection = useMemo(
-    () => projection ? applyJevGraphPhysics(projection, physicsProfile) : null,
-    [physicsProfile, projection],
+    () => projection
+      ? authority === 'codegraph' ? projection : applyJevGraphPhysics(projection, physicsProfile)
+      : null,
+    [authority, physicsProfile, projection],
   );
   const manualProjectionSource = useMemo(
     () => authority === 'joined' && activeJoinedPresentation
@@ -1618,7 +392,9 @@ export function KnowledgeGraphProjectionSurface({
     [expandedFocusPresentation, focusRelease, localDisplayProjection, manualFocusPresentation],
   );
   const selectedVisual = displayProjection?.nodes.find(node => node.id === selectedId);
+  const selectedCodeNode = authority === 'codegraph' ? selectedVisual : undefined;
   const selectedNodeVariants: JoinedGraphNodeVariant[] = selectedVisual
+    && authority !== 'codegraph'
     ? activeJoinedPresentation?.nodeVariants.get(selectedVisual.id)
       || (authority !== 'joined' ? [{ authority, node: selectedVisual }] : [])
     : [];
@@ -1651,15 +427,19 @@ export function KnowledgeGraphProjectionSurface({
   const selectedNodeVariant = selectedAuthorityVariants.find(
     variant => providerMemberKey(variant.authority, variant.node.id) === selectedMemberKey,
   ) || selectedAuthorityVariants[0];
-  const selected = selectedNodeVariant?.node;
+  const selected = selectedCodeNode || selectedNodeVariant?.node;
   const selectedEdgeVisual = displayProjection?.edges.find(edge => edge.id === selectedEdgeId);
   const selectedEdgeVariant: JoinedGraphEdgeVariant | undefined = selectedEdgeVisual
+    && authority !== 'codegraph'
     ? activeJoinedPresentation?.edgeVariants.get(selectedEdgeVisual.id)
       || (authority !== 'joined' ? { authority, edge: selectedEdgeVisual } : undefined)
     : undefined;
-  const selectedEdge = selectedEdgeVariant?.edge;
-  const inspectedAuthority = selectedEdgeVariant?.authority || selectedNodeVariant?.authority || null;
+  const selectedEdge = authority === 'codegraph' ? selectedEdgeVisual : selectedEdgeVariant?.edge;
+  const inspectedAuthority: GraphAuthority | 'codegraph' | null = authority === 'codegraph'
+    ? 'codegraph'
+    : selectedEdgeVariant?.authority || selectedNodeVariant?.authority || null;
   const inspectedProjection = authority === 'joined' && inspectedAuthority
+    && inspectedAuthority !== 'codegraph'
     ? activeJoinedPresentation?.providerProjections[inspectedAuthority] || null
     : displayProjection;
   const selectedProperties = selected?.properties || {};
@@ -1670,6 +450,20 @@ export function KnowledgeGraphProjectionSurface({
     setSelectedId(visualNodeId);
     setSelectedEdgeId(null);
     setInspectorOpen(true);
+    setCodeSource(null);
+    setCodeSourceError(null);
+    const codeNode = authority === 'codegraph'
+      ? displayProjection?.nodes.find(node => node.id === visualNodeId)
+      : null;
+    const filePath = codeNode?.properties?.recordKind === 'file'
+      && typeof codeNode.properties.filePath === 'string'
+      ? codeNode.properties.filePath
+      : '';
+    if (filePath && codeNode?.properties?.structuralLoaded !== true && onReadCodeGraphFile) {
+      void onReadCodeGraphFile(filePath).catch(failure => {
+        setCodeSourceError(failure instanceof Error ? failure.message : String(failure));
+      });
+    }
   };
   inspectNodeRef.current = openNodeInspector;
   const syncPaper = () => {
@@ -1913,9 +707,11 @@ export function KnowledgeGraphProjectionSurface({
         },
       });
       const restoredLayout = savedPresentation.layout || 'compact';
-      const restoredStyle = savedPresentationIsCurrent
-        ? savedPresentation.style || 'solarpunk'
-        : 'solarpunk';
+      const restoredStyle = authority === 'codegraph'
+        ? savedPresentation.style || 'cyber'
+        : savedPresentationIsCurrent
+          ? savedPresentation.style || 'solarpunk'
+          : 'solarpunk';
       const restoredPhysics = savedPresentation.physicsProfile || 'galaxy';
       const defaults = graph.setPreset(restoredLayout);
       const savedSettings = savedPresentationIsCurrent
@@ -1933,6 +729,14 @@ export function KnowledgeGraphProjectionSurface({
       graph.setCollapse(false);
       setLayout(restoredLayout); setStyle(restoredStyle); setPhysicsProfile(restoredPhysics);
       graph.setStyle(rendererStyle(restoredStyle));
+      if (authority === 'codegraph') {
+        graph.setColorBy('type');
+        graph.setTypeColors({
+          Feature: '#b789ff',
+          File: '#22e0ff',
+          Symbol: '#fff1a8',
+        });
+      }
       graph.setSettings(restoredSettings);
       setSettings(restoredSettings);
       graphRef.current = graph;
@@ -1944,6 +748,13 @@ export function KnowledgeGraphProjectionSurface({
   }, [authority, savedPresentationIsCurrent]);
 
   useEffect(() => {
+    if (authority === 'codegraph') {
+      graphRef.current?.setColorBy('type');
+      graphRef.current?.setTypeColors({
+        Feature: '#b789ff', File: '#22e0ff', Symbol: '#fff1a8',
+      });
+      return;
+    }
     graphRef.current?.setThemeColors(style === 'solarpunk' ? {
       material_blue: solarpunkColors.think,
       material_orange: solarpunkColors.know,
@@ -2092,7 +903,9 @@ export function KnowledgeGraphProjectionSurface({
       ...(scene || {}),
       nodes: sceneNodes.map((rawNode) => {
         const node = rawNode as GraphProjectionNode;
-        if (style !== 'solarpunk') return withoutSolarpunkMaterial(node);
+        if (authority === 'codegraph' || style !== 'solarpunk') {
+          return withoutSolarpunkMaterial(node);
+        }
         const combinedCyber = authority === 'joined';
         const variants = authority === 'joined'
           ? activeJoinedPresentation?.nodeVariants.get(node.id) || []
@@ -2122,12 +935,23 @@ export function KnowledgeGraphProjectionSurface({
         const projected = projectionEdgesById.get(String(edge.id));
         const properties = { ...(edge.properties || {}), ...(projected?.properties || {}) };
         const semanticEdge = { ...edge, ...(projected || {}), properties };
-        const edgeAuthority = authority === 'joined'
+        const edgeAuthority: GraphAuthority | 'codegraph' | undefined = authority === 'joined'
           ? activeJoinedPresentation?.edgeVariants.get(String(semanticEdge.id))?.authority
-          : authority;
+          : authority === 'codegraph' ? 'codegraph' : authority;
         const materialEdge = style === 'solarpunk' && edgeAuthority
+          && edgeAuthority !== 'codegraph'
           ? { ...semanticEdge, ...solarpunkEdgeFields(edgeAuthority, solarpunkColors) }
           : withoutSolarpunkEdgeMaterial(semanticEdge);
+        if (edgeAuthority === 'codegraph') {
+          return {
+            ...materialEdge,
+            relation: materialEdge.predicate,
+            label: '',
+            hover_label: materialEdge.predicate,
+            directional_arrow_length: 3,
+            directional_arrow_rel_pos: 0.88,
+          };
+        }
         if (edgeAuthority !== 'thinkgraph') {
           return {
             ...materialEdge,
@@ -2252,6 +1076,23 @@ export function KnowledgeGraphProjectionSurface({
       setRemovingId(null);
     }
   };
+  const loadCodeSource = async (qualifiedName: string) => {
+    if (!onReadCodeGraphSource) return;
+    setCodeSourceLoading(true);
+    setCodeSourceError(null);
+    try {
+      const source = await onReadCodeGraphSource(qualifiedName);
+      if (!source || source.cbmQualifiedName !== qualifiedName) {
+        throw new Error('codegraph_source_identity_mismatch');
+      }
+      setCodeSource(source);
+    } catch (failure) {
+      setCodeSource(null);
+      setCodeSourceError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setCodeSourceLoading(false);
+    }
+  };
 
   const allNodes = displayProjection?.nodes.length ?? 0;
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
@@ -2330,7 +1171,9 @@ export function KnowledgeGraphProjectionSurface({
   );
   const availableNodeAuthorities = (['thinkgraph', 'knowgraph'] as const)
     .filter(candidate => candidate === 'thinkgraph' ? directThinkAvailable : directKnowAvailable);
-  const visualNodeIdForProvider = (providerId: string) => inspectedAuthority
+  const visualNodeIdForProvider = (providerId: string) => inspectedAuthority === 'codegraph'
+    ? providerId
+    : inspectedAuthority
     ? activeJoinedPresentation?.visualNodeIdByProviderMember.get(
       providerMemberKey(inspectedAuthority, providerId),
     ) || providerId
@@ -2414,7 +1257,9 @@ export function KnowledgeGraphProjectionSurface({
             {warning}
           </div>
         ) : null}
-        {status === 'ready' && allNodes === 0 ? <div className="knowledge-authority-empty">No knowledge yet.</div> : null}
+        {status === 'ready' && allNodes === 0 ? <div className="knowledge-authority-empty">
+          {authority === 'codegraph' ? 'No CodeGraph data available.' : 'No knowledge yet.'}
+        </div> : null}
       </div>
         <RightGlassDrawer
           isOpen={controlsOpen || inspectorOpen}
@@ -2433,14 +1278,14 @@ export function KnowledgeGraphProjectionSurface({
           top={48} right={12} bottom={12} zIndex={6}
         >
           {!inspectorOpen ? <div ref={panelBodyRef} className="knowledge-authority-controls">
-            <label>Physics profile<select aria-label="Physics profile" value={physicsProfile} onChange={event => {
+            {authority !== 'codegraph' ? <label>Physics profile<select aria-label="Physics profile" value={physicsProfile} onChange={event => {
               recordManualPresentationChange('physics');
               setPhysicsProfile(event.target.value as JevGraphPhysicsProfile);
             }}>
               {JEV_GRAPH_PHYSICS_PROFILES.map(profile => <option key={profile} value={profile}>
                 {JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}
               </option>)}
-            </select></label>
+            </select></label> : null}
             <label>Layout<select aria-label="Layout" value={layout} onChange={event => {
               recordManualPresentationChange('layout');
               setAppliedPresetNodeSize(null);
@@ -2461,7 +1306,7 @@ export function KnowledgeGraphProjectionSurface({
               graphRef.current?.setStyle(rendererStyle(next)); setStyle(next);
             }}>
               <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>
-              <option value="solarpunk">Solarpunk</option><option value="galaxy">Galaxy</option>
+              {authority !== 'codegraph' ? <option value="solarpunk">Solarpunk</option> : null}<option value="galaxy">Galaxy</option>
               <option value="solar">Solar</option>
             </select></label>
             {style === 'solarpunk'
@@ -2486,7 +1331,7 @@ export function KnowledgeGraphProjectionSurface({
               const patch = { labels: event.target.checked };
               graphRef.current?.setSettings(patch);
               setSettings(current => ({ ...current, ...patch }));
-            }} />Entity labels</label>
+            }} />{authority === 'codegraph' ? 'Code labels' : 'Entity labels'}</label>
             {([
               ['Node size', 'size', 1, 12, 1], ['Text size', 'font', 6, 24, 1],
               ['Line width', 'linkw', 0.1, 2, 0.01], ['Label density', 'labelDensity', 1, 100, 1],
@@ -2567,6 +1412,13 @@ export function KnowledgeGraphProjectionSurface({
           data-testid={`${inspectedAuthority}-node-inspector`} data-provider-id={selected.id}>
           {selected.label}
         </span> : null}
+        {inspectedAuthority === 'codegraph' && selected && !selectedEdge ? <CodeGraphNodeDetails
+          node={selected}
+          source={codeSource}
+          sourceLoading={codeSourceLoading}
+          sourceError={codeSourceError}
+          onLoadSource={onReadCodeGraphSource ? qualifiedName => { void loadCodeSource(qualifiedName); } : undefined}
+        /> : null}
         {visibleThinks.length ? <section className="graph-inspector-records" data-testid="knowledge-think-records">
           <h4>{visibleThinks.length > 1 ? 'Recent Thinks' : 'Recent Think'}</h4>
           {visibleThinks.map(item => <ThinkRecordCard
@@ -2601,16 +1453,16 @@ export function KnowledgeGraphProjectionSurface({
           <button type="button" onClick={() => {
             const visualId = visualNodeIdForProvider(selectedEdge.source);
             inspectNodeRef.current(visualId);
-            setSelectedAuthority(inspectedAuthority);
-            setSelectedMemberKey(inspectedAuthority
+            setSelectedAuthority(inspectedAuthority === 'codegraph' ? null : inspectedAuthority);
+            setSelectedMemberKey(inspectedAuthority && inspectedAuthority !== 'codegraph'
               ? providerMemberKey(inspectedAuthority, selectedEdge.source)
               : null);
           }}>{providerNodeLabel(selectedEdge.source)}</button>
           <button type="button" onClick={() => {
             const visualId = visualNodeIdForProvider(selectedEdge.target);
             inspectNodeRef.current(visualId);
-            setSelectedAuthority(inspectedAuthority);
-            setSelectedMemberKey(inspectedAuthority
+            setSelectedAuthority(inspectedAuthority === 'codegraph' ? null : inspectedAuthority);
+            setSelectedMemberKey(inspectedAuthority && inspectedAuthority !== 'codegraph'
               ? providerMemberKey(inspectedAuthority, selectedEdge.target)
               : null);
           }}>{providerNodeLabel(selectedEdge.target)}</button>

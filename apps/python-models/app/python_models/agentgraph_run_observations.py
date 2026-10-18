@@ -1,5 +1,8 @@
 """Truthful AGE Run and artifact observations."""
 
+# Entity: AgentGraph
+# Relationship: Records exact Run acceptance, preparation, Hermes identity, assignment, lineage, terminal state, and artifact events in AGE without authorizing or controlling execution.
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,7 +12,6 @@ from psycopg.rows import dict_row
 
 from app.python_models import agentgraph_query
 from app.python_models.postgres import connect_postgres
-from app.python_models.saved_card_contract import accepted_at, utc_now
 
 
 def observe_run_acceptance(
@@ -146,48 +148,26 @@ def observe_run_execution_started(
 
 
 def observe_run_progress(run_id: str, hermes_status: str, payload: dict[str, Any]) -> bool:
-    active_workers = payload.get("activeWorkers")
-    execution_active = hermes_status == "running" or (
-        isinstance(active_workers, int)
-        and not isinstance(active_workers, bool)
-        and active_workers > 0
-    )
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            agentgraph_query.execute_fixed_agentgraph_query(
+            observed = agentgraph_query.execute_fixed_agentgraph_query(
                 cursor,
                 """
                 MATCH (run:Run {runId: $runId})
-                SET run.state=coalesce($runState, run.state),
-                    run.startedAt=coalesce(run.startedAt, $startedAt),
-                    run.hermesRootId=$hermesRootId,
+                SET run.hermesRootId=$hermesRootId,
                     run.hermesRunId=$hermesRunId,
-                    run.hermesStatus=$hermesStatus,
-                    run.hermesTaskCompletedCount=$tasksCompleted,
-                    run.hermesTaskTotalCount=$tasksTotal,
-                    run.hermesActiveWorkerCount=$activeWorkers,
-                    run.toolCallCount=$toolCallCount,
-                    run.providerCachedTokens=$providerCachedTokens,
-                    run.providerReasoningTokens=$providerReasoningTokens
-                RETURN properties(run)
+                    run.hermesStatus=$hermesStatus
+                RETURN run.runId
                 """,
                 {
                     "runId": run_id,
-                    "runState": "running" if execution_active else None,
-                    "startedAt": utc_now().isoformat() if execution_active else None,
                     "hermesRootId": payload.get("hermesRootId"),
                     "hermesRunId": payload.get("hermesRunId"),
                     "hermesStatus": hermes_status,
-                    "tasksCompleted": payload.get("tasksCompleted"),
-                    "tasksTotal": payload.get("tasksTotal"),
-                    "activeWorkers": payload.get("activeWorkers"),
-                    "toolCallCount": payload.get("toolCallCount"),
-                    "providerCachedTokens": payload.get("providerCachedTokens"),
-                    "providerReasoningTokens": payload.get("providerReasoningTokens"),
                 },
-                "value agtype",
+                "run_id agtype",
             )
-        return True
+        return len(observed) == 1 and str(observed[0].get("run_id") or "") == run_id
     except Exception:
         return False
 
@@ -198,49 +178,38 @@ def observe_run_preparation_complete(
     *,
     run_id: str,
     correlation_id: str,
-    input_file: dict[str, Any] | None = None,
+    preparation_started_at: datetime,
+    ended_at: datetime,
 ) -> bool:
-    """Observe completed preparation without claiming that Hermes execution started."""
+    """Observe exact preparation completion and optional assignment or lineage."""
+
     try:
-        ended_at = utc_now()
-        accepted_text = str(payload.get("acceptedAt") or "").strip()
-        preparation_elapsed_ms = None
-        if accepted_text:
-            preparation_elapsed_ms = max(
-                0.0,
-                (ended_at - accepted_at(accepted_text)).total_seconds() * 1000,
-            )
+        elapsed_ms = max(
+            0.0,
+            (ended_at - preparation_started_at).total_seconds() * 1000,
+        )
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             identity = prepared["cardIdentity"]
-            runtime = (
-                ((prepared.get("idf") or {}).get("stableSavedCardContext") or {}).get("runtime")
-                or {}
-            )
-            agentgraph_query.execute_fixed_agentgraph_query(
+            run_rows = agentgraph_query.execute_fixed_agentgraph_query(
                 cursor,
                 """
-                MERGE (run:Run {
+                MATCH (run:Run {
                   projectId: $projectId, deckId: $deckId, runId: $runId
                 })
                 SET run.correlationId=$correlationId,
-                    run.state=coalesce(run.state, 'pending'),
-                    run.hermesProfile=$hermesProfile,
-                    run.conversationId=$conversationId,
-                    run.rootRunId=$rootRunId,
-                    run.acceptedAt=coalesce(run.acceptedAt, $acceptedAt),
                     run.preparationState='completed',
                     run.preparationStartedAt=coalesce(
-                      run.preparationStartedAt, $acceptedAt
+                      run.preparationStartedAt, $preparationStartedAt
                     ),
                     run.preparationEndedAt=$endedAt,
                     run.preparationElapsedMs=$preparationElapsedMs,
-                    run.preparationError=null,
-                    run.idfSha256=$idfSha256,
-                    run.idfBytes=$idfBytes
+                    run.preparationError=null
                 WITH run
-                MATCH (card:Card {projectId: $projectId, deckId: $deckId, cardId: $cardId})
+                MATCH (card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
                 MERGE (run)-[:EXECUTED_BY]->(card)
-                RETURN properties(run)
+                RETURN run.runId
                 """,
                 {
                     "runId": run_id,
@@ -248,30 +217,32 @@ def observe_run_preparation_complete(
                     "deckId": prepared["deckId"],
                     "correlationId": correlation_id,
                     "endedAt": ended_at.isoformat(),
+                    "preparationStartedAt": preparation_started_at.isoformat(),
+                    "preparationElapsedMs": elapsed_ms,
                     "cardId": identity["cardId"],
-                    "hermesProfile": (
-                        str(runtime.get("profile") or "").strip()
-                        or None
-                    ),
-                    "conversationId": str(payload.get("conversationId") or "").strip() or None,
-                    "rootRunId": str(payload.get("rootRunId") or run_id).strip(),
-                    "acceptedAt": str(payload.get("acceptedAt") or "").strip() or None,
-                    "preparationElapsedMs": preparation_elapsed_ms,
-                    "idfSha256": str((input_file or {}).get("idfSha256") or "").strip() or None,
-                    "idfBytes": (input_file or {}).get("idfBytes"),
                 },
-                "value agtype",
+                "run_id agtype",
             )
+            if (
+                len(run_rows) != 1
+                or str(run_rows[0].get("run_id") or "") != run_id
+            ):
+                return False
+
             sender_id = str(payload.get("senderCardId") or "").strip()
             if sender_id:
-                agentgraph_query.execute_fixed_agentgraph_query(
+                assignment_rows = agentgraph_query.execute_fixed_agentgraph_query(
                     cursor,
                     """
-                    MATCH (sender:Card {projectId: $projectId, deckId: $deckId, cardId: $senderId})
-                    MATCH (target:Card {projectId: $projectId, deckId: $deckId, cardId: $targetId})
+                    MATCH (sender:Card {
+                      projectId: $projectId, deckId: $deckId, cardId: $senderId
+                    })
+                    MATCH (target:Card {
+                      projectId: $projectId, deckId: $deckId, cardId: $targetId
+                    })
                     MERGE (sender)-[assignment:ASSIGNED_TO {runId: $runId}]->(target)
                     SET assignment.correlationId=$correlationId
-                    RETURN properties(assignment)
+                    RETURN sender.cardId, target.cardId, assignment.runId
                     """,
                     {
                         "projectId": prepared["projectId"],
@@ -281,117 +252,114 @@ def observe_run_preparation_complete(
                         "runId": run_id,
                         "correlationId": correlation_id,
                     },
-                    "value agtype",
+                    "sender_id agtype, target_id agtype, run_id agtype",
                 )
+                if (
+                    len(assignment_rows) != 1
+                    or str(assignment_rows[0].get("sender_id") or "") != sender_id
+                    or str(assignment_rows[0].get("target_id") or "")
+                    != str(identity["cardId"])
+                    or str(assignment_rows[0].get("run_id") or "") != run_id
+                ):
+                    return False
+
             parent_run_id = str(payload.get("originatingRunId") or "").strip()
             if parent_run_id:
-                agentgraph_query.execute_fixed_agentgraph_query(
+                lineage_rows = agentgraph_query.execute_fixed_agentgraph_query(
                     cursor,
                     """
                     MATCH (parent:Run {runId: $parentRunId})
                     MATCH (child:Run {runId: $runId})
-                    MERGE (parent)-[edge:CHILD_RUN]->(child)
-                    RETURN properties(edge)
+                    MERGE (parent)-[:CHILD_RUN]->(child)
+                    RETURN parent.runId, child.runId
                     """,
                     {"parentRunId": parent_run_id, "runId": run_id},
-                    "value agtype",
+                    "parent_run_id agtype, child_run_id agtype",
                 )
+                if (
+                    len(lineage_rows) != 1
+                    or str(lineage_rows[0].get("parent_run_id") or "")
+                    != parent_run_id
+                    or str(lineage_rows[0].get("child_run_id") or "") != run_id
+                ):
+                    return False
         return True
     except Exception:
         return False
 
+def observe_run_finish(run_record: dict[str, Any]) -> bool:
+    """Observe exact terminal state read back from PostgreSQL Run authority."""
 
-def observe_run_finish(
-    run_id: str,
-    state: str,
-    payload: dict[str, Any] | None = None,
-) -> bool:
+    run_id = str(run_record.get("run_id") or "").strip()
+    state = str(run_record.get("state") or "").strip()
+    finished_at = run_record.get("finished_at")
+    if not run_id or not state or not isinstance(finished_at, datetime):
+        return False
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            agentgraph_query.execute_fixed_agentgraph_query(
+            observed = agentgraph_query.execute_fixed_agentgraph_query(
                 cursor,
                 """
                 MATCH (run:Run {runId: $runId})
-                SET run.state=$state, run.finishedAt=$finishedAt,
-                    run.durationMs=$durationMs,
-                    run.providerInputTokens=$providerInputTokens,
-                    run.providerOutputTokens=$providerOutputTokens,
-                    run.providerCachedTokens=$providerCachedTokens,
-                    run.providerReasoningTokens=$providerReasoningTokens,
-                    run.toolCallCount=$toolCallCount,
-                    run.totalCostUsd=$totalCostUsd,
-                    run.provider=$provider,
-                    run.model=$model,
+                SET run.state=$state,
+                    run.finishedAt=$finishedAt,
                     run.hermesRootId=$hermesRootId,
                     run.hermesRunId=$hermesRunId,
-                    run.hermesSessionId=$hermesSessionId,
-                    run.effectiveProvider=$effectiveProvider,
-                    run.hermesStatus=$hermesStatus,
-                    run.hermesTaskCompletedCount=$tasksCompleted,
-                    run.hermesTaskTotalCount=$tasksTotal,
-                    run.hermesActiveWorkerCount=$activeWorkers,
-                    run.resultReady=$resultReady,
                     run.errorCode=$errorCode,
                     run.errorSummary=$errorSummary
-                RETURN properties(run)
+                RETURN run.runId
                 """,
                 {
                     "runId": run_id,
                     "state": state,
-                    "finishedAt": utc_now().isoformat(),
-                    "durationMs": (payload or {}).get("durationMs"),
-                    "providerInputTokens": (payload or {}).get("providerInputTokens"),
-                    "providerOutputTokens": (payload or {}).get("providerOutputTokens"),
-                    "providerCachedTokens": (payload or {}).get("providerCachedTokens"),
-                    "providerReasoningTokens": (payload or {}).get("providerReasoningTokens"),
-                    "toolCallCount": (payload or {}).get("toolCallCount"),
-                    "totalCostUsd": (payload or {}).get("totalCostUsd"),
-                    "provider": (payload or {}).get("provider"),
-                    "model": (payload or {}).get("model"),
-                    "hermesRootId": (payload or {}).get("providerThreadRef"),
-                    "hermesRunId": (payload or {}).get("providerTurnRef"),
-                    "hermesSessionId": (payload or {}).get("hermesSessionRef"),
-                    "effectiveProvider": (payload or {}).get("effectiveProvider"),
-                    "hermesStatus": (payload or {}).get("hermesStatus"),
-                    "tasksCompleted": (payload or {}).get("tasksCompleted"),
-                    "tasksTotal": (payload or {}).get("tasksTotal"),
-                    "activeWorkers": (payload or {}).get("activeWorkers"),
-                    "resultReady": bool((payload or {}).get("finalResult")),
-                    "errorCode": (payload or {}).get("errorCode"),
-                    "errorSummary": (payload or {}).get("errorSummary"),
+                    "finishedAt": finished_at.isoformat(),
+                    "hermesRootId": run_record.get("provider_thread_ref"),
+                    "hermesRunId": run_record.get("provider_turn_ref"),
+                    "errorCode": run_record.get("error_code"),
+                    "errorSummary": run_record.get("error_summary"),
                 },
-                "value agtype",
+                "run_id agtype",
             )
-        return True
+        return len(observed) == 1 and str(observed[0].get("run_id") or "") == run_id
     except Exception:
         return False
-
 
 def observe_artifact(
     run_id: str,
     artifact_id: str,
     artifact_kind: str,
     locator: str,
+    content_sha256: str,
+    size_bytes: int,
 ) -> bool:
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            agentgraph_query.execute_fixed_agentgraph_query(
+            observed = agentgraph_query.execute_fixed_agentgraph_query(
                 cursor,
                 """
                 MATCH (run:Run {runId: $runId})
                 MERGE (artifact:Artifact {artifactId: $artifactId})
-                SET artifact.artifactKind=$artifactKind, artifact.locator=$locator
+                SET artifact.artifactKind=$artifactKind,
+                    artifact.locator=$locator,
+                    artifact.contentSha256=$contentSha256,
+                    artifact.sizeBytes=$sizeBytes
                 MERGE (run)-[edge:PRODUCED_ARTIFACT]->(artifact)
-                RETURN properties(edge)
+                RETURN run.runId, artifact.artifactId
                 """,
                 {
                     "runId": run_id,
                     "artifactId": artifact_id,
                     "artifactKind": artifact_kind,
                     "locator": locator,
+                    "contentSha256": content_sha256,
+                    "sizeBytes": size_bytes,
                 },
-                "value agtype",
+                "run_id agtype, artifact_id agtype",
             )
-        return True
+        return (
+            len(observed) == 1
+            and str(observed[0].get("run_id") or "") == run_id
+            and str(observed[0].get("artifact_id") or "") == artifact_id
+        )
     except Exception:
         return False

@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldSignals
+ * Relationship: Stores and recovers the mounted product’s Project-and-Card-scoped layer profile in best-effort browser storage without becoming server or capability authority.
+ */
+
 type WorldSignalLayerPrefs = {
   profileVersion: number;
   enabledLayerIds: string[];

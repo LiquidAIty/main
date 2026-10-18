@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: Authorizes the one Earth surface, validates exact Card action and readback envelopes, serves Project capability state, and exposes bounded readiness and internal dispatch routes.
+ */
+
 import type { Request, Response } from 'express';
 import { pool } from '../db/pool';
 import { isLoopbackSocketRequest } from '../security/requestAccess';
@@ -7,7 +12,11 @@ import {
   type ProjectWorldviewCapabilityStore,
 } from './projectWorldviewCapabilities';
 import { requireOwnedProject } from './projectAccess';
-import type { WorldviewAction, WorldviewActionChannel } from './worldviewActionChannel';
+import type {
+  ClaimedWorldviewAction,
+  WorldviewAction,
+  WorldviewActionChannel,
+} from './worldviewActionChannel';
 
 const DEFAULT_GLOBE_URL = 'http://127.0.0.1:4174';
 const CAPABILITY_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/;
@@ -160,33 +169,40 @@ export function worldviewActionResultHandler(
       || Buffer.byteLength(JSON.stringify(result)) > MAX_ACTION_BYTES) {
       return res.status(400).json({ ok: false, error: 'worldview_action_result_invalid' });
     }
+    let command: ClaimedWorldviewAction | null = null;
     try {
       if (!await projectAuthorizer(req, res, projectId)) return;
-      const command = channel.pendingAction(projectId, cardId, requestId);
+      command = channel.claim(projectId, cardId, requestId);
       if (!command) {
         return res.status(409).json({ ok: false, error: 'worldview_action_result_stale' });
       }
       let capability: ProjectWorldviewCapability | null = null;
       if (command.name === 'set_layer_visibility' && result.ok === true) {
+        const expectedLayerId = typeof command.arguments.layerId === 'string'
+          ? command.arguments.layerId.trim()
+          : '';
+        const expectedEnabled = command.arguments.enabled;
         if (result.action !== 'set_layer_visibility'
           || typeof result.layerId !== 'string' || !CAPABILITY_ID.test(result.layerId)
-          || typeof result.enabled !== 'boolean') {
-          channel.settle(projectId, cardId, requestId, {
+          || typeof result.enabled !== 'boolean'
+          || result.layerId !== expectedLayerId
+          || result.enabled !== expectedEnabled) {
+          command.finish({
             ok: false, error: 'worldview_layer_readback_invalid',
           });
           return res.status(400).json({ ok: false, error: 'worldview_layer_readback_invalid' });
         }
         capability = await capabilityStore.set(
-          projectId, result.layerId, 'worldview_card', result.enabled,
+          projectId, expectedLayerId, 'worldview_card', expectedEnabled,
         );
       }
       const settled = capability ? { ...result, projectCapability: capability } : result;
-      if (!channel.settle(projectId, cardId, requestId, settled)) {
+      if (!command.finish(settled)) {
         return res.status(409).json({ ok: false, error: 'worldview_action_result_stale' });
       }
       return res.json({ ok: true, capability });
     } catch {
-      channel.settle(projectId, cardId, requestId, {
+      command?.finish({
         ok: false, error: 'project_worldview_write_failed',
       });
       return res.status(503).json({ ok: false, error: 'worldview_action_result_unavailable' });

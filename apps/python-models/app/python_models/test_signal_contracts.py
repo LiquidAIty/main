@@ -105,3 +105,40 @@ def test_contracts_reject_invalid_geometry_and_unknown_fields() -> None:
             ).model_dump(),
             "inventedAuthority": True,
         })
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        ("not-a-time", "signal_timestamp_invalid"),
+        ("2026-10-17T12:00:00", "signal_timestamp_timezone_required"),
+        ("2026-13-99T12:00:00Z", "signal_timestamp_invalid"),
+    ],
+)
+def test_query_timestamps_require_timezone_aware_iso_8601(
+    value: str,
+    error: str,
+) -> None:
+    with pytest.raises(ValidationError, match=error):
+        build_signal_query(
+            project_id="project-1",
+            deck_id="deck-1",
+            requesting_card_id="card-signal-analyst",
+            requesting_run_id="run-request-1",
+            reason="Inspect changes.",
+            source_system="worldsignals",
+            command="what_changed",
+            from_time=value,
+        )
+
+    valid = build_signal_query(
+        project_id="project-1",
+        deck_id="deck-1",
+        requesting_card_id="card-signal-analyst",
+        requesting_run_id="run-request-1",
+        reason="Inspect changes.",
+        source_system="worldsignals",
+        command="what_changed",
+        from_time="2026-10-17T12:00:00Z",
+    )
+    assert valid.fromTime == "2026-10-17T12:00:00Z"

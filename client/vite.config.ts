@@ -32,7 +32,7 @@ const WORLDVIEW_MOUNT_ID = 'virtual:worldview-native-mount';
 const WORLDVIEW_MOUNT_RESOLVED_ID = `\0${WORLDVIEW_MOUNT_ID}`;
 const WORLDVIEW_BUNDLED_MOUNT_ID = 'virtual:worldview-native-mount-bundled';
 const WORLDVIEW_PUBLIC_MOUNT_URL = 'http://127.0.0.1:4174/src/app/mount.js';
-const WORLDVIEW_SELECTOR = '#worldview-native-root';
+const WORLDVIEW_SELECTOR = '#worldview-gods-eye-root';
 
 export function worldviewNativeMountModuleSource(command: 'serve' | 'build'): string {
   const target = command === 'serve'

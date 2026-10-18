@@ -1,173 +1,131 @@
-# Next Turn — Frozen Crystallization Boundary
+# Turn Report
 
-## Review status
+## Status
 
-**PASS for this PromptSpec stage.** The frozen implementation reaches the requested stopping condition: every remaining eligible file is explicitly decision-bound, live/deferred, or a structural refactor candidate. The repository map is intentionally incomplete rather than decoratively inflated.
+COMPLETE for the requested recovery: the upstream CBM daemon and application stack are healthy, the in-app CodeGraph renders real provider data without the unwanted Feature sorter, the saved Agents canvas is visible, and real Main plus direct Builder Bot Mode turns completed and rendered.
 
-- Base branch: `main`
-- Base `HEAD`: `395dff3867c001e535264678b1534b3ac92cc51d`
-- Frozen implementation paths changed relative to `HEAD`: **36** (`34` modified, `2` deleted), including the pre-existing dirty CBM artifact.
-- Frozen implementation diff: **107,364 bytes**
-- `FROZEN_IMPLEMENTATION_DIFF_SHA256`: `69a82c2e8b8d973ab88bdccc4f15e732e1341458bc690dad2a2980fee1abec8c`
-- Digest definition: SHA-256 of the exact raw output of `git diff --binary HEAD` immediately after the Primary froze implementation and before this reviewer replaced `turn.md`.
+## Requested Delta
 
-## Exact semantic coverage
+- Make the loaded LiquidAIty application work again.
+- Restore Main chat and direct saved-Card Bot Mode.
+- Restore the in-app CodeGraph through the official CBM provider.
+- Remove the unwanted CodeGraph Feature sorter.
+- Verify that the Project's saved agents are present and visible.
 
-Inventory authority: current existing Git-tracked first-party `.ts`, `.tsx`, and `.py` files under `apps/`, `client/`, and `services/`, plus root `vite.config.ts`; `__init__.py`, controlled-vendor roots, and currently deleted paths are excluded.
+## Preservation Set
 
-- Eligible current files: **356**
-- Classified files: **322 (90.4%)**
-- Deliberately unclassified files: **34 (9.6%)**
-- Reusable Entity vocabulary: **51**
-- Single-Entity files: **296**
-- Multi-Entity files: **26**
-- Maximum pairs in one file: **3**
-- Malformed or unmatched Entity/Relationship pairs: **0**
-- Forbidden generic fallback Entities: **0**
-- Exact duplicate Relationship prose: **0**
-- Relationships outside the 12–40 word guidance: **0**
+- Preserve every saved Card, profile, grant, Project, graph record, conversation, Run, topology edge, and unrelated dirty-tree change.
+- Preserve the single official application CBM frontend and one shared upstream daemon; no cache/database access, reindex, repair, project deletion, alternate frontend, or fallback.
+- Preserve the joined Think/Know graph, existing Engraphis renderer, shared Inspector, File/Symbol expansion, source reads, and CodeGraph provider authority.
+- Preserve the user's browser draft; live acceptance ran in a separate test tab.
 
-The prior `turn.md` checkpoint reported `358 / 303 / 84.6%`, but a deterministic read of the committed `HEAD` finds **301 classified files (84.1%)** and 57 unclassified files. The frozen delta is exactly **21 newly classified files plus two deleted unclassified files**, producing the verified current `356 / 322 / 90.4%`. Do not reuse the stale `303` starting count.
+## Tasks
 
-No Entity was added. The lone file-specific alias `Trading Project` was reconciled into the established `Trading` Entity, reducing the vocabulary from 52 to 51 without changing behavior.
+### T001 — Recover official CBM service
 
-## Remaining owner decisions and missing product prerequisites — 6 files
+- Key Objective: Restore the application-owned CBM provider without another implementation or graph authority.
+- Definition of Done: official daemon lifecycle only; application catalog includes CBM; source identity is current; real CodeGraph provider reads succeed.
+- Result: PASS. The official CLI reported a wedged state (`daemon status` said not running while frontends were refused as active/starting). One authorized `daemon stop`/`daemon start` lifecycle was performed, followed by one canonical `npm run dev:fresh` application reload. MCP froze 57 unique tools with `liquidaity`, `cbm`, and `graphiti` ready and no unavailable families.
 
-### AgentGraph Run chronology — owner decision required
+### T002 — Remove Feature sorter
 
-- `apps/python-models/app/python_models/agentgraph_run_observations.py`
-- `apps/python-models/app/python_models/test_agentgraph_card_topology.py`
-- `apps/python-models/app/python_models/test_agentgraph_inspection.py`
+- Key Objective: Remove the unwanted CodeGraph Feature dropdown and always render the complete provider projection.
+- Definition of Done: no `CodeGraph Feature` combobox or `All Features` option; no abandoned filter path; Feature/File/Symbol records and edges remain intact; counts/freshness remain visible.
+- Result: PASS. `CodeGraphSurface` now passes the complete projection directly to the shared renderer. The filter helper and its filter-specific test were removed; multi-Feature identity remains covered by the full-projection test.
 
-Current-source reason: the observation writer persists `acceptedAt`, `preparationStartedAt`, `preparationEndedAt`, `preparationElapsedMs`, `preparationState`, `preparationError`, and `startedAt`; topology and inspection tests assert the same chronology. Classifying these files would silently approve that complete lifecycle contract. The owner previously rejected accepted/started presentation, while current repository law permits AGE to observe real Run events, so source alone cannot decide whether those fields remain internal observations or are removed entirely.
+### T003 — Restore Agents canvas
 
-Smallest next action: decide the exact minimal AGE Run-observation schema. Then change the writer, inspection projection, and both focused test sections as one contract; prove existing Card topology, Run/artifact/tool/failure/completion observations; classify the three files only after that proof.
+- Key Objective: Prove the user's saved agents were not lost and restore their visible canvas.
+- Definition of Done: authoritative saved deck still contains the six enabled core Cards; Agents navigation mounts the canvas and shows every Card without a saved-state write.
+- Result: PASS. Read-only saved-deck readback returned Main, Builder, ThinkGraph, Magnetic, Team, and KnowGraph. Selecting Agents removed `workspace=knowledge`, mounted the canvas, and rendered all six Cards plus the two saved edges. No Card/topology mutation occurred.
 
-### ThinkGraph completed-pair intake — approved Hermes caller still missing
+### T004 — Prove Main chat and Bot Mode
 
-- `apps/python-models/app/python_models/thinkgraph_completed_pair_preparation.py`
-- `apps/python-models/app/python_models/thinkgraph_completed_pair_extraction.py`
-- `apps/python-models/app/python_models/thinkgraph_completed_pair_settlement.py`
+- Key Objective: Execute real loaded Main and direct Builder turns through saved Card/Hermes authority.
+- Definition of Done: newly submitted input; terminal outer Run; expected native response rendered; exact provider/model/session readback; direct Builder delivery settles through Bot Mode.
+- Result: PASS.
+  - Main Run `req_516c8e77bd0f4624` completed with `MAIN_CHAT_OK`, provider `openai-codex`, model `gpt-5.6-sol`, session `20261016_200153_db929c`.
+  - Direct Builder Bot Mode Run `req_11da909347e246e9` completed with `BUILDER_BOT_OK`, provider `openai-codex`, model `gpt-5.6-sol`, same saved Main session. The Builder delivery settled in saved Builder session `20261016_195431_6b25c4`.
+  - Both replies rendered in Main chat with exact underscores and no accidental emphasis.
 
-Current-source reason: preparation validates one completed User/Main pair and builds Entity grounding plus a structured extraction request; extraction contains the structured output contract and semantic operating prompt; settlement atomically writes the resulting Thinks and Jev-classified relationships to Engraphis. The Python route exists, but no approved saved ThinkGraph Card caller currently connects completed Main pairs through Hermes. Directly calling these rails would restore the rejected bypass.
-
-Smallest next action: approve the saved per-Project `Capture Main turns automatically` control and exact Hermes saved-Card caller. Keep semantic extraction instructions with the saved ThinkGraph Card where appropriate, execute one real completed User/Main pair, read the resulting Think back from Engraphis, and only then classify all three files.
-
-## Deferred WorldView and WorldSignals seam — 25 files
-
-- `apps/backend/src/routes/worldview.routes.spec.ts`
-- `apps/backend/src/routes/worldviewRouteHandlers.ts`
-- `apps/python-models/app/python_models/project_worldview.py`
-- `apps/python-models/app/python_models/signal_contracts.py`
-- `apps/python-models/app/python_models/test_project_worldview.py`
-- `client/src/components/worldsignal/GodsEyeSurface.spec.tsx`
-- `client/src/components/worldsignal/GodsEyeSurface.tsx`
-- `client/src/components/worldsignal/loadWorldViewNative.spec.ts`
-- `client/src/components/worldsignal/loadWorldViewNative.ts`
-- `client/src/components/worldsignal/worldSignalLayerPrefs.spec.ts`
-- `client/src/components/worldsignal/worldSignalLayerPrefs.ts`
-- `client/src/components/worldsignal/worldViewInspectorMount.spec.ts`
-- `client/src/features/agentbuilder/core/AgentBuilderRail.spec.tsx`
-- `client/src/features/agentbuilder/core/AgentBuilderRail.tsx`
-- `client/src/features/agentbuilder/core/AgentBuilderWorkspace.spec.tsx`
-- `client/src/features/agentbuilder/core/useAgentBuilderWorkspaceLayout.spec.tsx`
-- `client/src/features/agentbuilder/core/useAgentBuilderWorkspaceLayout.ts`
-- `client/src/features/agentbuilder/rail/railVisibility.spec.ts`
-- `client/src/features/agentbuilder/rail/railVisibility.ts`
-- `client/src/features/worldview/WorldViewSurface.spec.tsx`
-- `client/src/features/worldview/WorldViewSurface.tsx`
-- `client/src/features/worldview/projectWorldview.spec.ts`
-- `client/src/features/worldview/projectWorldview.ts`
-- `client/src/worldview-native.d.ts`
-- `vite.config.ts`
-
-Current-source reason: these files are one connected first-party seam. Root Vite configuration supplies the controlled test module doorway; the declaration and loader define the mounted God’s Eye contract, frame/fallback readiness, commands, images, and destruction; the surface, rail, layout, and preference files mount it into the application; backend handlers correlate Project-and-Card-scoped actions and capabilities; Python validates Project WorldView state and WorldSignals contracts. Truthful classification depends on the already deferred loaded boundary, not more source-only labels.
-
-Smallest next action after the owner resumes this boundary:
-
-1. Inspect the current WorldSignals command manifest and existing startup credential handoff without creating, printing, rotating, or persisting another credential.
-2. Prove one signed mainstream command, one refused specialist command, and one unknown-command refusal.
-3. Prove WorldView module load, first rendered frame or honest fallback, destruction, Project remount, command readiness, and image readiness.
-4. Re-read and classify these 25 first-party files. If source proves that a controlled God’s Eye or Shadowbroker change is unavoidable, stop for a separate vendored-change authorization and divergence record.
-
-No controlled-vendor file was changed in the frozen implementation.
-
-## Structural refactor candidates — 3 files
-
-### Shared knowledge surface and its specification
+## Actual Changes
 
 - `client/src/components/knowledge/KnowledgeAuthorityGraphSurface.tsx`
-- `client/src/components/knowledge/KnowledgeAuthorityGraphSurface.spec.tsx`
+  - Removed Feature selection state, dropdown, reset effect, and filtered projection.
+  - Retained read-only Feature/File/freshness counts.
+  - Passes the complete CodeGraph projection to the existing Engraphis surface.
+- `client/src/components/knowledge/codeGraphProjection.ts`
+  - Removed the now-abandoned `filterCodeGraphProjection` presentation path.
+- Focused tests
+  - Assert the sorter is absent and the complete projection reaches the one renderer.
+  - Assert one shared File retains both source-owned Feature memberships.
+- Runtime
+  - Started the official permanent CBM daemon once and reloaded the canonical application stack once.
+  - No saved Product data, Git state, index data, cache data, or configuration was changed.
 
-Current-source reason: the 2,643-line production file is one real shared inspector surface, but it contains independently testable projection/join composition, Jev Focus preparation and validation, presentation persistence/material settings, citation/evidence presentation, and the stateful renderer/inspector. The 1,600-line specification mirrors those boundaries. Assigning several headers to both files would conceal the current structural problem; splitting by line count or creating multiple product surfaces would also be wrong. The frozen repair only corrected the documented KnowGraph-first default when a joined Entity has both authorities.
+## Verification
 
-Smallest next action: extract only pure contracts that already have independent tests and reasons to change, while preserving one unchanged shared graph/inspector component, its mounts, renderer, storage keys, and visual behavior. Move the corresponding test sections with each extracted contract, rerun the complete client suite, then perform a loaded visual regression before classification.
+### Source
 
-### Cross-authority Data Anchor specification
+- PASS — direct source and CBM map identified the exact sorter owner and all consumers.
+- PASS — exact residue search finds no production `CodeGraph Feature`, `All Features`, or `filterCodeGraphProjection` path.
+- PASS — `git diff --check` for the four changed files.
 
-- `apps/python-models/app/python_models/test_data_anchor.py`
+### Deterministic
 
-Current-source reason: this 1,120-line test module covers distinct owners: ThinkGraph exact reads and handoffs, KnowGraph Entity/Know projection and provenance, canonical Entity-directory validation, CodeGraph MCP reads, and IDF Data Anchor materialization. Six Entity labels on one test file would document the mixing rather than resolve it.
+- `KnowledgeAuthorityGraphSurface.spec.tsx`: 32 passed.
+- `codeGraphProjection.spec.ts`: 3 passed.
+- Client source and spec TypeScript checks: PASS.
+- Client production build: PASS, 2,715 modules; only the existing God's Eye `node:fs` externalization and large-chunk warnings remain.
 
-Smallest next action: split the tests along the existing production-owner boundaries without changing fixtures or expectations; run every resulting focused module plus the full Python rails suite; classify each new cohesive test file only after it passes.
+### Loaded
 
-## Frozen completed boundary
+- PASS — MCP catalog ready, 57 generated/published/unique tools, zero unavailable families, `sourceCurrent=true`, startup `96048858c8c24789b04be05c94c6ee4d`.
+- PASS — loaded CodeGraph rendered 51 Features and 374 Files with no `read_failed` state and no sorter.
+- PASS — loaded Agents canvas rendered all six saved core Cards.
 
-- Removed the uncalled `deckValidation.ts` path after moving its one live edge-identity rule into `BuilderCanvas.tsx`; exact residue search is clean.
-- Removed duplicate `test_agentgraph.py`; its unique real libpq URL-parsing proof now lives in `test_postgres.py`.
-- Deleted disconnected BuilderCanvas helper/test families while preserving the mounted Canvas contract.
-- Removed duplicate Direct ID selector aliases and synthetic unknown defaults while retaining unavailable saved model selections in the Card editor.
-- Redacted query strings and fragments from copyable frontend crash locations.
-- Replaced KnowGraph failure-body projection with bounded status/code outcomes in the backend and bounded code handling in the uploader.
-- Removed MCP prose/JSON error inference; protocol-declared `CallToolResult.isError` and structurally created application errors now own success or failure.
-- Isolated Kronos package loading under a private package name without changing `sys.path` or the top-level `model` module.
-- Isolated the controlled Hermes holographic-memory proof in a subprocess rather than mutating the parent test interpreter.
-- Preserved Graphiti-backed KnowGraph and Engraphis-backed ThinkGraph as LiquidAIty features; no second graph authority, runtime, route, registry, parser, queue, scheduler, or metadata store was added.
+### Live Agent
 
-## Proof boundary
+- PASS — one new real Main turn and one new real direct Builder Bot Mode turn completed with exact expected outputs.
 
-### Source and structure — PASS
+### Persistence
 
-- Complete frozen diff reviewed; every changed executable hunk is bounded to the listed repair classes.
-- Two deleted paths have no surviving source references.
-- No added files, controlled-vendor edits, generic Entity, malformed pair, legacy fake metadata block, or `Trading Project` Entity residue.
-- `git diff --check`: passed.
-- `HEAD` remained unchanged; no commit or push occurred in this run.
-- `.codebase-memory/artifact.json` was already dirty at run start and remains index-generated metadata. The run record contains one explicit authorized CLI reindex; no second lifecycle command or CBM repair was introduced.
+- PASS — exact outer Run readback confirmed both terminal Runs, provider/model/session identities, and final results.
+- PASS — Builder's direct Bot delivery settled; saved Card/deck/topology state remained unchanged.
 
-### Deterministic — PASS
+### Visual
 
-Primary freeze evidence:
+- PASS — inspected the loaded Main chat, Builder reply, Agents canvas, and positive CodeGraph scene. The Feature sorter is absent.
+- Owner visual acceptance remains the owner's judgment.
 
-- `typecheck:all`: passed.
-- Vitest: **77 passed / 1 skipped files; 471 passed / 1 skipped tests**.
-- Python rails: **507 passed** in 45m16s, with one upstream Graphiti/Pydantic deprecation warning.
-- KnowGraph service package: **31 passed** with the same upstream warning. These are tests of LiquidAIty's Graphiti-backed KnowGraph service; they were executed with the Python-rails test interpreter because `services/knowgraph/.venv` lacks pytest. That interpreter choice is test tooling, not another KnowGraph authority or implementation.
-- Backend and client production builds: passed; the existing deferred God’s Eye `node:fs` browser-externalization and large-chunk warnings remain with the frozen WorldView boundary.
-- Python compileall: passed.
-- Focused KnowGraph write route: **7 passed**.
-- Focused MCP contracts: **35 passed**.
+## Baseline or Unrelated Failures
 
-Independent reviewer replay against the frozen snapshot:
+- One initial combined Vitest attempt could not start an isolated worker under concurrent service/build load; exact isolated replays passed 32/32 and 3/3.
+- CodeGraph reports freshness `unverified`; the real 51-Feature/374-File projection and provider calls succeeded. No freshness gate or hidden fallback was added.
+- Existing older pending Runs were not altered.
 
-- KnowGraph write route plus shared knowledge-surface specification: **46 passed**.
-- MCP provider/catalog/streamable-HTTP contracts: **35 passed**, same upstream deprecation warning.
-- Hermes memory isolation, Trading/Kronos isolation, and PostgreSQL boundary: **15 passed**.
-- BuilderCanvas, crash diagnostics, model configuration, and Card-options projection: **39 passed**.
+## Documentation Coherence
 
-### Loaded health — PASS, narrow only
+- No canonical architecture document claimed the removed Feature selector as required current behavior.
+- This report replaces the prior blocked retry handoff with the successful daemon recovery and loaded acceptance evidence.
 
-- Frontend HTTP: **200**.
-- Backend `/api/health`: **200**.
-- This proves process health only; it does not prove a new loaded Card turn, external provider call, graph write, Magnetic mission, persistence mutation, or current visual acceptance.
+## Remaining / Blocked
 
-### Higher proof tiers — NOT RUN / NOT CLAIMED
+- None for the requested recovery.
 
-- Live saved Card or model behavior: not run.
-- External-provider acceptance: not run.
-- Persistence/readback for changed behavior: not run; the deterministic changes did not authorize a saved-state mutation.
-- Visual inspection and owner visual acceptance: not run.
+## Proposal — Not Implemented
 
-## Next-turn rule
+- None.
 
-Start with one of the three exact groups above. Do not reopen the 322 classified files for wording cleanup, do not reindex CBM without a new exact owner instruction, and do not add the future CodeGraph UI until the remaining source map is stable.
+## Changed-File Snapshot
+
+`turn.md` is excluded from its own self-referential digest.
+
+```text
+86cd01879e8f4ebe552f717b87e6c346c86d4de7c812db708e620e695939fb0c  client/src/components/knowledge/codeGraphProjection.spec.ts
+001514058b15251cc805dbef1a3e6dfc23d5cb3969234b9df9b7abdd00dce3e1  client/src/components/knowledge/codeGraphProjection.ts
+dcc9b552be7d3c6805008ea5ed555aa5c972fe135d1cb7b0808154d7c57b6ec4  client/src/components/knowledge/KnowledgeAuthorityGraphSurface.spec.tsx
+934f4dcb6c0b799a15d010d0f5eeb4a8a14534e9bdd8e783a0961e1994786043  client/src/components/knowledge/KnowledgeAuthorityGraphSurface.tsx
+```
+
+CHANGED_SNAPSHOT_SHA256: `8bb4222189f9ac0a552563951dcec5f2706355a3c5fcec7b4bb58dd8d8cdbba9`

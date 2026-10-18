@@ -1040,8 +1040,10 @@ def test_begin_run_preserves_source_failure_after_settling_accepted_attempt(
         "preparationStartedAt": "2026-10-01T20:00:00.001+00:00",
     }
     monkeypatch.setattr(card_run_preparation, "accept_run_request", lambda _payload: accepted)
-    monkeypatch.setattr(card_run_preparation, "_begin_accepted_run",
-        lambda _payload: (_ for _ in ()).throw(
+    monkeypatch.setattr(
+        card_run_preparation,
+        "_begin_accepted_run",
+        lambda _payload, _accepted: (_ for _ in ()).throw(
             saved_card_contract.CardDomainError("configured_tool_unknown:provider.tool")
         ),
     )
@@ -1105,7 +1107,7 @@ def test_auto_model_preparation_failure_persists_the_typed_bounded_decision(
     monkeypatch.setattr(
         card_run_preparation,
         "_begin_accepted_run",
-        lambda _payload: (_ for _ in ()).throw(error),
+        lambda _payload, _accepted: (_ for _ in ()).throw(error),
     )
     monkeypatch.setattr(
         card_run_preparation,

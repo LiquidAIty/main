@@ -1,3 +1,8 @@
+"""Focused Project WorldView capability persistence contracts."""
+
+# Entity: WorldView
+# Relationship: Verifies Main capability writes preserve user authority, validate identifiers and bounded reasons, and return the effective Project database result.
+
 from __future__ import annotations
 
 from contextlib import contextmanager

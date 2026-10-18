@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: Agent Builder
+ * Relationship: Verifies Main and companion panes retain one mounted subtree, surface-specific floors, pointer resizing, collision clipping, and underlay geometry.
+ */
+
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';

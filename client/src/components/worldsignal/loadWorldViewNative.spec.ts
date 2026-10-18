@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: WorldView
+ * Relationship: Proves the bounded module doorway and synthetic visual-readiness observer contracts, including frame milestones, fallback, failure, cleanup, and remount behavior without claiming loaded renderer pixels.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

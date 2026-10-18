@@ -69,6 +69,11 @@ def test_current_datetime_returns_iso_like_string():
 def test_card_selection_uses_the_live_definition_availability_and_grant_flag():
     assert card_tool_selection_is_eligible("calculator") is True
     assert card_tool_selection_is_eligible("main.context") is False
+    assert card_tool_selection_is_eligible("main.submit") is False
+    context = operation_definition("main.context")
+    submit = operation_definition("main.submit")
+    assert context is not None and context.external_entry is True
+    assert submit is not None and submit.external_entry is True
     assert card_tool_selection_is_eligible("not_a_real_tool") is False
 
 

@@ -48,7 +48,7 @@ def _health_row_count(value) -> int:
     except TypeError:
         return 0
 
-APP_VERSION = os.environ.get("_HEALTH_APP_VERSION", "0.9.82")
+APP_VERSION = os.environ.get("_HEALTH_APP_VERSION", "0.9.83")
 
 router = APIRouter()
 

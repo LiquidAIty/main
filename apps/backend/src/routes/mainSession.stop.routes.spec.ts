@@ -54,6 +54,18 @@ const gatewayMocks = vi.hoisted(() => ({
   hermesGateway: vi.fn(),
 }));
 
+const externalEntryMocks = vi.hoisted(() => ({
+  resolveExternalIdentityProjectGrant: vi.fn(async () => ({
+    grantId: 'grant-one',
+    userId: 'user-one',
+    projectId: 'project-one',
+    projectName: 'Project One',
+  })),
+  internalMcpProcessSecretAuthorized: vi.fn((value: unknown) => (
+    value === 'internal-secret'
+  )),
+}));
+
 vi.mock('../conversations/store', () => conversationMocks);
 vi.mock('../services/projectStore', () => ({
   assertHermesProfileOwner: projectMocks.assertHermesProfileOwner,
@@ -67,6 +79,12 @@ vi.mock('../services/projectCardAuthority', async () => {
 });
 vi.mock('../services/hermesGateway', () => ({
   hermesGateway: gatewayMocks.hermesGateway,
+}));
+vi.mock('../auth/externalIdentityGrantStore', () => ({
+  resolveExternalIdentityProjectGrant: externalEntryMocks.resolveExternalIdentityProjectGrant,
+}));
+vi.mock('../services/mcp/internalMcpAuth', () => ({
+  internalMcpProcessSecretAuthorized: externalEntryMocks.internalMcpProcessSecretAuthorized,
 }));
 vi.mock('../services/cardRunLifecycle', async () => {
   const actual = await vi.importActual<typeof import('../services/cardRunLifecycle')>(
@@ -158,9 +176,11 @@ function event(
   return { type, session_id: sessionId, payload } as HermesGatewayEvent;
 }
 
-function gateway(recipientWaiting: () => void) {
+function gateway(recipientWaiting: () => void, disconnectAfterStart = false) {
   const listeners = new Set<(value: HermesGatewayEvent) => void>();
+  const stateListeners = new Set<(value: string) => void>();
   const emit = (value: HermesGatewayEvent) => listeners.forEach(listener => listener(value));
+  const emitState = (value: string) => stateListeners.forEach(listener => listener(value));
   const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
     const profile = String(params.profile || '');
     if (method === 'session.list') {
@@ -177,6 +197,10 @@ function gateway(recipientWaiting: () => void) {
     if (method === 'prompt.submit') {
       queueMicrotask(() => {
         emit(event('prompt.submission.started', 'live-main', { submission_id: 'run-one' }));
+        if (disconnectAfterStart) {
+          emitState('closed');
+          return;
+        }
         emit(event('tool.start', 'live-main', {
           submission_id: 'run-one',
           name: 'message_agent',
@@ -228,19 +252,24 @@ function gateway(recipientWaiting: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     }),
-    onState: vi.fn(() => () => undefined),
+    onState: vi.fn((listener: (value: string) => void) => {
+      stateListeners.add(listener);
+      return () => stateListeners.delete(listener);
+    }),
     onRequest: vi.fn(() => () => undefined),
     request,
   } as unknown as HermesGatewayClient;
 }
 
-async function serve(): Promise<{ baseUrl: string }> {
+async function serve(withBrowserUser = true): Promise<{ baseUrl: string }> {
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => {
-    (req as typeof req & { userId: string }).userId = 'user-one';
-    next();
-  });
+  if (withBrowserUser) {
+    app.use((req, _res, next) => {
+      (req as typeof req & { userId: string }).userId = 'user-one';
+      next();
+    });
+  }
   app.use('/api/main/session', router);
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -257,6 +286,104 @@ afterEach(async () => {
 });
 
 describe('Main direct-recipient stop settlement', () => {
+  it('accepts only a supervised external identity and exact saved Main binding', async () => {
+    const fakeGateway = gateway(() => undefined, true);
+    gatewayMocks.hermesGateway.mockResolvedValue(fakeGateway);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve(false);
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-LiquidAIty-Internal-MCP-Secret': 'internal-secret',
+      },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: '@Builder investigate the exact issue',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000005',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000006',
+        externalIssuer: 'https://tenant.example/',
+        externalSubject: 'auth0|owner',
+        expectedMainCardId: 'card-main',
+      }),
+    });
+    const stream = await chat.text();
+
+    expect(chat.status).toBe(200);
+    expect(stream).toContain('event: run');
+    expect(stream).toContain('event: end');
+    expect(externalEntryMocks.resolveExternalIdentityProjectGrant).toHaveBeenCalledWith(
+      'https://tenant.example/', 'auth0|owner',
+    );
+    expect(projectMocks.getOwnedProjectByReference).toHaveBeenCalledWith(
+      'project-one', 'user-one',
+    );
+  });
+
+  it('refuses an external request whose saved Main binding changed', async () => {
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve(false);
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-LiquidAIty-Internal-MCP-Secret': 'internal-secret',
+      },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: '@Builder investigate the exact issue',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000007',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000008',
+        externalIssuer: 'https://tenant.example/',
+        externalSubject: 'auth0|owner',
+        expectedMainCardId: 'stale-main',
+      }),
+    });
+
+    expect(chat.status).toBe(409);
+    expect(await chat.json()).toEqual({
+      ok: false,
+      error: 'external_main_card_binding_changed',
+    });
+    expect(conversationMocks.appendConversationTurn).not.toHaveBeenCalled();
+    expect(lifecycleMocks.prepareCardRun).not.toHaveBeenCalled();
+  });
+
+  it('fails and settles the outer Run when the Hermes socket closes mid-turn', async () => {
+    const fakeGateway = gateway(() => undefined, true);
+    gatewayMocks.hermesGateway.mockResolvedValue(fakeGateway);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority());
+    const { baseUrl } = await serve();
+
+    const chat = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: '@Builder investigate the exact issue',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000003',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000004',
+      }),
+    });
+    const stream = await chat.text();
+
+    expect(chat.status).toBe(200);
+    expect(stream).toContain('"code":"hermes_gateway_closed_during_turn"');
+    expect(stream).toContain('event: end');
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-one',
+      state: 'failed',
+      errorCode: 'hermes_turn_failed',
+      errorSummary: 'hermes_gateway_closed_during_turn',
+    }));
+    expect(conversationMocks.appendConversationReplyOnce).not.toHaveBeenCalled();
+  });
+
   it('interrupts the exact recipient, cancels the outer Run, and persists no partial reply', async () => {
     let markRecipientWaiting!: () => void;
     const recipientWaiting = new Promise<void>((resolve) => { markRecipientWaiting = resolve; });

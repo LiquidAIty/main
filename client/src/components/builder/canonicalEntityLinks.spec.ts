@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   GraphProjectionV1,
   JoinedGraphPresentation,
-} from '../knowledge/KnowledgeAuthorityGraphSurface';
+} from '../knowledge/knowledgeGraphProjection';
 import {
   readCanonicalEntityProviderPointers,
   type CanonicalEntityHeader,

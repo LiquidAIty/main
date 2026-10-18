@@ -225,8 +225,8 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
   }
   return card.id;
 }
-// The launch surface renders one mixed human graph. ThinkGraph and KnowGraph
-// remain separate provider authorities; CodeGraph remains agent-facing through CBM.
+// The Graphs workspace keeps the mixed Think/Know presentation separate from
+// the opt-in Code view; all three remain backed by their own provider authority.
 const PROJECTS_API = '/api/projects';
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -1407,6 +1407,10 @@ export default function AgentBuilder(): React.ReactElement {
             statuses={knowledgeGraphs.statuses}
             onReadFocusNeighborhood={knowledgeGraphs.readProviderNeighborhood}
             entityFocusRequest={entityFocusRequest}
+            codeGraph={knowledgeGraphs.codeGraph}
+            onOpenCodeGraph={knowledgeGraphs.loadCodeGraph}
+            onReadCodeGraphFile={knowledgeGraphs.readCodeGraphFile}
+            onReadCodeGraphSource={knowledgeGraphs.readCodeGraphSource}
           />
         </KnowledgeSurfaceErrorBoundary>
       </div>

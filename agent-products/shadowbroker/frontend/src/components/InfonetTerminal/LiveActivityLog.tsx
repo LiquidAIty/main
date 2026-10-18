@@ -67,7 +67,7 @@ export default function LiveActivityLog() {
       if (data?.ships?.length) {
         initial.push({ id: crypto.randomUUID(), timestamp: now, gate: 'SYS', user: 'SYSTEM', content: `AIS: ${data.ships.length} vessels tracked`, color: 'text-gray-500' });
       }
-      if (data?.threat_level) {
+      if (data?.threat_level?.available !== false && data?.threat_level) {
         initial.push({ id: crypto.randomUUID(), timestamp: now, gate: 'SYS', user: 'SYSTEM', content: `Threat level: ${data.threat_level.level} (${data.threat_level.score}/100)`, color: pickColor('threat') });
       }
 
@@ -150,7 +150,13 @@ export default function LiveActivityLog() {
     }
 
     // Threat level changes
-    if (data?.threat_level && prev.threat_level && data.threat_level.level !== prev.threat_level.level) {
+    if (
+      data?.threat_level?.available !== false &&
+      prev.threat_level?.available !== false &&
+      data?.threat_level &&
+      prev.threat_level &&
+      data.threat_level.level !== prev.threat_level.level
+    ) {
       newLogs.push({
         id: crypto.randomUUID(), timestamp: now,
         gate: 'SYS', user: 'SYSTEM',

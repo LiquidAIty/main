@@ -190,7 +190,15 @@ def catalog_for_request(tools: list[Tool]) -> list[Tool]:
     elif principal is None and mcp_auth.access_token_available():
         context = mcp_auth.authenticated_project_context()
         granted = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])
-        visible = [tool for tool in visible if tool.name in granted]
+        visible = [tool for tool in visible if (
+            tool.name in granted
+            or bool(
+                (definition := operation_definition(tool.name))
+                and definition.external_entry
+                and context is not None
+                and context.get(mcp_auth.PROJECT_CONTEXT_MAIN_ENTRY_FIELD) is True
+            )
+        )]
     names = [tool.name for tool in visible]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})

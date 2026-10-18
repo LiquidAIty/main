@@ -25,7 +25,7 @@ def agentgraph_operation_definitions(
             title="Inspect AgentGraph",
             description=(
                 "Read a bounded, authenticated Project-scoped view of current PostgreSQL/AGE "
-                "Card relationships plus available run, lineage, tool, and artifact telemetry. "
+                "Card relationships plus exact run, lineage, and artifact observations. "
                 "runId selects one exact Run; otherwise the authenticated conversation is "
                 "selected. cardId filters its direct Runs. projectWide reads across the "
                 "authenticated Project, before limits. No prompt or model input is returned."

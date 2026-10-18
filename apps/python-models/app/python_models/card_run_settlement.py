@@ -232,7 +232,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             cursor, payload, request,
         )
     telemetry_written = (
-        agentgraph_run_observations.observe_run_finish(run_id, state, payload)
+        agentgraph_run_observations.observe_run_finish(run_record)
         if updated else False
     )
     return {

@@ -1,3 +1,8 @@
+/**
+ * Entity: Agent Builder
+ * Relationship: Owns continuous Main and companion resize state, pointer capture, surface-specific widths, collision geometry, and independent in-session WorldView sizing.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 

@@ -27,6 +27,14 @@ def test_expected_release_names():
     assert release_helper.expected_asset("0.9.6") == "ShadowBroker_v0.9.6.zip"
 
 
+def test_current_release_version_sources_are_coherent():
+    expected = release_helper.current_version()
+    sources = release_helper.release_version_sources()
+
+    assert sources
+    assert set(sources.values()) == {expected}, sources
+
+
 def test_set_version_updates_package_json(monkeypatch, tmp_path):
     package_json = tmp_path / "package.json"
     package_json.write_text(json.dumps({"name": "frontend", "version": "0.9.5"}) + "\n", encoding="utf-8")

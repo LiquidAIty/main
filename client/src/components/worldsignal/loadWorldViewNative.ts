@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: Loads the controlled one Earth mount, observes its real rendered-frame readiness and bounded OSM fallback, and exposes its existing commands, images, inspector controls, and teardown without creating another renderer.
+ */
+
 import nativeDocument from '../../../../agent-products/gods-eye-view/index.html?raw';
 import scopedStyles from 'virtual:worldview-native-css';
 import { importNativeWorldViewMount as importRuntimeWorldViewMount } from 'virtual:worldview-native-mount';

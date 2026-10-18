@@ -30,6 +30,9 @@
 .knowgraph-relationships button span { color:#89bcb8; }
 .knowgraph-sources a { display:block; margin:6px 0; color:#85d3ca; font-size:13px; overflow-wrap:anywhere; }
 .knowledge-authority-controls pre { max-height:160px; overflow:auto; color:#a9a9b8; font-size:10px; white-space:pre-wrap; }
+.knowledge-authority-controls .codegraph-source { display:grid; gap:8px; padding:10px 12px; border:1px solid rgba(34,224,255,.24); border-radius:10px; background:rgba(8,15,20,.78); }
+.knowledge-authority-controls .codegraph-source pre { max-height:360px; margin:0; padding:10px; border-radius:7px; background:#071014; color:#cce8e6; font-family:"JetBrains Mono",monospace; font-size:10px; line-height:1.45; }
+.knowledge-authority-controls .graph-inspector-records ul { display:grid; gap:5px; margin:0; padding-left:18px; color:#b8c7cc; font-size:12px; line-height:1.45; overflow-wrap:anywhere; }
 .knowledge-authority-controls select { min-width:0; flex:1; padding:7px; background:#101b20; color:inherit; border:1px solid #35454a; border-radius:5px; }
 .knowledge-authority-controls article, .knowledge-authority-controls dl { min-width:0; }
 .knowledge-authority-graph > aside { max-width:calc(100% - 24px); }

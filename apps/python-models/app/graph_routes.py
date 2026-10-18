@@ -267,3 +267,18 @@ def thinkgraph_neighborhood(projectId: str, canonicalId: str):
         return projection(project_id, canonical_id)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@graph_read_router.post("/codegraph/read")
+def codegraph_read(payload: dict[str, Any]):
+    """Read one bounded CodeGraph view through the persisted Builder grants."""
+
+    from app.python_models.codegraph_reference_reads import read_codegraph_view
+    from app.python_models.data_anchor_contract import DataAnchorError
+
+    try:
+        return read_codegraph_view(payload)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except DataAnchorError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err

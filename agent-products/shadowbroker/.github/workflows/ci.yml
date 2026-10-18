@@ -70,6 +70,7 @@ jobs:
       - run: cd backend && uv run ruff check .
       - run: cd backend && uv run black --check .
       - run: cd backend && uv run python -c "from services.fetchers.retry import with_retry; from services.env_check import validate_env; print('Module imports OK')"
+      - run: cd backend && uv run python scripts/release_helper.py check-version
       - name: Run release smoke tests
         run: |
           cd backend
@@ -78,5 +79,13 @@ jobs:
             tests/mesh/test_mesh_infonet_sync_support.py \
             tests/mesh/test_mesh_canonical.py \
             tests/mesh/test_mesh_merkle.py \
+            tests/mesh/test_mesh_privacy_hardening.py \
+            tests/mesh/test_signed_write_transport_matrix.py \
+            tests/test_no_new_duplicate_routes.py \
+            tests/test_oracle_resolve_auth_gate.py \
+            tests/test_oracle_routes.py \
+            tests/test_oracle_service.py \
+            tests/test_prediction_markets_opt_in.py \
+            tests/test_third_party_fetchers_opt_in.py \
             tests/test_release_helper.py \
             -v --tb=short

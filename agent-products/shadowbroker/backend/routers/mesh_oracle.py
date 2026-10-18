@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import math
 from typing import Any
 from fastapi import APIRouter, Request, Response, Query, Depends
@@ -16,6 +18,7 @@ from services.mesh.mesh_signed_events import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _signed_body(request: Request) -> dict[str, Any]:
@@ -98,21 +101,29 @@ async def oracle_predict(request: Request):
             matched = m
             break
     if not matched:
-        for m in markets:
-            if market_title.lower() in m.get("title", "").lower():
-                matched = m
-                break
-    if not matched:
         return {"ok": False, "detail": f"Market '{market_title}' not found in active markets."}
+
+    canonical_market_title = matched["title"]
+    prediction_payload["market_title"] = canonical_market_title
+
     probability = 50.0
     side_lower = side.lower()
     outcomes = matched.get("outcomes", [])
     if outcomes:
+        matched_outcome = None
         for o in outcomes:
             if o.get("name", "").lower() == side_lower:
-                probability = float(o.get("pct", 50))
+                matched_outcome = o
                 break
+        if matched_outcome is None:
+            return {
+                "ok": False,
+                "detail": f"Outcome '{side}' is not valid for market '{matched['title']}'.",
+            }
+        probability = float(matched_outcome.get("pct", 50))
     else:
+        if side_lower not in {"yes", "no"}:
+            return {"ok": False, "detail": "Binary market side must be 'yes' or 'no'."}
         consensus = matched.get("consensus_pct")
         if consensus is None:
             consensus = matched.get("polymarket_pct") or matched.get("kalshi_pct") or 50
@@ -120,11 +131,13 @@ async def oracle_predict(request: Request):
         if side_lower == "no":
             probability = 100.0 - probability
     if stake_amount > 0:
-        ok, detail = oracle_ledger.place_market_stake(node_id, matched["title"], side, stake_amount, probability)
+        ok, detail = oracle_ledger.place_market_stake(node_id, canonical_market_title, side, stake_amount, probability)
         mode = "staked"
     else:
-        ok, detail = oracle_ledger.place_prediction(node_id, matched["title"], side, probability)
+        ok, detail = oracle_ledger.place_prediction(node_id, canonical_market_title, side, probability)
         mode = "free"
+    audit_recorded = False
+    audit_warning = None
     if ok:
         try:
             from services.mesh.mesh_hashchain import infonet
@@ -132,9 +145,19 @@ async def oracle_predict(request: Request):
             infonet.append(event_type="prediction", node_id=node_id, payload=normalized_payload,
                 signature=signature, sequence=sequence, public_key=public_key,
                 public_key_algo=public_key_algo, protocol_version=protocol_version)
-        except Exception:
-            pass
-    return {"ok": ok, "detail": detail, "probability": probability, "mode": mode}
+            audit_recorded = True
+        except Exception as exc:
+            logger.warning("Oracle prediction recorded without Infonet audit event: %s", exc)
+            audit_warning = "Prediction was recorded, but its Infonet audit event was unavailable."
+    return {
+        "ok": ok,
+        "detail": detail,
+        "probability": probability,
+        "mode": mode,
+        "market_title": canonical_market_title,
+        "audit_recorded": audit_recorded,
+        "warning": audit_warning,
+    }
 
 
 @router.get("/api/mesh/oracle/markets")
@@ -150,10 +173,11 @@ async def oracle_markets(request: Request):
     for m in markets:
         by_category[m.get("category", "NEWS")].append(m)
     _fields = ("title", "consensus_pct", "polymarket_pct", "kalshi_pct", "volume", "volume_24h",
-               "end_date", "description", "category", "sources", "slug", "kalshi_ticker", "outcomes")
+               "end_date", "description", "category", "sources", "slug", "kalshi_ticker", "outcomes",
+               "kalshi_volume")
     categories = {}
     cat_totals = {}
-    for cat in ["POLITICS", "CONFLICT", "NEWS", "FINANCE", "CRYPTO"]:
+    for cat in ["POLITICS", "CONFLICT", "NEWS", "FINANCE", "CRYPTO", "SPORTS"]:
         all_cat = sorted(by_category.get(cat, []), key=lambda x: x.get("volume", 0) or 0, reverse=True)
         cat_totals[cat] = len(all_cat)
         cat_list = []
@@ -165,20 +189,65 @@ async def oracle_markets(request: Request):
     return {"categories": categories, "total_count": len(markets), "cat_totals": cat_totals}
 
 
-@router.get("/api/mesh/oracle/search")
+@router.get("/api/mesh/oracle/search", dependencies=[Depends(require_local_operator)])
 @limiter.limit("20/minute")
-async def oracle_search(request: Request, q: str = "", limit: int = 50):
+async def oracle_search(request: Request, q: str = "", limit: int = 20, offset: int = 0):
     """Search prediction markets across Polymarket + Kalshi APIs."""
+    q = str(q or "").strip()
     if not q or len(q) < 2:
-        return {"results": [], "query": q, "count": 0}
+        return {"results": [], "query": q, "count": 0, "offset": 0, "has_more": False}
+    if len(q) > 200:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "query_too_long",
+                "detail": "Prediction-market search queries are limited to 200 characters.",
+                "results": [],
+                "query": q[:200],
+                "count": 0,
+                "offset": 0,
+                "has_more": False,
+            },
+        )
+
+    from services.prediction_markets_settings import prediction_markets_fetch_enabled
+
+    if not prediction_markets_fetch_enabled():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "prediction_markets_disabled",
+                "detail": "Prediction-market provider access is disabled. Enable MKT explicitly before searching Polymarket or Kalshi.",
+                "results": [],
+                "query": q,
+                "count": 0,
+                "offset": 0,
+                "has_more": False,
+            },
+        )
+
     from services.fetchers.prediction_markets import search_polymarket_direct, search_kalshi_direct
-    import concurrent.futures
-    # Search both APIs in parallel for speed
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        poly_fut = pool.submit(search_polymarket_direct, q, limit)
-        kalshi_fut = pool.submit(search_kalshi_direct, q, limit)
-        poly_results = poly_fut.result(timeout=20)
-        kalshi_results = kalshi_fut.result(timeout=20)
+
+    limit = max(1, min(_safe_int(limit, 20), 100))
+    offset = max(0, min(_safe_int(offset, 0), 1000))
+    provider_limit = min(offset + limit + 25, 250)
+
+    async def _provider_search(name: str, search_fn):
+        try:
+            rows = await asyncio.wait_for(
+                asyncio.to_thread(search_fn, q, provider_limit, 0),
+                timeout=20,
+            )
+            return list(rows or []), None
+        except Exception as exc:
+            logger.warning("Oracle provider search failed for %s: %s", name, exc)
+            return [], name
+
+    (poly_results, poly_error), (kalshi_results, kalshi_error) = await asyncio.gather(
+        _provider_search("polymarket", search_polymarket_direct),
+        _provider_search("kalshi", search_kalshi_direct),
+    )
+    provider_errors = [name for name in (poly_error, kalshi_error) if name]
     # Also check cached/merged markets
     data = get_latest_data()
     markets = data.get("prediction_markets", [])
@@ -202,22 +271,36 @@ async def oracle_search(request: Request, q: str = "", limit: int = 50):
             combined.append(m)
     combined.sort(key=lambda x: x.get("volume", 0) or 0, reverse=True)
     _fields = ("title", "consensus_pct", "polymarket_pct", "kalshi_pct", "volume", "volume_24h",
-               "end_date", "description", "category", "sources", "slug", "kalshi_ticker", "outcomes")
-    results = [{k: m.get(k) for k in _fields} for m in combined[:limit]]
-    return {"results": results, "query": q, "count": len(results)}
+               "end_date", "description", "category", "sources", "slug", "kalshi_ticker", "outcomes",
+               "kalshi_volume")
+    page = combined[offset : offset + limit]
+    results = [{k: m.get(k) for k in _fields} for m in page]
+    return {
+        "results": results,
+        "query": q,
+        "count": len(results),
+        "offset": offset,
+        "has_more": len(combined) > offset + limit,
+        "total_seen": len(combined),
+        "provider_errors": provider_errors,
+    }
 
 
 @router.get("/api/mesh/oracle/markets/more")
 @limiter.limit("30/minute")
 async def oracle_markets_more(request: Request, category: str = "NEWS", offset: int = 0, limit: int = 10):
     """Load more markets for a specific category (paginated)."""
+    category = (category or "NEWS").upper()
+    offset = max(0, _safe_int(offset, 0))
+    limit = max(1, min(_safe_int(limit, 10), 100))
     data = get_latest_data()
     markets = data.get("prediction_markets", [])
-    cat_markets = sorted([m for m in markets if m.get("category") == category],
+    cat_markets = sorted([m for m in markets if category == "ALL" or m.get("category") == category],
         key=lambda x: x.get("volume", 0) or 0, reverse=True)
     page = cat_markets[offset : offset + limit]
     _fields = ("title", "consensus_pct", "polymarket_pct", "kalshi_pct", "volume", "volume_24h",
-               "end_date", "description", "category", "sources", "slug", "kalshi_ticker", "outcomes")
+               "end_date", "description", "category", "sources", "slug", "kalshi_ticker", "outcomes",
+               "kalshi_volume")
     results = [{k: m.get(k) for k in _fields} for m in page]
     return {"markets": results, "category": category, "offset": offset,
             "has_more": offset + limit < len(cat_markets), "total": len(cat_markets)}

@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { GraphProjectionV1 } from './KnowledgeAuthorityGraphSurface';
+import type { GraphProjectionV1 } from './knowledgeGraphProjection';
 import {
   applyJevGraphPhysics,
   DURABLE_NODE_RADIUS_MAX,

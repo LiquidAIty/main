@@ -642,10 +642,13 @@ export interface NewsArticle {
 }
 
 export interface ThreatLevel {
-  score: number;
-  level: 'GREEN' | 'GUARDED' | 'ELEVATED' | 'HIGH' | 'SEVERE';
+  available: boolean;
+  status: 'available' | 'no_data' | 'disabled' | 'error';
+  score: number | null;
+  level: 'UNAVAILABLE' | 'GREEN' | 'GUARDED' | 'ELEVATED' | 'HIGH' | 'SEVERE';
   color: string;
   drivers: string[];
+  detail?: string;
 }
 
 // ─── UKRAINE FRONTLINE ──────────────────────────────────────────────────────

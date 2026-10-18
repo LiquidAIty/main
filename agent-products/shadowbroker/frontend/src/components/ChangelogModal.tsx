@@ -18,32 +18,32 @@ import {
 
 const CURRENT_VERSION = '0.9.83';
 const STORAGE_KEY = `shadowbroker_changelog_v${CURRENT_VERSION}`;
-const RELEASE_TITLE = 'Infonet Gate Messaging + DM Protocols Live';
+const RELEASE_TITLE = 'Infonet Messaging Testnet + Transport Hardening';
 
 const HEADLINE_FEATURES = [
   {
     icon: <Lock size={20} className="text-purple-400" />,
     accent: 'purple' as const,
-    title: 'Gate Messaging — End-to-End on the Hashchain',
+    title: 'Gate Messaging — Experimental Encrypted Testnet Lane',
     subtitle:
-      'Encrypted MLS gate rooms now carry live chat over your private Infonet hashchain. Messages replicate across participant nodes via swarm push/pull — only gate members can decrypt.',
+      'Gate rooms carry encrypted messages over the Infonet hashchain, but this release does not claim end-to-end privacy or metadata protection. Treat the lane as an experimental testnet.',
     details: [
-      'Gate messages append as signed `gate_message` events on each participant\'s private chain; peers sync ciphertext through the mesh without exposing room keys to outsiders.',
+      'Gate messages append as signed `gate_message` events; peers sync ciphertext through the mesh. The canonical threat model remains the authority for what this does and does not protect.',
       'Swarm replication keeps late joiners and offline nodes convergent — pull missing blocks, push new envelopes to known gate peers.',
-      'MLS group crypto (privacy-core) handles forward secrecy and membership changes; the UI surfaces delivery, key rotation, and compat approval when room epochs advance.',
+      'Privacy-core and MLS integration work is present, but live end-to-end privacy acceptance remains TODO before stronger public claims.',
     ],
     callToAction: 'MESH CHAT → GATES → CREATE OR JOIN A ROOM',
   },
   {
     icon: <MessageSquare size={20} className="text-cyan-400" />,
     accent: 'cyan' as const,
-    title: 'Direct Messages — Short Address, Request, Encrypt',
+    title: 'Direct Messages — Experimental Contact and Encrypted Lane',
     subtitle:
-      'DMs are fully operational over the wormhole/Tor lane: share your short wormhole address out-of-band, accept a contact request, then exchange ratchet-encrypted messages.',
+      'The request, approval, and encrypted-message workflow is available over the Wormhole/Tor lane. It is the strongest current lane, but it is not yet claimed as confidently private.',
     details: [
       'Contact flow: outbound request → peer approve/deny → mutual DM session with double-ratchet bundles and mailbox claim keys.',
       'No public phonebook — addresses are intentionally short and meant to be exchanged like a phone number or email, not discovered from a directory.',
-      'Fleet-tested across multiple onion participants: request, accept, decrypt, and reply paths verified on live Tor hidden services.',
+      'Cross-node live acceptance and privacy assurance remain release evidence TODOs; use only non-sensitive testnet content.',
     ],
     callToAction: 'MESH CHAT → DIRECT → SHARE SHORT ADDRESS',
   },

@@ -57,6 +57,13 @@ profile, or historical screenshot cannot establish one Project's current configu
   returns the fixed combined view. Graph settings remain in the detailed inspector.
 - Entity radius scales linearly from least to most attached Think-and-Know words. Jev relationship
   probability remains movement/centrality input and is not replaced by word count.
+- The existing Graphs workspace now has an explicit opt-in **Code** view beside the unchanged joined
+  Think/Know view. It reuses the same Engraphis renderer and Inspector. Structural File/Symbol identities
+  and edges come only from the official CBM provider through the persisted Builder Card's actual grants;
+  Feature membership and each file's Relationship statement come from bounded CBM reads of the inline
+  source comments. The browser cannot submit a tool, raw query, provider, MCP URL, Card or deck override.
+  File selection requests a bounded structural expansion and Symbol source loads only after an explicit
+  action. Provider failure remains an unavailable/error state with no cached or empty-success fallback.
 
 ### ThinkGraph
 
@@ -113,6 +120,15 @@ These are source/documentation gaps, not permission to repair them during this d
    fresh loaded health/source check and graph-inspector visual regression, but did not repeat model turns.
    Interactive profile OAuth, enabled Card Script execution/failure recovery, Team, Magnetic, graph writes,
    external clients, and final owner visual acceptance remain separate.
+7. The 2026-10-17 CodeGraph implementation passed its focused provider, transport, projection, hook,
+   renderer, and shared-Inspector checks and loaded real CBM Feature data before the final pagination
+   correction. The owner then authorized one application-CBM frontend retry. A read-only CLI preflight
+   reported canonical project `C-Projects-LiquidAIty-main` ready, but the canonical application reload's
+   one frontend still failed with `CBM daemon is active or starting but could not accept this client within
+   30000 ms`. The MCP host froze 48 unique tools with `cbm` as the sole unavailable family, and the loaded
+   Code view correctly showed `0 Features · 0 Files · unverified` plus `Graph failed: read_failed` rather
+   than stale or empty-success data. Loaded File/Symbol expansion, source readback, and owner visual
+   acceptance remain blocked and unproven.
 
 ## Loaded core checkpoint — reached 2026-10-14
 
@@ -154,6 +170,10 @@ trade, credential change, or saved Card mutation was performed.
 Profile OAuth tool readback and Card Script success/failure recovery require their real external or saved
 prerequisites. A new model turn, Team, Magnetic, graph writes, external-client acceptance, and Jeremiah's final
 visual acceptance remain separate and must not be inferred from health, deterministic, or inspector proof.
+CodeGraph's one explicitly authorized application-CBM frontend retry was performed and failed with the same
+30-second upstream-daemon attachment error. The final positive loaded path cannot be accepted. Any further
+CBM retry, restart, repair, reindex, cache access, project mutation, or configuration change requires a new
+exact owner instruction.
 
 ## Next graph boundary — deferred
 

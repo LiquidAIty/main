@@ -57,6 +57,7 @@ PROJECT_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "callerCardId"}
 )
 PROJECT_CONTEXT_TOOLS_FIELD = "grantedTools"
+PROJECT_CONTEXT_MAIN_ENTRY_FIELD = "mainEntryAuthorized"
 _REQUESTED_HERMES_PROFILE: ContextVar[str] = ContextVar(
     "requested_hermes_profile", default="",
 )
@@ -122,6 +123,25 @@ def oauth_trace_fields() -> dict[str, str]:
 
 def access_token_available() -> bool:
     return get_access_token() is not None
+
+
+def authenticated_external_identity() -> dict[str, str] | None:
+    """Return the verified external issuer/subject without exposing token material."""
+
+    access_token = get_access_token()
+    if access_token is None or internal_mcp_principal() is not None:
+        return None
+    expires_at = getattr(access_token, "expires_at", None)
+    if expires_at is not None and float(expires_at) <= time.time():
+        return None
+    claims = getattr(access_token, "claims", None)
+    issuer = str(claims.get("iss") or "").strip() if isinstance(claims, dict) else ""
+    subject = str(getattr(access_token, "subject", "") or "").strip()
+    if not subject and isinstance(claims, dict):
+        subject = str(claims.get("sub") or "").strip()
+    if not issuer or not subject:
+        return None
+    return {"issuer": issuer, "subject": subject}
 
 
 @dataclass(frozen=True)
@@ -197,6 +217,9 @@ def _validated_project_context(value: Any) -> dict[str, Any] | None:
     return {
         **{field: str(value[field]) for field in PROJECT_CONTEXT_FIELDS},
         PROJECT_CONTEXT_TOOLS_FIELD: sorted(granted_tools),
+        PROJECT_CONTEXT_MAIN_ENTRY_FIELD: (
+            value.get(PROJECT_CONTEXT_MAIN_ENTRY_FIELD) is True
+        ),
     }
 
 

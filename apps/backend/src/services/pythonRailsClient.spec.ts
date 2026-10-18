@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  fetchCodeGraphRead,
   fetchKnowGraphNeighborhood,
   fetchKnowGraphProjection,
   fetchThinkGraphNeighborhood,
@@ -167,6 +168,39 @@ describe('pythonRailsClient', () => {
       2,
       'http://python-rails:8001/knowgraph/neighborhood?projectId=p1&nodeId=node-1&limit=50',
       expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('transports one fixed-purpose CodeGraph read without reshaping it', async () => {
+    const responseBody = {
+      schemaVersion: 'codegraph.read.v1',
+      status: 'partial',
+      mode: 'projection',
+      errors: [{ code: 'metadata_changed' }],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify(responseBody),
+    });
+    vi.stubGlobal('fetch', fetchMock as any);
+
+    await expect(fetchCodeGraphRead({
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      cardId: 'builder',
+      mode: 'projection',
+    })).resolves.toEqual(responseBody);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://python-rails:8001/codegraph/read',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'builder',
+          mode: 'projection',
+        }),
+      }),
     );
   });
 

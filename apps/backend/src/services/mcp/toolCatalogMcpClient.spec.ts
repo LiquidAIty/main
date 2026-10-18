@@ -33,6 +33,7 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       'engraphis_remember',
       'agentgraph.inspect',
       'main.context',
+      'main.submit',
       'run_mag_one',
     ]));
     // Obsolete model-facing graph and agent-fabric wrappers are all gone.

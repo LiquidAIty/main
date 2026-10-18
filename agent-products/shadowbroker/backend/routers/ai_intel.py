@@ -1590,7 +1590,7 @@ async def agent_tool_manifest(request: Request):
 
     return {
         "ok": True,
-        "version": "0.9.82",
+        "version": "0.9.83",
         "access_tier": access_tier,
         "available_commands": available_commands,
         "transport": {
@@ -2327,7 +2327,7 @@ async def api_capabilities(request: Request):
     access_tier = str(get_settings().OPENCLAW_ACCESS_TIER or "restricted").strip().lower()
     return {
         "ok": True,
-        "version": "0.9.82",
+        "version": "0.9.83",
         "routing": routing_manifest(),
         "auth": {
             "method": "HMAC-SHA256",
@@ -3548,4 +3548,3 @@ async def list_analysis_zones(request: Request) -> dict:
     from services.analysis_zone_store import list_zones
 
     return {"ok": True, "zones": list_zones()}
-

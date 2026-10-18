@@ -1,6 +1,6 @@
 """Read-only saved-deck and AGE AgentGraph inspection."""
 # Entity: AgentGraph
-# Relationship: Reads bounded saved Card authority and identity-only AGE Run, assignment, lineage, tool, graph-access, and artifact observations without storing raw IDF content.
+# Relationship: Reads bounded saved Card authority and exact AGE Run, assignment, lineage, and artifact observations without inventing missing fields or storing raw IDF content.
 
 from __future__ import annotations
 
@@ -66,12 +66,12 @@ def _base_age_run_projection(
             continue
         runs[current_run_id] = {
             "runId": current_run_id,
-            "correlationId": str(properties.get("correlationId") or ""),
-            "state": str(properties.get("state") or "unknown"),
+            "correlationId": str(properties.get("correlationId") or "") or None,
+            "state": str(properties.get("state") or "") or None,
             "projectId": project_id,
             "deckId": str(properties.get("deckId") or deck_id),
-            "conversationId": str(properties.get("conversationId") or ""),
-            "rootRunId": str(properties.get("rootRunId") or current_run_id),
+            "conversationId": str(properties.get("conversationId") or "") or None,
+            "rootRunId": str(properties.get("rootRunId") or "") or None,
             "startedAt": str(properties.get("startedAt") or "") or None,
             "acceptedAt": str(properties.get("acceptedAt") or "") or None,
             "finishedAt": str(properties.get("finishedAt") or "") or None,
@@ -94,14 +94,7 @@ def _base_age_run_projection(
             "assignedFromCardIds": [],
             "parentRunIds": [],
             "childRunIds": [],
-            "usedTools": [],
-            "graphReads": 0,
-            "graphWrites": 0,
             "artifacts": [],
-            "idf": {
-                "sha256": str(properties.get("idfSha256") or "") or None,
-                "bytes": properties.get("idfBytes"),
-            },
         }
 
     return runs
@@ -133,28 +126,6 @@ def _apply_age_run_telemetry(
                 RETURN parent.runId, child.runId
                 """,
                 "parent_run_id agtype, child_run_id agtype",
-            ),
-            "tools": (
-                """
-                MATCH (run:Run {projectId: $projectId, deckId: $deckId})
-                      -[edge:USED_TOOL]->(tool:Tool)
-                WHERE run.runId IN $runIds
-                  AND edge.eventId IS NOT NULL AND edge.eventId <> ''
-                RETURN run.runId, tool.toolId, properties(edge)
-                ORDER BY edge.timestamp DESC
-                """,
-                "run_id agtype, tool_id agtype, event agtype",
-            ),
-            "tool_totals": (
-                """
-                MATCH (run:Run {projectId: $projectId, deckId: $deckId})
-                      -[edge:USED_TOOL]->(:Tool)
-                WHERE run.runId IN $runIds
-                  AND edge.eventId IS NOT NULL AND edge.eventId <> ''
-                  AND (edge.phase IS NULL OR edge.phase = 'completed')
-                RETURN run.runId, edge.operation, count(edge)
-                """,
-                "run_id agtype, operation agtype, event_count agtype",
             ),
             "artifacts": (
                 """
@@ -193,19 +164,6 @@ def _apply_age_run_telemetry(
                 runs[child_id]["parentRunIds"].append(parent_id)
             if parent_id in runs and child_id:
                 runs[parent_id]["childRunIds"].append(child_id)
-        for row in telemetry["tools"]:
-            item = runs.get(str(row.get("run_id") or ""))
-            if item is not None:
-                tool_id = str(row.get("tool_id") or "")
-                if tool_id and tool_id not in item["usedTools"]:
-                    item["usedTools"].append(tool_id)
-        for row in telemetry["tool_totals"]:
-            item = runs.get(str(row.get("run_id") or ""))
-            operation = str(row.get("operation") or "")
-            if item is not None and operation in {"read", "write"}:
-                item["graphReads" if operation == "read" else "graphWrites"] = int(
-                    row.get("event_count") or 0
-                )
         for row in telemetry["artifacts"]:
             item = runs.get(str(row.get("run_id") or ""))
             artifact = row.get("artifact")
@@ -214,6 +172,10 @@ def _apply_age_run_telemetry(
                     "artifactId": str(artifact.get("artifactId") or ""),
                     "artifactKind": str(artifact.get("artifactKind") or ""),
                     "locator": str(artifact.get("locator") or "")[:2048],
+                    "contentSha256": (
+                        str(artifact.get("contentSha256") or "") or None
+                    ),
+                    "sizeBytes": artifact.get("sizeBytes"),
                 })
 
 

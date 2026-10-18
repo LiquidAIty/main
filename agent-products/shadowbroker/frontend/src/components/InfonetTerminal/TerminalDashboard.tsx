@@ -19,6 +19,7 @@ function formatTime(pubDate: string): string {
 }
 
 const THREAT_COLORS: Record<string, { text: string; bg: string; border: string }> = {
+  UNAVAILABLE: { text: 'text-gray-400', bg: 'bg-gray-900/30', border: 'border-gray-700/50' },
   GREEN: { text: 'text-green-400', bg: 'bg-green-900/30', border: 'border-green-900/50' },
   GUARDED: { text: 'text-blue-400', bg: 'bg-blue-900/30', border: 'border-blue-900/50' },
   ELEVATED: { text: 'text-yellow-400', bg: 'bg-yellow-900/30', border: 'border-yellow-900/50' },
@@ -41,7 +42,7 @@ export default function TerminalDashboard({ onNavigate, onComingSoon }: Terminal
   const news = data?.news || [];
   const markets = data?.trending_markets || [];
   const threat = data?.threat_level;
-  const threatStyle = THREAT_COLORS[threat?.level || 'ELEVATED'] || THREAT_COLORS.ELEVATED;
+  const threatStyle = THREAT_COLORS[threat?.level || 'UNAVAILABLE'] || THREAT_COLORS.UNAVAILABLE;
 
   // Count active data layers
   const flightCount = (data?.commercial_flights?.length || 0) + (data?.military_flights?.length || 0);

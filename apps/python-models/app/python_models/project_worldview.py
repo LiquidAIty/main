@@ -1,5 +1,8 @@
 """Project-owned WorldView layer choices written by the Main profile."""
 
+# Entity: WorldView
+# Relationship: Validates and persists Main-authored Project capability recommendations while preserving explicit user overrides and returning the effective bounded WorldView state.
+
 from __future__ import annotations
 
 import re

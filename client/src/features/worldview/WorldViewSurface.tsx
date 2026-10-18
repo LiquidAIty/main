@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: Hosts the one Earth workspace, attaches its controls to the shared Inspector, applies exact Project layer choices, and relays scoped saved-Card actions through the mounted bridge.
+ */
+
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import scopedWorldViewStyles from 'virtual:worldview-native-css';
@@ -33,7 +38,7 @@ const INSPECTOR_TABS = [
   { id: 'selection', label: 'Selection' },
 ] as const;
 type InspectorTab = typeof INSPECTOR_TABS[number]['id'];
-const inspectorStyles = `${scopedWorldViewStyles.replaceAll('#worldview-native-root', '#worldview-inspector-controls')}\n${inspectorOverrides}`;
+const inspectorStyles = `${scopedWorldViewStyles.replaceAll('#worldview-gods-eye-root', '#worldview-inspector-controls')}\n${inspectorOverrides}`;
 const NAVIGATION_INSET = 16;
 
 type ViewRect = Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>;

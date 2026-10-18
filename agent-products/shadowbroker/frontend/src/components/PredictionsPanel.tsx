@@ -25,10 +25,11 @@ import { getNodeIdentity, nextSequence } from '@/mesh/meshIdentity';
 import { validateEventPayload } from '@/mesh/meshSchema';
 import { getActiveSigningContext, signMeshEvent } from '@/mesh/wormholeIdentityClient';
 import { useDataKeys } from '@/hooks/useDataStore';
+import { usePredictionMarketsOptIn } from '@/hooks/usePredictionMarketsOptIn';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type MarketCategory = 'POLITICS' | 'CONFLICT' | 'NEWS' | 'FINANCE' | 'CRYPTO';
+type MarketCategory = 'POLITICS' | 'CONFLICT' | 'NEWS' | 'FINANCE' | 'CRYPTO' | 'SPORTS';
 
 interface SourceBadge {
   name: string;
@@ -74,6 +75,7 @@ interface CategorizedMarkets {
   NEWS: Market[];
   FINANCE: Market[];
   CRYPTO: Market[];
+  SPORTS: Market[];
 }
 
 interface Prediction {
@@ -136,6 +138,7 @@ const CATEGORY_CONFIG: {
   { id: 'CONFLICT', label: 'CONFLICT', color: 'text-red-400', icon: Crosshair },
   { id: 'FINANCE', label: 'FINANCE', color: 'text-emerald-400', icon: DollarSign },
   { id: 'CRYPTO', label: 'CRYPTO', color: 'text-amber-400', icon: Bitcoin },
+  { id: 'SPORTS', label: 'SPORTS', color: 'text-orange-400', icon: Trophy },
   { id: 'NEWS', label: 'NEWS', color: 'text-cyan-400', icon: Newspaper },
 ];
 
@@ -150,6 +153,9 @@ function MarketCard({ market, onOpenModal }: { market: Market; onOpenModal: (m: 
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Oracle prediction: ${market.title}`}
       className="border border-[var(--border-primary)]/40 bg-[var(--bg-secondary)]/20 hover:bg-[var(--bg-secondary)]/40 transition-colors cursor-pointer"
       onClick={() => onOpenModal(market)}
     >
@@ -437,6 +443,103 @@ function MarketModal({
             </div>
           )}
 
+          {/* Prediction entry. This records testnet Oracle reputation only; it
+              does not place a wager with either market-data provider. */}
+          <div className="border border-amber-500/30 bg-amber-950/10 p-3 rounded space-y-3">
+            <div>
+              <div className="text-[9px] font-mono tracking-widest text-amber-300">
+                RECORD TESTNET PREDICTION
+              </div>
+              <div className="text-[9px] font-mono text-[var(--text-muted)] mt-1 leading-relaxed">
+                Saved to this node&apos;s experimental Oracle ledger. Polymarket and Kalshi are data sources only.
+                Settlement is manual until a verified provider-outcome contract is implemented.
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setMode('free')}
+                className={`px-3 py-2 text-[10px] tracking-wider border transition-colors ${
+                  mode === 'free'
+                    ? 'border-emerald-400/60 bg-emerald-500/15 text-emerald-300'
+                    : 'border-[var(--border-primary)] text-[var(--text-muted)]'
+                }`}
+              >
+                FREE PICK
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('stake')}
+                disabled={availableRep <= 0}
+                className={`px-3 py-2 text-[10px] tracking-wider border transition-colors disabled:opacity-40 ${
+                  mode === 'stake'
+                    ? 'border-amber-400/60 bg-amber-500/15 text-amber-300'
+                    : 'border-[var(--border-primary)] text-[var(--text-muted)]'
+                }`}
+              >
+                STAKE REP ({availableRep.toFixed(2)})
+              </button>
+            </div>
+
+            {mode === 'stake' && (
+              <label className="block text-[9px] tracking-wider text-[var(--text-muted)]">
+                ORACLE REP TO STAKE
+                <input
+                  aria-label="Oracle reputation to stake"
+                  type="number"
+                  min="0.01"
+                  max={availableRep}
+                  step="0.01"
+                  value={stakeInput}
+                  onChange={(event) => setStakeInput(event.target.value)}
+                  className="mt-1 w-full bg-black/40 border border-amber-500/30 px-2 py-1.5 text-amber-200 outline-none focus:border-amber-400"
+                />
+              </label>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              {(isMulti ? sortedOutcomes.map((outcome) => outcome.name) : ['yes', 'no']).map((side) => (
+                <button
+                  type="button"
+                  key={side}
+                  onClick={() => handlePick(side)}
+                  className="px-3 py-2 text-[10px] border border-cyan-500/30 text-cyan-200 hover:bg-cyan-500/10 hover:border-cyan-400/60 transition-colors truncate"
+                  title={side}
+                >
+                  PICK {side.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            {confirmSide && (
+              <div className="border border-red-500/30 bg-red-950/20 p-3 space-y-2">
+                <div className="text-[10px] text-red-200 leading-relaxed">
+                  Record <strong>{confirmSide.toUpperCase()}</strong>
+                  {mode === 'stake' ? ` with ${Number(stakeInput || 0).toFixed(2)} REP` : ' as a free pick'}?
+                  This node does not currently support editing an active prediction.
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmSide(null)}
+                    className="px-3 py-1.5 text-[10px] border border-[var(--border-primary)] text-[var(--text-muted)]"
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirm}
+                    disabled={loading || (mode === 'stake' && (!(Number(stakeInput) > 0) || Number(stakeInput) > availableRep))}
+                    className="px-3 py-1.5 text-[10px] border border-red-400/50 bg-red-500/10 text-red-200 disabled:opacity-40"
+                  >
+                    {loading ? 'RECORDING...' : 'RECORD PREDICTION'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* External links */}
           <div className="flex flex-wrap gap-2 pt-1 border-t border-[var(--border-primary)]/30">
             {market.slug && (
@@ -482,6 +585,7 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
     NEWS: [],
     FINANCE: [],
     CRYPTO: [],
+    SPORTS: [],
   });
   const [totalCount, setTotalCount] = useState(0);
   const [catTotals, setCatTotals] = useState<Record<MarketCategory, number>>({
@@ -490,6 +594,7 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
     NEWS: 0,
     FINANCE: 0,
     CRYPTO: 0,
+    SPORTS: 0,
   });
   const [expandedCategories, setExpandedCategories] = useState<Set<MarketCategory>>(
     new Set(['POLITICS']),
@@ -507,10 +612,16 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
 
   // Existing state
   const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [hiddenPredictionCount, setHiddenPredictionCount] = useState(0);
   const [profile, setProfile] = useState<OracleProfile | null>(null);
   const [loading, setLoading] = useState(false);
+  const [marketsLoading, setMarketsLoading] = useState(false);
+  const [marketsError, setMarketsError] = useState('');
   const [betStatus, setBetStatus] = useState('');
   const [activeNodeId, setActiveNodeId] = useState('');
+  const { status: marketsStatus, refreshStatus: refreshMarketsStatus } = usePredictionMarketsOptIn(
+    !isMinimized,
+  );
 
   const identity = typeof window !== 'undefined' ? getNodeIdentity() : null;
   const nodeId = activeNodeId || identity?.nodeId || '';
@@ -518,18 +629,23 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
   // ── Fetchers ──
 
   const fetchMarkets = useCallback(async () => {
+    setMarketsLoading(true);
+    setMarketsError('');
     try {
       const res = await fetch(`${API_BASE}/api/mesh/oracle/markets`);
-      if (res.ok) {
-        const d = await res.json();
-        setCategories(
-          d.categories || { POLITICS: [], CONFLICT: [], NEWS: [], FINANCE: [], CRYPTO: [] },
-        );
-        setTotalCount(d.total_count || 0);
-        if (d.cat_totals) setCatTotals(d.cat_totals);
-      }
+      if (!res.ok) throw new Error(`Oracle markets unavailable (${res.status})`);
+      const d = await res.json();
+      setCategories(
+        d.categories || {
+          POLITICS: [], CONFLICT: [], NEWS: [], FINANCE: [], CRYPTO: [], SPORTS: [],
+        },
+      );
+      setTotalCount(d.total_count || 0);
+      if (d.cat_totals) setCatTotals(d.cat_totals);
     } catch {
-      /* silent */
+      setMarketsError('Oracle market data is unavailable. Retry after the backend is healthy.');
+    } finally {
+      setMarketsLoading(false);
     }
   }, []);
 
@@ -541,18 +657,17 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
         const res = await fetch(
           `${API_BASE}/api/mesh/oracle/markets/more?category=${cat}&offset=${current}&limit=10`,
         );
-        if (res.ok) {
-          const d = await res.json();
-          if (d.markets?.length) {
-            setCategories((prev) => ({
-              ...prev,
-              [cat]: [...prev[cat], ...d.markets],
-            }));
-          }
-          if (d.total != null) setCatTotals((prev) => ({ ...prev, [cat]: d.total }));
+        if (!res.ok) throw new Error(`Oracle market page unavailable (${res.status})`);
+        const d = await res.json();
+        if (d.markets?.length) {
+          setCategories((prev) => ({
+            ...prev,
+            [cat]: [...prev[cat], ...d.markets],
+          }));
         }
+        if (d.total != null) setCatTotals((prev) => ({ ...prev, [cat]: d.total }));
       } catch {
-        /* silent */
+        setMarketsError('Could not load more Oracle markets.');
       }
       setLoadingMore((prev) => {
         const n = new Set(prev);
@@ -569,20 +684,30 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
       setIsSearching(false);
       return;
     }
+    if (marketsStatus?.enabled === false) {
+      setSearchResults([]);
+      setMarketsError('Prediction-market provider access is disabled. Enable MKT before searching.');
+      setIsSearching(false);
+      return;
+    }
     setIsSearching(true);
+    setMarketsError('');
     try {
       const res = await fetch(
         `${API_BASE}/api/mesh/oracle/search?q=${encodeURIComponent(query)}&limit=50`,
       );
-      if (res.ok) {
-        const d = await res.json();
-        setSearchResults(d.results || []);
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || `Oracle search unavailable (${res.status})`);
+      setSearchResults(d.results || []);
+      if (Array.isArray(d.provider_errors) && d.provider_errors.length > 0) {
+        setMarketsError(`Partial results: ${d.provider_errors.join(' and ')} unavailable.`);
       }
     } catch {
-      /* silent */
+      setSearchResults([]);
+      setMarketsError('Oracle search is unavailable. No provider result was accepted.');
     }
     setIsSearching(false);
-  }, []);
+  }, [marketsStatus?.enabled]);
 
   const handleSearchInput = useCallback(
     (value: string) => {
@@ -602,6 +727,9 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
       if (res.ok) {
         const d = await res.json();
         setPredictions(d.predictions || []);
+        setHiddenPredictionCount(
+          Math.max(0, Number(d.count ?? (Array.isArray(d.predictions) ? d.predictions.length : 0))),
+        );
       }
     } catch {
       /* silent */
@@ -651,6 +779,7 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
   useEffect(() => {
     if (isMinimized) return;
     if (activeTab === 'markets') {
+      void refreshMarketsStatus();
       fetchMarkets();
       const iv = setInterval(fetchMarkets, 60000);
       return () => clearInterval(iv);
@@ -663,7 +792,11 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
       const iv = setInterval(fetchProfile, 60000);
       return () => clearInterval(iv);
     }
-  }, [isMinimized, activeTab, fetchMarkets, fetchPredictions, fetchProfile]);
+  }, [isMinimized, activeTab, fetchMarkets, fetchPredictions, fetchProfile, refreshMarketsStatus]);
+
+  useEffect(() => {
+    if (!isMinimized && modalMarket && nodeId) void fetchProfile();
+  }, [fetchProfile, isMinimized, modalMarket, nodeId]);
 
   // ── Place prediction (supports free + staked) ──
 
@@ -713,7 +846,11 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
       const d = await res.json();
       if (d.ok) {
         const modeLabel = stakeAmount > 0 ? `STAKED ${stakeAmount.toFixed(1)} REP` : 'FREE PICK';
-        setBetStatus(`${side.toUpperCase()} ${modeLabel} — FINAL`);
+        setBetStatus(
+          d.audit_recorded === false
+            ? `${side.toUpperCase()} ${modeLabel} — RECORDED, AUDIT UNAVAILABLE`
+            : `${side.toUpperCase()} ${modeLabel} — RECORDED`,
+        );
         setModalMarket(null);
         setActiveNodeId(signed.context.nodeId);
         fetchPredictions();
@@ -831,6 +968,20 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
                 {/* ─── MARKETS TAB ─── */}
                 {activeTab === 'markets' && (
                   <div className="flex flex-col">
+                    {marketsStatus?.enabled === false && (
+                      <div className="mx-3 mt-3 border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-[10px] font-mono text-amber-200 leading-relaxed">
+                        PROVIDER SEARCH OFF — enable MKT in Global Threat Intercept before contacting
+                        Polymarket or Kalshi. Cached rows, if any, remain read-only.
+                      </div>
+                    )}
+                    {marketsError && (
+                      <div className="mx-3 mt-3 border border-red-500/30 bg-red-950/20 px-3 py-2 text-[10px] font-mono text-red-200 leading-relaxed">
+                        {marketsError}
+                      </div>
+                    )}
+                    {marketsLoading && headerCount === 0 && (
+                      <div className="mx-3 mt-3 text-[10px] font-mono text-cyan-300">LOADING ORACLE MARKETS...</div>
+                    )}
                     {/* Search bar */}
                     <div className="px-3 pt-3 pb-2">
                       <div className="relative">
@@ -1064,7 +1215,9 @@ const PredictionsPanel = React.memo(function PredictionsPanel() {
                     )}
                     {nodeId && predictions.length === 0 && (
                       <div className="text-[12px] text-[var(--text-muted)] font-mono text-center py-6">
-                        NO ACTIVE PREDICTIONS
+                        {hiddenPredictionCount > 0
+                          ? `${hiddenPredictionCount} ACTIVE POSITION${hiddenPredictionCount === 1 ? '' : 'S'} HIDDEN — MESH AUDIT AUTH REQUIRED`
+                          : 'NO ACTIVE PREDICTIONS'}
                       </div>
                     )}
                     {predictions.map((p, i) => (

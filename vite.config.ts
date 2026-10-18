@@ -1,3 +1,11 @@
+/**
+ * Entity: Development Tooling
+ * Relationship: Defines the repository Vitest projects, client transforms, shared aliases, and test defaults used by the root test command.
+ *
+ * Entity: WorldView
+ * Relationship: Supplies test-only virtual CSS and mount modules so client specifications resolve the controlled one-Earth doorway without loading the real renderer.
+ */
+
 // vitest/config re-exports Vite's defineConfig with the `test` key typed.
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
@@ -17,7 +25,7 @@ export default defineConfig({
       load(id) {
         if (id === '\0worldview-native-test-css') return 'export default "";';
         if (id === '\0worldview-native-test-mount') {
-          return 'export const importNativeWorldViewMount = async () => ({ mountWorldView: () => null });';
+          return 'export const importNativeWorldViewMount = async () => { throw new Error("worldview_test_mount_unavailable"); };';
         }
         return null;
       },
@@ -57,21 +65,6 @@ export default defineConfig({
       // Verified against disk 2026-07-08; the dead "allotment" alias (no copy
       // anywhere, no importer) was removed.
       "react-router-dom": path.resolve(process.cwd(), "node_modules/react-router-dom"),
-    },
-  },
-  server: {
-    host: true,
-    port: 5173,
-    strictPort: true,
-    hmr: {
-      host: "localhost",
-      port: 5173,
-    },
-    proxy: {
-      "/api": {
-        target: "http://127.0.0.1:4000",
-        changeOrigin: true,
-      },
     },
   },
 });

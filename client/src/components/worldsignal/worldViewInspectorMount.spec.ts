@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: WorldView
+ * Relationship: Verifies the controlled mount relocates its original live controls into the shared Inspector and restores them before teardown without replacing their listeners.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const application = vi.hoisted(() => ({
@@ -55,7 +60,7 @@ afterEach(async () => {
   mounted = null;
   root.remove();
   host.remove();
-  document.head.querySelectorAll('link[data-worldview-native-font]').forEach((link) => link.remove());
+  document.head.querySelectorAll('link[data-worldview-gods-eye-font]').forEach((link) => link.remove());
 });
 
 describe('WorldView Inspector control attachment', () => {
@@ -66,7 +71,7 @@ describe('WorldView Inspector control attachment', () => {
     });
     mounted = await mountWorldView(root, {
       documentMarkup,
-      scopedStyles: '#worldview-native-root { display: block; }',
+      scopedStyles: '#worldview-gods-eye-root { display: block; }',
     });
     expect(getActiveWorldViewMountCount()).toBe(1);
     const original = new Map(controlIds.map((id) => [id, root.querySelector(`#${id}`)]));

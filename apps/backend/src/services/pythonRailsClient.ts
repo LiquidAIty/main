@@ -1,6 +1,6 @@
 /**
  * Entity: Python Rails
- * Relationship: Performs bounded JSON HTTP transport to the configured Python rails service and exposes unmodified ThinkGraph and KnowGraph read helpers.
+ * Relationship: Performs bounded JSON HTTP transport to the configured Python rails service and exposes unmodified ThinkGraph, KnowGraph, and saved-authority CodeGraph read helpers.
  */
 
 function trimBaseUrl(value: string): string {
@@ -156,4 +156,20 @@ export async function fetchKnowGraphNeighborhood(
     limit: String(limit),
   });
   return requestPythonRailsJson(`/knowgraph/neighborhood?${query.toString()}`, { method: 'GET' });
+}
+
+/** Transport one fixed-purpose CodeGraph read without exposing provider operations. */
+export async function fetchCodeGraphRead(payload: {
+  projectId: string;
+  deckId: 'deck_builder';
+  cardId: 'builder';
+  mode: 'projection' | 'file' | 'source';
+  filePath?: string;
+  qualifiedName?: string;
+}): Promise<unknown> {
+  return requestPythonRailsJson('/codegraph/read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 }

@@ -133,21 +133,31 @@ export async function streamSession(args: {
   onEvent: (event: HermesSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
-  const response = await fetch(`${BASE}/chat`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: args.projectId,
-      deckId: args.deckId,
-      message: args.message,
-      clientMessageId: clientMessageId(),
-      clientReplyMessageId: clientMessageId(),
-      dataAnchors: args.dataAnchors || [],
-      ...(args.images?.length ? { images: args.images } : {}),
-    }),
-    signal: args.signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/chat`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: args.projectId,
+        deckId: args.deckId,
+        message: args.message,
+        clientMessageId: clientMessageId(),
+        clientReplyMessageId: clientMessageId(),
+        dataAnchors: args.dataAnchors || [],
+        ...(args.images?.length ? { images: args.images } : {}),
+      }),
+      signal: args.signal,
+    });
+  } catch (error) {
+    if (args.signal?.aborted) throw error;
+    throw new SessionStreamError({
+      code: 'session_stream_transport_failed',
+      message: error instanceof Error ? error.message : 'The Main stream transport failed.',
+      route: `${BASE}/chat`,
+    });
+  }
   if (!response.ok || !response.body) {
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
     throw new SessionStreamError({
@@ -196,9 +206,19 @@ export async function streamSession(args: {
     args.onEvent({ ...data, kind });
   };
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    let result: ReadableStreamReadResult<Uint8Array>;
+    try {
+      result = await reader.read();
+    } catch (error) {
+      if (args.signal?.aborted) throw error;
+      throw new SessionStreamError({
+        code: 'session_stream_transport_failed',
+        message: error instanceof Error ? error.message : 'The Main stream transport failed.',
+        route: `${BASE}/chat`,
+      });
+    }
+    if (result.done) break;
+    buffer += decoder.decode(result.value, { stream: true });
     buffer = parseSseFrames(buffer, receive);
     if (sawEnd) {
       await reader.cancel().catch(() => undefined);

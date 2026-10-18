@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: Verifies exact Project capability transport for the one Earth surface, including structural validation, duplicate rejection, identifier encoding, user writes, and server error propagation.
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {

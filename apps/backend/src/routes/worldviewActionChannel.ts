@@ -27,15 +27,37 @@ type PendingAction = {
   projectId: string;
   cardId: string;
   name: string;
+  arguments: Readonly<Record<string, unknown>>;
   listener: ActionListener;
-  finish: (result: Record<string, unknown>) => void;
+  resolve: (result: Record<string, unknown>) => void;
   timer: ReturnType<typeof setTimeout>;
+};
+
+export type ClaimedWorldviewAction = Pick<
+  PendingAction,
+  'projectId' | 'cardId' | 'name' | 'arguments'
+> & {
+  finish: (result: Record<string, unknown>) => boolean;
 };
 
 /** One short-lived command lane to the existing direct mount, not a second globe. */
 export function createWorldviewActionChannel() {
   const listeners = new Map<string, ActionListener>();
   const pending = new Map<string, PendingAction>();
+  const take = (requestId: string): PendingAction | null => {
+    const current = pending.get(requestId);
+    if (!current) return null;
+    clearTimeout(current.timer);
+    pending.delete(requestId);
+    current.listener.pending.delete(requestId);
+    return current;
+  };
+  const finish = (requestId: string, value: Record<string, unknown>): boolean => {
+    const current = take(requestId);
+    if (!current) return false;
+    current.resolve(value);
+    return true;
+  };
   return {
     listen(projectId: string, cardId: string, response: Response): boolean {
       if (listeners.has(projectId)) return false;
@@ -52,7 +74,7 @@ export function createWorldviewActionChannel() {
         if (listeners.get(projectId) !== listener) return;
         listeners.delete(projectId);
         for (const requestId of listener.pending) {
-          pending.get(requestId)?.finish({ ok: false, error: 'worldview_mount_disconnected' });
+          finish(requestId, { ok: false, error: 'worldview_mount_disconnected' });
         }
       });
       return true;
@@ -68,21 +90,17 @@ export function createWorldviewActionChannel() {
       if (listener.pending.size > 0) return { ok: false, error: 'worldview_action_busy' };
       const requestId = randomUUID();
       const result = new Promise<Record<string, unknown>>((resolve) => {
-        const finish = (value: Record<string, unknown>) => {
-          const current = pending.get(requestId);
-          if (!current) return;
-          clearTimeout(current.timer);
-          pending.delete(requestId);
-          current.listener.pending.delete(requestId);
-          resolve(value);
-        };
         const timer = setTimeout(
-          () => finish({ ok: false, error: 'worldview_action_timeout' }),
+          () => finish(requestId, { ok: false, error: 'worldview_action_timeout' }),
           ACTION_TIMEOUT_MS,
         );
         pending.set(requestId, {
           projectId: action.projectId, cardId: action.cardId,
-          name: action.name, listener, finish, timer,
+          name: action.name,
+          arguments: Object.freeze({ ...action.arguments }),
+          listener,
+          resolve,
+          timer,
         });
         listener.pending.add(requestId);
       });
@@ -94,21 +112,33 @@ export function createWorldviewActionChannel() {
           disabledLayerIds,
         })}\n\n`);
       } catch {
-        pending.get(requestId)?.finish({ ok: false, error: 'worldview_mount_disconnected' });
+        finish(requestId, { ok: false, error: 'worldview_mount_disconnected' });
       }
       return result;
     },
-    pendingAction(projectId: string, cardId: string, requestId: string): PendingAction | null {
-      const command = pending.get(requestId);
-      return command && command.projectId === projectId && command.cardId === cardId
-        && listeners.get(projectId) === command.listener ? command : null;
-    },
-    settle(projectId: string, cardId: string, requestId: string, result: Record<string, unknown>): boolean {
+    claim(
+      projectId: string,
+      cardId: string,
+      requestId: string,
+    ): ClaimedWorldviewAction | null {
       const command = pending.get(requestId);
       if (!command || command.projectId !== projectId || command.cardId !== cardId
-        || listeners.get(projectId) !== command.listener) return false;
-      command.finish(result);
-      return true;
+        || listeners.get(projectId) !== command.listener) return null;
+      const claimed = take(requestId);
+      if (!claimed) return null;
+      let completed = false;
+      return {
+        projectId: claimed.projectId,
+        cardId: claimed.cardId,
+        name: claimed.name,
+        arguments: claimed.arguments,
+        finish(result: Record<string, unknown>) {
+          if (completed) return false;
+          completed = true;
+          claimed.resolve(result);
+          return true;
+        },
+      };
     },
   };
 }

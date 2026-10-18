@@ -22,11 +22,12 @@ Persistence: JSON files in backend/data/ (auto-saved on change).
 """
 
 import json
+import os
 import time
 import logging
 import secrets
 import threading
-import atexit
+from functools import wraps
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,19 @@ MIN_STAKE_DAYS = 1  # Minimum stake duration
 MAX_STAKE_DAYS = 7  # Maximum stake duration
 GRACE_PERIOD_HOURS = 24  # Counter-stakers get 24h after any new stake
 ORACLE_DECAY_DAYS = 90  # Oracle rep decays over 90 days like regular rep
+
+
+def _state_locked(method):
+    """Serialize ledger reads/mutations and refuse use after a corrupt load."""
+
+    @wraps(method)
+    def _wrapped(self, *args, **kwargs):
+        with self._state_lock:
+            if self._load_error is not None:
+                raise RuntimeError("Oracle ledger unavailable because persisted state could not be loaded")
+            return method(self, *args, **kwargs)
+
+    return _wrapped
 
 
 class OracleLedger:
@@ -61,10 +75,8 @@ class OracleLedger:
         self.stakes: list[dict] = []  # Truth stakes on posts (separate system)
         self.prediction_log: list[dict] = []  # Public log of all predictions
         self._dirty = False
-        self._save_lock = threading.Lock()
-        self._save_timer: threading.Timer | None = None
-        self._SAVE_INTERVAL = 5.0
-        atexit.register(self._flush)
+        self._state_lock = threading.RLock()
+        self._load_error: str | None = None
         self._load()
 
     # ─── Persistence ──────────────────────────────────────────────────
@@ -73,6 +85,18 @@ class OracleLedger:
         if ORACLE_FILE.exists():
             try:
                 data = json.loads(ORACLE_FILE.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError("root must be a JSON object")
+                expected_types = {
+                    "oracle_rep": dict,
+                    "predictions": list,
+                    "market_stakes": list,
+                    "stakes": list,
+                    "prediction_log": list,
+                }
+                for field, expected_type in expected_types.items():
+                    if not isinstance(data.get(field, expected_type()), expected_type):
+                        raise ValueError(f"{field} must be {expected_type.__name__}")
                 self.oracle_rep = data.get("oracle_rep", {})
                 self.predictions = data.get("predictions", [])
                 self.market_stakes = data.get("market_stakes", [])
@@ -84,21 +108,21 @@ class OracleLedger:
                     f"{len(self.market_stakes)} market stakes, {len(self.stakes)} truth stakes"
                 )
             except Exception as e:
+                self._load_error = str(e)
                 logger.error(f"Failed to load oracle ledger: {e}")
 
+    @_state_locked
     def _save(self):
-        """Mark dirty and schedule a coalesced disk write."""
+        """Synchronously commit the current ledger before reporting success."""
         self._dirty = True
-        with self._save_lock:
-            if self._save_timer is None or not self._save_timer.is_alive():
-                self._save_timer = threading.Timer(self._SAVE_INTERVAL, self._flush)
-                self._save_timer.daemon = True
-                self._save_timer.start()
+        self._flush()
 
+    @_state_locked
     def _flush(self):
-        """Actually write to disk (called by timer or atexit)."""
+        """Atomically replace the ledger file while holding the state lock."""
         if not self._dirty:
             return
+        temp_path = ORACLE_FILE.with_name(f".{ORACLE_FILE.name}.tmp")
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             data = {
@@ -108,13 +132,24 @@ class OracleLedger:
                 "stakes": self.stakes,
                 "prediction_log": self.prediction_log,
             }
-            ORACLE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(data, indent=2))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, ORACLE_FILE)
             self._dirty = False
         except Exception as e:
             logger.error(f"Failed to save oracle ledger: {e}")
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     # ─── Oracle Rep ───────────────────────────────────────────────────
 
+    @_state_locked
     def get_oracle_rep(self, node_id: str) -> float:
         """Get current oracle rep for a node (excludes locked/staked amount)."""
         total = self.oracle_rep.get(node_id, 0.0)
@@ -132,20 +167,24 @@ class OracleLedger:
         )
         return round(max(0, total - locked), 3)
 
+    @_state_locked
     def get_total_oracle_rep(self, node_id: str) -> float:
         """Get total oracle rep including locked stakes."""
         return round(self.oracle_rep.get(node_id, 0.0), 3)
 
+    @_state_locked
     def _add_oracle_rep(self, node_id: str, amount: float):
         """Add oracle rep to a node."""
         self.oracle_rep[node_id] = self.oracle_rep.get(node_id, 0.0) + amount
 
+    @_state_locked
     def _remove_oracle_rep(self, node_id: str, amount: float):
         """Remove oracle rep from a node (floor at 0)."""
         self.oracle_rep[node_id] = max(0, self.oracle_rep.get(node_id, 0.0) - amount)
 
     # ─── Predictions ──────────────────────────────────────────────────
 
+    @_state_locked
     def place_prediction(
         self, node_id: str, market_title: str, side: str, probability_at_bet: float
     ) -> tuple[bool, str]:
@@ -221,6 +260,7 @@ class OracleLedger:
             f"This decision is FINAL."
         )
 
+    @_state_locked
     def resolve_market(self, market_title: str, outcome: str) -> tuple[int, int]:
         """Resolve all FREE predictions on a market.
 
@@ -289,6 +329,7 @@ class OracleLedger:
         self._save()
         return winners, losers
 
+    @_state_locked
     def get_active_markets(self) -> list[str]:
         """Get list of market titles with unresolved predictions or stakes."""
         titles = set()
@@ -302,6 +343,7 @@ class OracleLedger:
 
     # ─── Market Stakes (prediction markets) ────────────────────────────
 
+    @_state_locked
     def place_market_stake(
         self, node_id: str, market_title: str, side: str, amount: float, probability_at_bet: float
     ) -> tuple[bool, str]:
@@ -383,6 +425,7 @@ class OracleLedger:
             f"If correct, you split the loser pool proportionally."
         )
 
+    @_state_locked
     def resolve_market_stakes(self, market_title: str, outcome: str) -> dict:
         """Resolve all market stakes for a concluded market.
 
@@ -489,6 +532,7 @@ class OracleLedger:
             "loser_pool": round(loser_pool, 3),
         }
 
+    @_state_locked
     def get_market_consensus(self, market_title: str) -> dict:
         """Get network consensus for a single market — picks + stakes per side."""
         sides: dict[str, dict] = {}
@@ -522,6 +566,7 @@ class OracleLedger:
             "sides": sides,
         }
 
+    @_state_locked
     def get_all_market_consensus(self) -> dict[str, dict]:
         """Bulk consensus for all active markets. Returns {market_title: consensus_summary}."""
         titles = set()
@@ -544,6 +589,7 @@ class OracleLedger:
 
     # ─── Truth Stakes (posts/comments — separate system) ──────────────
 
+    @_state_locked
     def place_stake(
         self,
         staker_id: str,
@@ -638,6 +684,7 @@ class OracleLedger:
             f"{message_id} for {days_str}. Expires {time.strftime('%Y-%m-%d %H:%M', time.localtime(expires))}"
         )
 
+    @_state_locked
     def resolve_expired_stakes(self) -> list[dict]:
         """Resolve all expired stake contests. Called periodically.
 
@@ -738,6 +785,7 @@ class OracleLedger:
             self._save()
         return resolutions
 
+    @_state_locked
     def get_stakes_for_message(self, message_id: str) -> dict:
         """Get all stakes on a message with totals."""
         active = [
@@ -763,6 +811,7 @@ class OracleLedger:
 
     # ─── Oracle Profile ───────────────────────────────────────────────
 
+    @_state_locked
     def get_oracle_profile(self, node_id: str) -> dict:
         """Full oracle profile — rep, prediction history, active stakes."""
         total_rep = self.get_total_oracle_rep(node_id)
@@ -825,6 +874,7 @@ class OracleLedger:
             "prediction_history": prediction_history,
         }
 
+    @_state_locked
     def get_active_predictions(self, node_id: str) -> list[dict]:
         """Get a node's unresolved predictions (free picks + staked)."""
         results = []
@@ -871,6 +921,7 @@ class OracleLedger:
 
     # ─── Cleanup ──────────────────────────────────────────────────────
 
+    @_state_locked
     def cleanup_old_data(self):
         """Remove resolved predictions and market stakes older than decay window."""
         cutoff = time.time() - (ORACLE_DECAY_DAYS * 86400)

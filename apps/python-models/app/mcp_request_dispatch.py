@@ -20,6 +20,7 @@ from mcp.types import CallToolResult, TextContent
 MCP_CALL_TIMEOUT_SECONDS = 30.0
 ENGRAPHIS_OPERATION_TIMEOUT_SECONDS = 120.0
 MAG_ONE_COMPLETION_TIMEOUT_SECONDS = 570.0
+MAIN_SUBMIT_COMPLETION_TIMEOUT_SECONDS = 570.0
 
 
 def _tool_error_result(
@@ -49,7 +50,12 @@ def request_tool_is_allowed(
     name: str,
     definition: OperationDefinition | None = None,
 ) -> bool:
-    access = definition.access if definition is not None else tool_access(name)
+    resolved_definition = definition or operation_definition(name)
+    access = (
+        resolved_definition.access
+        if resolved_definition is not None
+        else tool_access(name)
+    )
     principal = mcp_auth.internal_mcp_principal()
     if (
         mcp_provider_operations.is_provider_operation_name(name)
@@ -64,6 +70,12 @@ def request_tool_is_allowed(
         if not mcp_auth.OAUTH_ENFORCED:
             return True
         context = mcp_auth.authenticated_project_context()
+        if resolved_definition is not None and resolved_definition.external_entry:
+            return (
+                context is not None
+                and context.get(mcp_auth.PROJECT_CONTEXT_MAIN_ENTRY_FIELD) is True
+                and name in mcp_catalog_runtime.published_mcp_tool_names()
+            )
         granted = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])
         return (
             name in mcp_catalog_runtime.published_mcp_tool_names()
@@ -247,6 +259,8 @@ def mcp_tool_timeout_seconds(name: str) -> float:
         return ENGRAPHIS_OPERATION_TIMEOUT_SECONDS
     if name == "run_mag_one":
         return MAG_ONE_COMPLETION_TIMEOUT_SECONDS
+    if name == "main.submit":
+        return MAIN_SUBMIT_COMPLETION_TIMEOUT_SECONDS
     return MCP_CALL_TIMEOUT_SECONDS
 
 

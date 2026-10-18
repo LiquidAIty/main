@@ -1,3 +1,8 @@
+/**
+ * Entity: WorldView
+ * Relationship: Verifies bounded Card actions, exact result correlation, Project capability authority, persistence failure handling, readiness, and route-level scope through the mounted Express boundary.
+ */
+
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -126,6 +131,51 @@ async function serve(
     server.close((error) => error ? reject(error) : resolve());
   }));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}/worldview`;
+}
+
+function mountActionChannel(
+  channel: ReturnType<typeof createWorldviewActionChannel>,
+  projectId = 'project-a',
+  cardId = 'card-worldview',
+) {
+  let stream = '';
+  const response: any = { destroyed: false };
+  response.status = vi.fn(() => response);
+  response.set = vi.fn(() => response);
+  response.flushHeaders = vi.fn();
+  response.write = vi.fn((chunk: string) => {
+    stream += chunk;
+    return true;
+  });
+  response.on = vi.fn(() => response);
+  expect(channel.listen(projectId, cardId, response)).toBe(true);
+  return {
+    actionEvent() {
+      const match = stream.match(/event: action\ndata: ([^\n]+)\n\n/);
+      if (!match) throw new Error('worldview_action_event_missing');
+      return JSON.parse(match[1]) as {
+        requestId: string;
+        name: string;
+        arguments: Record<string, unknown>;
+      };
+    },
+  };
+}
+
+function dispatchLayerAction(
+  channel: ReturnType<typeof createWorldviewActionChannel>,
+  enabled: boolean,
+) {
+  const mounted = mountActionChannel(channel);
+  const result = channel.dispatch({
+    projectId: 'project-a',
+    deckId: 'deck-a',
+    cardId: 'card-worldview',
+    parentRunId: 'run-a',
+    name: 'set_layer_visibility',
+    arguments: { layerId: 'earthquakes', enabled },
+  }, []);
+  return { event: mounted.actionEvent(), result };
 }
 
 describe('authenticated WorldView presentation readiness', () => {
@@ -263,17 +313,14 @@ describe('Project WorldView capability authority', () => {
         lastOrigin: actor, mainReason: null, updatedAt: '2026-09-27T00:00:01.000Z',
       })),
     };
-    const channel = {
-      ...createWorldviewActionChannel(),
-      pendingAction: vi.fn(() => ({ name: 'set_layer_visibility' })),
-      settle: vi.fn(() => true),
-    } as unknown as ReturnType<typeof createWorldviewActionChannel>;
+    const channel = createWorldviewActionChannel();
+    const dispatched = dispatchLayerAction(channel, false);
     const base = await serve(fetcher, capabilityStore, channel);
     const response = await fetch(`${base}/projects/project-a/actions/result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        cardId: 'card-worldview', requestId: '00000000-0000-4000-8000-000000000001',
+        cardId: 'card-worldview', requestId: dispatched.event.requestId,
         result: { ok: true, action: 'set_layer_visibility', layerId: 'earthquakes', enabled: false },
       }),
     });
@@ -284,12 +331,10 @@ describe('Project WorldView capability authority', () => {
     expect(await response.json()).toMatchObject({
       ok: true, capability: { lastOrigin: 'worldview_card', enabled: false },
     });
-    expect(channel.settle).toHaveBeenCalledWith(
-      'project-a', 'card-worldview', '00000000-0000-4000-8000-000000000001',
-      expect.objectContaining({ ok: true, projectCapability: expect.objectContaining({
-        lastOrigin: 'worldview_card',
-      }) }),
-    );
+    await expect(dispatched.result).resolves.toMatchObject({
+      ok: true,
+      projectCapability: { lastOrigin: 'worldview_card', enabled: false },
+    });
   });
 
   it('fails the Card action rather than claiming success when Project persistence fails', async () => {
@@ -297,24 +342,103 @@ describe('Project WorldView capability authority', () => {
       list: vi.fn(async () => []),
       set: vi.fn(async () => { throw new Error('database_offline'); }),
     };
-    const channel = {
-      ...createWorldviewActionChannel(),
-      pendingAction: vi.fn(() => ({ name: 'set_layer_visibility' })),
-      settle: vi.fn(() => true),
-    } as unknown as ReturnType<typeof createWorldviewActionChannel>;
+    const channel = createWorldviewActionChannel();
+    const dispatched = dispatchLayerAction(channel, true);
     const base = await serve(fetcher, capabilityStore, channel);
     const response = await fetch(`${base}/projects/project-a/actions/result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        cardId: 'card-worldview', requestId: '00000000-0000-4000-8000-000000000002',
+        cardId: 'card-worldview', requestId: dispatched.event.requestId,
         result: { ok: true, action: 'set_layer_visibility', layerId: 'earthquakes', enabled: true },
       }),
     });
     expect(response.status).toBe(503);
-    expect(channel.settle).toHaveBeenCalledWith(
-      'project-a', 'card-worldview', '00000000-0000-4000-8000-000000000002',
-      { ok: false, error: 'project_worldview_write_failed' },
+    await expect(dispatched.result).resolves.toEqual({
+      ok: false, error: 'project_worldview_write_failed',
+    });
+  });
+
+  it('refuses a layer readback that differs from the exact dispatched arguments', async () => {
+    const capabilityStore: ProjectWorldviewCapabilityStore = {
+      list: vi.fn(async () => []),
+      set: vi.fn(async () => { throw new Error('must_not_write'); }),
+    };
+    const channel = createWorldviewActionChannel();
+    const dispatched = dispatchLayerAction(channel, false);
+    const base = await serve(fetcher, capabilityStore, channel);
+
+    const response = await fetch(`${base}/projects/project-a/actions/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cardId: 'card-worldview', requestId: dispatched.event.requestId,
+        result: {
+          ok: true,
+          action: 'set_layer_visibility',
+          layerId: 'weather',
+          enabled: false,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(capabilityStore.set).not.toHaveBeenCalled();
+    await expect(dispatched.result).resolves.toEqual({
+      ok: false, error: 'worldview_layer_readback_invalid',
+    });
+  });
+
+  it('claims one exact result before awaiting Project persistence', async () => {
+    let persistenceStarted!: () => void;
+    let finishPersistence!: (value: Awaited<ReturnType<ProjectWorldviewCapabilityStore['set']>>) => void;
+    const started = new Promise<void>((resolve) => { persistenceStarted = resolve; });
+    const persisted = new Promise<Awaited<ReturnType<ProjectWorldviewCapabilityStore['set']>>>(
+      (resolve) => { finishPersistence = resolve; },
     );
+    const capabilityStore: ProjectWorldviewCapabilityStore = {
+      list: vi.fn(async () => []),
+      set: vi.fn(async () => {
+        persistenceStarted();
+        return persisted;
+      }),
+    };
+    const channel = createWorldviewActionChannel();
+    const dispatched = dispatchLayerAction(channel, true);
+    const base = await serve(fetcher, capabilityStore, channel);
+
+    const responsePromise = fetch(`${base}/projects/project-a/actions/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cardId: 'card-worldview', requestId: dispatched.event.requestId,
+        result: {
+          ok: true,
+          action: 'set_layer_visibility',
+          layerId: 'earthquakes',
+          enabled: true,
+        },
+      }),
+    });
+    await started;
+    expect(channel.claim(
+      'project-a', 'card-worldview', dispatched.event.requestId,
+    )).toBeNull();
+
+    finishPersistence({
+      capabilityId: 'earthquakes',
+      enabled: true,
+      controlledBy: 'main',
+      lastOrigin: 'worldview_card',
+      mainReason: null,
+      updatedAt: '2026-10-17T00:00:00.000Z',
+    });
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    await expect(dispatched.result).resolves.toMatchObject({
+      ok: true,
+      projectCapability: { capabilityId: 'earthquakes', enabled: true },
+    });
   });
 });

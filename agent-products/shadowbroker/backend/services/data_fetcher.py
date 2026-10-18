@@ -704,90 +704,19 @@ _STARTUP_CCTV_INGEST_DELAY_S = int(os.environ.get("SHADOWBROKER_STARTUP_CCTV_ING
 _FINANCIAL_REFRESH_MINUTES = 30
 
 
-def _oracle_resolution_sweep():
-    """Hourly sweep: check if any markets with active predictions have concluded.
+def _oracle_maintenance_sweep():
+    """Remove expired resolved rows without inferring a market outcome.
 
-    Resolution logic:
-    - If a market's end_date has passed AND it's no longer in the active API data → resolved
-    - For binary markets: final probability determines outcome (>50% = yes, <50% = no)
-    - For multi-outcome: the outcome with highest final probability wins
+    Provider probabilities are prices, not settlement evidence. Oracle predictions
+    remain unresolved until the existing admin-only resolution endpoint receives an
+    explicit outcome. Automatic provider-settlement integration is intentionally a
+    release TODO until it has stable market IDs and a verified settled-outcome field.
     """
     try:
         from services.mesh.mesh_oracle import oracle_ledger
-
-        active_titles = oracle_ledger.get_active_markets()
-        if not active_titles:
-            return
-
-        # Get current market data
-        with _data_lock:
-            markets = list(latest_data.get("prediction_markets", []))
-
-        # Build lookup of active API markets
-        api_titles = {m.get("title", "").lower(): m for m in markets}
-
-        import time as _time
-
-        now = _time.time()
-        resolved_count = 0
-
-        for title in active_titles:
-            api_market = api_titles.get(title.lower())
-
-            # If market still in API and end_date hasn't passed, skip
-            if api_market:
-                end_date = api_market.get("end_date")
-                if end_date:
-                    try:
-                        from datetime import datetime, timezone
-
-                        dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                        if dt.timestamp() > now:
-                            continue  # Market hasn't ended yet
-                    except Exception:
-                        continue
-                else:
-                    continue  # No end date, can't auto-resolve
-
-            # Market has concluded (past end_date or dropped from API)
-            # Determine outcome from last known data
-            if api_market:
-                outcomes = api_market.get("outcomes", [])
-                if outcomes and len(outcomes) > 2:
-                    # Multi-outcome: highest pct wins
-                    best = max(outcomes, key=lambda o: o.get("pct", 0))
-                    outcome = best.get("name", "")
-                else:
-                    # Binary: consensus > 50 = yes
-                    pct = api_market.get("consensus_pct") or api_market.get("polymarket_pct") or 50
-                    outcome = "yes" if float(pct) > 50 else "no"
-            else:
-                # Market dropped from API entirely — can't determine outcome, skip
-                logger.warning(
-                    f"Oracle sweep: market '{title}' no longer in API, cannot auto-resolve"
-                )
-                continue
-
-            if not outcome:
-                continue
-
-            # Resolve both free predictions and market stakes
-            winners, losers = oracle_ledger.resolve_market(title, outcome)
-            stake_result = oracle_ledger.resolve_market_stakes(title, outcome)
-            resolved_count += 1
-            logger.info(
-                f"Oracle sweep resolved '{title}' → {outcome}: "
-                f"{winners}W/{losers}L free, "
-                f"{stake_result.get('winners', 0)}W/{stake_result.get('losers', 0)}L staked"
-            )
-
-        if resolved_count:
-            logger.info(f"Oracle sweep complete: {resolved_count} markets resolved")
-        # Also clean up old data periodically
         oracle_ledger.cleanup_old_data()
-
     except Exception as e:
-        logger.error(f"Oracle resolution sweep error: {e}")
+        logger.error(f"Oracle maintenance sweep error: {e}")
 
 
 def start_scheduler():
@@ -1101,12 +1030,13 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
-    # Oracle resolution sweep — every hour, check if any markets with predictions have concluded
+    # Oracle maintenance only. Outcome settlement remains explicit and admin-only;
+    # provider probabilities must never be interpreted as settled outcomes.
     _scheduler.add_job(
-        lambda: _run_task_with_health(_oracle_resolution_sweep, "oracle_sweep"),
+        lambda: _run_task_with_health(_oracle_maintenance_sweep, "oracle_maintenance"),
         "interval",
         hours=1,
-        id="oracle_sweep",
+        id="oracle_maintenance",
         max_instances=1,
         misfire_grace_time=300,
     )

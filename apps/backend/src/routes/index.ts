@@ -25,6 +25,7 @@ import mainSessionRoutes from './mainSession.routes';
 import cardTerminalRoutes from './cardTerminal.routes';
 import cardTurnInternalRoutes from './cardTurnInternal.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
+import codeGraphReadRoutes from './codeGraphRead.routes';
 
 const router = Router();
 
@@ -43,6 +44,7 @@ router.use('/hermes-profile', authMiddleware, hermesProfileRoutes);
 router.use('/mcp', mcpInternalRoutes);
 router.use('/idd', authMiddleware, builderIddRoutes);
 router.use('/graph', authMiddleware, jevGraphFocusRoutes);
+router.use('/codegraph', authMiddleware, codeGraphReadRoutes);
 router.use('/knowgraph', authMiddleware, knowGraphReadRoutes, knowGraphWriteRoutes);
 router.use('/thinkgraph', authMiddleware, thinkGraphRoutes);
 router.use('/worldsignals', authMiddleware, worldSignalsRoutes);

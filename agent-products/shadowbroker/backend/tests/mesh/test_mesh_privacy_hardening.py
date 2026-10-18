@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from starlette.requests import Request
 
 import main
+from routers import mesh_oracle as mesh_oracle_routes
 from services.mesh.mesh_crypto import build_signature_payload, derive_node_id
 from services.mesh.mesh_hashchain import GateMessageStore
 from services.mesh import mesh_reputation
@@ -503,16 +504,16 @@ def test_public_oracle_profile_hides_behavioral_lists(monkeypatch):
         "active_stakes": [{"message_id": "msg-1", "side": "truth", "amount": 0.5, "expires": 123}],
         "prediction_history": [{"market": "Test", "side": "yes", "rep_earned": 0.7}],
     }
-    monkeypatch.setattr(main, "_check_scoped_auth", lambda *_args, **_kwargs: (False, "no"))
+    monkeypatch.setattr(mesh_oracle_routes, "_scoped_view_authenticated", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         mesh_oracle,
         "oracle_ledger",
         type("FakeOracleLedger", (), {"get_oracle_profile": staticmethod(lambda *_args, **_kwargs: dict(fake_profile))})(),
         raising=False,
     )
-    monkeypatch.setattr(main, "_is_debug_test_request", lambda *_args, **_kwargs: False)
-
-    response = asyncio.run(main.oracle_profile(_request("/api/mesh/oracle/profile"), node_id="!oracle"))
+    response = asyncio.run(
+        mesh_oracle_routes.oracle_profile(_request("/api/mesh/oracle/profile"), node_id="!oracle")
+    )
 
     assert response["node_id"] == "!oracle"
     assert response["oracle_rep"] == 2.5
@@ -527,7 +528,7 @@ def test_public_oracle_predictions_hide_active_positions(monkeypatch):
         {"prediction_id": "pred-1", "market_title": "Alpha", "side": "yes", "mode": "free"},
         {"prediction_id": "pred-2", "market_title": "Bravo", "side": "no", "mode": "staked"},
     ]
-    monkeypatch.setattr(main, "_check_scoped_auth", lambda *_args, **_kwargs: (False, "no"))
+    monkeypatch.setattr(mesh_oracle_routes, "_scoped_view_authenticated", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         mesh_oracle,
         "oracle_ledger",
@@ -538,10 +539,10 @@ def test_public_oracle_predictions_hide_active_positions(monkeypatch):
         )(),
         raising=False,
     )
-    monkeypatch.setattr(main, "_is_debug_test_request", lambda *_args, **_kwargs: False)
-
     response = asyncio.run(
-        main.oracle_predictions(_request("/api/mesh/oracle/predictions"), node_id="!oracle")
+        mesh_oracle_routes.oracle_predictions(
+            _request("/api/mesh/oracle/predictions"), node_id="!oracle"
+        )
     )
 
     assert response == {"predictions": [], "count": 2}
@@ -558,7 +559,7 @@ def test_public_oracle_stakes_hide_staker_lists(monkeypatch):
         "false_stakers": [{"node_id": "!false", "amount": 0.75, "expires": 456}],
         "earliest_expiry": 123,
     }
-    monkeypatch.setattr(main, "_check_scoped_auth", lambda *_args, **_kwargs: (False, "no"))
+    monkeypatch.setattr(mesh_oracle_routes, "_scoped_view_authenticated", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         mesh_oracle,
         "oracle_ledger",
@@ -569,10 +570,10 @@ def test_public_oracle_stakes_hide_staker_lists(monkeypatch):
         )(),
         raising=False,
     )
-    monkeypatch.setattr(main, "_is_debug_test_request", lambda *_args, **_kwargs: False)
-
     response = asyncio.run(
-        main.oracle_stakes_for_message(_request("/api/mesh/oracle/stakes/msg-1"), message_id="msg-1")
+        mesh_oracle_routes.oracle_stakes_for_message(
+            _request("/api/mesh/oracle/stakes/msg-1"), message_id="msg-1"
+        )
     )
 
     assert response == {

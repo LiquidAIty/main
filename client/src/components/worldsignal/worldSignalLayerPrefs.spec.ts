@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: WorldSignals
+ * Relationship: Verifies Project-and-Card-scoped browser layer preferences round-trip and reject malformed stored shapes without failing the mounted product.
+ */
+
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { layerPrefsKey, readLayerPrefs, writeLayerPrefs } from './worldSignalLayerPrefs';

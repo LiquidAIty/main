@@ -132,6 +132,39 @@ describe('MainProjectChat', () => {
     expect(onEntityFocus).toHaveBeenCalledWith(targets.get('Rocket Lab'));
   });
 
+  it('keeps intraword underscores literal while retaining intentional underscore emphasis', async () => {
+    render(
+      <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
+        <MainProjectChat
+          messages={[{
+            role: 'assistant',
+            text: [
+              'MAIN_RESTORE_OK BUILDER_RESTORE_OK snake_case file_name.py',
+              '_intentional emphasis_ _outer_identifier_value_',
+            ].join('\n'),
+            speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
+            status: 'complete',
+          }]}
+          mainCardId="card_main_chat"
+          onSend={vi.fn()}
+          knowledgeProjectId="project-1"
+          colors={colors}
+        />
+      </VirtuosoMockContext.Provider>,
+    );
+    scrollVirtualViewportToBottom(1, 96, 300);
+
+    const frame = await screen.findByTestId('main-chat-message-frame');
+    expect(frame.textContent).toContain('MAIN_RESTORE_OK');
+    expect(frame.textContent).toContain('BUILDER_RESTORE_OK');
+    expect(frame.textContent).toContain('snake_case');
+    expect(frame.textContent).toContain('file_name.py');
+    expect([...frame.querySelectorAll('em')].map(element => element.textContent)).toEqual([
+      'intentional emphasis',
+      'outer_identifier_value',
+    ]);
+  });
+
   it('shows a quiet activity indicator while the Hermes turn is connecting', () => {
     render(
       <MainProjectChat
@@ -458,12 +491,13 @@ describe('MainProjectChat', () => {
     expect(screen.queryByText('You → Builder')).toBeNull();
     expect(screen.queryByText('You')).toBeNull();
     expect(screen.getAllByTestId('main-chat-speaker')).toHaveLength(1);
-    expect(screen.getByTestId('main-chat-speaker').textContent).toBe('@Builder');
+    const builderSpeaker = screen.getByTestId('main-chat-speaker');
+    expect(builderSpeaker.textContent).toBe('@Builder');
+    const builderFrame = builderSpeaker.closest('[data-testid="main-chat-message-frame"]');
+    expect(builderFrame?.textContent).toContain('BUILDER_DIRECT_OK');
+    expect(builderFrame?.querySelector('em')).toBeNull();
     expect(screen.queryByText('Main Chat')).toBeNull();
     expect(screen.getByText('Main answer')).not.toBeNull();
-    expect(screen.getAllByTestId('main-chat-message-frame').some(
-      frame => frame.textContent?.endsWith('BUILDER_DIRECT_OK'),
-    )).toBe(true);
   });
 
   it('mounts only a bounded Virtuoso window for the 114-message Trading history', async () => {

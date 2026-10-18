@@ -1675,6 +1675,7 @@ function NewsFeedInner({ selectedEntity, regionDossier, regionDossierLoading, gt
                     >
                         <div
                             className={`flex items-center gap-2 px-2 py-1.5 border rounded-sm font-mono ${
+                                data.threat_level.available === false ? 'bg-gray-950/40 border-gray-500/50' :
                                 data.threat_level.level === 'SEVERE' ? 'bg-red-950/40 border-red-500/50' :
                                 data.threat_level.level === 'HIGH' ? 'bg-orange-950/40 border-orange-500/50' :
                                 data.threat_level.level === 'ELEVATED' ? 'bg-yellow-950/40 border-yellow-500/50' :
@@ -1689,7 +1690,9 @@ function NewsFeedInner({ selectedEntity, regionDossier, regionDossierLoading, gt
                                 THREAT: {data.threat_level.level}
                             </span>
                             <span className="text-[12px] text-[var(--text-muted)] ml-auto">
-                                {data.threat_level.score}/100
+                                {data.threat_level.available === false || data.threat_level.score == null
+                                    ? data.threat_level.status.replace('_', ' ').toUpperCase()
+                                    : `${data.threat_level.score}/100`}
                             </span>
                         </div>
                         {/* Threat drivers removed — the level bar is sufficient */}

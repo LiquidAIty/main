@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from auth import _transport_tier_is_sufficient
+from routers import mesh_oracle as mesh_oracle_routes
 
 
 TIERS = [
@@ -60,6 +61,7 @@ class SignedWriteCase:
     pre_setup: Callable[[pytest.MonkeyPatch], None] | None = None
     verifier_attr: str = "_verify_signed_write"
     capture_result: tuple[Any, ...] = (False, "captured")
+    handler_module: str = "main"
 
 
 def _set_transport_tier(monkeypatch: pytest.MonkeyPatch, tier: str) -> None:
@@ -262,7 +264,8 @@ SIGNED_WRITE_CASES = [
             "sequence": 1,
             "protocol_version": "1",
         },
-        invoke=lambda main, req: main.oracle_predict(req),
+        invoke=lambda _main, req: mesh_oracle_routes.oracle_predict(req),
+        handler_module="routers.mesh_oracle",
     ),
     SignedWriteCase(
         name="oracle_stake",
@@ -282,7 +285,8 @@ SIGNED_WRITE_CASES = [
             "sequence": 1,
             "protocol_version": "1",
         },
-        invoke=lambda main, req: main.oracle_stake(req),
+        invoke=lambda _main, req: mesh_oracle_routes.oracle_stake(req),
+        handler_module="routers.mesh_oracle",
     ),
     SignedWriteCase(
         name="dm_register",
@@ -425,6 +429,7 @@ def test_signed_write_transport_matrix_enforces_tier_before_handler(monkeypatch,
 
 @pytest.mark.parametrize("case", SIGNED_WRITE_CASES, ids=lambda case: case.name)
 def test_signed_write_handler_uses_expected_event_type(monkeypatch, case: SignedWriteCase):
+    import importlib
     import main
 
     monkeypatch.setenv("MESH_SIGNED_WRITE_CONTEXT_REQUIRED", "false")
@@ -445,7 +450,8 @@ def test_signed_write_handler_uses_expected_event_type(monkeypatch, case: Signed
         )
         return case.capture_result
 
-    monkeypatch.setattr(main, case.verifier_attr, _capture_signed_event)
+    handler_owner = importlib.import_module(case.handler_module)
+    monkeypatch.setattr(handler_owner, case.verifier_attr, _capture_signed_event, raising=False)
 
     request = _request(case.path, case.body_factory())
     result = asyncio.run(case.invoke(main, request))

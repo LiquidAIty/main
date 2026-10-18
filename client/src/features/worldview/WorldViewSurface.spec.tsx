@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
 
+/**
+ * Entity: WorldView
+ * Relationship: Proves the host, shared-Inspector, Project layer, saved-Card action, navigation, failure, and remount contracts around a simulated bridge without claiming loaded one Earth pixels.
+ */
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

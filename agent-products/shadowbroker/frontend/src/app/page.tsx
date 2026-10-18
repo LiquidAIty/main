@@ -7,7 +7,7 @@ import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react'
 import WorldviewLeftPanel from '@/components/WorldviewLeftPanel';
 
 import NewsFeed from '@/components/NewsFeed';
-import MarketsPanel from '@/components/MarketsPanel';
+import PredictionsPanel from '@/components/PredictionsPanel';
 import FilterPanel from '@/components/FilterPanel';
 import FindLocateBar from '@/components/FindLocateBar';
 import TopRightControls from '@/components/TopRightControls';
@@ -905,6 +905,15 @@ export default function Dashboard() {
               </div>
 
               {/* GLOBAL TICKER REPLACES MARKETS PANEL - RENDERED OUTSIDE THIS DIV */}
+
+              {/* ORACLE PREDICTIONS — canonical human browse/pick/profile surface */}
+              {secondaryBootReady && (
+                <div className={`flex-shrink-0 ${rightFocusedPanel && rightFocusedPanel !== 'predictions' ? 'hidden' : ''}`}>
+                  <ErrorBoundary name="PredictionsPanel">
+                    <PredictionsPanel />
+                  </ErrorBoundary>
+                </div>
+              )}
 
               {/* EVENT TIMELINE */}
               {secondaryBootReady && (

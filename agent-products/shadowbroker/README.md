@@ -84,6 +84,20 @@ ShadowBroker includes an optional **Shodan connector** for operator-supplied API
 ---
 
 
+## v0.9.83 supported release scope
+
+The supported first publication target is the self-hosted **Web/Docker Compose experimental testnet**.
+Oracle market browsing, exact signed testnet predictions, manual admin settlement, and local profile reads
+are included. Set `PREDICTION_MARKETS_ENABLED=true` or use the in-product **MKT** opt-in before ShadowBroker
+contacts Polymarket or Kalshi. Provider prices are never treated as settled outcomes.
+
+The following remain explicit TODOs and are not release claims: bundled model/agent reasoning, agent Oracle
+writes or governance actions, automatic provider settlement, production privacy, signed desktop installers,
+and durable multi-replica Helm/HA operation. Docker Compose retains `/app/data`; other deployment paths must
+provide equivalent single-writer persistence before using stateful Oracle or InfoNet features.
+
+---
+
 ⚡ Quick Start (Docker)</summary>
 
 ### From GitHub (default — uses GHCR images)
@@ -144,7 +158,10 @@ That's it. `pull` grabs the latest images, `up -d` restarts the containers.
 
 ### Update Integrity
 
-Docker updates are delivered through signed container registries. The legacy ZIP self-updater verifies release archives through this chain, in order:
+Docker updates are delivered through authenticated container registries and published manifests. Pin an
+immutable image digest when supply-chain immutability is required; the current workflow does not publish a
+separate Cosign-style image signature. The legacy ZIP self-updater verifies release archives through this
+chain, in order:
 
 * `MESH_UPDATE_SHA256` when an operator pins a digest explicitly.
 * `backend/data/release_digests.json` for bundled release pins.
@@ -183,6 +200,10 @@ docker compose up -d
 
 <details>
 <summary>☸️ Kubernetes / Helm (Advanced)</summary>
+
+> **Experimental for stateless evaluation.** The bundled chart does not currently provision the required
+> single-writer persistent `/app/data` volume for Oracle/InfoNet state. Do not describe this chart as
+> high-availability for stateful features until persistence and writer coordination are implemented and proven.
 
 For high-availability deployments or home-lab clusters, ShadowBroker supports deployment via **Helm**. This chart is based on the `bjw-s-labs` template and provides a robust, modular setup for both the backend and frontend.
 
@@ -427,11 +448,15 @@ Adapted from the [OSIRIS](https://github.com/simplifaisoul/osiris) recon stack (
 
 ![Gaza](https://gitlab.com/bigbodycobain/Shadowbroker/uploads/c55a0c8d49e5e05c6cd094279e6e089b/gaza-screenshot.jpg)
 
-### 🤖 Agentic AI Command Channel — OpenClaw + Compatible Agents (expanded in v0.9.7)
+### 🤖 Agent Command Channel Preview — OpenClaw + Protocol-Compatible Clients
 
-ShadowBroker exposes a **bidirectional agentic AI command channel** — a signed, tier-gated bridge that gives any compatible AI agent full read/write access to the intelligence platform. **OpenClaw is the reference agent**, but the channel is an open protocol: any LLM-driven agent that signs requests with HMAC-SHA256 (Claude Code, GPT, LangChain, custom Python/TypeScript clients, or your own integration) can connect as an analyst that sees the same data as the operator and can take actions on the map. ShadowBroker does *not* bundle an LLM, an agent runtime, or model weights — it provides the surface; you bring the agent.
+ShadowBroker exposes a **bidirectional, HMAC-authenticated command channel**. **OpenClaw is the reference
+client.** A protocol-compatible client receives only the commands published by `/api/ai/tools` for the
+configured access tier; it does not automatically see everything the operator sees. The default
+`restricted` tier is read-only. The `full` tier adds the exact write commands in the live allowlist, not
+blanket API access. ShadowBroker does *not* bundle an LLM, an agent runtime, or model weights.
 
-v0.9.7 turns ShadowBroker from a dashboard a human watches into an intelligence surface any agent can act on.
+This is an external-agent integration preview, not a claim that every named agent framework has passed live compatibility acceptance.
 
 **Channel transport (NEW in v0.9.7):**
 
@@ -442,22 +467,22 @@ v0.9.7 turns ShadowBroker from a dashboard a human watches into an intelligence 
 
 **Capabilities:**
 
-* **Full Telemetry Access** — The agent queries all 40+ data layers: flights, ships, satellites, SIGINT, conflict events, earthquakes, fires, wastewater, **Telegram OSINT**, malware/C2, **CISA KEV cyber threats**, SCM overlays, fishing activity (GFW), prediction markets, and more. Fast and slow tier endpoints return enriched data with geographic coordinates, timestamps, and source attribution.
+* **Bounded Telemetry Read Access** — Restricted clients can call the read commands advertised by the live manifest, including compact telemetry, search, reports, and cached prediction-market reads. Provider availability and saved node configuration still limit returned data.
 * **Compact Search (preferred over full dumps)** — `get_summary` → `get_layer_slice` with per-layer `since_layer_versions` (SSE `layer_changed` push tells the agent exactly which layers updated). `search_telemetry` is the Google-style cross-layer keyword index. `search_news` covers news, GDELT, CrowdThreat, LiveUAMap, frontlines, and Telegram posts. `entities_near`, `brief_area`, `find_flights`/`find_ships`/`find_entity`, and `correlate_entity` answer targeted questions without multi-megabyte pulls.
 * **Recon Toolkit on the Channel** — `osint_lookup` runs the same SSRF-guarded backends as the Recon panel (`ip`, `dns`, `whois`, `certs`, `bgp`, `sanctions`, `cve`, `mac`, `github`, `leaks`, `threats`, `sweep_init`). `entity_expand` builds Wikidata + OFAC relationship graphs. `osint_sweep` runs Shodan InternetDB subnet discovery (**full** tier). Layer aliases: `telegram`, `malware`/`botnet`, `cyber`/`cisa`/`kev`, `scm`/`suppliers`, `gfw`/`fishing`.
 * **AI Intel Pins** — Place color-coded investigation markers directly on the operator's map. 14 pin categories (threat, anomaly, military, maritime, aviation, SIGINT, infrastructure, etc.) with confidence scores, TTL expiry, source URLs, and batch placement up to 100 pins at once.
 * **Map Control** — Fly the operator's map view to any coordinate, trigger satellite imagery lookups, and open region dossiers. The agent can direct the operator's attention to specific locations in real time.
 * **SAR Ground-Change** — Query SAR anomaly feeds, inspect pin details, manage AOIs, and fly the map to watch areas. The agent can monitor for ground deformation, flood extent, or damage and promote anomalies to pins.
 * **Native Layer Injection** — Push custom data directly into ShadowBroker's native layers (CCTV cameras, ships, SIGINT nodes, military bases, etc.) so agent-discovered sources render alongside real feeds.
-* **Wormhole Mesh Participation** — The agent can join the decentralized InfoNet, post signed messages, join encrypted gate channels, send/receive encrypted DMs, and interact with Meshtastic radio and Dead Drops — operating as a full mesh peer.
-* **Sovereign Shell Participation (v0.9.7)** — File petitions, sign and vote on governance changes, stake on resolutions and disputes, signal Heavy-Node readiness for upgrades — all programmatically, all gated by tier and HMAC. Agents become first-class participants in the decentralized intelligence economy.
+* **Bounded InfoNet Commands** — Full-tier clients can use the exact current allowlist for readiness, joining, gate posts, votes, and DMs. This does not make the external client an unrestricted mesh peer.
+* **Oracle/Governance Agent Writes — TODO** — Agent prediction placement, private-position reads, Oracle-reputation staking, evidence, resolution/disputes, petitions, and upgrade-readiness actions are not in the current command allowlist.
 * **Geocoding & Proximity Scans** — Resolve place names to coordinates, then scan all layers within a radius for a complete proximity digest.
 * **News & GDELT Near Location** — Pull GDELT conflict events and aggregated news articles near any coordinate for regional situational awareness.
-* **Alert Delivery** — Send branded intelligence briefs, warnings, and threat notifications to Discord webhooks and Telegram channels.
+* **Autonomous Alerts — TODO** — Proactive model monitoring and externally delivered agent alerts require an operator-selected agent/runtime and separate acceptance.
 * **Intelligence Reports** — Generate structured reports with summary stats, top military flights, correlations, earthquake activity, SIGINT counts, and pin inventories.
 * **Auditable** — Every channel call is logged; the operator can introspect what the agent has done.
 
-**Connect an agent:** Open the AI Intel panel in the left sidebar, click **Connect Agent**, and copy the HMAC secret. From there, point any compatible agent at the channel — for OpenClaw, import `ShadowBrokerClient` from `openclaw-skills/shadowbroker/sb_query.py` (see `SKILL.md` for examples); for any other agent, use the same HMAC contract documented above (timestamp + nonce + body digest, tier-gated). Discovery: `GET /api/ai/tools` and `GET /api/ai/capabilities`. The channel is the protocol, not the agent.
+**Connect an agent:** Open the AI Intel panel in the left sidebar, click **Connect Agent**, and copy the HMAC secret. For OpenClaw, import `ShadowBrokerClient` from `openclaw-skills/shadowbroker/sb_query.py` (see `SKILL.md` for examples). Other clients must implement the same HMAC contract and verify the live discovery response themselves. Discovery: `GET /api/ai/tools` and `GET /api/ai/capabilities`. All callers sharing one HMAC secret are currently one trust principal; per-agent credentials and attribution remain TODO.
 
 **Docker Compose + remote agents:** The dashboard UI talks to the backend over Docker's private bridge (trusted automatically). An OpenClaw agent running on the **host** (outside the container) hits `http://localhost:8000` from the Docker gateway IP — **HMAC is required** there. In AI Intel → **Connect Agent**, click **Bootstrap** then **Reveal**, copy `SHADOWBROKER_HMAC_SECRET` into your agent env, and restart the backend once so `data/openclaw.env` on the `backend_data` volume is loaded. Smoke-test with:
 
@@ -836,7 +861,7 @@ If you want to modify the code or run from source:
 
 #### Prerequisites
 
-* **Node.js** 18+ and **npm** — [nodejs.org](https://nodejs.org/)
+* **Node.js** 20.9+ and **npm** — [nodejs.org](https://nodejs.org/) (required by the locked Next.js release)
 * **Python** 3.10, 3.11, or 3.12 with `pip` — [python.org](https://www.python.org/downloads/) (**check "Add to PATH"** during install)
   * ⚠️ Python 3.13+ may have compatibility issues with some dependencies. **3.11 or 3.12 is recommended.**
 * API keys for: `aisstream.io` (required), and optionally `opensky-network.org` (OAuth2), `lta.gov.sg`
@@ -1206,7 +1231,10 @@ This tool is built entirely on publicly available, open-source intelligence (OSI
 
 ## 📜 License
 
-This project is for educational and personal research purposes. See individual API provider terms of service for data usage restrictions.
+ShadowBroker source code is licensed under **AGPL-3.0**; see [LICENSE](LICENSE). It is intended for
+education, research, and lawful OSINT operations, but that intended use is not an additional source-code
+license restriction. Third-party data remains governed by each provider's terms; see
+[DATA-ATTRIBUTION.md](DATA-ATTRIBUTION.md).
 
 ---
 
