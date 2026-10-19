@@ -19,6 +19,10 @@ import type { DeckCard, DeckDocument } from '../types';
 import type { HermesGatewayClient, HermesGatewayEvent } from '../services/hermesGateway';
 import type { ProjectCardAuthority, ProjectCardBinding } from '../services/projectCardAuthority';
 
+type FinishCardRunPayload = Parameters<
+  typeof import('../services/cardRunLifecycle').finishCardRun
+>[0];
+
 const conversationMocks = vi.hoisted(() => ({
   appendConversationReplyOnce: vi.fn(async () => undefined),
   appendConversationTurn: vi.fn(async () => undefined),
@@ -26,7 +30,7 @@ const conversationMocks = vi.hoisted(() => ({
 }));
 
 const lifecycleMocks = vi.hoisted(() => ({
-  finishCardRun: vi.fn(async () => undefined),
+  finishCardRun: vi.fn(async (_payload: FinishCardRunPayload) => undefined),
   prepareCardRun: vi.fn(async () => ({
     runId: 'run-one',
     request: {

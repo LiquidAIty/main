@@ -1,8 +1,70 @@
 param(
-  [switch]$WaitForMcpReadiness
+  [switch]$WaitForMcpReadiness,
+  [switch]$StartPythonRailsAfterWorldSignals
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($WaitForMcpReadiness -and $StartPythonRailsAfterWorldSignals) {
+  throw 'Dependent-service startup modes are mutually exclusive.'
+}
+
+if ($StartPythonRailsAfterWorldSignals) {
+  # WorldSignals persists its direct-agent HMAC inside the existing Docker volume.
+  # This branch is one concurrently sibling, so its image pull cannot hold the
+  # frontend or WorldView behind it. Python rails still waits for the existing
+  # credential readback and inherits it only in this process tree.
+  # Bootstrap only when the product confirms no credential exists; never rotate,
+  # print, or persist a second copy here.
+  & npm.cmd run dev:worldsignals
+  $worldSignalsExitCode = $LASTEXITCODE
+  if ($worldSignalsExitCode -ne 0) {
+    Write-Warning "WorldSignals startup stopped with exit code $worldSignalsExitCode; Python rails will report the provider as unavailable."
+  } else {
+    $connectInfoUrl = 'http://127.0.0.1:3000/api/ai/connect-info'
+    $revealUrl = 'http://127.0.0.1:3000/api/ai/connect-info/reveal'
+    $connectInfo = $null
+    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(2)
+
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+      try {
+        $candidate = Invoke-RestMethod -Uri $connectInfoUrl -Method Get -TimeoutSec 3
+        if ([bool]$candidate.ok) {
+          $connectInfo = $candidate
+          break
+        }
+      } catch {
+        # The Docker health check may still be warming; retry within the bound.
+      }
+      Start-Sleep -Seconds 1
+    }
+
+    if ($null -eq $connectInfo) {
+      Write-Warning 'WorldSignals operator proxy did not become ready; Python rails will report the provider as unavailable.'
+    } else {
+      try {
+        if (-not [bool]$connectInfo.hmac_secret_set) {
+          $bootstrapped = Invoke-RestMethod -Uri 'http://127.0.0.1:3000/api/ai/connect-info/bootstrap' -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 5
+          if (-not [bool]$bootstrapped.ok -or -not [bool]$bootstrapped.hmac_secret_set) {
+            throw 'WorldSignals credential bootstrap readback failed.'
+          }
+        }
+        $revealed = Invoke-RestMethod -Uri $revealUrl -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 5
+        $secret = [string]$revealed.hmac_secret
+        if (-not [bool]$revealed.ok -or $secret.Length -lt 32) {
+          throw 'WorldSignals returned an invalid credential readback.'
+        }
+        $env:WORLDSIGNALS_HMAC_SECRET = $secret
+        Write-Host 'WorldSignals existing HMAC credential is loaded for dependent services.'
+      } catch {
+        Write-Warning 'WorldSignals credential readback failed; Python rails will report the provider as unavailable.'
+      }
+    }
+  }
+
+  & npm.cmd run dev:python-rails
+  exit $LASTEXITCODE
+}
 
 if ($WaitForMcpReadiness) {
   $mcpReadinessUrl = 'http://127.0.0.1:8765/health/ready'
@@ -78,57 +140,6 @@ while ($true) {
 }
 
 Write-Host 'Backend ready; starting dependent services.'
-
-# WorldSignals persists its direct-agent HMAC inside the existing Docker volume.
-# Start the product first, then read that already-established credential through
-# its trusted frontend operator proxy so Python rails inherits it in memory.
-# Bootstrap only when the product confirms no credential exists; never rotate,
-# print, or persist a second copy here.
-& npm.cmd run dev:worldsignals
-$worldSignalsExitCode = $LASTEXITCODE
-if ($worldSignalsExitCode -ne 0) {
-  Write-Warning "WorldSignals startup stopped with exit code $worldSignalsExitCode; Python rails will report the provider as unavailable."
-} else {
-  $connectInfoUrl = 'http://127.0.0.1:3000/api/ai/connect-info'
-  $revealUrl = 'http://127.0.0.1:3000/api/ai/connect-info/reveal'
-  $connectInfo = $null
-  $deadline = [DateTimeOffset]::UtcNow.AddMinutes(2)
-
-  while ([DateTimeOffset]::UtcNow -lt $deadline) {
-    try {
-      $candidate = Invoke-RestMethod -Uri $connectInfoUrl -Method Get -TimeoutSec 3
-      if ([bool]$candidate.ok) {
-        $connectInfo = $candidate
-        break
-      }
-    } catch {
-      # The Docker health check may still be warming; retry within the bound.
-    }
-    Start-Sleep -Seconds 1
-  }
-
-  if ($null -eq $connectInfo) {
-    Write-Warning 'WorldSignals operator proxy did not become ready; Python rails will report the provider as unavailable.'
-  } else {
-    try {
-      if (-not [bool]$connectInfo.hmac_secret_set) {
-        $bootstrapped = Invoke-RestMethod -Uri 'http://127.0.0.1:3000/api/ai/connect-info/bootstrap' -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 5
-        if (-not [bool]$bootstrapped.ok -or -not [bool]$bootstrapped.hmac_secret_set) {
-          throw 'WorldSignals credential bootstrap readback failed.'
-        }
-      }
-      $revealed = Invoke-RestMethod -Uri $revealUrl -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 5
-      $secret = [string]$revealed.hmac_secret
-      if (-not [bool]$revealed.ok -or $secret.Length -lt 32) {
-        throw 'WorldSignals returned an invalid credential readback.'
-      }
-      $env:WORLDSIGNALS_HMAC_SECRET = $secret
-      Write-Host 'WorldSignals existing HMAC credential is loaded for dependent services.'
-    } catch {
-      Write-Warning 'WorldSignals credential readback failed; Python rails will report the provider as unavailable.'
-    }
-  }
-}
 
 & npm.cmd run dev:dependent-services
 exit $LASTEXITCODE

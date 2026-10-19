@@ -5,10 +5,10 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "dev:stop": "kill-port 4000 5173 8003 8001 8765 9119 4040 4174",
-    "dev:fresh": "npm run dev:stop && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-services.ps1",
-    "dev:services": "set \"MCP_PUBLIC_RESOURCE_URL=%npm_package_config_mcp_public_resource_url%\" && set \"MCP_AUTH0_CLIENT_ID=%npm_package_config_mcp_auth0_client_id%\" && set \"MCP_AUTH0_REQUIRED_SCOPE=%npm_package_config_mcp_auth0_required_scope%\" && concurrently --kill-others --success all --names hermes,backend,dependents --prefix-colors yellow,magenta,cyan \"npm run dev:hermes\" \"npm run dev:backend\" \"npm run dev:after-backend\"",
+    "dev:fresh": "node scripts/preflight-dev-dependencies.mjs && npm run dev:stop && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-services.ps1",
+    "dev:services": "set \"MCP_PUBLIC_RESOURCE_URL=%npm_package_config_mcp_public_resource_url%\" && set \"MCP_AUTH0_CLIENT_ID=%npm_package_config_mcp_auth0_client_id%\" && set \"MCP_AUTH0_REQUIRED_SCOPE=%npm_package_config_mcp_auth0_required_scope%\" && concurrently --kill-others-on-fail --success all --names hermes,backend,dependents --prefix-colors yellow,magenta,cyan \"npm run dev:hermes\" \"npm run dev:backend\" \"npm run dev:after-backend\"",
     "dev:after-backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dependent-services.ps1",
-    "dev:dependent-services": "concurrently --success all --names frontend,python-rails,knowgraph,mcp,tunnel,worldview,worldsignals --prefix-colors green,cyan,blue,white,gray,magenta,yellow \"npm run dev:frontend\" \"npm run dev:python-rails\" \"npm run dev:knowgraph\" \"npm run dev:mcp\" \"powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dependent-services.ps1 -WaitForMcpReadiness\" \"npm run dev:worldview\" \"npm run dev:worldsignals\"",
+    "dev:dependent-services": "concurrently --kill-others-on-fail --success all --names frontend,python-rails,knowgraph,mcp,tunnel,worldview --prefix-colors green,cyan,blue,white,gray,magenta \"npm run dev:frontend\" \"powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dependent-services.ps1 -StartPythonRailsAfterWorldSignals\" \"npm run dev:knowgraph\" \"npm run dev:mcp\" \"powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-dependent-services.ps1 -WaitForMcpReadiness\" \"npm run dev:worldview\"",
     "dev:frontend": "npm --workspace client run dev -- --strictPort",
     "dev:backend": "npm --workspace apps/backend run serve",
     "dev:hermes": "node -e \"const fs=require('node:fs');const path=require('node:path');const {spawnSync}=require('node:child_process');const root=path.join(process.cwd(),'HermesLatest');const python=path.join(root,'.venv','Scripts','python.exe');const profileRoot=path.join(root,'.hermes');if(!fs.existsSync(python))throw new Error('Hermes Python executable is unavailable.');if(!fs.existsSync(path.join(profileRoot,'config.yaml')))throw new Error('Hermes default profile is unavailable.');if(!/^[a-f0-9]{64}$/i.test(String(process.env.HERMES_DASHBOARD_SESSION_TOKEN||'')))throw new Error('Hermes Gateway credential is unavailable.');const child=spawnSync(python,['-m','hermes_cli.main','-p','default','serve','--host','127.0.0.1','--port','9119','--skip-build'],{cwd:root,env:{...process.env,HERMES_HOME:profileRoot,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'},stdio:'inherit',windowsHide:true});if(child.error)throw child.error;process.exit(child.status??1);\"",
@@ -24,7 +24,8 @@
     "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=prisma/schema.prisma --name init",
     "prisma:studio": "prisma studio",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:dev-startup": "node --test scripts/test-development-startup.mjs"
   },
   "config": {
     "mcp_public_resource_url": "https://exemption-unstable-wolverine.ngrok-free.dev/mcp",
