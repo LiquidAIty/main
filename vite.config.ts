@@ -1,9 +1,6 @@
 /**
- * Entity: Development Tooling
- * Relationship: Defines the repository Vitest projects, client transforms, shared aliases, and test defaults used by the root test command.
- *
  * Entity: WorldView
- * Relationship: Supplies test-only virtual CSS and mount modules so client specifications resolve the controlled one-Earth doorway without loading the real renderer.
+ * Relationship: This file contributes test-only virtual CSS and mount modules so WorldView client specifications resolve the controlled one-Earth doorway without loading the real renderer.
  */
 
 // vitest/config re-exports Vite's defineConfig with the `test` key typed.

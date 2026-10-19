@@ -1,7 +1,9 @@
 """PDF source authority and Graphiti episode ingestion for KnowGraph."""
 
 # Entity: KnowGraph
-# Relationship: Converts each immutable PDF section into one versioned duplicate-safe Graphiti episode and completes its authority metadata and Jev fact settlement.
+# Relationship: This file contributes versioned duplicate-safe Graphiti episode creation and exact authority settlement for immutable PDF sections to the KnowGraph feature.
+# Entity: Jev Decisions
+# Relationship: This file contributes ingestion-time relationship-vocabulary guidance and bounded fact-settlement orchestration to the Jev Decisions feature.
 
 from __future__ import annotations
 

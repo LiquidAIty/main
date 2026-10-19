@@ -1,6 +1,6 @@
 """FastAPI entrypoint for KnowGraph ingestion."""
 # Entity: KnowGraph
-# Relationship: Exposes bounded PDF ingestion, Project-scoped episode deletion, provider-safe error projection, and runtime health for the KnowGraph service.
+# Relationship: This file contributes bounded PDF ingestion, Project-scoped episode deletion, provider-safe errors, and runtime health to the KnowGraph feature.
 
 from __future__ import annotations
 

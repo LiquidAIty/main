@@ -1,7 +1,7 @@
 """Immutable content-addressed storage for uploaded KnowGraph PDFs."""
 
 # Entity: KnowGraph
-# Relationship: KnowGraph streams an accepted PDF into immutable content-addressed storage, sanitizes its source name, reuses identical bytes, and returns stable provenance metadata.
+# Relationship: This file contributes immutable content-addressed PDF storage, safe source naming, duplicate-byte reuse, and stable provenance metadata to the KnowGraph feature.
 
 from __future__ import annotations
 

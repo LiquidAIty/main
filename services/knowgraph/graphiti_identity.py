@@ -1,6 +1,6 @@
 """Canonical authenticated-project namespace for Graphiti."""
 # Entity: KnowGraph
-# Relationship: Validates Project identifiers and derives the deterministic Graphiti group namespace used by ingestion and deletion.
+# Relationship: This file contributes validated Project identifiers and deterministic Graphiti group namespaces to KnowGraph ingestion and deletion.
 
 from __future__ import annotations
 

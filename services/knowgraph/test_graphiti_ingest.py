@@ -1,7 +1,11 @@
 """Deterministic proof for the Graphiti KnowGraph ingestion boundary."""
 
 # Entity: KnowGraph
-# Relationship: Verifies deterministic episode identity, duplicate exclusion, interrupted settlement recovery, exact authority readback, and idempotent Jev fact repair.
+# Relationship: This file contributes proof of deterministic episode identity, duplicate exclusion, interrupted settlement recovery, and exact authority readback to the KnowGraph feature.
+# Entity: Jev Decisions
+# Relationship: This file contributes proof of bounded, idempotent, and repairable Graphiti fact classification to the Jev Decisions feature.
+# Entity: Credentials
+# Relationship: This file contributes proof of process-scoped provider and model configuration without exposing secret values to the Credentials feature.
 
 from __future__ import annotations
 

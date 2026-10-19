@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 # Entity: KnowGraph
-# Relationship: Verifies that the KnowGraph service loads one explicit environment source, honors process-secret precedence, and fails closed without exposing secret values.
+# Relationship: This file contributes proof of explicit environment loading and fail-closed configuration behavior to the KnowGraph feature.
+# Entity: Credentials
+# Relationship: This file contributes proof of file-backed secret loading, process-secret precedence, and secret-safe errors to the Credentials feature.
 
 import os
 
