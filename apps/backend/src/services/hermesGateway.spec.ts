@@ -1,6 +1,8 @@
 /**
- * Entity: Hermes Gateway
- * Relationship: Verifies the shared Gateway connection accepts only loopback credentials, closes failed attempts, and preserves a newer replacement client against stale finalizers.
+ * Entity: Hermes Card Sessions
+ * Relationship: This file verifies the shared Hermes session-gateway connection closes failed attempts and preserves a newer replacement client against stale finalizers.
+ * Entity: Credentials
+ * Relationship: This file verifies that plaintext Hermes gateway credentials are accepted only for loopback origins and are rejected when embedded in configured URLs.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

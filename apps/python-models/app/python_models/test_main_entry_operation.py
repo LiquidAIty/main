@@ -1,7 +1,15 @@
 """Focused contracts for the authenticated external saved-Main entry operation."""
 
 # Entity: Main Chat
-# Relationship: Verifies external missions enter through the saved Main route, preserve server-owned identity, and return only an observed terminal Run result.
+# Relationship: This file verifies external missions enter through the saved Main route, preserve server-owned identity, and return only an observed terminal result.
+# Entity: MCP Host
+# Relationship: This file verifies main.context and main.submit are external entry operations rather than saved Card grants.
+# Entity: Authentication
+# Relationship: This file verifies Main submission forwards only the issuer and subject from a verified external identity plus the expected server-owned Main binding.
+# Entity: Run Ledger
+# Relationship: This file verifies the external result parser requires one completed and ended outer Run and preserves real stream failure without a success shape.
+# Entity: Data Anchors
+# Relationship: This file verifies selected Data Anchors pass through the bounded Main submission unchanged.
 
 import asyncio
 import json

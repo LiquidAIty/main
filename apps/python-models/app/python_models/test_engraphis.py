@@ -1,10 +1,16 @@
 """Engraphis mechanics in a disposable store; never product acceptance data."""
 
 # Entity: ThinkGraph
-# Relationship: Exercises Project scoping, Smart operations, retirement, deletion isolation, and bounded Entity projection against a disposable real Engraphis store without claiming loaded-product acceptance.
+# Relationship: This file exercises Project scoping, Smart operations, retirement, deletion isolation, and bounded Entity projection against a disposable real Engraphis store.
 #
 # Entity: Jev Decisions
-# Relationship: Verifies graph-focus request validation, exact probability handling, ranking, and typed unavailable or timeout outcomes through a controlled provider transport.
+# Relationship: This file verifies graph-focus request validation, exact probability handling, ranking, and typed unavailable or timeout outcomes through a controlled provider transport.
+#
+# Entity: Tool Catalog
+# Relationship: This file verifies published Engraphis operations match the installed Smart interface and preserve explicit effect metadata and Project injection.
+#
+# Entity: Project Knowledge Graph
+# Relationship: This file verifies bounded ThinkGraph projections and focus decisions preserve real provider identities without claiming loaded product acceptance.
 
 import asyncio
 import time

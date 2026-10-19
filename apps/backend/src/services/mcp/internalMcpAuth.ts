@@ -1,6 +1,10 @@
 /**
- * Entity: Internal MCP Auth
- * Relationship: Restricts backend-to-MCP transport to loopback, mints the catalog-reader bearer, and timing-safely verifies the supervised process secret for internal routes.
+ * Entity: MCP Host
+ * Relationship: This file restricts backend-to-MCP transport to the canonical loopback endpoint and mints the host's signed catalog-reader principal.
+ * Entity: Credentials
+ * Relationship: This file loads and timing-safely verifies the supervised internal process secret used by protected backend and MCP seams.
+ * Entity: Authentication
+ * Relationship: This file signs the exact short-lived internal principal accepted by the MCP host and rejects unsupported principal kinds.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';

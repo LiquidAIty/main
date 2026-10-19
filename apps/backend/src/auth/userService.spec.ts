@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Verifies password hashing, timing-resistant absent-user checks, hash upgrades, secret-free user returns, and single-owner local bootstrap.
+ * Relationship: This file verifies user creation, verification, and the single-owner local bootstrap remain within the Authentication boundary.
+ * Entity: Credentials
+ * Relationship: This file verifies password hashing, timing-resistant absent-user checks, hash upgrades, and secret-free user returns.
  */
 
 import bcrypt from 'bcryptjs';

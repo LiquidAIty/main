@@ -1,7 +1,7 @@
-/**
- * Entity: Card Runs
- * Relationship: Verifies exact preparation, execution, readback, usage, and mismatch-settlement identities across the TypeScript-to-Python Run boundary.
- */
+// Entity: Card Invocation
+// Relationship: This file verifies preparation rejects mismatched Project, deck, conversation, Card, revision, profile, and Hermes transport identities.
+// Entity: Run Ledger
+// Relationship: This file verifies accepted Runs settle identity failures and record only nonnegative, internally consistent Hermes usage.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

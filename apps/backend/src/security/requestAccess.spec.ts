@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Verifies development bootstrap trusts only real loopback sockets with matching headers, exposes only loopback CORS origins, and never activates in production.
+ * Relationship: This file verifies development bootstrap trusts only real loopback sockets with matching headers, exposes only loopback CORS origins, and never activates in production.
+ * Entity: Credentials
+ * Relationship: This file protects the bootstrap-token boundary by proving remote requests cannot manufacture local authority through caller-controlled headers.
  */
 
 import type { Request } from 'express';

@@ -1,6 +1,12 @@
 /**
  * Entity: Agent Builder
- * Relationship: These tests prove Agent Builder deck persistence serializes revisions, retains the latest draft, promotes explicit saves, and freezes uncertain writes until canonical reload.
+ * Relationship: This file verifies Agent Builder deck persistence serializes revisions, retains the latest draft, promotes explicit saves, and freezes uncertain writes until canonical reload.
+ * Entity: Saved Cards
+ * Relationship: This file verifies the exact Card document and returned revision advance through one writer without rolling back a newer local edit.
+ * Entity: Card Topology
+ * Relationship: This file verifies Card nodes and edges remain one compare-and-set persistence unit.
+ * Entity: Projects
+ * Relationship: This file verifies persistence stays bound to the active Project scope and cannot accept a stale workspace completion.
  */
 
 // @vitest-environment jsdom

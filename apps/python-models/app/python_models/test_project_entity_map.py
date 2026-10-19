@@ -1,6 +1,10 @@
 """Focused proof for the automatically injected Entity/Relationship map."""
-# Entity: Entity Grounding
-# Relationship: Verifies the injected Project Entity map contains only canonical identities and relationship state from each authority, never Think, Know, citation, or episode bodies.
+# Entity: Project Knowledge Graph
+# Relationship: This file verifies the injected Project Entity map contains canonical identities and relationship state without copying Think, Know, citation, or episode bodies.
+# Entity: ThinkGraph
+# Relationship: This file verifies only current Jev-authored ThinkGraph relationships enter the shared map.
+# Entity: KnowGraph
+# Relationship: This file verifies KnowGraph relationships retain exact Entity identities while excluding episode and fact bodies from the shared map.
 
 from __future__ import annotations
 

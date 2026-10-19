@@ -1,6 +1,10 @@
 /**
- * Entity: Internal MCP Auth
- * Relationship: Internal MCP Auth verifies signed catalog-reader claims, loopback-only transport resolution, and constant-time rejection of missing, short, or foreign process secrets.
+ * Entity: MCP Host
+ * Relationship: This file verifies internal MCP transport resolves only the canonical loopback host and signs only the catalog-reader principal.
+ * Entity: Credentials
+ * Relationship: This file verifies missing, short, or foreign internal process secrets are rejected without weakening timing-safe comparison.
+ * Entity: Authentication
+ * Relationship: This file verifies the internal bearer contains the exact issuer, audience, subject, lifetime, scope, and principal claims expected by the MCP host.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';

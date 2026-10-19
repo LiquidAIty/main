@@ -1,7 +1,11 @@
 """Focused contracts for truthful AGE Run and artifact observations."""
 
 # Entity: AgentGraph
-# Relationship: Verifies only exact lifecycle, Hermes identity, assignment, lineage, and artifact events produce confirmed AGE observations while unmatched writes report false.
+# Relationship: This file verifies only exact lifecycle, Hermes identity, assignment, lineage, and artifact events produce confirmed AGE observations while unmatched writes report false.
+# Entity: Run Ledger
+# Relationship: This file verifies AgentGraph copies only canonical Run readback fields and never invents timing, token, worker, or result state.
+# Entity: Card Invocation
+# Relationship: This file verifies invocation acceptance, preparation, and real Hermes start events require the exact returned Run identity.
 
 from __future__ import annotations
 

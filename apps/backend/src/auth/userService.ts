@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Creates and verifies users with bounded bcrypt work, upgrades weak hashes, hides credential fields, and preserves the single local-development owner identity.
+ * Relationship: This file creates and verifies users with bounded bcrypt work and preserves the single local-development owner identity.
+ * Entity: Credentials
+ * Relationship: This file hashes passwords, upgrades weak hashes, performs a timing-resistant absent-user check, and excludes password fields from returned user records.
  */
 
 import bcrypt from 'bcryptjs';

@@ -1,7 +1,5 @@
-/**
- * Entity: Application Runtime
- * Relationship: Proves development and production use the same bounded JSON envelope required by the canonical four-image Main input contract.
- */
+// Entity: Application Startup
+// Relationship: This file verifies development and production mount the same bounded JSON envelope and ignore retired request-size overrides.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

@@ -1,6 +1,10 @@
 /**
  * Entity: Hermes Profiles
- * Relationship: Loads one authorized saved Card's profile, learning, and MCP status, applies bounded operations, and manages validated loopback OAuth start, poll, and cancel lifecycle.
+ * Relationship: This file loads one authorized saved Card's profile and learning state and applies only the bounded profile operations exposed by the backend.
+ * Entity: Credentials
+ * Relationship: This file manages the validated loopback OAuth start, poll, approval, cancellation, and timeout lifecycle for a Card profile's selected MCP server.
+ * Entity: Tool Catalog
+ * Relationship: This file reads and tests the MCP server tools exposed through the selected saved Hermes profile without changing Card grants.
  */
 
 export type HermesMcpServerView = {

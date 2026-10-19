@@ -1,7 +1,9 @@
 """The one process-owned official Codebase Memory MCP client."""
 
 # Entity: CodeGraph
-# Relationship: CodeGraph owns one long-lived official CBM SDK client, loads its complete unique tool catalog, dispatches exact provider calls, and closes the child connection with the MCP host lifecycle.
+# Relationship: This file owns one long-lived official CBM SDK client, loads its complete unique tool catalog, dispatches exact provider calls, and closes the connection with the host lifecycle.
+# Entity: MCP Host
+# Relationship: This file attaches the official CodeGraph provider client to the one MCP host lifespan and never launches a second fallback frontend.
 
 from __future__ import annotations
 

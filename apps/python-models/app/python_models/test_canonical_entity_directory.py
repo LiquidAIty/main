@@ -1,7 +1,11 @@
 """Focused contracts for the complete cross-authority Entity directory."""
 
 # Entity: Project Knowledge Graph
-# Relationship: Verifies complete ThinkGraph and KnowGraph Entity directories preserve provider identities, reject incomplete or ambiguous inputs, and join only exact canonical names.
+# Relationship: This file verifies the complete shared directory preserves provider identities, rejects incomplete or ambiguous inputs, and joins only exact canonical-name bytes.
+# Entity: ThinkGraph
+# Relationship: This file verifies all Engraphis identities and their source revision remain present without truncation.
+# Entity: KnowGraph
+# Relationship: This file verifies all Graphiti identities and their source revision remain present without truncation.
 
 from __future__ import annotations
 
@@ -179,4 +183,3 @@ def test_entity_directory_preserves_writer_canonical_name_bytes() -> None:
     assert [item["canonicalName"] for item in directory["entities"]] == [
         "  Writer-preserved Entity  ", "Writer-preserved Entity",
     ]
-

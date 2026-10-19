@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-/**
- * Entity: Card Terminal
- * Relationship: Verifies terminal preflight accepts only exact same-origin proxy identity and rejects direct, foreign, or mismatched WebSocket contracts.
- */
+// Entity: Card Terminals
+// Relationship: This file verifies terminal preflight accepts only the requested Card identity and an application-owned same-origin WebSocket path.
+// Entity: Hermes Card Sessions
+// Relationship: This file verifies direct Gateway URLs and session readback for another Card are rejected before a terminal stream opens.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

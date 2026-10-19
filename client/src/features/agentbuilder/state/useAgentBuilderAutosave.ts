@@ -1,6 +1,12 @@
 /**
  * Entity: Agent Builder
- * Relationship: Agent Builder serializes every canonical deck write through this one compare-and-swap coordinator, retaining newer local edits and requiring an explicit reload whenever the server commit result is uncertain.
+ * Relationship: This file serializes every Agent Builder deck write through one compare-and-swap coordinator and preserves newer local edits.
+ * Entity: Saved Cards
+ * Relationship: This file persists the exact current Card document and optimistic revision, promotes explicit saves, and freezes on an uncertain commit until canonical reload.
+ * Entity: Card Topology
+ * Relationship: This file persists Card placement and edges through the same single writer while excluding unsaved transient Cards and their incident edges.
+ * Entity: Projects
+ * Relationship: This file fences queued and in-flight saves to the exact active Project and rejects completions from a superseded workspace scope.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

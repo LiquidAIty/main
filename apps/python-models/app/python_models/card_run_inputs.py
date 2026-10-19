@@ -1,6 +1,12 @@
 """Canonical IDF retention and input-artifact persistence for Card Runs."""
-# Entity: Input Data File
-# Relationship: Writes or reopens the one canonical in.idf, records its exact artifact identity, reloads verified bytes, and projects the mechanical runtime request.
+# Entity: IDF
+# Relationship: This file writes or reopens the one canonical in.idf, reloads its verified bytes, and projects the mechanical runtime request from that retained file.
+#
+# Entity: Run Ledger
+# Relationship: This file records the retained IDF path, hash, byte count, media type, and producing Run as the canonical input artifact.
+#
+# Entity: AgentGraph
+# Relationship: This file emits the truthful input-artifact observation only after the Run artifact record has been persisted.
 
 from __future__ import annotations
 

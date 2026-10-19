@@ -1,6 +1,8 @@
 /**
  * Entity: Projects
- * Relationship: Deduplicates Project and deck reads, isolates caller cancellation, guards request generations, and safely parses persistence responses for Builder state owners.
+ * Relationship: This file fences overlapping Project reads, isolates caller cancellation, and rejects stale request generations before they can replace current Project state.
+ * Entity: Saved Cards
+ * Relationship: This file deduplicates saved-deck reads and safely parses persistence responses for Card and deck state owners.
  */
 
 type GuardedRequestOptions<T> = {

@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-# Entity: Card Runs
-# Relationship: Verifies scoped Run acceptance, canonical IDF retention, execution transitions, readback, measured usage, failure settlement, and exact saved revision authority across one outer Card Run.
+# Entity: Run Ledger
+# Relationship: This file verifies scoped Run acceptance, transitions, readback, usage, cost, failure settlement, terminal evidence, idempotence, and exact saved revision authority.
 #
-# Entity: Magnetic Runs
-# Relationship: Verifies one Magnetic outer Run retains its exact Hermes root, projects only connected saved workers, accepts bounded progress, and settles final synthesis without another session.
+# Entity: Card Invocation
+# Relationship: This file verifies preparation returns the same Card identity at every transport level and fails before execution when authority or revision evidence differs.
+#
+# Entity: IDF
+# Relationship: This file verifies every accepted Run retains and reloads one canonical IDF and settles honestly when input persistence fails.
+#
+# Entity: AgentGraph
+# Relationship: This file verifies Run history remains SQL-owned while optional conversation scope and truthful lifecycle observations use AgentGraph without controlling the Run.
+#
+# Entity: Magnetic TaskGraph
+# Relationship: This file verifies one Magnetic outer Run retains its exact Hermes root, projects only blue-connected saved workers, accepts bounded progress, and settles final synthesis.
 
 from datetime import datetime, timezone
 

@@ -1,6 +1,10 @@
 /**
  * Entity: ThinkGraph
- * Relationship: ThinkGraph exposes owner-scoped evidence retirement, full projection, and canonical Entity neighborhood reads while leaving graph data and semantics to Python and Engraphis.
+ * Relationship: This file exposes owner-scoped evidence retirement, full projection, and exact Entity-neighborhood reads while leaving graph data and semantics to Engraphis.
+ * Entity: Authentication
+ * Relationship: This file requires ownership of the exact Project before forwarding any ThinkGraph read or retirement operation.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file supplies the shared Project graph workspace with the provider-owned ThinkGraph projection and bounded focus neighborhoods.
  */
 
 import { Router } from 'express';

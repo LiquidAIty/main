@@ -1,7 +1,9 @@
-/**
- * Entity: Model Selection
- * Relationship: Defines the canonical provider model registry and projects those exact entries into saved Card selectors and bounded automatic-model candidates.
- */
+// Entity: Hermes Profiles
+// Relationship: This file defines the canonical configured provider/model identities that saved Card profiles may select.
+// Entity: IDD
+// Relationship: This file projects the exact configured model records consumed by the IDD-backed Card editor selector.
+// Entity: Jev Decisions
+// Relationship: This file authors the bounded compatibility facts used to build Auto Model candidates without letting Jev invent models or capabilities.
 export type Provider = "openai" | "openrouter";
 
 export type ModelEntry = {

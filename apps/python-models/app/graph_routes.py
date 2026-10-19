@@ -1,6 +1,14 @@
 """ThinkGraph, KnowGraph, and Jev route owners."""
 # Entity: Project Knowledge Graph
-# Relationship: Exposes Python rails routes for ThinkGraph and KnowGraph reads, completed-pair settlement, shared relationship vocabulary, KnowGraph classification, and graph-focus decisions.
+# Relationship: This file mounts the established Python-rails graph read and settlement routes without combining graph writers.
+# Entity: ThinkGraph
+# Relationship: This file exposes Engraphis projection, neighborhood, operation, completed-pair preparation, and completed-pair settlement routes.
+# Entity: KnowGraph
+# Relationship: This file exposes Graphiti projection, neighborhood, and bounded Jev fact-classification routes while Graphiti remains writer.
+# Entity: CodeGraph
+# Relationship: This file exposes the fixed saved-Builder CodeGraph read route and forwards validation failures without raw provider access.
+# Entity: Jev Decisions
+# Relationship: This file exposes bounded focus and shared relationship-vocabulary operations and returns explicit unavailable decisions without a success-shaped fallback.
 
 from fastapi import APIRouter, HTTPException
 from typing import Any

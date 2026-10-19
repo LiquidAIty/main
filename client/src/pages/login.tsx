@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Collects user credentials, requests the server-owned login session, displays exact failure text, and navigates authenticated users into the application.
+ * Relationship: This file requests the server-owned login session, displays exact refusal text, and navigates authenticated users into the application.
+ * Entity: Credentials
+ * Relationship: This file collects the user's email and password only for the bounded login request and keeps password input masked in the browser.
  */
 
 import { useState } from 'react';

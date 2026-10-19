@@ -1,0 +1,17 @@
+{
+  "last_start": 0,
+  "last_restart": 0,
+  "reason": "",
+  "transport": "direct",
+  "proxy": "",
+  "transport_active": "",
+  "proxy_active": "",
+  "installed": true,
+  "configured": false,
+  "running": false,
+  "ready": false,
+  "pid": 0,
+  "started_at": 0,
+  "last_error": "",
+  "privacy_level_effective": "default"
+}

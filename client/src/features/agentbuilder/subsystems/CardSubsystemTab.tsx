@@ -1,6 +1,8 @@
 /**
- * Entity: Card Subsystems
- * Relationship: Presents one Card's declared subsystem adapter, capabilities, lifecycle, and readiness without widening the Card's ordinary Hermes or graph authority.
+ * Entity: Agent Builder
+ * Relationship: This file renders the selected Card's declared subsystem adapter, capabilities, lifecycle, and readiness in the Agent Builder workspace.
+ * Entity: Saved Cards
+ * Relationship: This file presents one saved Card attachment without widening that Card's ordinary Hermes, tool, Team, Script, or graph authority.
  */
 import { useEffect, useState } from 'react';
 

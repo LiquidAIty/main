@@ -1,9 +1,15 @@
 """Saved-Card invocation, graph context, tool grant, and IDF preparation tests."""
-# Entity: Card Runs
-# Relationship: Verifies exact saved-Card invocation authority, graph context, provider configuration, and canonical IDF preparation without alternate runners or copied context.
+# Entity: Card Invocation
+# Relationship: This file verifies exact saved-Card revision, sender, topology, provider, model, Script, and execution authority without alternate runners or copied context.
 #
-# Entity: Tool Grants
-# Relationship: Proves catalog discovery cannot broaden saved grants and profile-scoped ThinkGraph operations cannot execute from an ordinary Card.
+# Entity: Data Anchors
+# Relationship: This file verifies selected graph references resolve exactly, remain Project-scoped, and cannot be replaced by unverified or copied context.
+#
+# Entity: IDF
+# Relationship: This file verifies the invocation materializes one canonical IDF whose saved Card, graph, tool, image, and subagent values survive exact readback.
+#
+# Entity: Tool Catalog
+# Relationship: This file proves live catalog discovery cannot broaden saved grants and profile-scoped operations cannot execute from an ordinary Card.
 
 from __future__ import annotations
 

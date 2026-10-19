@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-# Entity: Input Data Dictionary
-# Relationship: Verifies the literal IDD remains the sole composable Card-definition source and resolves its referenced executable contracts without copied runtime catalogs.
+# Entity: IDD
+# Relationship: This file verifies the literal IDD remains the sole composable Card-definition source and resolves its referenced executable contracts without copied runtime catalogs.
 #
 # Entity: Card Scripts
-# Relationship: Verifies bounded recipes compile only from the positive grammar and cannot escape the saved Card's selected-tool or child-process ceilings.
+# Relationship: This file verifies bounded recipes compile only from the positive grammar and cannot escape the saved Card's selected-tool or child-process ceilings.
 
 import pytest
 from pydantic import ValidationError

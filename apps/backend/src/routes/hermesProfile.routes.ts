@@ -1,6 +1,12 @@
 /**
  * Entity: Hermes Profiles
- * Relationship: Authenticates exact Project, Card, and single-owner profile authority before exposing bounded learning, MCP connection, and OAuth operations.
+ * Relationship: This file resolves the exact saved Card profile and exposes bounded learning and profile operations only after Project, Card, and single-owner authorization.
+ * Entity: Authentication
+ * Relationship: This file requires the authenticated Project owner and rejects cross-owner or non-Hermes Card profile access before contacting the Hermes gateway.
+ * Entity: Credentials
+ * Relationship: This file exposes bounded MCP OAuth start, poll, cancel, and connection-test operations while redacting token-shaped failure details.
+ * Entity: Tool Catalog
+ * Relationship: This file materializes each profile against the canonical tool catalog and returns its selected MCP server filters without widening grants.
  */
 
 import { Router, type Request, type Response } from 'express';

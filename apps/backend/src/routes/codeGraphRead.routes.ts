@@ -1,6 +1,10 @@
 /**
  * Entity: CodeGraph
- * Relationship: Authorizes one Project-owned browser read and injects the stable Builder scope before transporting a fixed projection, file, or source request to Python rails.
+ * Relationship: This file transports one fixed projection, File expansion, or explicit Symbol source read and rejects every browser-authored provider override.
+ * Entity: Authentication
+ * Relationship: This file requires ownership of the exact Project and injects its canonical identity before any CodeGraph read.
+ * Entity: Builder Card
+ * Relationship: This file fixes browser CodeGraph authority to the persisted Builder Card and deck rather than accepting a caller-selected Card.
  */
 
 import { Router } from 'express';

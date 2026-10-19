@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 # Entity: Project Knowledge Graph
-# Relationship: Verifies exact Entity-directory reads and bounded Relevant plus distinct Recent context from the separate ThinkGraph and KnowGraph authorities.
+# Relationship: This file verifies exact Entity-directory reads and bounded Relevant plus distinct Recent context from separate graph authorities.
+# Entity: ThinkGraph
+# Relationship: This file verifies exact Engraphis Entity references return bounded Recent and Relevant Thinks.
+# Entity: KnowGraph
+# Relationship: This file verifies exact Graphiti Entity references return bounded Recent and Relevant two-sided Knows.
+# Entity: Jev Decisions
+# Relationship: This file verifies stale or nonexact Entity references are rejected before bounded relevance ranking.
+# Entity: Tool Catalog
+# Relationship: This file verifies the two Project graph read operations expose exact read-only definitions and schemas.
 
 import pytest
 

@@ -1,6 +1,26 @@
 /**
- * Entity: Project Seeds
- * Relationship: Verifies the backend-owned fresh-Project roster, saved Card configuration, prompts, positions, topology, cloning, and canonical persistence readback contract.
+ * Entity: Projects
+ * Relationship: This file verifies each new Project receives an independent canonical source-default deck and exact persistence readback.
+ * Entity: Saved Cards
+ * Relationship: This file verifies the source-default roster contains exactly Main, Builder, ThinkGraph, Magnetic, Team, and KnowGraph with stable saved identities.
+ * Entity: Card Topology
+ * Relationship: This file verifies the default deck contains only the intended Main-to-Builder flow and Team-to-Magnetic membership.
+ * Entity: Main Chat
+ * Relationship: This file verifies Main's source-default saved mode, profile, model, and selected capabilities.
+ * Entity: Builder Card
+ * Relationship: This file verifies Builder's source-default saved profile, model, skills, and construction toolsets.
+ * Entity: ThinkGraph
+ * Relationship: This file verifies the source-default ThinkGraph Card receives only its intended Engraphis operations.
+ * Entity: KnowGraph
+ * Relationship: This file verifies the source-default KnowGraph Card uses its intended model and Graphiti operations.
+ * Entity: Magnetic TaskGraph
+ * Relationship: This file verifies Magnetic retains its distinct saved identity and blue Team membership.
+ * Entity: Team
+ * Relationship: This file verifies Team retains its distinct saved identity, model, and bounded research toolset.
+ * Entity: Hermes Profiles
+ * Relationship: This file verifies every source-default Card has one unique stable Hermes profile and expected runtime mode.
+ * Entity: Tool Catalog
+ * Relationship: This file verifies the exact source-default capability selections stored on the core Cards.
  */
 
 import { describe, expect, it } from 'vitest';

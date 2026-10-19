@@ -1,6 +1,10 @@
 /**
  * Entity: KnowGraph
- * Relationship: Verifies authenticated Project-scoped projection and neighborhood reads, exact provider identities and bounds, and honest upstream failures without graph reshaping.
+ * Relationship: This file verifies Project-scoped KnowGraph projection and neighborhood reads preserve provider identities, bounds, and honest upstream failures.
+ * Entity: Authentication
+ * Relationship: This file proves anonymous and non-owner requests cannot read a Project's KnowGraph data.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the shared graph routes forward exact KnowGraph projections and expansion requests without reshaping them.
  */
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';

@@ -1,12 +1,18 @@
 /**
  * Entity: Projects
- * Relationship: Creates, lists, authorizes, and compensates owner-scoped Project records without deriving one Project's state from another Project.
+ * Relationship: This file creates, lists, authorizes, and compensates owner-scoped Project records without deriving one Project's state from another Project.
  *
  * Entity: Saved Cards
- * Relationship: Lists and attaches exact owner-scoped saved Card revisions while preserving Project-local membership, profile uniqueness, and compare-and-swap deck authority.
+ * Relationship: This file lists and attaches exact owner-scoped saved Card revisions while preserving Project-local membership and compare-and-swap deck authority.
+
+ * Entity: Card Topology
+ * Relationship: This file creates and compensates Project-local Card membership and placement records without creating a new Card revision or wire.
  *
  * Entity: Hermes Profiles
- * Relationship: Proves one stable logical profile is referenced by exactly one authenticated owner before any reusable Hermes profile or credential surface is accessed.
+ * Relationship: This file proves one stable logical profile is referenced by exactly one authenticated owner before any reusable Hermes profile surface is accessed.
+
+ * Entity: Authentication
+ * Relationship: This file scopes Project and reusable Card access to the exact authenticated owner identity supplied by the route boundary.
  */
 
 import { randomUUID } from 'crypto';

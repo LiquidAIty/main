@@ -1,7 +1,9 @@
 """Magnetic projection from Hermes's package-safe taskgraph adapter."""
 
 # Entity: Magnetic TaskGraph
-# Relationship: Projects exact Hermes root, descendant, attempt, dependency, handoff, and terminal-result state without copying the Hermes task ledger.
+# Relationship: This file projects exact Hermes root, descendant, attempt, dependency, handoff, and terminal-result state without copying the Hermes task ledger.
+# Entity: Run Ledger
+# Relationship: This file returns the outer Run's exact Hermes root, attempt, status, failure, cancellation, and final-result evidence for settlement and inspection.
 
 from __future__ import annotations
 

@@ -8,7 +8,7 @@ owners instead of this store seam.
 """
 
 # Entity: ThinkGraph
-# Relationship: Owns the Project-scoped Engraphis service and exact Entity and Think read primitives used by projection, grounding, relationship settlement, and provider-scoped retrieval.
+# Relationship: This file owns the Project-scoped Engraphis service and exact Entity, Think, incidence, relationship, directory, and bounded snapshot read primitives.
 
 from __future__ import annotations
 

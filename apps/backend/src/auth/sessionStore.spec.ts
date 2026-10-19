@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Verifies session bearer tokens are digest-only at rest, expired records are removed, delete failures remain honest, and cookie attributes match lifecycle.
+ * Relationship: This file verifies active and expired session resolution, honest removal failures, and matching secure-cookie lifecycle attributes.
+ * Entity: Credentials
+ * Relationship: This file verifies session bearer tokens remain digest-only at rest and the stored digest never replaces the browser credential.
  */
 
 import { createHash } from 'node:crypto';

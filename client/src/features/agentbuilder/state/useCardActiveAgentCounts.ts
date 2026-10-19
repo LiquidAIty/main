@@ -1,7 +1,7 @@
-/**
- * Entity: Agent Canvas
- * Relationship: Polls inspect-only Run status for each saved Card and projects truthful parent-plus-worker counts and active identities to the Canvas.
- */
+// Entity: Run Ledger
+// Relationship: This file polls inspect-only status for each saved Card with bounded backoff and accepts only exact active Run and worker counts.
+// Entity: Card Topology
+// Relationship: This file projects the truthful parent-plus-worker count and active Card identities used by the topology canvas.
 
 import { useEffect, useMemo, useState } from 'react';
 

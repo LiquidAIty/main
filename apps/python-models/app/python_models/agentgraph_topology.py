@@ -1,7 +1,17 @@
 """Saved AGE Card topology and authorization projections."""
 
 # Entity: AgentGraph
-# Relationship: Persists and validates Project-owned Card topology, deriving exact outbound orange orchestrator targets and independent blue Magnetic worker authority from saved edges.
+# Relationship: This file persists and loads Project-owned Card vertices and relationships through exact fixed AGE queries.
+# Entity: Card Topology
+# Relationship: This file validates saved Card addresses, endpoints, edge identity, direction, handles, enabled state, and one-Magnetic-bus-per-worker constraints.
+# Entity: Bot Mode Delegation
+# Relationship: This file derives one orchestrator Card's addressable targets only from enabled outbound orange flow edges and never grants reverse authority.
+# Entity: Magnetic TaskGraph
+# Relationship: This file derives Magnetic's callable saved worker roster only from enabled blue membership and preserves each worker's exact revision and Hermes profile.
+# Entity: Tool Catalog
+# Relationship: This file projects only compact saved tool identifiers as Magnetic assignment metadata and never grants a capability or copies tool schemas.
+# Entity: Team
+# Relationship: This file preserves the saved Team Card's explicit Team-task marker when it is projected as a blue Magnetic worker.
 
 from __future__ import annotations
 

@@ -1,5 +1,7 @@
+# Entity: KnowGraph
+# Relationship: This file verifies Graphiti facts remain immutable while their exact source, Entity, temporal, and nearby-fact context is classified.
 # Entity: Jev Decisions
-# Relationship: Verifies KnowGraph relationship-choice validation, immutable Graphiti facts, bounded parallel classification, exact failure visibility, and deadline settlement through injected deterministic transports.
+# Relationship: This file verifies KnowGraph relationship-choice validation, bounded parallel classification, exact failure visibility, and deadline settlement through injected transports.
 
 from copy import deepcopy
 from threading import Lock

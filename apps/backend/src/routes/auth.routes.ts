@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Exposes local bootstrap, signup, login, and logout through server-owned sessions while validating credentials and maintaining the bounded session cookie.
+ * Relationship: This file exposes local bootstrap, signup, login, and logout through server-owned user and session authority.
+ * Entity: Credentials
+ * Relationship: This file validates submitted email and password fields and maintains the bounded session cookie without returning stored credential material.
  */
 
 import { Router } from 'express';

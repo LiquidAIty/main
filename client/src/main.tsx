@@ -1,7 +1,7 @@
-/**
- * Entity: Application Shell
- * Relationship: Installs global crash reporting and mounts the root React application inside its top-level recovery boundary.
- */
+// Entity: Application Startup
+// Relationship: This file installs global browser crash hooks and mounts the root React application inside its top-level recovery boundary.
+// Entity: Application Shell
+// Relationship: This file provides the one browser entry point that renders the route-owning application shell into the required root element.
 
 import React from "react";
 import { createRoot } from "react-dom/client";

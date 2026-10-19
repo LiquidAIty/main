@@ -1,7 +1,5 @@
-/**
- * Entity: Card Scripts
- * Relationship: Verifies the editor presents the positive recipe grammar, bounded starter, canonical examples, and grant-aware Monaco authoring controls.
- */
+// Entity: Card Scripts
+// Relationship: This file verifies the editor presents the positive recipe grammar, bounded starter, canonical examples, exact tool modes, and code-first Monaco controls.
 
 import { describe, expect, it } from 'vitest';
 

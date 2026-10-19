@@ -7,10 +7,13 @@ that same relationship; this module never admits, rejects, or rewrites facts.
 """
 
 # Entity: KnowGraph
-# Relationship: Supplies bounded source, Entity, temporal, and nearby-fact context for relationship classification without admitting, deleting, or rewriting Graphiti facts.
+# Relationship: This file supplies bounded source, Entity, temporal, and nearby-fact context for relationship classification without admitting, deleting, or rewriting Graphiti facts.
 #
 # Entity: Jev Decisions
-# Relationship: Obtains and validates one probabilistic canonical relationship Choice per Graphiti fact, with bounded concurrency and explicit incomplete outcomes.
+# Relationship: This file obtains and validates one probabilistic canonical relationship Choice per Graphiti fact, with bounded concurrency and explicit incomplete outcomes.
+#
+# Entity: Credentials
+# Relationship: This file reads the OpenRouter API key only inside the bounded KnowGraph classification request and never persists it with fact provenance.
 
 from __future__ import annotations
 

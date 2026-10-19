@@ -1,10 +1,15 @@
 """OAuth, internal-principal, and authenticated Project/profile context for MCP."""
 
-# Entity: External MCP
-# Relationship: Verifies OAuth configuration and Auth0 bearer tokens, then resolves an optional authenticated Project and saved-profile context for context-dependent tools.
-#
-# Entity: Internal MCP Auth
-# Relationship: Verifies the exact signed catalog-reader or materializer-read principal and carries its bounded Project, Run, Card, and granted-tool authority into dispatch.
+# Entity: Authentication
+# Relationship: This file verifies Auth0 bearer tokens and internal signed principals before any MCP request receives Project, Card, Run, or tool authority.
+# Entity: MCP Host
+# Relationship: This file supplies the MCP host's OAuth resource contract, token verifier, authenticated request context, and internal-principal validation.
+# Entity: Projects
+# Relationship: This file resolves a verified external identity to one owner-scoped Project context and rejects absent or malformed Project bindings.
+# Entity: Hermes Profiles
+# Relationship: This file carries the validated saved-profile identity requested by a profile-owned MCP connection into the backend context lookup.
+# Entity: Tool Catalog
+# Relationship: This file validates the exact granted-tool set carried by authenticated external and materializer-read principals.
 
 from __future__ import annotations
 

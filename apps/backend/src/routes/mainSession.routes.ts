@@ -1,9 +1,30 @@
 /**
  * Entity: Main Chat
- * Relationship: Runs and observes Main turns, exact orange-recipient delivery, cancellation, voice capture, and Project conversation persistence through saved Hermes sessions.
+ * Relationship: This file owns Main's authenticated chat, history, stop, and voice routes and streams the exact visible speaker and completion events to the Project conversation.
  *
  * Entity: Hermes Profiles
- * Relationship: Creates and resumes owner-authorized Project-scoped Card sessions while preserving each saved Card's stable logical profile and request-scoped context.
+ * Relationship: This file materializes each participating saved Card's stable profile and verifies the saved provider, model, and reasoning selection before inference.
+ *
+ * Entity: Hermes Card Sessions
+ * Relationship: This file creates, resumes, activates, and readbacks one hidden Project-scoped Hermes session per participating saved Card.
+ *
+ * Entity: Bot Mode Delegation
+ * Relationship: This file resolves explicit @Card addresses only from outbound orange authority, binds exact recipient sessions, and correlates direct and consultation completions without impersonation.
+ *
+ * Entity: Card Invocation
+ * Relationship: This file prepares one saved Main Card invocation, submits its exact Run identity to Hermes, attaches bounded images, and forwards the authorized tool and Script presentation.
+ *
+ * Entity: Run Ledger
+ * Relationship: This file starts and settles the outer Card Run from real Hermes events, usage, provider evidence, cancellation, failure, and final-result state.
+ *
+ * Entity: Tool Catalog
+ * Relationship: This file reads the canonical catalog while materializing participating Card profiles and passes only the prepared Run's selected tools to Hermes.
+ *
+ * Entity: Card Scripts
+ * Relationship: This file forwards an enabled immutable prepared Card Script only when the Run presentation declares Script mode.
+ *
+ * Entity: Authentication
+ * Relationship: This file authorizes either the signed-in Project owner or one exact external identity grant before resolving Main and any recipient Card.
  */
 
 import { Router, type Request, type Response } from 'express';

@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
 
 /**
- * Entity: Graph Presentation
- * Relationship: Verifies the shared inspector renders bounded Think and Know records, times, relationships, sources, and deletion controls without requiring the graph renderer.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the shared inspector renders bounded graph records, identities, times, relationships, sources, and deletion controls without requiring the renderer.
  *
  * Entity: ThinkGraph
- * Relationship: Verifies exact Think summaries and structured relationships remain readable and removable through the shared evidence presentation.
+ * Relationship: This file verifies exact Think summaries and structured relationships remain readable and removable through the shared evidence presentation.
  *
  * Entity: KnowGraph
- * Relationship: Verifies two-sided Knows preserve paragraph content and expose only credential-free HTTPS citations and deduplicated source links.
+ * Relationship: This file verifies two-sided Knows preserve paragraph content and expose only credential-free HTTPS citations and deduplicated source links.
  *
  * Entity: CodeGraph
- * Relationship: Verifies the shared Inspector keeps exact File/Symbol/Feature identity and loads bounded source only through an explicit action.
+ * Relationship: This file verifies the shared Inspector keeps exact File/Symbol/Feature identity and loads bounded source only through an explicit action.
  */
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';

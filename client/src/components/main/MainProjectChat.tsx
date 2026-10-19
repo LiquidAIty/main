@@ -1,6 +1,14 @@
 /**
  * Entity: Main Chat
- * Relationship: Renders the Project conversation and bounded composer, preserving drafts on rejected submissions and enforcing the same image count and byte ceiling accepted by the canonical IDF path.
+ * Relationship: This file renders the Project conversation and bounded composer, preserving drafts on rejected submissions and showing transport failures outside assistant speech.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file offers @Card completion only from Main's server-supplied authorized direct roster and renders the actual replying Card identity.
+ * Entity: Card Invocation
+ * Relationship: This file submits exact user text and bounded image records through the one Main invocation callback while keeping the composer available during active work.
+ * Entity: IDF
+ * Relationship: This file enforces the same image type, filename, count, and byte ceilings accepted by canonical IDF materialization.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file turns exact current assistant-side Entity names into explicit focus actions for the shared Project graph without rewriting message text.
  */
 
 import {

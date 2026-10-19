@@ -6,7 +6,11 @@ remain owned by their provider graph paths and are intentionally absent here.
 """
 
 # Entity: Jev Decisions
-# Relationship: Jev Decisions defines the canonical directed relationship vocabulary, selection criteria, and schema fingerprint shared by ThinkGraph and KnowGraph classification.
+# Relationship: This file defines the canonical directed relationship vocabulary, selection criteria, and schema fingerprint used by graph classification decisions.
+# Entity: ThinkGraph
+# Relationship: This file supplies ThinkGraph relationship normalization with the shared canonical predicate vocabulary while leaving Engraphis as writer.
+# Entity: KnowGraph
+# Relationship: This file supplies KnowGraph relationship classification with the same canonical predicates while leaving Graphiti facts unchanged.
 
 from __future__ import annotations
 

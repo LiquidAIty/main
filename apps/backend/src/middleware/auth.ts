@@ -1,6 +1,6 @@
 /**
  * Entity: Authentication
- * Relationship: Binds authenticated session ownership to protected requests and creates the single local-development session only for loopback callers.
+ * Relationship: This file binds authenticated session ownership to protected requests and creates the single local-development session only for loopback callers.
  */
 
 import { Request, Response, NextFunction } from 'express';

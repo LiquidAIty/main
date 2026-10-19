@@ -1,7 +1,5 @@
-/**
- * Entity: Agent Canvas
- * Relationship: Computes the initial canvas camera that aligns Magnetic with the workspace seam when a right-side workbench is present.
- */
+// Entity: Card Topology
+// Relationship: This file computes the initial canvas camera that aligns the saved Magnetic Card with the workspace seam when a right-side workbench is present.
 
 import type { DeckDocument } from '../../../types/agentgraph';
 

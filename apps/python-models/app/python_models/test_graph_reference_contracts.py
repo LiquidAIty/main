@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Entity: Data Anchors
-# Relationship: Data Anchors verifies that generic graph outputs retain Engraphis relationship identities while selected anchors reject non-selectable relationship records.
+# Relationship: This file verifies generic graph outputs retain Engraphis relationship identities while selected anchors reject non-selectable relationship records.
 
 import pytest
 from pydantic import ValidationError

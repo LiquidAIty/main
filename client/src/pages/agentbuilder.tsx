@@ -1,6 +1,24 @@
 /**
  * Entity: Agent Builder
- * Relationship: This page composes the Project-scoped Builder workspace, joining Main chat, the Card canvas and editors, graph and product surfaces, and canonical deck persistence without owning their domain logic.
+ * Relationship: This file composes the Project-scoped Agent Builder workspace and delegates each surface to its established state, transport, and persistence owner.
+ * Entity: Projects
+ * Relationship: This file binds workspace selection, navigation, canonical deck load, and save scope to the active Project.
+ * Entity: Main Chat
+ * Relationship: This file mounts Main as the persistent primary conversation surface and connects its saved history, send, stop, voice, direct-target, and Entity-focus controls.
+ * Entity: Builder Card
+ * Relationship: This file mounts the saved Builder Card's own Hermes terminal as the permanent lower work surface beneath Main.
+ * Entity: Saved Cards
+ * Relationship: This file composes exact deck hydration, optimistic persistence, existing-Card attachment, new-Card authoring, and Card configuration editing.
+ * Entity: Card Topology
+ * Relationship: This file owns the visible saved Card canvas composition, Card and edge selection, edge deletion, activity projection, and camera focus requests.
+ * Entity: Card Terminals
+ * Relationship: This file mounts the selected non-Main Card terminal in its CLI tab and keeps Builder's terminal separate from other Cards.
+ * Entity: Magnetic TaskGraph
+ * Relationship: This file presents the inspect-only Tasks tab for Magnetic and the blue-connected Team Card without creating or mutating Hermes tasks.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file mounts the shared ThinkGraph, KnowGraph, and CodeGraph workspace and routes exact chat Entity focus into that surface.
+ * Entity: CodeGraph
+ * Relationship: This file passes the bounded open, File expansion, and explicit Symbol source-read operations into the shared graph workspace.
  */
 
 import React, {

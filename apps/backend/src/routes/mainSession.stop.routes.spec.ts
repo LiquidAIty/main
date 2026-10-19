@@ -1,6 +1,12 @@
 /**
  * Entity: Main Chat
- * Relationship: Verifies cancelling an addressed recipient interrupts the exact Hermes submission and settles the outer Run without persisting incomplete recipient output.
+ * Relationship: This file verifies Main cancellation reports the exact active state and persists no incomplete recipient output as conversation speech.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file verifies an addressed Builder turn interrupts the exact recipient submission rather than Main or an unrelated Card.
+ * Entity: Run Ledger
+ * Relationship: This file verifies socket failure settles the outer Run as failed and explicit interruption settles it as cancelled without fabricated provider evidence.
+ * Entity: Authentication
+ * Relationship: This file verifies external Main entry requires the supervised internal seam, one verified identity grant, and the exact current saved Main binding.
  */
 
 import type { Server } from 'node:http';

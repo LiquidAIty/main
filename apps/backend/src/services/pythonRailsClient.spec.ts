@@ -1,6 +1,10 @@
 /**
- * Entity: Python Rails
- * Relationship: Verifies the backend's single configured Python rails transport, typed failure boundaries, timeouts, and exact ThinkGraph and KnowGraph read endpoints.
+ * Entity: ThinkGraph
+ * Relationship: This file verifies the backend uses the exact Engraphis projection and neighborhood endpoints without a fallback or TypeScript reshaping.
+ * Entity: KnowGraph
+ * Relationship: This file verifies the backend uses the exact Graphiti projection and neighborhood endpoints without a fallback or TypeScript reshaping.
+ * Entity: CodeGraph
+ * Relationship: This file verifies the backend transports one fixed-purpose CodeGraph request and preserves the Python-owned response unchanged.
  */
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';

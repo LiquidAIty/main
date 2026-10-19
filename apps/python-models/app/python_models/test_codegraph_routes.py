@@ -1,7 +1,9 @@
 """Bounded route contract for the in-app CodeGraph reader."""
 
 # Entity: CodeGraph
-# Relationship: Verifies the Python read route accepts only the fixed saved scope and returns the provider-backed result without semantic reshaping.
+# Relationship: This file verifies the Python CodeGraph route accepts only the fixed saved scope and returns the provider-backed result without semantic reshaping.
+# Entity: Project Knowledge Graph
+# Relationship: This file verifies invalid graph-read modes remain HTTP failures rather than success-shaped shared-workspace projections.
 
 from __future__ import annotations
 

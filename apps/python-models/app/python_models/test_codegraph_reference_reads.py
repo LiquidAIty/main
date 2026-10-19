@@ -1,7 +1,15 @@
 """Focused exact-symbol read contracts for CodeGraph."""
 
 # Entity: CodeGraph
-# Relationship: Verifies exact qualified-symbol reads request the authorized CBM operations, preserve repository-relative source coordinates, and normalize grouped caller records without semantic interpretation.
+# Relationship: This file verifies exact qualified-symbol reads preserve repository-relative source coordinates, structural predicates, Feature contributions, and grouped caller records without semantic interpretation.
+# Entity: Data Anchors
+# Relationship: This file verifies exact Symbol hydration uses only the authorized CBM snippet and bounded trace operations.
+# Entity: Builder Card
+# Relationship: This file verifies the shared Code view is unavailable unless the persisted Builder Card grants every required read operation.
+# Entity: Tool Catalog
+# Relationship: This file verifies projection, File expansion, and source read each enforce the exact saved CBM grant set.
+# Entity: Project Knowledge Graph
+# Relationship: This file verifies one File can contribute to multiple Features and the shared workspace receives exact structural expansions and explicit source reads.
 
 from __future__ import annotations
 

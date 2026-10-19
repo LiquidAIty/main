@@ -1,6 +1,8 @@
 /**
- * Entity: Entity Grounding
- * Relationship: Verifies assistant text links only current exact canonical Entity names to matching provider nodes, preserves source bytes, excludes code and URLs, and refuses stale or cross-Project evidence.
+ * Entity: Main Chat
+ * Relationship: This file verifies assistant text links exact Entity names without rewriting message bytes or linking user text, code, URLs, and citations.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies graph focus resolves only current matching provider nodes and refuses stale, malformed, or cross-Project Entity evidence.
  */
 
 import { describe, expect, it } from 'vitest';

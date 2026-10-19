@@ -1,6 +1,10 @@
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Verifies exact provider-owned Entity projections compose into one joined view only through the complete canonical directory while preserving records, edges, and authority.
+ * Relationship: This file verifies exact provider-owned Entity projections compose into one joined view only through the complete canonical directory while preserving records, edges, and authority.
+ * Entity: ThinkGraph
+ * Relationship: This file verifies Engraphis Entity and relationship records retain their exact provider identity in the joined presentation.
+ * Entity: KnowGraph
+ * Relationship: This file verifies Graphiti Entity and relationship records retain their exact provider identity in the joined presentation.
  */
 
 import { describe, expect, it } from 'vitest';

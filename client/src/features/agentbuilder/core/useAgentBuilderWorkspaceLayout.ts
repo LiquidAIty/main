@@ -1,6 +1,12 @@
 /**
  * Entity: Agent Builder
- * Relationship: Owns continuous Main and companion resize state, pointer capture, surface-specific widths, collision geometry, and independent in-session WorldView sizing.
+ * Relationship: This file owns continuous Agent Builder pane resizing, pointer capture, surface-specific minimums, and collision geometry.
+ * Entity: Main Chat
+ * Relationship: This file owns Main's adjustable width and keeps that width separate from companion surface geometry.
+ * Entity: Card Topology
+ * Relationship: This file protects the Card canvas viewport floor and closes its inspector before resize overlap would obscure the usable canvas.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file protects the Project graph tab strip and renderer width while allowing Main to overlap only the graph underplane.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

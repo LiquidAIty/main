@@ -1,7 +1,7 @@
 """Shared typed failure for application-owned Card and Canvas tools."""
 
-# Entity: Application Tools
-# Relationship: Defines the typed failure contract that code-owned application operations raise and the canonical dispatcher converts into structured tool errors.
+# Entity: Tool Catalog
+# Relationship: This file defines the typed failure contract raised by code-owned operations and converted by the canonical dispatcher into structured tool errors.
 
 
 class ApplicationToolError(Exception):

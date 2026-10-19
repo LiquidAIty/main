@@ -1,6 +1,8 @@
 /**
- * Entity: Entity Grounding
- * Relationship: Links exact current canonical Entity names in assistant text to their matching ThinkGraph and KnowGraph visual nodes while refusing protected text, stale revisions, and mismatched provider identities.
+ * Entity: Main Chat
+ * Relationship: This file turns exact current Entity names in assistant messages into selectable text segments while leaving user text, code, URLs, and citations untouched.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file resolves each selectable chat Entity against current ThinkGraph and KnowGraph provider identities and refuses stale or mismatched graph evidence.
  */
 import type {
   GraphProjectionNode,

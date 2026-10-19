@@ -1,6 +1,10 @@
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Validates the complete cross-authority Entity directory and exposes exact ThinkGraph and KnowGraph pointers for graph selection and inspection.
+ * Relationship: This file validates the complete cross-authority Entity directory and exposes exact provider pointers for graph selection and inspection.
+ * Entity: ThinkGraph
+ * Relationship: This file validates each Engraphis Entity pointer and the directory's complete ThinkGraph identity count.
+ * Entity: KnowGraph
+ * Relationship: This file validates each Graphiti Entity pointer and the directory's complete KnowGraph identity count.
  */
 
 export type CanonicalEntityProviderAuthority = 'thinkgraph' | 'knowgraph';

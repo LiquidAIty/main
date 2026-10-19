@@ -1,9 +1,9 @@
 """CBM and Graphiti publication, invocation, and result policy."""
-# Entity: External MCP
-# Relationship: Discovers and dispatches bounded CBM and Graphiti provider operations through their current authenticated MCP contracts.
+# Entity: MCP Host
+# Relationship: This file discovers and dispatches bounded CBM and Graphiti provider operations through their current authenticated MCP contracts.
 #
-# Entity: Tool Grants
-# Relationship: Publishes canonical operation metadata, including explicit eligibility and profile ceilings, into the authenticated tool catalog.
+# Entity: Tool Catalog
+# Relationship: This file publishes canonical provider-operation metadata, availability, eligibility, schemas, and profile ceilings into the authenticated catalog.
 
 from __future__ import annotations
 

@@ -1,7 +1,5 @@
-/**
- * Entity: Tool Grants
- * Relationship: Verifies immutable catalog lookup, pagination, selected Script grants, and exact saved-profile exclusion for scoped operations.
- */
+// Entity: Tool Catalog
+// Relationship: This file verifies immutable catalog indexing, bounded search, duplicate rejection, exact profile grants, and saved Card Script tool resolution.
 
 import { describe, expect, it } from 'vitest';
 import {

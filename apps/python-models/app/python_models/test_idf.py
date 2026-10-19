@@ -1,6 +1,6 @@
 """Canonical IDF contract, limits, retained bytes, and projection tests."""
-# Entity: Input Data File
-# Relationship: Proves exact four-part bytes, graph/tool/image retention, secret rejection, versioned new-input limits, failed-write cleanup, and historical read compatibility.
+# Entity: IDF
+# Relationship: This file verifies exact four-part bytes, graph/tool/image retention, secret rejection, versioned new-input limits, failed-write cleanup, and historical read compatibility.
 
 from __future__ import annotations
 

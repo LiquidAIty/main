@@ -1,10 +1,13 @@
 """Source-pair provenance and Jev classification for ThinkGraph relationships."""
 
 # Entity: ThinkGraph
-# Relationship: Freezes bounded existing Engraphis context for each model-authored directed relationship proposal and preserves the accepted classification as edge provenance.
+# Relationship: This file freezes bounded existing Engraphis context for each model-authored directed relationship proposal and preserves the accepted classification as edge provenance.
 #
 # Entity: Jev Decisions
-# Relationship: Obtains and validates one full probabilistic Choice over the Project relationship vocabulary before any ThinkGraph relationship write occurs.
+# Relationship: This file obtains and validates one full probabilistic Choice over the Project relationship vocabulary before any ThinkGraph relationship write occurs.
+#
+# Entity: Credentials
+# Relationship: This file reads the OpenRouter API key only inside the bounded relationship-classification request and never stores it in ThinkGraph provenance.
 
 from __future__ import annotations
 

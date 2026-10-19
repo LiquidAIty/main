@@ -1,7 +1,9 @@
 """Process/source observability and structurally typed MCP outcomes."""
 
-# Entity: External MCP
-# Relationship: Records bounded MCP process, catalog, session, authorization, and request events while hashing sensitive identities and redacting secrets from local diagnostic details.
+# Entity: MCP Host
+# Relationship: This file records bounded MCP process, session, authorization, and request outcomes while hashing sensitive identities and redacting secrets from diagnostic details.
+# Entity: Tool Catalog
+# Relationship: This file hashes the complete code-owned catalog source boundary and records catalog identity without exposing request arguments or credentials.
 
 from __future__ import annotations
 

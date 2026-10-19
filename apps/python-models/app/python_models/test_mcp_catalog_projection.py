@@ -1,5 +1,7 @@
 # Entity: Tool Catalog
-# Relationship: Verifies application and provider tool catalogs reject name collisions while retaining distinct canonical MCP operations.
+# Relationship: This file verifies application and provider catalogs reject identity collisions while retaining distinct canonical operations.
+# Entity: MCP Host
+# Relationship: This file verifies provider operations can join the host publication surface only under noncolliding canonical names.
 
 from __future__ import annotations
 

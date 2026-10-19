@@ -1,7 +1,9 @@
-/**
- * Entity: Tool Grants
- * Relationship: Verifies authenticated MCP catalog metadata preserves provider identity, availability, explicit grant eligibility, profile ceilings, pagination, and isolated definition failures.
- */
+// Entity: Tool Catalog
+// Relationship: This file verifies catalog metadata preserves provider identity, availability, eligibility, profile ceilings, pagination, and isolated descriptor failures.
+// Entity: MCP Host
+// Relationship: This file verifies readiness gates catalog reads, one authenticated connection is reused, every page is consumed, and cursor cycles fail closed.
+// Entity: Credentials
+// Relationship: This file verifies the MCP transport receives only the signed catalog-reader principal and rejects unauthenticated published projections.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

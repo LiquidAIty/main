@@ -1,7 +1,7 @@
 """Product-neutral saved-Card attachment contract for external subsystems."""
 
-# Entity: Card Subsystems
-# Relationship: Card Subsystems strictly validates and normalizes each product-neutral Python attachment's identity, presentation, contract version, capabilities, and optional configuration schema before saving.
+# Entity: Saved Cards
+# Relationship: This file validates and normalizes the product-neutral Python subsystem attachments stored with a saved Card, including identity, contract version, capabilities, presentation, and optional configuration schema.
 
 from __future__ import annotations
 

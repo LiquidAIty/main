@@ -1,6 +1,6 @@
 """Typed cross-authority graph-record and selected-anchor contracts."""
 # Entity: Data Anchors
-# Relationship: Defines exact one-provider graph reference identities and bounded selected-anchor schemas shared by graph reads, IDF materialization, and Card invocation.
+# Relationship: This file defines exact one-provider graph identities and bounded selected-reference schemas shared by graph reads, IDF materialization, and Card invocation.
 
 from __future__ import annotations
 

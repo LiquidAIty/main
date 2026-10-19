@@ -1,6 +1,6 @@
 /**
  * Entity: Authentication
- * Relationship: Authentication provides one shared Prisma client for user and session persistence while reusing the connection during development reloads.
+ * Relationship: This file provides the one shared Prisma client used by user and session persistence while reusing its connection during development reloads.
  */
 
 import '../config/env';

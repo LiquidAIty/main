@@ -1,7 +1,9 @@
 // Thin HTTP transport to the Python-owned stable Card/deck domain.
 /**
  * Entity: Saved Cards
- * Relationship: Transports exact deck reads and compare-and-set writes between TypeScript routes and the Python-owned saved Card domain.
+ * Relationship: This file transports exact deck reads and compare-and-set writes between TypeScript routes and the Python-owned saved Card domain.
+ * Entity: Card Topology
+ * Relationship: This file preserves the Python-owned Card placement and wire document unchanged while transporting a Project deck.
  */
 
 // TypeScript deliberately owns no SQL, deck aggregate, Card revision,

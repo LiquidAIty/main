@@ -1,9 +1,13 @@
 /**
  * Entity: Projects
- * Relationship: Verifies authenticated Project creation and deletion return exact owner-scoped identities and report partial-state failures honestly.
+ * Relationship: This file verifies Project creation and deletion return exact owner-scoped identities and report partial-state failures honestly.
  *
- * Entity: Project Seeds
- * Relationship: Verifies Project creation persists and returns the backend-owned canonical deck, recovers committed readback, and compensates only proven absent decks.
+ * Entity: Saved Cards
+ * Relationship: This file verifies Project creation persists and returns the source-default saved Card roster, recovers committed readback, and compensates only a proven absent deck.
+ * Entity: Card Topology
+ * Relationship: This file verifies the persisted Project deck includes the source-default Card topology without substituting another seed.
+ * Entity: Authentication
+ * Relationship: This file verifies Project lifecycle routes use the authenticated canonical owner identity for creation and deletion.
  */
 
 import type { Server } from 'node:http';

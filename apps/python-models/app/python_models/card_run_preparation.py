@@ -1,6 +1,18 @@
 """Accepted Card Run request persistence and fallible preparation."""
-# Entity: Card Runs
-# Relationship: Accepts one durable outer Run, prepares and retains its canonical IDF, returns exact Hermes transport identity, and settles preparation failures without creating another runtime.
+# Entity: Run Ledger
+# Relationship: This file accepts one durable pending Run, preserves idempotent identity, records selection decisions, and settles preparation failures against that same row.
+#
+# Entity: Card Invocation
+# Relationship: This file invokes the saved Card preparation boundary and returns the exact Hermes transport identity for ordinary Card execution.
+#
+# Entity: IDF
+# Relationship: This file retains and reloads the one canonical IDF before exposing any runtime request or Magnetic mission.
+#
+# Entity: AgentGraph
+# Relationship: This file records acceptance, successful preparation, and preparation-failure observations only around corresponding durable Run transitions.
+#
+# Entity: Magnetic TaskGraph
+# Relationship: This file projects the saved Mag One orchestrator and exact blue-connected worker authorities into one bounded root task packet.
 
 from __future__ import annotations
 

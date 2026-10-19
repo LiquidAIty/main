@@ -1,6 +1,6 @@
 """Focused coverage for the deterministic tool registry primitives."""
-# Entity: Tool Grants
-# Relationship: Verifies every operation has one canonical identity, explicit publication and grant metadata, and duplicate-free provider discovery.
+# Entity: Tool Catalog
+# Relationship: This file verifies every operation has one canonical identity, explicit publication and grant metadata, valid schemas, and duplicate-free provider discovery.
 import json
 from copy import deepcopy
 

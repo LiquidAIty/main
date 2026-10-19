@@ -1,6 +1,10 @@
 /**
  * Entity: Jev Decisions
- * Relationship: Verifies bounded Project-authorized graph-focus transport, exact projection revisions, strict response validation, and honest Python rails failures without a fallback decision.
+ * Relationship: This file verifies bounded graph-focus transport, exact projection revisions, strict response validation, and honest Python-rails failures without a fallback decision.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies only a current declared provider neighborhood crosses the manual focus transport.
+ * Entity: Authentication
+ * Relationship: This file verifies Project authorization completes before Python rails receives any focus request.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';

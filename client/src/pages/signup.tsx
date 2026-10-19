@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Collects new user identity and password, requests account and session creation, reports server refusal, and navigates successful signups into the application.
+ * Relationship: This file requests account and session creation, reports the server's refusal, and navigates successful signups into the application.
+ * Entity: Credentials
+ * Relationship: This file collects the new user's email and bounded password only for the signup request and keeps password input masked in the browser.
  */
 
 import { useState } from 'react';

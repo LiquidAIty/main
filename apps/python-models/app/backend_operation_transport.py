@@ -1,6 +1,8 @@
 """Generic loopback backend transport for application-owned operations."""
-# Entity: Python Rails
-# Relationship: Carries bounded loopback Python-to-backend JSON or text requests, refuses redirects, and includes the supervised process secret only when explicitly required.
+# Entity: MCP Host
+# Relationship: This file carries bounded loopback Python-to-backend requests used by MCP context and operation seams while refusing redirects that could forward authority elsewhere.
+# Entity: Credentials
+# Relationship: This file includes the supervised internal process secret only for callers that explicitly require the protected backend seam.
 
 from __future__ import annotations
 

@@ -1,7 +1,9 @@
-/**
- * Entity: Card Terminal
- * Relationship: Authorizes one non-Main saved Card session and proxies its existing Hermes PTY without exposing reusable gateway credentials to the browser.
- */
+// Entity: Card Terminals
+// Relationship: This file authorizes one non-Main saved Card terminal and proxies bounded browser input, output, resize frames, close states, and WebSocket upgrades.
+// Entity: Hermes Card Sessions
+// Relationship: This file resolves the exact Project/Card/profile session and attaches the terminal to that existing Hermes session and Bot Mode roster.
+// Entity: Credentials
+// Relationship: This file keeps the reusable Gateway token server-side while issuing only the application-owned same-origin terminal stream path to the browser.
 
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';

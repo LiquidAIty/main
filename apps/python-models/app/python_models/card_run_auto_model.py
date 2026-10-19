@@ -1,5 +1,8 @@
-# Entity: Model Selection
-# Relationship: Filters backend-authored model candidates by saved provider, context, tools, images, and reasoning requirements, then uses Jev only when multiple compatible choices remain.
+# Entity: Jev Decisions
+# Relationship: This file filters compatible model candidates deterministically and invokes Jev only when more than one exact authorized choice remains.
+#
+# Entity: Hermes Profiles
+# Relationship: This file preserves the saved provider and access mode as the eligibility boundary while selecting one configured model for the current Run.
 
 from __future__ import annotations
 

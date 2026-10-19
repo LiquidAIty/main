@@ -1,6 +1,6 @@
 /**
  * Entity: KnowGraph
- * Relationship: Validates one selected PDF and Project, submits authenticated KnowGraph ingestion, clears the picker, and renders bounded application-owned success or failure feedback.
+ * Relationship: This file validates one selected PDF and Project, submits KnowGraph ingestion, clears the picker, and renders bounded application-owned success or failure feedback.
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";

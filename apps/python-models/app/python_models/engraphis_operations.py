@@ -1,6 +1,10 @@
 """Engraphis Smart operation contracts, invocation, and application-only actions."""
 # Entity: ThinkGraph
-# Relationship: Binds Engraphis Smart operations to Project-owned ThinkGraph scope and marks the retained memory-update grant as exclusive to the saved ThinkGraph profile.
+# Relationship: This file binds Engraphis Smart operations and application-only reads or retirements to the authenticated Project's ThinkGraph scope.
+# Entity: Tool Catalog
+# Relationship: This file projects the installed Smart operation schemas, explicit effects, grant eligibility, and ThinkGraph-only update ceiling into canonical definitions.
+# Entity: Data Anchors
+# Relationship: This file inspects exact Engraphis Entity and Memory identities with bounded evidence and relationship records for provider reference hydration.
 from __future__ import annotations
 
 import asyncio

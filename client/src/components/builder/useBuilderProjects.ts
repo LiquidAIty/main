@@ -1,6 +1,8 @@
 /**
  * Entity: Projects
- * Relationship: Loads the authenticated Project list, fences overlapping refreshes, reconciles the active Project with the URL, and preserves explicit preferred selection.
+ * Relationship: This file loads the authenticated Project list, fences overlapping refreshes, reconciles the active Project with the URL, and preserves explicit preferred selection.
+ * Entity: Agent Builder
+ * Relationship: This file supplies Agent Builder with its active Project identity and the Project-selection state used by the workspace.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

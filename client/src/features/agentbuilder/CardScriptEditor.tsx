@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-/**
- * Entity: Card Scripts
- * Relationship: Presents the grant-aware Script editor, positive recipe grammar, validation diagnostics, activation control, and generated read-only tool definitions.
- */
+// Entity: Card Scripts
+// Relationship: This file presents the Script editor, bounded recipe grammar, validation diagnostics, activation control, examples, and compiled identity readback.
+// Entity: Tool Catalog
+// Relationship: This file loads the Card's authorized live tool handles and uses their exact schemas for completion, hover, signatures, and validation.
+// Entity: IDD
+// Relationship: This file presents the generated read-only IDD type declarations beside the editable Script without saving or executing that generated header.
 
 import type { AgentCardRuntimeOptions } from '../../types/agentgraph';
 import './CardScriptEditor.css';

@@ -2,7 +2,7 @@
 
 /**
  * Entity: Crash Diagnostics
- * Relationship: Verifies the root crash boundary converts child render failures into a copyable diagnostic panel without losing the captured error.
+ * Relationship: This file verifies the root crash boundary converts child render failures into a copyable diagnostic panel without losing the captured error.
  */
 
 import React from "react";

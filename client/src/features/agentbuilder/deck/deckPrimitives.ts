@@ -1,9 +1,9 @@
 /**
  * Entity: Saved Cards
- * Relationship: Normalizes Card runtime configuration, optional editor text, default new-Card model authority, identifiers, and detached deck copies for Project editing.
+ * Relationship: This file normalizes Card runtime configuration, optional editor text, default new-Card model authority, identifiers, and detached deck copies for Project editing.
  *
- * Entity: Agent Canvas
- * Relationship: Recognizes saved orange orchestrator authority and canonical orange or blue edge types used by Card nodes, rails, and topology editing.
+ * Entity: Card Topology
+ * Relationship: This file recognizes saved orange orchestrator authority and canonical orange or blue edge types used by Card nodes, rails, and topology editing.
  */
 import type {
   AgentCardInstance,

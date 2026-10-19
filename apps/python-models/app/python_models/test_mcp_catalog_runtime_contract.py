@@ -1,7 +1,9 @@
 """MCP process-wide catalog lifecycle contract tests."""
 
 # Entity: Tool Catalog
-# Relationship: Verifies catalog immutability, single initialization, transport readiness during slow startup, provider-family unavailability, lifecycle reset, and truthful terminal failure states.
+# Relationship: This file verifies catalog immutability, single initialization, provider-family unavailability, lifecycle reset, and truthful terminal failure states.
+# Entity: MCP Host
+# Relationship: This file verifies Streamable HTTP health is live during slow initialization while tools/list waits for one complete frozen catalog.
 
 import socket
 

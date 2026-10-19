@@ -1,6 +1,6 @@
 /**
  * Entity: Agent Builder
- * Relationship: Agent Builder renders the selected knowledge, Trading, WorldSignals, or WorldView companion surface while keeping Canvas and Chat workspaces unobstructed.
+ * Relationship: This file renders the selected Agent Builder companion surface while keeping the dedicated Canvas and Chat workspaces unobstructed.
  */
 
 import type { ReactNode } from 'react';

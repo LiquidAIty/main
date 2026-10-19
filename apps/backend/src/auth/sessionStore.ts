@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Persists only hashed session tokens, resolves and expires owner sessions, creates the single local-owner session, and applies bounded secure cookies.
+ * Relationship: This file creates, resolves, expires, and removes owner sessions and applies the bounded secure session cookie lifecycle.
+ * Entity: Credentials
+ * Relationship: This file persists only a digest of each session bearer token and never returns the stored digest as the browser credential.
  */
 
 import { createHash, randomBytes } from 'node:crypto';

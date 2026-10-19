@@ -1,6 +1,16 @@
 /**
  * Entity: Main Chat
- * Relationship: This transport validates Main history and SSE identities, admits exactly one final turn result, closes at the explicit end frame, and carries Hermes voice events without inventing assistant output.
+ * Relationship: This file validates Main history and SSE identities, admits exactly one final turn result, closes at the explicit end frame, and carries Hermes voice events without inventing assistant output.
+ * Entity: Hermes Card Sessions
+ * Relationship: This file transports Main chat, history, stop, and voice requests to the one Project-scoped Hermes session route.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file validates the current server-supplied addressable Card roster and preserves requested and responding participant identities in streamed events.
+ * Entity: Card Invocation
+ * Relationship: This file submits exact user text, bounded images, and selected Data Anchors with unique message identities and rejects incomplete or conflicting completion frames.
+ * Entity: Run Ledger
+ * Relationship: This file preserves the exact Run ID and typed terminal failure or completion evidence used by Main's stop and stream consumers.
+ * Entity: Data Anchors
+ * Relationship: This file defines and transports only bounded provider reference identities, reasons, priorities, expansion limits, and required flags for the current Main Run.
  */
 
 export type MainConversationParticipant = {

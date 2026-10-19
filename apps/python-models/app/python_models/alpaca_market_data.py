@@ -12,8 +12,10 @@ or placed in any result. Live-mode credentials are rejected for this lane. When
 credentials are absent the providers return the honest ``provider_unconfigured`` status;
 provider/HTTP failures return ``provider_error``. Nothing is ever fabricated.
 """
-# Entity: Market Research
-# Relationship: Performs bounded read-only Alpaca paper-account and market-data requests, returning typed availability or safe failure without exposing credentials or order authority.
+# Entity: Market Data
+# Relationship: This file performs bounded read-only Alpaca snapshot, historical-bar, and paper-account readiness requests and returns typed availability without order authority.
+# Entity: Credentials
+# Relationship: This file consumes validated paper-provider credentials without returning, logging, or forwarding their secret values.
 
 from __future__ import annotations
 

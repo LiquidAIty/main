@@ -1,7 +1,5 @@
-/**
- * Entity: Agent Canvas
- * Relationship: Verifies Canvas rails use continuous curved paths in both forward and returning directions.
- */
+// Entity: Card Topology
+// Relationship: This file verifies saved connection rails use continuous curved paths in both forward and returning directions.
 
 import { Position } from '@xyflow/react';
 import { describe, expect, it } from 'vitest';

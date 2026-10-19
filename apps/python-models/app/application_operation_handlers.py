@@ -1,7 +1,16 @@
 """Callable handlers for application-owned tool definitions."""
 
-# Entity: Application Tools
-# Relationship: Application Tools validates shared arguments and adapts AgentGraph, Canvas, and saved Card handlers into asynchronous code-owned operation callables.
+# Entity: Tool Catalog
+# Relationship: This file adapts code-owned feature handlers into the asynchronous callable functions referenced by their canonical operation definitions.
+#
+# Entity: AgentGraph
+# Relationship: This file validates Project and deck scope before dispatching the fixed AgentGraph inspection operation.
+#
+# Entity: Saved Cards
+# Relationship: This file dispatches explicit saved Card creation and configuration updates while preserving the authenticated caller Card identity.
+#
+# Entity: Card Topology
+# Relationship: This file dispatches exact topology inspection and single-connection update operations to the saved canvas owner.
 
 from __future__ import annotations
 

@@ -1,10 +1,17 @@
-/**
- * Entity: External MCP
- * Relationship: Resolves a verified external identity to one owned Project, persisted Card profile, active Run, and exact saved tool-grant ceiling.
- *
- * Entity: Card Editor
- * Relationship: Returns the canonical editor projection for one exact Project, deck, and Card only to the supervised internal MCP process.
- */
+// Entity: MCP Host
+// Relationship: This file exposes process-secret-only context and Card-editor projections to the supervised MCP host without creating a public arbitrary-Card API.
+// Entity: Authentication
+// Relationship: This file resolves a verified external issuer and subject to one existing local user grant before exposing application context.
+// Entity: Credentials
+// Relationship: This file rejects every internal request that does not carry the exact shared MCP process secret.
+// Entity: Projects
+// Relationship: This file binds external context to one Project actually owned by the granted local user.
+// Entity: Saved Cards
+// Relationship: This file resolves one enabled persisted Hermes Card and returns only its exact profile, caller identity, and saved tool ceiling.
+// Entity: Run Ledger
+// Relationship: This file accepts an optional parent Run only when it matches the resolved Card and remains pending or running.
+// Entity: IDD
+// Relationship: This file returns the canonical Card-editor materialization for one exact Project, deck, and Card to the internal MCP process.
 
 import { Router, type Request } from 'express';
 

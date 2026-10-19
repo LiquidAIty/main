@@ -1,6 +1,8 @@
 /**
  * Entity: Projects
- * Relationship: Verifies Project and deck reads share in-flight requests without letting one caller's abort or stale completion cancel a newer generation.
+ * Relationship: This file verifies Project reads may share in-flight work without letting one caller's abort or stale completion replace a newer Project generation.
+ * Entity: Saved Cards
+ * Relationship: This file verifies saved-deck reads retain the current in-flight request when an older caller finishes or aborts.
  */
 
 import { describe, expect, it, vi } from 'vitest';

@@ -1,5 +1,13 @@
 # Entity: Magnetic TaskGraph
-# Relationship: Verifies exact blue-roster validation, package-bound root staging and activation, retained-IDF authority, readback projection, and request-driven same-Run continuation.
+# Relationship: This file verifies exact blue-roster validation, package-bound root staging and activation, readback projection, and same-root continuation.
+# Entity: IDF
+# Relationship: This file verifies Magnetic reloads the retained canonical IDF and rejects a transport mission that differs from its materialized mission.
+# Entity: Run Ledger
+# Relationship: This file verifies root staging binds the existing outer Run before activation and terminal reconciliation settles that same Run.
+# Entity: Tool Catalog
+# Relationship: This file verifies worker scope carries only compact saved tool identifiers and rejects an alternate capability authority.
+# Entity: Team
+# Relationship: This file verifies a sole Team worker uses the same adapter root with the exact saved Team identity, provider, and model.
 
 from __future__ import annotations
 

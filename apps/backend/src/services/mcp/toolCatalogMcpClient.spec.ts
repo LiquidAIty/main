@@ -1,6 +1,8 @@
 /**
  * Entity: Tool Catalog
- * Relationship: Verifies the authenticated internal MCP reader exposes the complete canonical operation catalog without retired graph or agent wrapper tools.
+ * Relationship: This file verifies the authenticated catalog reader exposes the complete canonical operation catalog without retired graph or agent wrapper tools.
+ * Entity: MCP Host
+ * Relationship: This file verifies the backend reads that catalog through the one internal authenticated MCP host connection.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';

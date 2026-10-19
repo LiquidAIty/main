@@ -1,5 +1,8 @@
 """Saved ThinkGraph Card structured extraction contract and result projection."""
 
+# Entity: ThinkGraph
+# Relationship: This file defines and validates the saved ThinkGraph Card's completed-pair extraction contract and projects one bounded Think per distinct Entity.
+
 from __future__ import annotations
 
 from copy import deepcopy

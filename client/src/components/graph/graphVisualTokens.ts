@@ -1,6 +1,8 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Defines the shared palette, graph-paper navigation values, glass materials, and control styles used across graph canvases, Cards, and inspectors.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file defines the shared graph palette, graph-paper values, inspector materials, and controls used by the Project knowledge workspace.
+ * Entity: Card Topology
+ * Relationship: This file defines the Card-canvas materials, flow-edge colors, and navigation tokens used by saved topology presentation.
  */
 
 import type { CSSProperties } from 'react';

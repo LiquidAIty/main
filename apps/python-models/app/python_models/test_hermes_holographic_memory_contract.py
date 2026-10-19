@@ -1,7 +1,7 @@
 """Isolated contract proof for the controlled Hermes holographic memory provider."""
 
 # Entity: Hermes Profiles
-# Relationship: Exercises isolated Hermes profile memory stores across restart, including explicit fact storage, trust feedback, disabled automatic extraction, and cross-profile separation.
+# Relationship: This file exercises isolated Hermes profile memory stores across restart, including explicit fact storage, trust feedback, disabled automatic extraction, and cross-profile separation.
 
 from __future__ import annotations
 

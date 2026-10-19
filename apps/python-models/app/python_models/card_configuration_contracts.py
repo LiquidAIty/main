@@ -1,6 +1,14 @@
 """Typed saved-Card runtime and model configuration contracts."""
 # Entity: Saved Cards
-# Relationship: Defines strict saved Card runtime, model, subagent, grant, orchestration, and reasoning fields shared by editing, validation, and execution.
+# Relationship: This file defines the strict saved Card configuration shapes shared by editing, validation, persistence, and execution.
+# Entity: Hermes Profiles
+# Relationship: This file defines stable Hermes runtime mode, profile, provider, model, subagent model, and reasoning selections.
+# Entity: Bot Mode Delegation
+# Relationship: This file defines the saved orchestrator switch that permits outbound orange Card messaging when topology also authorizes it.
+# Entity: Tool Catalog
+# Relationship: This file defines the exact saved tool identity list used as the Card's grant ceiling.
+# Entity: Jev Decisions
+# Relationship: This file defines the optional per-Run AutoTools and AutoModel switches without changing the Card's durable selections.
 
 from __future__ import annotations
 

@@ -1,10 +1,7 @@
-/**
- * Entity: Card Runs
- * Relationship: Returns authenticated latest Run metrics and status for one exact saved Card without exposing another Project's execution state.
- *
- * Entity: Magnetic Runs
- * Relationship: Reconciles terminal Hermes root readback into the same outer Magnetic Run through Python rails before returning worker progress.
- */
+// Entity: Run Ledger
+// Relationship: This file returns authenticated latest Run metrics and status for one exact saved Card without exposing another Project's execution state.
+// Entity: Magnetic TaskGraph
+// Relationship: This file reconciles terminal Hermes root readback into the same outer Magnetic Run before returning bounded task and worker progress.
 
 import { Router, type Request } from 'express';
 import { getOwnedProjectByReference } from '../services/projectStore';

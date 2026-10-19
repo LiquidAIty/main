@@ -1,6 +1,12 @@
 /**
  * Entity: Jev Decisions
- * Relationship: Builds bounded provider neighborhoods, validates Jev focus choices, and composes manual, expanded, and release presentations without writing to ThinkGraph or KnowGraph.
+ * Relationship: This file builds bounded provider neighborhoods, validates Jev focus choices, and projects only the selected real neighbors into transient focus views.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file composes manual, expanded, and release presentations over the existing shared graph without creating nodes, edges, or another graph authority.
+ * Entity: ThinkGraph
+ * Relationship: This file carries exact Engraphis provider members and incident relationships into focus candidates without writing ThinkGraph.
+ * Entity: KnowGraph
+ * Relationship: This file carries exact Graphiti provider members and incident relationships into focus candidates without writing KnowGraph.
  */
 
 import {
@@ -563,4 +569,3 @@ export function composeFocusReleasePresentation(
     } : edge),
   };
 }
-

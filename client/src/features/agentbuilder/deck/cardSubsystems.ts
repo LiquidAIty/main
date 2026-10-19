@@ -1,6 +1,8 @@
 /**
- * Entity: Card Subsystems
- * Relationship: Card Subsystems reads tolerant client presentation attachments, normalizes their identity and capability contracts, and filters invalid or duplicate saved records.
+ * Entity: Saved Cards
+ * Relationship: This file reads the subsystem attachments stored in a Card revision and filters malformed or duplicate presentation records without changing the saved contract.
+ * Entity: Agent Builder
+ * Relationship: This file supplies Agent Builder with the validated subsystem attachments it may present for the selected Card.
  */
 
 import type { AgentCardRuntimeOptions, CardSubsystemAttachment } from '../../../types/agentgraph';

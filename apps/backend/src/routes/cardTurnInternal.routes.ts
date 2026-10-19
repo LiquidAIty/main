@@ -1,7 +1,7 @@
-/**
- * Entity: Card Runs
- * Relationship: Provides the process-authenticated prepare, start, and finish bridge for exact non-Magnetic saved Card turns while preserving Run, profile, model, Script, and usage identity.
- */
+// Entity: Card Invocation
+// Relationship: This file provides the process-authenticated preparation bridge for one exact non-Magnetic saved Card, model, profile, Script, and presented-tool contract.
+// Entity: Run Ledger
+// Relationship: This file verifies the exact pending or running Run identity before applying start or terminal settlement and bounded Hermes usage.
 
 import { Router, type Request } from 'express';
 

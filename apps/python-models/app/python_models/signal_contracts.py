@@ -8,7 +8,7 @@ runtime caller, never inferred from a model-authored query.
 """
 
 # Entity: WorldSignals
-# Relationship: Defines immutable Project-, Card-, Run-, source-, evidence-, time-, geometry-, and payload-scoped contracts for unassessed observations supplied to the one Earth experience.
+# Relationship: This file defines immutable Project-, Card-, Run-, source-, evidence-, time-, geometry-, and payload-scoped contracts for unassessed WorldSignals observations.
 
 from __future__ import annotations
 

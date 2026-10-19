@@ -1,7 +1,9 @@
 """The one frozen MCP catalog lifecycle and readiness state machine."""
 
 # Entity: Tool Catalog
-# Relationship: Owns the single process-wide MCP catalog lifecycle, freezes provider-backed tool definitions, exposes bounded readiness, and resets registrations only between host lifespans.
+# Relationship: This file owns the single process-wide catalog lifecycle, freezes provider-backed definitions, exposes bounded readiness, and resets registrations only between host lifespans.
+# Entity: MCP Host
+# Relationship: This file lets the host accept health traffic during initialization while preventing tools/list from observing a partial or failed catalog.
 
 from __future__ import annotations
 

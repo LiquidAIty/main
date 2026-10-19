@@ -1,6 +1,8 @@
 /**
  * Entity: Projects
- * Relationship: Projects derives the authenticated owner from each request and rejects access when the referenced Project is not owned by that user.
+ * Relationship: This file resolves an exact Project reference within the current user scope and rejects access when that user does not own the Project.
+ * Entity: Authentication
+ * Relationship: This file derives the authenticated user from each request before returning any owner-scoped Project identity.
  */
 
 import type { Request, Response } from 'express';

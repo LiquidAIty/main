@@ -1,7 +1,13 @@
 """Focused projection and exact-read contracts for Graphiti-backed KnowGraph."""
 
 # Entity: KnowGraph
-# Relationship: Verifies Graphiti-backed KnowGraph projection, exact Entity and episode reads, citation containment, provider identity, provenance, Jev enrichment, and Project-scoped query behavior.
+# Relationship: This file verifies Graphiti-backed KnowGraph projection, exact Entity and episode reads, citation containment, provider identity, provenance, and Project-scoped query behavior.
+# Entity: Project Knowledge Graph
+# Relationship: This file proves KnowGraph projections expose only valid Entity nodes, bounded relationships, and attached evidence to the shared graph surface.
+# Entity: Data Anchors
+# Relationship: This file proves exact selected KnowGraph references hydrate only requested Project-scoped records and provenance.
+# Entity: Jev Decisions
+# Relationship: This file verifies valid persisted Jev relationship decisions enrich KnowGraph edges while malformed decisions do not replace provider facts.
 
 from __future__ import annotations
 
@@ -596,4 +602,3 @@ def test_knowgraph_exact_relationship_preserves_provider_text_when_jev_is_malfor
     assert "know" not in record
     assert "jev" not in record
     assert driver.closed is True
-

@@ -1,6 +1,6 @@
 /**
  * Entity: Main Chat
- * Relationship: Precomputes wrapped message geometry and returns the narrowest stable width for Main chat bubbles without repeated DOM measurement.
+ * Relationship: This file precomputes wrapped message geometry and returns the narrowest stable width for Main chat bubbles without repeated DOM measurement.
  */
 
 import {

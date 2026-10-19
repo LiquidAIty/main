@@ -1,6 +1,12 @@
 """Terminal settlement for durable Card Runs."""
-# Entity: Card Runs
-# Relationship: Validates terminal Run state and Hermes or provider evidence, idempotently settles usage, cost, errors, results, and task aggregates, then records AgentGraph completion.
+# Entity: Run Ledger
+# Relationship: This file validates terminal state and idempotently settles provider identity, usage, cost, errors, results, and bounded task aggregates on the durable Run.
+#
+# Entity: Hermes Card Sessions
+# Relationship: This file requires the persisted and supplied Hermes session, root, submission, provider, and model evidence to agree before successful settlement.
+#
+# Entity: AgentGraph
+# Relationship: This file records terminal Run completion or failure only after the durable Run row was actually updated.
 
 from __future__ import annotations
 

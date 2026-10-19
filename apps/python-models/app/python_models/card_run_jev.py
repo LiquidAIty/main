@@ -1,6 +1,8 @@
 """Bounded Jev transport and exact Choice response validation."""
 # Entity: Jev Decisions
-# Relationship: Sends bounded Choice requests to Jev and validates decision identifiers, probability distributions, winners, and confidence before application use.
+# Relationship: This file sends bounded Choice requests to Jev and validates decision identifiers, probability distributions, winners, and confidence before application use.
+# Entity: Credentials
+# Relationship: This file reads the OpenRouter API key only inside the bounded Jev transport and reports typed unavailability without exposing the key.
 
 from __future__ import annotations
 

@@ -1,6 +1,10 @@
 """MCP Tool construction, provider discovery, and request projection."""
 # Entity: Tool Catalog
-# Relationship: Builds the authenticated MCP catalog, discovers selected external provider families, rejects duplicate names, and filters each request to its exact grants.
+# Relationship: This file builds the canonical MCP catalog, projects server-owned arguments out of model-visible schemas, rejects duplicate identities, and filters each request to exact grants.
+# Entity: MCP Host
+# Relationship: This file discovers the selected live provider families through host-owned clients and freezes their namespaced tools into the host catalog.
+# Entity: Authentication
+# Relationship: This file attaches the OAuth security declaration and narrows each external or materializer request to its authenticated Project tool authority.
 
 from __future__ import annotations
 

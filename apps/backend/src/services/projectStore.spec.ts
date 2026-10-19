@@ -1,9 +1,18 @@
 /**
  * Entity: Projects
- * Relationship: Verifies owner-scoped Project identity creation and compensation never derive fresh state from another Project's Card revisions.
+ * Relationship: This file verifies owner-scoped Project identity creation and compensation never derive fresh state from another Project's Card revisions.
  *
  * Entity: Saved Cards
- * Relationship: Verifies exact owner-scoped Card listing and attachment preserve profile uniqueness and Project-local membership authority.
+ * Relationship: This file verifies exact owner-scoped Card listing and attachment preserve profile uniqueness and Project-local membership authority.
+
+ * Entity: Card Topology
+ * Relationship: This file verifies attaching a saved Card creates only the requested Project-local membership and position without inventing a revision or wire.
+
+ * Entity: Hermes Profiles
+ * Relationship: This file verifies a stable Hermes profile belongs to exactly one authenticated owner and is locked before Card attachment.
+
+ * Entity: Authentication
+ * Relationship: This file verifies Project creation, compensation, and reusable Card selection remain scoped to the exact owner identity.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';

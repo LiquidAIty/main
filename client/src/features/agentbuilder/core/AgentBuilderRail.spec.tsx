@@ -2,7 +2,7 @@
 
 /**
  * Entity: Agent Builder
- * Relationship: Verifies rail destinations, callbacks, saved-Card entry, shared lunar styling, and absence of retired Kanban or terminal launchers.
+ * Relationship: This file verifies rail destinations, callbacks, saved-Card entry, shared lunar styling, and absence of retired Kanban or terminal launchers.
  */
 
 import React, { act } from 'react';

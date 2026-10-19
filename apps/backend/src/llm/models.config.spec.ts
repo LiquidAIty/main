@@ -1,7 +1,9 @@
-/**
- * Entity: Model Selection
- * Relationship: Verifies pinned model identities and provider classifications remain available to the canonical Card model selector without compatibility aliases.
- */
+// Entity: Hermes Profiles
+// Relationship: This file verifies pinned provider/model identities remain valid saved profile choices without compatibility aliases.
+// Entity: IDD
+// Relationship: This file verifies each configured registry key projects exactly once into the Card editor model options with one canonical default.
+// Entity: Jev Decisions
+// Relationship: This file verifies manually available but Auto Model-ineligible entries remain explicitly excluded from automatic selection.
 
 import { describe, it, expect } from 'vitest';
 import { listConfiguredModelOptions, MODEL_REGISTRY } from './models.config';

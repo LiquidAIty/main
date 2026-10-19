@@ -1,6 +1,8 @@
 """Python rails FastAPI lifespan and application composition root."""
-# Entity: Python Rails
-# Relationship: Loads validated configuration, warms the ThinkGraph service, mounts Python rails domain routers, and exposes process health.
+# Entity: Application Startup
+# Relationship: This file composes the Python-rails FastAPI application, loads validated configuration, mounts the established domain routers, and exposes process health.
+# Entity: ThinkGraph
+# Relationship: This file starts the Engraphis service warmup during application lifespan without moving ThinkGraph authority into the transport layer.
 
 from contextlib import asynccontextmanager
 

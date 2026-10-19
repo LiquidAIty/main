@@ -1,7 +1,11 @@
 """Complete cross-authority Entity identities for exact shared-name context."""
 
 # Entity: Project Knowledge Graph
-# Relationship: Project Knowledge Graph validates complete ThinkGraph and KnowGraph Entity directories, joins only exact canonical names, and emits a bounded revisioned identity map without copying Thinks, Knows, or edges.
+# Relationship: This file validates complete provider Entity directories, joins only exact canonical-name bytes, and emits a bounded revisioned identity map without copying records or edges.
+# Entity: ThinkGraph
+# Relationship: This file reads and preserves every exact Engraphis Entity identity and revision in the Project directory.
+# Entity: KnowGraph
+# Relationship: This file reads and preserves every exact Graphiti Entity identity and revision in the Project directory.
 
 from __future__ import annotations
 

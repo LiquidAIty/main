@@ -1,6 +1,12 @@
 """Exact public schemas for saved Card create and configuration operations."""
 # Entity: Saved Cards
-# Relationship: Defines the exact public schemas for creating a saved Card or updating one expected revision without accepting undeclared configuration fields.
+# Relationship: This file defines the exact public schemas for creating a saved Card or updating one expected revision without accepting undeclared configuration fields.
+# Entity: Hermes Profiles
+# Relationship: This file exposes the bounded saved provider, model, profile, subagent, reasoning, skill, toolset, and MCP-selection fields accepted by Card operations.
+# Entity: Tool Catalog
+# Relationship: This file constrains public Card capability selections to explicit string-list fields that the canonical catalog validation later checks.
+# Entity: Card Scripts
+# Relationship: This file permits the saved Script object only within an exact-revision Card configuration update.
 
 from __future__ import annotations
 

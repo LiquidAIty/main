@@ -1,6 +1,28 @@
 /**
- * Entity: Project Seeds
- * Relationship: Defines the one backend-owned Card roster, saved configuration, prompts, positions, and initial topology persisted for every new Project.
+ * Entity: Projects
+ * Relationship: This file defines the complete Card deck persisted when a new Project is created.
+ * Entity: Saved Cards
+ * Relationship: This file defines the six source-default saved Cards, including each Card's prompt, model, runtime options, and canvas position.
+ * Entity: Card Topology
+ * Relationship: This file defines the initial Main-to-Builder orange flow and Team-to-Magnetic blue membership saved with a new Project.
+ * Entity: Main Chat
+ * Relationship: This file defines Main's source-default prompt, Hermes mode, model, tools, and front-door operating policy.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file defines Main's direct orange-roster messaging policy and seeds its authorized flow to Builder.
+ * Entity: Builder Card
+ * Relationship: This file defines the saved Builder Card's construction prompt, Hermes profile binding, tools, skills, and model.
+ * Entity: ThinkGraph
+ * Relationship: This file defines the saved ThinkGraph Card's reasoning prompt, Engraphis tools, profile, and model.
+ * Entity: KnowGraph
+ * Relationship: This file defines the saved KnowGraph Card's sourced-research prompt, Graphiti tools, profile, and model.
+ * Entity: Magnetic TaskGraph
+ * Relationship: This file defines Magnetic's approved-mission prompt, Hermes mode, model, and initial blue worker membership.
+ * Entity: Team
+ * Relationship: This file defines the saved Team Card's bounded-assignment prompt, profile, tools, and role as Magnetic's general worker.
+ * Entity: Hermes Profiles
+ * Relationship: This file binds every source-default Card to its stable Hermes mode, profile, provider, parent model, and subagent model selection.
+ * Entity: Tool Catalog
+ * Relationship: This file selects the source-default tool, skill, and toolset grants stored on each seeded Card.
  */
 
 import type { DeckDocument } from '../types';

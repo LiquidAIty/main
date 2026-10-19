@@ -1,9 +1,9 @@
 /**
  * Entity: Application Startup
- * Relationship: Loads the backend's one workspace-owned environment file and validates mandatory configuration without depending on the process working directory.
+ * Relationship: This file loads the backend's one workspace-owned environment file and validates mandatory configuration without depending on the process working directory.
  *
  * Entity: Credentials
- * Relationship: Resolves supported file-backed secrets while preserving process-injected values and keeping secret contents out of configuration errors.
+ * Relationship: This file resolves supported file-backed secrets while preserving process-injected values and keeping secret contents out of configuration errors.
  */
 
 import fs from 'node:fs';

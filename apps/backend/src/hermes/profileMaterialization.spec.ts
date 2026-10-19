@@ -1,6 +1,16 @@
 /**
  * Entity: Hermes Profiles
- * Relationship: Verifies reusable profiles retain stable Card configuration, remove persisted Project context, claim one hashed owner, and refuse cross-owner reuse before mutation.
+ * Relationship: This file verifies reusable profiles retain the exact saved Card configuration and remove persisted Project context from the profile-owned MCP connection.
+ * Entity: Saved Cards
+ * Relationship: This file verifies profile materialization follows the saved Card revision and refuses a tool not authorized for that Card's profile.
+ * Entity: Tool Catalog
+ * Relationship: This file verifies only catalog-published, grant-eligible tools enter a saved profile's MCP filter.
+ * Entity: MCP Host
+ * Relationship: This file verifies the profile-owned LiquidAIty connection is rewritten without a persisted Project header and retains only the stable profile header.
+ * Entity: Authentication
+ * Relationship: This file verifies one hashed owner claims the profile and a different owner is rejected before any MCP or profile mutation.
+ * Entity: Credentials
+ * Relationship: This file verifies raw user identity and unavailable tool names do not leak into the configured OAuth connection payload.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

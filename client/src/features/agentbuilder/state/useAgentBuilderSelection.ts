@@ -1,6 +1,8 @@
 /**
  * Entity: Agent Builder
- * Relationship: Agent Builder owns workspace tab, drawer, Card, edge, and canvas-focus selection while clearing selections removed from the current deck.
+ * Relationship: This file owns Agent Builder's workspace tab, drawer, Card, edge, and canvas-focus selection state.
+ * Entity: Card Topology
+ * Relationship: This file clears selected Card and edge identities when the current saved topology no longer contains them.
  */
 
 import { useEffect, useState } from 'react';

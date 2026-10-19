@@ -1,10 +1,16 @@
 """Focused proof for the one-Think, Jev-governed Engraphis lifecycle."""
 
 # Entity: ThinkGraph
-# Relationship: Exercises completed-pair extraction, atomic Engraphis Think writes, exact Entity attachment, duplicate handling, projection, and reads across the retained ThinkGraph lifecycle.
+# Relationship: This file exercises completed-pair extraction, atomic Think writes, exact Entity attachment, duplicate handling, projection, and reads across the retained Engraphis lifecycle.
 #
 # Entity: Jev Decisions
-# Relationship: Verifies every free-form Think relationship receives a bounded Jev choice before atomic edge settlement, including vocabulary promotion, provider failure, and rollback.
+# Relationship: This file verifies every free-form Think relationship receives a bounded Jev choice before atomic edge settlement, including vocabulary promotion, provider failure, and rollback.
+#
+# Entity: Data Anchors
+# Relationship: This file verifies exact ThinkGraph Entity and Memory references remain Project-scoped, read-only, and distinct from each other.
+#
+# Entity: Project Knowledge Graph
+# Relationship: This file verifies projection contains Entity nodes with bounded attached Thinks and never turns Think memories into visible graph nodes.
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 /**
- * Entity: Working Directories
- * Relationship: Working Directories verifies portable checkout discovery and explicit packaged-runtime root injection without binding the application to one machine path.
+ * Entity: Application Startup
+ * Relationship: This file verifies that startup discovers the repository from portable markers or an explicit packaged-runtime root without binding the application to one machine path.
  */
 
 import path from 'node:path';

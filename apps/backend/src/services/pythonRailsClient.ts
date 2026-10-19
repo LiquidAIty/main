@@ -1,6 +1,10 @@
 /**
- * Entity: Python Rails
- * Relationship: Performs bounded JSON HTTP transport to the configured Python rails service and exposes unmodified ThinkGraph, KnowGraph, and saved-authority CodeGraph read helpers.
+ * Entity: ThinkGraph
+ * Relationship: This file transports exact Project projection and neighborhood reads from the Engraphis-owned ThinkGraph endpoint without reshaping them in TypeScript.
+ * Entity: KnowGraph
+ * Relationship: This file transports exact Project projection and neighborhood reads from the Graphiti-owned KnowGraph endpoint without reshaping them in TypeScript.
+ * Entity: CodeGraph
+ * Relationship: This file transports one fixed-purpose saved-Builder CodeGraph read without exposing raw provider operations to the browser.
  */
 
 function trimBaseUrl(value: string): string {

@@ -1,6 +1,6 @@
 /**
  * Entity: Crash Diagnostics
- * Relationship: Catches root and Agent Builder render failures and presents the captured route, Project, canvas, stack, and recovery details as copyable diagnostics.
+ * Relationship: This file catches root and Agent Builder render failures and presents the captured route, Project, canvas, stack, and recovery details as copyable diagnostics.
  */
 import React from "react";
 import {

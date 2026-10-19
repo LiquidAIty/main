@@ -1,10 +1,14 @@
+/**
+ * Entity: KnowGraph
+ * Relationship: This file accepts bounded PDF ingestion and episode deletion requests and returns only application-owned Graphiti write results.
+ * Entity: Authentication
+ * Relationship: This file requires an authenticated Project owner before forwarding KnowGraph writes.
+ */
+
 import { Router } from 'express';
 import multer from 'multer';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { isDevelopmentEnvironment } from '../services/requestPayloadLimits';
-
-// Entity: KnowGraph
-// Relationship: Accepts authenticated PDF ingestion and episode deletion, resolves each Project reference to its owner-authorized canonical ID, and exposes only bounded application-owned Graphiti write results.
 
 const router = Router();
 

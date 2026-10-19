@@ -1,6 +1,14 @@
 """Saved Card creation through the canonical optimistic deck authority."""
 # Entity: Saved Cards
-# Relationship: Validates one explicit Card definition against template, runtime, provider, model, tool, subagent, and revision authority before persisting a new immutable identity.
+# Relationship: This file validates one explicit Card definition and persists a new immutable saved identity through the optimistic deck authority.
+# Entity: IDD
+# Relationship: This file requires the selected Card template and runtime mode to match the canonical Input Data Dictionary before creation.
+# Entity: Hermes Profiles
+# Relationship: This file validates and stores the new Card's stable Hermes profile, provider, parent model, subagent model, subagent type, and reasoning selection.
+# Entity: Tool Catalog
+# Relationship: This file validates and stores the new Card's exact tools, skills, toolsets, and MCP connection selections without widening grants.
+# Entity: Card Topology
+# Relationship: This file stores the new Card's initial Project-canvas position without creating any orange or blue edge.
 
 from __future__ import annotations
 

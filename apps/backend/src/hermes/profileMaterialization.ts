@@ -1,6 +1,20 @@
 /**
  * Entity: Hermes Profiles
- * Relationship: Materializes saved Card prompts, models, grants, and reusable profile capabilities while enforcing one owner and keeping Project and Run context request-scoped.
+ * Relationship: This file materializes one saved Card's prompt, model, skills, toolsets, delegation settings, and stable profile metadata into its Hermes profile.
+ * Entity: Saved Cards
+ * Relationship: This file treats the saved Card revision as authority for profile configuration and verifies the materialized profile against that exact Card state.
+ * Entity: Tool Catalog
+ * Relationship: This file intersects each saved tool selection with the canonical published catalog, profile restrictions, and provider availability before configuring the profile.
+ * Entity: MCP Host
+ * Relationship: This file configures the profile-owned LiquidAIty MCP connection with the fixed public host, OAuth contract, profile header, and exact selected tool filter.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file derives a Card's direct Bot roster only from its enabled outbound orange flow edges and never from blue Magnetic membership.
+ * Entity: Team
+ * Relationship: This file assigns Hermes Team task mode only to the saved Team Card and clears that mode from every other profile.
+ * Entity: Authentication
+ * Relationship: This file claims and verifies one hashed owner reference before any reusable profile mutation can occur.
+ * Entity: Credentials
+ * Relationship: This file requires the configured MCP OAuth client identity, forbids credential mirroring on profile creation, and keeps Project context request-scoped.
  */
 
 import { createHash } from 'node:crypto';

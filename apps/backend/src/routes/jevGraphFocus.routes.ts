@@ -1,6 +1,10 @@
 /**
  * Entity: Jev Decisions
- * Relationship: Authenticates and validates one bounded graph-focus Choice request and exact ranked response before returning it to the knowledge canvas.
+ * Relationship: This file validates one bounded graph-focus Choice request and exact ranked response before returning it to the knowledge canvas.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file transports only declared current-revision ThinkGraph and KnowGraph provider members and incident relationships for a manual focus view.
+ * Entity: Authentication
+ * Relationship: This file requires ownership of the exact Project before forwarding a focus request to Python rails.
  */
 
 import { Router } from 'express';

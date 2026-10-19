@@ -1,7 +1,7 @@
 """Focused contracts for bounded Data Anchor materialization."""
 
 # Entity: Data Anchors
-# Relationship: Verifies selected graph references materialize bounded provider data and stable references, deduplicate repeated payloads, populate model-bound projections, and fail closed when required records are missing.
+# Relationship: This file verifies selected graph references materialize bounded provider data and stable references, deduplicate repeated payloads, populate projections, and fail closed when required records are missing.
 
 from __future__ import annotations
 

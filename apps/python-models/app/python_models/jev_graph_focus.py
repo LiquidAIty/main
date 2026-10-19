@@ -1,7 +1,15 @@
 """Read-only Jev focus ranking for a bounded cross-authority neighborhood."""
 
 # Entity: Jev Decisions
-# Relationship: Validates a bounded visual graph neighborhood and obtains one read-only Jev probability ranking for the most useful connected Entities around a fixed center.
+# Relationship: This file validates a bounded visual graph neighborhood and obtains one read-only Jev probability ranking for useful connected Entities around a fixed center.
+# Entity: Project Knowledge Graph
+# Relationship: This file preserves exact current projection revision, provider identities, center membership, and real incident relationships in the focus result.
+# Entity: ThinkGraph
+# Relationship: This file accepts bounded ThinkGraph Entity candidates without reading or writing Engraphis.
+# Entity: KnowGraph
+# Relationship: This file accepts bounded KnowGraph Entity candidates without reading or writing Graphiti.
+# Entity: Credentials
+# Relationship: This file reads the OpenRouter API key only inside the bounded focus request and returns typed provider failures without exposing it.
 
 from __future__ import annotations
 

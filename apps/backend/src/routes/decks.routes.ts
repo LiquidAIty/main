@@ -1,6 +1,12 @@
 /**
  * Entity: Saved Cards
- * Relationship: Exposes authenticated Project deck load/save and saved-Card membership operations with canonical revision checks, readback, and bounded compensation.
+ * Relationship: This file exposes owner-scoped deck load, save, reusable Card listing, and exact saved Card attachment with canonical revision readback.
+ * Entity: Card Topology
+ * Relationship: This file accepts one exact Card placement membership and preserves the Python-owned deck topology through compare-and-set persistence.
+ * Entity: Projects
+ * Relationship: This file resolves every deck operation against the canonical owner-scoped Project identity rather than a caller-supplied alias.
+ * Entity: Authentication
+ * Relationship: This file requires authenticated Project ownership before any deck, Card, membership, or topology read or write.
  */
 import { Router } from 'express';
 import {

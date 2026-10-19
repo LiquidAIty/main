@@ -1,7 +1,19 @@
 """PostgreSQL Project, deck, saved-Card revision, save, and delete authority."""
 
 # Entity: Saved Cards
-# Relationship: Persists Project-scoped decks and immutable Card revisions, validates topology and portable project folders, and enforces each stable Card's permanent Hermes profile binding.
+# Relationship: This file persists Project-scoped decks and immutable Card revisions through optimistic, read-backed PostgreSQL transactions.
+# Entity: Projects
+# Relationship: This file resolves exact Project identity and stores each Project's deck name, portable Builder code folder, templates, revision, and save timestamp.
+# Entity: Card Topology
+# Relationship: This file validates and persists Card placement plus orange and blue edges while rejecting missing endpoints, duplicate connections, and invalid Magnetic membership.
+# Entity: AgentGraph
+# Relationship: This file keeps Project-local Card vertices and relationship records synchronized with the saved deck without making AGE the Card runtime authority.
+# Entity: Hermes Profiles
+# Relationship: This file enforces the permanent one-to-one saved Card and Hermes profile binding across Projects before writing a revision.
+# Entity: Tool Catalog
+# Relationship: This file persists the exact tool, skill, toolset, and MCP connection grant rows belonging to each immutable Card revision.
+# Entity: Card Scripts
+# Relationship: This file carries validated Card Script state inside the immutable runtime-extension record without creating another Script store.
 
 from __future__ import annotations
 

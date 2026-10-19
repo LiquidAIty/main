@@ -1,6 +1,10 @@
 /**
  * Entity: Main Chat
- * Relationship: These tests prove the Main transport admits one consistent completion, requires the explicit completion/end pair, and stops consuming frames after the server closes the turn.
+ * Relationship: This file verifies the Main transport admits one consistent completion, requires the explicit completion/end pair, and stops consuming frames after the server closes the turn.
+ * Entity: Card Invocation
+ * Relationship: This file verifies transport and body-reader failures remain typed invocation errors instead of assistant output.
+ * Entity: Run Ledger
+ * Relationship: This file verifies a Main stream cannot report completion without one nonconflicting done frame followed by the explicit end frame.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';

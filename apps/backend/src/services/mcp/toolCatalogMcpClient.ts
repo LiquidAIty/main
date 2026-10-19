@@ -1,7 +1,9 @@
-/**
- * Entity: Tool Grants
- * Relationship: Reads the authenticated MCP catalog and preserves each operation's availability, explicit grant eligibility, and exact Hermes-profile ceiling for downstream Card authorization.
- */
+// Entity: Tool Catalog
+// Relationship: This file reads and validates the complete paginated live catalog while preserving each operation's availability, eligibility, schemas, and exact profile ceiling.
+// Entity: MCP Host
+// Relationship: This file owns the backend's lazy authenticated Streamable HTTP client and catalog-readiness probe for the supervised MCP host.
+// Entity: Credentials
+// Relationship: This file presents only the bounded internal catalog-reader bearer created for the MCP connection and never exposes the underlying process secret.
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';

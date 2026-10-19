@@ -1,7 +1,9 @@
 """The one official Python MCP host composition and executable entrypoint."""
 
 # Entity: MCP Host
-# Relationship: MCP Host composes the published resource, tool-catalog, and tool-dispatch handlers into one versioned server and selects its supported stdio or streamable-HTTP transport.
+# Relationship: This file composes resource, tool-list, and tool-dispatch handlers into the one versioned MCP server and selects its supported stdio or Streamable HTTP transport.
+# Entity: Tool Catalog
+# Relationship: This file exposes only the frozen canonical catalog and its model-visible schemas through the MCP tools/list and tools/call protocol handlers.
 
 from __future__ import annotations
 

@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 # Entity: Saved Cards
-# Relationship: Verifies deck validation, stable Card-to-profile identity across Projects, topology persistence, portable project folders, reasoning settings, revision forking, and optimistic saves.
+# Relationship: This file verifies immutable Card revision forking, optimistic deck saves, stable Card identity, and portable Project configuration.
+# Entity: Hermes Profiles
+# Relationship: This file verifies global Card-to-profile bindings lock deterministically and reject profile reuse by another saved Card identity.
+# Entity: Card Topology
+# Relationship: This file verifies orange and blue edge identity, endpoint validity, unique public addresses, Card placement, and Project-local membership persistence.
+# Entity: Bot Mode Delegation
+# Relationship: This file verifies orange flow endpoints require exact unique one-word saved Card addresses.
+# Entity: Magnetic TaskGraph
+# Relationship: This file verifies blue membership is direction-independent and contains exactly one Magnetic endpoint.
+# Entity: AgentGraph
+# Relationship: This file verifies a saved Card revision update also preserves the exact Project-local AGE Card presence.
 
 import pytest
 

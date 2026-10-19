@@ -1,6 +1,6 @@
 """Basic general-purpose Python tool handlers and definitions."""
-# Entity: Card Tools
-# Relationship: Supplies the bounded date/time and arithmetic operations that any explicitly configured Card may grant.
+# Entity: Tool Catalog
+# Relationship: This file defines the bounded UTC date/time and arithmetic operations that may appear as explicit grant-eligible Card capabilities.
 
 from __future__ import annotations
 

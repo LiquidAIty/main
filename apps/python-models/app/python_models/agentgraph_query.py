@@ -1,7 +1,7 @@
 """Fixed-query Apache AGE execution for AgentGraph owners."""
 
 # Entity: AgentGraph
-# Relationship: AgentGraph executes fixed parameterized AGE queries and converts returned agtype values into Python records for topology, Run, and inspection owners.
+# Relationship: This file executes only fixed parameterized AGE queries and converts returned agtype values into Python records for AgentGraph owners.
 
 from __future__ import annotations
 

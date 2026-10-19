@@ -1,6 +1,8 @@
 /**
  * Entity: Agent Builder
- * Relationship: Derives product-rail visibility from enabled saved Cards and attached surfaces while keeping orange orchestration and blue Magnetic topology independent from UI availability.
+ * Relationship: This file derives Agent Builder rail visibility from enabled saved Cards and attached surfaces while keeping UI availability separate from execution authority.
+ * Entity: Saved Cards
+ * Relationship: This file reads exact enabled Card identities and declared subsystem attachments to decide which optional product surfaces are visible.
  */
 
 import type {

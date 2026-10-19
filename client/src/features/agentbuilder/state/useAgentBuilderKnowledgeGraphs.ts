@@ -1,6 +1,14 @@
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Loads and independently refreshes ThinkGraph and KnowGraph, while exposing opt-in saved-authority CodeGraph projection, file expansion, and exact-source reads to the existing graph workspace.
+ * Relationship: This file owns the Project graph workspace's independent provider load, error, refresh, neighborhood, removal, and opt-in Code state.
+ * Entity: ThinkGraph
+ * Relationship: This file validates and refreshes the Engraphis projection, reads exact neighborhoods, and refreshes only after confirmed Think removal.
+ * Entity: KnowGraph
+ * Relationship: This file validates Entity-only Graphiti projections, bounds startup retries, reads exact neighborhoods, and refreshes only after confirmed Know removal.
+ * Entity: CodeGraph
+ * Relationship: This file opens CodeGraph only on demand, validates its read envelopes, merges exact File structure, and loads Symbol source only by explicit action.
+ * Entity: Jev Decisions
+ * Relationship: This file applies validated Jev relationship physics locally to the KnowGraph presentation without modifying provider data.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

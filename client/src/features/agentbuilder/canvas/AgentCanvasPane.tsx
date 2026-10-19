@@ -1,7 +1,7 @@
-/**
- * Entity: Agent Canvas
- * Relationship: Embeds the shared Card-and-rail canvas in large or companion workspace shells while forwarding exact selection, activity, and persistence state.
- */
+// Entity: Card Topology
+// Relationship: This file embeds the shared Card-and-connection canvas in large or companion workspace shells and forwards topology selection and persistence actions.
+// Entity: Saved Cards
+// Relationship: This file supplies the current deck, Card activity, selected identity, and document updater to the one canvas implementation.
 
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 

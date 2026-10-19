@@ -1,6 +1,6 @@
 /**
- * Entity: Database Migrations
- * Relationship: Applies the immutable backend migration ledger under an advisory lock, verifies checksums and transaction envelopes, and delays listening through bounded PostgreSQL recovery.
+ * Entity: Application Startup
+ * Relationship: This file applies the required backend schema ledger before opening the application listener and keeps startup closed when migration integrity or PostgreSQL readiness fails.
  */
 
 import { createHash } from 'node:crypto';

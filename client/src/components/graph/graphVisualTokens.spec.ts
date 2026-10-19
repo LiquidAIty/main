@@ -1,6 +1,8 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Graph Presentation verifies that the shared Solarpunk palette preserves its semantic sea and sun roles across graph accents, edges, and workflows.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the shared Solarpunk palette preserves its knowledge-surface and relationship-color roles.
+ * Entity: Card Topology
+ * Relationship: This file verifies the same palette preserves its saved Card workflow and topology accent roles.
  */
 
 import { describe, expect, it } from 'vitest';

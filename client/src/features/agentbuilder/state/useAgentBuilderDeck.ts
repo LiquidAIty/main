@@ -1,6 +1,8 @@
 /**
  * Entity: Agent Builder
- * Relationship: Agent Builder owns the current deck document, revision, load and save activity, status, and error state for the open workspace.
+ * Relationship: This file owns the current Agent Builder deck document, revision, load and save activity, status, and error state.
+ * Entity: Saved Cards
+ * Relationship: This file holds the exact loaded saved Card deck and its optimistic revision while the workspace is open.
  */
 
 import { useState } from 'react';

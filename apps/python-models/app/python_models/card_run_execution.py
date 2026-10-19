@@ -1,6 +1,12 @@
 """Execution start and aggregate progress for accepted Card Runs."""
-# Entity: Card Runs
-# Relationship: Starts one accepted Hermes Run from exact submission evidence and records bounded Magnetic aggregate progress, usage, cost, and active-worker telemetry.
+# Entity: Run Ledger
+# Relationship: This file starts one accepted Run from exact submission/session evidence and persists bounded execution state, usage, cost, and progress fields.
+#
+# Entity: Magnetic TaskGraph
+# Relationship: This file accepts aggregate task counts and active-worker progress only for the exact saved Mag One root and runtime binding.
+#
+# Entity: AgentGraph
+# Relationship: This file emits execution-start and progress observations only after the matching durable Run transition succeeds.
 
 from __future__ import annotations
 

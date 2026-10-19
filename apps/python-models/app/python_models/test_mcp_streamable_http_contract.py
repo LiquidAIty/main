@@ -1,7 +1,13 @@
 """MCP Streamable HTTP and protocol contract tests."""
 
-# Entity: External MCP
-# Relationship: Exercises the real local Streamable HTTP host with official clients to verify OAuth, transport security, stateless Card-scoped grants, catalog identity, and shared provider lifecycle.
+# Entity: MCP Host
+# Relationship: This file exercises the real local Streamable HTTP host with official clients to verify stateless requests, transport security, protocol compatibility, readiness, and provider lifecycle.
+# Entity: Authentication
+# Relationship: This file verifies OAuth-protected MCP clients receive only the exact Project and Card context established by their verified bearer token.
+# Entity: Tool Catalog
+# Relationship: This file verifies each authenticated client sees the exact unique subset of the canonical catalog granted to its saved Card context.
+# Entity: CodeGraph
+# Relationship: This file verifies separate authenticated clients can call the granted CBM search operation through one host-owned CodeGraph provider connection.
 
 import json
 import os

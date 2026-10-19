@@ -1,8 +1,3 @@
-/**
- * Entity: Authentication
- * Relationship: Authentication selects Prisma log levels for its shared database client, retaining warnings and errors while making verbose query output explicitly opt-in.
- */
-
 export type PrismaLogLevel = 'query' | 'info' | 'warn' | 'error';
 
 /**

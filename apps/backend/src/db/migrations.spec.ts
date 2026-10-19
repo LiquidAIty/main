@@ -1,6 +1,6 @@
 /**
- * Entity: Database Migrations
- * Relationship: Verifies ordered transactional migration application, immutable applied-ledger evidence, forward-only schema corrections, and fail-closed backend startup.
+ * Entity: Application Startup
+ * Relationship: This file verifies that backend startup applies the required schema ledger transactionally, preserves applied migration evidence, and stays closed when migration work fails.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';

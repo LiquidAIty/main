@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
 /**
- * Entity: Card Subsystems
- * Relationship: Verifies that subsystem readiness is scoped to the selected Card, superseded reads cannot leak across selections, and failures remain visible.
+ * Entity: Agent Builder
+ * Relationship: This file verifies the subsystem tab clears superseded readiness, reports failures, and follows the Card currently selected in Agent Builder.
+ * Entity: Saved Cards
+ * Relationship: This file verifies subsystem readiness remains scoped to the exact selected saved Card and cannot leak across Card selections.
  */
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react';

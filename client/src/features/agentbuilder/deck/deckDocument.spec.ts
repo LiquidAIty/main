@@ -2,7 +2,13 @@
 
 /**
  * Entity: Agent Builder
- * Relationship: Verifies the client-only Assist quick-add mutation without treating browser fixtures as persisted Project seed authority.
+ * Relationship: This file verifies Agent Builder's client-only Assist quick-add mutation without treating browser fixtures as persisted Project seed authority.
+ * Entity: Saved Cards
+ * Relationship: This file verifies quick-add creates exactly one unique editable Assist Card and does not mutate existing saved Cards.
+ * Entity: Card Topology
+ * Relationship: This file verifies quick-add preserves every existing edge and leaves the new Card unattached at a valid open position.
+ * Entity: Hermes Profiles
+ * Relationship: This file verifies each quick-added Assist receives one unique delegate profile and the expected saved model defaults.
  */
 
 import { describe, expect, it } from 'vitest';

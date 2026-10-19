@@ -1,7 +1,11 @@
 """Canonical MCP request authorization, dispatch, timeout, and typed results."""
 
-# Entity: External MCP
-# Relationship: Authorizes MCP calls, injects server-owned scope, invokes the exact operation under bounded timeouts, and returns protocol-declared outcomes without interpreting result prose.
+# Entity: MCP Host
+# Relationship: This file dispatches one MCP request under a bounded timeout and returns protocol-declared outcomes without interpreting result prose.
+# Entity: Tool Catalog
+# Relationship: This file resolves only published operation definitions, enforces each request's exact grants, rejects caller-supplied server identity, and invokes the selected canonical operation.
+# Entity: Authentication
+# Relationship: This file injects only the Project, Card, Run, and caller scope established by the authenticated request principal.
 
 from __future__ import annotations
 

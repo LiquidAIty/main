@@ -1,6 +1,12 @@
 """Saved Card, sender, execution, and configuration authority for one invocation."""
-# Entity: Card Runs
-# Relationship: Authorizes one Card invocation against exact orange or blue topology and projects its saved runtime, model, tools, skills, and subagent configuration.
+# Entity: Card Invocation
+# Relationship: This file authorizes one Card invocation and produces the exact saved runtime configuration used to prepare that execution.
+#
+# Entity: Card Topology
+# Relationship: This file requires the sender-to-target orange or blue saved edge authority appropriate to the invoking Card roles.
+#
+# Entity: Saved Cards
+# Relationship: This file projects the target Card's saved provider, model, reasoning, tools, skills, toolsets, MCP references, and subagent configuration.
 
 from __future__ import annotations
 

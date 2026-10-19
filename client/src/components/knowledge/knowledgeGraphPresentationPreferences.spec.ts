@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 /**
- * Entity: Graph Presentation
- * Relationship: Verifies saved knowledge-renderer preferences remain authority-scoped, bounded, migration-safe, and presentation-only while material fields can be added or removed without mutating inputs.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies saved graph preferences remain authority-scoped, bounded, migration-safe, and presentation-only while material fields can change without mutating provider records.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';

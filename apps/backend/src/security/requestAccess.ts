@@ -1,6 +1,8 @@
 /**
  * Entity: Authentication
- * Relationship: Defines loopback, bootstrap-token, and CORS trust checks so local-development sessions and internal HTTP routes cannot be authorized by spoofed headers.
+ * Relationship: This file defines loopback, bootstrap-session, and CORS trust checks so local-development access cannot be authorized by spoofed headers.
+ * Entity: Credentials
+ * Relationship: This file reads and timing-safely compares the optional bootstrap token without accepting a missing or mismatched value.
  */
 
 import crypto from 'crypto';

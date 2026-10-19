@@ -1,6 +1,10 @@
 /**
  * Entity: Saved Cards
- * Relationship: Verifies authorized deck loads and compare-and-set saves consistently use and return the canonical owned Project identity.
+ * Relationship: This file verifies authorized saved Card deck loads and compare-and-set saves preserve exact Python-owned readback.
+ * Entity: Projects
+ * Relationship: This file verifies deck routes use and return the canonical owned Project identity instead of a supplied alias.
+ * Entity: Authentication
+ * Relationship: This file verifies each deck request is scoped through the owner-authorized Project boundary.
  */
 
 import type { Server } from 'node:http';

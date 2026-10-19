@@ -1,3 +1,8 @@
+# Entity: MCP Host
+# Relationship: This file verifies the public MCP server advertises its exact purpose, stable initialization metadata, and current source-backed catalog identity.
+# Entity: Tool Catalog
+# Relationship: This file verifies provider tools have human-readable titles and every source-default Card tool belongs to the canonical catalog.
+
 import re
 from pathlib import Path
 

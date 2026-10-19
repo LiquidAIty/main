@@ -1,6 +1,8 @@
 /**
  * Entity: Main Chat
- * Relationship: Persists the Project conversation's user turns and completed Card replies exactly once with stable ordering and truthful speaker and target identity.
+ * Relationship: This file persists the Project conversation's user turns and completed Card replies exactly once with stable ordering and truthful speaker and target identity.
+ * Entity: Projects
+ * Relationship: This file resolves each conversation against the canonical Project identity and keeps message ordering isolated within that Project conversation.
  */
 // Runtime histories remain owned by their exact saved Card sessions.
 // This store persists Main's application conversation: user-authored turns and

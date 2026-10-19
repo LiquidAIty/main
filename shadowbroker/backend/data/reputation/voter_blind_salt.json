@@ -1,0 +1,7 @@
+{
+  "kind": "sb_secure_json",
+  "version": 1,
+  "path": "voter_blind_salt.json",
+  "nonce": "zuKbUZeVHqOUDNYc",
+  "ciphertext": "YiFSq1EPCo0jCXulT8MK+NZEwVDIqEwkrG91vbeWpXhxNJfc9uu1drhxspkABSZ6vm0Ym8AdPKQpEqp+jkbHLJaExmZ+4mKzmCU6HFQIcDsmiPta8Jrj1KQ0oX7e4/bQR2rbC8T42BBjs1leuXpqZiu/LKr5RR5ztTyleUadMrqPEy63ItltQyQqmvPApV94Ixz9WYuwiS3/jra0f+oP/+LTnRX2qD5/5a8mDHSOT4mV+VpJwuZM"
+}

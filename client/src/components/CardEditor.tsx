@@ -1,7 +1,19 @@
-/**
- * Entity: Card Editor
- * Relationship: This editor changes one saved Card's prompt, runtime, model, reasoning, subagent, skills, tools, connections, and optional script while keeping saved Card authority explicit.
- */
+// Entity: Saved Cards
+// Relationship: This file edits one saved Card's title, prompt, runtime, model, reasoning, delegation, skills, tools, connections, subsystems, and optional Script configuration.
+// Entity: Agent Builder
+// Relationship: This file owns the human-facing Prompt, Runtime, Memory, Skills, Tools, and Script editing surfaces inside the construction workspace.
+// Entity: IDD
+// Relationship: This file loads the current Card-editor field and choice projection instead of maintaining a second runtime configuration dictionary.
+// Entity: Hermes Profiles
+// Relationship: This file reads effective profile state, learning details, and MCP server configuration and submits explicit profile edits and connection tests.
+// Entity: Tool Catalog
+// Relationship: This file searches and selects live profile-eligible capabilities while preserving unresolved saved selections and the Card's explicit grant ceiling.
+// Entity: Card Scripts
+// Relationship: This file mounts the saved Python Script editor and persists only the visible Script configuration returned by that bounded editor.
+// Entity: Credentials
+// Relationship: This file initiates, polls, cancels, and reports explicit Hermes MCP OAuth authorization without storing provider secrets in Card configuration.
+// Entity: Run Ledger
+// Relationship: This file reads the selected Card's latest runtime and token metrics for display without starting or reconciling a Run.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 

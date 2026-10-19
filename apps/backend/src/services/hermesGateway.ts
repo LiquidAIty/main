@@ -1,6 +1,8 @@
 /**
- * Entity: Hermes Gateway
- * Relationship: Owns the backend's authenticated singleton connection to the repository-controlled Hermes JSON-RPC Gateway, including readiness, cancellation, reconnect, and close behavior.
+ * Entity: Hermes Card Sessions
+ * Relationship: This file owns the backend connection used to open and observe the repository-controlled Hermes session gateway, including readiness, reconnect, cancellation, and shutdown behavior.
+ * Entity: Credentials
+ * Relationship: This file validates the configured Hermes gateway origin and injects the dashboard session token only into the authenticated loopback connection URL.
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';

@@ -1,6 +1,8 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Graph Presentation renders the shared viewport-aligned graph-paper layers and accessible pan, zoom, and fit controls used by Card and knowledge canvases.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file renders the shared graph-paper substrate and accessible pan, zoom, and fit controls used by the Project knowledge canvas.
+ * Entity: Card Topology
+ * Relationship: This file supplies the same viewport-aligned canvas chrome to the saved Card topology surface.
  */
 
 import type { CSSProperties } from 'react';

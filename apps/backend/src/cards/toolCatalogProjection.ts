@@ -1,7 +1,5 @@
-/**
- * Entity: Tool Grants
- * Relationship: Indexes the authenticated tool catalog and exposes only definitions grantable to the exact saved Hermes profile selected by the caller.
- */
+// Entity: Tool Catalog
+// Relationship: This file indexes immutable live tool definitions and resolves searches, saved selections, profile grants, and executable Card Script tools without inferring metadata.
 
 export type ToolCatalogDefinition = {
   canonicalId: string;

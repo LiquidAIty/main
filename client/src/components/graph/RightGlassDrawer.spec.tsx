@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 /**
- * Entity: Graph Presentation
- * Relationship: Verifies the shared glass drawer docks, detaches, resizes, snaps, collapses without remounting children, supports keyboard movement, and cancels interrupted gestures.
+ * Entity: Application Shell
+ * Relationship: This file verifies the shared inspector drawer docks, detaches, resizes, snaps, collapses without remounting children, supports keyboard movement, and cancels interrupted gestures.
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';

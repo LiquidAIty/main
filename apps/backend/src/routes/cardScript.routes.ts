@@ -1,7 +1,7 @@
-/**
- * Entity: Card Scripts
- * Relationship: Card Scripts validates an unsaved Script against the Card's selected live tool definitions and returns its compiled draft, references, and palette fingerprint.
- */
+// Entity: Card Scripts
+// Relationship: This file validates an unsaved Script and returns its compiled draft, selected references, and palette fingerprint without persisting it.
+// Entity: Tool Catalog
+// Relationship: This file limits Script validation to the exact live tool definitions selected for the Card.
 
 import { Router } from 'express';
 import { resolveScriptToolDefinitions } from '../cards/toolCatalogProjection';

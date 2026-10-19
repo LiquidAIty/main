@@ -2,7 +2,13 @@
 
 /**
  * Entity: Agent Builder
- * Relationship: Verifies continuous pointer resizing, surface-specific minimums, collision thresholds, inspector closure, cancellation, and independent standard versus WorldView widths.
+ * Relationship: This file verifies continuous pointer resizing, surface minimums, collision thresholds, cancellation, and independent workspace widths.
+ * Entity: Main Chat
+ * Relationship: This file verifies Main's width follows exact drag input and preserves the last committed width across companion changes.
+ * Entity: Card Topology
+ * Relationship: This file verifies the Card canvas keeps its viewport floor and closes an open inspector before collision overlap.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the Project graph stays adjacent through the complete Code tab strip and overlaps only beyond that edge.
  */
 
 import { act, renderHook } from '@testing-library/react';

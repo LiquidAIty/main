@@ -1,7 +1,13 @@
 """Official stdio and Streamable HTTP transport lifecycles for the MCP host."""
 
-# Entity: External MCP
-# Relationship: Owns the MCP host's stdio and authenticated Streamable HTTP lifecycles, catalog readiness, request context, transport security, and provider cleanup.
+# Entity: MCP Host
+# Relationship: This file owns the MCP host's stdio and Streamable HTTP lifecycles, readiness endpoints, request context, transport security, and provider cleanup.
+# Entity: Authentication
+# Relationship: This file protects the public Streamable HTTP endpoint with OAuth verification, bearer challenges, host checks, and origin checks.
+# Entity: Tool Catalog
+# Relationship: This file initializes the canonical tool catalog before accepting requests and exposes catalog health and readiness without rebuilding the catalog per client.
+# Entity: Hermes Profiles
+# Relationship: This file binds validated Project, Run, and Hermes profile headers to one request context for profile-owned MCP connections.
 
 from __future__ import annotations
 

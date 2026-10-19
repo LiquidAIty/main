@@ -1,5 +1,7 @@
-# Entity: Internal MCP Auth
-# Relationship: Verifies Python rails accepts only exact loopback backend origins, emits the process secret only for internal calls, and refuses redirect forwarding.
+# Entity: MCP Host
+# Relationship: This file verifies Python rails accepts only exact loopback backend origins for MCP and application operation transport and refuses redirect forwarding.
+# Entity: Credentials
+# Relationship: This file verifies the internal process secret is required and emitted only for explicitly protected requests.
 
 from __future__ import annotations
 

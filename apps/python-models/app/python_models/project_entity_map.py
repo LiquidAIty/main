@@ -1,6 +1,10 @@
 """Lightweight current Project Entity and Relationship map for model context."""
-# Entity: Entity Grounding
-# Relationship: Combines canonical Entity identities with current ThinkGraph and KnowGraph relationship state, excludes evidence bodies, and appends the bounded map to Card context.
+# Entity: Project Knowledge Graph
+# Relationship: This file builds the bounded Project Entity directory and relationship map appended to Card context without copying Think or Know evidence bodies.
+# Entity: ThinkGraph
+# Relationship: This file projects current Jev-authored ThinkGraph relationships into the shared Project Entity map while preserving Engraphis identity.
+# Entity: KnowGraph
+# Relationship: This file projects current KnowGraph Entity relationships into the shared Project Entity map while preserving Graphiti identity and provenance state.
 
 from __future__ import annotations
 

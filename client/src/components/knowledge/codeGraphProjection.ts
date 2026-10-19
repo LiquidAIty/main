@@ -1,9 +1,9 @@
 /**
  * Entity: CodeGraph
- * Relationship: Validates official CBM structural projections, preserves source-owned Feature memberships, and derives non-authoritative filters without duplicating File identity.
+ * Relationship: This file validates official CBM structural projections, preserves source-owned Feature memberships, and derives non-authoritative filters without duplicating File identity.
  *
- * Entity: Graph Presentation
- * Relationship: Supplies the Code view with fail-closed projection parsing, stable expansion merges, and presentation-only Feature filtering for the shared renderer.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file supplies the shared graph workspace with fail-closed Code view parsing, stable expansion merges, and presentation-only Feature filtering.
  */
 
 import type {

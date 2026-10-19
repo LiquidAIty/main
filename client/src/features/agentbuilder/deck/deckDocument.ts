@@ -1,6 +1,12 @@
 /**
  * Entity: Agent Builder
- * Relationship: Validates canonical deck responses, constructs projectless canvas state, and creates one unattached Assist Card without supplying persisted Project defaults.
+ * Relationship: This file validates canonical deck responses, constructs projectless canvas state, and performs the client-only quick-add authoring mutation.
+ * Entity: Saved Cards
+ * Relationship: This file creates one editable Assist Card with a unique saved identity and preserves an exact loaded deck without merging browser defaults.
+ * Entity: Card Topology
+ * Relationship: This file validates saved edge endpoints and places a quick-added Card without creating or changing any orange or blue wire.
+ * Entity: Hermes Profiles
+ * Relationship: This file gives a quick-added Assist Card one unique delegate profile and carries the template's saved provider and model choices.
  */
 
 import type {

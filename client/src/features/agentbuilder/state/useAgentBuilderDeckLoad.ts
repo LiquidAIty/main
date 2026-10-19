@@ -1,7 +1,7 @@
-/**
- * Entity: Agent Canvas
- * Relationship: Loads the selected Project's canonical saved deck and revision into canvas state while rejecting stale, mismatched, aborted, or incomplete responses.
- */
+// Entity: Projects
+// Relationship: This file requests the canonical deck only for the selected Project and rejects cross-Project, stale, aborted, or incomplete responses.
+// Entity: Saved Cards
+// Relationship: This file loads the exact saved deck and revision into editor state and initializes autosave fingerprints from the persisted Card and edge document.
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 

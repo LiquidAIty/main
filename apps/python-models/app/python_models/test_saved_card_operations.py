@@ -1,5 +1,7 @@
 # Entity: Saved Cards
-# Relationship: Verifies Card creation and configuration expose the exact reasoning enum, persist accepted choices, and reject unrecognized levels.
+# Relationship: This file verifies exact-revision Card creation and configuration persist accepted reasoning choices and reject unrecognized values.
+# Entity: Hermes Profiles
+# Relationship: This file verifies the public Card operations expose the exact saved Hermes reasoning-effort vocabulary used by runtime materialization.
 
 from __future__ import annotations
 

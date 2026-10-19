@@ -1,8 +1,3 @@
-/**
- * Entity: Authentication
- * Relationship: Authentication verifies that its shared Prisma client always keeps warning and error logs while enabling query output only through explicit flags.
- */
-
 import { describe, expect, it } from 'vitest';
 import { resolvePrismaLog } from './prismaLog';
 

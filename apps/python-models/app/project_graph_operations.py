@@ -1,6 +1,14 @@
 """Read-only exact Project Entity operations."""
 # Entity: Project Knowledge Graph
-# Relationship: Publishes explicit grantable Project Entity directory and bounded cross-authority context reads while graph providers retain data ownership.
+# Relationship: This file publishes explicit grantable Entity-directory and bounded cross-authority context reads while each graph provider retains data ownership.
+# Entity: ThinkGraph
+# Relationship: This file reads exact Engraphis Entity Think candidates and returns one distinct Recent plus Jev-ranked Relevant selection.
+# Entity: KnowGraph
+# Relationship: This file reads exact Graphiti Entity two-sided Know candidates and returns one distinct Recent plus Jev-ranked Relevant selection.
+# Entity: Jev Decisions
+# Relationship: This file uses Jev only to rank bounded provider-owned candidates against the current request and never writes relevance into either graph.
+# Entity: Tool Catalog
+# Relationship: This file defines the exact schemas, access hints, server-injected Project scope, and handlers for the two Project graph read operations.
 
 from __future__ import annotations
 

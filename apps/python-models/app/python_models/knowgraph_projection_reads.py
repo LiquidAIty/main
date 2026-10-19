@@ -1,7 +1,11 @@
 """Bounded KnowGraph projection and neighborhood reads for the UI."""
 
 # Entity: KnowGraph
-# Relationship: Projects bounded Project-scoped Graphiti Entities, relationships, two-sided Know evidence, and one-hop neighborhoods for the visual graph without copying graph authority.
+# Relationship: This file reads bounded Project-scoped Graphiti Entities, relationships, two-sided Know evidence, and one-hop neighborhoods without copying graph authority.
+# Entity: Project Knowledge Graph
+# Relationship: This file projects KnowGraph records into the shared visual graph contract used by the application.
+# Entity: Jev Decisions
+# Relationship: This file attaches validated persisted Jev relationship decisions to projected KnowGraph edges.
 
 from __future__ import annotations
 

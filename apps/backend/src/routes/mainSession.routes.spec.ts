@@ -1,6 +1,12 @@
 /**
  * Entity: Main Chat
- * Relationship: Verifies Project-session closure, exact direct-recipient correlation, and Hermes completion classification across saved Card sessions.
+ * Relationship: This file verifies Main uses the saved Project session closure and classifies Hermes completion, failure, and interruption without inventing a result.
+ * Entity: Hermes Card Sessions
+ * Relationship: This file verifies only Main, an explicitly addressed recipient, and that recipient's downstream orange closure receive resumed Project sessions.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file verifies explicit @Card routing accepts only the exact orange roster and requires a complete direct Hermes delivery receipt.
+ * Entity: Run Ledger
+ * Relationship: This file verifies interrupted and cancelled Hermes completions remain cancellation evidence rather than completed Run results.
  */
 
 import { describe, expect, it, vi } from 'vitest';

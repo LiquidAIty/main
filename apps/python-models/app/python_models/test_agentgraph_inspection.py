@@ -1,7 +1,11 @@
 """Bounded read-only AgentGraph inspection contracts."""
 
 # Entity: AgentGraph
-# Relationship: Verifies Project-scoped saved Card authority and exact AGE Run, assignment, lineage, and artifact observations without synthetic tool telemetry or raw IDF content.
+# Relationship: This file verifies Project-scoped AgentGraph inspection is read-only, bounded, and sourced from exact saved Card and AGE records.
+# Entity: Card Topology
+# Relationship: This file verifies the inspection response preserves the current saved Card and relationship identity for the requested Project deck.
+# Entity: Run Ledger
+# Relationship: This file verifies Run, assignment, lineage, and artifact observations remain exact and omit synthetic telemetry and raw IDF content.
 
 from __future__ import annotations
 

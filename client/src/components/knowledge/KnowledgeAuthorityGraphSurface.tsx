@@ -1,6 +1,14 @@
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Owns the single shared renderer lifecycle for joined Think/Know and opt-in Code views, preserving authority-specific selection, camera, settings, and one Inspector over exact projections.
+ * Relationship: This file owns the single renderer lifecycle, camera, settings, selection, focus, and Inspector shared by the Project graph views.
+ * Entity: ThinkGraph
+ * Relationship: This file renders exact Engraphis nodes, relationships, Think records, Jev provenance, focus neighborhoods, and confirmed removal actions.
+ * Entity: KnowGraph
+ * Relationship: This file renders exact Graphiti Entities, relationships, two-sided Knows, citations, focus neighborhoods, and confirmed episode removal actions.
+ * Entity: CodeGraph
+ * Relationship: This file renders opt-in Feature, File, and Symbol projections, expands a selected File, and loads exact source only after an explicit Symbol action.
+ * Entity: Jev Decisions
+ * Relationship: This file presents validated relationship probabilities and bounded manual focus results as transient physics and navigation without writing graph meaning.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';

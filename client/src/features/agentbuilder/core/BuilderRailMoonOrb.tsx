@@ -1,6 +1,6 @@
 /**
  * Entity: Agent Builder
- * Relationship: Agent Builder computes the current synodic phase and renders the accessible lunar rail affordance with a geometry-derived waxing or waning terminator.
+ * Relationship: This file computes the current synodic phase and renders Agent Builder's accessible lunar rail affordance with a geometry-derived terminator.
  */
 
 import React from 'react';

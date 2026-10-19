@@ -1,6 +1,10 @@
 """Market-data and SEC-read Python tool handlers and definitions."""
-# Entity: Market Research
-# Relationship: Publishes explicit read-only grants for bounded SEC filings, Alpaca market data, and paper-account readiness without order authority.
+# Entity: Market Data
+# Relationship: This file publishes the bounded read-only Alpaca snapshot, historical-bar, paper-readiness, and SEC filing operations used for market evidence.
+# Entity: WorldSignals
+# Relationship: This file exposes the explicit SEC filing signal operation that WorldSignals may use without adding scheduling, graph writes, or trading authority.
+# Entity: Tool Catalog
+# Relationship: This file defines the schemas, annotations, access mode, and handlers for the Market Data and SEC-read capabilities included in the canonical catalog.
 
 from __future__ import annotations
 

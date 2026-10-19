@@ -1,6 +1,18 @@
 /**
  * Entity: Main Chat
- * Relationship: This hook owns the Project-scoped Main conversation view, exact saved-Card addressing, streamed partial replies, cancellation state, and one final voice submission per Hermes capture.
+ * Relationship: This file owns the Project-scoped Main conversation view, history, streamed partial replies, error state, and one final submission per Hermes voice capture.
+ * Entity: Projects
+ * Relationship: This file resets conversation, authority, voice, and active-stream state whenever the active Project changes.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file admits an explicit @Card only when it exactly matches the current server-supplied roster and preserves the observed recipient as the reply speaker.
+ * Entity: Card Invocation
+ * Relationship: This file assembles one Main Run request from exact user text, bounded images, and selected references and retains partial text on failure or cancellation.
+ * Entity: Run Ledger
+ * Relationship: This file tracks the real active Run identity for stop requests and refuses to interrupt without an observed Run ID.
+ * Entity: Data Anchors
+ * Relationship: This file converts selected reference order into bounded Run priorities without changing provider identity or resolved data.
+ * Entity: Hermes Card Sessions
+ * Relationship: This file loads Project conversation history and consumes chat, stop, and voice events from Main's saved Hermes session.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

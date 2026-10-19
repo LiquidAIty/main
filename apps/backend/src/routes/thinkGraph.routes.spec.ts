@@ -1,6 +1,10 @@
 /**
  * Entity: ThinkGraph
- * Relationship: Verifies owner-scoped Engraphis projections, exact neighborhood reads, bounded retirement, required identities, and honest Python failure projection.
+ * Relationship: This file verifies Engraphis projections, exact neighborhood reads, bounded retirement, required identities, and honest Python failure projection.
+ * Entity: Authentication
+ * Relationship: This file verifies Project ownership is required before any ThinkGraph read or retirement reaches Python rails.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the shared workspace receives exact provider projections and neighborhoods without TypeScript graph reconstruction.
  */
 
 import type { Server } from 'node:http';

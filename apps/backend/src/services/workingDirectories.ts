@@ -1,6 +1,8 @@
 /**
- * Entity: Working Directories
- * Relationship: Working Directories resolves the repository plus durable neutral Card and Builder Project folders, rejecting traversal, reserved names, temporary storage, repository overlap, and escaped real paths.
+ * Entity: Hermes Card Sessions
+ * Relationship: This file creates each product Card session's durable neutral workspace outside the application repository and temporary storage.
+ * Entity: Builder Card
+ * Relationship: This file resolves the saved Builder Card's Project code directory while rejecting traversal, reserved names, repository overlap, and escaped paths.
  */
 
 import { createHash } from 'node:crypto';

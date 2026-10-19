@@ -1,7 +1,9 @@
 """Canonical operation lookup and live provider registration."""
 
 # Entity: Tool Catalog
-# Relationship: Tool Catalog assembles code-owned operation definitions once, atomically replaces each live external provider contribution, rejects identity collisions, and resolves exact access and Card-grant eligibility without prose inference.
+# Relationship: This file assembles code-owned operation definitions once, atomically replaces each live provider contribution, rejects identity collisions, and resolves exact access and Card-grant eligibility without prose inference.
+# Entity: MCP Host
+# Relationship: This file binds live CBM and Graphiti operation definitions to their exact provider owners for host publication and dispatch.
 
 from __future__ import annotations
 

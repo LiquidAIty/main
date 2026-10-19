@@ -11,8 +11,10 @@ Provider modules consume the TYPED, VALUE-FREE config objects exposed here inste
 scattering ``os.getenv`` calls. No secret value ever appears on a returned public object,
 exception, log line, or serialized result.
 """
-# Entity: Provider Configuration
-# Relationship: Loads the canonical Python rails environment, resolves file-backed secrets without overriding process values, and exposes value-free typed Alpaca and SEC configuration.
+# Entity: Credentials
+# Relationship: This file loads the canonical Python-rails environment, resolves file-backed secrets without overriding process values, and exposes only value-free provider configuration objects.
+# Entity: Market Data
+# Relationship: This file defines the safe paper-only Alpaca and SEC provider configuration consumed by Market Data operations.
 
 from __future__ import annotations
 

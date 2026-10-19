@@ -1,5 +1,10 @@
 """Engraphis settlement for one completed User/Main pair."""
 
+# Entity: ThinkGraph
+# Relationship: This file atomically settles a completed User/Main pair as bounded Entity-specific Thinks, exact attachments, and durable Engraphis relationships.
+# Entity: Jev Decisions
+# Relationship: This file requires a validated Jev choice for every proposed ThinkGraph relationship before writing or replacing its durable edge.
+
 from __future__ import annotations
 
 from copy import deepcopy

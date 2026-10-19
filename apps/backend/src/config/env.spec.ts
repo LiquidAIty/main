@@ -1,9 +1,9 @@
 /**
  * Entity: Application Startup
- * Relationship: Executes the real backend environment loader in isolated processes and verifies module-relative path resolution, process precedence, and explicit missing-required configuration failure.
+ * Relationship: This file executes the backend environment loader in isolated processes and verifies module-relative paths, process precedence, and explicit missing-required configuration failure.
  *
  * Entity: Credentials
- * Relationship: Verifies file-backed secret resolution and proves configuration failures identify configuration keys without echoing secret values.
+ * Relationship: This file verifies file-backed secret resolution and proves configuration failures identify configuration keys without echoing secret values.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

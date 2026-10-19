@@ -1,6 +1,6 @@
 """Deterministic projection of canonical operations into the selectable catalog."""
-# Entity: Tool Grants
-# Relationship: Projects each canonical operation's explicit availability, eligibility, and exact profile ceiling into the authenticated Card tool catalog without aliases or inferred grants.
+# Entity: Tool Catalog
+# Relationship: This file projects code-owned and authenticated provider operations into one validated catalog with explicit availability, eligibility, schemas, publications, and profile ceilings.
 
 from __future__ import annotations
 

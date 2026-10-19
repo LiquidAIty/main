@@ -1,6 +1,10 @@
 /**
  * Entity: Main Chat
- * Relationship: These tests prove exact @Card admission, partial-answer retention on failure, and one Main submission for each final Hermes voice transcript.
+ * Relationship: This file verifies partial-answer retention on failure and one Main submission for each distinct Hermes voice transcript.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file verifies exact @Card admission against the current Project roster and synchronous refusal of an unknown address.
+ * Entity: Card Invocation
+ * Relationship: This file verifies streamed partial text remains visible when the same invocation later fails.
  */
 
 // @vitest-environment jsdom

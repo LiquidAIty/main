@@ -1,6 +1,6 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Graph Presentation provides the themed collapsible inspector section used to group graph-adjacent controls, status signals, and detail content without owning their domain data.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file provides the collapsible inspector section used to group Project graph controls, status signals, and record details without owning graph data.
  */
 
 import { useState } from 'react';

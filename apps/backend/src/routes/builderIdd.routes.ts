@@ -1,7 +1,9 @@
-/**
- * Entity: Tool Grants
- * Relationship: Serves authenticated Card editor and Script palettes filtered by the exact saved Card profile, so profile-scoped tools never become ordinary choices.
- */
+// Entity: IDD
+// Relationship: This file exposes the Project-authorized Card editor projection materialized from the literal IDD and current configured model catalog.
+// Entity: Tool Catalog
+// Relationship: This file loads, indexes, searches, and filters the live tool catalog against the exact saved Card profile and selections.
+// Entity: Card Scripts
+// Relationship: This file resolves the selected executable Script tools and returns their palette fingerprint and generated authoring header.
 
 import { createHash } from 'crypto';
 import { Router } from 'express';

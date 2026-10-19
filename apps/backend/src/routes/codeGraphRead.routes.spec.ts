@@ -1,6 +1,10 @@
 /**
  * Entity: CodeGraph
- * Relationship: Verifies browser CodeGraph reads remain Project-owned, fixed-purpose, and server-scoped to the persisted Builder Card.
+ * Relationship: This file verifies browser CodeGraph reads remain fixed-purpose and preserve typed provider unavailability without a fallback.
+ * Entity: Authentication
+ * Relationship: This file verifies each CodeGraph read resolves the canonical owner-scoped Project before dispatch.
+ * Entity: Builder Card
+ * Relationship: This file verifies the server injects the persisted Builder Card and deck and rejects any browser-authored provider or tool scope.
  */
 
 import type { Server } from 'node:http';

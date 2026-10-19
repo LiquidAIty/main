@@ -1,7 +1,13 @@
 """Behavioral MCP provider-publication and request-dispatch contracts."""
 
-# Entity: External MCP
-# Relationship: Verifies authenticated catalog publication, exact provider schemas and annotations, grant enforcement, timeout recovery, and two-sided Know projection through MCP dispatch.
+# Entity: MCP Host
+# Relationship: This file verifies provider requests retain protocol-declared schemas, arguments, error state, timeout behavior, and recoverable dispatch through the MCP host.
+# Entity: Tool Catalog
+# Relationship: This file verifies canonical catalog publication, exact access annotations, hidden-operation refusal, and saved Card grant enforcement.
+# Entity: Authentication
+# Relationship: This file verifies external Main entry and materializer-read requests receive only their authenticated Project and tool authority.
+# Entity: KnowGraph
+# Relationship: This file verifies the KnowGraph MCP projection accepts one two-sided cited Know and dispatches it to the exact Graphiti Entity operation.
 
 import json
 from types import SimpleNamespace

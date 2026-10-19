@@ -1,7 +1,13 @@
 """Application operation for the saved Magnetic Card."""
 
-# Entity: Magnetic Runs
-# Relationship: Starts one approved Magnetic outer Run, observes the same Hermes root through its request window, and idempotently settles that Run when later readback becomes terminal.
+# Entity: Magnetic TaskGraph
+# Relationship: This file submits one approved mission to the saved Mag One Card, observes the same Hermes root, reports progress, and returns its actual terminal synthesis.
+#
+# Entity: Run Ledger
+# Relationship: This file keeps the outer Run bound to the accepted Hermes root and idempotently records progress, failure, timeout, or terminal settlement.
+#
+# Entity: Data Anchors
+# Relationship: This file accepts only deliberately selected graph references and marks them required before passing them into the Magnetic Card invocation.
 
 from __future__ import annotations
 

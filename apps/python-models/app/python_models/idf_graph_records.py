@@ -1,7 +1,7 @@
 """Pure construction helpers for bounded provider graph records in an IDF."""
 
-# Entity: Input Data File
-# Relationship: Converts selected provider-owned graph records and provenance into the bounded node, relationship, and selection records retained in one Run's canonical IDF.
+# Entity: IDF
+# Relationship: This file converts selected provider-owned graph records and provenance into the bounded node, relationship, and selection records retained in one Run's canonical IDF.
 
 from __future__ import annotations
 

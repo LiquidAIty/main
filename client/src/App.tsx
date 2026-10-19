@@ -1,7 +1,5 @@
-/**
- * Entity: Application Shell
- * Relationship: Application Shell maps browser URLs to Agent Builder, Trading, login, and signup surfaces and redirects the root route into the workspace.
- */
+// Entity: Application Shell
+// Relationship: This file maps browser URLs to the Agent Builder, Trading, login, and signup surfaces and redirects the root route into the workspace.
 
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import TradingUI from "./pages/tradingui";

@@ -1,6 +1,8 @@
 /**
- * Entity: Card Subsystems
- * Relationship: Card Subsystems verifies that the client preserves valid typed Python attachments and filters malformed or duplicate subsystem records from saved Card presentation.
+ * Entity: Saved Cards
+ * Relationship: This file verifies valid typed Python attachments survive saved Card readback while malformed or duplicate records are excluded from presentation.
+ * Entity: Agent Builder
+ * Relationship: This file verifies Agent Builder receives only validated subsystem attachment records for the selected Card.
  */
 
 import { describe, expect, it } from 'vitest';

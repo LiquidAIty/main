@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 /**
- * Entity: Graph Presentation
- * Relationship: Verifies the controlled renderer's click arbitration, semantic edge transfer, authority materials, joined palette, and position preservation through its public deterministic test seam.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the shared graph renderer's click arbitration, joined materials, edge transfer, and position preservation through its public deterministic seam.
+ * Entity: ThinkGraph
+ * Relationship: This file verifies ThinkGraph nodes and relationships retain their distinct renderer material and semantic edge values.
+ * Entity: KnowGraph
+ * Relationship: This file verifies KnowGraph nodes and relationships retain their distinct renderer material and authority color.
+ * Entity: Jev Decisions
+ * Relationship: This file verifies persisted Jev relationship strength, distance, and spring values reach the renderer without changing ordinary provider edges.
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';

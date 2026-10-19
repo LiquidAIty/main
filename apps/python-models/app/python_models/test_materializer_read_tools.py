@@ -1,6 +1,14 @@
 """Focused no-provider proof for the shared internal MCP Card client."""
 # Entity: Data Anchors
-# Relationship: Verifies Card-scoped graph preload uses one short-lived read-only MCP principal, preserves successful concurrent reads, and contains unavailable or timed-out providers.
+# Relationship: This file verifies Card-scoped graph hydration preserves successful bounded reads and contains unavailable or timed-out providers.
+# Entity: MCP Host
+# Relationship: This file verifies hydration uses one official loopback MCP session and rejects nonlocal or alternate transport endpoints.
+# Entity: Authentication
+# Relationship: This file verifies the short-lived materializer principal carries exact Project, deck, Card, conversation, and requested read authority without inventing a Run.
+# Entity: Credentials
+# Relationship: This file verifies the internal signing secret is required and remains inside the bearer-creation boundary.
+# Entity: Tool Catalog
+# Relationship: This file verifies the authoritative host rejects a requested write even when a caller places that operation name in the short-lived principal.
 
 from __future__ import annotations
 

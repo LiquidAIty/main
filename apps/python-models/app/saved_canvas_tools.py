@@ -1,7 +1,10 @@
 """Saved Canvas inspection and one-wire optimistic updates."""
 
-# Entity: Agent Canvas
-# Relationship: Publishes exact saved-Canvas inspection and single-wire update operations while enforcing Project revisions, Card endpoints, edge types, and topology authority.
+# Entity: Card Topology
+# Relationship: This file publishes exact topology inspection and single-connection update operations while enforcing endpoints, edge types, direction, enabled state, and revision authority.
+#
+# Entity: Saved Cards
+# Relationship: This file reads and revision-checks the persisted Project deck before returning or changing any Card connection.
 
 from __future__ import annotations
 

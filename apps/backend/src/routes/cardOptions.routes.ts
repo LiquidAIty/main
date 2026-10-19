@@ -1,7 +1,5 @@
-/**
- * Entity: Card Editor
- * Relationship: Returns the authenticated Card editor's canonical model and runtime option catalogs after validating the Python rails projection.
- */
+// Entity: IDD
+// Relationship: This file supplies configured model choices to IDD materialization and returns validated runtime fields and catalogs for Card editing.
 
 import { Router } from 'express';
 import { listConfiguredModelOptions } from '../llm/models.config';

@@ -1,7 +1,13 @@
 """Magnetic root validation, package-safe staging, activation and Run binding."""
 
 # Entity: Magnetic TaskGraph
-# Relationship: Stages and activates one same-root Hermes mission from exact saved blue-worker authority after binding the existing outer Run.
+# Relationship: This file validates, stages, binds, and activates one same-root Hermes mission from exact saved blue-worker authority.
+# Entity: IDF
+# Relationship: This file reloads the canonical retained in.idf and rejects any transport mission that differs from the materialized mission bytes.
+# Entity: Run Ledger
+# Relationship: This file binds the staged Hermes root to the already accepted outer Run before activation and never creates a second product Run.
+# Entity: Team
+# Relationship: This file uses the same Hermes root path for a sole direct Team worker while preserving Team's saved profile and parent model.
 
 from __future__ import annotations
 

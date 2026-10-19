@@ -1,6 +1,8 @@
 /**
  * Entity: Saved Cards
- * Relationship: Verifies the TypeScript deck transport preserves stable identity, exact Python readback, not-found semantics, and compare-and-set revision writes.
+ * Relationship: This file verifies the TypeScript deck transport preserves stable saved Card identity, exact Python readback, not-found semantics, and compare-and-set revision writes.
+ * Entity: Card Topology
+ * Relationship: This file verifies the complete Python-owned deck document, including its nodes and edges, crosses the transport without TypeScript reconstruction.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';

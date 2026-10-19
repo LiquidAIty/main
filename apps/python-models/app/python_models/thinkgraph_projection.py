@@ -1,7 +1,11 @@
 """ThinkGraph presentation projection from the Engraphis service."""
 
 # Entity: ThinkGraph
-# Relationship: Projects Engraphis Entities, relationships, bounded Think evidence, Jev semantics, and current provider identity into the Project graph presentation without becoming a second graph owner.
+# Relationship: This file projects Engraphis Entities, relationships, bounded Think evidence, Jev semantics, and provider identity without becoming a second graph owner.
+# Entity: Project Knowledge Graph
+# Relationship: This file supplies the shared workspace with the complete ThinkGraph scene or one explicitly bounded Entity neighborhood plus a current cross-authority directory when available.
+# Entity: Jev Decisions
+# Relationship: This file carries persisted Jev labels and probabilities into bounded presentation fields without making a new decision or changing Engraphis data.
 
 from __future__ import annotations
 

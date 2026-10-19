@@ -1,6 +1,6 @@
 """One authored definition for every callable product operation."""
-# Entity: Tool Grants
-# Relationship: Defines the mandatory grant eligibility and optional exact Hermes-profile ceiling carried by every callable operation into catalogs and Runs.
+# Entity: Tool Catalog
+# Relationship: This file defines the canonical callable-operation contract, including schemas, publishers, access, availability, eligibility, profile ceilings, annotations, and dispatcher ownership.
 
 from __future__ import annotations
 

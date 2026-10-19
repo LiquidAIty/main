@@ -1,6 +1,16 @@
 /**
  * Entity: Saved Cards
- * Relationship: Defines the backend's canonical saved deck, Card revision and configuration, subsystem, Script, and orange or blue topology transport types.
+ * Relationship: This file defines the backend's canonical saved deck, immutable Card revision identity, and saved Card configuration transport types.
+ * Entity: Card Topology
+ * Relationship: This file defines saved Card placement and the explicit flow, magentic_option, and invalid edge classifications.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file defines the saved orchestrator setting and directed orange flow edge used for Card-to-Card authority.
+ * Entity: Magnetic TaskGraph
+ * Relationship: This file defines blue magentic_option membership independently from orange delegation authority.
+ * Entity: Hermes Profiles
+ * Relationship: This file defines each saved Card's single Hermes runtime mode, profile, provider, model, subagent, skill, toolset, and MCP selections.
+ * Entity: Card Scripts
+ * Relationship: This file defines the versioned saved Card Script source, compiled contract, hashes, tool states, and validation record.
  */
 
 export type PromptTemplate = {

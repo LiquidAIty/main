@@ -1,7 +1,9 @@
 """Accepted Jev-decision settlement into the Engraphis ThinkGraph."""
 
 # Entity: ThinkGraph
-# Relationship: Applies one accepted Jev relationship decision to canonical Engraphis Entities, preserving decision provenance and superseding only the prior edge for that exact pair.
+# Relationship: This file applies one accepted relationship decision to canonical Engraphis Entities and supersedes only the prior edge for that exact directed pair.
+# Entity: Jev Decisions
+# Relationship: This file persists the exact winning distribution, confidence, vocabulary state, natural phrase, and source event as ThinkGraph edge provenance.
 
 from __future__ import annotations
 

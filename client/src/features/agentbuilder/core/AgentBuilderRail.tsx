@@ -1,6 +1,6 @@
 /**
  * Entity: Agent Builder
- * Relationship: Renders the persistent product rail and routes visible WorldSignals, WorldView, Canvas, graph, Trading, Add Agent, and menu controls to their existing workspace owners.
+ * Relationship: This file renders the persistent product rail and routes each visible destination to its existing Agent Builder workspace owner.
  */
 
 import type { ReactNode } from 'react';

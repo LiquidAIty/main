@@ -1,7 +1,5 @@
-/**
- * Entity: Application Runtime
- * Relationship: Composes the backend API by mounting each public, internal, and authenticated feature router beneath its stable application path.
- */
+// Entity: Application Startup
+// Relationship: This file composes the backend API by mounting every public, process-secret, and authenticated feature router beneath its stable path exactly once.
 
 import { Router } from 'express';
 import health from './health.routes';

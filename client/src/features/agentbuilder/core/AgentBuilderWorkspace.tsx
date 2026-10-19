@@ -1,6 +1,12 @@
 /**
  * Entity: Agent Builder
- * Relationship: Lays out the resizable Main chat, Card canvas, companion workspace, rail, and drawer while preserving collision and underlay geometry.
+ * Relationship: This file lays out the resizable Main chat, Card canvas, companion workspace, rail, and drawer while preserving collision and underlay geometry.
+ * Entity: Main Chat
+ * Relationship: This file keeps Main mounted as the primary adjustable pane and expands it to the full workspace in chat mode.
+ * Entity: Card Topology
+ * Relationship: This file keeps one saved Card canvas mounted in the companion pane while the Main pane is resized.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file gives the Project graph companion its bounded viewport and collision behavior without owning graph data.
  */
 
 import type { PointerEvent, ReactNode, RefObject } from 'react';

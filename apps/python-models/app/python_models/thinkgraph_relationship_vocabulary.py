@@ -1,6 +1,10 @@
 """Project-scoped ThinkGraph relationship vocabulary and promotion."""
 # Entity: ThinkGraph
-# Relationship: Maintains each Project's bounded relationship vocabulary, normalizes proposed predicates, prepares Jev choices, and atomically promotes only a winning valid label.
+# Relationship: This file owns each Project's bounded durable relationship vocabulary and atomically promotes only a valid winning predicate.
+# Entity: Jev Decisions
+# Relationship: This file normalizes free-form proposals into one canonical or optional novel Choice plan within the provider's maximum option count.
+# Entity: Project Knowledge Graph
+# Relationship: This file supplies the one relationship vocabulary shared by ThinkGraph and KnowGraph without merging their graph writers.
 
 from __future__ import annotations
 

@@ -1,7 +1,15 @@
 """Saved blue-worker validation and package-safe Hermes taskgraph transport."""
 
 # Entity: Magnetic TaskGraph
-# Relationship: Validates exact saved blue-worker authority and invokes Hermes's public taskgraph adapter without importing or mutating Hermes modules in Python rails.
+# Relationship: This file validates exact saved blue-worker and orchestrator authority and invokes Hermes's public taskgraph adapter without importing or mutating Hermes modules in Python rails.
+# Entity: Saved Cards
+# Relationship: This file requires every Magnetic worker's exact Card ID, revision, stable profile, title, and bounded description before submission.
+# Entity: Tool Catalog
+# Relationship: This file accepts only compact saved tool identifiers as worker-assignment context and rejects any second capability authority.
+# Entity: Team
+# Relationship: This file recognizes direct Team execution only when the sole saved worker is the exact card_team identity with its Team marker.
+# Entity: Hermes Profiles
+# Relationship: This file validates the saved orchestrator and worker profiles plus their provider and model bindings through the Hermes adapter.
 
 from __future__ import annotations
 

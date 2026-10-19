@@ -1,6 +1,8 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Verifies valid live Jev probabilities alter only bounded visual mass and spring fields while preserving provider graph meaning and superseded evidence.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies Project graph profiles change only bounded transient visual mass, width, spring, and distance fields.
+ * Entity: Jev Decisions
+ * Relationship: This file verifies only valid live Jev winner probabilities affect presentation while ordinary, malformed, and superseded provider evidence remains unchanged.
  */
 
 import { describe, expect, it } from 'vitest';

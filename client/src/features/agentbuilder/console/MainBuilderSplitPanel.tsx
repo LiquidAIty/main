@@ -1,7 +1,9 @@
-/**
- * Entity: Application Shell
- * Relationship: Preserves Main as the ambient Project conversation while letting the user collapse, split, resize, or expand the active Card work surface below it.
- */
+// Entity: Application Shell
+// Relationship: This file owns the remembered collapse, split, resize, and full-height presentation between the ambient conversation and active work surface.
+// Entity: Main Chat
+// Relationship: This file preserves Main Chat as the ambient Project conversation whenever the lower work surface is not explicitly expanded.
+// Entity: Builder Card
+// Relationship: This file presents the saved Builder Card's lower work surface without creating a second Builder session or terminal authority.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 const HANDLE_HEIGHT = 12;

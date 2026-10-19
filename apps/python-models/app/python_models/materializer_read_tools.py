@@ -1,6 +1,14 @@
 """Authenticated client primitives for the one official Python MCP host."""
 # Entity: Data Anchors
-# Relationship: Issues short-lived Card-scoped read principals and performs one bounded authenticated MCP session to hydrate selected graph references without granting writes.
+# Relationship: This file performs one bounded authenticated MCP session to hydrate selected graph references before IDF materialization without granting writes.
+# Entity: MCP Host
+# Relationship: This file uses the one official loopback MCP host and official client transport instead of importing or duplicating provider catalogs.
+# Entity: Authentication
+# Relationship: This file signs a short-lived materializer-read principal scoped to the exact Project, deck, Card, conversation, and requested read operations.
+# Entity: Credentials
+# Relationship: This file reads the supervised internal MCP secret only to sign the short-lived principal and rejects missing or non-loopback transport configuration.
+# Entity: Tool Catalog
+# Relationship: This file delegates read-only operation classification to the live MCP host and never mirrors the canonical catalog in Python rails.
 
 from __future__ import annotations
 

@@ -1,6 +1,8 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Maps validated live Jev winner probabilities into bounded transient edge and node physics while preserving provider data, history, and profile-independent graph meaning.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file maps validated relationship evidence into bounded transient edge and node physics for the Project graph presentation without mutating provider data.
+ * Entity: Jev Decisions
+ * Relationship: This file consumes only validated live Jev winner probabilities and preserves historical, superseded, malformed, and non-Jev relationships unchanged.
  */
 
 import type {

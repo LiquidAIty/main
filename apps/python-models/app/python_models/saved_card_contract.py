@@ -1,7 +1,19 @@
 """Pure saved-Card identity, runtime, provider, and serialization contract."""
 
 # Entity: Saved Cards
-# Relationship: Defines and validates saved Card identity, immutable Hermes bindings, provider and model selections, grants, Scripts, subsystems, automatic selectors, and canonical revision serialization.
+# Relationship: This file defines canonical saved Card identity and serialization and validates each proposed immutable revision before persistence or invocation.
+# Entity: Hermes Profiles
+# Relationship: This file validates the Card's permanent Hermes profile, runtime mode, provider access mode, parent model, subagent model, subagent type, and reasoning selection.
+# Entity: Tool Catalog
+# Relationship: This file separates tools, skills, toolsets, and MCP connection grants and removes retired tool identifiers from canonical Card state.
+# Entity: Card Scripts
+# Relationship: This file normalizes a saved Card Script as an inert versioned extension when disabled or invalid and preserves ordinary tool grants independently.
+# Entity: Bot Mode Delegation
+# Relationship: This file validates the saved orchestrator switch only for eligible non-Magnetic Hermes Cards.
+# Entity: Magnetic TaskGraph
+# Relationship: This file recognizes the saved magentic_one runtime while preventing ordinary AutoTools, AutoModel, and orchestrator settings from changing Magnetic authority.
+# Entity: Jev Decisions
+# Relationship: This file validates the optional AutoTools and AutoModel switches as per-Run selectors that never replace durable saved choices.
 
 from __future__ import annotations
 

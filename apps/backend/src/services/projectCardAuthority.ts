@@ -1,6 +1,10 @@
 /**
  * Entity: Saved Cards
- * Relationship: Loads one Project's persisted deck and resolves every enabled Card to its exact revision, profile, display address, and unique Main authority.
+ * Relationship: This file loads one Project's persisted deck and resolves every enabled Card to its exact saved revision, profile, title, and address.
+ * Entity: Main Chat
+ * Relationship: This file requires exactly one enabled Hermes Main Card and exposes that saved identity as the Project's chat authority.
+ * Entity: Hermes Profiles
+ * Relationship: This file binds each enabled saved Card to its exact stable Hermes profile without deriving a second runtime identity.
  */
 
 import { getDeckDocument } from '../decks/deckDomainClient';

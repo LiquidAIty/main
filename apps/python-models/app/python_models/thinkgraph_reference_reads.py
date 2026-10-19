@@ -1,6 +1,8 @@
 """Exact project-scoped reads from the Engraphis ThinkGraph authority."""
 # Entity: ThinkGraph
-# Relationship: Reads one exact Project-scoped Engraphis Entity or Think, bounds optional relationship expansion, and projects portable content with native provenance and truncation.
+# Relationship: This file reads one exact Project-scoped Engraphis Entity or Think and projects bounded portable content with provider provenance and truncation.
+# Entity: Data Anchors
+# Relationship: This file hydrates exact ThinkGraph reference IDs and an optional one-hop relationship expansion for canonical IDF materialization.
 
 from __future__ import annotations
 

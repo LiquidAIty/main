@@ -2,7 +2,13 @@
 
 /**
  * Entity: KnowGraph
- * Relationship: Verifies accepted Know deletion refreshes the provider projection exactly once while refusal preserves the current graph and avoids false refresh.
+ * Relationship: This file verifies accepted Know deletion refreshes the provider projection exactly once while refusal preserves the current graph and avoids false refresh.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the shared workspace keeps provider projections independent and performs no eager CodeGraph read.
+ * Entity: ThinkGraph
+ * Relationship: This file verifies the Engraphis projection loads alongside KnowGraph without being replaced by another authority.
+ * Entity: CodeGraph
+ * Relationship: This file verifies CodeGraph opens only on demand, merges exact File structure, and loads current Symbol source only after explicit selection.
  */
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';

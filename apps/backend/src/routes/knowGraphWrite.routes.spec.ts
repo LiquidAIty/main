@@ -1,6 +1,8 @@
 /**
  * Entity: KnowGraph
- * Relationship: Verifies authenticated PDF ingestion and episode deletion resolve canonical Project ownership, forward only allowed fields, reject unauthorized Projects, and never expose Graphiti failure bodies.
+ * Relationship: This file verifies PDF ingestion and episode deletion forward only allowed fields and never expose Graphiti failure bodies.
+ * Entity: Authentication
+ * Relationship: This file proves KnowGraph writes require authenticated ownership of the exact Project.
  */
 
 import type { Server } from 'node:http';

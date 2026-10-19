@@ -1,7 +1,7 @@
-/**
- * Entity: Card Runs
- * Relationship: Transports one saved Card request through Python preparation and Run lifecycle readbacks, enforcing exact Project/deck/Card/revision/session identities at every transition.
- */
+// Entity: Card Invocation
+// Relationship: This file submits one exact saved Card assignment for preparation and rejects any returned Card, revision, profile, conversation, or transport identity mismatch.
+// Entity: Run Ledger
+// Relationship: This file starts, reads, and finishes durable Runs while validating transition readback and normalizing bounded Hermes token and cost usage.
 
 import { randomUUID } from 'node:crypto';
 

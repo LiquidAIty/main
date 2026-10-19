@@ -1,7 +1,9 @@
-/**
- * Entity: Card Terminal
- * Relationship: Verifies terminal preflight and WebSocket upgrades preserve exact Card identity, refuse ineligible Cards, and never expose the reusable Hermes credential.
- */
+// Entity: Card Terminals
+// Relationship: This file verifies terminal preflight and WebSocket upgrades preserve exact Card identity, normalize close frames, and refuse Main or Magnetic Cards.
+// Entity: Hermes Card Sessions
+// Relationship: This file verifies the terminal binds to the exact returned Hermes profile and session before exposing its same-origin stream path.
+// Entity: Credentials
+// Relationship: This file verifies unauthenticated upgrades are refused and reusable Gateway credentials or upstream ports never enter the browser response.
 
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';

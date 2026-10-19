@@ -1,7 +1,7 @@
-/**
- * Entity: Agent Canvas
- * Relationship: Verifies Card rendering, topology editing, viewport recovery, and orange-versus-blue connection rules against explicit behavior-focused deck fixtures.
- */
+// Entity: Card Topology
+// Relationship: This file verifies persisted orange and blue connection rules, endpoint validation, topology edits, viewport recovery, and inert invalid edges.
+// Entity: Saved Cards
+// Relationship: This file verifies saved Cards render from explicit deck fixtures and Card mutations preserve the expected deck document behavior.
 
 import React from 'react';
 import { Handle } from '@xyflow/react';

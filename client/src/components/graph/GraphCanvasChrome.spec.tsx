@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Entity: Graph Presentation
- * Relationship: Graph Presentation verifies the shared graph-paper substrate and compact zoom, fit, and navigation controls used across graph-backed workspaces.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the shared Project graph-paper substrate and compact zoom, fit, and navigation controls.
+ * Entity: Card Topology
+ * Relationship: This file verifies the same canvas controls remain reusable by the saved Card topology workspace.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';

@@ -1,6 +1,14 @@
 """Exact repository-symbol reads from the official Codebase Memory authority."""
 # Entity: CodeGraph
-# Relationship: Reads one exact qualified symbol and optional bounded call neighborhood through authenticated CBM tools, preserving source coordinates and native provenance.
+# Relationship: This file reads exact CBM structure, qualified Symbol source, coverage, and source-owned Feature contributions while preserving repository coordinates and provenance.
+# Entity: Data Anchors
+# Relationship: This file hydrates one exact CodeGraph reference and optional bounded call neighborhood for canonical IDF materialization.
+# Entity: Builder Card
+# Relationship: This file fixes in-app CodeGraph reads to the persisted Builder Card identity, revision, deck, and exact saved CBM grants.
+# Entity: Tool Catalog
+# Relationship: This file checks each required CBM operation against Builder's saved tool ceiling before opening the authenticated materializer-read session.
+# Entity: Project Knowledge Graph
+# Relationship: This file projects Feature, File, Symbol, and structural edges for the shared graph workspace without replacing CBM as structural authority.
 
 from __future__ import annotations
 

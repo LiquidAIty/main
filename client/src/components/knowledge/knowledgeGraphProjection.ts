@@ -1,9 +1,11 @@
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Defines provider projection contracts and composes exact same-name ThinkGraph and KnowGraph Entities into one joined presentation without merging graph authority.
+ * Relationship: This file defines provider projection contracts and composes exact same-name ThinkGraph and KnowGraph Entities into one joined presentation without merging graph authority.
  *
- * Entity: Graph Presentation
- * Relationship: Supplies stable provider-member render identities and material roles used by the single shared knowledge surface and its focused presentations.
+ * Entity: ThinkGraph
+ * Relationship: This file preserves exact Engraphis Entity and relationship identities as ThinkGraph members of the shared presentation.
+ * Entity: KnowGraph
+ * Relationship: This file preserves exact Graphiti Entity and relationship identities as KnowGraph members of the shared presentation.
  */
 
 import { GRAPH_THEME, SOLARPUNK_PALETTE } from '../graph/graphVisualTokens';

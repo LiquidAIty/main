@@ -1,6 +1,16 @@
 /**
  * Entity: Saved Cards
- * Relationship: Defines the client-side saved deck, Card configuration, subsystem, Script, and orange or blue topology types consumed by the Canvas and editor.
+ * Relationship: This file defines the client-side saved deck, immutable Card revision identity, and saved Card configuration types consumed by the Canvas and editor.
+ * Entity: Card Topology
+ * Relationship: This file defines saved Card placement and the explicit flow, magentic_option, and invalid edge classifications rendered by the Canvas.
+ * Entity: Bot Mode Delegation
+ * Relationship: This file defines the saved orchestrator setting and directed orange flow edge used for Card-to-Card authority.
+ * Entity: Magnetic TaskGraph
+ * Relationship: This file defines blue magentic_option worker membership independently from orange delegation authority.
+ * Entity: Hermes Profiles
+ * Relationship: This file defines the saved Hermes mode, profile, provider, model, subagent, skill, toolset, and MCP selections edited for a Card.
+ * Entity: Card Scripts
+ * Relationship: This file defines the versioned saved Card Script source, compiled contract, hashes, tool states, and validation record presented by Agent Builder.
  */
 
 export type PromptTemplate = {

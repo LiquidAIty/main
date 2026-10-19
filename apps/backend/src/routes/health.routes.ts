@@ -1,7 +1,5 @@
-/**
- * Entity: Application Runtime
- * Relationship: Exposes the backend liveness endpoint consumed by dependent-service startup before other application services are launched.
- */
+// Entity: Application Startup
+// Relationship: This file exposes the backend liveness endpoint consumed by dependent-service startup before the remaining application services launch.
 
 import { Router } from "express";
 

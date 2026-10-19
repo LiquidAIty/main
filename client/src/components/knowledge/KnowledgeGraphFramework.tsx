@@ -1,6 +1,12 @@
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Keeps joined Think/Know and opt-in Code views inside one lazy shared renderer workspace, projecting each authority's independent status and read actions.
+ * Relationship: This file keeps joined Think/Know and opt-in Code views inside one lazy shared renderer workspace while preserving independent status and read actions.
+ * Entity: ThinkGraph
+ * Relationship: This file presents the Engraphis projection and its exact focus-neighborhood and removal actions through the shared graph surface.
+ * Entity: KnowGraph
+ * Relationship: This file presents the Graphiti projection and its exact focus-neighborhood and removal actions through the shared graph surface.
+ * Entity: CodeGraph
+ * Relationship: This file opens CodeGraph only on explicit tab selection and passes bounded File expansion and Symbol source reads into the same renderer and Inspector.
  */
 
 import { Suspense, lazy, useState } from 'react';

@@ -1,6 +1,6 @@
 /**
  * Entity: Crash Diagnostics
- * Relationship: Captures React, window, and unhandled-promise failures with route and Project context for the visible copyable crash report.
+ * Relationship: This file captures React, window, and unhandled-promise failures with route and Project context for the visible copyable crash report.
  */
 
 export type FrontendCrashRecord = {

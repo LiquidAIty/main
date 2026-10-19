@@ -2,7 +2,13 @@
 
 /**
  * Entity: Agent Builder
- * Relationship: Verifies Main and companion panes retain one mounted subtree, surface-specific floors, pointer resizing, collision clipping, and underlay geometry.
+ * Relationship: This file verifies the Agent Builder shell retains one mounted subtree with pointer resizing, surface floors, collision clipping, and underlay geometry.
+ * Entity: Main Chat
+ * Relationship: This file verifies Main remains mounted and continuously sized while an adjacent companion surface reaches its collision floor.
+ * Entity: Card Topology
+ * Relationship: This file verifies the Card canvas remains mounted while its true adjacent pane shrinks or overlaps only at the defined floor.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies the knowledge workspace retains its own minimum width and collision edge inside the shared shell.
  */
 
 import React, { act } from 'react';

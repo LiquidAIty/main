@@ -1,6 +1,8 @@
 /**
  * Entity: Projects
- * Relationship: Renders owner-scoped Project creation, selection, deletion, and sign-out controls while accepting only a canonical persisted deck response for navigation.
+ * Relationship: This file renders owner-scoped Project creation, selection, and deletion controls and navigates only after canonical persisted deck readback.
+ * Entity: Authentication
+ * Relationship: This file exposes the authenticated user's sign-out action from the Project drawer and returns the browser to login after the session closes.
  */
 
 import { useState } from 'react';

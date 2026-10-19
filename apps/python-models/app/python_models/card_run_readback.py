@@ -1,7 +1,10 @@
 """Durable Card Run projection and bounded readback."""
 
-# Entity: Card Runs
-# Relationship: Projects durable Run state and performs bounded Project, deck, Card, correlation, and conversation-scoped readback without becoming a runtime controller.
+# Entity: Run Ledger
+# Relationship: This file projects durable Run state and performs bounded newest-first Project, deck, Card, correlation, and exact-Run readback without controlling execution.
+#
+# Entity: AgentGraph
+# Relationship: This file verifies an optional conversation-scoped Run read through the exact AgentGraph observation before returning it.
 
 from __future__ import annotations
 

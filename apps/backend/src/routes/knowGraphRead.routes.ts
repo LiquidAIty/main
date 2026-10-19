@@ -1,6 +1,10 @@
 /**
  * Entity: KnowGraph
- * Relationship: Authenticates Project ownership and serves bounded KnowGraph Entity projections or focused neighborhoods from Python rails.
+ * Relationship: This file serves bounded KnowGraph Entity projections and focused neighborhoods from Python rails.
+ * Entity: Authentication
+ * Relationship: This file requires an authenticated owner before reading a Project's KnowGraph data.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file provides the KnowGraph projection and expansion routes consumed by the shared graph surface.
  */
 
 import { Router, type Request, type Response } from 'express';

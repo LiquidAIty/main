@@ -1,6 +1,12 @@
 """Exact-revision saved Card configuration updates."""
 # Entity: Saved Cards
-# Relationship: Validates and applies an exact-revision Card configuration update, preserves runtime, tool, and Script ceilings, and returns the persisted revision readback.
+# Relationship: This file validates and applies an exact-revision saved Card configuration update and returns the persisted revision readback.
+# Entity: Hermes Profiles
+# Relationship: This file validates updates to the Card's saved provider, model, reasoning, subagent, skill, toolset, and MCP selections without changing runtime identity.
+# Entity: Tool Catalog
+# Relationship: This file accepts only exact normalized capability lists and rejects tools unavailable to saved Card grants.
+# Entity: Card Scripts
+# Relationship: This file validates, authors, versions, and saves the next Card Script configuration without creating another executor.
 
 from __future__ import annotations
 

@@ -1,7 +1,11 @@
 """Exact Project-scoped KnowGraph Entity, episode, and reference reads."""
 
 # Entity: KnowGraph
-# Relationship: Performs exact Project-scoped Graphiti Entity, relationship, episode, Know, directory, and bounded-neighborhood reads for graph context and Data Anchors.
+# Relationship: This file performs exact Project-scoped Graphiti Entity, relationship, episode, Know, directory, and bounded-neighborhood reads.
+# Entity: Data Anchors
+# Relationship: This file hydrates selected KnowGraph references with bounded records and provenance for Card input.
+# Entity: Project Knowledge Graph
+# Relationship: This file supplies the exact KnowGraph directory and record projections shown on the shared graph surface.
 
 from __future__ import annotations
 

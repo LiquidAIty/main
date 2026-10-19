@@ -3,11 +3,11 @@
 IDD is data, not an authenticator or a second runtime schema. Ordinary Card
 execution uses its executable contracts and saved grants, not this palette.
 """
-# Entity: Input Data Dictionary
-# Relationship: Reads the one literal IDD and materializes composable Card editor fields, templates, and configured model choices without becoming runtime authority.
+# Entity: IDD
+# Relationship: This file reads the one literal IDD and materializes composable Card editor fields, templates, and configured model choices without becoming runtime authority.
 #
-# Entity: Tool Grants
-# Relationship: Projects the authenticated live tool catalog into the selected Card's editor palette while honoring explicit eligibility and exact profile ceilings.
+# Entity: Tool Catalog
+# Relationship: This file projects the authenticated live tool catalog into a selected Card's editor palette while honoring explicit eligibility and exact profile ceilings.
 from __future__ import annotations
 
 import json

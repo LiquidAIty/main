@@ -1,6 +1,6 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Validates and persists the shared knowledge renderer’s layout, style, physics, material colors, and bounded settings without owning graph data or React lifecycle.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file validates and persists authority-scoped layout, style, physics, material colors, and bounded renderer settings without owning graph data.
  */
 
 import {

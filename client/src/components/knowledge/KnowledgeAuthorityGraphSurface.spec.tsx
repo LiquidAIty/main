@@ -2,7 +2,15 @@
 
 /**
  * Entity: Project Knowledge Graph
- * Relationship: Verifies one joined renderer, provider-status isolation, focus lifecycle, presentation settings, selection, and shared inspector wiring without inventing graph identity or mutation.
+ * Relationship: This file verifies one joined renderer, provider-status isolation, focus lifecycle, settings, selection, and shared Inspector without inventing graph identity or mutation.
+ * Entity: ThinkGraph
+ * Relationship: This file verifies exact Think records, relationships, Jev fields, provider IDs, positions, and confirmed removal remain intact in the shared surface.
+ * Entity: KnowGraph
+ * Relationship: This file verifies exact two-sided Knows, sources, relationships, provider isolation, and confirmed removal remain intact in the shared surface.
+ * Entity: CodeGraph
+ * Relationship: This file verifies CodeGraph remains opt-in, reuses the same renderer and Inspector, expands only the selected File, and exposes no iframe or Feature sorter.
+ * Entity: Jev Decisions
+ * Relationship: This file verifies bounded focus reads, probability-driven transient presentation, unavailable-focus fallback, and manual setting preservation without another graph write.
  */
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';

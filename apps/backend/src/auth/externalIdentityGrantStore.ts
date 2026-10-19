@@ -1,6 +1,8 @@
 /**
- * Entity: External Identity Grants
- * Relationship: External Identity Grants resolves a verified OAuth issuer and subject to one existing user and owned Project without storing tokens.
+ * Entity: Authentication
+ * Relationship: This file resolves one verified OAuth issuer-and-subject identity to an existing LiquidAIty user without storing the caller's token.
+ * Entity: Projects
+ * Relationship: This file limits an externally authenticated identity to the exact Project already granted to and owned by that user.
  */
 
 import { pool } from '../db/pool';

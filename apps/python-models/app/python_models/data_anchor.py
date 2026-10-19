@@ -6,7 +6,7 @@ never writes a graph, copies one into another authority, or materializes an IDF.
 """
 
 # Entity: Data Anchors
-# Relationship: Resolves exact selected ThinkGraph, KnowGraph, and CodeGraph provider identities into bounded model context, stable references, provenance, and an optional transient projection.
+# Relationship: This file resolves exact selected ThinkGraph, KnowGraph, and CodeGraph identities into bounded model context, stable references, provenance, and an optional transient projection.
 
 from __future__ import annotations
 

@@ -1,6 +1,8 @@
 /**
  * Entity: Agent Builder
- * Relationship: Verifies product-rail visibility follows enabled saved Cards and attached surfaces while orange flow and blue Magnetic wires remain independent execution authorities.
+ * Relationship: This file verifies Agent Builder rail visibility follows enabled saved Cards and declared surface attachments.
+ * Entity: Saved Cards
+ * Relationship: This file verifies Card identity and attachment state, rather than orange or blue wires, controls optional surface visibility.
  */
 
 import { describe, expect, it } from 'vitest';

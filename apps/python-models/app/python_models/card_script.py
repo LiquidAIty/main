@@ -7,7 +7,7 @@ cannot become the active runtime presentation.
 """
 
 # Entity: Card Scripts
-# Relationship: Compiles one saved Card's bounded Python tool recipe against its current grants into the exact per-turn Hermes Script contract.
+# Relationship: This file compiles one saved Card's bounded Python tool recipe against its current grants into the exact per-turn Hermes Script contract.
 
 from __future__ import annotations
 

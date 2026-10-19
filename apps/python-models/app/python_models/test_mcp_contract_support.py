@@ -1,7 +1,7 @@
 """Test-owned value formatting and provider reset support for MCP contracts."""
 
 # Entity: MCP Host
-# Relationship: MCP Host supplies shared test formatting and provider-reset fixtures that isolate authenticated streamable HTTP and dispatch contract suites.
+# Relationship: This file supplies shared result formatting and provider-reset fixtures that isolate authenticated Streamable HTTP and dispatch contract tests.
 
 import json
 

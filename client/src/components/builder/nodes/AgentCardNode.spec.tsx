@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-/**
- * Entity: Agent Canvas
- * Relationship: Verifies shared Card geometry, truthful live activity badges, and the separate orange orchestrator and blue Magnetic connection controls rendered on the canvas.
- */
+// Entity: Saved Cards
+// Relationship: This file verifies shared Card geometry, identity presentation, and truthful live activity badges.
+// Entity: Card Topology
+// Relationship: This file verifies the node renders separate orange orchestrator and blue Magnetic connection controls from saved authority.
 
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';

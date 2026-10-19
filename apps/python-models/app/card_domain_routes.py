@@ -1,9 +1,21 @@
 """Card, IDD, tool, Script, deck, Run, and Magnetic routes."""
 # Entity: Saved Cards
-# Relationship: Exposes Python-owned deck, Card Script, IDD, tool-catalog, and durable Run operations through typed internal HTTP routes.
+# Relationship: This file exposes the Python-owned Project deck read and revision-checked save operations through internal HTTP routes.
 #
-# Entity: Magnetic Runs
-# Relationship: Reconciles one bound Hermes task root into its existing outer Run whenever authenticated status readback observes terminal state.
+# Entity: IDD
+# Relationship: This file exposes literal IDD Card-editor and runtime-option materialization without making HTTP transport the dictionary authority.
+#
+# Entity: Tool Catalog
+# Relationship: This file exposes canonical live tool-definition materialization from the supplied provider catalog.
+#
+# Entity: Card Scripts
+# Relationship: This file exposes unsaved Script validation and generated read-only authoring headers without executing or persisting the draft.
+#
+# Entity: Run Ledger
+# Relationship: This file exposes begin, start, finish, exact read, and bounded history operations for the durable outer Run ledger.
+#
+# Entity: Magnetic TaskGraph
+# Relationship: This file reads or reconciles one bound Hermes task root into its existing outer Magnetic Run when status is requested.
 
 from fastapi import APIRouter, HTTPException
 from typing import Any

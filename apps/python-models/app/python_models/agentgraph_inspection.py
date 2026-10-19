@@ -1,6 +1,10 @@
 """Read-only saved-deck and AGE AgentGraph inspection."""
 # Entity: AgentGraph
-# Relationship: Reads bounded saved Card authority and exact AGE Run, assignment, lineage, and artifact observations without inventing missing fields or storing raw IDF content.
+# Relationship: This file reads bounded Project-scoped Card, relationship, Run, assignment, lineage, and artifact observations from PostgreSQL and AGE without inventing missing fields.
+# Entity: Card Topology
+# Relationship: This file projects the current saved Card roster and orange or blue relationship records into the AgentGraph inspector response.
+# Entity: Run Ledger
+# Relationship: This file exposes bounded outer Run identity, lifecycle, lineage, assignments, and artifacts while explicitly excluding raw IDF content.
 
 from __future__ import annotations
 

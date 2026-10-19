@@ -1,7 +1,13 @@
 """Provider graph retrieval followed by bounded Jev context relevance."""
 
-# Entity: Entity Grounding
-# Relationship: Retrieves bounded Project candidates from ThinkGraph and KnowGraph, uses Jev to select one Relevant record per authority, and pairs each with one distinct Recent record for current-request context.
+# Entity: Project Knowledge Graph
+# Relationship: This file builds the non-persisting current-request grounding packet shared with Cards from bounded provider-owned graph records.
+# Entity: ThinkGraph
+# Relationship: This file retrieves exact Project Think candidates and one distinct recent Think while preserving Engraphis record identity.
+# Entity: KnowGraph
+# Relationship: This file retrieves exact two-sided Know candidates and one distinct recent Know while preserving Graphiti record identity.
+# Entity: Jev Decisions
+# Relationship: This file asks Jev to rank bounded provider candidates for current-request relevance without changing either graph authority.
 
 from __future__ import annotations
 

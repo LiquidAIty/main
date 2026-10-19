@@ -1,9 +1,13 @@
 /**
  * Entity: Projects
- * Relationship: Exposes authenticated Project list, create, and delete routes while preserving exact owner scope and explicit partial-state failures.
+ * Relationship: This file exposes Project list, create, and delete routes while preserving exact owner scope and explicit partial-state failures.
  *
- * Entity: Project Seeds
- * Relationship: Persists the backend-owned canonical deck through the Python deck authority and returns its exact Project, deck, and revision readback.
+ * Entity: Saved Cards
+ * Relationship: This file persists the source-default saved Card roster through the deck authority during Project creation and returns its exact revision readback.
+ * Entity: Card Topology
+ * Relationship: This file persists the source-default Card positions and wires as part of the newly created Project deck.
+ * Entity: Authentication
+ * Relationship: This file requires an authenticated owner for Project listing, creation, and deletion and scopes each operation to that owner.
  */
 
 import { Router } from 'express';

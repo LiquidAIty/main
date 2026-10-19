@@ -15,8 +15,12 @@ Hard boundaries (enforced by tests):
   * the API key is read from the environment only and never appears in any returned
 object, replay identity, error string, or log.
 """
-# Entity: Market Research
-# Relationship: Performs bounded read-only SEC filing queries and maps only complete SEC.gov-sourced records into provenance-bearing signal envelopes without graph or trading side effects.
+# Entity: WorldSignals
+# Relationship: This file performs bounded read-only SEC filing queries and maps only complete SEC.gov-sourced records into provenance-bearing WorldSignal envelopes.
+# Entity: Market Data
+# Relationship: This file supplies filing-event evidence for an explicit issuer, form set, and date window without graph writes, scheduling, or trading side effects.
+# Entity: Credentials
+# Relationship: This file consumes the SEC provider key only inside the request transport and excludes it from results, replay identity, errors, and logs.
 
 from __future__ import annotations
 

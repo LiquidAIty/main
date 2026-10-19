@@ -1,7 +1,9 @@
 """Shared Graphiti/Neo4j read connection and Relationship metadata."""
 
 # Entity: KnowGraph
-# Relationship: Provides Project-scoped Graphiti read support, filters citation URLs and embeddings from visual projection, and validates persisted Jev relationship metadata.
+# Relationship: This file opens Project-scoped Graphiti reads and removes citation URLs and embedding vectors from KnowGraph projections.
+# Entity: Jev Decisions
+# Relationship: This file validates and projects the Jev decision metadata persisted on KnowGraph relationships.
 
 from __future__ import annotations
 

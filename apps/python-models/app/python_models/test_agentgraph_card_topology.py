@@ -1,10 +1,22 @@
 """Saved orange and blue Card-topology contracts."""
 
 # Entity: AgentGraph
-# Relationship: Verifies saved directional orange flow authority and blue Magnetic membership use exact enabled Card identities without granting reverse or presentation-derived authority.
+# Relationship: This file verifies saved AGE Card relationships retain exact enabled Card identity and never gain authority from presentation fields.
+#
+# Entity: Card Topology
+# Relationship: This file verifies orange and blue topology validation, address uniqueness, endpoint rules, direction, and independent coexistence.
+#
+# Entity: Bot Mode Delegation
+# Relationship: This file verifies only enabled outbound orange flow from an authorized orchestrator produces a direct saved Card roster.
 #
 # Entity: Magnetic TaskGraph
-# Relationship: Verifies blue topology projects only callable saved workers with each worker’s exact Card revision, Hermes profile, provider, and Team mode.
+# Relationship: This file verifies blue topology projects only callable saved workers with each worker's exact Card revision, Hermes profile, provider, and Team mode.
+#
+# Entity: Tool Catalog
+# Relationship: This file verifies Magnetic worker projection carries only compact saved tool identifiers and does not create grants.
+#
+# Entity: Team
+# Relationship: This file verifies the saved Team Card retains its explicit Team-task marker and saved parent model when selected as a blue worker.
 
 from __future__ import annotations
 

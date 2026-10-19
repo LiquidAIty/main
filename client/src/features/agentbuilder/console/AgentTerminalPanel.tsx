@@ -1,7 +1,7 @@
-/**
- * Entity: Card Terminal
- * Relationship: Mounts one terminal view for the selected Card, forwards input and resize frames, and tears down the prior identity before any retargeting.
- */
+// Entity: Card Terminals
+// Relationship: This file owns the xterm view, forwards input and resize events, renders streamed output, and disposes terminal resources on unmount.
+// Entity: Hermes Card Sessions
+// Relationship: This file opens one session for the exact Project, deck, and Card identity while ignoring stale openings and output after retargeting.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';

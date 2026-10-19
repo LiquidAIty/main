@@ -1,5 +1,17 @@
 # Entity: Saved Cards
-# Relationship: Verifies stable profile and runtime ownership, strict orchestration and auto-selection flags, retired embedded-team removal, and inert retention of disabled invalid Card Scripts.
+# Relationship: This file verifies canonical saved Card serialization, explicit runtime ownership, stable grants, and revision validation.
+# Entity: Hermes Profiles
+# Relationship: This file verifies permanent profile binding, supported Hermes modes, reasoning values, and parent/subagent runtime selections.
+# Entity: Bot Mode Delegation
+# Relationship: This file verifies only eligible ordinary Hermes Cards may save the orchestrator switch.
+# Entity: Magnetic TaskGraph
+# Relationship: This file verifies the Magnetic runtime remains distinct from ordinary Hermes Cards and rejects ordinary automatic selectors and orange orchestration.
+# Entity: Jev Decisions
+# Relationship: This file verifies AutoTools and AutoModel remain strict optional booleans on eligible non-Magnetic Cards.
+# Entity: Card Scripts
+# Relationship: This file verifies a disabled invalid Card Script remains readable and inert without suppressing the Card's ordinary tools.
+# Entity: Team
+# Relationship: This file verifies retired embedded Team configuration is removed from saved Card extensions and kanban is not restored as a Card runtime mode.
 
 from __future__ import annotations
 

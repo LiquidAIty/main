@@ -1,6 +1,10 @@
 """Bounded, non-history decision context for one saved Card Run."""
 # Entity: Jev Decisions
-# Relationship: Projects one bounded non-history context from the current request, saved instructions, graph references, attachment metadata, and visible-token estimate.
+# Relationship: This file projects one bounded non-history decision context from the current request, saved instructions, references, attachment metadata, and visible-token estimate.
+# Entity: Data Anchors
+# Relationship: This file carries only selected provider reference identities and bounded provenance into a Jev choice and excludes materialized graph bodies.
+# Entity: Card Invocation
+# Relationship: This file constructs the one invocation-scoped context used by optional AutoTools and AutoModel decisions without reading conversation history.
 
 from __future__ import annotations
 

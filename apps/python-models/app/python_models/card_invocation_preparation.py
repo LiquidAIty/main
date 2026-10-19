@@ -1,10 +1,22 @@
 """Graph selection, AutoTools/AutoModel, and canonical Card IDF preparation."""
 
-# Entity: Card Runs
-# Relationship: Resolves the exact saved Card revision, sender authority, current graph selections, effective tools, Script presentation, AutoTools, and AutoModel decisions for one Run.
+# Entity: Card Invocation
+# Relationship: This file resolves one saved Card revision, sender authority, provider/model, effective tools, Script presentation, images, and transient assignment for execution.
 #
-# Entity: Input Data File
-# Relationship: Passes those resolved stable and transient inputs to the sole canonical IDF materializer and verifies every required selected graph reference before execution.
+# Entity: IDF
+# Relationship: This file passes the resolved stable and transient inputs to the sole IDF materializer and retains its exact public projection for the Run.
+#
+# Entity: Data Anchors
+# Relationship: This file validates, orders, resolves, deduplicates, and verifies every selected provider graph reference before execution.
+#
+# Entity: Jev Decisions
+# Relationship: This file builds the bounded selection context and applies optional AutoTools and AutoModel decisions without changing saved Card defaults.
+#
+# Entity: Project Knowledge Graph
+# Relationship: This file appends the shared Project Entity map and default relevant/recent grounding for the system Cards that receive automatic graph context.
+#
+# Entity: Magnetic TaskGraph
+# Relationship: This file resolves the one enabled saved Mag One Card identity used by the Magnetic task graph boundary.
 
 from __future__ import annotations
 

@@ -2,7 +2,15 @@
 
 /**
  * Entity: Agent Builder
- * Relationship: Verifies canonical saved-deck hydration preserves exact Card configuration and topology without merging browser-owned Project defaults.
+ * Relationship: This file verifies Agent Builder hydrates canonical saved decks without merging browser-owned Project defaults.
+ * Entity: Saved Cards
+ * Relationship: This file verifies hydration preserves exact Cards, prompts, revisions, provider/model choices, and optional Card deletion.
+ * Entity: Card Topology
+ * Relationship: This file verifies hydration preserves every saved orange, blue, or unrecognized edge without inventing a template chain.
+ * Entity: Hermes Profiles
+ * Relationship: This file verifies each saved Card retains its one explicit Hermes mode and stable profile identity through browser hydration.
+ * Entity: Tool Catalog
+ * Relationship: This file verifies saved tool grants remain byte-for-byte authoritative and are never replaced by browser defaults.
  */
 
 import { describe, expect, it } from 'vitest';

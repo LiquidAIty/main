@@ -1,15 +1,15 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Renders the shared inspector’s Think, Know, Code, source, relationship, probability, time, and removal controls while keeping one evidence surface.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file renders the shared inspector for Think, Know, Code, source, relationship, probability, time, and removal details on one evidence surface.
  *
  * Entity: ThinkGraph
- * Relationship: Presents bounded Think summaries, details, relationships, timestamps, probabilities, and removal actions for the exact selected Engraphis Entity.
+ * Relationship: This file presents bounded Think summaries, details, relationships, timestamps, probabilities, and removal actions for the exact selected Engraphis Entity.
  *
  * Entity: KnowGraph
- * Relationship: Presents bounded two-sided Knows and safe HTTPS citations for the exact selected Graphiti Entity without rendering citations as graph nodes.
+ * Relationship: This file presents bounded two-sided Knows and safe HTTPS citations for the exact selected Graphiti Entity without rendering citations as graph nodes.
  *
  * Entity: CodeGraph
- * Relationship: Presents exact CBM File/Symbol identity, source-owned Feature contributions, bounded structural neighbors, and explicitly loaded source without creating another Inspector.
+ * Relationship: This file presents exact CBM File/Symbol identity, source-owned Feature contributions, bounded structural neighbors, and explicitly loaded source without creating another Inspector.
  */
 
 import type { CodeGraphSelectedSymbol } from './codeGraphProjection';

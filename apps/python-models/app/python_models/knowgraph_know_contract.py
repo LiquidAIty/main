@@ -1,6 +1,6 @@
 """Literal two-sided Know payload validation and projection."""
 # Entity: KnowGraph
-# Relationship: Validates, encodes, reads, and sizes one atomic two-sided Know while requiring safe HTTPS citations and rejecting credential-bearing provenance URLs.
+# Relationship: This file validates, encodes, reads, and sizes one atomic two-sided Know while requiring safe HTTPS citations and rejecting credential-bearing provenance URLs.
 
 from __future__ import annotations
 

@@ -1,5 +1,11 @@
-# Entity: Card Tools
-# Relationship: Uses one bounded Jev choice per granted ordinary tool to narrow the current Run presentation without widening the saved Card's grant ceiling.
+# Entity: Jev Decisions
+# Relationship: This file asks one bounded USE/OMIT Jev choice for each exact ordinary tool and records the decision identity and confidence.
+#
+# Entity: Tool Catalog
+# Relationship: This file accepts only a complete duplicate-free set of canonical granted tool contracts and never invents or widens capabilities.
+#
+# Entity: Card Invocation
+# Relationship: This file narrows only the current Run's model-presented tools while preserving the saved Card's full grant ceiling when selection is unavailable.
 
 from __future__ import annotations
 

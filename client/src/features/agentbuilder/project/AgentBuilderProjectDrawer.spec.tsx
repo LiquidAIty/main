@@ -2,7 +2,7 @@
 
 /**
  * Entity: Projects
- * Relationship: Verifies Project creation sends only identity fields and navigates only after exact persisted deck and revision readback.
+ * Relationship: This file verifies Project creation sends only identity fields and navigates only after exact persisted deck and revision readback.
  */
 
 import React, { act } from 'react';

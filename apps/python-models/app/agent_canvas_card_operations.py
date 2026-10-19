@@ -1,6 +1,15 @@
 """AgentGraph, Canvas, and saved Card operation definitions."""
-# Entity: Card Tools
-# Relationship: Publishes explicit grantable operations for inspecting AgentGraph and for reading or changing the authenticated saved Canvas and Card configuration.
+# Entity: Tool Catalog
+# Relationship: This file publishes the explicit grantable operation definitions, schemas, access modes, annotations, and injected scope for Card and topology capabilities.
+#
+# Entity: AgentGraph
+# Relationship: This file defines the bounded Project-scoped AgentGraph inspection operation without exposing prompts or model input.
+#
+# Entity: Saved Cards
+# Relationship: This file defines explicit operations for inspecting, creating, and revision-checking configuration changes to saved Cards without running them.
+#
+# Entity: Card Topology
+# Relationship: This file defines the single-connection update operation for persisted orange or blue topology without executing agents.
 
 from __future__ import annotations
 

@@ -2,7 +2,9 @@
 
 /**
  * Entity: Magnetic TaskGraph
- * Relationship: Verifies inspect-only Magnetic status renders exact Hermes task states, deterministic dependency layers, saved Card assignees, bounded details, idle state, and timeout.
+ * Relationship: This file verifies inspect-only Magnetic status renders exact Hermes task states, deterministic dependency layers, saved Card assignees, bounded details, idle state, and timeout.
+ * Entity: Run Ledger
+ * Relationship: This file verifies the task view requests status only, preserves the selected Run identity, and exposes no execute or stop mutation.
  */
 
 import { fireEvent, screen, waitFor } from '@testing-library/react';

@@ -1,5 +1,5 @@
 # Entity: KnowGraph
-# Relationship: Verifies each two-sided Know rejects unsafe citation URLs while preserving safe cited evidence through encoding and property readback.
+# Relationship: This file verifies each two-sided Know rejects unsafe citation URLs while preserving safe cited evidence through encoding and property readback.
 
 from __future__ import annotations
 

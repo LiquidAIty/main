@@ -1,6 +1,8 @@
 /**
  * Entity: Jev Decisions
- * Relationship: Verifies bounded Jev Focus responses select only declared provider candidates and produce transient manual, expanded, and release presentations without changing graph authority.
+ * Relationship: This file verifies bounded Jev Focus responses select only declared provider candidates and reject stale or malformed distributions.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies manual, expanded, and release focus views reuse only existing real graph nodes and edges without mutating the source projection.
  */
 
 import { describe, expect, it } from 'vitest';

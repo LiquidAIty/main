@@ -1,6 +1,8 @@
 /**
  * Entity: Agent Builder
- * Relationship: Supplies only the blank projectless canvas and unattached Assist quick-add defaults that exist before or outside a persisted backend-owned Project seed.
+ * Relationship: This file supplies only the blank projectless canvas and unattached Assist quick-add defaults used before a persisted Project deck exists.
+ * Entity: Saved Cards
+ * Relationship: This file defines the client-local Assist template used to author one new Card without claiming persisted Project seed authority.
  */
 
 import type {

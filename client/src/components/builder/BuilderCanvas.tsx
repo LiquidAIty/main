@@ -1,7 +1,7 @@
-/**
- * Entity: Agent Canvas
- * Relationship: Renders and edits saved Card positions and orange or blue topology while preserving selection, viewport, activity, and canonical deck persistence semantics.
- */
+// Entity: Card Topology
+// Relationship: This file renders and edits persisted Card positions and orange or blue connections while enforcing endpoint, direction, duplicate-edge, and saved-authority rules.
+// Entity: Saved Cards
+// Relationship: This file projects the saved deck into Card nodes, applies user mutations back to that deck, and preserves selection, activity, and viewport behavior.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {

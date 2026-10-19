@@ -1,6 +1,12 @@
 """Live catalog, saved grants, and Script tool selection."""
-# Entity: Tool Grants
-# Relationship: Intersects a saved Card's selected tool ceiling with live availability, explicit eligibility, and the exact Hermes-profile scope before Run or Script presentation.
+# Entity: Tool Catalog
+# Relationship: This file normalizes the live catalog and rejects unknown, ineligible, profile-restricted, unavailable, or unsupported saved tool selections.
+#
+# Entity: Card Invocation
+# Relationship: This file intersects the saved Card tool ceiling with current availability and projects the exact enabled, unavailable, and model-presented tool contracts.
+#
+# Entity: Card Scripts
+# Relationship: This file recompiles the saved Script presentation against the invocation's effective tools without widening the Card's grants.
 
 from __future__ import annotations
 

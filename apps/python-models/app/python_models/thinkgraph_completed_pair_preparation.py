@@ -1,5 +1,8 @@
 """Completed User/Main pair identity, duplicate reads, and non-writing preparation."""
 
+# Entity: ThinkGraph
+# Relationship: This file validates one completed User/Main pair, detects duplicate prior intake, and prepares the saved ThinkGraph Card extraction without mutating the graph.
+
 from __future__ import annotations
 
 import hashlib

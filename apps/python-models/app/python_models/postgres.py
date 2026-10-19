@@ -1,7 +1,4 @@
 """Canonical Python connection to LiquidAIty's application Postgres."""
-# Entity: Python Rails
-# Relationship: Opens the canonical PostgreSQL connection from validated backend environment configuration for every Python rails persistence owner.
-
 from __future__ import annotations
 
 import os

@@ -1,6 +1,3 @@
-# Entity: Python Rails
-# Relationship: Verifies Python rails accepts only the canonical DATABASE_URL, redacts malformed credentials, and preserves caller-selected transaction mode.
-
 from __future__ import annotations
 
 import pytest

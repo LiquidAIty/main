@@ -3,8 +3,10 @@
 These tests are deterministic (explicit env mappings or a temp env file) and never read
 or assert on real secret values — only presence and readiness.
 """
-# Entity: Provider Configuration
-# Relationship: Verifies canonical dotenv and file-backed secret precedence, safe paper-only Alpaca origins, readiness states, and secret-free public configuration.
+# Entity: Credentials
+# Relationship: This file verifies canonical dotenv and file-backed secret precedence and proves public provider configuration never exposes secret values.
+# Entity: Market Data
+# Relationship: This file verifies Market Data accepts only canonical paper-mode Alpaca endpoints and reports safe provider readiness states.
 
 import json
 import os

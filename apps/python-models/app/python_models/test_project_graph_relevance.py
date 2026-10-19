@@ -1,5 +1,11 @@
 # Entity: Project Knowledge Graph
-# Relationship: Verifies Recent/Relevant separation, context-based Jev ranking, exact Graphiti Entity hydration, and per-authority failure behavior through explicitly controlled provider fixtures.
+# Relationship: This file verifies the shared grounding packet keeps Recent and Relevant distinct and reports provider failure without substitution.
+# Entity: ThinkGraph
+# Relationship: This file verifies bounded Engraphis candidates exclude the distinct recent Think before relevance ranking.
+# Entity: KnowGraph
+# Relationship: This file verifies Graphiti search hydrates only exact ABOUT-linked two-sided Knows for matched Entities.
+# Entity: Jev Decisions
+# Relationship: This file verifies Jev ranks complete provider records against current context without rewarding mere recency.
 
 from __future__ import annotations
 

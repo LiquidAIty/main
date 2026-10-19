@@ -1,6 +1,8 @@
 /**
- * Entity: Graph Presentation
- * Relationship: Graph Presentation centralizes graph-paper geometry, viewport motion bounds, text sizing, and topology-neutral neighbor and focus helpers shared by canvas rendering.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file centralizes graph-paper geometry, viewport motion bounds, text sizing, and topology-neutral focus helpers used by the Project graph workspace.
+ * Entity: Card Topology
+ * Relationship: This file supplies the same bounded viewport and neighbor calculations to the saved Card canvas without changing topology authority.
  */
 
 const GRAPH_PAPER_MINOR_STEP = 24;

@@ -1,7 +1,7 @@
 """Ordered catalog composition for application-owned operations."""
 
-# Entity: Application Tools
-# Relationship: Application Tools composes feature-specific operation definitions into the ordered code-owned catalog consumed by the canonical tool registry.
+# Entity: Tool Catalog
+# Relationship: This file composes feature-owned operation definitions into the one ordered code-owned catalog consumed by registration and publication.
 
 from __future__ import annotations
 

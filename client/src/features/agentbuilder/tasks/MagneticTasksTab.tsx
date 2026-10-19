@@ -1,6 +1,8 @@
 /**
  * Entity: Magnetic TaskGraph
- * Relationship: Renders inspect-only Hermes task dependencies, saved Card assignments, bounded handoffs, and current task states for the selected Magnetic Run.
+ * Relationship: This file renders inspect-only Hermes task dependencies, saved Card assignments, bounded handoffs, and exact current states for the selected Magnetic Run.
+ * Entity: Run Ledger
+ * Relationship: This file reads the current outer Run status and displays task attempts and the same root identity without creating or mutating work.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {

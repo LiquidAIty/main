@@ -1,6 +1,8 @@
 /**
  * Entity: CodeGraph
- * Relationship: Verifies fail-closed structural projection parsing, multi-Feature File identity, and expansion merging.
+ * Relationship: This file verifies fail-closed structural projection parsing, multi-Feature File identity, and expansion merging without erasing source contributions.
+ * Entity: Project Knowledge Graph
+ * Relationship: This file verifies CodeGraph projections can join the shared graph workspace only with complete identities and non-dangling edges.
  */
 
 import { describe, expect, it } from 'vitest';

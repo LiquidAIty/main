@@ -1,7 +1,11 @@
 """Truthful AGE Run and artifact observations."""
 
 # Entity: AgentGraph
-# Relationship: Records exact Run acceptance, preparation, Hermes identity, assignment, lineage, terminal state, and artifact events in AGE without authorizing or controlling execution.
+# Relationship: This file records exact accepted Run, preparation, Hermes identity, assignment, lineage, terminal-state, and artifact observations in AGE without controlling execution.
+# Entity: Run Ledger
+# Relationship: This file mirrors confirmed outer Run lifecycle and artifact evidence from the canonical PostgreSQL Run authority into AgentGraph observations.
+# Entity: Card Invocation
+# Relationship: This file observes invocation acceptance, preparation completion or failure, and real Hermes submission start without creating or authorizing a Card Run.
 
 from __future__ import annotations
 

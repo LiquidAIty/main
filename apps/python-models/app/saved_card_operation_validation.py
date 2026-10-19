@@ -1,7 +1,11 @@
 """Shared validation for saved Card create and configuration operations."""
 
 # Entity: Saved Cards
-# Relationship: Validates create and update inputs against saved Card runtime, provider, subagent, reasoning, capability, and tool-grant contracts before persistence.
+# Relationship: This file validates create and update inputs against the saved Card contract before any deck persistence occurs.
+# Entity: Hermes Profiles
+# Relationship: This file validates provider access mode, stable profile runtime, subagent type, subagent model, and reasoning selections used by Hermes profiles.
+# Entity: Tool Catalog
+# Relationship: This file normalizes exact capability lists and rejects saved tool selections that are not eligible in the canonical catalog.
 
 from __future__ import annotations
 
