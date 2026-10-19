@@ -1,0 +1,35 @@
+[Unit]
+Description=LiquidAIty MCP host
+Requires=liquidaity-backend.service
+Wants=liquidaity-python-rails.service liquidaity-knowgraph.service
+After=network-online.target liquidaity-backend.service liquidaity-python-rails.service liquidaity-knowgraph.service
+PartOf=liquidaity.target
+
+[Service]
+Type=simple
+User=liquidaity
+Group=liquidaity
+WorkingDirectory=/opt/liquidaity
+EnvironmentFile=/etc/liquidaity/liquidaity.env
+Environment=HOME=/var/lib/liquidaity
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+Environment=MCP_TRANSPORT=streamable-http
+Environment=MCP_HTTP_PORT=8765
+ExecStart=/opt/liquidaity/apps/python-models/.venv/bin/python -X utf8 /opt/liquidaity/apps/python-models/app/mcp_host.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=liquidaity.target

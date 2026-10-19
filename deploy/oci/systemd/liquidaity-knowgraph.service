@@ -1,0 +1,32 @@
+[Unit]
+Description=LiquidAIty KnowGraph
+Requires=liquidaity-infrastructure.service
+After=network-online.target liquidaity-infrastructure.service liquidaity-python-rails.service
+PartOf=liquidaity.target
+
+[Service]
+Type=simple
+User=liquidaity
+Group=liquidaity
+WorkingDirectory=/opt/liquidaity/services/knowgraph
+EnvironmentFile=/etc/liquidaity/liquidaity.env
+Environment=HOME=/var/lib/liquidaity
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/liquidaity/services/knowgraph/.venv/bin/python -X utf8 -m uvicorn app:app --app-dir /opt/liquidaity/services/knowgraph --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=liquidaity.target

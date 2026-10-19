@@ -7,7 +7,7 @@
     "clean": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$dist = 'apps/backend/dist'; if (-not (Test-Path $dist)) { exit 0 }; for ($attempt = 1; $attempt -le 5; $attempt++) { try { Remove-Item -LiteralPath $dist -Recurse -Force -ErrorAction Stop; exit 0 } catch { if ($attempt -eq 5) { throw }; Start-Sleep -Milliseconds (200 * $attempt) } }; if (Test-Path $dist) { throw 'backend dist cleanup failed' }\""
+        "command": "node -e \"require('node:fs').rmSync('apps/backend/dist',{recursive:true,force:true,maxRetries:5,retryDelay:200})\""
       }
     },
     "build": {

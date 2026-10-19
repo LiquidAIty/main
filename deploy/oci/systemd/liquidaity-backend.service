@@ -1,0 +1,32 @@
+[Unit]
+Description=LiquidAIty backend
+Requires=liquidaity-infrastructure.service liquidaity-hermes.service
+Wants=liquidaity-python-rails.service liquidaity-knowgraph.service
+After=network-online.target liquidaity-infrastructure.service liquidaity-hermes.service liquidaity-python-rails.service liquidaity-knowgraph.service
+PartOf=liquidaity.target
+
+[Service]
+Type=simple
+User=liquidaity
+Group=liquidaity
+WorkingDirectory=/opt/liquidaity/apps/backend
+EnvironmentFile=/etc/liquidaity/liquidaity.env
+Environment=HOME=/var/lib/liquidaity
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/src/main.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=liquidaity.target

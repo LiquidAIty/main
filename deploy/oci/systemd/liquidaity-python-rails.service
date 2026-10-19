@@ -1,0 +1,32 @@
+[Unit]
+Description=LiquidAIty Python rails
+Requires=liquidaity-infrastructure.service
+After=network-online.target liquidaity-infrastructure.service
+PartOf=liquidaity.target
+
+[Service]
+Type=simple
+User=liquidaity
+Group=liquidaity
+WorkingDirectory=/opt/liquidaity
+EnvironmentFile=/etc/liquidaity/liquidaity.env
+Environment=HOME=/var/lib/liquidaity
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/liquidaity/apps/python-models/.venv/bin/python -X utf8 -m uvicorn app.main:app --app-dir /opt/liquidaity/apps/python-models --host 127.0.0.1 --port 8003
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=liquidaity.target

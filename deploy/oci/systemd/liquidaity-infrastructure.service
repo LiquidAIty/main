@@ -1,0 +1,19 @@
+[Unit]
+Description=LiquidAIty PostgreSQL AGE and Neo4j infrastructure
+Requires=docker.service
+After=docker.service network-online.target
+PartOf=liquidaity.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/liquidaity
+EnvironmentFile=/etc/liquidaity/liquidaity.env
+ExecStartPre=/usr/bin/docker compose --env-file /etc/liquidaity/liquidaity.env -f /opt/liquidaity/docker-compose.yml config --quiet
+ExecStart=/usr/bin/docker compose --env-file /etc/liquidaity/liquidaity.env -f /opt/liquidaity/docker-compose.yml up -d --wait postgres neo4j
+ExecStop=/usr/bin/docker compose --env-file /etc/liquidaity/liquidaity.env -f /opt/liquidaity/docker-compose.yml stop postgres neo4j
+TimeoutStartSec=300
+TimeoutStopSec=90
+
+[Install]
+WantedBy=liquidaity.target

@@ -1,0 +1,57 @@
+__LIQUIDAITY_DOMAIN__ {
+	encode zstd gzip
+
+	# Current source accepts 20 MB JSON and a 25 MiB PDF plus multipart framing.
+	request_body {
+		max_size 32MB
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), payment=()"
+	}
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:4000 {
+			flush_interval -1
+			header_up Host {host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	@mcp path /mcp /mcp/*
+	handle @mcp {
+		reverse_proxy 127.0.0.1:8765 {
+			flush_interval -1
+			header_up Host {host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	@oauth_metadata path /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp
+	handle @oauth_metadata {
+		reverse_proxy 127.0.0.1:8765 {
+			header_up Host {host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	@immutable path /assets/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+	root * /opt/liquidaity/client/dist
+	try_files {path} /index.html
+	header /index.html Cache-Control "no-cache"
+	file_server
+}
