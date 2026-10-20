@@ -6,7 +6,7 @@
  * Entity: ThinkGraph
  * Relationship: This file verifies exact Think records, relationships, Jev fields, provider IDs, positions, and confirmed removal remain intact in the shared surface.
  * Entity: KnowGraph
- * Relationship: This file verifies exact two-sided Knows, sources, relationships, provider isolation, and confirmed removal remain intact in the shared surface.
+ * Relationship: This file verifies exact atomic and historical Knows, sources, relationships, provider isolation, and confirmed removal remain intact in the shared surface.
  * Entity: CodeGraph
  * Relationship: This file verifies CodeGraph remains opt-in, reuses the same renderer and Inspector, expands only the selected File, and exposes no iframe or Feature sorter.
  * Entity: Jev Decisions
@@ -14,7 +14,7 @@
  */
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { StrictMode } from 'react';
+import { StrictMode, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as graphVisualTokens from '../graph/graphVisualTokens';
 
@@ -203,9 +203,9 @@ describe('knowledge authority graph surfaces', () => {
 
 
   it.each([
-    ['thinkgraph', 'Think', 'Know'],
-    ['knowgraph', 'Know', 'Think'],
-  ] as const)('shows only the real authority button for a mixed-canvas %s-only bundle', (authority, realTab, absentTab) => {
+    ['thinkgraph', 'Know'],
+    ['knowgraph', 'Think'],
+  ] as const)('focuses a mixed-canvas %s-only node without inventing another authority lens', (authority, absentTab) => {
     const providerProjection = {
       ...empty(authority),
       nodes: [{ id: `${authority}-only`, label: 'Single authority', properties: {} }],
@@ -220,9 +220,10 @@ describe('knowledge authority graph surfaces', () => {
     act(() => graph.nodeClick(graph.data.nodes[0]));
 
     expect(screen.queryAllByRole('tab')).toEqual([]);
-    expect(screen.getByRole('complementary').getAttribute('aria-label')).toBe('Open graph settings');
+    expect(screen.getByRole('complementary').getAttribute('aria-label')).toBe('Single authority');
+    expect(screen.getByTestId(`${authority}-node-inspector`).getAttribute('data-provider-id'))
+      .toBe(`${authority}-only`);
     expect(screen.getByRole('complementary').textContent).not.toContain(absentTab);
-    expect(realTab).toBe(authority === 'thinkgraph' ? 'Think' : 'Know');
     expect(screen.queryByRole('tab', { name: absentTab })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Load$/ })).toBeNull();
   });
@@ -734,7 +735,15 @@ describe('knowledge authority graph surfaces', () => {
     expect(forceGraphMocks.instances.at(-1).data.nodes.map((node: { id: string }) => node.id)).toEqual(['source']);
   });
 
-  it('keeps Code out of the default canvas and opens it inside the same Graphs workspace', async () => {
+  it('controls Think, Know, and lazy Code as independent layers on one canvas', async () => {
+    const thinkProjection: GraphProjectionV1 = {
+      ...empty('thinkgraph'),
+      nodes: [{ id: 'think-one', label: 'Think one', properties: {} }],
+    };
+    const knowProjection: GraphProjectionV1 = {
+      ...empty('knowgraph'),
+      nodes: [{ id: 'know-one', label: 'Know one', properties: {} }],
+    };
     const codeProjection: GraphProjectionV1 = {
       ...emptyCode(),
       nodes: [
@@ -743,35 +752,109 @@ describe('knowledge authority graph surfaces', () => {
       ],
       edges: [{ id: 'feature-file', source: 'feature:CodeGraph', target: 'file:surface', predicate: 'FEATURE_CONTRIBUTION' }],
     };
-    const props = codeProps(codeProjection);
-    const { container } = render(
-      <KnowledgeGraphFramework
-        projections={{
-          thinkgraph: empty('thinkgraph'),
-          knowgraph: empty('knowgraph'),
-        }}
+    const openCode = vi.fn();
+    const readCodeFile = vi.fn(async () => null);
+    const readCodeSource = vi.fn(async () => null);
+    function LayerHarness() {
+      const [codeGraph, setCodeGraph] = useState({
+        projection: emptyCode(),
+        status: 'idle' as 'idle' | 'loading' | 'ready' | 'error',
+        error: null as string | null,
+        warning: null as string | null,
+        freshness: 'unverified',
+      });
+      return <KnowledgeGraphFramework
+        projections={currentProjections(thinkProjection, knowProjection)}
         errors={{}}
-        {...props}
-      />,
+        codeGraph={codeGraph}
+        onOpenCodeGraph={async () => {
+          openCode();
+          setCodeGraph({
+            projection: codeProjection,
+            status: 'ready',
+            error: null,
+            warning: null,
+            freshness: 'current',
+          });
+          return codeProjection;
+        }}
+        onReadCodeGraphFile={readCodeFile}
+        onReadCodeGraphSource={readCodeSource}
+      />;
+    }
+    const { container } = render(
+      <LayerHarness />,
     );
 
     expect(container.querySelector('[data-testid="knowledge-codegraph-surface"]')).toBeNull();
-    expect(screen.getByRole('tablist', { name: 'Graph authority' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
-    await waitFor(() => expect(screen.getByTestId('knowledge-codegraph-surface')).toBeTruthy());
-    expect(props.onOpenCodeGraph).not.toHaveBeenCalled();
+    expect(screen.queryByRole('tablist', { name: 'Graph authority' })).toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
     expect(screen.queryByRole('combobox', { name: 'CodeGraph Feature' })).toBeNull();
     expect(screen.queryByText('All Features')).toBeNull();
-    expect(screen.getByText('1 Features · 1 Files · current')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('knowledge-joined-surface')).toBeTruthy());
     expect(container.querySelectorAll('.knowledge-authority-network')).toHaveLength(1);
     const graph = forceGraphMocks.instances.at(-1);
-    expect(graph.setColorBy).toHaveBeenCalledWith('type');
-    expect(graph.data.nodes.map((node: any) => node.etype)).toEqual(['Feature', 'File']);
+    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label))
+      .toEqual(['Think one', 'Know one']));
+    expect(openCode).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    const thinkLayer = screen.getByRole('button', { name: 'Think layer' });
+    const knowLayer = screen.getByRole('button', { name: 'Know layer' });
+    const codeLayer = screen.getByRole('button', { name: 'Code layer' });
+    expect(thinkLayer.getAttribute('aria-pressed')).toBe('true');
+    expect(knowLayer.getAttribute('aria-pressed')).toBe('true');
+    expect(codeLayer.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('codegraph-scope').textContent)
+      .toContain('CodeGraph · Repository-scoped');
+
+    fireEvent.click(knowLayer);
+    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label))
+      .toEqual(['Think one']));
+    expect(thinkLayer.getAttribute('aria-pressed')).toBe('true');
+    expect(knowLayer.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(knowLayer);
+    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label))
+      .toEqual(['Think one', 'Know one']));
+
+    fireEvent.click(codeLayer);
+    await waitFor(() => expect(openCode).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
+      'Think one', 'Know one', 'CodeGraph', 'surface.tsx',
+    ]));
+    expect(graph.setTypeColors).toHaveBeenCalledWith({
+      Feature: '#63C79A', File: '#63C79A', Symbol: '#63C79A',
+    });
+    expect(graph.data.nodes.find((node: any) => node.etype === 'Feature')).toMatchObject({
+      material_kind: 'joined-cyber',
+      material_role: 'CODE_MATERIAL',
+      material_green: '#63C79A',
+    });
+    expect(graph.data.links.find((edge: any) => edge.layer === 'codegraph'))
+      .toMatchObject({ material_kind: 'solarpunk', material_color: '#63C79A' });
+
     act(() => graph.nodeClick(graph.data.nodes.find((node: any) => node.etype === 'File')));
-    expect(props.onReadCodeGraphFile).toHaveBeenCalledWith('client/src/surface.tsx');
+    await waitFor(() => expect(readCodeFile).toHaveBeenCalledWith('client/src/surface.tsx'));
     expect(screen.getByTestId('codegraph-node-details').textContent)
       .toContain('client/src/surface.tsx');
+    act(() => graph.backgroundClick());
+    expect(screen.getByRole('group', { name: 'Graph layers' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Code layer' }).getAttribute('aria-pressed'))
+      .toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Think layer' }));
+    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label)).toEqual([
+      'Know one', 'CodeGraph', 'surface.tsx',
+    ]));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset graph layers' }));
+    await waitFor(() => expect(graph.data.nodes.map((node: any) => node.label))
+      .toEqual(['Think one', 'Know one']));
+    expect(screen.getByRole('button', { name: 'Think layer' }).getAttribute('aria-pressed'))
+      .toBe('true');
+    expect(screen.getByRole('button', { name: 'Know layer' }).getAttribute('aria-pressed'))
+      .toBe('true');
+    expect(screen.getByRole('button', { name: 'Code layer' }).getAttribute('aria-pressed'))
+      .toBe('false');
+    expect(openCode).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the relationship word and probability hover-only on a ThinkGraph edge', () => {
@@ -1243,8 +1326,8 @@ describe('knowledge authority graph surfaces', () => {
     expect(screen.getAllByRole('link', { name: /SEC filing/ }).some(link => (
       link.getAttribute('href') === 'https://www.sec.gov/Archives/rocket-lab-10-k'
     ))).toBe(true);
-    const forSide = screen.getByText('For').parentElement!;
-    const againstSide = screen.getByText('Against').parentElement!;
+    const forSide = screen.getByText('Supporting record').parentElement!;
+    const againstSide = screen.getByText('Counter record').parentElement!;
     expect(forSide.textContent).toContain('Supports the reported participation.');
     expect(forSide.textContent).not.toContain('Supports the competitive-risk counterpoint.');
     expect(againstSide.textContent).toContain('Supports the competitive-risk counterpoint.');

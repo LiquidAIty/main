@@ -78,6 +78,18 @@ describe('backend-owned default Project deck', () => {
       modelKey: 'gpt-5.6-sol',
       tools: ['canvas.inspect', 'run_mag_one', 'worldview.set_capability'],
     });
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'do not paste raw source lists unless the user explicitly asks',
+    );
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'Do not tell KnowGraph not to write graphs or memories',
+    );
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'Unless the user explicitly prohibits Project-knowledge persistence itself',
+    );
+    expect(byId.get('card_main_chat')?.prompt).toContain(
+      'The Know inspector owns provenance and record detail',
+    );
     expect(byId.get('builder')?.runtimeOptions).toMatchObject({
       subagentType: 'none',
       modelKey: 'gpt-5.6-sol',
@@ -103,11 +115,28 @@ describe('backend-owned default Project deck', () => {
     });
     expect(byId.get('card_knowgraph')?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
+      subagentType: 'none',
       tools: expect.arrayContaining([
         'graphiti.add_memory_to_entity',
         'graphiti.get_status',
       ]),
+      toolsets: ['web'],
     });
+    expect(byId.get('card_knowgraph')?.runtimeOptions?.skills).toBeUndefined();
+    expect(byId.get('card_knowgraph')?.prompt).toContain(
+      'One Know is one atomic know.v2 sourced observation',
+    );
+    expect(byId.get('card_knowgraph')?.prompt).toContain(
+      'A worker must never write Graphiti or Engraphis',
+    );
+    expect(byId.get('card_knowgraph')?.prompt).not.toContain('For and Against');
+    expect(byId.get('card_knowgraph')?.prompt).not.toContain('two-sided cited know.v1');
+    expect(byId.get('card_knowgraph')?.prompt).toContain(
+      'the Know inspector, not the chat answer, presents citations and Graphiti record detail',
+    );
+    expect(byId.get('card_knowgraph')?.prompt).toContain(
+      'omit persistence logistics instead of claiming completion',
+    );
   });
 
   it('returns an independent document copy for every Project creation', () => {

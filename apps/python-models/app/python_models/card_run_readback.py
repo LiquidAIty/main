@@ -171,15 +171,21 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                     """
                     MATCH (run:Run {projectId: $projectId, deckId: $deckId,
                                     runId: $runId, conversationId: $conversationId})
-                    RETURN run.runId
+                    RETURN run.runId, run.inputMessageIds
                     """,
                     {"projectId": project_id, "deckId": deck_id,
                      "runId": str(row["run_id"]), "conversationId": conversation_id},
-                    "run_id agtype",
+                    "run_id agtype, input_message_ids agtype",
                 )
                 if len(scope) != 1 or scope[0].get("run_id") != str(row["run_id"]):
                     return {"ok": True, "run": None}
     run = run_projection(dict(row)) if row is not None else None
     if run is not None and conversation_id is not None:
         run["conversationId"] = conversation_id
+        raw_input_ids = scope[0].get("input_message_ids")
+        run["inputMessageIds"] = (
+            [str(value) for value in raw_input_ids]
+            if isinstance(raw_input_ids, list)
+            else []
+        )
     return {"ok": True, "run": run}

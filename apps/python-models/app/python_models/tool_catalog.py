@@ -23,7 +23,7 @@ _CARD_CATALOG_EXCLUDED_IDS = frozenset({
     "engraphis_conflict_review",
     "engraphis_session",
 })
-_LIVE_PROVIDER_CATALOG_SOURCES = frozenset({"cbm", "graphiti"})
+_LIVE_PROVIDER_CATALOG_SOURCES = frozenset({"cbm", "graphiti", "openstudio"})
 
 
 def project_server_injected_schema(

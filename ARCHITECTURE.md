@@ -59,7 +59,7 @@ and inverse deletion/rename mechanics.
 | Saved Card system | `saved_card_contract.py`, `saved_cards.py`, `card_invocation_authority.py`, `card_invocation_tools.py`, `card_invocation_preparation.py`, `card_run_preparation.py`, `card_run_inputs.py`, `card_run_readback.py`, `card_run_execution.py`, `card_run_settlement.py`, `card_run_selection_context.py`, `card_run_jev.py`, `card_run_auto_tools.py`, `card_run_auto_model.py`, `agentgraph_query.py`, `agentgraph_topology.py`, `agentgraph_run_observations.py`, and `agentgraph_inspection.py` under `apps/python-models/app/python_models/` | Separate literal owners for saved identity/runtime validation, Project/deck/Card revisions, invocation authority, effective tools, graph selection and IDF preparation, Run acceptance/preparation, canonical input retention, readback/projection, execution progress, terminal settlement, bounded Jev context/transport, saved-ceiling AutoTools, same-provider AutoModel, AGE query/topology/observations, and read-only AgentGraph inspection |
 | Canonical Run input | `idf.py`, `idf_contract.py`, `idf_graph_records.py`, and `idf_projection.py` under `apps/python-models/app/python_models/`; sole constructor `idf.py::materialize_idf` | Literal contract, bounded graph-record construction, inspection/model projections, and one materializer which writes and rereads one UTF-8 `in.idf` before execution |
 | Card Python Script | `apps/python-models/app/python_models/card_script.py`, the existing Card editor transport, and `HermesLatest/agent/{card_turn_tools,card_script_tool}.py` | Saved Card-owned source, structural compilation, live selected-tool validation, one immutable turn contract, and execution through Hermes' existing child Python runner against profile-loaded tools; no TypeScript executor or application callback tool protocol |
-| Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, the opt-in shared-workspace Code view, and no semantic routing |
+| Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, unified Think/Know/Code visual-layer controls, and no semantic routing |
 | Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, Hermes request/event translation, and Python-rails calls; it does not own Hermes processes or sessions |
 | Hermes runtime | `HermesLatest/` | Hermes inference, profiles, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
 | Magnetic TaskGraph | `magnetic_taskgraph_authority.py`, `magnetic_taskgraph_submission.py`, and `magnetic_taskgraph_readback.py` under `apps/python-models/app/python_models/`, with the exact invocation owner in `apps/python-models/app/mag_one_operation.py` | Literal owners for saved profile/worker authority, headless root staging and outer-Run binding, redacted status/final-result observation, and invocation-scoped waiting/progress/terminal outer-Run settlement against Hermes' existing SQLite task/dependency APIs; Card Run reads never reconcile or settle execution |
@@ -124,8 +124,8 @@ or disabled source is inert. General hook points remain future work. No syntheti
 ## Application routes
 
 `apps/backend/src/routes/index.ts` mounts each domain once. Browser-facing routes use normal user
-authentication. The official Python MCP host's `/api/mcp` Project/profile context, Card-editor
-projection, and Hermes' `/api/card-turn` receiving-Card lifecycle use the existing process-secret
+authentication. The official Python MCP host's `/api/mcp` Project/profile context, exact active saved-Card
+profile/Run context, Card-editor projection, and Hermes' `/api/card-turn` receiving-Card lifecycle use the existing process-secret
 boundary and are mounted separately from browser authentication.
 
 | Route family | Current responsibility |
@@ -133,9 +133,9 @@ boundary and are mounted separately from browser authentication.
 | `/api/cards` | `cardOptions.routes.ts`, `cardRunRead.routes.ts`, and `cardScript.routes.ts` own Card editor options, Script validation, and read-only `POST /runs/read` latest/history/status projection; none executes a Card |
 | `/api/card-turn` | Process-authenticated preparation/start/finish for a receiving Card turn; it delegates to the existing Python Run/IDF owners and stores no session, queue, scheduler, or second transcript |
 | `/api/idd` | `builderIdd.routes.ts` owns Builder/editor-only IDD fields, deterministic live-catalog tool projection, and Script-header projection |
-| `/api/mcp` | `mcpInternal.routes.ts` owns only process-authenticated Project/profile context and the configured-model/IDD projection used by Hermes profile MCP tools |
+| `/api/mcp` | `mcpInternal.routes.ts` owns process-authenticated Project/profile context, exact active saved-Card profile/Run grant readback, and the configured-model/IDD projection used by Hermes profile MCP tools |
 | `/api/thinkgraph` and `/api/knowgraph` | Engraphis and Graphiti projections/operations without merging authority |
-| `/api/codegraph/read` | One fixed-purpose Project-owned CodeGraph projection/file/source read; the server injects `deck_builder`/`builder`, Python reloads that persisted Card revision, and the official MCP host enforces its live read-only CBM grants |
+| `/api/codegraph/read` | One fixed-purpose authenticated request for Repository-scoped CodeGraph projection/file/source reads; the server injects `deck_builder`/`builder`, Python reloads that persisted Card revision, and the official MCP host enforces its live read-only CBM grants |
 | `/api/projects` | Project and deck transport |
 
 CodeGraph remains reached through the saved Card's granted CBM operations in the canonical tool catalog.
@@ -162,9 +162,13 @@ The launch target is one supervised local process graph. Internal services do no
 | WorldSignals backend / frontend | `127.0.0.1:8000` / `127.0.0.1:3000` by default |
 
 The browser reaches the backend and companion applications only through same-origin client proxies.
-The backend alone holds the internal process secret and Hermes dashboard credential. Card terminals use
-the authenticated backend WebSocket upgrade; the browser never receives a reusable Hermes token or direct
-PTY URL. The optional ngrok MCP publication is a separate OAuth-protected external resource and exposes
+The backend and supervised Hermes/Python processes hold the internal process secret; the browser does not.
+Card terminals use the authenticated backend WebSocket upgrade; the browser never receives a reusable Hermes
+token or direct PTY URL. Each saved Card profile's reserved `liquidaity` MCP connection stays on loopback and
+uses a short-lived signed bearer plus the current Project, deck, profile, and Run identity. The backend rereads
+the exact active saved Card and Run and validates the server-issued conversation identity against its AgentGraph
+Run observation before the MCP host projects or dispatches that Card's grants. The optional
+ngrok MCP publication is a separate OAuth-protected external resource and exposes
 only the MCP host, never the internal backend routes. A separated private-service deployment remains future
 work and requires a separately approved authenticated TLS topology.
 
@@ -216,23 +220,32 @@ These are separate execution contracts:
 | Mechanism | Current owner | Current meaning |
 | --- | --- | --- |
 | Team | Saved `card_team`/profile `team` plus Hermes `kanban.task_mode: team` | One durable Team root, Hermes decomposition into temporary same-profile workers, review, and synthesis in Hermes SQLite Kanban |
+| KnowGraph research | Saved `card_knowgraph`/profile `knowgraph`, its exact orange caller, and Hermes `kanban.task_mode: team` | One saved-Card Run bound to an AutoTeam root; read-only Web candidate workers feed one root-owned verified Graphiti synthesis |
 | Magnetic | Saved `card_magentic`, exact blue topology, and `magnetic_taskgraph_*` Python owners | One approved mission and exact saved worker ceiling; the same Magnetic root orchestrates dependency rounds and supplies the final result |
 
-The internal Team workflow marker remains `auto-team-v1`; it names the current generic Hermes Team
-implementation and does not authorize rejected KnowGraph AutoTeam behavior. Team workers cannot open a
-nested Team, leaf, or recursive delegation tree. Magnetic may assign the saved Team Card as one blue
-worker. When Team is the only exact blue worker, current source deliberately stages the Hermes Team root
-directly; that bounded integration does not collapse the two mechanisms.
+The internal Team workflow marker remains `auto-team-v1`; it names the one existing generic Hermes
+decomposition/review/synthesis implementation. Both the Team Card and KnowGraph can use that capability
+through their own saved profiles without routing KnowGraph through the Team Card. Candidate workers cannot
+open a nested Team, leaf, or recursive delegation tree. KnowGraph decomposition and candidate steps omit
+profile MCP connections; only its synthesis root receives the exact target Card Run context and saved grant
+ceiling. Magnetic may assign the saved Team Card as one blue worker. When Team is the only exact blue worker,
+current source deliberately stages that Team root directly; the KnowGraph research binding does not alter
+Magnetic's topology or collapse these saved-Card authorities.
 
 ## MCP and Codebase Memory
 
 `apps/python-models/app/mcp_host.py` is the one official MCP composition/launch boundary;
 `mcp_transport.py` owns its official SDK transports and `mcp_request_dispatch.py` owns authenticated
 request dispatch. Together they derive one MCP projection from the canonical definitions, preserve provider-owned tool schemas, and dispatch to the existing Python owners. External
-account access uses the configured OAuth resource boundary. Main and every other Card are Hermes profiles:
-their exact saved application-tool selection is an include filter on that profile's Hermes-owned `liquidaity`
-MCP connection, while saved external MCP references remain separate profile servers. The web user's OAuth
-Project grant authorizes data access; the profile whitelist is the agent capability ceiling. Main does not
+account access uses the configured OAuth resource boundary. Main and every other Card are Hermes profiles.
+Their exact saved application-tool selection is an include filter on the profile's internal loopback
+`liquidaity` MCP connection; it does not use the public GPT/plugin URL or require an external OAuth token.
+Hermes signs the current Card turn, and the MCP host accepts a call only after backend readback confirms the
+exact Project, deck, profile, active Run, and current saved grants. A Card's separately saved Hermes Tools
+selection controls its ordinary Hermes toolsets: Builder currently retains web, browser, terminal, file,
+code-execution, and vision, while an empty ordinary-tool selection never removes that Card's `liquidaity`
+toolset. Saved external MCP references remain separate profile servers. External web-user OAuth Project grants
+authorize only external account access; the saved Card whitelist remains the agent capability ceiling. Main does not
 inject tools into other profiles, and ordinary Card tools do not use the experimental Dynamic Tools
 callback. God’s Eye Project layer visibility never gates a Card's saved tools. Retired
 `hermes:tool:*` markers are removed on canonical Card read/save; Hermes profile memory is not represented
@@ -275,8 +288,9 @@ AgentGraph = AGE Card topology and truthful execution observations
 
 Each graph has one authority and one writer. Run-scoped Context Selections may carry bounded provider
 IDs, data, and provenance together in `in.idf`; that transport is not another graph and does not copy
-ownership. The completed-pair Python preparation and settlement rails remain, but this cleanup leaves
-them without a TypeScript agent-execution caller and does not claim the automatic lifecycle is current.
+ownership. A completed ordinary Main Run preserves its ordered conversation-message references as Run
+evidence, executes the exact authorized saved ThinkGraph Card through the repo-owned Hermes adapter, and
+submits that structured output to the existing Python preparation and settlement owners exactly once.
 
 Engraphis owns Entity identity, memory/entity incidence, bi-temporal fields, provider evidence, graph scene
 projection, and its existing force/galaxy vocabulary. One portable ThinkGraph unit is a **Think**: one
@@ -309,36 +323,46 @@ current user request
 + one most Relevant Know + one distinct most Recent Know
 ```
 
-Thinks are selected for the strongest faithful optimistic steelman of the user's current idea. Every valid
-Know already contains its cited supporting idea and cited counter idea. Equal Think/Know counts therefore
-make the prepared content intentionally two-thirds supportive and one-third challenging. Missing provider
-records shrink the packet honestly; Jev never creates graph content, truth, authority, or write permission.
-Jev failure leaves relevance unavailable and never relabels recency as relevance.
+Thinks are selected for the strongest faithful optimistic steelman of the user's current idea. Each current
+Know is one verified sourced observation with a separate bounded interpretation and may support, challenge,
+or contextualize an explicit proposition. Balance is a property of research coverage and synthesis, not a
+fixed ratio implied by equal record counts. Missing provider records shrink the packet honestly; Jev never
+creates graph content, truth, authority, or write permission. Jev failure leaves relevance unavailable and
+never relabels recency as relevance.
 
 The exact Entity inspector does not perform that relevance-read flow. It shows at most two current
 provider-projected attached Thinks or Knows, with KnowGraph as the landing authority when an Entity has both;
 ThinkGraph remains the left tab and KnowGraph the right tab. Search/Results and a Relevant/Recent switch are
 not current UI. Main/Builder's automatic grounding remains a separate one-result-per-category contract.
 
-One Know is one atomic `know.v1` Graphiti episode:
+One current Know is one atomic `know.v2` Graphiti episode:
 
 ```text
-idea.body + optional idea.detail + one or more idea.citations
-+ counterIdea.body + optional counterIdea.detail + one or more counterIdea.citations
+one verified source URL/redirect + document identity/date + exact evidence passage
++ one self-contained observation
++ one separately labeled bounded interpretation
++ optional supports/challenges/context direction for one explicit proposition
 = one Know attached to exactly one Entity
 ```
 
-Python rails projects `graphiti.add_memory_to_entity` as that strict model-facing schema, canonicalizes the
-single JSON episode and exact URL list, then invokes Graphiti's queued operation. A missing
-side or side without a citation fails validation; a one-sided cited episode is not projected as a Know.
-Only Entities render as Project graph nodes. Thinks, Knows, Graphiti episodes, citations, provider references,
-and supporting episode IDs remain attached properties/evidence/provenance. Each visible body is compact and
-each side's optional depth remains inside the same record behind **More**.
+Python rails projects `graphiti.add_memory_to_entity` as that strict model-facing schema, re-fetches a
+public source through bounded verified redirects, rejects hard/soft failure pages, document-identity
+mismatches, absent exact passages and temporary access failures, then canonicalizes the single JSON episode
+and exact resolved URL before invoking Graphiti's queued operation. A deterministic episode UUID makes a
+repeated same-Entity/source/observation submission idempotent; a persisted duplicate is not queued again.
+Historical paired `know.v1` episodes remain explicit legacy reads and are never relabeled as newly verified
+atomic Knows. Only Entities render as Project graph nodes. Thinks, Knows, Graphiti episodes, sources, provider
+references and supporting episode IDs remain attached properties/evidence/provenance.
 
-The combined view uses one fixed presentation. The ordinary color-key labels **Think** and **Know** select
-authority-only projections; clicking renderer background returns to combined. Know defaults to Graphiti
-Graphiti Community grouping and Think defaults to the existing Engraphis Galaxy layout, while the detailed
-graph settings inspector retains the provider renderer's layout choices. Entity radius linearly normalizes the complete
+The unified canvas shows the blue **Think** and orange **Know** visual layers by default. The green **Code**
+layer is hidden and unloaded until explicitly enabled from the graph-design inspector, where it remains marked
+Repository-scoped until real open-Project filtering is proven. Each color-key control changes only its own
+visual layer, and the explicit layer reset restores Think on, Know on, and Code off. Clicking renderer
+background clears the selected node or edge and returns the inspector to the combined currently visible layers
+without changing their visibility. ThinkGraph, KnowGraph, and CBM retain separate identities, relationships,
+and writers; the shared canvas creates no cross-authority relationship. Know defaults to Graphiti evidence
+and Think retains the existing Engraphis Focus behavior, while the detailed graph-design inspector retains the
+provider renderer's layout choices. Entity radius linearly normalizes the complete
 attached Think-and-Know word count from least to most. That transient visual metric never changes Jev edge
 probability, gravity mass, retrieval, or stored graph meaning.
 
@@ -399,9 +423,11 @@ when their wording is old.
 
 ## Startup and loaded proof
 
-Canonical development startup is `npm run dev:fresh`. It resolves the current official CBM command from PATH,
-validates its bundled MCP server identity, and starts the supported local service graph. No cleanup task
-may launch an extra CBM frontend, restart the daemon, or partially replace the supervisor.
+Canonical development startup is `npm run dev:fresh`. It starts and waits for the root PostgreSQL/AGE and
+Neo4j Compose services, starts the supported application process graph, and exposes the frontend only after
+Python rails and the complete MCP catalog are ready. It resolves the current official CBM command from PATH
+and validates its bundled MCP server identity. No cleanup task may launch an extra CBM frontend, restart the
+daemon, or partially replace the supervisor.
 
 Evidence tiers remain separate:
 
@@ -436,7 +462,7 @@ LiquidAIty execution boundary. No other Hermes customization is accepted by this
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
 | --- | --- | --- | --- |
-| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. Hermes keeps profile creation, execution, sessions, Bot delivery, learning, queue, task ledger, PTY, MCP transport, and child Python execution. Local hunks add Project roster/session inputs, receiving-Card Run context, exact process/Run correlation, profile-MCP request headers, Card Script presentation, and the existing Team/Magnetic authority constraints without another runtime. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, per-turn application tool callback, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
+| `NousResearch/hermes-agent` `0.21.5`, tag `v2026.9.24`, source commit `f97608f178d1ffeca59860195ab7da295f7c8e5f` | The bounded families inventoried by file and symbol in `HermesLatest/LIQUIDAITY_PATCHES.md` | Retained Hermes extensions are governed only by that register and current source. Hermes keeps profile creation, execution, sessions, Bot delivery, learning, its upstream internal scheduling, task ledger, PTY, MCP transport, and child Python execution. LiquidAIty submits only an idle Main prompt or an invisible active-turn steer and never requests, exposes, or accepts an upstream busy-prompt queue state. Local hunks add Project roster/session/target-Card inputs, receiving-Card Run context, exact process/task/Run correlation, profile-MCP request headers and signed loopback authorization, content-aware profile-configuration cache invalidation, preservation of enabled profile MCP servers beneath an empty ordinary-Hermes-tool pin, Card Script presentation, saved-Card-bound AutoTeam synthesis with read-only candidate workers, and the existing Team/Magnetic authority constraints without another runtime. | The overlay register records focused tests, mechanical compatibility decisions, exclusions, apply-check procedure, update cost, and rollback. Application residue checks prohibit the old target opener, process/session owners, per-turn application tool callback, IDD tool authority, Builder Docker policy, custom PTY/voice work, and alternate Codex App Server paths. |
 | Same Hermes baseline | `HermesLatest/hermes_cli/taskgraph_adapter.py::{validate_profiles,stage_root,activate_root,read_root,main}`; focused adapter tests | Provide one generic, JSON-serializable public process boundary over Hermes's existing profile and Kanban APIs so another co-located runtime can stage, activate, and read the same task root without importing Hermes internals or mutating process-global Python module state. Hermes retains its database, dispatcher, attempts, workers, dependencies, authority events, and synthesis. | External alternative check: shipped CLI/Gateway do not expose exact allowed-assignee, authority-event, blocked-stage/activate, or whole-root readback contracts; Python-rails and Hermes package pins conflict. Proof requires adapter unit tests plus application Magnetic tests and one loaded same-root mission. Fork cost is one additive module; rollback removes it and disables the dependent Magnetic adapter without migrating task data. |
 
 The existing Hermes app-server adapter also preserves provider vision input:
@@ -485,9 +511,35 @@ The installed Engraphis runtime and the separately retained browser-renderer for
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::resolve_capability`; `apps/python-models/app/python_models/engraphis_operations.py::_invoke_tool` | Promote the existing capability-ID/schema-digest resolver to a public function so the authenticated Project adapter can inspect the exact discovered Smart action schema and inject `workspace` only when that action declares it. The resolver body, TTL/HMAC validation, availability gate, LRU refresh, action selection and execution remain unchanged. | Required proof is the focused Engraphis Smart discovery/execute suite plus the application operation/catalog contract. Fork cost is one identifier/API promotion suitable for an upstream PR. Remove the application dependency when upstream exposes an equivalent public capability-inspection API; never copy or reimplement its capability index. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/mcp_server.py::smart_tool_catalog`; `EngraphisLatest/engraphis/backends/extractor.py::StructuredLLMExtractor.extraction_contract`; `apps/python-models/app/python_models/engraphis_operations.py`; `apps/python-models/app/python_models/thinkgraph_completed_pair_extraction.py` | Expose two read-only integration contracts that Engraphis already owns: the exact registered Smart MCP Tool models for synchronous host composition, and the exact structured-extraction prompt/schema for a saved Card that performs the model call. The application no longer reads MCPServer's private `_tool_manager` or extractor-private prompt/schema helpers, and it does not copy either contract. | Focused Smart MCP and extractor tests require each public result to equal the actually served/generated contract; application ThinkGraph and operation tests cover the consumers. Fork cost is two additive public methods suitable for upstream submission. Retire either method when upstream exposes an equivalent supported API. |
 | Same Engraphis baseline | `EngraphisLatest/engraphis/core/engine.py::remember_entities`; `engraphis/service.py::remember_entities`; `engraphis/mcp_server.py::engraphis_remember_entities`; generated MCP contracts, bundled integrations, docs, and tests | Add one exact Entity-memory batch operation. Each Fact has exactly one caller-declared Entity incidence; an existing explicit ID/name mismatch fails, new exact Entities and their memories/incidences settle atomically, and automatic text-derived incidence is disabled for this path. Existing generic remember, extraction, graph, and Smart discovery behavior is unchanged. | Engine rollback and incidence tests, Smart/classic inventory and dispatch tests, generated-contract checks, bundled integration tests, and application settlement tests cover the path. Fork cost is one additive service/Smart/Classic operation suitable for an upstream PR. Rollback removes that operation and returns ThinkGraph to no exact Entity attachment; existing Engraphis data needs no migration. |
-| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: existing semantic physics/material/click helpers plus `explicitVisualSizeWeight`, `linearVisualNodeRadius`, and their render call site | Preserve Jev relationship width/spring/distance and gravity/centrality while accepting one optional transient normalized size weight. Entity radius then scales linearly from least to most attached Think-and-Know words without rewriting `gravity_mass`, relationship probability, storage, or retrieval. Existing styles—including the work-in-progress Solarpunk material—presets, palettes, graph scene, inspectors, Galaxy Focus physics, controls, and layout engine remain unchanged. | `EngraphisRenderer.spec.ts` exercises real renderer relationship physics and exact linear sizing; focused projection/surface tests prove all-history word aggregation, combined sums, isolated views, and the attached-record inspector. Fork cost is two pure radius helpers plus one render branch. Rollback removes the optional field handling and restores provider degree/mass sizing without changing graph data. |
+| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: existing semantic physics/material/click helpers plus `explicitVisualSizeWeight`, `linearVisualNodeRadius`, the `CODE_MATERIAL` joined-cyber palette branch, and their render call sites | Preserve Jev relationship width/spring/distance and gravity/centrality while accepting one optional transient normalized size weight. Entity radius then scales linearly from least to most attached Think-and-Know words without rewriting `gravity_mass`, relationship probability, storage, or retrieval. The additive Code material makes the Repository-scoped visual layer green in the shared canvas without changing CBM identity, edges, or graph authority. Existing styles—including the work-in-progress Solarpunk material—presets, palettes, graph scene, inspectors, Galaxy Focus physics, controls, and layout engine remain unchanged. | `EngraphisRenderer.spec.ts` exercises real renderer relationship physics, exact linear sizing, and the isolated green Code palette; focused projection/surface tests prove all-history word aggregation, combined sums, visual-layer isolation, and the attached-record inspector. Fork cost is two pure radius helpers plus two small render branches. Rollback removes the optional field handling and Code palette branch, restoring provider degree/mass sizing and generic cyber colors without changing graph data. |
 
 ## Current proof limits
+
+### NRGSIM modeling boundary
+
+`agent-products/nrgsim/nrgsim/session.py` owns Project-scoped application references and serializes
+calls to one active installed OpenStudio MCP process per Project. It saves actual OSM files under the
+product's ignored `.data/<project>/runs/models/` area; `project.json` stores references, revisions and
+selection, not engineering objects. SDK-generated glTF and its object-handle projection are disposable
+reads of those OSMs. Pascal's public `Viewer`/`GlbScene` receive those artifacts with custom selection;
+the Pascal Editor and its parametric mutations are not engineering writers.
+
+`apps/python-models/app/mcp_openstudio_provider.py` contributes the selected upstream tools to the
+existing catalog with their original names, descriptions and schemas. Existing saved Card grants and
+authenticated Project context control agent calls. The backend's `/api/nrgsim/:projectId/:action`
+route checks normal Project ownership before forwarding human actions to the same MCP-host session
+through the existing process-secret boundary. The browser receives neither that secret nor Card
+credentials. No extra agent runtime, MCP host, scheduler or engineering schema is introduced.
+
+The TypeScript product surface is lazily mounted by the existing Agent Builder companion host and
+uses the shared inspector drawer and current authorized `@Card` conversation path. New Building is
+an explicit empty SDK model followed by a requested agent recipe; save/reopen is OSM persistence.
+The current two editable inspector properties have explicit units and authoritative readback.
+The upstream OpenStudio installation is configured by `NRGSIM_OPENSTUDIO_ROOT`, defaulting to the
+existing Desktop NRGSIM reference installation. Upstream SDK/MCP source remains unchanged.
+
+Direct engineering/persistence proof, loaded transport proof, saved-Card execution, and visual
+acceptance are separate; `PLAN.md` records the still-incomplete first modeling checkpoint.
 
 - Source, focused tests, typechecks, a loaded service, a real saved-Card turn, an external MCP call,
   and owner visual acceptance remain separate proof tiers.

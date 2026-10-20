@@ -491,6 +491,7 @@ def _run_after_agent_ready(
     rid, sid, session, text, display_kind, display_metadata, hosted_terminal_callback,
     turn_author=None, submission_id=None, card_script=None, mcp_tool_selection=None,
     bot_mode_roster=None, card_run_id=None, bot_mode_reply_delivery=None,
+    bot_mode_card_contexts=None,
 ):
     """Turn thread body: patient wait for a deferred build (a slow build must not eat the
     accepted in-flight message), then run."""
@@ -535,7 +536,33 @@ def _run_after_agent_ready(
         card_script=card_script,
         mcp_tool_selection=mcp_tool_selection,
         bot_mode_roster=bot_mode_roster, card_run_id=card_run_id,
-        bot_mode_reply_delivery=bot_mode_reply_delivery)
+        bot_mode_reply_delivery=bot_mode_reply_delivery,
+        bot_mode_card_contexts=bot_mode_card_contexts)
+
+
+def _validated_bot_mode_card_contexts(value, roster) -> dict[str, dict[str, str]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(roster, list):
+        raise ValueError("bot_mode_card_contexts_invalid")
+    from tui_gateway.saved_card_turn import normalize_card_turn_context
+
+    allowed = {str(profile).strip().lower() for profile in roster}
+    result: dict[str, dict[str, str]] = {}
+    for raw_profile, raw_context in value.items():
+        profile = str(raw_profile or "").strip().lower()
+        context = normalize_card_turn_context(raw_context)
+        if (
+            not profile
+            or profile not in allowed
+            or context is None
+            or context["profile"].lower() != profile
+        ):
+            raise ValueError("bot_mode_card_contexts_invalid")
+        result[profile] = context
+    if set(result) != allowed:
+        raise ValueError("bot_mode_card_contexts_incomplete")
+    return result
 
 
 _TRUNCATION_PARAMS = (
@@ -624,6 +651,10 @@ def _(rid, params: dict) -> dict:
             _session_bot_sessions(params, bot_mode_roster)
             if "bot_mode_sessions" in params
             else None
+        )
+        bot_mode_card_contexts = _validated_bot_mode_card_contexts(
+            params.get("bot_mode_card_contexts"),
+            bot_mode_roster,
         )
     except ValueError as exc:
         return _err(rid, -32602, str(exc))
@@ -751,7 +782,8 @@ def _(rid, params: dict) -> dict:
             rid, sid, session, text, display_kind, display_metadata,
             hosted_terminal_callback, turn_author, submission_id,
             card_script, mcp_tool_selection,
-            bot_mode_roster, card_run_id, bot_mode_reply_delivery),
+            bot_mode_roster, card_run_id, bot_mode_reply_delivery,
+            bot_mode_card_contexts),
         daemon=True)
     # Handle lets session.interrupt tell a live turn from a stuck `running` flag.
     session["_run_thread"] = run_thread

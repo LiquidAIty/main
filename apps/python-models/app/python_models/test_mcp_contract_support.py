@@ -31,3 +31,4 @@ def clear_live_provider_operations():
 
         replace_discovered_external_operations("cbm", [])
         replace_discovered_external_operations("graphiti", [])
+        replace_discovered_external_operations("openstudio", [])

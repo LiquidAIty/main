@@ -22,7 +22,11 @@ import { readCardRun } from '../services/cardRunLifecycle';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { getOwnedProjectByReference } from '../services/projectStore';
 import { materializeCardEditor } from './builderIdd.routes';
-import { exactStrings, objectRecord } from '../services/projectCardAuthority';
+import {
+  exactStrings,
+  objectRecord,
+  projectCardAuthority,
+} from '../services/projectCardAuthority';
 
 const mcpInternalRoutes = Router();
 
@@ -98,6 +102,60 @@ mcpInternalRoutes.post('/context', async (req, res) => {
     return res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'external_mcp_context_failed',
+    });
+  }
+});
+
+mcpInternalRoutes.post('/card-context', async (req, res) => {
+  if (!processAuthorized(req)) {
+    return res.status(403).json({ ok: false, error: 'internal_mcp_authorization_required' });
+  }
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || '').trim();
+  const profile = String(req.body?.profile || '').trim().toLowerCase();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  const runId = String(req.body?.runId || '').trim();
+  if (!projectId || !deckId || !profile || !conversationId || !runId) {
+    return res.status(400).json({ ok: false, error: 'card_runtime_context_required' });
+  }
+  try {
+    const authority = await projectCardAuthority(projectId, deckId);
+    const matches = authority.cards.filter((candidate) => (
+      candidate.card.enabled !== false
+      && candidate.card.runtime.kind === 'hermes'
+      && candidate.profile.toLowerCase() === profile
+    ));
+    if (matches.length !== 1) {
+      return res.status(409).json({ ok: false, error: 'persisted_hermes_profile_unavailable' });
+    }
+    const matched = matches[0];
+    const run = await readCardRun({
+      projectId,
+      deckId,
+      runId,
+      cardId: matched.card.id,
+      profile: matched.profile,
+      conversationId,
+    });
+    if (!['pending', 'running'].includes(String(run.state || ''))) {
+      return res.status(409).json({ ok: false, error: 'card_turn_run_unavailable' });
+    }
+    return res.json({
+      ok: true,
+      context: {
+        projectId,
+        deckId,
+        conversationId,
+        parentRunId: runId,
+        callerCardId: matched.card.id,
+        grantedTools: exactStrings(objectRecord(matched.card.runtimeOptions).tools),
+        mainEntryAuthorized: false,
+      },
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_runtime_context_failed',
     });
   }
 });

@@ -148,7 +148,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
     _complete_catalog_family("liquidaity")
     tools = [mcp_provider_operations.bind_operation_access(tool) for tool in tools]
     provider_tools = await _materialize_configured_provider_catalog(
-        tuple(mcp_provider_operations.PROVIDER_PREFIXES)
+        tuple(mcp_provider_operations.PROVIDER_FAMILIES)
     )
     catalog = mcp_catalog_projection.complete_catalog(tools, provider_tools)
     catalog_count, catalog_hash = mcp_catalog_projection.catalog_identity(catalog)
@@ -378,6 +378,8 @@ def reset_catalog_lifecycle() -> None:
     # clients have closed so a later lifespan must rediscover exact live tools.
     mcp_provider_operations.register_cbm_catalog([])
     mcp_provider_operations.register_graphiti_catalog([])
+    from app.mcp_openstudio_provider import register_tools
+    register_tools([])
     with _CATALOG_DIAGNOSTIC_LOCK:
         _CATALOG_STATE = "initializing"
         _CATALOG_FAILURE = None

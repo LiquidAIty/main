@@ -153,6 +153,40 @@ def _attached_know_rows() -> list[dict]:
     } for index in (3, 2, 1)]
 
 
+def _atomic_know_row() -> dict:
+    return {
+        "entity_id": "entity-a",
+        "episode_id": "know-atomic",
+        "episode_props": {
+            "name": "Atomic Know",
+            "content": json.dumps({
+                "schemaVersion": "know.v2",
+                "observation": "Rocket Lab reported one source-backed result.",
+                "interpretation": "The result informs demand without deciding the thesis.",
+                "source": {
+                    "url": "https://example.test/result",
+                    "resolvedUrl": "https://example.test/archive/result",
+                    "title": "Rocket Lab result",
+                    "publisher": "Rocket Lab",
+                    "evidence": "Rocket Lab reported one source-backed result.",
+                    "retrievedAt": "2026-10-20T08:00:00Z",
+                    "contentFingerprint": "a" * 64,
+                },
+                "direction": {
+                    "proposition": "Rocket Lab can compound launch revenue.",
+                    "relation": "supports",
+                },
+                "dedupeKey": "b" * 64,
+            }),
+            "source_description": json.dumps([
+                "https://example.test/archive/result",
+            ]),
+            "created_at": "2026-10-20T08:00:00Z",
+            "valid_at": "2026-10-19T00:00:00Z",
+        },
+    }
+
+
 def test_knowgraph_projection_preserves_only_entity_nodes_and_relationship_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -407,6 +441,49 @@ def test_exact_entity_know_read_returns_one_literal_two_sided_know_and_ids(
     }]
     assert "ABOUT" in driver.calls[0][0]
     assert driver.calls[0][1]["limit"] == 2
+
+
+def test_exact_entity_know_read_returns_atomic_source_and_direction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _atomic_know_row()
+    driver = _FakeNeo4jDriver([[{
+        "episodeId": row["episode_id"],
+        "entityId": row["entity_id"],
+        "properties": row["episode_props"],
+    }]])
+    monkeypatch.setattr(
+        knowgraph_exact_reads,
+        "knowgraph_driver",
+        lambda: (driver, "neo4j"),
+    )
+
+    knows = read_knowgraph_entity_knows("project-1", "entity-a", limit=2)
+
+    assert knows == [{
+        "graphitiEpisodeId": "know-atomic",
+        "graphitiEntityId": "entity-a",
+        "schemaVersion": "know.v2",
+        "observation": "Rocket Lab reported one source-backed result.",
+        "interpretation": "The result informs demand without deciding the thesis.",
+        "source": {
+            "url": "https://example.test/result",
+            "resolvedUrl": "https://example.test/archive/result",
+            "title": "Rocket Lab result",
+            "publisher": "Rocket Lab",
+            "evidence": "Rocket Lab reported one source-backed result.",
+            "retrievedAt": "2026-10-20T08:00:00Z",
+            "contentFingerprint": "a" * 64,
+        },
+        "direction": {
+            "proposition": "Rocket Lab can compound launch revenue.",
+            "relation": "supports",
+        },
+        "dedupeKey": "b" * 64,
+        "validFrom": "2026-10-19T00:00:00Z",
+        "ingestedAt": "2026-10-20T08:00:00Z",
+    }]
+    assert "know.v2" in driver.calls[0][0]
 
 
 def test_knowgraph_exact_read_preserves_project_graphiti_identity_and_provenance(

@@ -16,6 +16,7 @@ import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldSignalsRoutes from './worldSignals.routes';
 import tradingRoutes from './trading.routes';
+import nrgsimRoutes from './nrgsim.routes';
 import worldviewRoutes, { worldviewInternalRoutes } from './worldview.routes';
 import jevGraphFocusRoutes from './jevGraphFocus.routes';
 import mcpInternalRoutes from './mcpInternal.routes';
@@ -49,6 +50,7 @@ router.use('/worldsignals', authMiddleware, worldSignalsRoutes);
 router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);
 router.use('/trading', authMiddleware, tradingRoutes);
+router.use('/nrgsim', authMiddleware, nrgsimRoutes);
 router.use('/worldview', authMiddleware, worldviewRoutes);
 
 export default router;

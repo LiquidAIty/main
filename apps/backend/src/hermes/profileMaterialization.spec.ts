@@ -13,6 +13,8 @@
  * Relationship: This file verifies raw user identity and unavailable tool names do not leak into the configured OAuth connection payload.
  */
 
+import { createHash } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DeckCard } from '../types';
@@ -90,9 +92,7 @@ function profile(ownerRef?: string): HermesProfileState {
 
 describe('Hermes profile owner and request-context materialization', () => {
   beforeEach(() => {
-    vi.stubEnv('MCP_PUBLIC_RESOURCE_URL', 'https://mcp.example.test/mcp');
-    vi.stubEnv('MCP_AUTH0_CLIENT_ID', 'client-one');
-    vi.stubEnv('MCP_AUTH0_REQUIRED_SCOPE', 'liquidaity.main');
+    vi.stubEnv('LIQUIDAITY_INTERNAL_MCP_URL', 'http://127.0.0.1:8765/mcp');
   });
 
   afterEach(() => {
@@ -176,14 +176,58 @@ describe('Hermes profile owner and request-context materialization', () => {
       profile: 'builder',
       name: 'liquidaity',
       config: {
+        url: 'http://127.0.0.1:8765/mcp',
         headers: { 'X-LiquidAIty-Hermes-Profile': 'builder' },
       },
     });
+    expect(JSON.stringify(added?.params)).not.toContain('oauth');
     expect(JSON.stringify(calls)).not.toContain('X-LiquidAIty-Project-Id');
     expect(JSON.stringify(calls)).not.toContain('project-old');
     expect(JSON.stringify(calls)).not.toContain('user-owner-one');
     expect(JSON.stringify(calls)).not.toContain('cbm.search_graph');
     expect(calls.map((call) => call.method)).toContain('mcp.servers.remove');
+  });
+
+  it('keeps an established internal MCP server when the safe server summary omits headers', async () => {
+    const ownerRef = createHash('sha256').update('user-owner-one').digest('hex');
+    const current: HermesProfileState = {
+      ...profile(ownerRef),
+      mcp_servers: [{
+        name: 'liquidaity',
+        enabled: true,
+        tool_filter: ['canvas.inspect'],
+        context_headers: null,
+      }],
+    };
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+      calls.push({ method, params: structuredClone(params) });
+      if (method === 'mcp.servers.list') {
+        return {
+          servers: [{
+            name: 'liquidaity',
+            url: 'http://127.0.0.1:8765/mcp',
+            auth: null,
+          }],
+        };
+      }
+      if (method === 'profiles.describe') return current;
+      throw new Error(`unexpected_method:${method}`);
+    });
+    const gatewayRequest = <T>(method: string, params?: Record<string, unknown>): Promise<T> => (
+      request(method, params) as Promise<T>
+    );
+
+    await expect(materializeSavedCardProfile(
+      gatewayRequest,
+      card,
+      'user-owner-one',
+      current,
+      [tool],
+      ['cbm'],
+    )).resolves.toEqual(current);
+
+    expect(calls.map((call) => call.method)).toEqual(['mcp.servers.list']);
   });
 
   it('refuses a different owner before MCP or profile configuration', async () => {
@@ -203,6 +247,80 @@ describe('Hermes profile owner and request-context materialization', () => {
       [tool],
     )).rejects.toThrow('hermes_profile_owner_conflict');
     expect(mutation).not.toHaveBeenCalled();
+  });
+
+  it('materializes AutoTeam only for the saved Team and KnowGraph identities', async () => {
+    const ownerRef = createHash('sha256').update('user-owner-one').digest('hex');
+    const knowCard: DeckCard = {
+      ...card,
+      id: 'card_knowgraph',
+      title: 'KnowGraph',
+      prompt: 'Saved KnowGraph prompt',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' },
+      runtimeOptions: {
+        provider: 'openai',
+        accessMode: 'chatgpt-account',
+        modelKey: 'gpt-5.6-sol',
+        providerModelId: 'gpt-5.6-sol',
+        subagentType: 'none',
+        subagentModel: {
+          provider: 'openai',
+          accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-luna',
+          providerModelId: 'gpt-5.6-luna',
+        },
+        tools: [],
+        toolsets: [],
+      },
+    };
+    let current: HermesProfileState = {
+      ...profile(ownerRef),
+      name: 'knowgraph',
+      soul: 'Saved KnowGraph prompt',
+      mcp_servers: [],
+      task_mode: null,
+      ui_meta: {
+        'hermes-bots': {
+          title: 'KnowGraph',
+          owner_ref: ownerRef,
+          owner_scoped: true,
+        },
+      },
+      delegation: {
+        provider: 'openai-codex',
+        model: 'gpt-5.6-luna',
+        max_spawn_depth: 1,
+        orchestrator_enabled: false,
+        enabled: false,
+      },
+    };
+    const configured: Record<string, unknown>[] = [];
+    const request = async <T>(method: string, params: Record<string, unknown> = {}) => {
+      if (method === 'mcp.servers.list') return { servers: [] } as T;
+      if (method === 'profiles.configure') {
+        configured.push(structuredClone(params));
+        current = { ...current, task_mode: params.task_mode as 'team' };
+        return { ok: true, applied: { task_mode: true } } as T;
+      }
+      if (method === 'profiles.describe') return current as T;
+      throw new Error('unexpected_method:' + method);
+    };
+
+    const result = await materializeSavedCardProfile(
+      request,
+      knowCard,
+      'user-owner-one',
+      current,
+      [],
+    );
+
+    expect(result.task_mode).toBe('team');
+    expect(configured).toHaveLength(1);
+    expect(configured[0]).toMatchObject({
+      name: 'knowgraph',
+      task_mode: 'team',
+    });
+    expect(configured[0]).not.toHaveProperty('enabled_toolsets');
   });
 
   it('refuses a profile-scoped tool before changing an ordinary Card profile', async () => {

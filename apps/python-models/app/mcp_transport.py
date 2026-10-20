@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app import mcp_auth, mcp_catalog_runtime, mcp_cbm_provider, mcp_graphiti_provider, mcp_observability, mcp_provider_operations
+from app import mcp_openstudio_provider
 from mcp.server.lowlevel.server import Server
 from mcp.server.stdio import stdio_server
 
@@ -64,6 +65,7 @@ async def run_stdio(server: Server, implementation_version: str) -> None:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
     finally:
+        await mcp_openstudio_provider.close()
         await mcp_graphiti_provider.close_graphiti()
         await mcp_cbm_provider.close_cbm()
         mcp_catalog_runtime.reset_catalog_lifecycle()
@@ -138,17 +140,31 @@ class _HermesProfileContextMiddleware:
             raw_project,
             re.IGNORECASE,
         ) else "__invalid__"
+        raw_deck = _safe_request_header(scope, b"x-liquidaity-deck-id").strip()
+        deck_id = raw_deck if not raw_deck or re.fullmatch(
+            r"^[A-Za-z0-9:_-]{1,128}$", raw_deck,
+        ) else "__invalid__"
+        raw_conversation = _safe_request_header(
+            scope, b"x-liquidaity-conversation-id"
+        ).strip()
+        conversation_id = raw_conversation if not raw_conversation or re.fullmatch(
+            r"^[A-Za-z0-9:_-]{1,128}$", raw_conversation,
+        ) else "__invalid__"
         raw_run = _safe_request_header(scope, b"x-liquidaity-run-id").strip()
         run_id = raw_run if not raw_run or re.fullmatch(
             r"^[A-Za-z0-9:_-]{1,128}$", raw_run,
         ) else "__invalid__"
         profile_token = mcp_auth.set_requested_hermes_profile(profile)
         project_token = mcp_auth.set_requested_project_id(project_id)
+        deck_token = mcp_auth.set_requested_deck_id(deck_id)
+        conversation_token = mcp_auth.set_requested_conversation_id(conversation_id)
         run_token = mcp_auth.set_requested_run_id(run_id)
         try:
             await self.app(scope, receive, send)
         finally:
             mcp_auth.reset_requested_run_id(run_token)
+            mcp_auth.reset_requested_conversation_id(conversation_token)
+            mcp_auth.reset_requested_deck_id(deck_token)
             mcp_auth.reset_requested_project_id(project_token)
             mcp_auth.reset_requested_hermes_profile(profile_token)
 
@@ -236,6 +252,7 @@ async def run_streamable_http(
                     await catalog_task
                 except asyncio.CancelledError:
                     pass
+            await mcp_openstudio_provider.close()
             await mcp_graphiti_provider.close_graphiti()
             await mcp_cbm_provider.close_cbm()
             mcp_catalog_runtime.reset_catalog_lifecycle()
@@ -267,6 +284,8 @@ async def run_streamable_http(
         )
 
     health_routes = [
+        Route("/_internal/nrgsim/{project_id}/{action}",
+              endpoint=mcp_openstudio_provider.human_endpoint, methods=["GET", "POST"]),
         Route("/health", endpoint=health_endpoint, methods=["GET"]),
         Route("/health/catalog", endpoint=readiness_endpoint, methods=["GET"]),
         Route("/health/ready", endpoint=readiness_endpoint, methods=["GET"]),

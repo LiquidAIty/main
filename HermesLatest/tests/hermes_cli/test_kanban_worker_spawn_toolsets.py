@@ -217,3 +217,36 @@ toolsets:
     assert "kanban_complete" in names
     assert "kanban_list" not in names
     assert resolved != ["kanban"]
+
+
+def test_team_candidate_toolsets_keep_web_and_remove_profile_mcp(monkeypatch, tmp_path):
+    root = tmp_path / ".hermes"
+    profile = root / "profiles" / "knowgraph"
+    profile.mkdir(parents=True)
+    profile.joinpath("config.yaml").write_text(
+        """
+platform_toolsets:
+  cli:
+    - web
+    - liquidaity
+mcp_servers:
+  liquidaity:
+    enabled: true
+    transport: http
+    url: http://127.0.0.1:8765/mcp
+toolsets:
+  - web
+""".lstrip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    synthesis = kbd._resolve_worker_cli_toolsets(str(profile), allow_mcp=True)
+    candidate = kbd._resolve_worker_cli_toolsets(str(profile), allow_mcp=False)
+
+    assert synthesis is not None and "liquidaity" in synthesis
+    assert candidate is not None
+    assert "web" in candidate
+    assert "liquidaity" not in candidate
+    assert "no_mcp" in candidate

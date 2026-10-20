@@ -1248,6 +1248,12 @@ def _active_config_path() -> Path:
     return Path(override if isinstance(override, str) and override else _hermes_home) / "config.yaml"
 
 
+def _raw_config_signature(path: Path) -> tuple:
+    stat_signature = file_signature(path.stat())
+    content_signature = hashlib.sha256(path.read_bytes()).digest()
+    return (*stat_signature, content_signature)
+
+
 def _load_cfg_raw() -> dict:
     """The active profile's config.yaml EXACTLY as written — the write-back primitive, ONLY for
     read→mutate→``_save_cfg`` round-trips and raw inspection (defaults / managed overlay / ``${VAR}``
@@ -1258,7 +1264,7 @@ def _load_cfg_raw() -> dict:
     from hermes_cli.config_read_errors import FailedConfigRead
     try:
         p = _active_config_path()
-        sig = file_signature(p.stat()) if p.exists() else None
+        sig = _raw_config_signature(p) if p.exists() else None
         with _cfg_lock:
             if _cfg_cache is not None and _cfg_sig == sig and _cfg_path == p:
                 return copy.deepcopy(_cfg_cache)
@@ -1289,7 +1295,7 @@ def _save_cfg(cfg: dict):
     with _cfg_lock:
         _cfg_cache, _cfg_path = copy.deepcopy(cfg), path
         try:
-            _cfg_sig = file_signature(path.stat())
+            _cfg_sig = _raw_config_signature(path)
         except Exception:
             _cfg_sig = None
 
@@ -1954,7 +1960,10 @@ def _load_enabled_toolsets(platform: str | None = None) -> list[str] | None:
             if isinstance(platform_toolsets, dict) and "cli" in platform_toolsets:
                 pinned = _coerce_platform_toolsets_value(platform_toolsets["cli"], "cli")
                 if isinstance(pinned, list) and not pinned:
-                    return []
+                    from hermes_cli.tools_config import _get_platform_tools
+                    return sorted(_get_platform_tools(
+                        cfg, "cli", include_default_mcp_servers=True,
+                    ))
         with contextlib.suppress(Exception):
             from agent.coding_context import coding_selection
             selection = coding_selection(platform=session_platform)
@@ -1980,7 +1989,9 @@ def _load_enabled_toolsets(platform: str | None = None) -> list[str] | None:
             if isinstance(pinned, list) and not pinned:
                 if fallback_notice is not None:
                     _tui_notice(fallback_notice)
-                return []
+                return sorted(_get_platform_tools(
+                    cfg, "cli", include_default_mcp_servers=True,
+                ))
         # include_default_mcp_servers=True is the runtime variant (the agent must be able to call
         # default MCP servers); the config-editing variant would silently drop MCP tools from the TUI.
         # Passing ``False`` here is the config-editing variant — used when we need to persist a toolset list

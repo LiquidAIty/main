@@ -383,3 +383,60 @@ def test_streamable_http_client_strips_credentials_on_redirect(monkeypatch):
 
         asyncio.run(_drive())
     assert "authorization" not in seen and "x-api-key" not in seen
+
+
+def test_saved_card_context_headers_never_follow_a_cross_origin_loopback_redirect(monkeypatch):
+    import tools.mcp_tool as _mcp
+    from tui_gateway import saved_card_turn
+
+    task = _make_task()
+    seen: dict = {}
+    captured: dict = {}
+
+    @asynccontextmanager
+    async def _fake_streams(url, http_client=None, **kwargs):
+        captured["client"] = http_client
+        yield (None, None, None)
+
+    monkeypatch.setattr(_mcp, "streamable_http_client", _fake_streams)
+    monkeypatch.setattr(
+        saved_card_turn,
+        "current_card_turn_headers",
+        lambda: {
+            "X-LiquidAIty-Project-Id": "project-one",
+            "X-LiquidAIty-Deck-Id": "deck_builder",
+            "X-LiquidAIty-Conversation-Id": "conversation-one",
+            "X-LiquidAIty-Hermes-Profile": "trading",
+            "X-LiquidAIty-Run-Id": "run-one",
+        },
+    )
+    monkeypatch.setattr(
+        saved_card_turn,
+        "current_card_turn_authorization",
+        lambda: "Bearer internal-only",
+    )
+
+    with _serve(_recording_mcp_handler(seen)) as target, \
+            _serve(_redirect_handler(target)) as origin:
+        async def _drive():
+            cm = task._streamable_http_transport(
+                f"{origin}/mcp",
+                {"X-LiquidAIty-Hermes-Profile": "trading"},
+                connect_timeout=5.0, ssl_verify=True, client_cert=None,
+                oauth_auth=None, strict_cfg_headers=True,
+                configured_header_names={"x-liquidaity-hermes-profile"},
+            )
+            async with cm:
+                await captured["client"].get(f"{origin}/mcp")
+
+        asyncio.run(_drive())
+
+    for name in (
+        "authorization",
+        "x-liquidaity-project-id",
+        "x-liquidaity-deck-id",
+        "x-liquidaity-conversation-id",
+        "x-liquidaity-hermes-profile",
+        "x-liquidaity-run-id",
+    ):
+        assert name not in seen

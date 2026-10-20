@@ -375,8 +375,10 @@ discipline, never a deterministic TypeScript timer, classifier, parser, or route
 Before inference, Python rails automatically appends the complete Entity/Relationship map and the default
 current-request grounding to Main, Builder, ThinkGraph, and KnowGraph: one Jev-ranked most Relevant plus one
 distinct most Recent record per authority. Think retrieval favors the strongest faithful optimistic steelman.
-Every valid Know already contains a cited For and cited Against, producing the intended two-thirds supportive,
-one-third challenging balance at equal record counts. Relevance failure never promotes Recent as Relevant.
+Each current Know is one verified sourced observation with a separate bounded interpretation and optional
+direction relative to an explicit proposition. Supporting, challenging and neutral Knows are all valid;
+balance belongs across research coverage and synthesis rather than fixed record proportions. Relevance failure
+never promotes Recent as Relevant.
 Each non-Magnetic Hermes Card has one explicit saved `Orchestrator` setting. When enabled, its outbound
 orange `flow` edges authorize that Card to address those exact saved Bot/Card targets; an edge grants no
 reverse authority. Main is a source-default direct orchestrator, while another Card may
@@ -400,13 +402,17 @@ general Card memory-provider field or reconfigures memory at Run start.
 
 The saved `card_knowgraph` Card, visible as `KnowGraph` and bound one-to-one to Hermes profile
 `knowgraph`, is the persistent sourced-research and KnowGraph helper. It is an ordinary Hermes-backed
-Card in `delegate` mode with `subagentType: none` for the launch baseline. It may read deliberately
-selected ThinkGraph and CodeGraph context, but Neo4j/Graphiti remains its graph authority and writer.
-The source-default Card uses Sol for the deeper factual/reality-check role; persisted saved Card model choice
-remains authority. One Know is one atomic `know.v1` episode about one Entity with mandatory cited supporting
-and counter ideas. Python rails validates and encodes both sides before invoking Graphiti's queued
-`add_memory_to_entity`; a one-sided episode is not projected as a Know. KnowGraph must make the strongest
-supported case on both sides and may not use a weak counter as a strawman.
+Card in `delegate` mode with `subagentType: none`; its profile's structural AutoTeam setting uses Hermes'
+existing `auto-team-v1` root for substantial research without enabling ordinary recursive delegation. It may
+read deliberately selected ThinkGraph and CodeGraph context, but Neo4j/Graphiti remains its graph authority
+and writer. The source-default Card uses Sol for the deeper factual/reality-check role; persisted saved Card
+model choice remains authority. AutoTeam candidate workers retain the saved Web research surface but receive
+no profile MCP connection or graph-write tool. The synthesis root alone receives the exact saved Card Run
+context and saved MCP ceiling, reviews worker findings, verifies provenance, deduplicates, and persists.
+One current Know is one atomic `know.v2` episode about one Entity with one source document, exact evidence
+passage, self-contained observation, separate bounded interpretation and optional proposition direction.
+Python rails verifies and encodes that record before invoking Graphiti's queued
+`add_memory_to_entity`. Historical paired `know.v1` records remain explicit legacy reads.
 Main PDF attachment ingestion writes through the Graphiti service directly; it is not a KnowGraph Card
 turn and must never borrow this Card's model or system prompt. The retired Steward/Stuart identities,
 Team delegation residue, and compatibility aliases must not return.
@@ -420,7 +426,7 @@ and application/UI construction. Card creation and configuration use explicit to
 exact targets, current revisions and saved grants. No prefilled operation tasks or hidden modes.
 Saving a Card and invoking a Card remain separate actions. Builder has no Mag One edge.
 Builder receives the same default Relevant/Recent graph grounding as Main so construction retains the user's
-faithful steelman and the two-sided cited reality check. Its expanded inspector/search tools do not widen the
+faithful steelman and the bounded sourced reality check. Its expanded inspector/search tools do not widen the
 automatic packet.
 
 ### Mag One
@@ -458,11 +464,13 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 
 One authority and one writer per graph.
 
-Main is not the owner of ThinkGraph writes. The completed-pair Python preparation and settlement rails remain,
-but the TypeScript child-Card executor and revision relay were removed without replacement. No automatic
-User/Main-pair intake is current until a separately approved Hermes saved-Card caller exists. No candidate graph,
-approval state, shadow graph, raw conversation Memory, regex-first skeleton, broad cleanup path, or direct
-target runner may substitute for that missing seam. KnowGraph retains sourced research through its existing
+Main is not the owner of ThinkGraph writes. After one ordinary Main Run completes, the backend preserves the
+ordered user-message references on that Run, invokes the exact authorized saved ThinkGraph Card through the
+repo-owned Hermes adapter, and submits that Card's structured result to the existing completed-pair Python
+preparation and settlement owners exactly once. User additions during active inference invisibly steer the same
+Run and produce one aggregate completed exchange; LiquidAIty owns no chat prompt queue. No candidate graph,
+approval state, shadow graph, raw conversation Memory, regex-first skeleton, broad cleanup path, generic target
+runner, or second graph writer may substitute for that bounded caller. KnowGraph retains sourced research through its existing
 research agent and queued Graphiti intake. Its dedicated Entity write records one exact structural `ABOUT` edge while
 leaving extracted `MENTIONS` independent. Only Entities render as Project graph nodes; Thinks, Knows,
 Graphiti episodes, citations, and supporting IDs remain attached properties or provenance. Engraphis

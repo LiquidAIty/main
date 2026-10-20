@@ -34,6 +34,7 @@ import {
   appendConversationReplyOnce,
   appendConversationTurn,
   getConversationMessages,
+  settleConversationMessage,
   type ConversationMessage,
   type ConversationParticipant,
 } from '../conversations/store';
@@ -70,6 +71,11 @@ import {
 } from '../services/projectCardAuthority';
 import { readToolCatalog } from '../services/mcp/toolCatalogMcpClient';
 import { internalMcpProcessSecretAuthorized } from '../services/mcp/internalMcpAuth';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
+import {
+  registerActiveThinkGraphCapture,
+  withThinkGraphCaptureLock,
+} from '../services/thinkGraphCaptureSynchronization';
 import {
   resolveBuilderProjectCodeDirectory,
   resolveProductChatWorkingDirectory,
@@ -125,13 +131,81 @@ type ActiveTurnInterruptTarget = {
   stopRequested: boolean;
 };
 
+type MainSteerTarget = {
+  client: HermesGatewayClient;
+  sessionId: string;
+  runId: string;
+} | {
+  error: string;
+};
+
+type ActiveMainTurn = {
+  runId: string | null;
+  inputMessageIds: string[];
+  ready: Promise<MainSteerTarget>;
+  resolveReady(value: MainSteerTarget): void;
+  readyResolved: boolean;
+};
+
 const sessionBindingTails = new Map<string, Promise<void>>();
 const activeTurnInterruptTargets = new Map<string, ActiveTurnInterruptTarget>();
+const mainTurnAdmissionTails = new Map<string, Promise<void>>();
+const activeMainTurns = new Map<string, ActiveMainTurn>();
 
 function activeTurnKey(
   runId: string, projectId: string, deckId: string, userId: string,
 ): string {
   return JSON.stringify([runId, projectId, deckId, userId]);
+}
+
+function mainTurnScopeKey(
+  projectId: string,
+  deckId: string,
+  conversationId: string,
+  userId: string,
+  mainCardId: string,
+): string {
+  return JSON.stringify([projectId, deckId, conversationId, userId, mainCardId]);
+}
+
+async function withMainTurnAdmission<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = mainTurnAdmissionTails.get(key) || Promise.resolve();
+  let release!: () => void;
+  const completion = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.catch(() => undefined).then(() => completion);
+  mainTurnAdmissionTails.set(key, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (mainTurnAdmissionTails.get(key) === tail) mainTurnAdmissionTails.delete(key);
+  }
+}
+
+function createActiveMainTurn(): ActiveMainTurn {
+  let resolveReady!: (value: MainSteerTarget) => void;
+  const ready = new Promise<MainSteerTarget>((resolve) => { resolveReady = resolve; });
+  return {
+    runId: null,
+    inputMessageIds: [],
+    ready,
+    resolveReady,
+    readyResolved: false,
+  };
+}
+
+function settleActiveMainTurnReadiness(entry: ActiveMainTurn, value: MainSteerTarget): void {
+  if (entry.readyResolved) return;
+  entry.readyResolved = true;
+  entry.resolveReady(value);
+}
+
+function releaseActiveMainTurn(key: string, entry: ActiveMainTurn, error?: unknown): void {
+  if (activeMainTurns.get(key) === entry) activeMainTurns.delete(key);
+  settleActiveMainTurnReadiness(entry, {
+    error: error instanceof Error ? error.message : error ? String(error) : 'main_turn_unavailable',
+  });
 }
 
 async function withSessionBindingLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -292,8 +366,7 @@ export function directRecipientSubmissionId(value: unknown): string {
   const deliveryId = String(result.delivery_id || '').trim();
   const processId = String(result.process_id || '').trim();
   if (
-    String(result.status || '').trim() !== 'queued'
-    || !deliveryId
+    !deliveryId
     || !processId
     || String(result.reply_delivery || '').trim() !== 'direct'
     || Boolean(result.notification_error)
@@ -775,6 +848,233 @@ async function attachImages(
   }
 }
 
+function runInputProviderMessageId(runId: string, ordinal: number): string {
+  return `run:${runId}:input:${ordinal}`;
+}
+
+async function completedMainInputText(args: {
+  projectId: string;
+  conversationId: string;
+  inputMessageIds: string[];
+}): Promise<string> {
+  const expected = new Set(args.inputMessageIds);
+  const messages = (await getConversationMessages(args.projectId, args.conversationId))
+    .filter((message) => expected.has(message.messageId));
+  if (
+    messages.length !== args.inputMessageIds.length
+    || messages.some((message, index) => (
+      message.role !== 'user'
+      || message.messageId !== args.inputMessageIds[index]
+      || message.status !== 'complete'
+    ))
+  ) throw new Error('main_run_input_evidence_mismatch');
+  if (messages.length === 1) return messages[0].content;
+  return messages.map((message, index) => (
+    `USER INPUT ${index + 1}:\n${message.content}`
+  )).join('\n\n');
+}
+
+function thinkGraphExtractionTask(preparation: Record<string, any>): string {
+  const schema = record(preparation.enrichmentSchema);
+  const prompt = String(preparation.enrichmentPrompt || '').trim();
+  const input = record(preparation.enrichmentInput);
+  if (!Object.keys(schema).length || !prompt || !Object.keys(input).length) {
+    throw new Error('thinkgraph_prepare_extraction_contract_invalid');
+  }
+  return [
+    'Apply the supplied structured extraction contract to this completed Main exchange.',
+    'Use the saved ThinkGraph Card instructions and its granted capabilities as needed.',
+    'Return exactly one JSON object that validates against OUTPUT_SCHEMA, with no surrounding prose.',
+    '',
+    'OUTPUT_SCHEMA:',
+    JSON.stringify(schema),
+    '',
+    'EXTRACTION_PROMPT:',
+    prompt,
+    '',
+    'EXTRACTION_INPUT:',
+    JSON.stringify(input),
+  ].join('\n');
+}
+
+async function assertHermesSessionIdle(
+  client: HermesGatewayClient,
+  sessionId: string,
+): Promise<void> {
+  const status = record(await client.request('session.status', { session_id: sessionId }));
+  if (status.running === true) throw new Error('hermes_session_active');
+}
+
+type CompletedMainTurnCaptureArgs = {
+  client: HermesGatewayClient;
+  authority: ProjectCardAuthority;
+  main: ProjectCardBinding;
+  parentBinding: CardSessionBinding;
+  parentRunId: string;
+  userId: string;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  userMessage: string;
+  mainResponse: string;
+};
+
+async function executeCompletedMainTurnCapture(
+  args: CompletedMainTurnCaptureArgs,
+): Promise<Record<string, any>> {
+  let childRun: PreparedCardRun | null = null;
+  let childBinding: SessionBinding | null = null;
+  let childSettled = false;
+  try {
+    const completedPair = {
+      projectId: args.projectId,
+      deckId: args.deckId,
+      conversationId: args.conversationId,
+      runId: args.parentRunId,
+      cardId: args.main.card.id,
+      hermesSessionId: args.parentBinding.sessionId,
+      completedAt: new Date().toISOString(),
+      userMessage: args.userMessage,
+      mainResponse: args.mainResponse,
+    };
+    const preparation = record(await requestPythonRailsJson(
+      '/thinkgraph/completed-pair/prepare',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(completedPair),
+      },
+    ));
+    if (preparation.revisionChanged !== false || !String(preparation.preparation?.status || '')) {
+      throw new Error('thinkgraph_prepare_mutated_graph');
+    }
+    if (
+      preparation.structuredExtractionRequired === false
+      && preparation.intakeOperation === 'noop'
+    ) return preparation;
+    if (
+      preparation.structuredExtractionRequired !== true
+      || preparation.intakeOperation !== 'pending'
+      || !String(preparation.pairReference || '').trim()
+    ) throw new Error('thinkgraph_prepare_intake_contract_invalid');
+
+    const targets = mainBotRosterCards(args.authority).filter(
+      (candidate) => candidate.card.id === 'card_thinkgraph',
+    );
+    if (targets.length !== 1) {
+      throw new Error(targets.length
+        ? 'thinkgraph_saved_card_ambiguous'
+        : 'thinkgraph_saved_card_not_authorized');
+    }
+    const target = targets[0];
+    childRun = await prepareCardRun({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      conversationId: args.conversationId,
+      message: thinkGraphExtractionTask(preparation),
+      target,
+      dataAnchors: [],
+      images: [],
+      senderCardId: args.main.card.id,
+      originatingRunId: args.parentRunId,
+    });
+    childBinding = await cardSession(args.client, args.authority, target, {
+      projectId: args.projectId,
+      projectSessionId: args.conversationId,
+      userId: args.userId,
+    });
+    await ensureSavedCardTurnModel({
+      client: args.client,
+      binding: childBinding,
+      profile: target.profile,
+      runRequest: childRun.request,
+    });
+    await assertHermesSessionIdle(args.client, childBinding.liveHandle);
+    const runtimeOptions = record(childRun.request.runtimeOptions);
+    const scriptPresentation = record(childRun.request.scriptPresentation);
+    const cardScript = scriptPresentation.mode === 'script'
+      ? record(childRun.request.cardScript)
+      : null;
+    if (scriptPresentation.mode === 'script' && !Object.keys(cardScript || {}).length) {
+      throw new Error('card_script_runtime_contract_missing');
+    }
+    let started: Promise<void> | null = null;
+    const result = await executeHermesTurn({
+      client: args.client,
+      binding: childBinding,
+      main: target,
+      directRecipient: null,
+      consultationCards: [],
+      text: String(childRun.request.message),
+      submissionId: childRun.runId,
+      mcpToolSelection: runtimeOptions.autoTools === true || scriptPresentation.mode === 'script'
+        ? { liquidaity: exactStrings(childRun.request.presentedTools) }
+        : null,
+      cardScript,
+      botModeCardContexts: {},
+      onTeamConsultation: () => undefined,
+      onInterruptTarget: () => undefined,
+      onEvent: (event) => {
+        if (event.type === 'prompt.submission.started') {
+          started ||= startRun(childRun!, childBinding!, event);
+        }
+      },
+    });
+    if (!started) throw new Error('run_submission_start_missing');
+    await started;
+    if (!result.text.trim()) throw new Error('thinkgraph_card_empty_response');
+    let structuredOutput: Record<string, unknown>;
+    try {
+      structuredOutput = record(JSON.parse(result.text));
+    } catch {
+      throw new Error('thinkgraph_card_output_invalid');
+    }
+    if (!Array.isArray(structuredOutput.facts)) {
+      throw new Error('thinkgraph_card_output_invalid');
+    }
+    await finishRun({ run: childRun, binding: childBinding, result });
+    childSettled = true;
+    const settled = record(await requestPythonRailsJson(
+      '/thinkgraph/completed-pair/settle',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...completedPair,
+          pairReference: String(preparation.pairReference),
+          structuredOutput,
+          cardRun: {
+            runId: childRun.runId,
+            cardId: target.card.id,
+            revisionId: target.cardRevisionId,
+            profile: target.profile,
+            hermesSessionId: childBinding.sessionId,
+            resolvedProvider: String(childBinding.info.provider || ''),
+            resolvedModel: String(childBinding.info.model || ''),
+          },
+        }),
+      },
+    ));
+    if (settled.ok !== true) throw new Error('thinkgraph_settlement_invalid');
+    return settled;
+  } catch (error) {
+    if (childRun && !childSettled) {
+      await finishRun({ run: childRun, binding: childBinding, error }).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
+async function captureCompletedMainTurn(
+  args: CompletedMainTurnCaptureArgs,
+): Promise<Record<string, any>> {
+  return withThinkGraphCaptureLock(
+    args.projectId,
+    args.deckId,
+    () => executeCompletedMainTurnCapture(args),
+  );
+}
+
 function writeSse(res: Response, eventName: string, payload: Record<string, unknown>): boolean {
   if (res.destroyed || res.writableEnded) return false;
   res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -786,10 +1086,17 @@ async function executeHermesTurn(args: {
   binding: SessionBinding;
   main: ProjectCardBinding;
   directRecipient: ProjectCardBinding | null;
+  consultationCards: ProjectCardBinding[];
   text: string;
   submissionId: string;
   mcpToolSelection: Record<string, string[]> | null;
   cardScript: Record<string, unknown> | null;
+  botModeCardContexts: Record<string, CardTurnContext>;
+  onTeamConsultation(value: {
+    taskId: string;
+    runId: string;
+    target: ProjectCardBinding;
+  }): void;
   onInterruptTarget(target: { sessionId: string; submissionId: string }): void;
   onEvent(event: HermesGatewayEvent, speaker: ProjectCardBinding): void;
 }): Promise<TurnResult> {
@@ -807,6 +1114,9 @@ async function executeHermesTurn(args: {
     let messageAgentStarted = false;
     let consultationError: Error | null = null;
     let expectedConsultationProcessId: string | null = null;
+    let expectedConsultationTaskId: string | null = null;
+    let expectedConsultationRunId: string | null = null;
+    let consultationTarget: ProjectCardBinding | null = null;
     let addressedToolId: string | null = null;
     let expectedRecipientSubmissionId: string | null = null;
     let activeRecipientSubmissionId: string | null = null;
@@ -889,6 +1199,7 @@ async function executeHermesTurn(args: {
       if (event.session_id !== args.binding.liveHandle) return;
       const eventSubmissionId = String(event.payload?.submission_id || '').trim();
       const notificationProcessIds = exactStrings(event.payload?.notification_process_ids);
+      const notificationTaskIds = exactStrings(event.payload?.notification_task_ids);
       if (event.type === 'prompt.submission.started') {
         if (eventSubmissionId !== args.submissionId) return;
         ownTurnStarted = true;
@@ -899,9 +1210,16 @@ async function executeHermesTurn(args: {
       const consultationCompletionEvent = (
         event.type === 'message.complete'
         && ownTurnCompleted
-        && !args.directRecipient
-        && Boolean(expectedConsultationProcessId)
-        && notificationProcessIds.includes(expectedConsultationProcessId!)
+        && (
+          (
+            Boolean(expectedConsultationProcessId)
+            && notificationProcessIds.includes(expectedConsultationProcessId!)
+          )
+          || (
+            Boolean(expectedConsultationTaskId)
+            && notificationTaskIds.includes(expectedConsultationTaskId!)
+          )
+        )
       );
       if (!ownSubmissionEvent && !consultationCompletionEvent) return;
       args.onEvent(event, args.main);
@@ -909,6 +1227,12 @@ async function executeHermesTurn(args: {
         toolCalls += 1;
         if (String(event.payload?.name || '') === 'message_agent') {
           messageAgentStarted = true;
+          const targetValue = record(event.payload?.args).target;
+          const matches = args.consultationCards.filter((candidate) => (
+            messageAgentTargetMatchesCard(targetValue, candidate)
+          ));
+          if (matches.length === 1) consultationTarget = matches[0];
+          else consultationError = new Error('hermes_consultation_target_ambiguous');
           if (
             args.directRecipient
             && messageAgentTargetMatchesCard(record(event.payload?.args).target, args.directRecipient)
@@ -926,12 +1250,30 @@ async function executeHermesTurn(args: {
         && String(event.payload?.name || '') === 'message_agent'
       ) {
         const result = record(event.payload?.result);
-        if (!args.directRecipient) {
+        if (String(result.reply_delivery || '').trim() === 'team') {
+          const taskId = String(result.task_id || '').trim();
+          const runId = String(result.run_id || '').trim();
+          if (!taskId || !runId || !consultationTarget) {
+            consultationError = new Error('hermes_team_consultation_correlation_missing');
+          } else if (
+            (expectedConsultationTaskId && expectedConsultationTaskId !== taskId)
+            || (expectedConsultationRunId && expectedConsultationRunId !== runId)
+          ) {
+            consultationError = new Error('hermes_team_consultation_duplicate');
+          } else {
+            expectedConsultationTaskId = taskId;
+            expectedConsultationRunId = runId;
+            args.onTeamConsultation({
+              taskId,
+              runId,
+              target: consultationTarget,
+            });
+          }
+        } else if (!args.directRecipient) {
           const deliveryId = String(result.delivery_id || '').trim();
           const processId = String(result.process_id || '').trim();
           if (
-            String(result.status || '').trim() !== 'queued'
-            || !deliveryId
+            !deliveryId
             || !processId
             || String(result.reply_delivery || '').trim() !== 'notification'
             || Boolean(result.notification_error)
@@ -977,7 +1319,7 @@ async function executeHermesTurn(args: {
         return;
       }
       if (ownSubmissionEvent) {
-        if (args.directRecipient) {
+        if (args.directRecipient && !expectedConsultationTaskId) {
           ownTurnCompleted = true;
           mainCompletion = { text, event };
           if (!addressedToolId) {
@@ -996,7 +1338,7 @@ async function executeHermesTurn(args: {
             finish(consultationError);
             return;
           }
-          if (!expectedConsultationProcessId) {
+          if (!expectedConsultationProcessId && !expectedConsultationTaskId) {
             finish(new Error('hermes_consultation_delivery_correlation_missing'));
             return;
           }
@@ -1007,9 +1349,14 @@ async function executeHermesTurn(args: {
       }
       if (!ownTurnCompleted) return;
       if (
-        !expectedConsultationProcessId
-        || notificationProcessIds.length !== 1
-        || notificationProcessIds[0] !== expectedConsultationProcessId
+        (
+          expectedConsultationTaskId
+            ? notificationTaskIds.length !== 1
+              || notificationTaskIds[0] !== expectedConsultationTaskId
+            : !expectedConsultationProcessId
+              || notificationProcessIds.length !== 1
+              || notificationProcessIds[0] !== expectedConsultationProcessId
+        )
       ) {
         finish(new Error('hermes_consultation_completion_ambiguous'));
         return;
@@ -1037,11 +1384,12 @@ async function executeHermesTurn(args: {
       bot_mode_sessions: args.directRecipient && recipientBinding
         ? { [args.directRecipient.profile]: recipientBinding.sessionId }
         : args.binding.botModeSessions,
+      bot_mode_card_contexts: args.botModeCardContexts,
       bot_mode_reply_delivery: args.directRecipient ? 'direct' : 'notification',
     }).then((submitted) => {
       const status = String(submitted.status || 'streaming');
       if (status !== 'streaming') {
-        finish(new Error(`hermes_submit_status_unsupported:${status || 'missing'}`));
+        finish(new Error('hermes_submission_not_started'));
       }
     }).catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
   });
@@ -1053,6 +1401,7 @@ async function finishRun(args: {
   result?: TurnResult;
   error?: unknown;
   cancelled?: boolean;
+  inputMessageIds?: string[];
 }): Promise<void> {
   const provider = record(args.binding?.info);
   const requestedProvider = record(args.run.request.provider);
@@ -1078,6 +1427,7 @@ async function finishRun(args: {
         : undefined,
       ...providerEvidence,
       toolCallCount: args.result?.toolCalls ?? 0,
+      ...(args.inputMessageIds?.length ? { inputMessageIds: args.inputMessageIds } : {}),
       ...usage,
   });
 }
@@ -1122,23 +1472,102 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       error: error instanceof Error ? error.message : 'project_card_authority_unavailable',
     });
   }
+  const scopeKey = mainTurnScopeKey(
+    projectId, deckId, conversationId, userId, main.card.id,
+  );
+  let activeTurn: ActiveMainTurn;
+  let admission: 'run' | 'steer';
   try {
-    await appendConversationTurn({
-      projectId,
-      conversationId,
-      messages: [{
-        messageId: clientMessageId,
-        role: 'user',
-        content: message,
-        speaker: USER_PARTICIPANT,
-        target: participant(addressedTarget || main),
-      }],
-    });
+    ({ entry: activeTurn, kind: admission } = await withMainTurnAdmission(
+      scopeKey,
+      async () => {
+        const active = activeMainTurns.get(scopeKey);
+        if (!active) {
+          const entry = createActiveMainTurn();
+          activeMainTurns.set(scopeKey, entry);
+          return { kind: 'run' as const, entry };
+        }
+
+        const ready = await active.ready;
+        if ('error' in ready) throw new Error(ready.error);
+        const ordinal = active.inputMessageIds.length + 1;
+        const providerMessageId = runInputProviderMessageId(ready.runId, ordinal);
+        let persisted = false;
+        try {
+          await appendConversationTurn({
+            projectId,
+            conversationId,
+            messages: [{
+              messageId: clientMessageId,
+              role: 'user',
+              content: message,
+              speaker: USER_PARTICIPANT,
+              target: participant(addressedTarget || main),
+              status: 'pending',
+              providerMessageId,
+            }],
+          });
+          persisted = true;
+          const steerText = botMentionInput(message, addressedTarget);
+          const result = record(await ready.client.request('session.steer', {
+            session_id: ready.sessionId,
+            text: steerText,
+          }));
+          if (String(result.status || '').trim() === 'rejected') {
+            throw new Error('hermes_steer_rejected');
+          }
+          await settleConversationMessage({
+            projectId,
+            conversationId,
+            messageId: clientMessageId,
+            providerMessageId,
+            status: 'complete',
+          });
+          active.inputMessageIds.push(clientMessageId);
+          return { kind: 'steer' as const, entry: active };
+        } catch (error) {
+          if (persisted) {
+            await settleConversationMessage({
+              projectId,
+              conversationId,
+              messageId: clientMessageId,
+              providerMessageId,
+              status: 'error',
+            }).catch(() => undefined);
+          }
+          throw error;
+        }
+      },
+    ));
   } catch (error) {
-    return res.status(503).json({
+    return res.status(409).json({
       ok: false,
-      error: error instanceof Error ? error.message : 'conversation_message_persist_failed',
+      error: error instanceof Error ? error.message : 'main_steer_failed',
     });
+  }
+
+  if (admission === 'steer') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const identity = {
+      projectId,
+      deckId,
+      cardId: main.card.id,
+      runId: activeTurn.runId!,
+      participant: participant(main),
+      requestedParticipant: participant(addressedTarget || main),
+      userMessageId: clientMessageId,
+      assistantMessageId: clientReplyMessageId,
+    };
+    writeSse(res, 'run', { ...identity, state: 'running' });
+    writeSse(res, 'done', { ...identity, fullText: '' });
+    writeSse(res, 'end', identity);
+    res.end();
+    return undefined;
   }
 
   let run: PreparedCardRun;
@@ -1152,10 +1581,37 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       dataAnchors: Array.isArray(req.body?.dataAnchors) ? req.body.dataAnchors : [],
       images: Array.isArray(req.body?.images) ? req.body.images : [],
     });
+    activeTurn.runId = run.runId;
   } catch (error) {
+    releaseActiveMainTurn(scopeKey, activeTurn, error);
     return res.status(503).json({
       ok: false,
       error: error instanceof Error ? error.message : 'saved_card_preparation_failed',
+    });
+  }
+
+  const initialInputProviderMessageId = runInputProviderMessageId(run.runId, 1);
+  try {
+    await appendConversationTurn({
+      projectId,
+      conversationId,
+      messages: [{
+        messageId: clientMessageId,
+        role: 'user',
+        content: message,
+        speaker: USER_PARTICIPANT,
+        target: participant(addressedTarget || main),
+        status: 'pending',
+        providerMessageId: initialInputProviderMessageId,
+      }],
+    });
+    activeTurn.inputMessageIds.push(clientMessageId);
+  } catch (error) {
+    await finishRun({ run, binding: null, error }).catch(() => undefined);
+    releaseActiveMainTurn(scopeKey, activeTurn, error);
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'conversation_message_persist_failed',
     });
   }
 
@@ -1180,8 +1636,19 @@ mainSessionRoutes.post('/chat', async (req, res) => {
 
   let binding: SessionBinding | null = null;
   let runSettled = false;
+  const teamConsultationState: {
+    value: {
+      taskId: string;
+      runId: string;
+      target: ProjectCardBinding;
+    } | null;
+    settled: boolean;
+  } = { value: null, settled: false };
   let streamedReplyText = '';
   let streamedReplySpeaker = main;
+  let started: Promise<void> | null = null;
+  let initialInputSettled = false;
+  let runInputMessageIds = [...activeTurn.inputMessageIds];
   try {
     const client = await hermesGateway();
     binding = await cardSession(client, authority, main, {
@@ -1191,6 +1658,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     }, addressedTarget);
     await ensureSavedCardTurnModel({ client, binding, profile: main.profile, runRequest: run.request });
     await attachImages(client, binding, main.profile, run.request.images);
+    await assertHermesSessionIdle(client, binding.liveHandle);
     const runtimeMode = String(record(run.request.runtime).mode || '').trim();
     if (!['main', 'delegate', 'magentic_one'].includes(runtimeMode)) {
       throw new Error('card_runtime_mode_invalid');
@@ -1216,18 +1684,34 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         unavailableTools: exactStrings(run.request.unavailableTools),
       },
     });
-    let started: Promise<void> | null = null;
     const result = await executeHermesTurn({
       client,
       binding,
       main,
       directRecipient: addressedTarget,
+      consultationCards: addressedTarget
+        ? [addressedTarget]
+        : mainBotRosterCards(authority),
       text: String(run.request.message),
       submissionId: run.runId,
       mcpToolSelection: runtimeOptions.autoTools === true || scriptPresentation.mode === 'script'
         ? { liquidaity: exactStrings(run.request.presentedTools) }
         : null,
       cardScript,
+      botModeCardContexts: Object.fromEntries(
+        (addressedTarget ? [addressedTarget] : mainBotRosterCards(authority))
+          .map((card) => [
+            card.profile,
+            cardTurnContext(authority, card, {
+              projectId,
+              projectSessionId,
+              userId,
+            }),
+          ]),
+      ),
+      onTeamConsultation: (value) => {
+        if (!teamConsultationState.value) teamConsultationState.value = value;
+      },
       onInterruptTarget: (target) => {
         const active = activeTurnInterruptTargets.get(interruptTargetKey);
         if (!active) return;
@@ -1236,7 +1720,22 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       onEvent: (event, speaker) => {
         const eventIdentity = { ...identity, participant: participant(speaker) };
         if (event.type === 'prompt.submission.started' && event.session_id === binding!.liveHandle) {
-          started ||= startRun(run, binding!, event).then(() => {
+          started ||= Promise.all([
+            startRun(run, binding!, event),
+            settleConversationMessage({
+              projectId,
+              conversationId,
+              messageId: clientMessageId,
+              providerMessageId: initialInputProviderMessageId,
+              status: 'complete',
+            }),
+          ]).then(() => {
+            initialInputSettled = true;
+            settleActiveMainTurnReadiness(activeTurn, {
+              client,
+              sessionId: binding!.liveHandle,
+              runId: run.runId,
+            });
             writeSse(res, 'run', { ...eventIdentity, state: 'running' });
           });
           void started.catch(() => undefined);
@@ -1258,6 +1757,10 @@ mainSessionRoutes.post('/chat', async (req, res) => {
     });
     if (!started) throw new Error('run_submission_start_missing');
     await started;
+    runInputMessageIds = await withMainTurnAdmission(scopeKey, async () => {
+      if (activeMainTurns.get(scopeKey) === activeTurn) activeMainTurns.delete(scopeKey);
+      return [...activeTurn.inputMessageIds];
+    });
     const mainRunResult = result.mainCompletion
       ? {
         ...result.mainCompletion,
@@ -1266,7 +1769,32 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         speaker: main,
       }
       : result;
-    await finishRun({ run, binding, result: mainRunResult });
+    const teamConsultation = teamConsultationState.value;
+    if (teamConsultation) {
+      const childBinding = binding.cardSessions[
+        teamConsultation.target.profile.toLowerCase()
+      ];
+      if (!childBinding) throw new Error('hermes_team_consultation_session_missing');
+      const childProvider = record(childBinding.info);
+      await finishCardRun({
+        runId: teamConsultation.runId,
+        state: 'completed',
+        finalResult: result.text,
+        hermesSessionRef: childBinding.sessionId,
+        providerTurnRef: teamConsultation.taskId,
+        effectiveProvider: String(childProvider.provider || ''),
+        provider: String(childProvider.provider || ''),
+        model: String(childProvider.model || ''),
+        toolCallCount: 0,
+      });
+      teamConsultationState.settled = true;
+    }
+    await finishRun({
+      run,
+      binding,
+      result: mainRunResult,
+      inputMessageIds: runInputMessageIds,
+    });
     runSettled = true;
     if (result.text.trim()) {
       const resultBinding = result.speaker.card.id === main.card.id
@@ -1292,15 +1820,69 @@ mainSessionRoutes.post('/chat', async (req, res) => {
         },
       });
     }
+    if (!addressedTarget && result.speaker.card.id === main.card.id && result.text.trim()) {
+      const capture = completedMainInputText({
+        projectId,
+        conversationId,
+        inputMessageIds: runInputMessageIds,
+      }).then((userMessage) => captureCompletedMainTurn({
+        client,
+        authority,
+        main,
+        parentBinding: binding!,
+        parentRunId: run.runId,
+        userId,
+        projectId,
+        deckId,
+        conversationId,
+        userMessage,
+        mainResponse: result.text,
+      }));
+      registerActiveThinkGraphCapture(projectId, run.runId, capture);
+      void capture.catch((graphError) => {
+        console.error('[thinkgraph-capture]', {
+          runId: run.runId,
+          error: graphError instanceof Error
+            ? graphError.message
+            : 'thinkgraph_completed_pair_failed',
+        });
+      });
+    }
     writeSse(res, 'done', {
       ...identity,
       participant: participant(result.speaker),
       fullText: result.text,
     });
   } catch (error) {
+    releaseActiveMainTurn(scopeKey, activeTurn, error);
+    const teamConsultation = teamConsultationState.value;
+    if (teamConsultation && !teamConsultationState.settled) {
+      await finishCardRun({
+        runId: teamConsultation.runId,
+        state: 'failed',
+        errorCode: 'hermes_team_consultation_failed',
+        errorSummary: error instanceof Error ? error.message : String(error),
+        providerTurnRef: teamConsultation.taskId,
+      }).catch(() => undefined);
+    }
+    if (!initialInputSettled) {
+      await settleConversationMessage({
+        projectId,
+        conversationId,
+        messageId: clientMessageId,
+        providerMessageId: initialInputProviderMessageId,
+        status: 'error',
+      }).catch(() => undefined);
+    }
     const cancelled = error instanceof Error && error.message === 'hermes_turn_cancelled'
       || activeTurnInterruptTargets.get(interruptTargetKey)?.stopRequested === true;
-    if (!runSettled) await finishRun({ run, binding, error, cancelled }).catch(() => undefined);
+    if (!runSettled) await finishRun({
+      run,
+      binding,
+      error,
+      cancelled,
+      inputMessageIds: activeTurn.inputMessageIds,
+    }).catch(() => undefined);
     if (cancelled) {
       writeSse(res, 'done', {
         ...identity,
@@ -1319,6 +1901,7 @@ mainSessionRoutes.post('/chat', async (req, res) => {
       });
     }
   } finally {
+    releaseActiveMainTurn(scopeKey, activeTurn);
     activeTurnInterruptTargets.delete(interruptTargetKey);
     writeSse(res, 'end', identity);
     res.end();

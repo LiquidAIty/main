@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import type { DeckCard, DeckDocument } from '../types';
 import { exactStrings, objectRecord } from '../services/projectCardAuthority';
 import type { ToolCatalogDescriptor } from '../services/mcp/toolCatalogMcpClient';
+import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 
 type HermesRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
@@ -52,7 +53,7 @@ export type HermesProfileState = {
 
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ESSENTIAL_SKILLS = new Set(['hermes-agent']);
-const TEAM_CARD_IDS = new Set(['card_team']);
+const TEAM_CARD_IDS = new Set(['card_team', 'card_knowgraph']);
 const CARD_PROFILE_MCP_SERVER = 'liquidaity';
 const PROFILE_OWNER_META_KEY = 'hermes-bots';
 
@@ -84,36 +85,6 @@ function assertProfileOwner(profile: HermesProfileState, ownerUserId: string): v
   if (existing && existing !== profileOwnerRef(ownerUserId)) {
     throw new Error('hermes_profile_owner_conflict');
   }
-}
-
-function cardProfileMcpUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const value = String(env.MCP_PUBLIC_RESOURCE_URL || '').trim();
-  if (!value) throw new Error('hermes_profile_mcp_public_url_missing');
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error('hermes_profile_mcp_public_url_invalid');
-  }
-  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.pathname !== '/mcp') {
-    throw new Error('hermes_profile_mcp_public_url_invalid');
-  }
-  parsed.search = '';
-  parsed.hash = '';
-  return parsed.toString();
-}
-
-function cardProfileMcpOauth(env: NodeJS.ProcessEnv = process.env): {
-  client_id: string;
-  scope: string;
-} {
-  const clientId = String(env.MCP_AUTH0_CLIENT_ID || '').trim();
-  const requiredScope = String(env.MCP_AUTH0_REQUIRED_SCOPE || '').trim();
-  if (!clientId || !requiredScope) throw new Error('hermes_profile_mcp_oauth_config_missing');
-  return {
-    client_id: clientId,
-    scope: ['openid', 'profile', 'email', 'offline_access', requiredScope].join(' '),
-  };
 }
 
 function cardProfileMcpTools(
@@ -158,8 +129,7 @@ async function ensureCardProfileMcpServer(
   current: HermesProfileState,
   selectedTools: string[],
 ): Promise<boolean> {
-  const expectedUrl = cardProfileMcpUrl();
-  const oauth = cardProfileMcpOauth();
+  const expectedUrl = resolveInternalMcpUrl();
   const listed = objectRecord(await request('mcp.servers.list', {
     profile: card.runtime.profile,
   }));
@@ -183,10 +153,11 @@ async function ensureCardProfileMcpServer(
     } catch {
       throw new Error(`hermes_profile_mcp_server_definition_mismatch:${card.runtime.profile}`);
     }
-    if (normalizedUrl !== expectedUrl || String(server.auth || '').trim() !== 'oauth') {
-      throw new Error(`hermes_profile_mcp_server_definition_mismatch:${card.runtime.profile}`);
-    }
-    if (!hasPersistedProjectContext) return false;
+    const definitionMatches = (
+      normalizedUrl === expectedUrl
+      && !String(server.auth || '').trim()
+    );
+    if (definitionMatches && !hasPersistedProjectContext) return false;
     const removed = objectRecord(await request('mcp.servers.remove', {
       profile: card.runtime.profile,
       name: CARD_PROFILE_MCP_SERVER,
@@ -202,8 +173,6 @@ async function ensureCardProfileMcpServer(
     name: CARD_PROFILE_MCP_SERVER,
     config: {
       url: expectedUrl,
-      auth: 'oauth',
-      oauth,
       enabled: true,
       strict_redirect_headers: true,
       headers: {

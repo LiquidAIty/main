@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   constructors: [] as Array<() => unknown>,
+  constructorOptions: [] as Array<Record<string, unknown>>,
   tsImport: vi.fn(),
 }));
 
@@ -61,8 +62,10 @@ beforeEach(() => {
   process.env.HERMES_GATEWAY_URL = 'ws://127.0.0.1:9119/api/ws';
   process.env.HERMES_DASHBOARD_SESSION_TOKEN = 'a'.repeat(64);
   mocks.constructors = [];
+  mocks.constructorOptions = [];
   mocks.tsImport.mockImplementation(async () => ({
-    JsonRpcGatewayClient: function GatewayClient() {
+    JsonRpcGatewayClient: function GatewayClient(options: Record<string, unknown>) {
+      mocks.constructorOptions.push(options);
       const next = mocks.constructors.shift();
       if (!next) throw new Error('unexpected_gateway_client');
       return next();
@@ -105,6 +108,18 @@ describe('Hermes Gateway lifecycle', () => {
     await expect(hermesGateway()).resolves.toBe(ready);
     await expect(hermesGateway()).resolves.toBe(ready);
     expect(mocks.tsImport).toHaveBeenCalledTimes(2);
+    expect(mocks.constructorOptions).toEqual([
+      expect.objectContaining({
+        requestIdPrefix: 'app',
+        requestTimeoutMs: 30 * 60_000,
+        heartbeatDeadlineMs: 5 * 60_000,
+      }),
+      expect.objectContaining({
+        requestIdPrefix: 'app',
+        requestTimeoutMs: 30 * 60_000,
+        heartbeatDeadlineMs: 5 * 60_000,
+      }),
+    ]);
   });
 
   it('does not let an older finalizer clear a replacement attempt', async () => {

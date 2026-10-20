@@ -3,7 +3,7 @@
 # Entity: ThinkGraph
 # Relationship: This file verifies bounded Engraphis candidates exclude the distinct recent Think before relevance ranking.
 # Entity: KnowGraph
-# Relationship: This file verifies Graphiti search hydrates only exact ABOUT-linked two-sided Knows for matched Entities.
+# Relationship: This file verifies Graphiti search hydrates only exact ABOUT-linked atomic Knows for matched Entities.
 # Entity: Jev Decisions
 # Relationship: This file verifies Jev ranks complete provider records against current context without rewarding mere recency.
 
@@ -25,13 +25,14 @@ def _know(identifier: str) -> dict:
     return {
         "graphitiEpisodeId": identifier,
         "graphitiEntityId": f"entity-{identifier}",
-        "idea": {
-            "body": f"For body {identifier}",
-            "citations": [{"url": f"https://example.test/for/{identifier}"}],
-        },
-        "counterIdea": {
-            "body": f"Against body {identifier}",
-            "citations": [{"url": f"https://example.test/against/{identifier}"}],
+        "schemaVersion": "know.v2",
+        "observation": f"Observation {identifier}",
+        "interpretation": f"Interpretation {identifier}",
+        "source": {
+            "url": f"https://example.test/source/{identifier}",
+            "title": f"Source {identifier}",
+            "publisher": "Example",
+            "evidence": f"Exact evidence {identifier}",
         },
         "ingestedAt": identifier,
     }
@@ -143,21 +144,32 @@ def test_jev_rates_provider_candidates_by_current_context_without_recency_reward
     assert "mere recency" in captured["questions"]["thinkgraph_relevance"][
         "instructions"
     ]
-    assert "two-sided Know" in captured["questions"]["knowgraph_relevance"][
+    assert "one verified observation" in captured["questions"]["knowgraph_relevance"][
         "instructions"
     ]
+    assert captured["state"]["candidates"]["knowgraph"][0]["source"]["title"] == "Source a"
     assert [item["relevanceRank"] for item in result["thinkgraph"]["records"]] == [1]
     assert result["thinkgraph"]["records"][0]["engraphisMemoryId"] == "b"
     assert result["knowgraph"]["records"][0]["graphitiEpisodeId"] == "b"
 
 
-def test_graphiti_provider_entity_search_hydrates_only_exact_about_knows(monkeypatch) -> None:
+def test_graphiti_entity_search_closes_each_python_rails_client(monkeypatch) -> None:
+    calls = 0
+    closes = 0
+
     async def search(name: str, arguments: dict):
+        nonlocal calls
+        calls += 1
         assert name == "search_nodes"
         assert arguments["max_nodes"] == 8
         return {"nodes": [{"uuid": "entity-a"}, {"uuid": "entity-b"}]}
 
+    async def close():
+        nonlocal closes
+        closes += 1
+
     monkeypatch.setattr(relevance.mcp_provider_operations, "call_graphiti_operation", search)
+    monkeypatch.setattr(relevance.mcp_graphiti_provider, "close_graphiti", close)
     monkeypatch.setattr(
         relevance,
         "read_recent_knowgraph_knows",
@@ -171,9 +183,9 @@ def test_graphiti_provider_entity_search_hydrates_only_exact_about_knows(monkeyp
         ],
     )
 
-    recent, candidates, metadata = relevance._provider_know_records(
-        "project-one", "current request",
-    )
+    first = relevance._provider_know_records("project-one", "current request")
+    second = relevance._provider_know_records("project-one", "current request")
+    recent, candidates, metadata = first
 
     assert recent[0]["graphitiEpisodeId"] == "recent"
     assert [item["graphitiEntityId"] for item in candidates] == ["entity-a", "entity-b"]
@@ -181,6 +193,9 @@ def test_graphiti_provider_entity_search_hydrates_only_exact_about_knows(monkeyp
         "retrieval": "graphiti_provider_entity_search",
         "matchedEntityCount": 2,
     }
+    assert second == first
+    assert calls == 2
+    assert closes == 2
 
 
 def test_provider_failure_is_honest_and_does_not_substitute_recent_as_relevant() -> None:

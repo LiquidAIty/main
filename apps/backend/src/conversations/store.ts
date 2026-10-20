@@ -46,6 +46,7 @@ export type ConversationMessageWrite = {
   content: string;
   speaker: ConversationParticipant;
   target?: ConversationParticipant;
+  status?: Extract<ConversationMessageStatus, 'pending' | 'complete' | 'error'>;
   providerContinuationRef?: string | null;
   providerMessageId?: string | null;
 };
@@ -217,13 +218,16 @@ export async function appendConversationTurn(input: {
         participantActivity('conversation_speaker', write.speaker),
         ...(write.target ? [participantActivity('conversation_target', write.target)] : []),
       ];
+      const status = write.status || 'complete';
       const result = await client.query(
         `INSERT INTO ${MESSAGES_TABLE} (
            project_id, conversation_id, message_id, role, content, status, seq,
            completed_at, provider_continuation_ref, provider_message_id,
            visible_activities
          )
-         VALUES ($1::uuid, $2, $3, $4, $5, 'complete', $6, NOW(), $7, $8, $9::jsonb)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7,
+                 CASE WHEN $6 = 'pending' THEN NULL ELSE NOW() END,
+                 $8, $9, $10::jsonb)
          RETURNING *`,
         [
           canonicalProjectId,
@@ -231,6 +235,7 @@ export async function appendConversationTurn(input: {
           write.messageId || `msg_${randomUUID()}`,
           write.role,
           write.content,
+          status,
           firstSequence + index,
           write.providerContinuationRef ?? null,
           write.providerMessageId ?? null,
@@ -240,6 +245,40 @@ export async function appendConversationTurn(input: {
       inserted.push(mapMessage(result.rows[0]));
     }
     return inserted;
+  });
+}
+
+export async function settleConversationMessage(input: {
+  projectId: string;
+  conversationId: string;
+  messageId: string;
+  providerMessageId: string;
+  status: Extract<ConversationMessageStatus, 'complete' | 'error'>;
+}): Promise<ConversationMessage> {
+  if (
+    !input.conversationId.trim()
+    || !MESSAGE_ID_REGEX.test(input.messageId)
+    || !input.providerMessageId.trim()
+  ) throw new Error('conversation_message_settlement_invalid');
+  return withTransaction(async (client) => {
+    const canonicalProjectId = await resolveProjectId(client, input.projectId);
+    const result = await client.query(
+      `UPDATE ${MESSAGES_TABLE}
+       SET status = $5, completed_at = NOW()
+       WHERE project_id = $1::uuid AND conversation_id = $2
+         AND message_id = $3 AND provider_message_id = $4
+         AND status = 'pending'
+       RETURNING *`,
+      [
+        canonicalProjectId,
+        input.conversationId,
+        input.messageId,
+        input.providerMessageId,
+        input.status,
+      ],
+    );
+    if (result.rows.length !== 1) throw new Error('conversation_message_settlement_mismatch');
+    return mapMessage(result.rows[0]);
   });
 }
 

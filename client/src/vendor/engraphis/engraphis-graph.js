@@ -6810,12 +6810,16 @@
       if (materialNode && materialNode.material_kind === 'joined-cyber') {
         const think = materialNode.material_blue || themeColors.material_blue || '#3979e8';
         const know = materialNode.material_orange || themeColors.material_orange || '#f2a64a';
+        const code = materialNode.material_green || '#63c79a';
         if (materialNode.material_role === 'THINK_MATERIAL') {
           fixedPalette = { cyan: think, blue: think, violet: think, magenta: think, teal: think };
           materialIdentity = think;
         } else if (materialNode.material_role === 'KNOW_MATERIAL') {
           fixedPalette = { cyan: know, blue: know, violet: know, magenta: know, teal: know };
           materialIdentity = know;
+        } else if (materialNode.material_role === 'CODE_MATERIAL') {
+          fixedPalette = { cyan: code, blue: code, violet: code, magenta: code, teal: code };
+          materialIdentity = code;
         } else if (materialNode.material_role === 'PAIRED_CYBER_MATERIAL') {
           fixedPalette = {
             cyan: think, blue: think, violet: mixColours(think, know, 0.5),

@@ -227,6 +227,40 @@ def test_staged_team_root_is_not_dispatchable_until_exact_native_activation(team
         assert events.count("team_root_activated") == 1
 
 
+def test_staged_team_root_binds_one_exact_saved_card_run(team_board):
+    from hermes_cli.kanban_team import (
+        bind_saved_card_run,
+        saved_card_run_binding,
+    )
+
+    context = {
+        "endpoint": "http://127.0.0.1:4000/api/card-turn",
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "conversation_id": "project-one",
+        "card_id": "card_knowgraph",
+        "profile": TEAM_PROFILE,
+    }
+    with kbc.connect_closing() as conn:
+        root = _new_team_root(conn, initial_status="blocked")
+        expected = {"context": context, "run_id": "req_team_one"}
+        assert bind_saved_card_run(
+            conn, root.id, context=context, run_id="req_team_one",
+        ) == expected
+        assert saved_card_run_binding(conn, root.id) == expected
+        assert bind_saved_card_run(
+            conn, root.id, context=context, run_id="req_team_one",
+        ) == expected
+        with pytest.raises(ValueError, match="binding_conflict"):
+            bind_saved_card_run(
+                conn, root.id, context=context, run_id="req_team_two",
+            )
+        assert len([
+            event for event in kb.list_events(conn, root.id)
+            if event.kind == "team_card_run_bound"
+        ]) == 1
+
+
 def test_kanban_create_uses_structure_without_a_public_workflow_knob(team_board, monkeypatch):
     from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
     from tools import kanban_tools
@@ -355,7 +389,12 @@ def test_team_decomposition_uses_same_profile_and_same_root_synthesis(team_board
         return FakeProcess()
 
     monkeypatch.setattr(dispatch, "_resolve_hermes_argv", lambda: ["hermes"])
-    monkeypatch.setattr(dispatch, "_resolve_worker_cli_toolsets", lambda _home: [])
+    toolset_calls = []
+    monkeypatch.setattr(
+        dispatch,
+        "_resolve_worker_cli_toolsets",
+        lambda _home, **kwargs: toolset_calls.append(kwargs) or [],
+    )
     monkeypatch.setattr(dispatch, "_restart_safe_worker_argv", lambda _task, command: command)
     monkeypatch.setattr(dispatch, "_open_worker_log", lambda _task, _board: open(os.devnull, "wb"))
     monkeypatch.setattr(dispatch, "_process_fingerprint", lambda _pid: 123.0)
@@ -366,6 +405,8 @@ def test_team_decomposition_uses_same_profile_and_same_root_synthesis(team_board
 
     dispatch._default_spawn(claimed_root, str(team_board.parent))
     assert captured["env"]["HERMES_KANBAN_TEAM_WORKER"] == "1"
+    assert captured["env"]["HERMES_KANBAN_TEAM_STEP"] == TEAM_SYNTHESIS_STEP
+    assert toolset_calls == [{"allow_mcp": False}]
     assert captured["cmd"][captured["cmd"].index("-p") + 1] == TEAM_PROFILE
     assert captured["cmd"][captured["cmd"].index("-m") + 1] == PARENT_MODEL
 

@@ -2638,7 +2638,11 @@ def _worker_profile_scope(hermes_home: str, *, bind_home: bool = True):
             reset_hermes_home_override(home_token)
 
 
-def _resolve_worker_cli_toolsets(hermes_home: Optional[str]) -> Optional[list[str]]:
+def _resolve_worker_cli_toolsets(
+    hermes_home: Optional[str],
+    *,
+    allow_mcp: bool = True,
+) -> Optional[list[str]]:
     """Return the assigned profile's effective CLI toolsets for a worker.
 
     Resolved at dispatch time and passed as an explicit ``--toolsets`` pin so
@@ -2656,6 +2660,15 @@ def _resolve_worker_cli_toolsets(hermes_home: Optional[str]) -> Optional[list[st
         with _worker_profile_scope(hermes_home):
             cfg = load_config()
             toolsets = sorted(_get_platform_tools(cfg, "cli"))
+            if not allow_mcp:
+                from hermes_cli.tools_config import enabled_mcp_server_names
+
+                configured_mcp = enabled_mcp_server_names(cfg)
+                toolsets = [
+                    name for name in toolsets
+                    if name not in configured_mcp and name != "no_mcp"
+                ]
+                toolsets.append("no_mcp")
         return toolsets or None
     except Exception as exc:
         _kb._log.debug(
@@ -2694,7 +2707,13 @@ def _retag_legacy_worker_sessions(workspaces_root_path: str) -> None:
         _kb._log.debug("kanban worker: legacy session retag skipped (%s)", exc)
 
 
-def _worker_argv(task: Task, profile_arg: str, hermes_home: Optional[str]) -> list[str]:
+def _worker_argv(
+    task: Task,
+    profile_arg: str,
+    hermes_home: Optional[str],
+    *,
+    allow_mcp: bool = True,
+) -> list[str]:
     """Build the ``hermes -p <profile> --cli ... chat -q ...`` worker command."""
     cmd = [
         *_resolve_hermes_argv(),
@@ -2722,7 +2741,10 @@ def _worker_argv(task: Task, profile_arg: str, hermes_home: Optional[str]) -> li
     # model at a different depth.
     if task.reasoning_effort:
         cmd.extend(["--reasoning", task.reasoning_effort])
-    worker_toolsets = _resolve_worker_cli_toolsets(hermes_home)
+    worker_toolsets = _resolve_worker_cli_toolsets(
+        hermes_home,
+        allow_mcp=allow_mcp,
+    )
     if worker_toolsets:
         cmd.extend(["--toolsets", ",".join(worker_toolsets)])
     cmd.extend(["chat", "-q", f"work kanban task {task.id}"])
@@ -2884,10 +2906,34 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
     # kanban_comment reads HERMES_PROFILE for its default author; `-p` alone
     # doesn't set the env var.
     env["HERMES_PROFILE"] = profile_arg
-    from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+    from hermes_cli.kanban_team import (
+        TEAM_SYNTHESIS_STEP,
+        TEAM_WORKFLOW_ID,
+        saved_card_run_binding,
+    )
 
+    team_card_binding = None
     if task.workflow_template_id == TEAM_WORKFLOW_ID:
         env["HERMES_KANBAN_TEAM_WORKER"] = "1"
+        env["HERMES_KANBAN_TEAM_STEP"] = str(task.current_step_key or "")
+        if task.current_step_key == TEAM_SYNTHESIS_STEP:
+            from hermes_cli import kanban_db_connect as _kbc
+
+            with _kbc.connect_closing(board=board) as connection:
+                team_card_binding = saved_card_run_binding(connection, task.id)
+            if team_card_binding is not None:
+                from tui_gateway.saved_card_turn import saved_card_turn_environment
+
+                env.update(saved_card_turn_environment(
+                    team_card_binding["context"],
+                    team_card_binding["run_id"],
+                ))
+                internal_secret = str(
+                    os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET") or ""
+                ).strip()
+                if len(internal_secret) < 32:
+                    raise RuntimeError("team_card_runtime_secret_unavailable")
+                env["LIQUIDAITY_INTERNAL_MCP_SECRET"] = internal_secret
     # This is the grant boundary: the dispatcher assigned this new worker's task.
     from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER
     env.pop(DELEGATED_CHILD_ENV_MARKER, None)
@@ -2895,7 +2941,18 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
     # older hermes builds on PATH that predate the flag's precedence.
     env.pop("HERMES_TUI", None)
 
-    cmd = _worker_argv(task, profile_arg, env.get("HERMES_HOME"))
+    cmd = _worker_argv(
+        task,
+        profile_arg,
+        env.get("HERMES_HOME"),
+        allow_mcp=(
+            task.workflow_template_id != TEAM_WORKFLOW_ID
+            or (
+                task.current_step_key == TEAM_SYNTHESIS_STEP
+                and team_card_binding is not None
+            )
+        ),
+    )
     # A worker spawned by a managed systemd gateway must leave the gateway's
     # cgroup before startup; otherwise restarting the service kills the worker
     # that is performing the handoff.

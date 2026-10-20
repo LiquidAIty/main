@@ -15,6 +15,15 @@
 .knowledge-authority-network { position:absolute; inset:0; z-index:1; }
 .knowledge-authority-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; color:#7a7a8c; pointer-events:none; }
 .knowledge-authority-controls { width:100%; min-width:0; overflow:auto; display:flex; flex-direction:column; gap:12px; }
+.graph-layer-controls { display:grid; gap:9px; margin:0; padding:10px; border:1px solid rgba(167,176,186,.22); border-radius:10px; background:rgba(11,20,24,.72); }
+.graph-layer-controls legend { padding:0 5px; color:#a7b0ba; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+.graph-layer-legend { display:flex; flex-wrap:wrap; gap:6px; }
+.graph-layer-legend button { display:inline-flex; align-items:center; gap:6px; min-width:0; padding:5px 8px; border:1px solid rgba(167,176,186,.22); border-radius:999px; background:rgba(8,15,20,.76); color:#9dabb0; font-size:11px; }
+.graph-layer-legend button[aria-pressed="true"] { border-color:rgba(220,232,232,.48); background:rgba(220,232,232,.1); color:#f5f7fa; }
+.graph-layer-legend button small { color:inherit; font-size:9px; font-variant-numeric:tabular-nums; opacity:.72; }
+.graph-layer-swatch { width:8px; height:8px; flex:0 0 8px; border-radius:50%; box-shadow:0 0 0 1px rgba(255,255,255,.2); }
+.graph-layer-scope { color:#85949a; font-size:10px; line-height:1.4; }
+.graph-layer-controls > button { justify-self:start; padding:5px 8px; border:1px solid rgba(167,176,186,.22); border-radius:7px; background:rgba(8,15,20,.76); font-size:11px; }
 .knowledge-authority-controls section { padding:12px; border:1px solid rgba(167,176,186,.22); border-radius:10px; background:rgba(11,20,24,.72); }
 .knowledge-authority-controls h3 { margin:0 0 12px; color:#7a7a8c; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.8px; }
 .knowledge-authority-controls h3 span { float:right; color:#5f5f70; font-weight:400; }

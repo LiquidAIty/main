@@ -53,13 +53,16 @@ profile, or historical screenshot cannot establish one Project's current configu
   default packet containing one most Relevant and one distinct most Recent record from each authority.
   Engraphis and Graphiti produce provider candidates; Jev alone ranks them. Relevant is presented first and
   outweighs recency, preventing the last exchange from becoming a repeating context loop.
-- The **Think** and **Know** color-key labels select isolated provider layouts and an empty-canvas click
-  returns the fixed combined view. Graph settings remain in the detailed inspector.
+- One unified canvas shows **Think** in blue and **Know** in orange by default. The detailed graph-design
+  inspector owns the small color-key visibility controls plus the deliberate default reset; an empty-canvas
+  click clears selection and returns to that combined visible-layer view without changing visibility.
 - Entity radius scales linearly from least to most attached Think-and-Know words. Jev relationship
   probability remains movement/centrality input and is not replaced by word count.
-- The existing Graphs workspace now has an explicit opt-in **Code** view beside the unchanged joined
-  Think/Know view. It reuses the same Engraphis renderer and Inspector. Structural File/Symbol identities
-  and edges come only from the official CBM provider through the persisted Builder Card's actual grants;
+- The existing Graphs workspace now has an opt-in green **Code** visual layer on the same joined Think/Know
+  canvas. Code remains hidden by default and loads only after its inspector control is enabled. It reuses the
+  same Engraphis renderer and Inspector and is labeled Repository-scoped until real open-Project filtering is
+  proven. Structural File/Symbol identities and edges come only from the official CBM provider through the
+  persisted Builder Card's actual grants;
   Feature membership and each file's Relationship statement come from bounded CBM reads of the inline
   source comments. The browser cannot submit a tool, raw query, provider, MCP URL, Card or deck override.
   File selection requests a bounded structural expansion and Symbol source loads only after an explicit
@@ -67,9 +70,11 @@ profile, or historical screenshot cannot establish one Project's current configu
 
 ### ThinkGraph
 
-The completed-pair Python preparation and settlement rails remain intact, but there is currently no
-LiquidAIty TypeScript agent-execution caller. Automatic User/Main-pair intake is therefore not current
-product behavior. A later Hermes saved-Card integration requires a separate approved implementation.
+Each successfully completed ordinary Main Run now supplies exactly one completed exchange to ThinkGraph.
+PostgreSQL retains the ordered user messages, the Run observation retains their ordered message IDs, the exact
+authorized saved ThinkGraph Card performs structured extraction through Hermes, and Python rails remains the
+sole preparation and settlement owner. An in-flight user addition steers the active Main Run invisibly and does
+not create a second Run or a second completed pair.
 
 ### KnowGraph
 
@@ -77,24 +82,37 @@ KnowGraph has Hermes Web plus its saved Graphiti read/write corridor. A delibera
 framing, not evidence. Useful sourced findings enter Graphiti through Graphiti's queued
 `add_memory_to_entity`, which binds the episode to one exact Entity through `ABOUT`, leaves extracted
 `MENTIONS` independent, updates Graphiti communities by default, and may associate the continuing research
-thread with one Saga. One Know is one atomic `know.v1` episode with a cited supporting idea and a cited
-counter idea; both compact bodies and both citation sets are mandatory, while each side may place depth
-behind **More**. Python rails validates and encodes that structure before the unchanged Graphiti queue.
-One-sided episodes are not projected as Knows. The source-default KnowGraph Card uses Sol; ThinkGraph
-remains Luna. Queue acceptance does not prove materialization. KnowGraph is not Team-enabled and has no
-current Team integration.
+thread with one Saga. One current Know is one atomic `know.v2` episode with one verified source document,
+one exact evidence passage, one self-contained observation, one separate bounded interpretation and optional
+direction relative to an explicit proposition. Supporting-only, challenging-only and neutral findings are
+valid. Distinct sources remain distinct Knows, including several attached to the same Entity; deterministic
+identity prevents repeated copies of the same source-backed observation. Historical paired `know.v1`
+records remain readable as explicit legacy records. Python rails verifies document identity, redirects,
+dates and exact passage presence before encoding the current structure for the unchanged Graphiti queue.
+The source-default KnowGraph Card uses Sol; ThinkGraph remains Luna. Queue acceptance does not prove
+materialization.
+
+KnowGraph reuses Hermes' existing `auto-team-v1` capability for substantial research. Main still consults
+the saved KnowGraph Card across its exact orange authority. Candidate workers inherit the saved Web research
+surface but no profile MCP connection or graph-write capability. The same saved KnowGraph root reviews,
+deduplicates and persists accepted findings during synthesis with its exact saved Card Run context and tool
+ceiling. This does not invoke the separate Team Card, change Team's Magnetic wildcard role, or create another
+scheduler, task store or worker pool.
 
 ### Execution
 
 - Ordinary Hermes delegation, Hermes Team/Kanban, and Magnetic are three different mechanisms.
 - Main and every non-Magnetic saved Hermes Card have one stable profile plus one hidden session per
   Project. The application supplies only exact profile/session/roster context; Hermes owns inference,
-  queueing, direct Bot delivery, transcript persistence, and each Card terminal.
+  direct Bot delivery, transcript persistence, and each Card terminal. LiquidAIty never requests or accepts a
+  busy-session prompt queue: an additional active-Main message uses Hermes steering inside the same Run.
 - Source now prepares one receiving-Card Run and canonical `in.idf` before Main, terminal, and orange
   recipient inference. Direct `@Card` delivery observes the recipient session without a second Main
   synthesis; consultations continue the same open Main Run from Hermes' real completion notification.
-- Saved application tools are exact include-filtered profile MCP tools. AutoTools can narrow that loaded
-  set for one turn but cannot grant a tool. The retired application per-turn callback tool protocol is absent.
+- Each Card's saved Hermes Tools section controls ordinary Hermes toolsets independently from its saved Card
+  Tools registry. Saved application tools are exact include-filtered profile MCP tools; an empty ordinary-Hermes
+  selection does not erase the enabled profile MCP server. AutoTools can narrow that loaded set for one turn but
+  cannot grant a tool. The retired application per-turn callback tool protocol is absent.
 - Valid enabled Card Scripts execute through Hermes' existing child Python runner and exact profile-loaded
   grants; blank or invalid source is inert. The owner's later general Hooks design remains a separate boundary.
 - Only saved Card `card_team` receives Hermes `task_mode: team`.
@@ -110,12 +128,10 @@ These are source/documentation gaps, not permission to repair them during this d
 1. Main's approved quick-Web direction is not present in its source-default toolsets.
 2. Main's source-default prompt describes ThinkGraph/KnowGraph use, but the server's default new-Project
    topology does not attach those orange edges.
-3. Automatic completed User/Main-pair ThinkGraph capture remains unconnected. The owner deferred its
-   saved per-Project “Capture Main turns automatically” control and Hermes caller to a later change.
-4. Quick-Web evidence handoff to durable KnowGraph correlation is not implemented.
-5. Existing saved Projects remain governed by their persisted Card revisions; the new source-default
+3. Quick-Web evidence handoff to durable KnowGraph correlation is not implemented.
+4. Existing saved Projects remain governed by their persisted Card revisions; the new source-default
    prompts, grants, and KnowGraph model do not silently overwrite saved authority.
-6. The 2026-10-14 loaded pass proved ordinary Main, Main consultation, direct Builder/ThinkGraph/KnowGraph/
+5. The 2026-10-14 loaded pass proved ordinary Main, Main consultation, direct Builder/ThinkGraph/KnowGraph/
    WorldView/Trader delivery, refresh retention, and the Builder terminal. The 2026-10-15 cleanup passed a
    fresh loaded health/source check and graph-inspector visual regression, but did not repeat model turns.
    Interactive profile OAuth, enabled Card Script execution/failure recovery, Team, Magnetic, graph writes,
@@ -123,7 +139,7 @@ These are source/documentation gaps, not permission to repair them during this d
 7. The 2026-10-17 CodeGraph implementation passed its focused provider, transport, projection, hook,
    renderer, and shared-Inspector checks. The subsequently authorized daemon recovery and canonical
    reload succeeded: the MCP host froze 57 generated/published/unique tools with no unavailable family,
-   and the loaded Code view rendered 51 real Features and 374 Files with no `read_failed` state or retired
+   and the loaded Code projection rendered 51 real Features and 374 Files with no `read_failed` state or retired
    Feature sorter. Main and Builder then completed one real turn each and their outer Runs read back.
    CodeGraph freshness still reports `unverified`, and final owner visual acceptance remains separate.
 
@@ -132,8 +148,9 @@ These are source/documentation gaps, not permission to repair them during this d
 Current source has one connected path from the restored UI through saved Card authority, one Project
 session per Card, one IDF/Run lifecycle, Hermes profile tools, orange Bot delivery, blue Magnetic
 authority, and each non-Main Card terminal. The old combined-conversation runtime, direct target executor,
-per-turn application tool callback, transport selector, fake status/limit controls, Card-runtime MCP
-principal, and their stale tests are absent from the live application path.
+per-turn application tool callback, transport selector, fake status/limit controls, generic Card-tools host,
+and their stale tests are absent from the live application path. The reserved saved-profile `liquidaity`
+connection instead uses one short-lived, exact active-Run internal principal against the official MCP host.
 
 The same loaded pass recorded the real Main/Bot/Builder terminal cases in `turn.md`. It did not prove
 OAuth-backed tool execution, an enabled Card Script, Team, Magnetic, graph writes, external clients, or
@@ -158,10 +175,18 @@ The bounded publish-preparation pass now has the following separate results:
   or saved-Card mutation was applied to bypass persisted authority.
 - Fresh loaded saved-Card turns completed for Main, Builder, and ThinkGraph. Direct Builder execution
   produced one correlated `message_agent` delivery, its own completed child Run, primary-source research,
-  and a persisted Builder reply. Trader routing and its child Run completed with an exact unavailable-tool
-  refusal. WorldView routing reached its real child session but failed on
-  `turn_mcp_tool_unavailable:mcp__liquidaity__worldview_action`; both the child and outer Main Runs settled
-  failed. No trade, graph write, globe action, or saved configuration change was performed.
+  and a persisted Builder reply. The saved-profile MCP repair moved every reserved `liquidaity` connection
+  from the public OAuth resource to the internal loopback host without changing Card grants. Ten tool-bearing
+  profiles read back `credentialStatus=not_required` with their exact include filters, while Builder retained
+  its saved web, browser, terminal, file, code-execution, and vision Hermes toolsets. A fresh direct Trader
+  child Run emitted exactly one real `mcp__liquidaity__forecast_market_bars` call for RKLB and returned the
+  honest Alpaca `provider_unconfigured` result. Its receipt recorded one tool call; Trading state retained no
+  jobs or positions, execution remained unapproved, and no fallback, trade, decision, graph write, or saved-Card
+  mutation occurred. Earlier unavailable-tool Trader and WorldView observations remain historical failures,
+  not current tool-transport acceptance.
+- Canonical `npm run dev:fresh` now starts and health-waits the existing root PostgreSQL/AGE and Neo4j
+  Compose services, then withholds Vite until Python rails and the complete MCP catalog are ready. Preview no
+  longer lands on `conversation_history_read_failed` during a normal cold start.
 - A pre-session Hermes heartbeat timeout exposed an outer-Run settlement defect. The failed test Run was
   settled explicitly, and current source now omits nonexistent provider evidence before a session binding;
   the focused regression and the complete root TypeScript suite pass.
@@ -176,8 +201,8 @@ The bounded publish-preparation pass now has the following separate results:
   `error` because live UAP/NUFORC and global FIRMS have never fetched successfully; other stale/low-volume
   feeds remain yellow. Container health is green, but full data-plane health is not.
 
-Remaining publish TODOs are explicit: refresh/reconnect the development plugin; complete saved-profile MCP
-OAuth for Trader and WorldView; run provider-opted-in Oracle read/write/persistence acceptance only after the
+Remaining publish TODOs are explicit: refresh/reconnect the development plugin only for external-client
+acceptance; run provider-opted-in Oracle read/write/persistence acceptance only after the
 operator enables MKT and authorizes test ledger writes; resolve the optional-feed SLO failures; rerun the
 frontend image build against the final dev-only lockfile after the last clean `npm ci` attempt stalled; reduce
 the five high-severity dev-only Next ESLint advisories when an upstream-compatible fix exists; complete
@@ -217,14 +242,13 @@ positive evidence is recorded in `turn.md`. No additional CBM lifecycle mutation
 Any new CBM restart, repair, reindex, cache access, project mutation, or configuration change still requires
 a new exact owner instruction.
 
-## Next graph boundary — deferred
+## Completed Main capture boundary
 
-The owner has named, but deferred, a saved ThinkGraph control labeled “Capture Main turns automatically.”
-When off, only explicitly selected data may be sent to ThinkGraph. A later implementation must use the
-real saved ThinkGraph Card through Hermes and the existing completed-pair Python preparation/settlement
-owners; it may not restore the deleted TypeScript child-Card executor. No graph optimization, automatic
-caller, time-sort interaction, entitlement, retention/billing policy, reset, report surface, or quick-Web
-handoff is part of this recovery.
+Automatic completed-Main capture uses the persisted Main-to-ThinkGraph authority, the current repo-owned
+Hermes adapter, the exact saved ThinkGraph Card, and the existing Python preparation/settlement owners. It has
+no candidate queue, approval/shadow graph, alternate writer, direct public target runner, or UI-owned semantic
+step. Graph optimization, time-sort interaction, entitlement, retention/billing policy, reset, report surface,
+and quick-Web evidence handoff remain outside this boundary.
 
 ## Proof tiers still separate
 
@@ -239,3 +263,46 @@ handoff is part of this recovery.
 
 A lower tier never proves a higher one. No Magnetic mission, graph write, trading action, or service
 restart is authorized by this plan alone.
+
+## NRGSIM — first modeling checkpoint in progress
+
+The 2026-10-20 owner PromptSpec places the general modeling app before simulation comparison:
+New Building → saved modeling Card → viewport/selection → human and agent property edits → save/reopen.
+OpenStudio is the engineering authority. `agent-products/nrgsim/` owns application references and the
+derived Pascal display; the upstream SDK and MCP are unchanged.
+
+Implemented source joins one serialized, Project-owned OpenStudio MCP session to native-name Card
+tools and a Project-authenticated inspector route. The first bounded inspector edits are Thermal Zone
+multiplier and Lights Definition watts per Space floor area. Other object assignments remain inspectable;
+shared Material/Construction local exceptions are not exposed as direct edits.
+
+Executed direct-MCP proof created a one-story SDK starter office with five Spaces, five Thermal Zones
+and 34 selectable Surface/SubSurface handles. Lighting changed from 10.7639104167097 to 8.0, then
+7.5 W/m²; the saved/reopened OSM retained 7.5 W/m². This is a development probe, not an AI or browser
+acceptance claim and not an Appendix G baseline. The host loaded the OpenStudio catalog; its internal
+domain route rejects missing process authority and its public route rejects an unowned Project.
+
+The first setup attempt, Run `req_987e77dccd6c46f9`, was incorrectly addressed to the connector's active
+Trading Project. It returned an empty `done/end` stream and created no Modeler Card or building there.
+The owner explicitly corrected the scope: use only **Building Energy Modeler**, created through the
+normal Project API as `38bd1429-e8e1-47ff-afef-d940aa8e8040`. Its default six system Cards contain none
+of Trader, Quant, Analyst, Shadowbroker or WorldSignals. The full saved Trading deck hash and revision
+were identical immediately before/after that Project creation; that does not claim its earlier shared
+development-stack restart was uninterrupted. Do not stop Trading Runs or restart shared services while
+the owner is actively working in Trading.
+
+Next: configure and prove the saved modeling Card in Building Energy Modeler only, coordinate any
+necessary shared-service reload, then finish the browser interaction through save/reopen. The latest
+Python catalog/display guards are not all proven loaded. Browser attachment/visual acceptance remains
+outstanding. Do not mark checkpoint A complete or claim a ready-to-use Project yet. Baseline/proposed
+comparison follows only after modeling acceptance and verification of the supported Appendix G
+transformation and edition.
+
+The owner explicitly deferred activation while using Trading. No automatic reload or later activation
+is authorized. Building Energy Modeler revision `81b95103-765c-4590-8727-8166241488ad` now has saved
+Main → ThinkGraph, Main → KnowGraph and Main → Builder flow edges. No agent was executed by that save.
+There is no Modeler Card yet: the loaded Card editor returned zero OpenStudio tools, so creating a
+correctly granted Modeler and its direct Main flow waits for the approved reload window. Modeler is
+not assigned to Magnetic; the factory's unrelated Team → Magnetic edge was preserved and remains
+unused by NRGSIM. The modeling launcher is gated by the current Project's authorized modeling Card,
+not added unconditionally to Trading or every other Project.

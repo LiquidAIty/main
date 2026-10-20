@@ -14,6 +14,8 @@ same database.
 from __future__ import annotations
 
 import logging
+import json
+import re
 import sqlite3
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -36,6 +38,8 @@ TEAM_WORKFLOW_ID = "auto-team-v1"
 TEAM_DECOMPOSITION_STEP = "decomposition"
 TEAM_WORKER_STEP = "worker"
 TEAM_SYNTHESIS_STEP = "synthesis"
+TEAM_CARD_RUN_EVENT = "team_card_run_bound"
+_CARD_RUN_ID = re.compile(r"^[A-Za-z0-9:_-]{1,128}$")
 
 
 def _profile_config(
@@ -336,6 +340,92 @@ def activate_staged_team_root(conn: sqlite3.Connection, task_id: str) -> bool:
             },
         )
     return True
+
+
+def bind_saved_card_run(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    context: Mapping[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    """Bind one staged Team root to an already prepared saved-Card Run.
+
+    The binding is structural identity only; the existing saved-Card turn
+    authenticator remains the sole source of MCP authorization.
+    """
+
+    from tui_gateway.saved_card_turn import normalize_card_turn_context
+
+    normalized_context = normalize_card_turn_context(dict(context))
+    exact_run_id = str(run_id or "").strip()
+    if normalized_context is None or not _CARD_RUN_ID.fullmatch(exact_run_id):
+        raise ValueError("team_card_run_binding_invalid")
+    binding = {"context": normalized_context, "run_id": exact_run_id}
+    with kb.write_txn(conn):
+        row = conn.execute(
+            "SELECT status, workflow_template_id, current_step_key FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if (
+            row is None
+            or row["status"] != "blocked"
+            or row["workflow_template_id"] != TEAM_WORKFLOW_ID
+            or row["current_step_key"] != TEAM_DECOMPOSITION_STEP
+        ):
+            raise ValueError("team_card_run_root_not_staged")
+        existing = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? AND kind = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id, TEAM_CARD_RUN_EVENT),
+        ).fetchone()
+        if existing is not None:
+            try:
+                prior = json.loads(existing["payload"] or "{}")
+            except (TypeError, ValueError):
+                prior = {}
+            if prior != binding:
+                raise ValueError("team_card_run_binding_conflict")
+            return binding
+        kb._append_event(conn, task_id, TEAM_CARD_RUN_EVENT, binding)
+    return binding
+
+
+def saved_card_run_binding(
+    conn: sqlite3.Connection,
+    task_id: str,
+) -> dict[str, Any] | None:
+    """Read one exact saved-Card binding from a Team root, never a child."""
+
+    row = conn.execute(
+        "SELECT workflow_template_id, current_step_key FROM tasks WHERE id = ?",
+        (task_id,),
+    ).fetchone()
+    if (
+        row is None
+        or row["workflow_template_id"] != TEAM_WORKFLOW_ID
+        or row["current_step_key"] not in {TEAM_DECOMPOSITION_STEP, TEAM_SYNTHESIS_STEP}
+    ):
+        return None
+    event = conn.execute(
+        "SELECT payload FROM task_events WHERE task_id = ? AND kind = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (task_id, TEAM_CARD_RUN_EVENT),
+    ).fetchone()
+    if event is None:
+        return None
+    try:
+        payload = json.loads(event["payload"] or "{}")
+    except (TypeError, ValueError):
+        return None
+    context = payload.get("context") if isinstance(payload, dict) else None
+    run_id = str(payload.get("run_id") or "") if isinstance(payload, dict) else ""
+    from tui_gateway.saved_card_turn import normalize_card_turn_context
+
+    normalized_context = normalize_card_turn_context(context)
+    if normalized_context is None or not _CARD_RUN_ID.fullmatch(run_id):
+        return None
+    return {"context": normalized_context, "run_id": run_id}
 
 
 def record_decomposition_failure(

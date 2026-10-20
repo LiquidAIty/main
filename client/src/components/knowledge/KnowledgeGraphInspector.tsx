@@ -6,7 +6,7 @@
  * Relationship: This file presents bounded Think summaries, details, relationships, timestamps, probabilities, and removal actions for the exact selected Engraphis Entity.
  *
  * Entity: KnowGraph
- * Relationship: This file presents bounded two-sided Knows and safe HTTPS citations for the exact selected Graphiti Entity without rendering citations as graph nodes.
+ * Relationship: This file presents bounded atomic Knows, explicit historical paired records, and safe HTTPS provenance for the exact selected Graphiti Entity without rendering sources as graph nodes.
  *
  * Entity: CodeGraph
  * Relationship: This file presents exact CBM File/Symbol identity, source-owned Feature contributions, bounded structural neighbors, and explicitly loaded source without creating another Inspector.
@@ -61,7 +61,11 @@ function sourcePathLabel(url: URL): string {
 }
 
 export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[] {
-  const rawUrls: unknown[] = [candidate.source_url, candidate.url];
+  const resolvedUrl = candidate.resolvedUrl ?? candidate.resolved_url;
+  const rawUrls: unknown[] = [
+    candidate.source_url,
+    resolvedUrl || candidate.url,
+  ];
   const described = candidate.source_description ?? candidate.sourceDescription;
   if (Array.isArray(described)) rawUrls.push(...described);
   else if (typeof described === 'string' && described.trim()) {
@@ -83,6 +87,7 @@ export function sourceLinks(candidate: Record<string, unknown>): SourceLinkView[
   const fingerprint = validUrls.size === 1
     ? String(
       candidate.content_fingerprint
+      || candidate.contentFingerprint
       || candidate.source_fingerprint
       || candidate.document_fingerprint
       || '',
@@ -218,6 +223,11 @@ function uniqueRecordSources(records: KnowInspectorRecord[]): SourceLinkView[] {
   const sources = new Map<string, SourceLinkView>();
   for (const record of records) {
     const candidates: Record<string, unknown>[] = [record.episode];
+    for (const possibleSource of [record.know.source, record.episode.source]) {
+      if (possibleSource && typeof possibleSource === 'object' && !Array.isArray(possibleSource)) {
+        candidates.push(possibleSource as Record<string, unknown>);
+      }
+    }
     for (const sideKey of ['idea', 'counterIdea'] as const) {
       const side = record.episode[sideKey];
       if (!side || typeof side !== 'object' || Array.isArray(side)) continue;
@@ -245,7 +255,7 @@ function KnowSide({
   label,
   side,
 }: {
-  label: 'For' | 'Against';
+  label: 'Supporting record' | 'Counter record';
   side: Record<string, unknown>;
 }) {
   const body = typeof side.body === 'string' ? side.body.trim() : '';
@@ -293,13 +303,65 @@ export function KnowGraphKnow({
   onRemove?: () => void;
 }) {
   const { episodeId, know } = record;
-  const entryTime = graphEntryTime(know.observedAt);
-  const sourceDate = graphEntryTime(know.sourceDate);
+  const atomic = know.schemaVersion === 'know.v2'
+    || (typeof know.observation === 'string' && know.observation.trim());
+  const source = know.source
+    && typeof know.source === 'object'
+    && !Array.isArray(know.source)
+    ? know.source as Record<string, unknown>
+    : {};
+  const direction = know.direction
+    && typeof know.direction === 'object'
+    && !Array.isArray(know.direction)
+    ? know.direction as Record<string, unknown>
+    : {};
+  const observation = typeof know.observation === 'string' ? know.observation.trim() : '';
+  const interpretation = typeof know.interpretation === 'string'
+    ? know.interpretation.trim()
+    : '';
+  const evidence = typeof source.evidence === 'string' ? source.evidence.trim() : '';
+  const entryTime = graphEntryTime(source.retrievedAt ?? know.observedAt);
+  const sourceDate = graphEntryTime(
+    source.eventAt ?? source.publishedAt ?? know.sourceDate,
+  );
+  const links = sourceLinks(source);
+  const relation = typeof direction.relation === 'string'
+    ? direction.relation.trim()
+    : '';
+  const proposition = typeof direction.proposition === 'string'
+    ? direction.proposition.trim()
+    : '';
   return <section className="graph-note graph-know" data-episode-id={episodeId}>
     <div className="graph-think-heading"><h5>{String(know.title || heading)}</h5></div>
-    <KnowSide label="For" side={know.idea || {}} />
-    <KnowSide label="Against" side={know.counterIdea || {}} />
-    {entryTime ? <p className="graph-record-time"><span>Observed</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
+    {atomic ? <>
+      {observation ? <div className="graph-know-finding">
+        <strong>Finding</strong>
+        <p>{observation}</p>
+      </div> : null}
+      {interpretation ? <div className="graph-know-interpretation">
+        <strong>Interpretation</strong>
+        <p>{interpretation}</p>
+      </div> : null}
+      {relation && proposition ? <p className="graph-know-direction">
+        <strong>{relation.charAt(0).toUpperCase() + relation.slice(1)}</strong>
+        {': '}{proposition}
+      </p> : null}
+      {links.length ? <ul className="graph-know-citations">
+        {links.map(link => <li key={link.url}>
+          <a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
+          <small>{link.publisher}</small>
+        </li>)}
+      </ul> : null}
+      {evidence ? <details>
+        <summary>Source passage</summary>
+        <blockquote>{evidence}</blockquote>
+      </details> : null}
+    </> : <>
+      <p className="graph-record-time">Historical paired Know</p>
+      <KnowSide label="Supporting record" side={know.idea || {}} />
+      <KnowSide label="Counter record" side={know.counterIdea || {}} />
+    </>}
+    {entryTime ? <p className="graph-record-time"><span>Retrieved</span>{' '}<time dateTime={entryTime.dateTime}>{entryTime.label}</time></p> : null}
     {sourceDate ? <p className="graph-record-time"><span>Source date</span>{' '}<time dateTime={sourceDate.dateTime}>{sourceDate.label}</time></p> : null}
     {onRemove ? <button
       type="button"

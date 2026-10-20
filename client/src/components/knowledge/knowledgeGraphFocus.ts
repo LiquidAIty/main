@@ -172,8 +172,22 @@ export function boundedProviderDescription(node: GraphProjectionNode): string | 
       && !Array.isArray(record.counterIdea)
       ? record.counterIdea as Record<string, unknown>
       : {};
+    const source = record.source
+      && typeof record.source === 'object'
+      && !Array.isArray(record.source)
+      ? record.source as Record<string, unknown>
+      : {};
+    const direction = record.direction
+      && typeof record.direction === 'object'
+      && !Array.isArray(record.direction)
+      ? record.direction as Record<string, unknown>
+      : {};
     return [
       record.summary,
+      record.observation,
+      record.interpretation,
+      source.evidence,
+      direction.proposition,
       idea.body,
       idea.detail,
       counterIdea.body,

@@ -69,6 +69,12 @@ _REQUESTED_HERMES_PROFILE: ContextVar[str] = ContextVar(
 _REQUESTED_PROJECT_ID: ContextVar[str] = ContextVar(
     "requested_project_id", default="",
 )
+_REQUESTED_DECK_ID: ContextVar[str] = ContextVar(
+    "requested_deck_id", default="",
+)
+_REQUESTED_CONVERSATION_ID: ContextVar[str] = ContextVar(
+    "requested_conversation_id", default="",
+)
 _REQUESTED_RUN_ID: ContextVar[str] = ContextVar(
     "requested_run_id", default="",
 )
@@ -96,6 +102,30 @@ def reset_requested_project_id(token: Token[str]) -> None:
 
 def requested_project_id() -> str:
     return _REQUESTED_PROJECT_ID.get()
+
+
+def set_requested_deck_id(deck_id: str) -> Token[str]:
+    return _REQUESTED_DECK_ID.set(str(deck_id or "").strip())
+
+
+def reset_requested_deck_id(token: Token[str]) -> None:
+    _REQUESTED_DECK_ID.reset(token)
+
+
+def requested_deck_id() -> str:
+    return _REQUESTED_DECK_ID.get()
+
+
+def set_requested_conversation_id(conversation_id: str) -> Token[str]:
+    return _REQUESTED_CONVERSATION_ID.set(str(conversation_id or "").strip())
+
+
+def reset_requested_conversation_id(token: Token[str]) -> None:
+    _REQUESTED_CONVERSATION_ID.reset(token)
+
+
+def requested_conversation_id() -> str:
+    return _REQUESTED_CONVERSATION_ID.get()
 
 
 def set_requested_run_id(run_id: str) -> Token[str]:
@@ -282,6 +312,38 @@ def _resolve_external_project_context_sync(
     return _validated_project_context(context)
 
 
+def _resolve_internal_card_context_sync() -> dict[str, Any] | None:
+    try:
+        request = Request(
+            f"{BACKEND}/api/mcp/card-context",
+            data=json.dumps({
+                "projectId": requested_project_id(),
+                "deckId": requested_deck_id(),
+                "profile": requested_hermes_profile(),
+                "conversationId": requested_conversation_id(),
+                "runId": requested_run_id(),
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-LiquidAIty-Internal-MCP-Secret": INTERNAL_MCP_SECRET,
+            },
+            method="POST",
+        )
+        with open_backend_request(
+            request,
+            timeout_seconds=_MAIN_CONTEXT_TIMEOUT_SECONDS,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TypeError, ValueError):
+        return None
+    context = (
+        payload.get("context")
+        if isinstance(payload, dict) and payload.get("ok") is True
+        else None
+    )
+    return _validated_project_context(context)
+
+
 class Auth0TokenVerifier:
     """Verify Auth0 JWTs and attach an authorized Project/profile context when one exists."""
 
@@ -314,7 +376,7 @@ class Auth0TokenVerifier:
                 )
                 principal = claims.get("principal")
                 if not isinstance(principal, dict) or principal.get("kind") not in {
-                    "catalog-reader", "materializer-read",
+                    "catalog-reader", "materializer-read", "card-runtime",
                 }:
                     return None
                 if principal.get("kind") == "materializer-read":
@@ -328,6 +390,11 @@ class Auth0TokenVerifier:
                         principal.get("grantedTools")
                     ) is None:
                         return None
+                card_context = None
+                if principal.get("kind") == "card-runtime":
+                    card_context = _resolve_internal_card_context_sync()
+                    if card_context is None:
+                        return None
                 access_token = AccessToken(
                     token=token,
                     client_id="liquidaity-internal-runtime",
@@ -337,7 +404,13 @@ class Auth0TokenVerifier:
                 )
                 object.__setattr__(access_token, "subject", str(claims["sub"]))
                 object.__setattr__(
-                    access_token, "claims", {**claims, "internal": principal},
+                    access_token,
+                    "claims",
+                    {
+                        **claims,
+                        "internal": principal,
+                        **({"project": card_context} if card_context is not None else {}),
+                    },
                 )
                 return access_token
             if header.get("alg") != "RS256":

@@ -22,16 +22,20 @@ import type { ProjectCardAuthority, ProjectCardBinding } from '../services/proje
 type FinishCardRunPayload = Parameters<
   typeof import('../services/cardRunLifecycle').finishCardRun
 >[0];
+type PrepareCardRunArgs = Parameters<
+  typeof import('../services/cardRunLifecycle').prepareCardRun
+>[0];
 
 const conversationMocks = vi.hoisted(() => ({
   appendConversationReplyOnce: vi.fn(async () => undefined),
   appendConversationTurn: vi.fn(async () => undefined),
-  getConversationMessages: vi.fn(async () => []),
+  getConversationMessages: vi.fn(async (): Promise<any[]> => []),
+  settleConversationMessage: vi.fn(async () => undefined),
 }));
 
 const lifecycleMocks = vi.hoisted(() => ({
   finishCardRun: vi.fn(async (_payload: FinishCardRunPayload) => undefined),
-  prepareCardRun: vi.fn(async () => ({
+  prepareCardRun: vi.fn(async (_args?: PrepareCardRunArgs) => ({
     runId: 'run-one',
     request: {
       message: '@Builder investigate the exact issue',
@@ -64,6 +68,19 @@ const gatewayMocks = vi.hoisted(() => ({
   hermesGateway: vi.fn(),
 }));
 
+const pythonRailsMocks = vi.hoisted(() => ({
+  requestPythonRailsJson: vi.fn(async (
+    _path: string,
+    _options?: unknown,
+  ): Promise<Record<string, any>> => ({
+    ok: true,
+    revisionChanged: false,
+    structuredExtractionRequired: false,
+    intakeOperation: 'noop',
+    preparation: { status: 'duplicate_noop' },
+  })),
+}));
+
 const externalEntryMocks = vi.hoisted(() => ({
   resolveExternalIdentityProjectGrant: vi.fn(async () => ({
     grantId: 'grant-one',
@@ -89,6 +106,9 @@ vi.mock('../services/projectCardAuthority', async () => {
 });
 vi.mock('../services/hermesGateway', () => ({
   hermesGateway: gatewayMocks.hermesGateway,
+}));
+vi.mock('../services/pythonRailsClient', () => ({
+  requestPythonRailsJson: pythonRailsMocks.requestPythonRailsJson,
 }));
 vi.mock('../auth/externalIdentityGrantStore', () => ({
   resolveExternalIdentityProjectGrant: externalEntryMocks.resolveExternalIdentityProjectGrant,
@@ -156,22 +176,29 @@ function binding(value: DeckCard): ProjectCardBinding {
   };
 }
 
-function authority(): ProjectCardAuthority {
+function authority(includeThinkGraph = false): ProjectCardAuthority {
   const main = card('card-main', 'Main', 'main', 'main');
   const builder = card('builder', 'Builder', 'builder', 'delegate');
+  const thinkGraph = card('card_thinkgraph', 'ThinkGraph', 'thinkgraph', 'delegate');
   const deck = {
     id: 'deck_builder',
     name: 'Test deck',
     projectId: 'project-one',
     promptTemplates: [],
-    nodes: [main, builder],
+    nodes: [main, builder, ...(includeThinkGraph ? [thinkGraph] : [])],
     edges: [{
       id: 'main-builder',
       source: main.id,
       target: builder.id,
       edgeType: 'flow',
       enabled: true,
-    }],
+    }, ...(includeThinkGraph ? [{
+      id: 'main-thinkgraph',
+      source: main.id,
+      target: thinkGraph.id,
+      edgeType: 'flow' as const,
+      enabled: true,
+    }] : [])],
     version: 1,
   } as DeckDocument;
   const cards = deck.nodes.map(binding);
@@ -204,7 +231,9 @@ function gateway(recipientWaiting: () => void, disconnectAfterStart = false) {
         info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
       };
     }
+    if (method === 'session.status') return { running: false };
     if (method === 'prompt.submit') {
+      expect(params).not.toHaveProperty('queued');
       queueMicrotask(() => {
         emit(event('prompt.submission.started', 'live-main', { submission_id: 'run-one' }));
         if (disconnectAfterStart) {
@@ -222,7 +251,6 @@ function gateway(recipientWaiting: () => void, disconnectAfterStart = false) {
           name: 'message_agent',
           tool_id: 'tool-one',
           result: {
-            status: 'queued',
             delivery_id: 'delivery-one',
             process_id: 'process-one',
             reply_delivery: 'direct',
@@ -271,6 +299,145 @@ function gateway(recipientWaiting: () => void, disconnectAfterStart = false) {
   } as unknown as HermesGatewayClient;
 }
 
+function steeringGateway() {
+  const listeners = new Set<(value: HermesGatewayEvent) => void>();
+  const stateListeners = new Set<(value: string) => void>();
+  const emit = (value: HermesGatewayEvent) => listeners.forEach(listener => listener(value));
+  let mainSubmitted = false;
+  let startedResolve!: () => void;
+  const started = new Promise<void>((resolve) => { startedResolve = resolve; });
+  const steers: string[] = [];
+  const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+    const profile = String(params.profile || 'main');
+    if (method === 'session.list') {
+      return { sessions: [{ resolved_id: `stored-${profile}` }] };
+    }
+    if (method === 'session.resume' || method === 'session.activate') {
+      return {
+        session_id: `live-${profile}`,
+        stored_session_id: `stored-${profile}`,
+        messages_omitted: true,
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      };
+    }
+    if (method === 'session.status') return { running: false };
+    if (method === 'prompt.submit') {
+      expect(params).not.toHaveProperty('queued');
+      if (profile === 'thinkgraph') {
+        queueMicrotask(() => {
+          emit(event('prompt.submission.started', 'live-thinkgraph', {
+            submission_id: 'run-thinkgraph',
+          }));
+          emit(event('message.complete', 'live-thinkgraph', {
+            submission_id: 'run-thinkgraph',
+            status: 'complete',
+            text: '{"facts":[]}',
+          }));
+        });
+        return { status: 'streaming' };
+      }
+      expect(mainSubmitted).toBe(false);
+      mainSubmitted = true;
+      queueMicrotask(() => {
+        emit(event('prompt.submission.started', 'live-main', { submission_id: 'run-one' }));
+        startedResolve();
+      });
+      return { status: 'streaming' };
+    }
+    if (method === 'session.steer') {
+      expect(params.session_id).toBe('live-main');
+      steers.push(String(params.text || ''));
+      return { status: 'accepted', text: params.text };
+    }
+    throw new Error(`unexpected_gateway_method:${method}`);
+  });
+  return {
+    client: {
+      connectionState: 'open',
+      connect: vi.fn(async () => undefined),
+      close: vi.fn(),
+      onEvent: vi.fn((listener: (value: HermesGatewayEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      onState: vi.fn((listener: (value: string) => void) => {
+        stateListeners.add(listener);
+        return () => stateListeners.delete(listener);
+      }),
+      onRequest: vi.fn(() => () => undefined),
+      request,
+    } as unknown as HermesGatewayClient,
+    started,
+    steers,
+    complete() {
+      emit(event('message.delta', 'live-main', {
+        submission_id: 'run-one',
+        text: 'Combined answer',
+      }));
+      emit(event('message.complete', 'live-main', {
+        submission_id: 'run-one',
+        status: 'complete',
+        text: 'Combined answer',
+      }));
+    },
+  };
+}
+
+function sequentialGateway() {
+  const listeners = new Set<(value: HermesGatewayEvent) => void>();
+  const emit = (value: HermesGatewayEvent) => listeners.forEach(listener => listener(value));
+  const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
+    const profile = String(params.profile || 'main');
+    if (method === 'session.list') {
+      return { sessions: [{ resolved_id: `stored-${profile}` }] };
+    }
+    if (method === 'session.resume' || method === 'session.activate') {
+      return {
+        session_id: `live-${profile}`,
+        stored_session_id: `stored-${profile}`,
+        messages_omitted: true,
+        info: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+      };
+    }
+    if (method === 'session.status') return { running: false };
+    if (method === 'session.steer') throw new Error('sequential_turn_must_not_steer');
+    if (method === 'prompt.submit') {
+      expect(params).not.toHaveProperty('queued');
+      const submissionId = String(params.submission_id || '');
+      const sessionId = `live-${profile}`;
+      queueMicrotask(() => {
+        emit(event('prompt.submission.started', sessionId, { submission_id: submissionId }));
+        const text = profile === 'thinkgraph'
+          ? '{"facts":[]}'
+          : `Answer for ${submissionId}`;
+        emit(event('message.delta', sessionId, { submission_id: submissionId, text }));
+        emit(event('message.complete', sessionId, {
+          submission_id: submissionId,
+          status: 'complete',
+          text,
+        }));
+      });
+      return { status: 'streaming' };
+    }
+    throw new Error(`unexpected_gateway_method:${method}`);
+  });
+  return {
+    client: {
+      connectionState: 'open',
+      connect: vi.fn(async () => undefined),
+      close: vi.fn(),
+      onEvent: vi.fn((listener: (value: HermesGatewayEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      onState: vi.fn(() => () => undefined),
+      onRequest: vi.fn(() => () => undefined),
+      request,
+    } as unknown as HermesGatewayClient,
+    request,
+  };
+}
+
 async function serve(withBrowserUser = true): Promise<{ baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -296,6 +463,242 @@ afterEach(async () => {
 });
 
 describe('Main direct-recipient stop settlement', () => {
+  it('atomically steers an active Main Run without creating or exposing another Run', async () => {
+    const fake = steeringGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority(true));
+    lifecycleMocks.prepareCardRun
+      .mockImplementationOnce(async () => ({
+        runId: 'run-one',
+        request: {
+          message: 'Compare buy and hold.',
+          provider: {
+            provider: 'openai', accessMode: 'chatgpt-account', providerModelId: 'gpt-5.6-sol',
+          },
+          runtime: { mode: 'main' }, runtimeOptions: {},
+          scriptPresentation: { mode: 'tools' }, presentedTools: [], unavailableTools: [], images: [],
+        },
+      }))
+      .mockImplementationOnce(async () => ({
+        runId: 'run-thinkgraph',
+        request: {
+          message: 'Extract the completed pair.',
+          provider: {
+            provider: 'openai', accessMode: 'chatgpt-account', providerModelId: 'gpt-5.6-sol',
+          },
+          runtime: { mode: 'delegate' }, runtimeOptions: {},
+          scriptPresentation: { mode: 'tools' }, presentedTools: [], unavailableTools: [], images: [],
+        },
+      }));
+    pythonRailsMocks.requestPythonRailsJson
+      .mockResolvedValueOnce({
+        ok: true,
+        revisionChanged: false,
+        structuredExtractionRequired: true,
+        intakeOperation: 'pending',
+        pairReference: 'pair-one',
+        preparation: { status: 'completed_without_graph_mutation' },
+        enrichmentSchema: { type: 'object' },
+        enrichmentPrompt: 'Extract exact Project reasoning.',
+        enrichmentInput: { exact_user_message: 'two inputs' },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        revisionChanged: true,
+        pairReference: 'pair-one',
+        thinkMemoryIds: [],
+      });
+    conversationMocks.getConversationMessages.mockResolvedValueOnce([
+      {
+        messageId: 'msg_00000000-0000-4000-8000-000000000011',
+        role: 'user', content: 'Compare buy and hold.', status: 'complete', seq: 1,
+      },
+      {
+        messageId: 'msg_00000000-0000-4000-8000-000000000013',
+        role: 'user', content: 'Also separate option timing.', status: 'complete', seq: 2,
+      },
+    ]);
+    const { baseUrl } = await serve();
+
+    const firstRequest = fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: 'Compare buy and hold.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000011',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000012',
+      }),
+    });
+    const first = await firstRequest;
+    const firstStream = first.text();
+    await fake.started;
+
+    const second = await fetch(`${baseUrl}/api/main/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'project-one',
+        deckId: 'deck_builder',
+        message: 'Also separate option timing.',
+        clientMessageId: 'msg_00000000-0000-4000-8000-000000000013',
+        clientReplyMessageId: 'msg_00000000-0000-4000-8000-000000000014',
+      }),
+    });
+    const secondStream = await second.text();
+    expect(secondStream).toContain('"runId":"run-one"');
+    expect(secondStream).not.toMatch(/queued|steered|redirected/i);
+    expect(fake.steers).toEqual(['Also separate option timing.']);
+    expect(lifecycleMocks.prepareCardRun).toHaveBeenCalledTimes(1);
+
+    fake.complete();
+    const firstText = await firstStream;
+    expect(firstText).toContain('Combined answer');
+    expect(firstText).not.toMatch(/queued|steered|redirected/i);
+    const mainSettlement = lifecycleMocks.finishCardRun.mock.calls
+      .map(([payload]) => payload)
+      .find((payload) => payload.runId === 'run-one');
+    expect(mainSettlement).toEqual(expect.objectContaining({
+      runId: 'run-one',
+      state: 'completed',
+      inputMessageIds: [
+        'msg_00000000-0000-4000-8000-000000000011',
+        'msg_00000000-0000-4000-8000-000000000013',
+      ],
+    }));
+    expect(conversationMocks.appendConversationTurn).toHaveBeenCalledTimes(2);
+    expect(conversationMocks.settleConversationMessage).toHaveBeenCalledTimes(2);
+    expect(conversationMocks.appendConversationReplyOnce).toHaveBeenCalledOnce();
+    expect(lifecycleMocks.prepareCardRun).toHaveBeenCalledTimes(2);
+    expect(lifecycleMocks.prepareCardRun.mock.calls.filter(
+      ([args]) => args?.target.card.id === 'card-main',
+    )).toHaveLength(1);
+    expect(lifecycleMocks.prepareCardRun.mock.calls.filter(
+      ([args]) => args?.target.card.id === 'card_thinkgraph',
+    )).toHaveLength(1);
+    expect(lifecycleMocks.finishCardRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'run-thinkgraph', state: 'completed',
+    }));
+    expect(pythonRailsMocks.requestPythonRailsJson).toHaveBeenCalledTimes(2);
+    expect(pythonRailsMocks.requestPythonRailsJson.mock.calls[0]?.[0])
+      .toBe('/thinkgraph/completed-pair/prepare');
+    expect(JSON.parse(String(
+      (pythonRailsMocks.requestPythonRailsJson.mock.calls[0]?.[1] as { body?: unknown })?.body,
+    ))).toMatchObject({
+      runId: 'run-one',
+      userMessage: 'USER INPUT 1:\nCompare buy and hold.\n\n'
+        + 'USER INPUT 2:\nAlso separate option timing.',
+      mainResponse: 'Combined answer',
+    });
+    expect(pythonRailsMocks.requestPythonRailsJson.mock.calls[1]?.[0])
+      .toBe('/thinkgraph/completed-pair/settle');
+    expect(JSON.parse(String(
+      (pythonRailsMocks.requestPythonRailsJson.mock.calls[1]?.[1] as { body?: unknown })?.body,
+    )).structuredOutput).toEqual({ facts: [] });
+  });
+
+  it('creates a new Run and one new ThinkGraph settlement after the prior turn completes', async () => {
+    const fake = sequentialGateway();
+    gatewayMocks.hermesGateway.mockResolvedValue(fake.client);
+    projectMocks.projectCardAuthority.mockResolvedValue(authority(true));
+    const run = (runId: string, mode: 'main' | 'delegate') => ({
+      runId,
+      request: {
+        message: runId,
+        provider: {
+          provider: 'openai', accessMode: 'chatgpt-account', providerModelId: 'gpt-5.6-sol',
+        },
+        runtime: { mode }, runtimeOptions: {},
+        scriptPresentation: { mode: 'tools' }, presentedTools: [], unavailableTools: [], images: [],
+      },
+    });
+    lifecycleMocks.prepareCardRun
+      .mockResolvedValueOnce(run('run-main-one', 'main'))
+      .mockResolvedValueOnce(run('run-think-one', 'delegate'))
+      .mockResolvedValueOnce(run('run-main-two', 'main'))
+      .mockResolvedValueOnce(run('run-think-two', 'delegate'));
+    pythonRailsMocks.requestPythonRailsJson
+      .mockResolvedValueOnce({
+        ok: true, revisionChanged: false, structuredExtractionRequired: true,
+        intakeOperation: 'pending', pairReference: 'pair-one',
+        preparation: { status: 'completed_without_graph_mutation' },
+        enrichmentSchema: { type: 'object' }, enrichmentPrompt: 'Extract one.',
+        enrichmentInput: { exact_user_message: 'first' },
+      })
+      .mockResolvedValueOnce({ ok: true, revisionChanged: true, pairReference: 'pair-one' })
+      .mockResolvedValueOnce({
+        ok: true, revisionChanged: false, structuredExtractionRequired: true,
+        intakeOperation: 'pending', pairReference: 'pair-two',
+        preparation: { status: 'completed_without_graph_mutation' },
+        enrichmentSchema: { type: 'object' }, enrichmentPrompt: 'Extract two.',
+        enrichmentInput: { exact_user_message: 'second' },
+      })
+      .mockResolvedValueOnce({ ok: true, revisionChanged: true, pairReference: 'pair-two' });
+    conversationMocks.getConversationMessages.mockResolvedValue([
+      {
+        messageId: 'msg_00000000-0000-4000-8000-000000000021',
+        role: 'user', content: 'First question.', status: 'complete', seq: 1,
+      },
+      {
+        messageId: 'msg_00000000-0000-4000-8000-000000000023',
+        role: 'user', content: 'Second question.', status: 'complete', seq: 3,
+      },
+    ]);
+    const { baseUrl } = await serve();
+    const submit = async (message: string, userId: string, replyId: string) => {
+      const response = await fetch(`${baseUrl}/api/main/session/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-one', deckId: 'deck_builder', message,
+          clientMessageId: userId, clientReplyMessageId: replyId,
+        }),
+      });
+      return response.text();
+    };
+
+    const first = await submit(
+      'First question.',
+      'msg_00000000-0000-4000-8000-000000000021',
+      'msg_00000000-0000-4000-8000-000000000022',
+    );
+    const second = await submit(
+      'Second question.',
+      'msg_00000000-0000-4000-8000-000000000023',
+      'msg_00000000-0000-4000-8000-000000000024',
+    );
+
+    expect(first).toContain('"runId":"run-main-one"');
+    expect(second).toContain('"runId":"run-main-two"');
+    expect(first).not.toMatch(/queued|steered|redirected/i);
+    expect(second).not.toMatch(/queued|steered|redirected/i);
+    expect(fake.request.mock.calls.filter(([method]) => method === 'session.steer'))
+      .toHaveLength(0);
+    expect(lifecycleMocks.prepareCardRun.mock.calls.filter(
+      ([args]) => args?.target.card.id === 'card-main',
+    )).toHaveLength(2);
+    expect(lifecycleMocks.prepareCardRun.mock.calls.filter(
+      ([args]) => args?.target.card.id === 'card_thinkgraph',
+    )).toHaveLength(2);
+    const mainSettlements = lifecycleMocks.finishCardRun.mock.calls
+      .map(([payload]) => payload)
+      .filter((payload) => String(payload.runId || '').startsWith('run-main'));
+    expect(mainSettlements).toEqual([
+      expect.objectContaining({
+        runId: 'run-main-one',
+        inputMessageIds: ['msg_00000000-0000-4000-8000-000000000021'],
+      }),
+      expect.objectContaining({
+        runId: 'run-main-two',
+        inputMessageIds: ['msg_00000000-0000-4000-8000-000000000023'],
+      }),
+    ]);
+    expect(pythonRailsMocks.requestPythonRailsJson.mock.calls.filter(
+      ([path]) => path === '/thinkgraph/completed-pair/settle',
+    )).toHaveLength(2);
+  });
+
   it('accepts only a supervised external identity and exact saved Main binding', async () => {
     const fakeGateway = gateway(() => undefined, true);
     gatewayMocks.hermesGateway.mockResolvedValue(fakeGateway);

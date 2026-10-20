@@ -1,12 +1,60 @@
 param(
   [switch]$WaitForMcpReadiness,
-  [switch]$StartPythonRailsAfterWorldSignals
+  [switch]$StartPythonRailsAfterWorldSignals,
+  [switch]$StartFrontendAfterApplicationReadiness
 )
 
 $ErrorActionPreference = 'Stop'
 
-if ($WaitForMcpReadiness -and $StartPythonRailsAfterWorldSignals) {
+if (@(
+  [bool]$WaitForMcpReadiness,
+  [bool]$StartPythonRailsAfterWorldSignals,
+  [bool]$StartFrontendAfterApplicationReadiness
+).Where({ $_ }).Count -gt 1) {
   throw 'Dependent-service startup modes are mutually exclusive.'
+}
+
+if ($StartFrontendAfterApplicationReadiness) {
+  $pythonRailsHealthUrl = 'http://127.0.0.1:8003/health'
+  $mcpReadinessUrl = 'http://127.0.0.1:8765/health/ready'
+  $lastFrontendState = ''
+  $lastFrontendNotice = [DateTimeOffset]::UtcNow
+
+  while ($true) {
+    $pythonRailsReady = $false
+    $mcpReady = $false
+    try {
+      $pythonHealth = Invoke-RestMethod -Uri $pythonRailsHealthUrl -Method Get -TimeoutSec 2
+      $pythonRailsReady = [string]$pythonHealth.status -eq 'ok'
+    } catch {
+      $pythonRailsReady = $false
+    }
+    try {
+      $mcpResponse = Invoke-WebRequest -Uri $mcpReadinessUrl -Method Get -UseBasicParsing -TimeoutSec 2
+      $mcpReady = [int]$mcpResponse.StatusCode -eq 200
+    } catch {
+      $mcpReady = $false
+    }
+    if ($pythonRailsReady -and $mcpReady) {
+      break
+    }
+
+    $frontendState = "python-rails=$pythonRailsReady mcp=$mcpReady"
+    if ($frontendState -ne $lastFrontendState) {
+      Write-Host "Frontend readiness: $frontendState"
+      $lastFrontendState = $frontendState
+    }
+    $now = [DateTimeOffset]::UtcNow
+    if (($now - $lastFrontendNotice).TotalMinutes -ge 1) {
+      Write-Warning "Frontend is waiting for application services: $frontendState"
+      $lastFrontendNotice = $now
+    }
+    Start-Sleep -Seconds 1
+  }
+
+  Write-Host 'Python rails and MCP are ready; starting the frontend.'
+  & npm.cmd --workspace client run dev -- --strictPort
+  exit $LASTEXITCODE
 }
 
 if ($StartPythonRailsAfterWorldSignals) {

@@ -291,7 +291,11 @@ def observe_run_preparation_complete(
     except Exception:
         return False
 
-def observe_run_finish(run_record: dict[str, Any]) -> bool:
+def observe_run_finish(
+    run_record: dict[str, Any],
+    *,
+    input_message_ids: list[str] | None = None,
+) -> bool:
     """Observe exact terminal state read back from PostgreSQL Run authority."""
 
     run_id = str(run_record.get("run_id") or "").strip()
@@ -310,7 +314,8 @@ def observe_run_finish(run_record: dict[str, Any]) -> bool:
                     run.hermesRootId=$hermesRootId,
                     run.hermesRunId=$hermesRunId,
                     run.errorCode=$errorCode,
-                    run.errorSummary=$errorSummary
+                    run.errorSummary=$errorSummary,
+                    run.inputMessageIds=coalesce($inputMessageIds, run.inputMessageIds)
                 RETURN run.runId
                 """,
                 {
@@ -321,6 +326,7 @@ def observe_run_finish(run_record: dict[str, Any]) -> bool:
                     "hermesRunId": run_record.get("provider_turn_ref"),
                     "errorCode": run_record.get("error_code"),
                     "errorSummary": run_record.get("error_summary"),
+                    "inputMessageIds": input_message_ids,
                 },
                 "run_id agtype",
             )

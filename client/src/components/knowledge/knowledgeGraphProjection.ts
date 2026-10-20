@@ -18,11 +18,24 @@ import {
 
 export type GraphAuthority = 'thinkgraph' | 'knowgraph';
 
+export type GraphVisualLayer = GraphAuthority | 'codegraph';
+
+export type GraphLayerVisibility = Record<GraphVisualLayer, boolean>;
+
+export const DEFAULT_GRAPH_LAYER_VISIBILITY: GraphLayerVisibility = Object.freeze({
+  thinkgraph: true,
+  knowgraph: true,
+  codegraph: false,
+});
+
+export const CODE_GRAPH_LAYER_COLOR = '#63C79A';
+
 export type GraphSurfaceAuthority = GraphAuthority | 'joined' | 'codegraph';
 
 const GRAPH_NODE_MATERIALS = {
   think: 'THINK_MATERIAL',
   know: 'KNOW_MATERIAL',
+  code: 'CODE_MATERIAL',
   paired: 'PAIRED_SOLARPUNK_MATERIAL',
 } as const;
 
@@ -86,6 +99,7 @@ export type GraphProjectionNode = {
   material_role?: GraphNodeMaterialRole;
   material_blue?: string;
   material_orange?: string;
+  material_green?: string;
   material_surface?: string;
   material_think_active?: boolean;
   material_know_active?: boolean;
@@ -114,7 +128,7 @@ export type GraphProjectionEdge = {
   visual_width?: number;
   layer?: string;
   material_kind?: 'solarpunk' | 'joined-cyber';
-  material_authority?: GraphAuthority;
+  material_authority?: GraphVisualLayer;
   material_color?: string;
 };
 
@@ -153,6 +167,11 @@ export type JoinedGraphPresentation = {
   nodeVariants: Map<string, JoinedGraphNodeVariant[]>;
   edgeVariants: Map<string, JoinedGraphEdgeVariant>;
   visualNodeIdByProviderMember: Map<string, string>;
+  codeProviderProjection?: GraphProjectionV1;
+  codeNodeVariants?: Map<string, GraphProjectionNode>;
+  codeEdgeVariants?: Map<string, GraphProjectionEdge>;
+  visualNodeIdByCodeProviderMember?: Map<string, string>;
+  layerVisibility?: GraphLayerVisibility;
 };
 
 export function solarpunkMaterialFields(
@@ -196,6 +215,21 @@ export function combinedCyberMaterialFields(
     ...solarpunkMaterialFields(source, thinkActive, knowActive, colors),
     material_kind: 'joined-cyber',
     material_role: source === 'paired' ? COMBINED_CYBER_MATERIAL : GRAPH_NODE_MATERIALS[source],
+  };
+}
+
+export function codeGraphMaterialFields(
+  color = CODE_GRAPH_LAYER_COLOR,
+): Pick<GraphProjectionNode,
+  | 'material_kind'
+  | 'material_role'
+  | 'material_green'
+  | 'material_surface'> {
+  return {
+    material_kind: 'joined-cyber',
+    material_role: GRAPH_NODE_MATERIALS.code,
+    material_green: color,
+    material_surface: GRAPH_THEME.surface.base,
   };
 }
 
@@ -375,5 +409,99 @@ export function composeThinkKnowPresentation(
     nodeVariants,
     edgeVariants,
     visualNodeIdByProviderMember,
+  };
+}
+
+function hiddenProviderProjection(projection: GraphProjectionV1): GraphProjectionV1 {
+  return {
+    ...projection,
+    scene: undefined,
+    counts: { nodes: 0, edges: 0 },
+    nodes: [],
+    edges: [],
+  };
+}
+
+function codeProviderRenderId(providerId: string): string {
+  return `codegraph:${encodeURIComponent(providerId)}`;
+}
+
+export function composeVisibleGraphLayers(
+  thinkProjection: GraphProjectionV1,
+  knowProjection: GraphProjectionV1,
+  codeProjection: GraphProjectionV1,
+  layerVisibility: GraphLayerVisibility,
+): JoinedGraphPresentation {
+  const joined = composeThinkKnowPresentation(
+    layerVisibility.thinkgraph
+      ? thinkProjection
+      : hiddenProviderProjection(thinkProjection),
+    layerVisibility.knowgraph
+      ? knowProjection
+      : hiddenProviderProjection(knowProjection),
+  );
+  if (layerVisibility.codegraph
+    && codeProjection.projectId !== joined.projection.projectId) {
+    throw new Error('codegraph_layer_project_mismatch');
+  }
+  const codeNodeVariants = new Map<string, GraphProjectionNode>();
+  const codeEdgeVariants = new Map<string, GraphProjectionEdge>();
+  const visualNodeIdByCodeProviderMember = new Map<string, string>();
+  const codeNodes = layerVisibility.codegraph
+    ? codeProjection.nodes.map((node) => {
+      const visualId = codeProviderRenderId(node.id);
+      codeNodeVariants.set(visualId, node);
+      visualNodeIdByCodeProviderMember.set(node.id, visualId);
+      return {
+        ...node,
+        id: visualId,
+        authority: 'codegraph',
+        properties: { ...(node.properties || {}) },
+      };
+    })
+    : [];
+  const visibleCodeNodeIds = new Set(codeNodes.map(node => node.id));
+  const codeEdges = layerVisibility.codegraph
+    ? codeProjection.edges.flatMap((edge): GraphProjectionEdge[] => {
+      const source = visualNodeIdByCodeProviderMember.get(edge.source);
+      const target = visualNodeIdByCodeProviderMember.get(edge.target);
+      if (!source || !target
+        || !visibleCodeNodeIds.has(source)
+        || !visibleCodeNodeIds.has(target)) return [];
+      const visualId = codeProviderRenderId(edge.id);
+      codeEdgeVariants.set(visualId, edge);
+      return [{
+        ...edge,
+        id: visualId,
+        source,
+        target,
+        layer: 'codegraph',
+        properties: { ...(edge.properties || {}) },
+      }];
+    })
+    : [];
+  const nodes = [...joined.projection.nodes, ...codeNodes];
+  const edges = [...joined.projection.edges, ...codeEdges];
+  return {
+    ...joined,
+    projection: {
+      ...joined.projection,
+      schemaVersion: 'think-know-code.presentation.v1',
+      revision: [
+        joined.projection.revision || '',
+        layerVisibility.codegraph ? codeProjection.revision || '' : '',
+        layerVisibility.thinkgraph ? 'think-on' : 'think-off',
+        layerVisibility.knowgraph ? 'know-on' : 'know-off',
+        layerVisibility.codegraph ? 'code-on' : 'code-off',
+      ].join(':'),
+      counts: { nodes: nodes.length, edges: edges.length },
+      nodes,
+      edges,
+    },
+    codeProviderProjection: codeProjection,
+    codeNodeVariants,
+    codeEdgeVariants,
+    visualNodeIdByCodeProviderMember,
+    layerVisibility: { ...layerVisibility },
   };
 }

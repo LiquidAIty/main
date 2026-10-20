@@ -217,6 +217,10 @@ describe('Engraphis graph renderer contracts', () => {
       material_kind: 'joined-cyber', material_role: 'KNOW_MATERIAL',
       material_blue: '#4FA2AD', material_orange: '#F2A64A',
     });
+    const code = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
+      material_kind: 'joined-cyber', material_role: 'CODE_MATERIAL',
+      material_green: '#63C79A',
+    });
     const paired = internals.materialRecipe('cyber', {}, 'theme', '#ffffff', {
       material_kind: 'joined-cyber', material_role: 'PAIRED_CYBER_MATERIAL',
       material_blue: '#4FA2AD', material_orange: '#F2A64A',
@@ -234,6 +238,13 @@ describe('Engraphis graph renderer contracts', () => {
       fixedPalette: {
         cyan: '#F2A64A', blue: '#F2A64A', violet: '#F2A64A',
         magenta: '#F2A64A', teal: '#F2A64A',
+      },
+    });
+    expect(code).toMatchObject({
+      family: ordinary.family,
+      fixedPalette: {
+        cyan: '#63C79A', blue: '#63C79A', violet: '#63C79A',
+        magenta: '#63C79A', teal: '#63C79A',
       },
     });
     expect(paired.family).toBe(ordinary.family);

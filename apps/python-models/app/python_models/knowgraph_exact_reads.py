@@ -35,6 +35,37 @@ _KNOWGRAPH_EPISODE_LIMIT = 50
 _KNOWGRAPH_EPISODE_PREVIEW_CHARS = 1_000
 
 
+def _projected_know_record(
+    know: dict[str, Any],
+    properties: dict[str, Any],
+    *,
+    episode_id: str,
+    entity_id: str,
+) -> dict[str, Any]:
+    common = {
+        "graphitiEpisodeId": episode_id,
+        "graphitiEntityId": entity_id,
+        "schemaVersion": know["schemaVersion"],
+        "validFrom": properties.get("valid_at"),
+        "ingestedAt": properties.get("created_at"),
+    }
+    if know["schemaVersion"] == "know.v2":
+        return {
+            **common,
+            "observation": know["observation"],
+            "interpretation": know["interpretation"],
+            "source": know["source"],
+            **({"direction": know["direction"]} if know.get("direction") else {}),
+            **({"dedupeKey": know["dedupeKey"]} if know.get("dedupeKey") else {}),
+        }
+    return {
+        **common,
+        "legacy": True,
+        "idea": know["idea"],
+        "counterIdea": know["counterIdea"],
+    }
+
+
 def _read_knowgraph_entity_knows(
     project_id: str,
     graphiti_entity_id: str,
@@ -56,7 +87,10 @@ def _read_knowgraph_entity_knows(
                 WHERE (elementId(entity) = $entityId OR toString(entity.uuid) = $entityId)
                   AND toString(entity.group_id) IN $scopeIds
                   AND toString(episode.group_id) IN $scopeIds
-                  AND toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
+                  AND (
+                    toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
+                    OR toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v2\"'
+                  )
                 RETURN coalesce(toString(episode.uuid), elementId(episode)) AS episodeId,
                        coalesce(toString(entity.uuid), elementId(entity)) AS entityId,
                        properties(episode) AS properties
@@ -86,14 +120,12 @@ def _read_knowgraph_entity_knows(
         know = know_from_properties(properties)
         if know is None:
             continue
-        knows.append({
-            "graphitiEpisodeId": str(row.get("episodeId") or ""),
-            "graphitiEntityId": str(row.get("entityId") or entity_id),
-            "idea": know["idea"],
-            "counterIdea": know["counterIdea"],
-            "validFrom": properties.get("valid_at"),
-            "ingestedAt": properties.get("created_at"),
-        })
+        knows.append(_projected_know_record(
+            know,
+            properties,
+            episode_id=str(row.get("episodeId") or ""),
+            entity_id=str(row.get("entityId") or entity_id),
+        ))
     return knows
 
 
@@ -145,7 +177,10 @@ def read_recent_knowgraph_knows(
                 MATCH (episode:Episodic)-[:ABOUT]->(entity:Entity)
                 WHERE toString(entity.group_id) IN $scopeIds
                   AND toString(episode.group_id) IN $scopeIds
-                  AND toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
+                  AND (
+                    toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v1\"'
+                    OR toString(episode.content) CONTAINS '\"schemaVersion\":\"know.v2\"'
+                  )
                 RETURN coalesce(toString(episode.uuid), elementId(episode)) AS episodeId,
                        coalesce(toString(entity.uuid), elementId(entity)) AS entityId,
                        properties(episode) AS properties
@@ -171,14 +206,12 @@ def read_recent_knowgraph_knows(
         know = know_from_properties(properties)
         if know is None:
             continue
-        records.append({
-            "graphitiEpisodeId": str(row.get("episodeId") or ""),
-            "graphitiEntityId": str(row.get("entityId") or ""),
-            "idea": know["idea"],
-            "counterIdea": know["counterIdea"],
-            "validFrom": properties.get("valid_at"),
-            "ingestedAt": properties.get("created_at"),
-        })
+        records.append(_projected_know_record(
+            know,
+            properties,
+            episode_id=str(row.get("episodeId") or ""),
+            entity_id=str(row.get("entityId") or ""),
+        ))
     return records
 
 

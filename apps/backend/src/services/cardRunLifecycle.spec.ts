@@ -114,6 +114,31 @@ describe('Card Run lifecycle identities', () => {
     })).rejects.toThrow('card_turn_run_identity_mismatch');
   });
 
+  it('returns the server-validated conversation identity from an exact Run readback', async () => {
+    mocks.requestPythonRailsJson.mockResolvedValue({
+      ok: true,
+      run: {
+        runId: 'run-one', projectId: 'project-one', deckId: 'deck-one',
+        conversationId: 'conversation-one', cardId: 'card-helper',
+        runtimeProfile: 'helper', state: 'running',
+      },
+    });
+
+    await expect(readCardRun({
+      projectId: 'project-one',
+      deckId: 'deck-one',
+      runId: 'run-one',
+      cardId: 'card-helper',
+      profile: 'helper',
+      conversationId: 'conversation-one',
+    })).resolves.toMatchObject({
+      conversationId: 'conversation-one',
+      state: 'running',
+    });
+    expect(JSON.parse(String(mocks.requestPythonRailsJson.mock.calls[0]?.[1]?.body)))
+      .toMatchObject({ conversationId: 'conversation-one' });
+  });
+
   it('settles an accepted Run when Python returns a mismatched transport identity', async () => {
     mocks.requestPythonRailsJson
       .mockResolvedValueOnce({

@@ -92,6 +92,50 @@ describe('Main saved-Card addressing', () => {
 });
 
 describe('Main stream retention and voice finality', () => {
+  it('keeps a steering message visible before the one combined active-Run answer', async () => {
+    const onMainRunCompleted = vi.fn();
+    let finishFirst!: () => void;
+    const firstMayFinish = new Promise<void>((resolve) => { finishFirst = resolve; });
+    clientMocks.streamSession
+      .mockImplementationOnce(async ({ onEvent }) => {
+        onEvent({ kind: 'run', runId: 'run-one' });
+        onEvent({ kind: 'session', runId: 'run-one' });
+        onEvent({ kind: 'text', runId: 'run-one', text: 'Working comparison' });
+        await firstMayFinish;
+        return { finalText: 'Combined comparison' };
+      })
+      .mockImplementationOnce(async ({ onEvent }) => {
+        onEvent({ kind: 'run', runId: 'run-one' });
+        return { finalText: '' };
+      });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-a',
+      deckId: 'deck_builder',
+      onMainRunCompleted,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => { result.current.handleSend('Compare buy and hold.'); });
+    await waitFor(() => expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'assistant', text: 'Working comparison' }),
+    ])));
+    act(() => { result.current.handleSend('Also separate options timing.'); });
+    await waitFor(() => expect(clientMocks.streamSession).toHaveBeenCalledTimes(2));
+    expect(result.current.messages.map((message) => [message.role, message.text])).toEqual([
+      ['user', 'Compare buy and hold.'],
+      ['user', 'Also separate options timing.'],
+      ['assistant', 'Working comparison'],
+    ]);
+
+    await act(async () => { finishFirst(); await firstMayFinish; });
+    await waitFor(() => expect(result.current.messages.at(-1)).toMatchObject({
+      role: 'assistant', text: 'Combined comparison', status: 'complete',
+    }));
+    await waitFor(() => expect(onMainRunCompleted).toHaveBeenCalledWith('run-one'));
+    expect(onMainRunCompleted).toHaveBeenCalledTimes(1);
+    expect(result.current.technicalError).toBeNull();
+  });
+
   it('keeps streamed assistant text when the turn later fails', async () => {
     clientMocks.streamSession.mockImplementationOnce(async ({ onEvent }) => {
       onEvent({ kind: 'run', runId: 'run-1' });

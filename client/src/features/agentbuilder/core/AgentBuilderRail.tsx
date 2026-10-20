@@ -35,6 +35,7 @@ type AgentBuilderRailProps = {
   onOpenAddAgent: () => void;
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
+  onShowModelingWorkspace?: () => void;
   onOpenNavigationDrawer: () => void;
 };
 
@@ -85,6 +86,7 @@ export default function AgentBuilderRail({
   onOpenAddAgent,
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
+  onShowModelingWorkspace,
   onOpenNavigationDrawer,
 }: AgentBuilderRailProps) {
   return (
@@ -188,6 +190,11 @@ export default function AgentBuilderRail({
         </button>
       ) : null}
       <div className="flex-1" />
+      {onShowModelingWorkspace && <button title="Building modeling" aria-label="Building modeling"
+        data-testid="rail-modeling-button" onClick={onShowModelingWorkspace} className="p-2 rounded"
+        style={{ color: workspaceView === 'nrgsim' ? colors.primary : colors.text }}>
+        <Icon d="M4 21V7l8-4 8 4v14H4zM9 21v-4h6v4M8 8h1M15 8h1M8 12h1M15 12h1" />
+      </button>}
 
       <button
         title="Menu"

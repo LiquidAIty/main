@@ -1088,6 +1088,7 @@ def _run_prompt_submit(
     card_run_id: str | None = None,
     originating_run_id: str | None = None,
     bot_mode_reply_delivery: str | None = None,
+    bot_mode_card_contexts: dict[str, dict[str, str]] | None = None,
 ) -> bool:
     # Every dispatch binds the session's own row (session_key, real source) before the turn writes:
     # the synthesized turns that enter here directly (crash auto-continue, queued-prompt drain,
@@ -1150,6 +1151,7 @@ def _run_prompt_submit(
         effective_mcp_tool_selection = mcp_tool_selection
         effective_card_script = card_script
         previous_bot_reply_delivery = getattr(agent, "_bot_mode_reply_delivery", None)
+        previous_bot_card_contexts = getattr(agent, "_bot_mode_card_contexts", None)
         st.marker_key = _record_turn_marker(session, text, auto_continue=terminal_callback is None,
             notification_category=(display_metadata or {}).get("notification_category"))
         goal_followup = None
@@ -1157,6 +1159,11 @@ def _run_prompt_submit(
             if bot_mode_roster is not None:
                 _apply_session_bot_roster(session, bot_mode_roster)
             agent._bot_mode_reply_delivery = bot_mode_reply_delivery or "notification"
+            if bot_mode_card_contexts is not None:
+                agent._bot_mode_card_contexts = {
+                    profile: dict(context)
+                    for profile, context in bot_mode_card_contexts.items()
+                }
             from tui_gateway.saved_card_turn import (
                 bind_card_turn,
                 normalize_card_turn_context,
@@ -1308,6 +1315,13 @@ def _run_prompt_submit(
                     for process_id in notification_process_ids
                     if str(process_id).strip()
                 ]
+            notification_task_ids = (display_metadata or {}).get("task_ids")
+            if isinstance(notification_task_ids, list):
+                payload["notification_task_ids"] = [
+                    str(task_id).strip()
+                    for task_id in notification_task_ids
+                    if str(task_id).strip()
+                ]
             _emit("message.complete", sid, payload)
             goal_followup = _goal_followup_after_turn(sid, session, st.result, status, raw)
             if status == "complete":
@@ -1361,6 +1375,11 @@ def _run_prompt_submit(
                     delattr(st.agent, "_bot_mode_reply_delivery")
             else:
                 st.agent._bot_mode_reply_delivery = previous_bot_reply_delivery
+            if previous_bot_card_contexts is None:
+                with contextlib.suppress(AttributeError):
+                    delattr(st.agent, "_bot_mode_card_contexts")
+            else:
+                st.agent._bot_mode_card_contexts = previous_bot_card_contexts
             # Closing bookend of "tui prompt accepted" — exactly one per accepted prompt.
             # agent.session_id is re-read because compression may have rotated it (an
             # accepted/finished pair whose id changed IS a rotation trace).

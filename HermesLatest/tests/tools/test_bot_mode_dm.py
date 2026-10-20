@@ -6,6 +6,7 @@ deliver from anywhere else even if a schema leaks.
 """
 
 import json
+import contextlib
 import os
 import shlex
 import subprocess
@@ -13,6 +14,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1086,6 +1088,180 @@ def test_project_delivery_never_falls_through_without_its_exact_live_session(tmp
 
     assert result["reason"] == "runtime_offline"
     assert "nothing was sent" in result["error"]
+
+
+def test_project_team_target_uses_exact_saved_card_context(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path, teammates=("knowgraph",))
+    agent = _FakeAgent(home, title="Project 00000000-0000-0000-0000-000000000001")
+    agent._bot_mode_roster = ["knowgraph"]
+    agent._bot_mode_sessions = {"knowgraph": "stored-knowgraph-session"}
+    target_context = {
+        "endpoint": "http://127.0.0.1:4000/api/card-turn",
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "conversation_id": "project-one",
+        "card_id": "card_knowgraph",
+        "profile": "knowgraph",
+    }
+    agent._bot_mode_card_contexts = {"knowgraph": target_context}
+    from hermes_cli import kanban_team
+
+    monkeypatch.setattr(kanban_team, "profile_task_mode", lambda *_args, **_kwargs: "team")
+    captured = {}
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "_start_team_task",
+        lambda **kwargs: captured.update(kwargs) or json.dumps({
+            "status": "sent", "task_id": "t_team", "run_id": "req_team",
+        }),
+    )
+
+    result = json.loads(bot_mode_dm.message_agent_tool(
+        target="@knowgraph",
+        message="Research the financing claim.",
+        tool_call_id="call-team",
+        agent=agent,
+    ))
+
+    assert result == {"status": "sent", "task_id": "t_team", "run_id": "req_team"}
+    assert captured["target_profile"] == "knowgraph"
+    assert captured["target_context"] == target_context
+    assert captured["tool_call_id"] == "call-team"
+    assert captured["body"] == "Research the financing claim."
+    assert captured["parent_run_id"] is None
+
+
+def test_team_submission_stages_card_run_before_exact_activation(tmp_path, monkeypatch):
+    from hermes_cli import kanban_db_connect, kanban_team
+    from tools import kanban_tools
+    from tui_gateway import saved_card_turn
+
+    route = {
+        "platform": "tui",
+        "chat_id": "source-session",
+        "thread_id": None,
+        "user_id": None,
+        "user_id_alt": None,
+        "chat_type": None,
+        "notifier_profile": "default",
+        "delivery_mode": "notify",
+        "delivery_metadata": {},
+    }
+    monkeypatch.setattr(kanban_tools, "_resolve_notify_target", lambda: route)
+    order = []
+    prepared = {
+        "runId": "req_team_run",
+        "message": "materialized exact IDF",
+        "context": {"profile": "knowgraph"},
+    }
+    monkeypatch.setattr(
+        saved_card_turn,
+        "prepare_saved_card_turn",
+        lambda *_args, **_kwargs: order.append("prepare") or prepared,
+    )
+    monkeypatch.setattr(
+        saved_card_turn,
+        "start_saved_card_turn",
+        lambda value, session: order.append(("start", value["runId"], session)),
+    )
+    monkeypatch.setattr(
+        saved_card_turn,
+        "finish_saved_card_turn",
+        lambda *_args, **_kwargs: pytest.fail("successful submission must not fail the Run"),
+    )
+    connection = object()
+
+    @contextlib.contextmanager
+    def connected(*_args, **_kwargs):
+        yield connection
+
+    monkeypatch.setattr(kanban_db_connect, "connect_closing", connected)
+    create_calls = []
+    monkeypatch.setattr(
+        kanban_team,
+        "create_team_root",
+        lambda conn, **kwargs: (
+            order.append("create"),
+            create_calls.append((conn, kwargs)),
+            SimpleNamespace(id="t_team_root"),
+        )[-1],
+    )
+    bind_calls = []
+    monkeypatch.setattr(
+        kanban_team,
+        "bind_saved_card_run",
+        lambda conn, task_id, **kwargs: (
+            order.append("bind"),
+            bind_calls.append((conn, task_id, kwargs)),
+        )[-1],
+    )
+    monkeypatch.setattr(
+        kanban_team,
+        "activate_staged_team_root",
+        lambda conn, task_id: order.append(("activate", task_id)) or True,
+    )
+    target_context = {
+        "endpoint": "http://127.0.0.1:4000/api/card-turn",
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "conversation_id": "project-one",
+        "card_id": "card_knowgraph",
+        "profile": "knowgraph",
+    }
+    agent = _FakeAgent(tmp_path)
+
+    result = json.loads(bot_mode_dm._start_team_task(
+        target_profile="knowgraph",
+        target_home=tmp_path,
+        target_label="@knowgraph",
+        target_context=target_context,
+        source_profile="default",
+        body="Research one claim.",
+        content="Message from Main: Research one claim.",
+        parent_run_id="req_parent",
+        tool_call_id="call-one",
+        agent=agent,
+    ))
+
+    assert result["status"] == "sent"
+    assert result["reply_delivery"] == "team"
+    assert result["task_id"] == "t_team_root"
+    assert result["run_id"] == "req_team_run"
+    assert order == [
+        "prepare",
+        ("start", "req_team_run", "req_team_run"),
+        "create",
+        "bind",
+        ("activate", "t_team_root"),
+    ]
+    assert create_calls[0][1]["body"] == "materialized exact IDF"
+    assert create_calls[0][1]["initial_status"] == "blocked"
+    assert bind_calls[0][2] == {
+        "context": target_context,
+        "run_id": "req_team_run",
+    }
+
+
+def test_message_agent_inline_executor_forwards_tool_call_identity(monkeypatch):
+    from agent.inline_tool_executors import INLINE_TOOL_EXECUTORS, InlineToolContext
+
+    seen = {}
+    agent = object()
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "message_agent_tool",
+        lambda **kwargs: seen.update(kwargs) or "captured",
+    )
+
+    result = INLINE_TOOL_EXECUTORS["message_agent"](
+        agent,
+        {"target": "knowgraph", "message": "research"},
+        InlineToolContext(effective_task_id="task-one", tool_call_id="call-one"),
+    )
+
+    assert result == "captured"
+    assert seen["tool_call_id"] == "call-one"
+    assert seen["task_id"] == "task-one"
 
 
 def test_live_owner_ack_carries_the_poll_return_path_when_session_cannot_receive_completions(tmp_path, monkeypatch):

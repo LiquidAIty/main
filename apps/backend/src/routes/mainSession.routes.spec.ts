@@ -198,18 +198,16 @@ describe('direct saved-Card delivery correlation', () => {
 
   it('accepts only a complete direct Hermes admission receipt', () => {
     expect(directRecipientSubmissionId({
-      status: 'queued',
       delivery_id: 'delivery-one',
       process_id: 'process-one',
       reply_delivery: 'direct',
     })).toBe('__bot_dm__delivery-one');
 
     for (const invalid of [
-      { status: 'ambiguous', delivery_id: 'delivery-one', process_id: 'process-one', reply_delivery: 'direct' },
-      { status: 'queued', delivery_id: '', process_id: 'process-one', reply_delivery: 'direct' },
-      { status: 'queued', delivery_id: 'delivery-one', process_id: '', reply_delivery: 'direct' },
-      { status: 'queued', delivery_id: 'delivery-one', process_id: 'process-one', reply_delivery: 'notification' },
-      { status: 'queued', delivery_id: 'delivery-one', process_id: 'process-one', reply_delivery: 'direct', notification_error: 'failed' },
+      { delivery_id: '', process_id: 'process-one', reply_delivery: 'direct' },
+      { delivery_id: 'delivery-one', process_id: '', reply_delivery: 'direct' },
+      { delivery_id: 'delivery-one', process_id: 'process-one', reply_delivery: 'notification' },
+      { delivery_id: 'delivery-one', process_id: 'process-one', reply_delivery: 'direct', notification_error: 'failed' },
     ]) {
       expect(() => directRecipientSubmissionId(invalid))
         .toThrow('hermes_addressed_delivery_correlation_missing');

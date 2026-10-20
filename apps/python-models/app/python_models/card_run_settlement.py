@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from psycopg.rows import dict_row
@@ -26,6 +27,27 @@ from app.python_models.saved_card_contract import (
     CardDomainError,
     required_text,
 )
+
+
+_MESSAGE_ID_PATTERN = re.compile(
+    r"^msg_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _input_message_ids(payload: dict[str, Any]) -> list[str] | None:
+    if "inputMessageIds" not in payload:
+        return None
+    value = payload.get("inputMessageIds")
+    if not isinstance(value, list) or not 1 <= len(value) <= 64:
+        raise CardDomainError("run_input_message_ids_invalid")
+    result: list[str] = []
+    for item in value:
+        message_id = str(item or "").strip()
+        if not _MESSAGE_ID_PATTERN.fullmatch(message_id) or message_id in result:
+            raise CardDomainError("run_input_message_ids_invalid")
+        result.append(message_id)
+    return result
 
 
 def _validated_run_settlement_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -52,6 +74,7 @@ def _validated_run_settlement_request(payload: dict[str, Any]) -> dict[str, Any]
         "hermesStatus": hermes_status,
         "childProvider": child_provider,
         "childModel": child_model,
+        "inputMessageIds": _input_message_ids(payload),
     }
 
 
@@ -238,7 +261,10 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             cursor, payload, request,
         )
     telemetry_written = (
-        agentgraph_run_observations.observe_run_finish(run_record)
+        agentgraph_run_observations.observe_run_finish(
+            run_record,
+            input_message_ids=request["inputMessageIds"],
+        )
         if updated else False
     )
     return {

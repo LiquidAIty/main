@@ -1,6 +1,8 @@
 /**
  * Entity: WorldView
  * Relationship: This file contributes test-only virtual CSS and mount modules so WorldView client specifications resolve the controlled one-Earth doorway without loading the real renderer.
+ * Entity: Building Modeling Verification
+ * Relationship: This file includes the first-party NRGSIM inspector tests without collecting vendored product suites.
  */
 
 // vitest/config re-exports Vite's defineConfig with the `test` key typed.
@@ -31,7 +33,7 @@ export default defineConfig({
   test: {
     // The one Vitest workspace definition. Client and application workspaces
     // own only their current first-party specs:
-    //   client  — inline below; owns ONLY client/src specs. Vendored repos
+    //   client  — inline below; owns client/src and first-party NRGSIM specs. Vendored repos
     //             (worldsignal, src/vendor),
     //             e2e/playwright (a Playwright runner), and other foreign
     //             runners that used to produce hundreds of phantom failures.
@@ -42,7 +44,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "client",
-          include: ["client/src/**/*.{spec,test}.{ts,tsx}"],
+          include: ["client/src/**/*.{spec,test}.{ts,tsx}", "agent-products/nrgsim/tests/*.spec.tsx"],
           exclude: [
             "**/node_modules/**",
             "**/dist/**",

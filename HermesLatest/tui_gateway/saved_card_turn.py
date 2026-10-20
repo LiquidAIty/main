@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import base64
 from contextvars import ContextVar, Token
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -28,6 +31,7 @@ _CURRENT_CARD_TURN: ContextVar[dict[str, str] | None] = ContextVar(
 )
 _MAX_IMAGES = 12
 _MAX_IMAGE_BYTES = 1_000_000
+_CARD_TURN_ENV = "HERMES_SAVED_CARD_TURN"
 
 
 def normalize_card_turn_context(value: Any) -> dict[str, str] | None:
@@ -78,19 +82,84 @@ def reset_card_turn(token: Token | None) -> None:
 
 
 def current_card_turn_headers() -> dict[str, str]:
-    current = _CURRENT_CARD_TURN.get()
+    current = current_card_turn_context()
     if not current:
         return {}
     return {
         "X-LiquidAIty-Project-Id": current["project_id"],
+        "X-LiquidAIty-Deck-Id": current["deck_id"],
+        "X-LiquidAIty-Conversation-Id": current["conversation_id"],
         "X-LiquidAIty-Hermes-Profile": current["profile"],
         "X-LiquidAIty-Run-Id": current["run_id"],
     }
 
 
+def current_card_turn_authorization() -> str:
+    secret = _internal_secret().encode("utf-8")
+    now = int(time.time())
+    kind = "card-runtime" if current_card_turn_context() else "catalog-reader"
+    header = base64.urlsafe_b64encode(json.dumps(
+        {"alg": "HS256", "typ": "JWT"}, separators=(",", ":"),
+    ).encode("utf-8")).rstrip(b"=").decode("ascii")
+    payload = base64.urlsafe_b64encode(json.dumps({
+        "iss": "liquidaity-runtime",
+        "aud": "liquidaity-internal-mcp",
+        "sub": kind,
+        "iat": now,
+        "exp": now + 300,
+        "scope": "liquidaity.main",
+        "principal": {"kind": kind},
+    }, separators=(",", ":")).encode("utf-8")).rstrip(b"=").decode("ascii")
+    unsigned = f"{header}.{payload}"
+    signature = base64.urlsafe_b64encode(hmac.new(
+        secret, unsigned.encode("ascii"), hashlib.sha256,
+    ).digest()).rstrip(b"=").decode("ascii")
+    return f"Bearer {unsigned}.{signature}"
+
+
 def current_card_turn_context() -> dict[str, str] | None:
     current = _CURRENT_CARD_TURN.get()
-    return dict(current) if current else None
+    if current:
+        return dict(current)
+    raw = str(os.environ.get(_CARD_TURN_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    context = normalize_card_turn_context(payload.get("context"))
+    run_id = str(payload.get("run_id") or "").strip()
+    if context is None or not _RUN_ID.fullmatch(run_id):
+        return None
+    return {
+        **context,
+        "run_id": run_id,
+        "externally_managed": (
+            "true" if payload.get("externally_managed") is True else "false"
+        ),
+    }
+
+
+def saved_card_turn_environment(
+    context: dict[str, str],
+    run_id: str,
+) -> dict[str, str]:
+    """Serialize one validated process-scoped Card Run binding for a Team root."""
+
+    normalized = normalize_card_turn_context(context)
+    exact_run_id = str(run_id or "").strip()
+    if normalized is None or not _RUN_ID.fullmatch(exact_run_id):
+        raise ValueError("card_turn_environment_invalid")
+    return {
+        _CARD_TURN_ENV: json.dumps({
+            "context": normalized,
+            "run_id": exact_run_id,
+            "externally_managed": True,
+        }, separators=(",", ":")),
+    }
 
 
 def _internal_secret() -> str:

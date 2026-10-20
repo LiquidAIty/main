@@ -225,10 +225,23 @@ def test_finish_uses_canonical_postgres_readback_and_rejects_unmatched_write(
         "hermesRunId": "turn-one",
         "errorCode": "provider_failure",
         "errorSummary": "provider source failure",
+        "inputMessageIds": None,
     }
     assert "durationMs" not in query
     assert "resultReady" not in query
     assert "providerInputTokens" not in query
+
+    statements = _install_observer(monkeypatch, _run_row)
+    message_ids = [
+        "msg_00000000-0000-4000-8000-000000000001",
+        "msg_00000000-0000-4000-8000-000000000002",
+    ]
+    assert agentgraph_run_observations.observe_run_finish(
+        run_record,
+        input_message_ids=message_ids,
+    ) is True
+    assert statements[0][1]["inputMessageIds"] == message_ids
+    assert "run.inputMessageIds=coalesce" in statements[0][0]
 
     _install_observer(monkeypatch, lambda *_args: [])
     assert agentgraph_run_observations.observe_run_finish(run_record) is False

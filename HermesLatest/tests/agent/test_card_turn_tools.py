@@ -11,6 +11,13 @@ from agent.card_turn_tools import (
 )
 from tools import mcp_tool
 from tools.mcp_tool_schema import mcp_prefixed_tool_name
+from tui_gateway.saved_card_turn import (
+    bind_card_turn,
+    current_card_turn_authorization,
+    current_card_turn_headers,
+    reset_card_turn,
+    saved_card_turn_environment,
+)
 
 
 def _definition(name: str) -> dict:
@@ -98,3 +105,77 @@ def test_script_runtime_failure_restores_only_its_wrapped_profile_tools(monkeypa
     assert result == {"error": "card_script_execution_failed"}
     assert agent.valid_tool_names == {"terminal", script_name, agent_name}
     assert "card_python" not in agent.valid_tool_names
+
+
+def test_saved_card_turn_signs_catalog_and_runtime_requests_without_oauth(monkeypatch):
+    import jwt
+
+    secret = "s" * 32
+    monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", secret)
+    catalog = current_card_turn_authorization().removeprefix("Bearer ")
+    assert jwt.decode(
+        catalog,
+        secret,
+        algorithms=["HS256"],
+        audience="liquidaity-internal-mcp",
+        issuer="liquidaity-runtime",
+    )["principal"] == {"kind": "catalog-reader"}
+
+    token = bind_card_turn({
+        "endpoint": "http://127.0.0.1:4000/api/card-turn",
+        "project_id": "project-one",
+        "deck_id": "deck_builder",
+        "conversation_id": "project-one",
+        "card_id": "trading",
+        "profile": "trading",
+    }, "run-one")
+    try:
+        assert current_card_turn_headers() == {
+            "X-LiquidAIty-Project-Id": "project-one",
+            "X-LiquidAIty-Deck-Id": "deck_builder",
+            "X-LiquidAIty-Conversation-Id": "project-one",
+            "X-LiquidAIty-Hermes-Profile": "trading",
+            "X-LiquidAIty-Run-Id": "run-one",
+        }
+        runtime = current_card_turn_authorization().removeprefix("Bearer ")
+        assert jwt.decode(
+            runtime,
+            secret,
+            algorithms=["HS256"],
+            audience="liquidaity-internal-mcp",
+            issuer="liquidaity-runtime",
+        )["principal"] == {"kind": "card-runtime"}
+    finally:
+        reset_card_turn(token)
+
+
+def test_saved_card_team_root_reads_the_same_process_scoped_runtime_identity(monkeypatch):
+    context = {
+        "endpoint": "http://127.0.0.1:4000/api/card-turn",
+        "project_id": "project-one",
+        "deck_id": "deck_builder",
+        "conversation_id": "project-one",
+        "card_id": "card_knowgraph",
+        "profile": "knowgraph",
+    }
+    environment = saved_card_turn_environment(context, "req_team_run")
+    monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", "s" * 32)
+    monkeypatch.setenv("HERMES_SAVED_CARD_TURN", environment["HERMES_SAVED_CARD_TURN"])
+
+    assert current_card_turn_headers() == {
+        "X-LiquidAIty-Project-Id": "project-one",
+        "X-LiquidAIty-Deck-Id": "deck_builder",
+        "X-LiquidAIty-Conversation-Id": "project-one",
+        "X-LiquidAIty-Hermes-Profile": "knowgraph",
+        "X-LiquidAIty-Run-Id": "req_team_run",
+    }
+    import jwt
+
+    claims = jwt.decode(
+        current_card_turn_authorization().removeprefix("Bearer "),
+        "s" * 32,
+        algorithms=["HS256"],
+        audience="liquidaity-internal-mcp",
+        issuer="liquidaity-runtime",
+    )
+    assert claims["principal"] == {"kind": "card-runtime"}

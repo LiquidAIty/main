@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   fetchThinkGraphProjection: vi.fn(),
   fetchThinkGraphNeighborhood: vi.fn(),
   requestPythonRailsJson: vi.fn(),
+  waitForActiveThinkGraphCapture: vi.fn(async () => undefined),
   requireOwnedProject: vi.fn(async (..._args: unknown[]): Promise<{
     ownerUserId: string;
   } | null> => ({ ownerUserId: 'owner-one' })),
@@ -30,6 +31,10 @@ vi.mock('../services/pythonRailsClient', () => ({
   fetchThinkGraphProjection: mocks.fetchThinkGraphProjection,
   fetchThinkGraphNeighborhood: mocks.fetchThinkGraphNeighborhood,
   requestPythonRailsJson: mocks.requestPythonRailsJson,
+}));
+
+vi.mock('../services/thinkGraphCaptureSynchronization', () => ({
+  waitForActiveThinkGraphCapture: mocks.waitForActiveThinkGraphCapture,
 }));
 
 import thinkGraphRoutes from './thinkGraph.routes';
@@ -56,6 +61,8 @@ afterEach(() => {
   mocks.fetchThinkGraphProjection.mockReset();
   mocks.fetchThinkGraphNeighborhood.mockReset();
   mocks.requestPythonRailsJson.mockReset();
+  mocks.waitForActiveThinkGraphCapture.mockReset();
+  mocks.waitForActiveThinkGraphCapture.mockResolvedValue(undefined);
   mocks.requireOwnedProject.mockReset();
   mocks.requireOwnedProject.mockResolvedValue({ ownerUserId: 'owner-one' });
 });
@@ -111,6 +118,29 @@ describe('ThinkGraph Engraphis read transport', () => {
       const failure = await fetch(`${baseUrl}/projection?projectId=project-1`);
       expect(failure.status).toBe(502);
       expect(await failure.json()).toEqual({ error: 'engraphis_unavailable' });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('waits for the exact completed Main Run capture before reading its projection', async () => {
+    mocks.fetchThinkGraphProjection.mockResolvedValue({
+      schemaVersion: 'thinkgraph.engraphis.v1',
+      projectId: 'project-1',
+      nodes: [],
+      edges: [],
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/projection?projectId=project-1&afterRunId=run-1`,
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.waitForActiveThinkGraphCapture).toHaveBeenCalledWith(
+        'project-1', 'run-1',
+      );
+      expect(mocks.waitForActiveThinkGraphCapture.mock.invocationCallOrder[0])
+        .toBeLessThan(mocks.fetchThinkGraphProjection.mock.invocationCallOrder[0]);
     } finally {
       await closeServer(server);
     }

@@ -142,13 +142,17 @@ def test_scoped_run_read_checks_provider_conversation_before_output(monkeypatch,
                                    "card_id": "main", "final_result": "private output"}
     monkeypatch.setattr(card_run_readback, "connect_postgres", lambda **kwargs: connection)
     monkeypatch.setattr(saved_cards, "resolve_project_record", lambda *args: {"id": "p"})
-    lineage = MagicMock(return_value=[{"run_id": "parent"}] if conversation_matches else [])
+    input_ids = ["msg_00000000-0000-4000-8000-000000000001"]
+    lineage = MagicMock(return_value=[{
+        "run_id": "parent", "input_message_ids": input_ids,
+    }] if conversation_matches else [])
     monkeypatch.setattr(agentgraph_query, "execute_fixed_agentgraph_query", lineage)
     result = card_run_readback.read_run({"projectId": "p", "deckId": "d", "runId": "parent",
                                    "conversationId": "selected-conversation"})
     if conversation_matches:
         assert result["run"]["conversationId"] == "selected-conversation"
         assert result["run"]["result"] == "private output"
+        assert result["run"]["inputMessageIds"] == input_ids
     else:
         assert result == {"ok": True, "run": None}
     assert lineage.call_args.args[2] == {"projectId": "p", "deckId": "d",
@@ -709,7 +713,13 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
             return Cursor()
 
     monkeypatch.setattr(card_run_settlement, "connect_postgres", lambda **_kwargs: Connection())
-    monkeypatch.setattr(agentgraph_run_observations, "observe_run_finish", lambda *_args, **_kwargs: True)
+    observed: dict[str, object] = {}
+
+    def observe_finish(*_args, **kwargs):
+        observed.update(kwargs)
+        return True
+
+    monkeypatch.setattr(agentgraph_run_observations, "observe_run_finish", observe_finish)
 
     result = card_run_settlement.finish_run({
         "runId": "run-one",
@@ -720,6 +730,10 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
         "provider": "openai-codex",
         "model": "gpt-5.6-sol",
         "effectiveProvider": "openai-codex",
+        "inputMessageIds": [
+            "msg_00000000-0000-4000-8000-000000000001",
+            "msg_00000000-0000-4000-8000-000000000002",
+        ],
     })
 
     update_query, update_params = next(
@@ -733,6 +747,36 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
     assert update_params[5] == "hermes-session"
     assert result["updated"] is True
     assert result["state"] == "completed"
+    assert observed["input_message_ids"] == [
+        "msg_00000000-0000-4000-8000-000000000001",
+        "msg_00000000-0000-4000-8000-000000000002",
+    ]
+
+
+@pytest.mark.parametrize("value", [[], ["bad"], [
+    "msg_00000000-0000-4000-8000-000000000001",
+    "msg_00000000-0000-4000-8000-000000000001",
+]])
+def test_finish_run_rejects_invalid_input_message_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    value,
+) -> None:
+    monkeypatch.setattr(
+        card_run_settlement,
+        "connect_postgres",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid input evidence must fail before storage")
+        ),
+    )
+    with pytest.raises(
+        saved_card_contract.CardDomainError,
+        match="run_input_message_ids_invalid",
+    ):
+        card_run_settlement.finish_run({
+            "runId": "run-one",
+            "state": "failed",
+            "inputMessageIds": value,
+        })
 
 def test_finish_run_accepts_mag_one_hermes_root_and_final_task_without_fake_session(
     monkeypatch: pytest.MonkeyPatch,

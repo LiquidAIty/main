@@ -33,6 +33,7 @@
     "moduleResolution": "bundler"
   },
   "include": [
+    "../agent-products/nrgsim/tests/*.spec.tsx",
     "vite.config.ts",
     "vite.config.mts",
     "vitest.config.ts",

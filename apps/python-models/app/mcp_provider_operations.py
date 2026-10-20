@@ -18,7 +18,11 @@ from typing import Any
 from mcp.types import CallToolResult, TextContent, Tool
 
 from app import mcp_cbm_provider, mcp_graphiti_provider
-from app.python_models.knowgraph_know_contract import encode_know_payload
+from app.python_models.knowgraph_know_contract import (
+    encode_know_payload,
+    know_episode_uuid,
+)
+from app.python_models.knowgraph_source_verification import verify_source_document
 from app.python_models.operation_definition import OperationDefinition
 from app.python_models.tool_registry import (
     graphiti_operation_policy,
@@ -36,6 +40,7 @@ PROVIDER_PREFIXES = {
     "cbm": "cbm.",
     "graphiti": "graphiti.",
 }
+PROVIDER_FAMILIES = (*PROVIDER_PREFIXES, "openstudio")
 _CARD_CATALOG_PROVIDER_TOOL_NAMES = {
     "cbm": frozenset({
         "check_index_coverage",
@@ -96,35 +101,23 @@ _GRAPHITI_SERVER_INJECTED_ARGUMENTS = frozenset({"group_id", "group_ids"})
 _GRAPHITI_PROJECT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def _know_side_input_schema(label: str) -> dict[str, Any]:
+def _know_source_input_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "description": (
-            f"The {label} side of the same Know. It must remain readable on its own "
-            "and carry its own source links."
+            "The one retrieved source document for this observation. The evidence must be an "
+            "exact passage from that document; acceptance re-fetches and verifies it."
         ),
         "properties": {
-            "body": {"type": "string", "minLength": 1, "maxLength": 8000},
-            "detail": {"type": "string", "minLength": 1, "maxLength": 40000},
-            "citations": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 12,
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "url": {"type": "string", "minLength": 1, "maxLength": 8000},
-                        "title": {"type": "string", "maxLength": 1000},
-                        "publisher": {"type": "string", "maxLength": 1000},
-                        "locator": {"type": "string", "maxLength": 1000},
-                        "supports": {"type": "string", "maxLength": 4000},
-                    },
-                    "required": ["url"],
-                    "additionalProperties": False,
-                },
-            },
+            "url": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "title": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "publisher": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "evidence": {"type": "string", "minLength": 20, "maxLength": 12000},
+            "locator": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "publishedAt": {"type": "string", "minLength": 4, "maxLength": 1000},
+            "eventAt": {"type": "string", "minLength": 4, "maxLength": 1000},
         },
-        "required": ["body", "citations"],
+        "required": ["url", "title", "publisher", "evidence"],
         "additionalProperties": False,
     }
 
@@ -134,37 +127,129 @@ def _project_entity_know_tool(payload: dict[str, Any]) -> None:
 
     schema = copy.deepcopy(payload.get("inputSchema") or {})
     properties = schema.setdefault("properties", {})
-    for field in ("episode_body", "source_description", "source"):
+    for field in (
+        "episode_body", "source_description", "source", "uuid", "reference_time",
+    ):
         properties.pop(field, None)
-    properties["idea"] = _know_side_input_schema("supporting idea")
-    properties["counterIdea"] = _know_side_input_schema("counter idea")
-    schema["required"] = ["entity_name", "name", "idea", "counterIdea"]
+    properties.update({
+        "observation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000,
+            "description": "One self-contained factual observation supported by the quoted passage.",
+        },
+        "interpretation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000,
+            "description": (
+                "A short, explicitly interpretive explanation. Do not present it as source text."
+            ),
+        },
+        "source": _know_source_input_schema(),
+        "direction": {
+            "type": "object",
+            "description": (
+                "Optional relevance to one explicit proposition; omit for a useful neutral finding."
+            ),
+            "properties": {
+                "proposition": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "relation": {
+                    "type": "string",
+                    "enum": ["supports", "challenges", "context"],
+                },
+            },
+            "required": ["proposition", "relation"],
+            "additionalProperties": False,
+        },
+    })
+    schema["required"] = [
+        "entity_name", "name", "observation", "interpretation", "source",
+    ]
     schema["additionalProperties"] = False
     payload["inputSchema"] = schema
     payload["title"] = "Add Know to Entity"
     payload["description"] = (
-        "Queue one atomic two-sided Know with an exact Entity attachment. The supporting "
-        "idea and counter idea are inseparable parts of one Know and each requires its "
-        "own citations. Graphiti keeps its queued extraction, provenance, time, "
-        "relationship, Community, and Saga behavior."
+        "Verify and queue one atomic sourced observation with an exact Entity attachment. "
+        "The source passage is mechanically checked before Graphiti receives it. Optional "
+        "direction describes relevance to one explicit proposition; balance belongs across "
+        "research coverage, not inside every Know. Graphiti keeps its queued extraction, "
+        "provenance, time, relationship, Community, and Saga behavior."
     )
 
 
-def _entity_know_provider_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+async def _entity_know_provider_arguments(
+    arguments: dict[str, Any],
+    project_id: str,
+) -> tuple[dict[str, Any], str]:
     provider_arguments = dict(arguments)
-    idea = provider_arguments.pop("idea", None)
-    counter_idea = provider_arguments.pop("counterIdea", None)
-    episode_body, source_description = encode_know_payload(idea, counter_idea)
+    observation = provider_arguments.pop("observation", None)
+    interpretation = provider_arguments.pop("interpretation", None)
+    raw_source = provider_arguments.pop("source", None)
+    direction = provider_arguments.pop("direction", None)
+    verified_source = await asyncio.to_thread(verify_source_document, raw_source)
+    episode_body, source_description, dedupe_key = encode_know_payload(
+        observation,
+        verified_source,
+        interpretation,
+        direction,
+    )
+    entity_name = str(provider_arguments.get("entity_name") or "").strip()
+    if not project_id or not entity_name:
+        raise ValueError("know_project_and_entity_required")
     provider_arguments.update({
         "episode_body": episode_body,
         "source_description": source_description,
         "source": "json",
+        "uuid": know_episode_uuid(project_id, entity_name, dedupe_key),
     })
-    return provider_arguments
+    reference_time = verified_source.get("eventAt") or verified_source.get("publishedAt")
+    if reference_time:
+        provider_arguments["reference_time"] = reference_time
+    return provider_arguments, dedupe_key
+
+
+async def _persisted_atomic_know(
+    project_id: str,
+    episode_uuid: str,
+) -> bool:
+    """Check exact Graphiti persistence before spending another queue/extraction pass."""
+
+    from app.python_models.knowgraph_exact_reads import read_knowgraph_episodes_exact
+
+    records = await asyncio.to_thread(
+        read_knowgraph_episodes_exact,
+        project_id,
+        [episode_uuid],
+    )
+    return bool(records)
+
+
+def _duplicate_atomic_know_result(episode_uuid: str, dedupe_key: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(
+        type="text",
+        text=json.dumps({
+            "status": "already_persisted",
+            "episode_uuid": episode_uuid,
+            "dedupe_key": dedupe_key,
+            "queued": False,
+            "persisted": True,
+        }, separators=(",", ":")),
+    )])
 
 
 def is_provider_operation_name(name: str) -> bool:
-    return name.startswith((*PROVIDER_PREFIXES.values(), "engraphis_"))
+    definition = operation_definition(name)
+    return name.startswith((*PROVIDER_PREFIXES.values(), "engraphis_")) or bool(
+        definition and definition.external_source_id == "openstudio"
+    )
+
+
+def belongs_to_provider(name: str, family: str) -> bool:
+    if family in PROVIDER_PREFIXES:
+        return name.startswith(PROVIDER_PREFIXES[family])
+    definition = operation_definition(name)
+    return bool(definition and definition.external_source_id == family)
 
 
 def graphiti_project_group_id(project_id: str) -> str:
@@ -311,7 +396,18 @@ def register_graphiti_catalog(tools: list[Tool]) -> None:
         ) -> Any:
             provider_arguments = dict(arguments)
             if _provider_tool_name == "add_memory_to_entity":
-                provider_arguments = _entity_know_provider_arguments(provider_arguments)
+                if not _authenticatedProjectId:
+                    raise RuntimeError("know_project_context_required")
+                provider_arguments, dedupe_key = await _entity_know_provider_arguments(
+                    provider_arguments,
+                    _authenticatedProjectId,
+                )
+                episode_uuid = str(provider_arguments["uuid"])
+                if await _persisted_atomic_know(
+                    _authenticatedProjectId,
+                    episode_uuid,
+                ):
+                    return _duplicate_atomic_know_result(episode_uuid, dedupe_key)
             include_body = bool(provider_arguments.pop("include_body", False))
             preview_chars = max(0, min(
                 2000, int(provider_arguments.pop("body_preview_chars", 400)),

@@ -5,7 +5,7 @@ from __future__ import annotations
 # Entity: ThinkGraph
 # Relationship: This file verifies exact Engraphis Entity references return bounded Recent and Relevant Thinks.
 # Entity: KnowGraph
-# Relationship: This file verifies exact Graphiti Entity references return bounded Recent and Relevant two-sided Knows.
+# Relationship: This file verifies exact Graphiti Entity references return bounded Recent and Relevant atomic or historical Knows.
 # Entity: Jev Decisions
 # Relationship: This file verifies stale or nonexact Entity references are rejected before bounded relevance ranking.
 # Entity: Tool Catalog

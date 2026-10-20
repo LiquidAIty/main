@@ -4,7 +4,7 @@
 # Entity: ThinkGraph
 # Relationship: This file reads exact Engraphis Entity Think candidates and returns one distinct Recent plus Jev-ranked Relevant selection.
 # Entity: KnowGraph
-# Relationship: This file reads exact Graphiti Entity two-sided Know candidates and returns one distinct Recent plus Jev-ranked Relevant selection.
+# Relationship: This file reads exact Graphiti Entity atomic and historical Know candidates and returns one distinct Recent plus Jev-ranked Relevant selection.
 # Entity: Jev Decisions
 # Relationship: This file uses Jev only to rank bounded provider-owned candidates against the current request and never writes relevance into either graph.
 # Entity: Tool Catalog
@@ -239,22 +239,77 @@ def project_graph_operation_definitions(
         "required": ["body", "citations"],
         "additionalProperties": False,
     }
-    know_record = {
+    know_record_common = {
+        "graphitiEpisodeId": {"type": "string", "minLength": 1},
+        "graphitiEntityId": {"type": "string", "minLength": 1},
+        "schemaVersion": {"type": "string"},
+        "validFrom": {}, "ingestedAt": {},
+        "relevance": {"type": "number", "minimum": 0, "maximum": 1},
+        "relevanceRank": {"type": "integer", "minimum": 1, "maximum": 12},
+    }
+    atomic_source = {
         "type": "object",
         "properties": {
-            "graphitiEpisodeId": {"type": "string", "minLength": 1},
-            "graphitiEntityId": {"type": "string", "minLength": 1},
-            "idea": know_side,
-            "counterIdea": know_side,
-            "validFrom": {}, "ingestedAt": {},
-            "relevance": {"type": "number", "minimum": 0, "maximum": 1},
-            "relevanceRank": {"type": "integer", "minimum": 1, "maximum": 12},
+            "url": {"type": "string", "minLength": 1},
+            "resolvedUrl": {"type": "string", "minLength": 1},
+            "title": {"type": "string", "minLength": 1},
+            "publisher": {"type": "string", "minLength": 1},
+            "evidence": {"type": "string", "minLength": 1},
+            "locator": {"type": "string"},
+            "publishedAt": {"type": "string"},
+            "eventAt": {"type": "string"},
+            "retrievedAt": {"type": "string"},
+            "documentTitle": {"type": "string"},
+            "contentFingerprint": {"type": "string"},
+        },
+        "required": ["url", "title", "publisher", "evidence"],
+        "additionalProperties": False,
+    }
+    atomic_direction = {
+        "type": "object",
+        "properties": {
+            "proposition": {"type": "string", "minLength": 1},
+            "relation": {
+                "type": "string",
+                "enum": ["supports", "challenges", "context"],
+            },
+        },
+        "required": ["proposition", "relation"],
+        "additionalProperties": False,
+    }
+    atomic_know_record = {
+        "type": "object",
+        "properties": {
+            **know_record_common,
+            "schemaVersion": {"const": "know.v2"},
+            "observation": {"type": "string", "minLength": 1},
+            "interpretation": {"type": "string", "minLength": 1},
+            "source": atomic_source,
+            "direction": atomic_direction,
+            "dedupeKey": {"type": "string", "minLength": 1},
         },
         "required": [
-            "graphitiEpisodeId", "graphitiEntityId", "idea", "counterIdea",
+            "graphitiEpisodeId", "graphitiEntityId", "schemaVersion",
+            "observation", "interpretation", "source",
         ],
         "additionalProperties": False,
     }
+    legacy_know_record = {
+        "type": "object",
+        "properties": {
+            **know_record_common,
+            "schemaVersion": {"const": "know.v1"},
+            "legacy": {"const": True},
+            "idea": know_side,
+            "counterIdea": know_side,
+        },
+        "required": [
+            "graphitiEpisodeId", "graphitiEntityId", "schemaVersion",
+            "legacy", "idea", "counterIdea",
+        ],
+        "additionalProperties": False,
+    }
+    know_record = {"oneOf": [atomic_know_record, legacy_know_record]}
 
     def selection_schema(record_schema: dict[str, Any]) -> dict[str, Any]:
         return {

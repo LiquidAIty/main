@@ -69,16 +69,21 @@ owns source boundaries. A historical report is evidence, never permission to act
 Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; CBM owns CodeGraph; AGE owns
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
-Main is not the owner of ThinkGraph writes. The completed-pair Python preparation and settlement rails remain,
-but the rejected TypeScript child-Card executor was removed and no current automatic caller is claimed.
-Do not reconnect those rails through a direct target runner, regex-first graph skeleton, pending-candidate
-queue, approval state, shadow graph, broad historical deletion, direct model edge writer, second extractor,
-or database-side semantic shortcut.
+Main is not the owner of ThinkGraph writes. One successfully completed ordinary Main Run is captured exactly
+once: the backend preserves its ordered user-message references on the Run, invokes the exact authorized saved
+ThinkGraph Card through the repo-owned Hermes adapter, and passes that Card's structured result to the existing
+Python preparation and settlement owners. Additional user input while Main is active invisibly steers that same
+Run and becomes part of its one completed exchange. Do not add an application or Hermes prompt queue, restore
+the rejected generic TypeScript child-Card executor, or substitute a regex-first graph skeleton, candidate or
+approval state, shadow graph, direct model edge writer, second extractor, or database-side semantic shortcut.
 KnowGraph retains actual sourced research through its existing owner. Its dedicated queued Entity write
 records one exact structural `ABOUT` attachment; `MENTIONS` remains extraction output, not attachment authority.
-One Know is one atomic `know.v1` episode with both a cited supporting idea and a cited counter idea. Do not
-store or project a one-sided cited statement as a Know, split its two sides into separate Knows, or attach the
-same Know to multiple Entities. Only Entities are visible Project graph nodes; episodes and citations remain
+One current Know is one atomic `know.v2` episode: one verified source document and exact passage, one
+self-contained observation, one separately labeled bounded interpretation, and optional direction relative to
+an explicit proposition. Do not bundle several sources into one Know, repeat the same source-backed finding,
+or attach one Know to multiple Entities. Balance belongs across research coverage and synthesis, not as a
+mandatory positive/negative pair inside every record. Historical paired `know.v1` records remain readable
+only as explicit legacy records. Only Entities are visible Project graph nodes; episodes and sources remain
 attached evidence/provenance.
 
 Current agent grounding is one most Relevant plus one distinct most Recent record from each authority by

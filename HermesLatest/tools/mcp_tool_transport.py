@@ -502,18 +502,52 @@ class MCPServerTransportMixin:
         # Explicit AsyncClient matching the SDK's create_mcp_http_client defaults; MUST come from the
         # SDK's httpx (httpx2 on mcp >= 2.0) since the SDK sends its own Requests through it.
         httpx = _core.sdk_httpx()
+        configured_url = urllib.parse.urlsplit(url)
+        profile_connection = (
+            any(key.lower() == "x-liquidaity-hermes-profile" for key in headers)
+            and configured_url.scheme.lower() == "http"
+            and is_loopback_host(configured_url.hostname or "")
+            and configured_url.path == "/mcp"
+        )
+        if profile_connection:
+            configured_header_names = set(configured_header_names) | {
+                "authorization",
+                "x-liquidaity-project-id",
+                "x-liquidaity-deck-id",
+                "x-liquidaity-conversation-id",
+                "x-liquidaity-run-id",
+            }
         _build_client = _make_redirect_header_stripper(
             httpx, httpx.URL(url), strict=strict_cfg_headers, configured_header_names=configured_header_names)
         # verify/cert live on the inner transport: a custom transport= makes client-level TLS kwargs
         # inert — and suppresses httpx's own proxy auto-detection, hence the explicit mounts=.
         inner_transport = httpx.AsyncHTTPTransport(verify=ssl_verify, **_present(cert=client_cert))
         request_hooks = []
-        if any(key.lower() == "x-liquidaity-hermes-profile" for key in headers):
-            async def _bind_saved_card_run(request):
-                from tui_gateway.saved_card_turn import current_card_turn_headers
+        if profile_connection:
+            configured_port = configured_url.port or 80
 
+            async def _bind_saved_card_run(request):
+                from tui_gateway.saved_card_turn import (
+                    current_card_turn_authorization,
+                    current_card_turn_headers,
+                )
+
+                requested_url = urllib.parse.urlsplit(str(request.url))
+                requested_origin = (
+                    requested_url.scheme.lower(),
+                    (requested_url.hostname or "").lower(),
+                    requested_url.port or (443 if requested_url.scheme.lower() == "https" else 80),
+                )
+                configured_origin = (
+                    configured_url.scheme.lower(),
+                    (configured_url.hostname or "").lower(),
+                    configured_port,
+                )
+                if requested_origin != configured_origin:
+                    return
                 for key, value in current_card_turn_headers().items():
                     request.headers[key] = value
+                request.headers["Authorization"] = current_card_turn_authorization()
 
             request_hooks.append(_bind_saved_card_run)
         client_kwargs: dict = {"follow_redirects": True, "timeout": httpx.Timeout(float(connect_timeout), read=300.0),
@@ -552,7 +586,13 @@ class MCPServerTransportMixin:
         # redirect — capture their names BEFORE client-generated headers are merged in.
         configured_header_names = {key.lower() for key in headers}
         if "x-liquidaity-hermes-profile" in configured_header_names:
-            configured_header_names.add("x-liquidaity-run-id")
+            configured_header_names.update({
+                "authorization",
+                "x-liquidaity-project-id",
+                "x-liquidaity-deck-id",
+                "x-liquidaity-conversation-id",
+                "x-liquidaity-run-id",
+            })
         headers = _apply_identity_header(self.name, config, headers)  # explicit same-name headers win
         # Seed MCP-Protocol-Version (user override wins) from the HANDSHAKE version, not the latest: a
         # 2026-07-28 header routes the handshake-era ``initialize()`` onto the envelope ladder, which rejects it.

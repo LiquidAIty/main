@@ -1412,7 +1412,7 @@ class Graphiti:
                 communities = []
                 community_edges = []
                 if update_communities:
-                    communities, community_edges = await semaphore_gather(
+                    community_results = await semaphore_gather(
                         *[
                             update_community(
                                 driver,
@@ -1425,6 +1425,9 @@ class Graphiti:
                         ],
                         max_coroutines=self.max_coroutines,
                     )
+                    for updated_communities, updated_edges in community_results:
+                        communities.extend(updated_communities)
+                        community_edges.extend(updated_edges)
 
                 end = time()
 

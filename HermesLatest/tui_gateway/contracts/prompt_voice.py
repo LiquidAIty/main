@@ -64,6 +64,7 @@ class PromptSubmitParams(SessionParams):
     card_script: CardScriptDefinition | None = None
     bot_mode_roster: list[str] | None = None
     bot_mode_sessions: dict[str, str] | None = None
+    bot_mode_card_contexts: dict[str, dict[str, str]] | None = None
     bot_mode_reply_delivery: Literal["notification", "direct"] | None = None
     surface: str | None = None  # a ClientSurface value; unknown values clear the surface
     voice_context: str | None = None  # recent spoken transcript, model input only (voice-live)

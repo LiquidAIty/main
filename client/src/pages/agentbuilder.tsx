@@ -122,6 +122,7 @@ type SavedCardChoice = {
 };
 
 const loadCardEditor = () => import('../components/CardEditor');
+const ModelWorkspace = lazy(() => import('../../../agent-products/nrgsim/ui/ModelWorkspace'));
 const CardEditor = lazy(async () => {
   const mod = await loadCardEditor();
   return { default: mod.CardEditor };
@@ -243,8 +244,8 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
   }
   return card.id;
 }
-// The Graphs workspace keeps the mixed Think/Know presentation separate from
-// the opt-in Code view; all three remain backed by their own provider authority.
+// The Graphs workspace presents independently visible Think, Know, and opt-in Code
+// layers on one canvas; all three remain backed by their own provider authority.
 const PROJECTS_API = '/api/projects';
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -258,10 +259,12 @@ export default function AgentBuilder(): React.ReactElement {
     | 'trading'
     | 'worldsignal'
     | 'worldview'
+    | 'nrgsim'
   >(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('workspace') === 'knowledge') return 'knowledge';
     if (params.get('workspace') === 'worldview') return 'worldview';
+    if (params.get('workspace') === 'nrgsim') return 'nrgsim';
     return params.get('projectId') ? 'canvas' : 'chat';
   });
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
@@ -483,6 +486,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [workspaceView, worldViewBridge, worldViewCard?.id]);
   const {
     handleSend,
+    requestMainText,
     messages,
     addressableAgents,
     sessionActive,
@@ -499,6 +503,11 @@ export default function AgentBuilder(): React.ReactElement {
     deckId: BUILDER_DECK_ID,
     deckRevision,
     prepareRunImages,
+    onMainRunCompleted: knowledgeGraphs.refreshAfterMainRun,
+  });
+  const modelingAgents = addressableAgents.filter((agent) => {
+    const tools = deck.nodes.find((card) => card.id === agent.cardId)?.runtimeOptions?.tools;
+    return Array.isArray(tools) && tools.includes('get_model_summary');
   });
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -1509,6 +1518,13 @@ export default function AgentBuilder(): React.ReactElement {
       onOpenAddAgent={handleOpenSavedCardChooser}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
+      onShowModelingWorkspace={modelingAgents.length ? () => {
+        setWorkspaceView('nrgsim');
+        closeInspectorDrawer();
+        const params = new URLSearchParams(window.location.search);
+        params.set('workspace', 'nrgsim');
+        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+      } : undefined}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
     />
   );
@@ -1516,6 +1532,14 @@ export default function AgentBuilder(): React.ReactElement {
   const workspaceCompanionSurfaceHost = (
     <CompanionSurfaceHost
       workspaceView={workspaceView}
+      nrgsimSurface={modelingAgents.length ? <Suspense fallback={<p>Loading building workspace…</p>}>
+        <ModelWorkspace projectId={canvasProjectId || null}
+          agents={modelingAgents}
+          onAgentRequest={requestMainText}
+          agentBusy={sessionActive || sessionConnecting} />
+      </Suspense> : <p style={{ padding: 24 }}>
+        This Project has no connected modeling Card. Open Building Energy Modeler and configure its saved Modeler through Builder.
+      </p>}
       knowledgeSurface={
         renderKnowledgeGraphSurface({
           minHeight: 420,

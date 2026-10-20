@@ -2472,6 +2472,7 @@ export interface PromptSubmitParams {
   card_script?: CardScriptDefinition | null
   bot_mode_roster?: string[] | null
   bot_mode_sessions?: Record<string, string> | null
+  bot_mode_card_contexts?: Record<string, Record<string, string>> | null
   bot_mode_reply_delivery?: 'notification' | 'direct' | null
   surface?: string | null
   voice_context?: string | null
@@ -4433,6 +4434,7 @@ export interface MessageCompletePayload {
   text?: string | unknown
   submission_id?: string | null
   notification_process_ids?: string[] | null
+  notification_task_ids?: string[] | null
   usage?: Usage | null
   turn_usage?: Usage | null
   status?: TurnStatus | null

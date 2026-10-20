@@ -14,6 +14,7 @@ import {
   fetchThinkGraphProjection,
   requestPythonRailsJson,
 } from '../services/pythonRailsClient';
+import { waitForActiveThinkGraphCapture } from '../services/thinkGraphCaptureSynchronization';
 import { requireOwnedProject } from './projectAccess';
 
 const thinkGraphRoutes = Router();
@@ -37,9 +38,11 @@ thinkGraphRoutes.post('/retire', async (req, res) => {
 // Transport only: Python/Engraphis owns the projection and its graph data.
 thinkGraphRoutes.get('/projection', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();
+  const afterRunId = String(req.query.afterRunId || '').trim();
   if (!projectId) return res.status(400).json({ error: 'projectId required' });
   try {
     if (!await requireOwnedProject(req, res, projectId)) return undefined;
+    if (afterRunId) await waitForActiveThinkGraphCapture(projectId, afterRunId);
     return res.json(await fetchThinkGraphProjection(projectId));
   } catch (error: any) {
     return res.status(502).json({ error: String(error?.message || 'thinkgraph_projection_unavailable') });

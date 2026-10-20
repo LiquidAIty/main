@@ -48,6 +48,7 @@ type UseAgentBuilderMainChatArgs = {
   deckRevision?: string | null;
   dataAnchors?: LoadedCardGraphReference['reference'][];
   prepareRunImages?: (addressedCardId: string | null) => Promise<MainRunImage[]>;
+  onMainRunCompleted?: (runId: string) => void | Promise<void>;
 };
 
 export type LoadedCardGraphReference = {
@@ -149,6 +150,7 @@ export default function useAgentBuilderMainChat({
   deckRevision,
   dataAnchors = [],
   prepareRunImages,
+  onMainRunCompleted,
 }: UseAgentBuilderMainChatArgs) {
   const projectKey = canvasProjectId;
   const [technical, setTechnical] = useState<{ key: string; error: string | null }>({
@@ -278,22 +280,33 @@ export default function useAgentBuilderMainChat({
       ...(mainCardId ? { cardId: mainCardId } : {}),
     };
     const requestKey = globalThis.crypto.randomUUID();
-    setTranscript((current) => ({
-      key: projectKey,
-      messages: [
-        ...(current.key === projectKey ? current.messages : []),
-        {
-          role: 'user',
-          text,
-          speaker: USER_PARTICIPANT,
-          target: requestTarget,
-          status: 'pending',
-          requestKey,
-        },
-      ],
-    }));
-    setTechnical({ key: projectKey, error: null });
     const alreadyActive = activeStreamsRef.current.size > 0;
+    setTranscript((current) => {
+      const messages = current.key === projectKey ? [...current.messages] : [];
+      const userMessage: MainProjectChatMessage = {
+        role: 'user',
+        text,
+        speaker: USER_PARTICIPANT,
+        target: requestTarget,
+        status: 'pending',
+        requestKey,
+      };
+      if (alreadyActive) {
+        const activeRequestKeys = new Set(
+          [...activeStreamsRef.current.values()].map((active) => active.requestKey),
+        );
+        const pendingAnswerIndex = messages.findIndex((item) => (
+          item.role === 'assistant'
+          && item.status === 'pending'
+          && Boolean(item.requestKey)
+          && activeRequestKeys.has(item.requestKey!)
+        ));
+        if (pendingAnswerIndex >= 0) messages.splice(pendingAnswerIndex, 0, userMessage);
+        else messages.push(userMessage);
+      } else messages.push(userMessage);
+      return { key: projectKey, messages };
+    });
+    setTechnical({ key: projectKey, error: null });
     setTurnState({ key: projectKey, phase: alreadyActive ? 'active' : 'connecting' });
     const controller = new AbortController();
     activeStreamsRef.current.set(controller, { key: projectKey, runId: null, requestKey });
@@ -424,6 +437,17 @@ export default function useAgentBuilderMainChat({
             : message
         )),
       }));
+      const completedRunId = runId;
+      if (
+        completedRunId
+        && !addressedCardId
+        && responseParticipant.cardId === mainCardId
+        && String(finalText || streamedText).trim()
+      ) {
+        void Promise.resolve()
+          .then(() => onMainRunCompleted?.(completedRunId))
+          .catch(() => undefined);
+      }
       return finalText;
     } catch (error) {
       if (controller.signal.aborted) {
@@ -469,6 +493,7 @@ export default function useAgentBuilderMainChat({
     dataAnchors,
     deckId,
     mainCardId,
+    onMainRunCompleted,
     prepareRunImages,
     projectKey,
   ]);

@@ -32,6 +32,35 @@ function projection(): GraphProjectionV1 {
 }
 
 describe('KnowGraph route contracts', () => {
+  it('refreshes ThinkGraph after the exact completed Main Run settles', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.startsWith('/api/thinkgraph/projection?')) {
+        return new Response(JSON.stringify(projection()), { status: 200 });
+      }
+      return new Response(JSON.stringify({ nodes: [], relationships: [] }), { status: 200 });
+    }));
+    const { result } = renderHook(() => useAgentBuilderKnowledgeGraphs({
+      projectId: 'project-one',
+      deckId: 'deck-one',
+      conversationId: 'conversation-one',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+
+    await act(async () => { await result.current.refreshAfterMainRun('run-one'); });
+
+    const refresh = calls.filter(url => url.startsWith('/api/thinkgraph/projection?')).at(-1);
+    const query = new URLSearchParams(refresh?.split('?')[1] || '');
+    expect(query.get('projectId')).toBe('project-one');
+    expect(query.get('afterRunId')).toBe('run-one');
+    const knowCalls = calls.filter(url => url.startsWith('/api/knowgraph/graph?'));
+    expect(knowCalls).toHaveLength(2);
+    expect(calls.lastIndexOf(knowCalls.at(-1)!))
+      .toBeGreaterThan(calls.lastIndexOf(refresh!));
+  });
+
   it('sends one exact delete request and refreshes after the server confirms it', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

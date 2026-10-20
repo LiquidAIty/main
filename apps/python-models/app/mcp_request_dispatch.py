@@ -88,6 +88,13 @@ def request_tool_is_allowed(
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
         return False
+    if kind == "card-runtime":
+        context = mcp_auth.authenticated_project_context()
+        granted = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])
+        return (
+            name in mcp_catalog_runtime.published_mcp_tool_names()
+            and name in granted
+        )
     if kind == "materializer-read":
         grants = mcp_auth.validated_principal_tool_names(
             principal.get("grantedTools")
@@ -254,6 +261,9 @@ async def dispatch_tool(
 
 
 def mcp_tool_timeout_seconds(name: str) -> float:
+    definition = operation_definition(name)
+    if definition is not None and definition.external_source_id == "openstudio":
+        return 600.0
     if name == "engraphis_remember":
         # Semantic extraction and storage can exceed the ordinary read deadline.
         return 190.0

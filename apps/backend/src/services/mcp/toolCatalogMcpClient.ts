@@ -14,8 +14,8 @@ import {
 
 let clientPromise: Promise<Client> | null = null;
 
-const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 500;
-const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm', 'graphiti']);
+const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 5_000;
+const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm', 'graphiti', 'openstudio']);
 const MAX_CATALOG_PAGES = 100;
 const MAX_CATALOG_TOOLS = 10_000;
 

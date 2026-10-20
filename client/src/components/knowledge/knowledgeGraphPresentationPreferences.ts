@@ -123,6 +123,7 @@ export function withoutSolarpunkMaterial(node: GraphProjectionNode): GraphProjec
   delete next.material_role;
   delete next.material_blue;
   delete next.material_orange;
+  delete next.material_green;
   delete next.material_surface;
   delete next.material_think_active;
   delete next.material_know_active;

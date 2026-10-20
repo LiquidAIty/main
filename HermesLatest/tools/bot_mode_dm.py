@@ -196,7 +196,13 @@ def _err(message: str, *, roster: list[str] | None = None, peers: list[str] | No
     return json.dumps(payload)
 
 
-def message_agent_tool(target: str = "", message: str = "", task_id: Optional[str] = None, agent: Any = None) -> str:
+def message_agent_tool(
+    target: str = "",
+    message: str = "",
+    task_id: Optional[str] = None,
+    agent: Any = None,
+    tool_call_id: Optional[str] = None,
+) -> str:
     """Deliver ``message`` to ``target``'s Bot Chat. Returns a JSON ack/error.
     ``agent`` is the calling AIAgent — used for the Bot Chat gate and sender identity."""
     home = _agent_home(agent)
@@ -293,6 +299,42 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     target_session_id = str(session_targets.get(resolved) or "").strip()
     if isinstance(session_targets_override, dict) and not target_session_id:
         return _err(f"Project session for @{_handle(resolved)} is unavailable; nothing was sent.")
+    try:
+        from hermes_cli.kanban_team import TEAM_TASK_MODE, profile_task_mode
+
+        task_mode = profile_task_mode(
+            resolved,
+            profile_home=str(roster_homes[resolved]),
+        )
+    except Exception as exc:
+        return _err(
+            f"Delivery to @{_handle(resolved)} was refused because its saved task mode "
+            f"is invalid: {exc}. Nothing was submitted."
+        )
+    if task_mode == TEAM_TASK_MODE:
+        raw_contexts = getattr(agent, "_bot_mode_card_contexts", None)
+        target_context = (
+            raw_contexts.get(resolved)
+            if isinstance(raw_contexts, dict)
+            else None
+        )
+        if not isinstance(target_context, dict):
+            return _err(
+                f"Delivery to @{_handle(resolved)} requires the target saved Card context. "
+                "Nothing was submitted."
+            )
+        return _start_team_task(
+            target_profile=resolved,
+            target_home=roster_homes[resolved],
+            target_label=f"@{_handle(resolved)}",
+            target_context=target_context,
+            source_profile=me,
+            body=body,
+            content=content,
+            parent_run_id=parent_run_id,
+            tool_call_id=tool_call_id,
+            agent=agent,
+        )
     turn_args = (
         ("chat", "--resume", target_session_id, "-Q")
         if target_session_id
@@ -304,6 +346,154 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
                            parent_run_id=parent_run_id,
                            continue_card_run=continue_card_run,
                            notify_sender=notify_sender, **delivery)
+
+
+def _start_team_task(
+    *,
+    target_profile: str,
+    target_home: Path,
+    target_label: str,
+    target_context: dict[str, str],
+    source_profile: str,
+    body: str,
+    content: str,
+    parent_run_id: Optional[str],
+    tool_call_id: Optional[str],
+    agent: Any,
+) -> str:
+    """Stage one saved-Card Run on Hermes' existing AutoTeam ledger.
+
+    The target Card is prepared through the same application-owned boundary as
+    an ordinary Bot delivery. Only the synthesis root later receives that
+    exact Run context; decomposition and candidate workers remain read-only.
+    """
+
+    source_session = str(getattr(agent, "session_id", "") or "").strip()
+    call_id = str(tool_call_id or "").strip()
+    if not source_session:
+        return _err(
+            f"Delivery to {target_label} requires the calling Hermes session. "
+            "Nothing was submitted."
+        )
+    if not call_id:
+        return _err(
+            f"Delivery to {target_label} requires a unique tool-call id. "
+            "Nothing was submitted."
+        )
+    try:
+        from tools.kanban_tools import _resolve_notify_target
+
+        notify = _resolve_notify_target()
+    except Exception as exc:
+        return _err(
+            f"Delivery to {target_label} could not resolve its completion route: {exc}. "
+            "Nothing was submitted."
+        )
+    if (
+        not notify
+        or not str(notify.get("platform") or "").strip()
+        or not str(notify.get("chat_id") or "").strip()
+    ):
+        return _err(
+            f"Delivery to {target_label} requires a durable completion route. "
+            "Nothing was submitted."
+        )
+
+    prepared = None
+    started = False
+    task = None
+    title = next((line.strip() for line in body.splitlines() if line.strip()), body)[:200]
+    idempotency_key = "message-agent-team:" + hashlib.sha256(
+        f"{source_session}\0{call_id}".encode("utf-8")
+    ).hexdigest()
+    author = {
+        "id": f"bot:{source_profile}",
+        "name": source_profile,
+        "is_bot": True,
+    }
+    try:
+        from tui_gateway.saved_card_turn import (
+            finish_saved_card_turn,
+            prepare_saved_card_turn,
+            start_saved_card_turn,
+        )
+
+        prepared = prepare_saved_card_turn(
+            {"card_turn_context": target_context},
+            content,
+            submission_id=None,
+            originating_run_id=parent_run_id,
+            turn_author=author,
+            image_paths=None,
+        )
+        if prepared is None:
+            raise RuntimeError("team_saved_card_preparation_missing")
+        start_saved_card_turn(prepared, str(prepared["runId"]))
+        started = True
+
+        from hermes_cli import kanban_db_connect as kbc
+        from hermes_cli.kanban_team import (
+            activate_staged_team_root,
+            bind_saved_card_run,
+            create_team_root,
+        )
+
+        with kbc.connect_closing() as conn:
+            task = create_team_root(
+                conn,
+                assignee=target_profile,
+                profile_home=str(target_home),
+                title=title,
+                body=str(prepared["message"]),
+                created_by=f"message_agent:{source_profile}",
+                idempotency_key=idempotency_key,
+                session_id=source_session,
+                notify_platform=notify["platform"],
+                notify_chat_id=notify["chat_id"],
+                notify_thread_id=notify.get("thread_id"),
+                notify_user_id=notify.get("user_id"),
+                notify_user_id_alt=notify.get("user_id_alt"),
+                notify_chat_type=notify.get("chat_type"),
+                notifier_profile=notify.get("notifier_profile"),
+                notify_delivery_mode=notify.get("delivery_mode"),
+                notify_delivery_metadata=notify.get("delivery_metadata"),
+                initial_status="blocked",
+            )
+            bind_saved_card_run(
+                conn,
+                task.id,
+                context=target_context,
+                run_id=str(prepared["runId"]),
+            )
+            if not activate_staged_team_root(conn, task.id):
+                raise RuntimeError("team_root_activation_failed")
+    except Exception as exc:
+        logger.error("message_agent Team submission could not be confirmed: %s", exc, exc_info=True)
+        if prepared is not None and started:
+            with contextlib.suppress(Exception):
+                finish_saved_card_turn(
+                    prepared,
+                    session_key=str(task.id if task is not None else prepared["runId"]),
+                    state="failed",
+                    error=str(exc),
+                )
+        return _err(
+            f"Delivery to {target_label} could not be confirmed: {exc}. "
+            "Do not retry blindly."
+        )
+
+    return json.dumps({
+        "status": "sent",
+        "to": target_label,
+        "task_id": task.id,
+        "run_id": prepared["runId"],
+        "reply_delivery": "team",
+        "detail": (
+            f"Task dispatched to {target_label} as {task.id}. Finish this turn; "
+            "the exact task completion will return the result."
+        ),
+        "sent_at": int(time.time()),
+    })
 
 
 def _try_relay_delivery(root: Path, raw_target: str, content: str, me: str, *,

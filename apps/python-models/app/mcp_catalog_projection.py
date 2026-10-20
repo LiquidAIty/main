@@ -107,12 +107,21 @@ def requested_provider_families() -> tuple[str, ...]:
         selected = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])
         return tuple(
             family
-            for family, prefix in mcp_provider_operations.PROVIDER_PREFIXES.items()
-            if any(name.startswith(prefix) for name in selected)
+            for family in mcp_provider_operations.PROVIDER_FAMILIES
+            if any(mcp_provider_operations.belongs_to_provider(name, family) for name in selected)
         )
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
-        return tuple(mcp_provider_operations.PROVIDER_PREFIXES)
+        return tuple(mcp_provider_operations.PROVIDER_FAMILIES)
+    if kind == "card-runtime":
+        selected = set((mcp_auth.authenticated_project_context() or {}).get(
+            mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD
+        ) or [])
+        return tuple(
+            family
+            for family in mcp_provider_operations.PROVIDER_FAMILIES
+            if any(mcp_provider_operations.belongs_to_provider(name, family) for name in selected)
+        )
     if kind != "materializer-read":
         return ()
     tool_names = mcp_auth.validated_principal_tool_names(
@@ -120,12 +129,15 @@ def requested_provider_families() -> tuple[str, ...]:
     ) or frozenset()
     return tuple(
         family
-        for family, prefix in mcp_provider_operations.PROVIDER_PREFIXES.items()
-        if any(name.startswith(prefix) for name in tool_names)
+        for family in mcp_provider_operations.PROVIDER_FAMILIES
+        if any(mcp_provider_operations.belongs_to_provider(name, family) for name in tool_names)
     )
 
 
 async def discover_provider_tools(provider: str) -> list[Tool]:
+    if provider == "openstudio":
+        from app.mcp_openstudio_provider import discover_tools
+        return await discover_tools()
     return (
         await mcp_cbm_provider.cbm_tools()
         if provider == "cbm"
@@ -140,6 +152,9 @@ def provider_unavailability(provider: str, tools: list[Tool]) -> dict[str, Any] 
 
 
 def project_provider_tools(provider: str, tools: list[Tool]) -> list[Tool]:
+    if provider == "openstudio":
+        from app.mcp_openstudio_provider import register_tools
+        return register_tools(tools)
     namespaced = mcp_provider_operations.namespace_provider_tools(provider, tools)
     if provider == "cbm":
         mcp_provider_operations.register_cbm_catalog(namespaced)
@@ -178,8 +193,8 @@ def catalog_for_request(tools: list[Tool]) -> list[Tool]:
         tool
         for tool in tools
         if not any(
-            tool.name.startswith(prefix) and family not in families
-            for family, prefix in mcp_provider_operations.PROVIDER_PREFIXES.items()
+            mcp_provider_operations.belongs_to_provider(tool.name, family) and family not in families
+            for family in mcp_provider_operations.PROVIDER_FAMILIES
         )
     ]
     principal = mcp_auth.internal_mcp_principal()
@@ -191,6 +206,11 @@ def catalog_for_request(tools: list[Tool]) -> list[Tool]:
             and tool.name in granted
             and tool_access(tool.name) == "read"
         )]
+    elif kind == "card-runtime":
+        granted = set((mcp_auth.authenticated_project_context() or {}).get(
+            mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD
+        ) or [])
+        visible = [tool for tool in visible if tool.name in granted]
     elif principal is None and mcp_auth.access_token_available():
         context = mcp_auth.authenticated_project_context()
         granted = set((context or {}).get(mcp_auth.PROJECT_CONTEXT_TOOLS_FIELD) or [])

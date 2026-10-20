@@ -2369,6 +2369,10 @@ def test_load_enabled_toolsets_folds_project_into_focus_posture(monkeypatch):
     ("cfg", "coding_selection", "expected_exact", "expected_members"),
     [
         ({"platform_toolsets": {"cli": []}}, ["coding"], [], set()),
+        ({
+            "platform_toolsets": {"cli": []},
+            "mcp_servers": {"liquidaity": {"url": "http://127.0.0.1:8765/mcp"}},
+        }, ["coding"], ["liquidaity"], set()),
         ({}, ["coding"], ["coding", "project"], set()),
         ({"platform_toolsets": {"cli": ["memory"]}}, ["coding"], ["coding", "project"], set()),
         ({"platform_toolsets": {"cli": ["memory"]}}, None, None, {"memory", "project"}),

@@ -17787,6 +17787,21 @@
             "default": null,
             "title": "Notification Process Ids"
           },
+          "notification_task_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notification Task Ids"
+          },
           "usage": {
             "anyOf": [
               {
@@ -25851,6 +25866,24 @@
             ],
             "default": null,
             "title": "Bot Mode Sessions"
+          },
+          "bot_mode_card_contexts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Mode Card Contexts"
           },
           "bot_mode_reply_delivery": {
             "anyOf": [

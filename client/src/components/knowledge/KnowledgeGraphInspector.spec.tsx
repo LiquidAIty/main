@@ -8,7 +8,7 @@
  * Relationship: This file verifies exact Think summaries and structured relationships remain readable and removable through the shared evidence presentation.
  *
  * Entity: KnowGraph
- * Relationship: This file verifies two-sided Knows preserve paragraph content and expose only credential-free HTTPS citations and deduplicated source links.
+ * Relationship: This file verifies atomic Knows render finding, interpretation, direction and verified source while historical paired records remain explicit and readable.
  *
  * Entity: CodeGraph
  * Relationship: This file verifies the shared Inspector keeps exact File/Symbol/Feature identity and loads bounded source only through an explicit action.
@@ -110,11 +110,63 @@ describe('shared knowledge inspector', () => {
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps one two-sided Know intact and deduplicates its safe sources', () => {
+  it('renders one atomic Know as finding, interpretation, direction, and source', () => {
+    const record: KnowInspectorRecord = {
+      episodeId: 'episode-atomic',
+      know: {
+        title: 'Rocket Lab result',
+        schemaVersion: 'know.v2',
+        observation: 'Rocket Lab reported one source-backed operating result.',
+        interpretation: 'The result informs demand but does not decide the thesis.',
+        source: {
+          url: 'https://example.test/result',
+          resolvedUrl: 'https://example.test/archive/result',
+          title: 'Rocket Lab quarterly result',
+          publisher: 'Rocket Lab',
+          evidence: 'The exact source passage remains inspectable.',
+          publishedAt: '2026-10-19',
+          retrievedAt: '2026-10-20T08:00:00Z',
+        },
+        direction: {
+          proposition: 'Rocket Lab can compound launch revenue.',
+          relation: 'supports',
+        },
+      },
+      episode: {},
+    };
+
+    render(<>
+      <KnowGraphKnow record={record} heading="Know" />
+      <KnowSourceList records={[record]} />
+    </>);
+
+    expect(screen.getByText('Finding')).toBeTruthy();
+    expect(screen.getByText('Rocket Lab reported one source-backed operating result.'))
+      .toBeTruthy();
+    expect(screen.getByText('Interpretation')).toBeTruthy();
+    expect(screen.getByText('The result informs demand but does not decide the thesis.'))
+      .toBeTruthy();
+    expect(screen.getByText((content, element) => (
+      Boolean(element?.classList.contains('graph-know-direction'))
+      && content.includes('Rocket Lab can compound launch revenue.')
+    ))).toBeTruthy();
+    expect(screen.queryByText('For')).toBeNull();
+    expect(screen.queryByText('Against')).toBeNull();
+    expect(screen.getAllByRole('link').map(link => link.getAttribute('href'))).toEqual([
+      'https://example.test/archive/result',
+      'https://example.test/archive/result',
+    ]);
+    fireEvent.click(screen.getByText('Source passage'));
+    expect(screen.getByText('The exact source passage remains inspectable.')).toBeTruthy();
+  });
+
+  it('keeps a historical paired Know explicitly readable and deduplicates its safe sources', () => {
     const record: KnowInspectorRecord = {
       episodeId: 'episode-one',
       know: {
         title: 'Rocket Lab evidence',
+        schemaVersion: 'know.v1',
+        legacy: true,
         idea: {
           body: 'Supporting paragraph stays intact.',
           detail: 'Supporting depth remains under More.',
@@ -147,6 +199,9 @@ describe('shared knowledge inspector', () => {
 
     expect(screen.getByText('Supporting paragraph stays intact.')).toBeTruthy();
     expect(screen.getByText('Counter paragraph stays intact.')).toBeTruthy();
+    expect(screen.getByText('Historical paired Know')).toBeTruthy();
+    expect(screen.getByText('Supporting record')).toBeTruthy();
+    expect(screen.getByText('Counter record')).toBeTruthy();
     expect(screen.getByText('Supporting depth remains under More.')).toBeTruthy();
     expect(screen.getAllByRole('link').map(link => link.getAttribute('href'))).toEqual([
       'https://example.test/source-one',

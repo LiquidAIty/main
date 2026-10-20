@@ -1,0 +1,32 @@
+/* Entity: Building Workspace
+   Relationship: These scoped styles apply the host palette to the viewport, navigation and inspector without restyling other products. */
+.nrgsim-workspace {height:100%; min-height:420px; display:flex; flex-direction:column; position:relative; background:#111a1f; font-size:13px}
+.nrgsim-workspace header,.nrgsim-workspace footer {display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:12px; border-bottom:1px solid #ffffff16; background:#172126}
+.nrgsim-workspace header strong {font-size:17px; letter-spacing:.12em}
+.nrgsim-workspace small {display:block; color:#9cacb4; font-size:11px}
+.nrgsim-workspace button,.nrgsim-workspace input,.nrgsim-workspace select {border:1px solid #ffffff22; border-radius:8px; padding:7px 9px; color:inherit; background:#1c2b31; min-width:0}
+.nrgsim-workspace button {cursor:pointer}
+.nrgsim-workspace button:hover,.nrgsim-workspace button[aria-pressed=true] {border-color:var(--nrgsim-accent); background:#24434a}
+.nrgsim-workspace button:disabled {opacity:.45; cursor:default}
+.nrgsim-workspace input[type=range] {width:100%; accent-color:var(--nrgsim-accent); padding:4px 0}
+.nrgsim-workspace input[type=number] {width:100%; margin:8px 0}
+.nrgsim-workspace header input {width:140px}
+.nrgsim-workspace footer input {flex:1}
+.nrgsim-body {flex:1; min-height:0; display:flex}
+.nrgsim-tree {width:218px; flex-shrink:0; overflow:auto; padding:10px; border-right:1px solid #ffffff18}
+.nrgsim-tree input {width:100%; box-sizing:border-box; margin-bottom:12px}
+.nrgsim-tree summary {padding:9px 0; cursor:pointer}
+.nrgsim-tree summary span {color:#91a6b1}
+.nrgsim-tree button {width:100%; text-align:left; margin:2px 0; overflow:hidden; text-overflow:ellipsis}
+.nrgsim-body main {flex:1; min-width:0; position:relative}
+.nrgsim-viewport {position:absolute; inset:0}
+.nrgsim-view-controls {position:absolute; bottom:38px; left:12px; display:flex; gap:6px}
+.nrgsim-view-caption {position:absolute; bottom:12px; left:14px; color:#b9c9ce; font-size:10px; letter-spacing:.08em}
+.nrgsim-empty {padding:36px; max-width:560px; line-height:1.7}
+.nrgsim-tabs {display:flex; gap:4px; margin:14px 0}
+.nrgsim-workspace pre {font-size:11px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:380px; overflow:auto}
+.nrgsim-workspace code {font-size:11px; overflow-wrap:anywhere}
+.nrgsim-workspace dl div {padding:7px 0; border-bottom:1px solid #ffffff18}
+.nrgsim-workspace dd {margin:4px 0}
+.nrgsim-muted {color:#a9bac3}
+.nrgsim-error {color:#ffd5bf; background:#4b2424; padding:10px; max-height:140px; overflow:auto; white-space:pre-wrap}

@@ -23,6 +23,23 @@ as permission to add another runtime or route.
 
 These calls require explicit approval. Structural tests must not be presented as live proof.
 
+## NRGSIM — after the first general modeling checkpoint
+
+- Investigate the installed, unchanged OpenStudio MCP `create_new_building` measure route: the
+  2026-10-20 attempt timed out in `create_bar` after its native five-minute limit. The public SDK
+  starter recipe works and is explicitly identified as a starter, not a standards-compliance result.
+  Do not patch upstream or disable its sandbox to conceal the failure.
+- Extend the bounded inspector only with verified setter/unit contracts. The generic upstream
+  Building-by-handle read currently calls its unique-object SDK getter with an unsupported argument;
+  use the existing typed Building read for now. Shared Material/Construction local exceptions need
+  supported copying and reassignment, not a second inheritance model.
+- After modeling acceptance, verify OpenStudio's actual Appendix G baseline-generation scope and
+  standard edition, preserve baseline/proposed OSM snapshots and weather/engine provenance, then
+  add DView-shaped channel comparison with shared time windows and scales. A template recipe is
+  not evidence of a baseline transformation.
+- Full CAD, curved towers, reconstruction, general HVAC drawing and jEPlus optimization remain later
+  work; none is a prerequisite for the first save/reopen modeling loop.
+
 ## Development toolchain major upgrades — deferred maintenance
 
 The production npm dependency audit is clean after the non-breaking 2026-10-15 updates. The remaining
@@ -49,19 +66,6 @@ The handoff mechanism is not implemented. A later bounded design may carry the r
 Entity references, source-backed claim, bounded interpretation, source URL/metadata, and why the evidence
 mattered. It must not carry whole chats, hidden reasoning, or every search result, and it must reuse an
 existing background/Bot/Card path rather than create a queue.
-
-## Optional automatic ThinkGraph capture — deferred
-
-The owner wants one saved per-Project ThinkGraph control labeled **Capture Main turns automatically**.
-When enabled, each successfully completed User/Main pair should enter the existing completed-pair
-preparation owner, run through the real saved ThinkGraph Card in its Project-scoped Hermes session, and
-settle through the existing Engraphis owner. When disabled, ThinkGraph changes only from data the user or
-an authorized Card explicitly selects and sends.
-
-This is not part of the current repair. A later implementation must decide the exact saved field/default,
-visible Card control, required orange authority, failure presentation, and existing-Project behavior. It
-must not restore the deleted TypeScript child-Card executor, candidate queue, approval/shadow graph, direct
-target runner, or another ThinkGraph writer.
 
 ## Project Knowledge Dashboard — deferred derived artifact
 

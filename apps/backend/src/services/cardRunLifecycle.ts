@@ -130,6 +130,7 @@ export async function readCardRun(args: {
   runId: string;
   cardId: string;
   profile: string;
+  conversationId?: string;
 }): Promise<Record<string, any>> {
   const response = record(await requestPythonRailsJson('/domain/runs/read', {
     method: 'POST',
@@ -138,6 +139,7 @@ export async function readCardRun(args: {
       projectId: args.projectId,
       deckId: args.deckId,
       runId: args.runId,
+      ...(args.conversationId ? { conversationId: args.conversationId } : {}),
     }),
   }));
   const run = record(response.run);
@@ -148,6 +150,10 @@ export async function readCardRun(args: {
     || String(run.deckId || '') !== args.deckId
     || String(run.cardId || '') !== args.cardId
     || String(run.runtimeProfile || '').toLowerCase() !== args.profile.toLowerCase()
+    || (
+      Boolean(args.conversationId)
+      && String(run.conversationId || '') !== args.conversationId
+    )
   ) throw new Error('card_turn_run_identity_mismatch');
   return run;
 }

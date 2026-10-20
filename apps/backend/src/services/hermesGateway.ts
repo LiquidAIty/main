@@ -46,6 +46,7 @@ let connecting: {
   promise: Promise<HermesGatewayClient>;
 } | null = null;
 let connectionGeneration = 0;
+const APPLICATION_GATEWAY_HEARTBEAT_DEADLINE_MS = 5 * 60_000;
 
 export function resolveHermesGatewayUrl(env: NodeJS.ProcessEnv = process.env): string {
   const configured = String(env.HERMES_GATEWAY_URL || '').trim();
@@ -92,6 +93,7 @@ async function newGatewayClient(): Promise<HermesGatewayClient> {
   return new loaded.JsonRpcGatewayClient({
     requestIdPrefix: 'app',
     requestTimeoutMs: 30 * 60_000,
+    heartbeatDeadlineMs: APPLICATION_GATEWAY_HEARTBEAT_DEADLINE_MS,
   });
 }
 

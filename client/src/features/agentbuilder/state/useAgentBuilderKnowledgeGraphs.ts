@@ -34,6 +34,8 @@ type KnowledgeGraphState = {
   ) => Promise<GraphProjectionV1>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   removeKnowGraphEvidence: (episodeId: string) => Promise<void>;
+  refreshThinkGraph: (afterRunId?: string) => Promise<void>;
+  refreshAfterMainRun: (runId: string) => Promise<void>;
   codeGraph: {
     projection: GraphProjectionV1;
     status: 'idle' | 'loading' | 'ready' | 'error';
@@ -171,7 +173,7 @@ export default function useAgentBuilderKnowledgeGraphs({
   const codeFileAbortRef = useRef<AbortController | null>(null);
   const codeSourceAbortRef = useRef<AbortController | null>(null);
 
-  const refreshThinkGraph = useCallback(async () => {
+  const refreshThinkGraph = useCallback(async (afterRunId?: string) => {
     const requestId = ++thinkRequestRef.current;
     thinkAbortRef.current?.abort();
     const controller = new AbortController();
@@ -183,6 +185,7 @@ export default function useAgentBuilderKnowledgeGraphs({
     setStatuses((current) => ({ ...current, thinkgraph: 'loading' }));
     try {
       const query = new URLSearchParams({ projectId });
+      if (afterRunId?.trim()) query.set('afterRunId', afterRunId.trim());
       const response = await fetch(`/api/thinkgraph/projection?${query}`, {
         signal: controller.signal,
       });
@@ -445,6 +448,14 @@ export default function useAgentBuilderKnowledgeGraphs({
     await refreshKnowGraph();
   }, [projectId, refreshKnowGraph]);
 
+  const refreshAfterMainRun = useCallback(async (runId: string) => {
+    try {
+      await refreshThinkGraph(runId);
+    } finally {
+      await refreshKnowGraph();
+    }
+  }, [refreshKnowGraph, refreshThinkGraph]);
+
   return {
     projections,
     errors,
@@ -452,6 +463,8 @@ export default function useAgentBuilderKnowledgeGraphs({
     readProviderNeighborhood,
     removeThinkGraphEvidence,
     removeKnowGraphEvidence,
+    refreshThinkGraph,
+    refreshAfterMainRun,
     codeGraph,
     loadCodeGraph,
     readCodeGraphFile,

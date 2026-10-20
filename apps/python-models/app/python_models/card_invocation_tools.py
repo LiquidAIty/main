@@ -20,7 +20,7 @@ from app.python_models.saved_card_contract import CardDomainError, string_list
 from app.python_models.tool_catalog import materialize_live_tool_catalog_with_failures
 
 
-_OPTIONAL_TOOL_CATALOG_FAMILIES = frozenset({"cbm", "graphiti"})
+_OPTIONAL_TOOL_CATALOG_FAMILIES = frozenset({"cbm", "graphiti", "openstudio"})
 
 
 def resolve_effective_card_tools(

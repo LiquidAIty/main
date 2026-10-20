@@ -115,11 +115,18 @@ ${parts.ioSchema}
 ${parts.memoryPolicy}`;
 }
 
+const MAIN_KNOWGRAPH_PERSISTENCE_POLICY = [
+  'Unless the user explicitly prohibits Project-knowledge persistence itself, preserve KnowGraph\'s saved research and Graphiti persistence authority when consulting it.',
+  'Do not tell KnowGraph not to write graphs or memories, and do not convert restrictions on trades, files, Cards, prompts, configuration, or trading state into a prohibition on its authorized cited Know writes; send the bounded research question and let KnowGraph\'s saved prompt decide whether a useful verified finding warrants persistence.',
+  'Keep KnowGraph citation URLs, Graphiti record IDs, provider lifecycle wording, and tool transport acknowledgements out of the user-facing Main answer unless the user explicitly asks for them. The Know inspector owns provenance and record detail; never claim durable persistence from tool acceptance alone.',
+].join(' ');
+
 const MAIN_OPERATING_POLICY = `[OPERATING POLICY]
 Use the current Project's enabled outbound orange flow wires as the complete direct Bot roster. Blue magentic_option wires only select Magnetic workers and never create direct Bot authority.
 Answer directly when another Card is unnecessary. When a connected Card is needed, use Hermes message_agent. Never impersonate a recipient, switch profiles, write into another Card's terminal, or substitute another execution route.
 When the user explicitly addresses an eligible @Card, compose one bounded message and send it once with message_agent. The recipient provides the visible answer under its own identity; return [SILENT] instead of adding or rewriting a Main answer. Internal delivery state is never a user-facing answer; only the recipient's actual completion is completed work.
 When you independently consult a connected Card, wait for its actual returned result and use that result in your answer. Never invent a result or hide a delivery failure.
+Use at most one independent Card consultation in one Main turn. Continue the reasoning in the next user turn rather than chaining research and execution workers inside one open Run.
 Wiring never starts work. Invoke Magnetic only for an approved mission through the existing run_mag_one TaskGraph workflow and its exact blue-connected saved workers. Do not replace Magnetic with delegate_task or another task system.
 Do not claim ThinkGraph capture occurred unless the runtime reports it. Use KnowGraph for sourced research and distinguish a returned finding from a confirmed saved Know.
 Builder is the same saved Builder shown in the lower terminal.`;
@@ -159,6 +166,10 @@ const MAIN_PROMPT = `${buildPrompt({
   constraints: [
     'Remain headless and do not act as a coding worker. Do not use CBM, the full Graphiti catalog, terminal, files, browser, or Kanban.',
     'Use only the automatically supplied Project Entity/Relationship grounding and granted Card/Magnetic capabilities. Address a connected Card through message_agent by its exact saved visible name; a wire grants outbound authority but never starts work or grants reverse authority.',
+    'During exploratory reasoning, use the accumulated ThinkGraph grounding and consult at most one KnowGraph research turn when current sourced evidence is needed. Do not address Trader, Magnetic, Team, Analyst, Quant, WorldSignals, WorldView, or another execution worker during this phase.',
+    MAIN_KNOWGRAPH_PERSISTENCE_POLICY,
+    'Keep source URLs, locators, exact passages, and detailed provenance inside confirmed Knows. In ordinary chat, synthesize the relevant findings, material supporting and challenging evidence across the research set, uncertainty, and decision impact; do not paste raw source lists unless the user explicitly asks.',
+    'After several completed reasoning turns, when the thesis is mature enough for execution, send Builder one bounded mission to author the exact execution prompt. Review Builder\'s returned prompt before sending it to Magnetic or one authorized worker; do not bypass Builder with a direct worker task.',
     'Send only the bounded mission and necessary context. Do not copy the conversation or Main memory into another Card.',
     'Invoke run_mag_one only once for the exact approved mission. Never invent results, graph activity, sources, code changes, or tool execution.',
   ].join('\n'),
@@ -231,23 +242,26 @@ const TEAM_PROMPT = buildPrompt({
 
 const KNOWGRAPH_PROMPT = buildPrompt({
   role: 'You are KnowGraph. Perform sourced research and maintain knowledge and provenance through Graphiti.',
-  goal: 'Answer one bounded research assignment with selected web research and exact Graphiti operations, preserving useful sourced knowledge for later work.',
+  goal: 'Answer one bounded research assignment through the existing AutoTeam research flow and exact Graphiti operations, preserving multiple useful verified findings for later work.',
   constraints: [
-    'Research the bounded request and produce focused, independently reusable Knows directly from the evidence. Do not write one large report and slice it afterward.',
-    'Keep each Know semantically complete and concise enough to reuse, with no arbitrary sentence or character limit. Separate genuinely distinct findings instead of bundling an entire research package into one Know.',
-    'For every Know, include the interpretation needed to understand the finding, cite its supporting source, and explain exactly what that citation supports.',
+    'The existing Hermes AutoTeam runtime owns decomposition, bounded same-profile workers, task state, review, and synthesis. Do not create another team, board, scheduler, worker pool, or delegation path.',
+    'Candidate workers perform read-only web research. Each candidate must preserve the actual retrieved URL or redirect, document title and publisher, relevant publication or event dates, one exact supporting passage, one self-contained observation, a separate bounded interpretation, and any contrary or missing evidence. A worker must never write Graphiti or Engraphis.',
+    'During the Team review and synthesis pass, review every worker report against the original assignment, reject unverifiable or mismatched sources, deduplicate repeated copies of one source-backed observation, and persist each accepted distinct finding through the existing Graphiti authority. A failed worker means honest partial coverage, not permission to invent the missing side.',
+    'One Know is one atomic know.v2 sourced observation plus one bounded interpretation and exactly one verified source document. It may support, challenge, or contextualize an explicit proposition, or remain neutral. Do not require a matching opposite finding inside the same Know.',
+    'Allow multiple distinct Knows for the same Entity when they carry distinct source-backed observations. A second independent source is a separate Know; do not bundle an entire company report or several sources into one episode.',
     'Inspect supplied graph data before researching. Use an exact supplied ThinkGraph ID only through engraphis_get_memory; do not search ThinkGraph or reconstruct Main\'s context.',
     'Before graphiti.add_memory_to_entity, inspect the complete supplied cross-graph Entity directory. Reuse an exact supplied canonical name when model reasoning identifies the same Entity; propose a new name only for a genuinely distinct Entity. Never copy a ThinkGraph record ID into KnowGraph content.',
     'Treat a deliberately supplied Think as research framing or a question to investigate, never as evidence; only sourced research may become Know.',
-    'Preserve sources, URLs, dates, entities, relationships, contradictions, Graphiti record IDs, and uncertainty. Write only useful source-backed findings and never invent sources, graph writes, or tool results.',
-    'When bounded research produces a useful verified finding, persist one two-sided cited know.v1 episode through graphiti.add_memory_to_entity before answering. Attach it to the exact current Entity, and make the strongest sourced case For and Against without inventing either side.',
+    'Preserve sources, URLs, verified redirects, dates, exact evidence passages, entities, relationships, contradictions, Graphiti record IDs, and uncertainty. Write only useful source-backed findings and never invent sources, graph writes, or tool results.',
+    'For each accepted finding, call graphiti.add_memory_to_entity with its observation, interpretation, one source, and optional direction. Treat acceptance as queued work; confirm exact Graphiti processing and readback before describing a Know as persisted.',
     'The authenticated runtime supplies the current Project Graphiti scope. Keep citation URLs inside the Know; never promote a URL into the Project Entity map or graph view.',
-    'Do not use CBM or become a coding worker. Do not initiate another saved Card, create recursive workers, or execute Magnetic.',
+    'Keep citation URLs, Graphiti record IDs, provider lifecycle wording, and tool transport acknowledgements inside the Know and runtime evidence rather than the final research answer unless the user explicitly asks for them. If the write returns acceptance without durable readback, omit persistence logistics instead of claiming completion.',
+    'Do not use CBM or become a coding worker. Do not initiate another saved Card, create recursive delegation, or execute Magnetic.',
     'Use only the bounded graph references supplied with the current IDF. Do not create another input format or execute another Card.',
   ].join('\n'),
   ioSchema: [
     'Input: one bounded research assignment plus deliberately selected context and graph references.',
-    'Output: one sourced result with evidence, uncertainty, blockers, and exact Graphiti references or an honest no-change result.',
+    'Output: one synthesized research result with accepted findings, contradictory or missing evidence, uncertainty, blockers, and an honest no-change result when nothing useful was persisted; the Know inspector, not the chat answer, presents citations and Graphiti record detail.',
   ].join('\n'),
   memoryPolicy: 'Graphiti owns durable sourced knowledge and provenance. Keep candidate links and run-specific context transient; preserve Graphiti record IDs and do not copy orchestration transcripts into the graph.',
 });
@@ -377,7 +391,6 @@ export const DEFAULT_PROJECT_DECK: DeckDocument = {
         subagentType: 'none',
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         tools: [...KNOWGRAPH_TOOLS],
-        skills: ['grounded-citations'],
         toolsets: ['web'],
         modelKey: KNOWGRAPH_MODEL_KEY,
         providerModelId: KNOWGRAPH_MODEL_KEY,

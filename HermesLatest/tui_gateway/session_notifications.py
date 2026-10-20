@@ -329,6 +329,19 @@ _KANBAN_EVENT_FORMATTERS = {
 }
 
 
+class KanbanNotificationText(str):
+    """Display text carrying exact task correlation without changing its UX."""
+
+    task_id: str
+    event_kind: str
+
+    def __new__(cls, value: str, *, task_id: str, event_kind: str):
+        instance = super().__new__(cls, value)
+        instance.task_id = task_id
+        instance.event_kind = event_kind
+        return instance
+
+
 def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[str]:
     """Single-line notification text for one kanban event; wording mirrors gateway/kanban_watchers.py (reads the same
     as on Telegram). None for silent kinds."""
@@ -339,7 +352,11 @@ def _format_kanban_event_text(sub: dict, task, ev, board_slug: str) -> Optional[
     title = (getattr(task, "title", None) or task_id)[:120]
     who = getattr(task, "assignee", None) or ""
     prefix = f"{glyph} " + (f"[{board_slug}] " if board_slug else "") + (f"@{who} " if who else "")
-    return f"{prefix}Kanban {task_id}{fmt(task, getattr(ev, 'payload', None) or {}, title)}"
+    return KanbanNotificationText(
+        f"{prefix}Kanban {task_id}{fmt(task, getattr(ev, 'payload', None) or {}, title)}",
+        task_id=str(task_id),
+        event_kind=str(getattr(ev, "kind", "") or ""),
+    )
 
 
 def _kb_board_key(_kb, board_meta) -> tuple[str, str]:
@@ -450,10 +467,20 @@ def _notif_poll_kanban_scoped(sid: str, session: dict) -> None:
         diagnostic = split and isinstance(pending[0], DiagnosticText)
         batch = [text for text in pending if not split or isinstance(text, DiagnosticText) == diagnostic]
         session["_kanban_pending"] = [text for text in pending if split and isinstance(text, DiagnosticText) != diagnostic]
+    completed_task_ids = list(dict.fromkeys(
+        str(getattr(text, "task_id", "") or "").strip()
+        for text in batch
+        if getattr(text, "event_kind", "") == "completed"
+        and str(getattr(text, "task_id", "") or "").strip()
+    ))
     with contextlib.suppress(Exception):
+        metadata = {
+            **({"notification_category": "diagnostic"} if diagnostic else {}),
+            **({"task_ids": completed_task_ids} if completed_task_ids else {}),
+        }
         _notif_submit(f"__notif__{int(time.time() * 1000)}", sid, session, "\n".join(batch),
                       "kanban notification dispatch failed",
-                      **({"display_metadata": {"notification_category": "diagnostic"}} if diagnostic else {}))
+                      **({"display_metadata": metadata} if metadata else {}))
 
 
 def _notif_dispatch_event(sid: str, session: dict, evt: dict, text: str) -> None:

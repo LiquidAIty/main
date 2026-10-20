@@ -5,7 +5,7 @@
 # Entity: ThinkGraph
 # Relationship: This file retrieves exact Project Think candidates and one distinct recent Think while preserving Engraphis record identity.
 # Entity: KnowGraph
-# Relationship: This file retrieves exact two-sided Know candidates and one distinct recent Know while preserving Graphiti record identity.
+# Relationship: This file retrieves exact atomic and historical Know candidates and one distinct recent Know while preserving Graphiti record identity.
 # Entity: Jev Decisions
 # Relationship: This file asks Jev to rank bounded provider candidates for current-request relevance without changing either graph authority.
 
@@ -15,12 +15,13 @@ import asyncio
 from copy import deepcopy
 import hashlib
 import json
+import threading
 from typing import Any, Callable
 
 from engraphis.core.interfaces import MemoryType
 from mcp.types import CallToolResult
 
-from app import mcp_provider_operations
+from app import mcp_graphiti_provider, mcp_provider_operations
 from app.python_models import card_run_jev
 from app.python_models.engraphis import (
     SERVICE_LOCK,
@@ -44,6 +45,7 @@ _CONTEXT_LIMIT = 16_000
 _BODY_LIMIT = 8_000
 _JEV_TIMEOUT_SECONDS = 8.0
 _GROUNDING_MARKER = "PROJECT GRAPH GROUNDING (CURRENT REQUEST):"
+_GRAPHITI_RETRIEVAL_LOCK = threading.Lock()
 
 
 def _bounded_text(value: Any, limit: int) -> str:
@@ -146,11 +148,19 @@ def _tool_payload(result: Any) -> dict[str, Any]:
 
 
 async def _search_graphiti_entities(project: str, query: str) -> list[str]:
-    result = await mcp_provider_operations.call_graphiti_operation("search_nodes", {
-        "query": query,
-        "group_ids": [mcp_provider_operations.graphiti_project_group_id(project)],
-        "max_nodes": 8,
-    })
+    try:
+        result = await mcp_provider_operations.call_graphiti_operation("search_nodes", {
+            "query": query,
+            "group_ids": [mcp_provider_operations.graphiti_project_group_id(project)],
+            "max_nodes": 8,
+        })
+    finally:
+        # Python rails calls Graphiti grounding from synchronous request workers.
+        # Each call owns a short-lived event loop, so the async Neo4j client must
+        # be closed before that loop exits instead of being reused by the next
+        # worker on a dead transport. The canonical MCP host runs in a separate
+        # process and keeps its Graphiti client for that host's lifetime.
+        await mcp_graphiti_provider.close_graphiti()
     payload = _tool_payload(result)
     nodes = payload.get("nodes")
     if not isinstance(nodes, list):
@@ -166,7 +176,8 @@ def _provider_know_records(
     query: str,
     result_limit: int = 1,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    entity_ids = asyncio.run(_search_graphiti_entities(project, query))
+    with _GRAPHITI_RETRIEVAL_LOCK:
+        entity_ids = asyncio.run(_search_graphiti_entities(project, query))
     candidate_limit = _candidate_limit(result_limit)
     recent = read_recent_knowgraph_knows(project, limit=result_limit)
     candidates: list[dict[str, Any]] = []
@@ -210,6 +221,38 @@ def _bounded_know_side(value: Any) -> dict[str, Any]:
     }
 
 
+def _bounded_know_candidate(record: dict[str, Any]) -> dict[str, Any]:
+    if record.get("schemaVersion") == "know.v2" or record.get("observation"):
+        source = record.get("source")
+        source = source if isinstance(source, dict) else {}
+        direction = record.get("direction")
+        direction = direction if isinstance(direction, dict) else {}
+        return {
+            "schemaVersion": "know.v2",
+            "observation": _bounded_text(record.get("observation"), _BODY_LIMIT),
+            "interpretation": _bounded_text(record.get("interpretation"), _BODY_LIMIT),
+            "source": {
+                "title": _bounded_text(source.get("title"), 1000),
+                "publisher": _bounded_text(source.get("publisher"), 1000),
+                "evidence": _bounded_text(source.get("evidence"), _BODY_LIMIT),
+                "url": _bounded_text(
+                    source.get("resolvedUrl") or source.get("url"),
+                    2048,
+                ),
+            },
+            **({"direction": {
+                "proposition": _bounded_text(direction.get("proposition"), _BODY_LIMIT),
+                "relation": _bounded_text(direction.get("relation"), 32),
+            }} if direction else {}),
+        }
+    return {
+        "schemaVersion": "know.v1",
+        "legacy": True,
+        "idea": _bounded_know_side(record.get("idea")),
+        "counterIdea": _bounded_know_side(record.get("counterIdea")),
+    }
+
+
 def _jev_relevance(
     query: str,
     context: str,
@@ -240,10 +283,7 @@ def _jev_relevance(
                     "body": _bounded_text(record.get("body"), _BODY_LIMIT),
                     **({"detail": _bounded_text(record.get("detail"), _BODY_LIMIT)}
                        if record.get("detail") else {}),
-                } if authority == "thinkgraph" else {
-                    "idea": _bounded_know_side(record.get("idea")),
-                    "counterIdea": _bounded_know_side(record.get("counterIdea")),
-                }),
+                } if authority == "thinkgraph" else _bounded_know_candidate(record)),
             })
         if not mapping:
             continue
@@ -258,9 +298,11 @@ def _jev_relevance(
                     "Rate which exact stored Think most faithfully steelmans the user's current "
                     "idea and makes its strongest useful optimistic case without changing its intent. "
                     if authority == "thinkgraph" else
-                    "Rate which exact stored two-sided Know is most directly about the current "
-                    "idea. Every Know already contains its cited supporting idea and cited counter "
-                    "idea; rate the whole Know without separating or suppressing either side. "
+                    "Rate which exact stored sourced Know is most directly useful to the current "
+                    "idea. A current Know is one verified observation plus a separate interpretation "
+                    "and may support, challenge, or contextualize an explicit proposition. Historical "
+                    "paired Knows remain labeled as legacy records; rate the complete stored record "
+                    "without inventing a conversion or fixed sentiment balance. "
                 )
                 + "Do not reward mere recency or repetition of the immediately previous turn. "
                 "This is contextual relevance, not truth, authority, claim confidence, or "

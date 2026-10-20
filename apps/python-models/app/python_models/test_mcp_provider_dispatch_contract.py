@@ -7,7 +7,7 @@
 # Entity: Authentication
 # Relationship: This file verifies external Main entry and materializer-read requests receive only their authenticated Project and tool authority.
 # Entity: KnowGraph
-# Relationship: This file verifies the KnowGraph MCP projection accepts one two-sided cited Know and dispatches it to the exact Graphiti Entity operation.
+# Relationship: This file verifies the KnowGraph MCP projection verifies one atomic sourced Know and dispatches it to the exact Graphiti Entity operation.
 
 import json
 from types import SimpleNamespace
@@ -69,6 +69,83 @@ def test_saved_card_tools_share_one_authenticated_mcp_projection(monkeypatch):
     monkeypatch.setattr(mcp_auth, "internal_mcp_principal", lambda: principal)
     visible = mcp_catalog_projection.catalog_for_request(tools)
     assert [tool.name for tool in visible] == ["get_market_snapshot"]
+
+
+def test_card_runtime_uses_only_backend_resolved_saved_grants(monkeypatch):
+    import asyncio
+
+    tools = asyncio.run(mcp_catalog_projection.application_tools())
+    context = {
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "conversationId": "project-one",
+        "parentRunId": "run-one",
+        "callerCardId": "trading",
+        "grantedTools": ["forecast_market_bars", "trading.record_decision"],
+        "mainEntryAuthorized": False,
+    }
+    monkeypatch.setattr(
+        mcp_auth, "internal_mcp_principal", lambda: {"kind": "card-runtime"},
+    )
+    monkeypatch.setattr(mcp_auth, "authenticated_project_context", lambda: context)
+    monkeypatch.setattr(
+        mcp_catalog_runtime,
+        "published_mcp_tool_names",
+        lambda: frozenset(tool.name for tool in tools),
+    )
+
+    assert [tool.name for tool in mcp_catalog_projection.catalog_for_request(tools)] == [
+        "forecast_market_bars", "trading.record_decision",
+    ]
+    assert mcp_request_dispatch.request_tool_is_allowed("forecast_market_bars") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("trading.record_decision") is True
+    assert mcp_request_dispatch.request_tool_is_allowed("trading.accept_assignment") is False
+
+
+def test_card_runtime_bearer_requires_exact_active_backend_context(monkeypatch):
+    import jwt
+
+    secret = "s" * 32
+    config = mcp_auth.OAuthConfig(
+        resource_url="https://example.test/mcp",
+        issuer_url="https://tenant.example/",
+        audience="https://example.test/mcp",
+        client_id="external-client",
+        required_scope="liquidaity.main",
+    )
+    verifier = mcp_auth.Auth0TokenVerifier(config, SimpleNamespace())
+    monkeypatch.setattr(mcp_auth, "INTERNAL_MCP_SECRET", secret)
+    context = {
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "conversationId": "project-one",
+        "parentRunId": "run-one",
+        "callerCardId": "trading",
+        "grantedTools": ["forecast_market_bars"],
+        "mainEntryAuthorized": False,
+    }
+    monkeypatch.setattr(
+        mcp_auth, "_resolve_internal_card_context_sync", lambda: context,
+    )
+    now = int(__import__("time").time())
+    token = jwt.encode({
+        "iss": mcp_auth.INTERNAL_MCP_ISSUER,
+        "aud": mcp_auth.INTERNAL_MCP_AUDIENCE,
+        "sub": "card-runtime",
+        "iat": now,
+        "exp": now + 300,
+        "scope": "liquidaity.main",
+        "principal": {"kind": "card-runtime"},
+    }, secret, algorithm="HS256")
+
+    verified = verifier._verify_sync(token)
+    assert verified is not None
+    assert verified.claims["internal"] == {"kind": "card-runtime"}
+    assert verified.claims["project"] == context
+    monkeypatch.setattr(
+        mcp_auth, "_resolve_internal_card_context_sync", lambda: None,
+    )
+    assert verifier._verify_sync(token) is None
 
 
 def test_catalog_preserves_provider_annotations_and_adds_only_source_identity():
@@ -389,7 +466,7 @@ def test_graphiti_add_memory_dispatch_preserves_provider_arguments(monkeypatch):
     }
 
 
-def test_entity_know_projection_queues_one_two_sided_episode(
+def test_entity_know_projection_verifies_and_queues_one_atomic_episode(
     monkeypatch, clear_live_provider_operations,
 ):
     import asyncio
@@ -403,6 +480,22 @@ def test_entity_know_projection_queues_one_two_sided_episode(
         return {"episode_uuid": "episode-one", "entity_uuid": "entity-one"}
 
     monkeypatch.setattr(mcp_provider_operations, "call_graphiti_operation", call)
+    monkeypatch.setattr(
+        mcp_provider_operations,
+        "verify_source_document",
+        lambda source: {
+            **source,
+            "resolvedUrl": source["url"],
+            "retrievedAt": "2026-10-20T08:00:00Z",
+            "documentTitle": source["title"],
+            "contentFingerprint": "a" * 64,
+        },
+    )
+    async def not_persisted(_project_id: str, _episode_uuid: str) -> bool:
+        return False
+    monkeypatch.setattr(
+        mcp_provider_operations, "_persisted_atomic_know", not_persisted,
+    )
     provider_tool = Tool(
         name="add_memory_to_entity",
         description="Generic exact Entity episode.",
@@ -414,6 +507,8 @@ def test_entity_know_projection_queues_one_two_sided_episode(
                 "episode_body": {"type": "string"},
                 "source_description": {"type": "string"},
                 "source": {"type": "string"},
+                "uuid": {"type": "string"},
+                "reference_time": {"type": "string"},
                 "group_id": {"type": "string"},
                 "update_communities": {"type": "boolean"},
             },
@@ -426,10 +521,12 @@ def test_entity_know_projection_queues_one_two_sided_episode(
         "graphiti", [provider_tool],
     )[0]
     assert projected.input_schema["required"] == [
-        "entity_name", "name", "idea", "counterIdea",
+        "entity_name", "name", "observation", "interpretation", "source",
     ]
     assert "episode_body" not in projected.input_schema["properties"]
     assert "source_description" not in projected.input_schema["properties"]
+    assert "uuid" not in projected.input_schema["properties"]
+    assert "reference_time" not in projected.input_schema["properties"]
 
     mcp_provider_operations.register_graphiti_catalog([projected])
     definition = operation_definition("graphiti.add_memory_to_entity")
@@ -438,13 +535,18 @@ def test_entity_know_projection_queues_one_two_sided_episode(
         _authenticatedProjectId="project-one",
         entity_name="Rocket Lab",
         name="Launch demand",
-        idea={
-            "body": "Demand is supported.",
-            "citations": [{"url": "https://example.test/for"}],
+        observation="Rocket Lab reported a source-backed demand result.",
+        interpretation="The result informs demand but does not remove execution risk.",
+        source={
+            "url": "https://example.test/result",
+            "title": "Rocket Lab result",
+            "publisher": "Rocket Lab",
+            "evidence": "Rocket Lab reported the exact source-backed demand result.",
+            "publishedAt": "2026-10-19",
         },
-        counterIdea={
-            "body": "Execution risk remains.",
-            "citations": [{"url": "https://example.test/against"}],
+        direction={
+            "proposition": "Rocket Lab can compound launch revenue.",
+            "relation": "supports",
         },
         update_communities=True,
     ))
@@ -454,19 +556,85 @@ def test_entity_know_projection_queues_one_two_sided_episode(
     arguments = calls[0][1]
     assert arguments["group_id"] == "liquidaity-project-one"
     assert arguments["source"] == "json"
-    assert json.loads(arguments["episode_body"]) == {
-        "schemaVersion": "know.v1",
-        "idea": {
-            "body": "Demand is supported.",
-            "citations": [{"url": "https://example.test/for"}],
-        },
-        "counterIdea": {
-            "body": "Execution risk remains.",
-            "citations": [{"url": "https://example.test/against"}],
-        },
-    }
+    body = json.loads(arguments["episode_body"])
+    assert body["schemaVersion"] == "know.v2"
+    assert body["observation"] == "Rocket Lab reported a source-backed demand result."
+    assert body["interpretation"] == (
+        "The result informs demand but does not remove execution risk."
+    )
+    assert body["direction"]["relation"] == "supports"
+    assert body["source"]["resolvedUrl"] == "https://example.test/result"
     assert json.loads(arguments["source_description"]) == [
-        "https://example.test/for", "https://example.test/against",
+        "https://example.test/result",
     ]
-    assert "idea" not in arguments
-    assert "counterIdea" not in arguments
+    assert arguments["reference_time"] == "2026-10-19"
+    assert len(arguments["uuid"]) == 36
+    assert "observation" not in arguments
+    assert "interpretation" not in arguments
+    assert "direction" not in arguments
+
+
+def test_entity_know_projection_deduplicates_an_already_persisted_episode(
+    monkeypatch, clear_live_provider_operations,
+):
+    import asyncio
+    from mcp.types import Tool
+    from app.python_models.tool_registry import operation_definition
+
+    monkeypatch.setattr(
+        mcp_provider_operations,
+        "verify_source_document",
+        lambda source: {
+            **source,
+            "resolvedUrl": source["url"],
+            "retrievedAt": "2026-10-20T08:00:00Z",
+            "contentFingerprint": "b" * 64,
+        },
+    )
+    async def persisted(_project_id: str, _episode_uuid: str) -> bool:
+        return True
+    monkeypatch.setattr(mcp_provider_operations, "_persisted_atomic_know", persisted)
+    monkeypatch.setattr(
+        mcp_provider_operations,
+        "call_graphiti_operation",
+        lambda *_args, **_kwargs: pytest.fail("duplicate must not be queued"),
+    )
+    provider_tool = Tool(
+        name="add_memory_to_entity",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity_name": {"type": "string"},
+                "name": {"type": "string"},
+                "episode_body": {"type": "string"},
+                "source_description": {"type": "string"},
+                "group_id": {"type": "string"},
+            },
+            "required": ["entity_name", "name", "episode_body", "source_description"],
+        },
+    )
+    projected = mcp_provider_operations.namespace_provider_tools(
+        "graphiti", [provider_tool],
+    )[0]
+    mcp_provider_operations.register_graphiti_catalog([projected])
+    definition = operation_definition("graphiti.add_memory_to_entity")
+    assert definition is not None
+
+    result = asyncio.run(definition.handler(
+        _authenticatedProjectId="project-one",
+        entity_name="Rocket Lab",
+        name="Repeated source",
+        observation="One exact observation.",
+        interpretation="One bounded interpretation.",
+        source={
+            "url": "https://example.test/result",
+            "title": "Rocket Lab result",
+            "publisher": "Rocket Lab",
+            "evidence": "Rocket Lab reported the exact source-backed demand result.",
+        },
+    ))
+
+    payload = json.loads(result.content[0].text)
+    assert payload["status"] == "already_persisted"
+    assert payload["queued"] is False
+    assert payload["persisted"] is True
